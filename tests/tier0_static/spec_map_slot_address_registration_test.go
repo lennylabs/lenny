@@ -366,9 +366,27 @@ var proposalGlossRE = regexp.MustCompile(`^\(\s*proposal\b`)
 // opens a gloss that names the number as a proposal's own section. A proposal
 // numbers its sections independently of the specification, so crediting such
 // an id to a spec-map key records coverage of a specification section the case
-// does not exercise.
+// does not exercise. The marker is a defect in the annotation rather than a
+// supported citation form: the reader recognizes it so that no id in the run it
+// terminates is credited, and TestAddressCaseAnnotationsCiteSpecificationHeadingsOnly
+// reports every site that carries one.
 func glossMarksAProposalSection(rest string) bool {
 	return proposalGlossRE.MatchString(strings.ToLower(strings.TrimLeft(rest, " \t")))
+}
+
+// itemCarriesTheProposalMarker reports whether any run of one item of a joined
+// `// spec:` annotation glosses its id as a proposal document's own section.
+func itemCarriesTheProposalMarker(item string) bool {
+	for _, run := range strings.Split(item, "/") {
+		m := citedSectionHeadRE.FindStringSubmatch(strings.TrimSpace(run))
+		if m == nil {
+			continue
+		}
+		if glossMarksAProposalSection(strings.TrimRight(m[3], " \t")) {
+			return true
+		}
+	}
+	return false
 }
 
 // citedSectionAtHead returns the spec-section id an annotation item cites at
@@ -427,6 +445,34 @@ func isIndentedCommentContinuation(lines []string, idx int) bool {
 	return strings.HasPrefix(rest, "\t") || strings.HasPrefix(rest, "  ")
 }
 
+// specTagRE matches the `spec:` tag of an annotation inside a comment line.
+// The tag opens the comment line in the canonical position and also follows
+// the line's own prose ("// rejected. spec: §7.4"), so the reader locates it
+// anywhere in the comment text rather than at the head alone.
+var specTagRE = regexp.MustCompile(`(^|[^\pL\pN_])spec:`)
+
+// specTagInComment returns the offset just past the `spec:` tag of an
+// annotation carried by the given line, and reports whether the line carries
+// one. Only a comment line carries an annotation, so a `// spec:` written
+// inside a string literal (a parser fixture, for example) is not one. A tag
+// inside a backtick-quoted span is a prose mention of the convention rather
+// than a citation, as in this file's own comments.
+func specTagInComment(line string) (int, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "//") {
+		return 0, false
+	}
+	offset := strings.Index(line, "//")
+	text := line[offset:]
+	for _, m := range specTagRE.FindAllStringIndex(text, -1) {
+		if strings.Count(text[:m[0]], "`")%2 == 1 {
+			continue
+		}
+		return offset + m[1], true
+	}
+	return 0, false
+}
+
 // annotationBlockAt joins the `// spec:` annotation opening at lines[i] with
 // the comment lines that continue it, and returns the joined text and the
 // index of the last line consumed. A blank comment line terminates the block
@@ -434,8 +480,8 @@ func isIndentedCommentContinuation(lines []string, idx int) bool {
 // wrapped annotation: dropping the block there would hide every section after
 // the first physical line. The block also ends at the `diagnosis:` tag, at a
 // following `spec:` tag, and at the end of the comment group.
-func annotationBlockAt(lines []string, i int) (string, int) {
-	block := []string{strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[i]), "// spec:"))}
+func annotationBlockAt(lines []string, i, tagEnd int) (string, int) {
+	block := []string{strings.TrimSpace(lines[i][tagEnd:])}
 	j := i + 1
 	for ; j < len(lines); j++ {
 		next := strings.TrimSpace(lines[j])
@@ -443,7 +489,10 @@ func annotationBlockAt(lines []string, i int) (string, int) {
 			break
 		}
 		next = strings.TrimSpace(strings.TrimPrefix(next, "//"))
-		if strings.HasPrefix(next, "diagnosis:") || strings.HasPrefix(next, "spec:") {
+		if strings.HasPrefix(next, "diagnosis:") {
+			break
+		}
+		if _, ok := specTagInComment(lines[j]); ok {
 			break
 		}
 		if next == "" {
@@ -468,8 +517,19 @@ func annotationBlockAt(lines []string, i int) (string, int) {
 // ("paths 2/4"). A run after a slash is therefore read as a citation only
 // when it announces itself as one, by carrying the section sign or by naming
 // a dotted id. The run at the head of the item keeps the ordinary rule.
+//
+// The proposal marker is written once after a run of ids rather than after
+// each of them ("§6.1, §4.3, §4.4 (proposal)"), so the marker disqualifies
+// every id read since the last marked item rather than the one it directly
+// follows. Crediting the unmarked head of such a run records coverage of a
+// specification section the case does not exercise.
 func sectionsInAnnotation(block string, out map[string]bool) {
+	pending := []string{}
 	for _, item := range strings.FieldsFunc(block, func(r rune) bool { return r == ',' || r == ';' }) {
+		if itemCarriesTheProposalMarker(item) {
+			pending = pending[:0]
+			continue
+		}
 		for i, run := range strings.Split(item, "/") {
 			id, ok := citedSectionAtHead(run)
 			if !ok {
@@ -478,8 +538,11 @@ func sectionsInAnnotation(block string, out map[string]bool) {
 			if i > 0 && !announcesItselfAsACitation(run) {
 				continue
 			}
-			out[id] = true
+			pending = append(pending, id)
 		}
+	}
+	for _, id := range pending {
+		out[id] = true
 	}
 }
 
@@ -508,10 +571,11 @@ func annotatedSectionsInFile(t *testing.T, file string) map[string]bool {
 func sectionsFromLines(lines []string) map[string]bool {
 	out := map[string]bool{}
 	for i := 0; i < len(lines); i++ {
-		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "// spec:") {
+		tagEnd, ok := specTagInComment(lines[i])
+		if !ok {
 			continue
 		}
-		block, last := annotationBlockAt(lines, i)
+		block, last := annotationBlockAt(lines, i, tagEnd)
 		i = last
 		sectionsInAnnotation(block, out)
 	}
@@ -549,8 +613,8 @@ func perCaseSectionsFromLines(lines []string) map[string]map[string]bool {
 	pending := map[string]bool{}
 	for i := 0; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "// spec:") {
-			block, last := annotationBlockAt(lines, i)
+		if tagEnd, ok := specTagInComment(lines[i]); ok {
+			block, last := annotationBlockAt(lines, i, tagEnd)
 			i = last
 			sectionsInAnnotation(block, pending)
 			continue
@@ -728,6 +792,48 @@ func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s::%s to section(s) %v its own `// spec:` annotation names", file, fn, sortedSectionIDs(missing))
 			}
+		}
+	}
+}
+
+// proposalMarkedAnnotationSites returns, for one repo-relative file, the
+// 1-based line numbers of the `// spec:` annotations that cite a proposal
+// document's own section number.
+func proposalMarkedAnnotationSites(t *testing.T, file string) []int {
+	t.Helper()
+	lines := repoFileLines(t, file)
+	sites := []int{}
+	for i := 0; i < len(lines); i++ {
+		tagEnd, ok := specTagInComment(lines[i])
+		if !ok {
+			continue
+		}
+		block, last := annotationBlockAt(lines, i, tagEnd)
+		for _, item := range strings.FieldsFunc(block, func(r rune) bool { return r == ',' || r == ';' }) {
+			if itemCarriesTheProposalMarker(item) {
+				sites = append(sites, i+1)
+				break
+			}
+		}
+		i = last
+	}
+	return sites
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// A `// spec:` annotation names a specification heading. A proposal numbers
+// its own sections independently, and those numbers exist only under
+// proposals/, so an annotation that cites one records no traceable coverage:
+// the number resolves to an unrelated specification heading, and the
+// section that states the behavior keeps showing no test against it. The
+// credit gate reads the marker so that it credits no such id, and this gate
+// reports the site so the citation is corrected to the heading that states
+// the behavior rather than left to pass silently.
+func TestAddressCaseAnnotationsCiteSpecificationHeadingsOnly(t *testing.T) {
+	for _, file := range slotAddressCaseFiles {
+		for _, line := range proposalMarkedAnnotationSites(t, file) {
+			t.Errorf("%s:%d cites a proposal document's own section number under `// spec:`; cite the specification heading that states the behavior", file, line)
 		}
 	}
 }
@@ -1027,13 +1133,43 @@ func TestSemicolonAndEmDashCitationFormsAreRead(t *testing.T) {
 		},
 		{
 			name:  "a proposal-marked number is not a specification citation",
-			lines: []string{"// spec: §4.1 (proposal), §7.1 step 4 — the binder phases"},
+			lines: []string{"// spec: §4.1 (proposal), §7.1 step 4 — the phases a binder runs"},
 			want:  []string{"7.1"},
 		},
 		{
-			name:  "a proposal marker disqualifies only the id it glosses",
-			lines: []string{"// spec: §6.1, §4.3, §4.4 (proposal) — RequiresDemotion is pure"},
-			want:  []string{"4.3", "6.1"},
+			// The marker is written once after a run of proposal-numbered
+			// ids, so it disqualifies the whole run rather than the id it
+			// directly follows. Reading the head of the run as a citation
+			// credits a specification section the case does not exercise.
+			name:  "a proposal marker disqualifies the run it terminates",
+			lines: []string{"// spec: §6.1, §4.3, §4.4 (proposal) — a pure demotion decision"},
+			want:  nil,
+		},
+		{
+			// A marked run ends at the marker, so a citation written after
+			// one is still read.
+			name:  "a citation after a marked run is still read",
+			lines: []string{"// spec: §4.4, §4.6 (proposal); §15.1 (precondition); §6.1."},
+			want:  []string{"15.1", "6.1"},
+		},
+		{
+			name:  "a tag written after the line's own prose is read",
+			lines: []string{"// rejected. spec: §7.4; §13.4 — the staging rules."},
+			want:  []string{"13.4", "7.4"},
+		},
+		{
+			// This file's own comments name the convention in backticks.
+			// A quoted mention is prose rather than a citation.
+			name:  "a backticked mention of the tag is not an annotation",
+			lines: []string{"// The `// spec:` annotations name §5.2 and §6.4."},
+			want:  nil,
+		},
+		{
+			// A `// spec:` inside a string literal is fixture data rather
+			// than an annotation on the code around it.
+			name:  `a tag inside a string literal is not an annotation`,
+			lines: []string{"\tlines: []string{\"// spec: §5.2\"},"},
+			want:  nil,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

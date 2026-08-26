@@ -66,7 +66,7 @@ func claimAndPrepare(t *testing.T, binder *podsession.Binder, req podsession.Bin
 	return claim
 }
 
-// spec: §4.1 (proposal), §7.1 step 4 — Claim reserves an idle warm pod, runs
+// spec: §4.6, §7.1 step 4 — Claim reserves an idle warm pod, runs
 // the §15.5 handshake, and returns the binding (sandbox name, pool, pod IP,
 // negotiated workspace root) for the gateway to persist at /create, recording
 // the §6.3 pod-claim timing. It does not run the setup chain or start the
@@ -109,7 +109,7 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (proposal) — Claim, Prepare, and Launch each reconnect to the
+// spec: §4.6, §7.1 — Claim, Prepare, and Launch each reconnect to the
 // claimed pod from the persisted binding rather than holding one connection
 // across the window. Driven independently with the claim threaded through, the
 // three phases place a session on the pod exactly as the monolithic Bind does:
@@ -156,7 +156,7 @@ func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §4.3 (proposal), §7.1 step 23 (lease release) — when a Launch step
+// spec: §4.9, §7.1 step 23 (lease release) — when a Launch step
 // fails after the §4.9 credential lease was assigned at Prepare, the reclaim
 // drains the pod AND revokes the lease back to its pool (Gap 2), so the
 // credential's active-session slot does not leak for the abandoned session.
@@ -212,7 +212,7 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §4.3 (proposal) — a Prepare-phase step that fails BEFORE
+// spec: §4.6, §4.9 — a Prepare-phase step that fails BEFORE
 // assignCredentials runs reclaims the pod without revoking a lease (the
 // lease-assigned flag is still false), so the revoke is a no-op. A
 // FinalizeWorkspace failure (no adapter workspace root) exercises this path.
@@ -257,7 +257,7 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_3(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (proposal), §7.1 step 23 (lease release) — when Launch fails to
+// spec: §4.6, §7.1 step 23 (lease release) — when Launch fails to
 // reconnect to the bound pod (a transient dial/handshake failure between
 // /finalize and /start), the pod claimed at /create AND the §4.9 lease Prepare
 // assigned are reclaimed before the error returns, so a reconnect failure does
@@ -320,7 +320,7 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (proposal) — when Prepare fails to reconnect to the bound pod (a
+// spec: §4.6 — when Prepare fails to reconnect to the bound pod (a
 // transient dial/handshake failure between /create and /finalize), the pod
 // claimed at /create is reclaimed before the error returns, so a reconnect
 // failure does not strand the reserved pod. No lease is assigned before Prepare
@@ -366,7 +366,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §4.5 (proposal), §4.6 (proposal), §7.1 step 23 — ReclaimClaimed
+// spec: §4.6, §7.1 step 23 — ReclaimClaimed
 // releases a pod held by a created/finalizing/ready session that has no live
 // BindResult (the created-expiry sweeper or a /terminate path) from the
 // persisted SandboxName + sessionID alone: it deletes the per-pod claim and
@@ -409,7 +409,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_5(t *testing.T) {
 	}
 }
 
-// spec: §4.5 (proposal) — ReclaimClaimed for a created session that never
+// spec: §4.6 — ReclaimClaimed for a created session that never
 // finalized (so holds only a pod, no lease) deletes the per-pod claim and
 // makes the lease revoke a no-op rather than erroring.
 // diagnosis: a failure means the created-expiry sweep cannot release a pod
@@ -449,7 +449,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_5(t *testing.T) {
 	}
 }
 
-// spec: §15.1, §7.1, §4.5 (proposal) — the created-expiry
+// spec: §15.1, §7.1, §4.6 — the created-expiry
 // sweep, wired to the binder's claimless reclaim, releases the pod a
 // `created`-state row claimed at /create back to the pool against a real
 // kube-apiserver before it deletes the abandoned row. This is the S5 end-to-end
@@ -522,7 +522,7 @@ func TestCreatedSweepReleasesClaimedPod_spec_15_1_630(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (proposal) — Prepare fails closed when the request carries no
+// spec: §4.6 — Prepare fails closed when the request carries no
 // persisted sandbox binding: it cannot reconnect to the pod claimed at
 // /create, so it rejects rather than claiming a fresh pod and orphaning the
 // reserved one.
@@ -545,7 +545,7 @@ func TestPrepareWithoutBindingFailsClosed_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (proposal), §15.5 — when Prepare reconnects to the claimed pod
+// spec: §4.6, §15.5 — when Prepare reconnects to the claimed pod
 // and the adapter speaks no protocol version the gateway accepts, the
 // reconnection fails closed rather than proceeding against an incompatible
 // adapter. A pod claimed at /create whose adapter later reports an
@@ -573,7 +573,7 @@ func TestPrepareRejectsIncompatibleAdapterOnReconnect_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §4.6 (proposal) — when the persisted binding names a pod that no
+// spec: §4.6 — when the persisted binding names a pod that no
 // longer exists (drained between /create and /finalize), the reconnect fails
 // closed rather than proceeding, so Prepare surfaces the error instead of
 // driving RPCs against a missing pod.

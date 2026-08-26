@@ -42,7 +42,7 @@ func inlinePlan(path string) *adapterv1.WorkspacePlan {
 	}
 }
 
-// spec: §6.1, §4.3, §4.4 (proposal) — RequiresDemotion is the pure
+// spec: §6.1, §7.1 — RequiresDemotion is the pure
 // §6.1 SDK-warm demotion decision the finalize-time Prepare makes and the
 // launch-only /start path recomputes from the persisted plan, so the gateway
 // does not persist the boolean. It must answer true only for a preConnect

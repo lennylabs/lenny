@@ -183,7 +183,8 @@
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditIsNotDemandedForATestingDocumentSectionID",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditsMissingReportsTheUncreditedAncestorKey",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestTheCreditInventoryCarriesEveryAddressGuardCaseFile",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestAddressCaseAnnotationsCiteSpecificationHeadingsOnly"
       ],
       "packages": [
         "pkg/gateway"
@@ -203,7 +204,8 @@
         "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres",
         "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway",
         "pkg/adapter/coordination_test.go",
-        "pkg/gateway/sessionserver/start_pod_test.go"
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/session",
@@ -228,9 +230,7 @@
         "tests/tier4_integration/oauth_token_proxy_test.go::TestOAuthTokenSurfaceUnmountedWithoutProxy",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore",
-        "tests/tier6_e2e_cloud/aws_resources_test.go",
-        "pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
-        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go"
+        "tests/tier6_e2e_cloud/aws_resources_test.go"
       ],
       "packages": [
         "pkg/token",
@@ -419,7 +419,8 @@
         "tests/tier5_e2e_kind/runtime_publish_journey_test.go",
         "pkg/gateway/sessionserver/create_test.go",
         "pkg/gateway/sessionserver/start_pod_test.go",
-        "tests/tier5_e2e_kind/eager_claim_e2e_test.go"
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_phases_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -484,7 +485,8 @@
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName",
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2",
-        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go"
+        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -559,7 +561,8 @@
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathScrubReportedReuses_spec_5_2",
-        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go"
+        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -663,7 +666,8 @@
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -962,7 +966,9 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestCredentialLeaseSweepCounterInCatalog",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
-        "tests/tier4_integration/credential_delivery_gate_test.go"
+        "tests/tier4_integration/credential_delivery_gate_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -1004,7 +1010,8 @@
         "pkg/adapter/integrationlevel_test.go",
         "pkg/adapter/staging_test.go",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindRejectsUnderperformingRuntime_spec_5_1",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindAcceptsRuntimeMeetingDeclaredLevel_spec_5_1",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/runtime"
@@ -1185,7 +1192,15 @@
         "pkg/gateway/runtime/slothealth/slothealth_test.go::TestUnhealthyThreshold_spec_5_2",
         "pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
         "pkg/gateway/storage/slotcounter/slotcounter_test.go",
-        "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock"
+        "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock",
+        "pkg/adapter/usage_test.go",
+        "pkg/controller/sandbox/podspec/podspec_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingArmsMissingReportTimeout_spec_3_4",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestForget",
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier7a_load_local/tracing_context_release_race_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1211,7 +1226,8 @@
         "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
         "pkg/gateway/sessionserver/create_test.go",
-        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go"
+        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/isolation"
@@ -1273,7 +1289,8 @@
         "pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
-        "pkg/adapter/slotlayout/slotlayout_test.go"
+        "pkg/adapter/slotlayout/slotlayout_test.go",
+        "pkg/adapter/manifest_fields_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1328,7 +1345,10 @@
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2",
         "pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
         "pkg/sandbox/slotstate/slotstate_test.go",
-        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryDrainsUnhealthyPod_spec_5_2"
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryDrainsUnhealthyPod_spec_5_2",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingPatchesClaimToRecycling_spec_3_4",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDoesNotArmTimeout_spec_3_4",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDrainsNotRecycle_spec_3_4"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1397,7 +1417,8 @@
         "pkg/gateway/sessionserver/workspace_root_persist_test.go",
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
         "pkg/adapter/tracingcontext_sampling_test.go",
-        "tests/tier0_static/claim_register_proto_agreement_test.go"
+        "tests/tier0_static/claim_register_proto_agreement_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/workspace"
@@ -1467,7 +1488,9 @@
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier4_integration/eager_claim_lifecycle_test.go",
         "pkg/adapter/resume_test.go",
-        "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go"
+        "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go",
+        "pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -1499,7 +1522,8 @@
         "pkg/adapter/manifest_test.go",
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorSendAddressesTheAttachStreamBySession",
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2",
-        "tests/tier2_component/rls/checkpoint_manifest_test.go"
+        "tests/tier2_component/rls/checkpoint_manifest_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1525,7 +1549,9 @@
         "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go",
         "pkg/gateway/sessionserver/workspace_root_persist_test.go",
         "pkg/gateway/sessionserver/resume_external_effect_regression_test.go",
-        "pkg/gateway/sessionserver/start_pod_test.go"
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "pkg/gateway/runtime/adapterclient/client_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/session/resume",
@@ -1542,7 +1568,8 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "pkg/gateway/sessionserver/upload_to_session_test.go",
         "tests/tier4_integration/eager_claim_lifecycle_test.go",
-        "tests/tier5_e2e_kind/eager_claim_e2e_test.go"
+        "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
+        "pkg/adapter/staging_test.go"
       ],
       "packages": [
         "pkg/upload"
@@ -1720,7 +1747,8 @@
       "tests": [
         "pkg/session/state/state_test.go::TestMCPProtocolStateSessionMapping_spec_8_8_871",
         "pkg/session/state/state_test.go::TestMCPProtocolStateUnknownStateReturnsEmpty_spec_8_8_871",
-        "tests/tier8_chaos/token_service_unavailability_guard_test.go"
+        "tests/tier8_chaos/token_service_unavailability_guard_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/session/state"
@@ -1820,7 +1848,8 @@
         "tests/tier4_integration/connector_oauth_test.go",
         "tests/tier4_integration/external_mcp_tool_test.go",
         "tests/tier4_integration/connector_delegation_scope_test.go",
-        "pkg/adapter/connectormcp_test.go"
+        "pkg/adapter/connectormcp_test.go",
+        "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go"
       ],
       "packages": [
         "pkg/connector",
@@ -2003,7 +2032,8 @@
         "tests/tier2_component/legalholdreconciler/reconciler_test.go",
         "tests/tier4_integration/checkpoint_grant_remint_test.go",
         "tests/tier4_integration/checkpoint_intent_generation_test.go",
-        "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go"
+        "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -2033,7 +2063,8 @@
       "tests": [
         "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
         "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",
-        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
+        "pkg/adapter/coordination_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -2742,7 +2773,8 @@
         "tests/tier7b_load_kind/postgres_test.go::TestPostgresWriteBaseline",
         "tests/tier2_component/stores/storerouter_routing_test.go",
         "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
-        "migrations/0178_checkpoint_manifest_test.go"
+        "migrations/0178_checkpoint_manifest_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -2811,7 +2843,8 @@
         "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go",
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
         "pkg/gateway/checkpoint/checkpointretention/checkpointretention_test.go",
-        "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go"
+        "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -2833,7 +2866,8 @@
         "tests/tier3_contract/cloudevents/published_schema_test.go",
         "tests/tier2_component/stores/postgrespodregistry_test.go",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
-        "tests/tier11_docs/redis_key_prefix_registry_test.go"
+        "tests/tier11_docs/redis_key_prefix_registry_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -3040,7 +3074,8 @@
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "tests/tier4_integration/checkpoint_grant_remint_test.go",
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
-        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go"
+        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -3269,7 +3304,8 @@
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio",
         "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric",
         "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives",
-        "pkg/gateway/sessionserver/start_pod_test.go"
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "pkg/adapter/staging_test.go"
       ],
       "packages": [
         "pkg/upload"
@@ -3535,7 +3571,8 @@
         "tests/tier3_contract/multiprotocol_journey/journey_test.go",
         "tests/tier4_integration/multi_protocol_same_deployment_test.go",
         "tests/tier4_integration/openai_cross_tenant_test.go",
-        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go"
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
+        "pkg/gateway/sessionserver/create_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -3885,7 +3922,9 @@
         "pkg/observability/tracing/tracing_test.go::TestRecordErrorAttachesCategoryAttribute",
         "pkg/observability/tracing/tracing_test.go::TestSpanNamesCatalogIsExhaustive",
         "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether",
-        "tests/tier3_contract/sdks/runtime_sdk_test.go"
+        "tests/tier3_contract/sdks/runtime_sdk_test.go",
+        "pkg/adapter/tracing_external_test.go",
+        "pkg/adapter/tracing_internal_test.go"
       ],
       "packages": [
         "pkg/observability/correlation",

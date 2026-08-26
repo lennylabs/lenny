@@ -302,7 +302,7 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 	}
 }
 
-// spec: §4.1 (proposal), §7.1 step 4, §5.2
+// spec: §7.1 step 4, §5.2
 // diagnosis: ClaimSlot did not reserve a §5.2 slot at create. The 0007
 // eager-claim design claims a per-session slot at /create for a
 // concurrent-workspace pool, so the §15.1 created-state pod-claim invariant
@@ -344,7 +344,7 @@ func TestClaimSlotReservesSlotWithoutStarting_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §4.1 (proposal), §5.2 — a concurrent pool with no idle pod returns
+// spec: §5.2 — a concurrent pool with no idle pod returns
 // the ErrNoIdlePod exhaustion sentinel unwrapped, reserving no slot, so the
 // create handler maps it to the §7.1 SESSION_CREATION_FAILED atomicity
 // envelope before the client uploads.
@@ -358,7 +358,7 @@ func TestClaimSlotEmptyPoolReturnsExhaustion_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §4.3, §4.4 (proposal), §5.2
+// spec: §5.2, §7.1 step 4
 // diagnosis: BindReservedSlot did not reconnect to a slot reserved at create
 // and run the materialize-and-launch sequence. The 0007 decomposed lifecycle
 // reserves the slot at /create (ClaimSlot) and reconnects at /start

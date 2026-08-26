@@ -1602,7 +1602,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	if ra := rr.Header().Get("Retry-After"); ra == "" {
 		t.Error("Retry-After header missing on the SESSION_CREATION_FAILED reply")
 	}
-	// spec: §7.1 / §4.1 (proposal) — create-time pool
+	// spec: §7.1 — create-time pool
 	// exhaustion surfaces the SESSION_CREATION_FAILED atomicity envelope, not
 	// the §5.2 WARM_POOL_EXHAUSTED code the two-step /start claim returns.
 	var env struct {

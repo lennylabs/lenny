@@ -281,9 +281,8 @@ func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credr
 	return r.inner.Resolve(ctx, in)
 }
 
-// spec: §4.1 (proposal: the §7.1-step-3 credential pre-check is moved into
-// createSession ahead of the step-4 claim and runs once before the claim),
-// §7.1 step 3, §4.9.
+// spec: §7.1 step 3 (the credential pre-check runs inside createSession
+// ahead of the step-4 claim, exactly once per session), §4.9.
 // diagnosis: the combined one-call POST /v1/sessions/start runs claim,
 // prepare, and launch in a single call. The credential availability
 // pre-check must run exactly once (at the create-time claim), not again at
@@ -363,9 +362,8 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 	}
 }
 
-// spec: §6.3, §5
-// (proposal: the combined create-and-start reuses the claim/prepare/launch
-// phases and the claim-to-ready span covers claim through ready).
+// spec: §6.3, §5 — the combined create-and-start reuses the claim, prepare,
+// and launch phases, and the claim-to-ready span covers claim through ready.
 // diagnosis: the combined one-call POST /v1/sessions/start performs the
 // claim, prepare, and launch in a single call, so the single end-to-end
 // lenny_session_startup_duration_seconds observation must include the
@@ -604,8 +602,8 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 }
 
-// spec: §4.4 (proposal: /start is launch-only and does no credential work),
-// §15.1 (/start precondition), §4.9.
+// spec: §15.1 (/start precondition: launch-only, with no credential work),
+// §4.9.
 // diagnosis: the two-step `POST /v1/sessions/{id}/start` exclusive-pool path
 // must launch only — the §4.9 credential resolution belongs at /create
 // (pre-check) and /finalize (lease assignment), never at /start. The router
@@ -700,8 +698,8 @@ func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §7.1 steps 11-13, §15.1 (finalize precondition), §4.3 (proposal).
-// diagnosis: /finalize is the §4.3 preparation barrier — it materializes
+// spec: §7.1 steps 11-13, §15.1 (finalize precondition).
+// diagnosis: /finalize is the §7.1 preparation barrier — it materializes
 // /workspace/current and runs setup before returning, and the session reaches
 // `ready` only once prepared. A failure here means /finalize transitioned to
 // `ready` without materializing the workspace, so the workspace plan was not
@@ -761,9 +759,9 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 }
 
 // spec: §7.5, §7.3,
-// §15.1 (SETUP_COMMAND_FAILED), §4.3 (proposal: finalize-failure reclaim),
+// §15.1 (SETUP_COMMAND_FAILED), §7.1 steps 11-13 (finalize-failure reclaim),
 // §6.2 (pre-attached disposition).
-// diagnosis: a deterministic non-zero setup-command exit during the §4.3
+// diagnosis: a deterministic non-zero setup-command exit during the §7.1
 // finalize barrier (which the adapter reports as gRPC FailedPrecondition) must
 // surface the non-retryable 422 SETUP_COMMAND_FAILED envelope (retryable:false,
 // no Retry-After, details.reason=setup_command_failed), reclaim the claimed pod
@@ -1000,8 +998,8 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §4.9, §7.3 / §4.9, §4.3 (proposal: a finalize-step failure reclaims the create-time
-// pod), §6.2 (pre-attached disposition).
+// spec: §4.9, §7.3 / §4.9, §7.1 steps 11-13 (a finalize-step failure reclaims
+// the create-time pod), §6.2 (pre-attached disposition).
 // diagnosis: a credential source present at the create-time §7.1-step-3
 // pre-check but gone by /finalize is the check-to-assignment mismatch. It must
 // (a) surface as CREDENTIAL_POOL_EXHAUSTED rather than the create-only
@@ -1164,10 +1162,10 @@ func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
 	a.released = append(a.released, sessionID)
 }
 
-// spec: §4.3 (proposal: Gap 2 — a finalize failure AFTER AssignCredentials
-// succeeded reclaims the pod AND revokes the lease), §7.1 step 23 (lease
-// release), §15.1 (finalize precondition).
-// diagnosis: the §4.3 finalize barrier assigns the §4.9 lease during its
+// spec: §7.1 step 23 (lease release: a finalize failure after
+// AssignCredentials succeeded reclaims the pod and revokes the lease),
+// §15.1 (finalize precondition).
+// diagnosis: the §7.1 finalize barrier assigns the §4.9 lease during its
 // prepare phase, then transitions finalizing → ready. When that final store
 // write fails after the lease was assigned, the gateway must reclaim the
 // create-time pod (delete the per-pod SandboxClaim) AND revoke the lease

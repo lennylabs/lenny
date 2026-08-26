@@ -118,7 +118,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 	}
 }
 
-// spec: §7.1 / §4.1 (proposal) — a create-time
+// spec: §7.1 — a create-time
 // pod-claim exhaustion (claimAtCreate wraps ErrNoIdlePod as
 // errCreateClaimExhausted) surfaces the create-handler fallback envelope
 // SESSION_CREATION_FAILED, not the §5.2 WARM_POOL_EXHAUSTED code the
