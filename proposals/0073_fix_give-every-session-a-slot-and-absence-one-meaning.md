@@ -334,6 +334,30 @@ rule, the text moves to the code's step, and the step that carries it names the 
       addressing CODE-4 lands, the `Checkpoint restore onto a concurrent pod` row takes the status, surface,
       and note CODE-2 makes true, and the generator is held to the register by a tier-0 case.
       Depends on: S12, S14
+- [ ] **S19 · test** — CODE-4's tier-8 chaos battery. §8's tier-8 block enters the tree: the rotation
+      ceiling and Token Service guard fixtures each bind a slot for the session they name, every
+      credential-file read moves onto that session's `slotlayout.Resolve` path, and the assertions move
+      onto the merged handler. Nothing here is compiler-caught, so the tier is run rather than reasoned
+      about. The package builds only under the `chaos` build tag.
+      Tiers 0, 8. Depends on: S14
+- [ ] **S20 · test** — Run the tiers the landed steps never exercised. The plan enumerated neither tier 5
+      nor tier 8, and named tiers 2 and 11 only partially for CODE-4. Run tier 5 on Kind for S12 and S16,
+      tier 8 for S14 and S19, the two alert-catalog gates at tiers 2 and 11, and tiers 0 and 1 across every
+      touched package, so the whole reached set is green before the record amendments are written. Establish
+      that a failing tier is failing on the step rather than on the fixture before rebuilding a landed step.
+      Tiers 0, 1, 2, 3, 4, 5, 7a, 8, 9, 10, 11. Depends on: S16, S19
+- [ ] **S21 · docs** — §7's amendments to other artifacts, none of which is in the tree. `PROPOSAL-QUEUE.md`
+      records that C-53's scope lands here per D15; `TEST-GAPS.md` closes T-4.4.21 against the tier-4 case in
+      §8, leaving the summary-counts line unedited; 0072 drops its §1.11 and its restore half with pointers
+      recording what superseded each; and 0064 records that the five `slot_id` fields it landed are retired
+      here. Prose only.
+      Tiers 0, 11. Depends on: S18, S20
+- [ ] **S22 · test** — `tests/spec-map.json`, which the proposal names twice and no step carried. The two
+      rows commit 01d19af0 added are dropped per §4.5(f) and the exact-count assertion in the tier-3
+      reportusage case returns to its earlier form. Every §8 case that landed without a mapping is entered,
+      swept against the case inventory rather than by adding the known gaps alone, and the tier-0 spec-map
+      and claim-register gates are re-run.
+      Tiers 0, 3. Depends on: S19, S20
 
 ## 0. Context an implementor should read first
 
