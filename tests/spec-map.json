@@ -5424,7 +5424,8 @@
       "title": "Interrupt, terminate, and delete",
       "spec_file": "spec/29_communication-scenarios.md",
       "tests": [
-        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go"
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
+        "tests/tier0_static/spec_map_exception_blocker_retention_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "0",
@@ -5434,7 +5435,8 @@
       "title": "Co-tenancy on a concurrent-session pod",
       "spec_file": "spec/29_communication-scenarios.md",
       "tests": [
-        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go"
+        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go",
+        "tests/tier0_static/spec_map_exception_blocker_retention_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "0",

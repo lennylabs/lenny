@@ -172,6 +172,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier0_static/claim_register_test.go",
 	"tests/tier0_static/slot_absence_claim_comment_test.go",
 	"tests/tier0_static/slot_assignment_attribution_test.go",
+	"tests/tier0_static/spec_map_exception_blocker_retention_test.go",
 	"tests/tier0_static/spec_map_slot_address_registration_test.go",
 	"tests/tier10_conformance/concurrent_slot_conformance_test.go",
 	"tests/tier10_conformance/credential_path_resolution_conformance_test.go",
