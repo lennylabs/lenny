@@ -35,6 +35,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -134,10 +136,15 @@ func (p *runtimePeer) expectSilence(d time.Duration) {
 }
 
 // startAdapter brings up a real adapter.Server bound to a real
-// CH-RUNTIMEOPS on a Unix socket, with credentials assigned for one
-// direct-mode provider. It returns the server, the socket path, and the
-// recording audit emitter wired to the §4.9.2 EventStore hook.
-func startAdapter(t *testing.T, pool string) (*adapter.Server, string, *recordingCeilingAudit) {
+// CH-RUNTIMEOPS on a Unix socket, with sessionID bound to a slot on the pod
+// and credentials assigned for one direct-mode provider. Every session is
+// bound to a slot on every pod, so the assignment binds the named session's
+// slot and its credential file lands under that slot's own tree. It returns
+// the server, the socket path, the recording audit emitter wired to the
+// §4.9.2 EventStore hook, and the session's resolved §6.1 credential file.
+//
+// spec: §6.1; §6.4.
+func startAdapter(t *testing.T, pool, sessionID string) (*adapter.Server, string, *recordingCeilingAudit, string) {
 	t.Helper()
 	// t.TempDir() embeds the (long) test name, so a socket path under it can
 	// overflow the platform sun_path limit (~104 bytes on darwin); bind under
@@ -157,26 +164,59 @@ func startAdapter(t *testing.T, pool string) (*adapter.Server, string, *recordin
 	go func() { _ = lc.Run(ctx) }()
 
 	audit := &recordingCeilingAudit{}
+	base := t.TempDir()
 	s := adapter.New("rotation-chaos")
-	s.CredentialsDir = t.TempDir()
+	// The pod roots the per-slot trees nest under (§6.4); the slot the
+	// assignment binds is created beneath them.
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
 	s.CheckpointPoolLabel = pool
 	s.RuntimeName = "claude-code"
 	s.Lifecycle = lc
 	s.RotationAudit = audit
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-chaos"},
+		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": {LeaseId: "l-old", Provider: "anthropic", Payload: []byte("{}")},
 		},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
-	return s, socketPath, audit
+	return s, socketPath, audit, assertSlotCredentialFile(t, s, sessionID)
 }
 
-func rotateRequest(leaseID, trigger string) *adapterv1.RotateCredentialsRequest {
+// assertSlotCredentialFile asserts the named session's §6.1 credential file
+// sits under that session's own slot tree,
+// `<CredentialsDir>/slots/<sessionId>/credentials.json`, and that no
+// pod-global credential file was written beside it. The per-slot tree is the
+// only layout, so the per-session path is the one place an assignment or a
+// rotation lands, on a pod of any concurrency. It returns the resolved path.
+//
+// spec: §6.1; §6.4.
+func assertSlotCredentialFile(t *testing.T, s *adapter.Server, sessionID string) string {
+	t.Helper()
+	paths, err := slotlayout.Resolve(slotlayout.Roots{Credentials: s.CredentialsDir}, sessionID)
+	if err != nil {
+		t.Fatalf("resolve session %s credential path: %v", sessionID, err)
+	}
+	if _, err := os.Stat(paths.CredentialsFile); err != nil {
+		t.Fatalf("session %s has no credential file at its slot path %s: %v",
+			sessionID, paths.CredentialsFile, err)
+	}
+	podGlobal := filepath.Join(s.CredentialsDir, slotlayout.CredentialsFileName)
+	if _, err := os.Stat(podGlobal); !os.IsNotExist(err) {
+		t.Fatalf("a pod-global credential file exists at %s: the assignment must land under the session's slot tree",
+			podGlobal)
+	}
+	return paths.CredentialsFile
+}
+
+// rotateRequest builds a rotation for the named session's bound slot.
+func rotateRequest(sessionID, leaseID, trigger string) *adapterv1.RotateCredentialsRequest {
 	return &adapterv1.RotateCredentialsRequest{
-		SessionId:       &adapterv1.SessionId{Value: "sess-chaos"},
+		SessionId:       &adapterv1.SessionId{Value: sessionID},
 		RotationTrigger: trigger,
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": {LeaseId: leaseID, Provider: "anthropic", Payload: []byte("{}")},
@@ -230,7 +270,8 @@ func (p *runtimePeer) startWithheldInflight(s *adapter.Server, provider string) 
 // audit event) were not recorded.
 func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(t *testing.T) {
 	const pool = "rotation-chaos-ceiling"
-	s, socketPath, audit := startAdapter(t, pool)
+	const session = "sess-chaos-ceiling"
+	s, socketPath, audit, credFile := startAdapter(t, pool, session)
 	s.RotationInflightCeiling = 150 * time.Millisecond
 	s.CredentialsAckTimeout = 5 * time.Second
 
@@ -245,7 +286,7 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 
 	errc := make(chan error, 1)
 	go func() {
-		_, err := s.RotateCredentials(context.Background(), rotateRequest("l-new", "fault_rate_limited"))
+		_, err := s.RotateCredentials(context.Background(), rotateRequest(session, "l-new", "fault_rate_limited"))
 		errc <- err
 	}()
 
@@ -256,10 +297,18 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	if got.Type != "credentials_rotated" || got.LeaseID != "l-new" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated for lease l-new", got)
 	}
+	// The frame points the runtime at the rotating session's own slot
+	// credential file, so a co-tenant slot's bundle is untouched (§6.1).
+	if got.CredentialsPath != credFile {
+		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
+	}
 	peer.send(rotationFrame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
 	if err := <-errc; err != nil {
 		t.Fatalf("RotateCredentials at ceiling: %v", err)
 	}
+	// The rotated lease landed in that session's own file rather than in a
+	// pod-global one.
+	assertCredentialFileHasLease(t, credFile, "l-new")
 
 	if after := counterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
 		map[string]string{"pool": pool, "trigger": "fault_rate_limited"}); after != before+1 {
@@ -305,7 +354,8 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 // incorrectly recorded a ceiling hit for a non-fault rotation.
 func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *testing.T) {
 	const pool = "rotation-chaos-proactive"
-	s, socketPath, audit := startAdapter(t, pool)
+	const session = "sess-chaos-proactive"
+	s, socketPath, audit, credFile := startAdapter(t, pool, session)
 	// A short ceiling that MUST be ignored for proactive_renewal.
 	s.RotationInflightCeiling = 150 * time.Millisecond
 	s.CredentialsAckTimeout = 5 * time.Second
@@ -321,7 +371,7 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 
 	errc := make(chan error, 1)
 	go func() {
-		_, err := s.RotateCredentials(context.Background(), rotateRequest("l-new", "proactive_renewal"))
+		_, err := s.RotateCredentials(context.Background(), rotateRequest(session, "l-new", "proactive_renewal"))
 		errc <- err
 	}()
 
@@ -334,6 +384,9 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 	got := peer.read()
 	if got.Type != "credentials_rotated" || got.LeaseID != "l-new" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated after natural drain", got)
+	}
+	if got.CredentialsPath != credFile {
+		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
 	}
 	peer.send(rotationFrame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
 	if err := <-errc; err != nil {
@@ -366,7 +419,8 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 // duration is not recorded for the release decision.
 func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 	const pool = "rotation-chaos-acktimeout"
-	s, socketPath, _ := startAdapter(t, pool)
+	const session = "sess-chaos-acktimeout"
+	s, socketPath, _, credFile := startAdapter(t, pool, session)
 	s.CredentialsAckTimeout = 150 * time.Millisecond
 
 	peer := dialRuntimePeer(t, socketPath)
@@ -379,7 +433,7 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		_, err := s.RotateCredentials(context.Background(), rotateRequest("l-new", "fault_auth_expired"))
+		_, err := s.RotateCredentials(context.Background(), rotateRequest(session, "l-new", "fault_auth_expired"))
 		errc <- err
 	}()
 
@@ -388,6 +442,9 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 	got := peer.read()
 	if got.Type != "credentials_rotated" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated", got)
+	}
+	if got.CredentialsPath != credFile {
+		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
 	}
 	err := <-errc
 	if status.Code(err) != codes.DeadlineExceeded {
@@ -399,6 +456,21 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 	if afterGrace := histogramCount(t, "lenny_credential_rotation_grace_period_seconds",
 		map[string]string{"pool": pool, "provider": "anthropic"}); afterGrace != beforeGrace+1 {
 		t.Errorf("grace-period histogram count = %d, want %d", afterGrace, beforeGrace+1)
+	}
+}
+
+// assertCredentialFileHasLease asserts the session's own slot credential
+// file carries the named lease id, which is how a rotation is observed to
+// have rewritten that session's bundle rather than a pod-global one.
+// spec: §6.1.
+func assertCredentialFileHasLease(t *testing.T, credFile, leaseID string) {
+	t.Helper()
+	data, err := os.ReadFile(credFile)
+	if err != nil {
+		t.Fatalf("read session credential file %s: %v", credFile, err)
+	}
+	if !strings.Contains(string(data), leaseID) {
+		t.Errorf("session credential file %s does not carry the rotated lease %s", credFile, leaseID)
 	}
 }
 

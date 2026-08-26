@@ -329,6 +329,17 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("assign direct lease to adapter: %v", err)
 	}
+	// The assignment binds run-cap's slot on the pod, so its bundle lands
+	// under that session's own slot tree and nowhere else. That file is the
+	// one the extension keeps alive and the capped deadline deletes.
+	// spec: §6.1; §6.4.
+	if !credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
+		t.Fatal("the assignment did not write run-cap's own slot credential file: the session took no bound slot")
+	}
+	if _, err := os.Stat(filepath.Join(credsDir, slotlayout.CredentialsFileName)); !os.IsNotExist(err) {
+		t.Fatalf("a pod-global credential file exists at %s: the assignment must land under the session's slot tree",
+			filepath.Join(credsDir, slotlayout.CredentialsFileName))
+	}
 
 	leases := credleasestore.New()
 	if err := leases.Put(credential.Lease{
@@ -355,7 +366,9 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 			mu.Lock()
 			extendCount++
 			mu.Unlock()
-			// Direct-mode enforcement point: re-arm the adapter expiry timer.
+			// Direct-mode enforcement point: re-arm the adapter expiry timer
+			// on the rotating session's own bound slot, so only that
+			// session's enforced deadline moves (§6.1).
 			rc, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			return adapterCli.ExtendCredentialLease(rc, lease.SessionID, guardProvider, lease.LeaseID, newExpiresAt)
