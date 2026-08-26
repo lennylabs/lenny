@@ -467,8 +467,18 @@ const SHA = {
 
 // ---- Plan: blast radius + ordered build sequence, completeness-checked ----
 
-phase("Plan");
-log("Planning the blast radius and build sequence for " + proposal);
+// Only announce a planning phase when one actually runs. A caller-supplied
+// sequence skips the planner, and opening a phase named "Plan" anyway makes
+// the progress view claim work the run is not doing.
+if (suppliedPlan) {
+  log(
+    "Build sequence supplied by the caller: " + suppliedPlan.steps.length +
+      " step(s); the planning and plan-critique phases are skipped",
+  );
+} else {
+  phase("Plan");
+  log("Planning the blast radius and build sequence for " + proposal);
+}
 let plan = skipBuild
   ? { steps: [] }
   : suppliedPlan
@@ -516,12 +526,6 @@ let plan = skipBuild
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-if (suppliedPlan) {
-  log(
-    "Build sequence supplied by the caller: " + plan.steps.length +
-      " step(s); the planning and plan-critique phases are skipped",
-  );
-}
 for (let round = 1; !skipBuild && !suppliedPlan && round < maxPlanRounds; round++) {
   const critique = await agentTry(
     "Adversarially check whether a build plan covers the entire blast radius of an applied spec proposal.\n\n" +
