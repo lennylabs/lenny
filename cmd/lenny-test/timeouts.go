@@ -74,9 +74,14 @@ var (
 	// LENNY_TEST_INTEGRATION_TIMEOUT.
 	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 1800*time.Second)
 
-	// tierE2EKindTimeout caps the e2e_kind tier. Override:
+	// tierE2EKindTimeout caps the e2e_kind tier. The suite drives a live
+	// Kind cluster over kubectl and in-cluster probe pods, and one case
+	// stands up and tears down a second Kind cluster of its own to
+	// exercise etcd encryption at rest, so a whole-package run is tens of
+	// minutes. The ten-minute figure predated that case and aborted the
+	// package part-way through the first lifecycle test. Override:
 	// LENNY_TEST_E2E_KIND_TIMEOUT.
-	tierE2EKindTimeout = tierTimeout("LENNY_TEST_E2E_KIND_TIMEOUT", 600*time.Second)
+	tierE2EKindTimeout = tierTimeout("LENNY_TEST_E2E_KIND_TIMEOUT", 3600*time.Second)
 
 	// tierE2ECloudTimeout caps the e2e_cloud tier. Override:
 	// LENNY_TEST_E2E_CLOUD_TIMEOUT.

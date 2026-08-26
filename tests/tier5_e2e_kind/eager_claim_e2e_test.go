@@ -9,8 +9,8 @@
 // These cover the cluster behaviors no in-process tier can reproduce:
 //
 //   - Pool exhaustion surfaces at /create: once every idle pod in a finite
-//     pool carries a per-pod SandboxClaim, a fresh create fails fast with
-//     SESSION_CREATION_FAILED before the client uploads.
+//     pool carries a per-pod SandboxClaim, a fresh create fails fast with a
+//     retryable 503 before the client uploads.
 //   - /finalize is the preparation barrier: it claims-then-materializes the
 //     workspace and reaches ready against a real warm pod.
 //   - Pod AND lease release on created-expiry and on /terminate of a
@@ -42,6 +42,19 @@ const eagerAgentNS = "lenny-agents"
 // eagerEchoRuntime is the reference sidecar echo runtime the e2e agent
 // workload warms a pool for.
 const eagerEchoRuntime = "echo-runtime-sidecar"
+
+// eagerFiniteRuntime and eagerFinitePool name the reference runtime and the
+// warm pool the exhaustion case drives. echo-pool-sidecar is unusable for it:
+// the §6.3 startup benchmark warms that pool six pods deep, and the pool
+// refills a claimed pod while a serial create loop is still running, so the
+// loop never reaches the exhausted state it means to observe.
+// echo-pool-embedded warms one pod, is the only pool serving
+// echo-runtime-embedded, and refills far slower than two back-to-back HTTP
+// creates, so the surplus create lands inside the refill window.
+const (
+	eagerFiniteRuntime = "echo-runtime-embedded"
+	eagerFinitePool    = "echo-pool-embedded"
+)
 
 // eagerTenant is a test tenant the eager-claim e2e flows create sessions in.
 func eagerTenant() t5Role {
@@ -78,6 +91,25 @@ func claimExistsForPod(t *testing.T, c *kind.Cluster, pod string) bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// idlePodsInPool returns the names of the pool's agent pods that carry no
+// per-pod SandboxClaim, the pods a fresh create can still claim. Counting the
+// whole managed workload instead would count every pool's pods, and a create
+// loop sized by that count runs long enough for the target pool to refill.
+func idlePodsInPool(t *testing.T, c *kind.Cluster, pods []kind.AgentPod, pool string) []string {
+	t.Helper()
+	var idle []string
+	for _, p := range pods {
+		if p.Pool != pool {
+			continue
+		}
+		if claimExistsForPod(t, c, p.Name) {
+			continue
+		}
+		idle = append(idle, p.Name)
+	}
+	return idle
+}
+
 // sessionState GETs a session and returns its reported state, or "" when the
 // read fails or the session is absent.
 func sessionState(t *testing.T, c *kind.Cluster, probe, gatewayIP, id string, role t5Role) string {
@@ -98,7 +130,14 @@ func sessionState(t *testing.T, c *kind.Cluster, probe, gatewayIP, id string, ro
 // pod synchronously (§7.1 step 4) returns the claimed pod's isolation level.
 func createdSession(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role t5Role) string {
 	t.Helper()
-	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, eagerEchoRuntime, role.user)
+	return createdSessionOn(t, c, probe, gatewayIP, role, eagerEchoRuntime)
+}
+
+// createdSessionOn is createdSession against a named runtime, for the cases
+// that need a pool other than the sidecar echo pool.
+func createdSessionOn(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role t5Role, runtimeRef string) string {
+	t.Helper()
+	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, runtimeRef, role.user)
 	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/sessions", role, body)
 	if res.statusCode != 201 {
 		t.Fatalf("create session: status %d (want 201), body=%s", res.statusCode, res.body)
@@ -137,11 +176,11 @@ func leaseRowCountForSession(t *testing.T, c *kind.Cluster, pgIP, sessionID stri
 
 // spec: 7.1, 15.1 (pool exhaustion surfaces at /create)
 // diagnosis: a failure means the gateway no longer claims the warm pod
-// synchronously at /create. Proposal 0007 claims at create so a finite pool
-// admits at most one create per idle pod and fails the surplus fast with
-// SESSION_CREATION_FAILED, before the client wastes an upload. If a create
-// past the pool's idle capacity succeeds (no claim, deferred to /start) the
-// eager-claim model regressed to the pre-0007 deferred-claim behavior.
+// synchronously at /create. The claim is taken at create, so a finite pool
+// admits at most one create per idle pod and fails the surplus fast with a
+// retryable 503, before the client wastes an upload. If a create past the
+// pool's idle capacity succeeds (no claim, deferred to /start) the eager-claim
+// model regressed to the deferred-claim behavior.
 func TestEagerClaimPoolExhaustionAtCreate(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pods := kind.RequireAgentWorkload(t, c)
@@ -154,17 +193,20 @@ func TestEagerClaimPoolExhaustionAtCreate(t *testing.T) {
 	// before any claim is taken.
 	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
-	// The finite reference pools warm one pod each (minWarm: 1). Claim every
-	// idle pod by creating one session per warm pod, then assert a further
-	// create fails fast.
-	idle := len(pods)
+	// Claim every idle pod of the one finite pool, by creating one session per
+	// idle pod, then assert a further create fails fast. The count is taken
+	// over that pool alone: a create against it can only claim its own pods,
+	// and sizing the loop by the whole managed workload would run creates the
+	// pool refills underneath.
+	idlePods := idlePodsInPool(t, c, pods, eagerFinitePool)
+	idle := len(idlePods)
 	if idle == 0 {
-		t.Skip("no warm agent pods to exhaust")
+		t.Skip("no idle agent pods in " + eagerFinitePool + " to exhaust")
 	}
 	before := claimCount(t, c)
 	var created []string
 	for i := 0; i < idle; i++ {
-		created = append(created, createdSession(t, c, probe, gatewayIP, role))
+		created = append(created, createdSessionOn(t, c, probe, gatewayIP, role, eagerFiniteRuntime))
 	}
 	t.Cleanup(func() {
 		for _, id := range created {
@@ -178,13 +220,18 @@ func TestEagerClaimPoolExhaustionAtCreate(t *testing.T) {
 	}
 
 	// One more create than the pool can serve fails fast at /create.
-	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, eagerEchoRuntime, role.user)
+	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, eagerFiniteRuntime, role.user)
 	res := t5GatewayRequest(t, c, probe, gatewayIP, "POST", "/v1/sessions", role, body)
 	if res.statusCode != 503 {
-		t.Fatalf("create against an exhausted pool: status %d, want 503 SESSION_CREATION_FAILED (fail-fast at /create); body=%s", res.statusCode, res.body)
+		t.Fatalf("create against an exhausted pool: status %d, want a retryable 503 (fail-fast at /create); body=%s", res.statusCode, res.body)
 	}
-	if !strings.Contains(res.body, "SESSION_CREATION_FAILED") {
-		t.Errorf("exhausted-create body = %s, want SESSION_CREATION_FAILED", res.body)
+	// §15.1 gives the exhausted claim two codes, both TRANSIENT 503. A pool
+	// that is warming a replacement for the pod the loop just claimed reports
+	// the specific RUNTIME_UNAVAILABLE with its retry hint; a claim that fails
+	// outside a more specific condition falls back to the generic
+	// SESSION_CREATION_FAILED. Either is the fail-fast this case is about.
+	if !strings.Contains(res.body, "RUNTIME_UNAVAILABLE") && !strings.Contains(res.body, "SESSION_CREATION_FAILED") {
+		t.Errorf("exhausted-create body = %s, want RUNTIME_UNAVAILABLE or SESSION_CREATION_FAILED", res.body)
 	}
 }
 
@@ -266,14 +313,21 @@ func TestEagerClaimCreatedExpiryReleasesPod(t *testing.T) {
 	t.Cleanup(func() {
 		_ = t5GatewayRequest(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/terminate", role, "")
 	})
+	// The row leaves `created` on whichever §11.3 sweep reaches it first. The
+	// pre-running state-lifetime watchdog forces it to `failed` with
+	// CREATED_TIMEOUT, and the created-expiry sweep expires it and deletes the
+	// row (a GET then 404s and sessionState reports ""). Both run at the same
+	// `maxCreatedStateTimeoutSeconds` deadline and both run the same claimless
+	// reclaim, so the subject here is the pod claim rather than which of the
+	// two terminal outcomes the row settled in.
 	deadline := time.Now().Add(6 * time.Minute)
 	for {
 		st := sessionState(t, c, probe, gatewayIP, id, role)
-		if st == "expired" || st == "" {
+		if st == "expired" || st == "failed" || st == "" {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("created session %s did not expire within the sweep window (last state %q)", id, st)
+			t.Fatalf("created session %s stayed pre-terminal past the sweep window (last state %q)", id, st)
 		}
 		time.Sleep(10 * time.Second)
 	}

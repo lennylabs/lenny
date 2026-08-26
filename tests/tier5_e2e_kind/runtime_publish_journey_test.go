@@ -33,6 +33,11 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
+// journeyRuntimePrefix is the stem of the runtime, pool, and image
+// names this test mints per run. The start-time sweep uses it to
+// recognize what an earlier, killed run of this same test left behind.
+const journeyRuntimePrefix = "bob-agent-"
+
 // spec: 26 (day-one utility: "once the deployer registers the published
 // image digest, applies a Runtime CRD instance, and creates a warm pool
 // for it"; tenant access: "Operators grant access per tenant via POST
@@ -47,11 +52,6 @@ import (
 // exercise any of this live; this is the only test that drives a real
 // `lenny runtime publish` push against a real registry and a real
 // session against the result.
-// journeyRuntimePrefix is the stem of the runtime, pool, and image
-// names this test mints per run. The start-time sweep uses it to
-// recognize what an earlier, killed run of this same test left behind.
-const journeyRuntimePrefix = "bob-agent-"
-
 func TestRuntimePublishJourney(t *testing.T) {
 	c := kind.InstallLenny(t)
 	ctx := context.Background()
