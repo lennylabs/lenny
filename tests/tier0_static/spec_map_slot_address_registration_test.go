@@ -357,6 +357,20 @@ var slotAddressCaseFiles = []string{
 // and whatever follows the id inside the item.
 var citedSectionHeadRE = regexp.MustCompile(`^(§?)(\d+(?:\.\d+)*)(.*)$`)
 
+// proposalGlossRE matches a gloss that opens with the word "proposal", which
+// is how an annotation marks the number it carries as a proposal document's
+// own section rather than a specification section.
+var proposalGlossRE = regexp.MustCompile(`^\(\s*proposal\b`)
+
+// glossMarksAProposalSection reports whether the text following a cited id
+// opens a gloss that names the number as a proposal's own section. A proposal
+// numbers its sections independently of the specification, so crediting such
+// an id to a spec-map key records coverage of a specification section the case
+// does not exercise.
+func glossMarksAProposalSection(rest string) bool {
+	return proposalGlossRE.MatchString(strings.ToLower(strings.TrimLeft(rest, " \t")))
+}
+
 // citedSectionAtHead returns the spec-section id an annotation item cites at
 // its head. The id must open the item, and what follows it decides whether the
 // item is a citation: the section sign, the end of the item, a trailing
@@ -364,13 +378,18 @@ var citedSectionHeadRE = regexp.MustCompile(`^(§?)(\d+(?:\.\d+)*)(.*)$`)
 // dotted id, a gloss introduced by whitespace, which is how the repo's
 // annotations write an em-dash or bare-word gloss. An undotted number followed
 // by prose ("a Phase 3 contract migration", "the latest 2 checkpoints") is a
-// quantity rather than a citation and is not read as one.
+// quantity rather than a citation and is not read as one. An id whose gloss
+// opens with the word "proposal" names a proposal document's own section and
+// is not a specification citation at all.
 func citedSectionAtHead(item string) (string, bool) {
 	m := citedSectionHeadRE.FindStringSubmatch(strings.TrimSpace(item))
 	if m == nil {
 		return "", false
 	}
 	sign, id, rest := m[1], m[2], strings.TrimRight(m[3], " \t")
+	if glossMarksAProposalSection(rest) {
+		return "", false
+	}
 	switch {
 	case sign == "§", rest == "", rest == ".", rest == ":", rest == ";":
 		return id, true
@@ -440,13 +459,41 @@ func annotationBlockAt(lines []string, i int) (string, int) {
 
 // sectionsInAnnotation returns every spec-section id cited at the head of an
 // item of one joined `// spec:` annotation. The repo's annotations separate
-// citations with a comma or a semicolon, so both are item separators.
+// citations with a comma or a semicolon, and also run several citations
+// together with a slash ("§5.1 / §15.4.3 — ..."), so a slash opens a further
+// citation inside one comma-separated item.
+//
+// A slash carries other freight than a separator: it divides a gloss's own
+// words ("Event / Checkpoint Store") and joins a pair of quantities
+// ("paths 2/4"). A run after a slash is therefore read as a citation only
+// when it announces itself as one, by carrying the section sign or by naming
+// a dotted id. The run at the head of the item keeps the ordinary rule.
 func sectionsInAnnotation(block string, out map[string]bool) {
 	for _, item := range strings.FieldsFunc(block, func(r rune) bool { return r == ',' || r == ';' }) {
-		if id, ok := citedSectionAtHead(item); ok {
+		for i, run := range strings.Split(item, "/") {
+			id, ok := citedSectionAtHead(run)
+			if !ok {
+				continue
+			}
+			if i > 0 && !announcesItselfAsACitation(run) {
+				continue
+			}
 			out[id] = true
 		}
 	}
+}
+
+// announcesItselfAsACitation reports whether a run of an annotation item names
+// its section explicitly enough to be read as a citation in a position where a
+// bare number is more often a quantity. The section sign and a dotted id both
+// qualify; a bare integer does not.
+func announcesItselfAsACitation(run string) bool {
+	run = strings.TrimSpace(run)
+	if strings.HasPrefix(run, "§") {
+		return true
+	}
+	m := citedSectionHeadRE.FindStringSubmatch(run)
+	return m != nil && strings.Contains(m[2], ".")
 }
 
 // annotatedSectionsInFile returns every spec-section id that the `// spec:`
@@ -957,6 +1004,36 @@ func TestSemicolonAndEmDashCitationFormsAreRead(t *testing.T) {
 			name:  "a quantity in a gloss is not a citation",
 			lines: []string{"// spec: 4.1 (one address per request), the latest 2 checkpoints are kept"},
 			want:  []string{"4.1"},
+		},
+		{
+			name:  "slash-separated citations",
+			lines: []string{"// spec: §5.1 / §15.4.3 — the integration level the manifest declares"},
+			want:  []string{"15.4.3", "5.1"},
+		},
+		{
+			name:  "slash-separated citations with an item-internal qualifier",
+			lines: []string{"// spec: §17.2 item 5 / §5.2 / §13.2 NET-003"},
+			want:  []string{"13.2", "17.2", "5.2"},
+		},
+		{
+			name:  "a slash inside a gloss yields no second citation",
+			lines: []string{"// spec: 4.4 (Event / Checkpoint Store)"},
+			want:  []string{"4.4"},
+		},
+		{
+			name:  "a pair of quantities joined by a slash is not a citation",
+			lines: []string{"// spec: §15.1; §7.2 paths 2/4."},
+			want:  []string{"15.1", "7.2"},
+		},
+		{
+			name:  "a proposal-marked number is not a specification citation",
+			lines: []string{"// spec: §4.1 (proposal), §7.1 step 4 — the binder phases"},
+			want:  []string{"7.1"},
+		},
+		{
+			name:  "a proposal marker disqualifies only the id it glosses",
+			lines: []string{"// spec: §6.1, §4.3, §4.4 (proposal) — RequiresDemotion is pure"},
+			want:  []string{"4.3", "6.1"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
