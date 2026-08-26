@@ -6,10 +6,10 @@
   rather than corrected, because they lay outside that section. Each has now been revalidated against the
   tree. Seven hold as recorded, two hold in a narrower or different form than recorded, two were wrong as
   recorded and concealed a different defect, and one has since been fixed by other work. The revalidation
-  surfaced five further defects, one of them in a register this branch landed. This proposal corrects what
-  can be corrected and states what cannot.
+  surfaced five further defects. One of them was a register row, whose correction proposal 0073 superseded;
+  §1.11 records that dropped section. This proposal corrects what can be corrected and states what cannot.
 
-This document stages the proposed specification, code, and register changes. It does not modify any spec,
+This document stages the proposed specification and code changes. It does not modify any spec,
 code, or doc file. Apply the changes in the "Proposed changes" section after sign-off.
 
 ## 0. Context an implementor should read first
