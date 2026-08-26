@@ -334,7 +334,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
       addressing CODE-4 lands, the `Checkpoint restore onto a concurrent pod` row takes the status, surface,
       and note CODE-2 makes true, and the generator is held to the register by a tier-0 case.
       Depends on: S12, S14
-- [ ] **S19 · test** — CODE-4's tier-8 chaos battery. §8's tier-8 block enters the tree: the rotation
+- [x] **S19 · test** — CODE-4's tier-8 chaos battery. §8's tier-8 block enters the tree: the rotation
       ceiling and Token Service guard fixtures each bind a slot for the session they name, every
       credential-file read moves onto that session's `slotlayout.Resolve` path, and the assertions move
       onto the merged handler. Nothing here is compiler-caught, so the tier is run rather than reasoned
