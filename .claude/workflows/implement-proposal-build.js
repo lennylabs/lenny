@@ -445,16 +445,26 @@ const TICKED = {
 // the loop grinding instead.
 const STUCK_VERDICT = {
   type: "object",
-  required: ["stuck", "confidence", "reasoning"],
+  required: ["verdict", "confidence", "reasoning"],
   properties: {
-    stuck: { type: "boolean", description: "true only when NO legal change can resolve the finding" },
+    verdict: {
+      type: "string",
+      enum: ["resolvable", "unresolvable", "unproductive"],
+      description:
+        "resolvable: a legal change closes this and the rounds show the loop converging on it. unresolvable: no legal change closes it, because the landed code is right and the proposal is wrong. unproductive: a legal change exists, but the rounds show this loop is not making it and further rounds would not either.",
+    },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
     findingTitle: {
       type: "string",
-      description: "the exact title of the finding you judge stuck, copied verbatim from the findings you were given. Empty when stuck is false.",
+      description: "the exact title of the finding you judge, copied verbatim from the findings you were given. Empty when the verdict is resolvable.",
     },
-    whyCodeIsRight: { type: "string", description: "the evidence that the landed code is correct, with file:line" },
-    whyProposalIsWrong: { type: "string", description: "what the proposal says that the code cannot satisfy, and where. Note especially any place the proposal contradicts itself." },
+    roundsMovedIt: {
+      type: "string",
+      description: "What the rounds actually did about this finding, named round by round from the commits you inspected: which rounds touched the files the finding names, and which produced motion elsewhere. This is the evidence for your verdict and is required whenever the verdict is not resolvable.",
+    },
+    whyCodeIsRight: { type: "string", description: "unresolvable only: the evidence that the landed code is correct, with file:line" },
+    whyProposalIsWrong: { type: "string", description: "unresolvable only: what the proposal says that the code cannot satisfy, and where" },
+    outstandingWork: { type: "string", description: "unproductive only: the concrete work that would actually close the finding, and why the rounds did not do it" },
     reasoning: { type: "string" },
   },
 };
@@ -666,30 +676,30 @@ const skippedSteps = [];
 // finding ships a defect silently, so a single dissent keeps the loop running.
 const STUCK_LENSES = [
   {
-    key: "recurrence",
+    key: "motion",
     text:
-      "LENS: recurrence, behaviour only. Do not judge whether the finding is correct. Read the attempt " +
-      "history and decide whether the same defect keeps returning in different words while the commits " +
-      "between rounds failed to move it. A finding restated four ways across four rounds, each round " +
-      "producing a commit that did not resolve it, is the signature. A finding that is genuinely new each " +
-      "round, or one the commits are visibly narrowing, is not stuck.",
+      "LENS: motion against the blocker. For each round, compare what the commit actually changed against " +
+      "the files and lines the finding names. Decide how many rounds touched the finding's own subject at " +
+      "all. Rounds that produced commits elsewhere while the finding's subject went untouched are motion " +
+      "without progress, and a run of them is the signature of a loop that will not close it.",
   },
   {
-    key: "ground-truth",
+    key: "remaining-work",
     text:
-      "LENS: ground truth. Ignore the findings entirely at first. Read the code this step landed and read " +
-      "what the proposal specifies for it, and decide independently which of the two is wrong. Only then " +
-      "look at the finding. It is stuck when you concluded, on your own, that the code is right and the " +
-      "proposal is wrong. If you concluded the code is wrong, the finding is not stuck: the fixer can fix it.",
+      "LENS: the size and legality of what remains. State concretely what would close the finding, then " +
+      "judge two things about it. Is it legal for this step (code and tests only, never the proposal)? And " +
+      "is it work the rounds have been attempting, or work they have been avoiding? A finding that needs a " +
+      "substantial new test or a new mechanism, where every round instead reworded prose around it, is one " +
+      "the loop is avoiding rather than approaching.",
   },
   {
-    key: "self-consistency",
+    key: "forecast",
     text:
-      "LENS: does the proposal contradict itself? A finding is unsatisfiable when the proposal asks for two " +
-      "things that cannot both hold, so no implementation can be conformant. Read every section of the " +
-      "proposal that bears on this finding, including its decisions, its recorded limits, and its open " +
-      "questions, and look for a statement elsewhere in the document that the disputed requirement " +
-      "contradicts. A document at odds with itself cannot be satisfied by any code.",
+      "LENS: forecast. Assume the loop runs five more rounds exactly as it has been running. Say what you " +
+      "expect to change. If you can name the specific commit that would close the finding and the rounds " +
+      "are visibly converging on it, it is resolvable. If your honest forecast is five more rounds of the " +
+      "same, say so, and say whether that is because no legal change exists or because the loop is not " +
+      "making the one that does.",
   },
 ];
 
@@ -698,11 +708,11 @@ const STUCK_LENSES = [
 // it dies with the step rather than persisting into a later run, because the
 // tree a later run sees may differ.
 function suppressedNote(step) {
-  const mine = stuckFindings.filter((f) => f.step === step.id);
+  const mine = stuckFindings.filter((f) => f.step === step.id && f.kind !== "unproductive");
   if (mine.length === 0) return "";
   return (
-    "\n\nALREADY JUDGED UNRESOLVABLE, AND NOT YOUR WORK. Three independent judges agreed at high " +
-    "confidence that the finding(s) below cannot be closed by any change this step may legally make: the " +
+    "\n\nALREADY JUDGED UNRESOLVABLE, AND NOT YOUR WORK. Every judge agreed that the finding(s) below " +
+    "cannot be closed by any change this step may legally make: the " +
     "landed code is correct and the proposal is wrong, and the proposal is read-only to this phase. Each is " +
     "recorded and will be reported to a human at the end of the run. Do not act on them, do not report them " +
     "again, and do not treat leaving them alone as leaving the step unfinished:\n" +
@@ -711,29 +721,67 @@ function suppressedNote(step) {
   );
 }
 
-// The per-step slice of the run's history, for the judges' recurrence lens.
-function applyHistoryForStep(step) {
-  return stepResults.filter((r) => r.step === step.id);
+// The round-by-round activity for one step: what each attempt claimed, what it
+// committed, whether it verified green, and what the review said afterwards.
+// This is the judges' primary evidence. It replaces a filter over stepResults,
+// whose entries are only pushed when a step ENDS, so during the loop it
+// returned the other steps' results and nothing at all about this one. The
+// judges were being asked whether a loop was stuck while being shown no round
+// of that loop.
+function formatRounds(rounds) {
+  if (rounds.length === 0) return "(no rounds recorded yet)";
+  return rounds
+    .map((r) => {
+      const lines = [
+        "ROUND " + r.attempt + (r.fix ? " (fix)" : " (initial implementation)"),
+        "  commit: " + (r.commit || "(none committed)"),
+        "  the agent said it changed: " + ((r.filesChanged || []).join(", ") || "(nothing named)"),
+        "  tests it added or modified: " + ((r.testsAddedOrModified || []).join(", ") || "(none)"),
+        "  independent verify: " + (r.green ? "green" : "NOT green") +
+          ((r.failures || []).length ? " — " + r.failures.join("; ") : ""),
+        "  review findings after this round: " +
+          ((r.findingTitles || []).length ? "" : "(none)"),
+      ];
+      (r.findingTitles || []).forEach((t, i) => lines.push("    " + (i + 1) + ". " + t));
+      return lines.join("\n");
+    })
+    .join("\n\n");
 }
 
-async function judgeStuck(step, findings, history, attempt) {
+async function judgeStuck(step, findings, rounds, attempt) {
   const brief =
-    "You judge whether a build step is stuck on a finding that no legal change can resolve.\n\n" +
+    "You judge whether a build step's fix loop can still close the findings against it.\n\n" +
     READ_ONLY_NOTE +
     "\n\nProposal: " + proposal + " (its spec edits are applied). Step " + step.id + ": " + step.title +
     "\nWork: " + step.work +
     "\nSections it implements: " + ((step.specRefs || []).join(", ") || "(none named)") +
     "\nTargets: " + ((step.targets || []).join(", ") || "(none named)") +
-    "\n\nThis step has run " + attempt + " attempts without going clean. THE RULE THAT CREATES THE TRAP: " +
-    "the fixer may change code and tests, and may NEVER edit the proposal. So when a reviewer is right that " +
-    "the code diverges from the proposal, but the code is the correct thing and the proposal is the wrong " +
-    "thing, no legal action closes the finding. The reviewer reports it, the fixer cannot fix it, and the " +
-    "step loops forever. Your job is to detect exactly that, and nothing else.\n\n" +
-    "DO NOT report a finding as stuck merely because it is hard, has recurred, or was reported by several " +
-    "reviewers. Those are ordinary. Stuck means UNRESOLVABLE: the code is right, the proposal is wrong.\n\n" +
+    "\n\nThis step has run " + attempt + " attempts without going clean.\n\n" +
+    "DO THIS FIRST, BEFORE FORMING ANY VIEW. Read the round log below in order. For every round that " +
+    "names a commit, run `git show --stat <sha>` and, where the stat is not enough, `git show <sha>`. " +
+    "Compare what each commit actually changed against the files and lines the outstanding findings name. " +
+    "You are establishing one fact: across these rounds, did the loop move the thing the finding is about, " +
+    "or did it produce changes elsewhere while that thing stayed as it was. Answer the lens only after you " +
+    "have read the commits. A judgment formed from the finding's text alone, without reading what the " +
+    "rounds did, is the failure this step exists to avoid.\n\n" +
+    "THE THREE VERDICTS.\n" +
+    "  resolvable — a legal change closes the finding AND the rounds show the loop converging on it. This " +
+    "is the default and the common case. A hard finding, a finding that recurred, or a finding several " +
+    "reviewers reported is still resolvable.\n" +
+    "  unresolvable — no legal change closes it. The fixer may change code and tests and may NEVER edit " +
+    "the proposal, so when the code is right and the proposal is wrong, nothing legal closes the finding. " +
+    "The reviewer reports it, the fixer cannot fix it, and the step loops forever.\n" +
+    "  unproductive — a legal change exists and the loop is not making it. The reviewer is right, the code " +
+    "genuinely falls short, and the work that would close it is real; but round after round produced " +
+    "commits that did not touch it. Judge this on the rounds, not on the finding: the test is whether the " +
+    "loop is approaching the work or circling it.\n\n" +
+    "The two non-resolvable verdicts have different consequences, so do not merge them. An unresolvable " +
+    "finding is set aside and reported as a defect in the proposal. An unproductive one is NOT set aside: " +
+    "the step stops and a human is told what work is outstanding, because the finding is real and setting " +
+    "it aside would ship the gap in silence.\n\n" +
     "The findings still outstanding on this step:\n" + JSON.stringify(findings, null, 2) +
-    "\n\nWhat the earlier rounds produced:\n" + JSON.stringify(history, null, 2) +
-    "\n\nRead the real code and the real proposal before answering. Cite file:line.";
+    "\n\nTHE ROUND LOG:\n" + formatRounds(rounds) +
+    "\n\nCite file:line and commit SHAs for what you assert.";
   return (await parallel(
     STUCK_LENSES.map((l) => () =>
       agentTry(brief + "\n\n" + l.text, {
@@ -851,6 +899,13 @@ for (let i = 0; i < plan.steps.length; i++) {
   let stepGreen = false;
   let stepReviewClean = false;
   let stepFindings = [];
+  // One entry per attempt, built as the attempt runs: what the agent said it
+  // changed, what it committed, how the independent verify came back, and what
+  // the review found afterwards. The stuck judges read this.
+  const stepRounds = [];
+  // Set when the judges agree the loop is not closing a real finding. The step
+  // stops rather than ticking, and this carries the outstanding work out.
+  let unproductiveStep = null;
   let issues = ""; // carried failures or divergences for the next attempt
   let attempt = 0;
 
@@ -1046,6 +1101,16 @@ for (let i = 0; i < plan.steps.length; i++) {
     const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
     stepFindings = liveReviews.flatMap((r) => r.findings);
     stepReviewClean = stepFindings.length === 0 && allReviewersRan;
+    stepRounds.push({
+      attempt,
+      fix: attempt > 1 || firstAttemptWasFix,
+      commit: res.commit || "",
+      filesChanged: res.filesChanged || [],
+      testsAddedOrModified: res.testsAddedOrModified || [],
+      green: !!(sv && sv.green),
+      failures: (sv && sv.failures) || [],
+      findingTitles: stepFindings.map((f) => f.title).filter(Boolean),
+    });
     log(
       "Step " +
         step.id +
@@ -1097,38 +1162,74 @@ for (let i = 0; i < plan.steps.length; i++) {
         continue;
       }
     }
-    // Every introspectEvery attempts, ask whether the step is stuck on a finding
-    // no legal change can close. Only when all three judges say so at high
-    // confidence is the finding suppressed for the rest of this step: a loop
-    // wastes time in the open, while a wrongly suppressed finding ships a
-    // defect in silence, so one dissent or one medium keeps the loop running.
+    // Every introspectEvery attempts, ask whether this loop can still close its
+    // findings. The judges read the round log and the commits before answering,
+    // because the question is about the loop's behaviour rather than the
+    // finding's merits, and a judge reasoning from the finding's text alone
+    // reaches the wrong answer confidently.
+    //
+    // The bar is every judge agreeing on the same non-resolvable verdict at
+    // medium or better. It was unanimous-at-high across three lenses that asked
+    // three different questions, which made the narrowest lens the decider:
+    // only what all three could see was ever detectable, and the two lenses
+    // that judged correctness could not see a loop failing to do work that was
+    // legal and real. These lenses read the same evidence and differ in how
+    // they weigh it, so agreement between them means something.
     if (!stepReviewClean && stepFindings.length > 0 && attempt % introspectEvery === 0) {
-      log("Step " + step.id + ": " + attempt + " attempts without converging; asking whether a finding is stuck");
-      const votes = await judgeStuck(step, stepFindings, stepResults.concat(applyHistoryForStep(step)), attempt);
-      const unanimous =
+      log("Step " + step.id + ": " + attempt + " attempts without converging; asking whether the loop can still close its findings");
+      const votes = await judgeStuck(step, stepFindings, stepRounds, attempt);
+      const enough = (v) => v.confidence === "high" || v.confidence === "medium";
+      const all = (verdict) =>
         votes.length === STUCK_LENSES.length &&
-        votes.every((v) => v.stuck === true && v.confidence === "high");
-      if (unanimous) {
-        const titles = votes.map((v) => (v.findingTitle || "").trim()).filter(Boolean);
-        const title = titles[0] || (stepFindings[0] && stepFindings[0].title) || "";
+        votes.every((v) => v.verdict === verdict && enough(v));
+      const summary = votes.map((v) => v.verdict + "/" + v.confidence).join(", ");
+      const titles = votes.map((v) => (v.findingTitle || "").trim()).filter(Boolean);
+      const title = titles[0] || (stepFindings[0] && stepFindings[0].title) || "";
+      const pick = (k) => votes.map((v) => v[k]).filter(Boolean)[0] || "";
+
+      if (all("unresolvable")) {
+        // No legal change closes it: the proposal is the defect. Set it aside
+        // so the loop can finish the rest of the step, and report it.
+        stuckFindings.push({
+          step: step.id,
+          checklistStep: step.checklistStep,
+          attempt,
+          kind: "unresolvable",
+          title,
+          whyCodeIsRight: pick("whyCodeIsRight"),
+          whyProposalIsWrong: pick("whyProposalIsWrong"),
+          roundsMovedIt: pick("roundsMovedIt"),
+          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
+        });
+        log(
+          "Step " + step.id + ": the judges agree no legal change closes \"" + title.slice(0, 110) +
+            "\" (" + summary + "). The code is right and the proposal is wrong. Recorded for a human and " +
+            "set aside for the rest of this step.",
+        );
+      } else if (all("unproductive")) {
+        // A legal change exists and this loop is not making it. Setting the
+        // finding aside would tick the step over a real gap, so the step stops
+        // here and the outstanding work goes to a human instead.
         const rec = {
           step: step.id,
           checklistStep: step.checklistStep,
           attempt,
+          kind: "unproductive",
           title,
-          whyCodeIsRight: votes.map((v) => v.whyCodeIsRight).filter(Boolean)[0] || "",
-          whyProposalIsWrong: votes.map((v) => v.whyProposalIsWrong).filter(Boolean)[0] || "",
+          outstandingWork: pick("outstandingWork"),
+          roundsMovedIt: pick("roundsMovedIt"),
           judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
         };
         stuckFindings.push(rec);
+        unproductiveStep = rec;
         log(
-          "Step " + step.id + ": THREE JUDGES AGREE a finding is unresolvable by any legal change — \"" +
-            title.slice(0, 110) + "\". The code is right and the proposal is wrong. Recorded for a human " +
-            "and suppressed for the rest of this step.",
+          "Step " + step.id + ": the judges agree the loop is not closing \"" + title.slice(0, 110) +
+            "\" (" + summary + "). The finding is real and the work is legal, so it is NOT set aside. " +
+            "Stopping the step and reporting the outstanding work.",
         );
+        break;
       } else {
-        const summary = votes.map((v) => (v.stuck ? "stuck/" : "not-stuck/") + v.confidence).join(", ");
-        log("Step " + step.id + ": judges did not reach unanimous high confidence (" + summary + "); the loop continues");
+        log("Step " + step.id + ": no agreed verdict (" + summary + "); the loop continues");
       }
     }
 
@@ -1156,8 +1257,8 @@ for (let i = 0; i < plan.steps.length; i++) {
     await recordStuckForStep(step);
   }
 
-  // Whether the step ticked or aborted, a finding three judges called
-  // unresolvable is written into the commit trail. Tying it to the tick alone
+  // Whether the step ticked or aborted, a finding the judges could not send
+  // back to the loop is written into the commit trail. Tying it to the tick alone
   // would lose it exactly when a step ends badly, which is when it matters most.
   async function recordStuckForStep(step) {
     const mine = stuckFindings.filter((f) => f.step === step.id && !f.recorded);
@@ -1168,16 +1269,18 @@ for (let i = 0; i < plan.steps.length; i++) {
         "Record, in the git history, a finding this build step could not resolve. Work in " + repo + ".\n\n" +
           "Stage nothing and write no file. Make an EMPTY commit on the current branch with " +
           "`git commit --allow-empty` whose message records the following, in the repository's commit style: " +
-          "that step " + step.checklistStep + " of " + proposal + " is complete and ticked, that the finding " +
-          "below was judged by three independent reviewers to be unresolvable by any change the step could " +
-          "legally make because the landed code is correct and the proposal is wrong, and that it is left " +
-          "for human review rather than fixed. Do not editorialise beyond what is given.\n\n" +
+          "what each finding below records. A finding marked kind \"unresolvable\" was judged by every " +
+          "reviewer to be closable by no change the step could legally make, because the landed code is " +
+          "correct and the proposal is wrong; say that it is left for human review rather than fixed. A " +
+          "finding marked kind \"unproductive\" is real and its remedy is legal, but the rounds did not " +
+          "make it; say what work is outstanding, and do not describe it as resolved or as a defect in the " +
+          "proposal. Say whether the step ticked. Do not editorialise beyond what is given.\n\n" +
           JSON.stringify(mine, null, 2) +
           "\n\nUse a subject line under 72 characters naming the step and the subject of the finding. " +
           "Reply with the commit sha.",
         { label: "record-stuck:" + step.checklistStep, phase: "Build" },
       );
-      log("Step " + step.id + ": recorded " + mine.length + " unresolvable finding(s) in the commit trail");
+      log("Step " + step.id + ": recorded " + mine.length + " unclosed finding(s) in the commit trail");
     }
   }
 
@@ -1201,7 +1304,9 @@ for (let i = 0; i < plan.steps.length; i++) {
     // running is resumable as soon as that clears, while a genuinely stuck
     // step needs someone to read the findings; reporting the first as the
     // second sends the operator to the wrong place.
-    const reason = deadAttempts >= maxDeadAttempts
+    const reason = unproductiveStep
+      ? "the judges agreed the loop was not closing a real finding: " + unproductiveStep.title
+      : deadAttempts >= maxDeadAttempts
       ? "subagents are not running (rate limit, exhausted credit, or expired auth), so the step was never attempted on its merits"
       : !stepGreen
         ? "tests not green"
