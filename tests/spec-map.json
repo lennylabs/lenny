@@ -381,7 +381,8 @@
         "pkg/controller/warmpool/...",
         "pkg/controller/poolscaling/...",
         "tests/tier2_component/controllers/apiserver_degraded_test.go::TestEtcdUnavailableDegradedMode_spec_4_6",
-        "tests/tier5_e2e_kind/node_drain_checkpoint_test.go::TestNodeDrainCheckpointsActiveSession"
+        "tests/tier5_e2e_kind/node_drain_checkpoint_test.go::TestNodeDrainCheckpointsActiveSession",
+        "tests/tier5_e2e_kind/journey_pool_reclaim_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -2179,7 +2180,8 @@
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
-        "tests/tier9_security/write_before_issue_failclosed_test.go"
+        "tests/tier9_security/write_before_issue_failclosed_test.go",
+        "tests/tier9_security/audit_sequence_precondition_test.go"
       ],
       "packages": [
         "pkg/audit",
@@ -2954,7 +2956,8 @@
         "tests/tier9_security/lease_extension_clear_test.go",
         "tests/tier6_e2e_cloud/session_lifecycle_test.go",
         "tests/tier3_contract/admin_conflict_codes/admin_conflict_codes_test.go",
-        "tests/tier9_security/write_before_issue_failclosed_test.go"
+        "tests/tier9_security/write_before_issue_failclosed_test.go",
+        "tests/tier9_security/audit_sequence_precondition_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
