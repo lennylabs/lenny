@@ -340,18 +340,31 @@ rule, the text moves to the code's step, and the step that carries it names the 
       onto the merged handler. Nothing here is compiler-caught, so the tier is run rather than reasoned
       about. The package builds only under the `chaos` build tag.
       Tiers 0, 8. Depends on: S14
-- [ ] **S20 · test** — Run the tiers the landed steps never exercised. The plan enumerated neither tier 5
+- [x] **S20 · test** — Run the tiers the landed steps never exercised. The plan enumerated neither tier 5
       nor tier 8, and named tiers 2 and 11 only partially for CODE-4. Run tier 5 on Kind for S12 and S16,
       tier 8 for S14 and S19, the two alert-catalog gates at tiers 2 and 11, and tiers 0 and 1 across every
       touched package, so the whole reached set is green before the record amendments are written. Establish
       that a failing tier is failing on the step rather than on the fixture before rebuilding a landed step.
       Tiers 0, 1, 2, 3, 4, 5, 7a, 8, 9, 10, 11. Depends on: S16, S19
-- [ ] **S21 · docs** — §7's amendments to other artifacts, none of which is in the tree. `PROPOSAL-QUEUE.md`
+- [x] **S21 · docs** — §7's amendments to other artifacts, none of which is in the tree. `PROPOSAL-QUEUE.md`
       records that C-53's scope lands here per D15; `TEST-GAPS.md` closes T-4.4.21 against the tier-4 case in
       §8, leaving the summary-counts line unedited; 0072 drops its §1.11 and its restore half with pointers
       recording what superseded each; and 0064 records that the five `slot_id` fields it landed are retired
       here. Prose only.
       Tiers 0, 11. Depends on: S18, S20
+      DEVIATIONS, both deliberate and both for a human to resolve rather than an implementor to close.
+      (a) T-4.4.21 is left OPEN. §7 and D15 close it against the tier-4 case §8 stages, a concurrent pool
+      that captures a slot's checkpoint, loses the pod, and resumes onto a replacement with the workspace
+      intact. That case is not in the tree: `tests/tier4_integration/checkpoint_concurrent_pool_test.go`
+      carries capture independence rather than the capture, pod-loss, and resume round trip. Closing the
+      finding without the case would record coverage that does not exist, so the entry stays OPEN and
+      `PROPOSAL-QUEUE.md`'s C-53 entry says which leg remains. Either the case is written or §7 and D15
+      are corrected to close T-4.4.21 only in part.
+      (b) `proposals/0064_*.md` is not amended. §4.5(f), §7, and "Files touched on application" stage a
+      note recording that the five `slot_id` fields commit 01d19af0 landed are retired here. Proposal 0064
+      is implemented, and a landed proposal is a record of what was decided at the time rather than a
+      running summary of what later became true (`.claude/rules/spec-driven-development.md`). The
+      revert disclosure itself stays in §4.5(f), where it belongs; only the amendment to 0064 is dropped.
 - [ ] **S22 · test** — `tests/spec-map.json`, which the proposal names twice and no step carried. The two
       rows commit 01d19af0 added are dropped per §4.5(f) and the exact-count assertion in the tier-3
       reportusage case returns to its earlier form. Every §8 case that landed without a mapping is entered,
