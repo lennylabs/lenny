@@ -34,7 +34,7 @@ const retiredFieldName = "slot_id"
 // retiredWrapperName is the message type every duplicate address carried.
 const retiredWrapperName = protoreflect.FullName("lenny.adapter.v1.SlotId")
 
-// sessionScopedMessages is every request message §4.5 addresses to one
+// sessionScopedMessages is every request message §4.1 addresses to one
 // session, in both directions, together with the number the duplicate
 // address held on it. A message is in this set when the specification's
 // message-scope table gives it session scope; a pod-scoped message
@@ -69,13 +69,13 @@ func messageDescriptors(t *testing.T) protoreflect.MessageDescriptors {
 	return (&adapterv1.StartSessionRequest{}).ProtoReflect().Descriptor().ParentFile().Messages()
 }
 
-// spec: 4.5 (the gRPC leg addresses a session by its session identifier),
+// spec: 4.1 (the gRPC leg addresses a session by its session identifier),
 // 5.2 (a session-mode slot's identifier is its session's identifier)
 //
 // diagnosis: a session-scoped request declares a second address again, so
 // the wire carries the session twice and a producer and a consumer can
 // disagree about which of the two is authoritative.
-func TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_5(t *testing.T) {
+func TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
 	for name := range sessionScopedMessages {
@@ -91,12 +91,12 @@ func TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_5(t *testing.T) {
 	}
 }
 
-// spec: 4.2 (the address is required and non-empty), 4.5
+// spec: 4.2 (the address is required and non-empty), 4.1
 //
 // diagnosis: a session-scoped request lost its session address, so the
 // adapter has nothing to resolve the session's slot from and the request
 // cannot be attributed at all.
-func TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_5(t *testing.T) {
+func TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
 	for name := range sessionScopedMessages {
@@ -115,12 +115,12 @@ func TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_5(t *testing.T) {
 	}
 }
 
-// spec: 4.5 (removed numbers and names stay reserved)
+// spec: 4.1 (removed numbers and names stay reserved)
 //
 // diagnosis: a removed field number or name was recycled onto a message a
 // runtime author's generated code already compiles against, which changes
 // the bytes on the wire without changing the schema's field names.
-func TestRemovedAddressNumbersAndNamesStayReserved_spec_4_5(t *testing.T) {
+func TestRemovedAddressNumbersAndNamesStayReserved_spec_4_1(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
 	for name, num := range sessionScopedMessages {
@@ -137,12 +137,12 @@ func TestRemovedAddressNumbersAndNamesStayReserved_spec_4_5(t *testing.T) {
 	}
 }
 
-// spec: 4.5 (the wrapper message is deleted with its last user)
+// spec: 4.1 (the wrapper message is deleted with its last user)
 //
 // diagnosis: the wrapper type survives with no field carrying it, so the
 // published schema still advertises a second address to a runtime author
 // reading it.
-func TestTheRetiredAddressWrapperIsGone_spec_4_5(t *testing.T) {
+func TestTheRetiredAddressWrapperIsGone_spec_4_1(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
 	for i := 0; i < msgs.Len(); i++ {

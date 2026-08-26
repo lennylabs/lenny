@@ -196,7 +196,7 @@ func TestRecycleScrubHasNoScrubProfileField_spec_5_2(t *testing.T) {
 // declares exactly exited_cleanly and exit_code; and the Shutdown RPC is
 // declared on service Adapter, which is the single end-of-session teardown
 // the gateway calls on every release.
-// spec: 4.5 (one address per request), 4.7 (Shutdown), 5.2 (a session-mode
+// spec: 4.1 (one address per request), 4.7 (Shutdown), 5.2 (a session-mode
 // slot's identifier is its session's identifier)
 //
 // diagnosis: a failure means the shutdown message drifted from the
@@ -205,7 +205,7 @@ func TestRecycleScrubHasNoScrubProfileField_spec_5_2(t *testing.T) {
 // Adapter. Every one of those changes the bytes on the teardown path, which
 // no round-trip case above would catch because both of its ends regenerate
 // from the same proto.
-func TestShutdownMessagePostRemovalDescriptor_spec_4_5(t *testing.T) {
+func TestShutdownMessagePostRemovalDescriptor_spec_4_1(t *testing.T) {
 	reqDesc := (&adapterv1.ShutdownRequest{}).ProtoReflect().Descriptor()
 
 	wantReq := map[protoreflect.FieldNumber]protoreflect.Name{

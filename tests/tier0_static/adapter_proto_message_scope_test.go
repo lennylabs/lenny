@@ -126,7 +126,7 @@ func messageScopeDisagreements(specBody, protoBody string) []string {
 	return findings
 }
 
-// spec: 4.1 (message-scope classification), 4.5 (one address per request), 28.5.3 (addressing)
+// spec: 4.1 (message-scope classification and one address per request), 28.5.3 (addressing)
 // diagnosis: the §4.1 classification table and the adapter proto disagree.
 // Either a request message one of the two services declares carries no row, a
 // row names a message neither service declares, a row names the wrong service,

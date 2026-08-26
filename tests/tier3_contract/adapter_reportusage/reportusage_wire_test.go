@@ -45,7 +45,7 @@ type wantField struct {
 //
 // spec: 4.7 (Runtime Adapter, ReportUsage RPC), 11.2 (crash recovery for
 // quota counters, pod-reported cumulative total), 10.1 (coordination
-// generation validated on every gateway-to-pod RPC), 4.5 (the gRPC leg
+// generation validated on every gateway-to-pod RPC), 4.1 (the gRPC leg
 // addresses a session by its session identifier)
 //
 // diagnosis: the ReportUsageRequest wire contract diverged from the §4.7

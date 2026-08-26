@@ -128,35 +128,129 @@ func sortedSectionIDs(set map[string]bool) []string {
 	return out
 }
 
-// slotAddressCaseFiles is the inventory of test files that landed with the
-// per-session slot address contract: the cases that pin the session
-// identifier as the only address on both intra-pod legs, the per-slot pod
-// filesystem layout, and the per-session credential file. Each of them must
-// be credited in tests/spec-map.json under every spec section its own
-// `// spec:` annotation names. The map validator walks tier 2 through tier
-// 10 only, and it checks that a reference resolves rather than that a case
-// is credited to the sections it exercises, so a tier-0, tier-11, `cmd/`, or
-// package-local case can carry an annotation no section records.
+// slotAddressCaseFiles is the inventory of test cases that landed with the
+// per-session slot address contract: every test file this change added, and
+// every existing test file whose `// spec:` annotation this change extended
+// with a further section. Each of them must be credited in tests/spec-map.json
+// under every spec section its own annotation names, so that a section the
+// case pins has a test against it in the coverage view and
+// `lenny-test --spec <section>` selects the case. The list is derived from the
+// change rather than chosen by hand, and it includes this file, because a
+// gate that omits itself does not check the case it is part of. The map
+// validator walks tier 2 through tier 10 only, and it checks that a reference
+// resolves rather than that a case is credited to the sections it exercises,
+// so a tier-0, tier-11, `cmd/`, `pkg/`, `sdks/`, or `migrations/` case can
+// carry an annotation no section records.
 var slotAddressCaseFiles = []string{
 	"cmd/lenny-compliance/full_test.go",
 	"cmd/lenny-compliance/sessionecho_test.go",
+	"cmd/lenny-ctl/runtimescaffold/scaffold_test.go",
+	"cmd/lenny-test/cmd_run_race_test.go",
+	"migrations/session_checkpoints_slot_id_test.go",
+	"pkg/adapter/checkpoint_stream_test.go",
+	"pkg/adapter/credentials_test.go",
+	"pkg/adapter/exportpaths_test.go",
+	"pkg/adapter/holdstate_test.go",
+	"pkg/adapter/one_session_only_test.go",
+	"pkg/adapter/podmcp_arming_internal_test.go",
+	"pkg/adapter/podscrub_test.go",
+	"pkg/adapter/resume_test.go",
+	"pkg/adapter/scrub/scrub_test.go",
+	"pkg/adapter/session_test.go",
+	"pkg/adapter/slotframe_test.go",
+	"pkg/adapter/socketruntime_e2e_test.go",
+	"pkg/adapter/staging_test.go",
+	"pkg/adapter/warmlayout_test.go",
+	"pkg/controller/sandbox/podspec/podspec_test.go",
+	"pkg/gateway/checkpoint/checkpointer/checkpointstart_test.go",
+	"pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
+	"pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
+	"pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+	"pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
+	"pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
+	"pkg/gateway/runtime/adapterclient/client_test.go",
+	"pkg/gateway/sessionserver/messages_component_test.go",
+	"pkg/gateway/sessionserver/messages_test.go",
+	"pkg/gateway/sessionserver/slotretry_test.go",
+	"sdks/runtime/go/runtime/runtime_test.go",
+	"tests/testinfra/sessiondriver/sessiondriver_test.go",
 	"tests/tier0_static/adapter_proto_message_scope_test.go",
+	"tests/tier0_static/adapter_proto_parse_test.go",
+	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
+	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
+	"tests/tier0_static/claim_register_generator_test.go",
+	"tests/tier0_static/claim_register_test.go",
+	"tests/tier0_static/slot_absence_claim_comment_test.go",
+	"tests/tier0_static/slot_assignment_attribution_test.go",
+	"tests/tier0_static/spec_map_slot_address_registration_test.go",
+	"tests/tier10_conformance/concurrent_slot_conformance_test.go",
+	"tests/tier10_conformance/credential_path_resolution_conformance_test.go",
 	"tests/tier10_conformance/scaffold_battery_test.go",
+	"tests/tier10_conformance/scaffolds_test.go",
+	"tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
+	"tests/tier11_docs/adapter_manifest_rewrite_trigger_doc_test.go",
+	"tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
+	"tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
+	"tests/tier11_docs/checkpoint_pipeline_consistency_test.go",
+	"tests/tier11_docs/checkpoint_scoping_key_test.go",
 	"tests/tier11_docs/credential_path_literal_sweep_test.go",
+	"tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
 	"tests/tier11_docs/frame_address_spec_citation_test.go",
+	"tests/tier11_docs/frame_identifier_schema_reconciliation_test.go",
+	"tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
+	"tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go",
+	"tests/tier11_docs/pod_filesystem_layout_doc_reconciliation_test.go",
 	"tests/tier11_docs/recycle_scrub_trigger_consistency_test.go",
 	"tests/tier11_docs/redis_key_prefix_registry_test.go",
 	"tests/tier11_docs/retirement_sweep_surfaces_test.go",
 	"tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
+	"tests/tier11_docs/runtime_page_metric_names_resolve_test.go",
+	"tests/tier11_docs/session_policy_table_mirror_reconciliation_test.go",
+	"tests/tier11_docs/session_scoped_frame_example_address_doc_reconciliation_test.go",
+	"tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
+	"tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go",
+	"tests/tier11_docs/slot_definition_glossary_reconciliation_test.go",
 	"tests/tier11_docs/tracing_context_addressing_doc_reconciliation_test.go",
+	"tests/tier11_docs/workspace_path_literal_sweep_test.go",
+	"tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
+	"tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
+	"tests/tier2_component/stores/checkpointretention_test.go",
+	"tests/tier2_component/stores/partialmanifeststore_test.go",
 	"tests/tier2_component/warmlayout/warm_layout_test.go",
 	"tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go",
 	"tests/tier3_contract/adapter_jsonl/gateway_envelope_address_test.go",
+	"tests/tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go",
 	"tests/tier3_contract/adapter_jsonl/subprocess_envelope_address_test.go",
+	"tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
+	"tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
 	"tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
+	"tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
+	"tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
 	"tests/tier3_contract/rest_sessions/slot_address_absence_test.go",
+	"tests/tier3_contract/sdks/go_client_test.go",
+	"tests/tier3_contract/sdks/python_client_test.go",
+	"tests/tier3_contract/sdks/typescript_client_test.go",
+	"tests/tier4_integration/checkpoint_concurrent_pool_test.go",
+	"tests/tier5_e2e_kind/admission_test.go",
+	"tests/tier5_e2e_kind/diagnostics_fix_test.go",
+	"tests/tier5_e2e_kind/execution_modes_test.go",
+	"tests/tier5_e2e_kind/gateway_probe_test.go",
+	"tests/tier5_e2e_kind/journey_pool_reclaim_test.go",
+	"tests/tier5_e2e_kind/runtime_publish_journey_test.go",
 	"tests/tier7a_load_local/coordinator_hold_termination_race_test.go",
 	"tests/tier7a_load_local/podmcp_arming_handoff_test.go",
+	"tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
+	"tests/tier7a_load_local/racestart_testsupport_test.go",
+	"tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
+	"tests/tier7a_load_local/sole_session_concurrent_release_test.go",
+	"tests/tier8_chaos/config_drift_test.go",
+	"tests/tier8_chaos/live_session_test.go",
+	"tests/tier9_security/adapter_hold_termination_surface_test.go",
+	"tests/tier9_security/adapter_shared_mcp_surface_test.go",
+	"tests/tier9_security/audit_integrity_test.go",
+	"tests/tier9_security/audit_sequence_precondition_test.go",
+	"tests/tier9_security/live_session_test.go",
+	"tests/tier9_security/session_teardown_surface_test.go",
 }
 
 // citedSectionRE matches one spec-section id at the head of a comma-separated
@@ -208,9 +302,23 @@ func annotatedSectionsInFile(t *testing.T, file string) map[string]bool {
 	return out
 }
 
+// specMapEntryCoversFile reports whether one tests/spec-map.json entry
+// registers the given repo-relative file. An entry names the whole file, one
+// of its cases with a `::TestName` selector, or a package subtree with a
+// trailing `/...`, and all three forms credit the file.
+func specMapEntryCoversFile(entry, file string) bool {
+	if entry == file || strings.HasPrefix(entry, file+"::") {
+		return true
+	}
+	if subtree, ok := strings.CutSuffix(entry, "..."); ok {
+		return strings.HasPrefix(file, subtree)
+	}
+	return false
+}
+
 // specMapSectionsForFile returns the spec-section ids under which
-// tests/spec-map.json registers the given file, whether the entry names the
-// whole file or one of its cases with a `::TestName` selector.
+// tests/spec-map.json registers the given file, in any of the entry forms
+// specMapEntryCoversFile recognizes.
 func specMapSectionsForFile(t *testing.T, file string) (map[string]bool, map[string]bool) {
 	t.Helper()
 	root := schematest.RepoRoot(t)
@@ -231,7 +339,7 @@ func specMapSectionsForFile(t *testing.T, file string) (map[string]bool, map[str
 	for id, sec := range doc.Sections {
 		declared[id] = true
 		for _, entry := range sec.Tests {
-			if entry == file || strings.HasPrefix(entry, file+"::") {
+			if specMapEntryCoversFile(entry, file) {
 				registered[id] = true
 			}
 		}
@@ -240,7 +348,7 @@ func specMapSectionsForFile(t *testing.T, file string) (map[string]bool, map[str
 }
 
 // spec: 28.5.3 (the session identifier addresses every session-scoped frame),
-// 4.5 (one address per gRPC request), 6.1 (the per-session credential file),
+// 4.1 (one address per gRPC request), 6.1 (the per-session credential file),
 // 6.4 (the per-slot workspace tree)
 //
 // Every case that landed with the per-session slot address contract is
