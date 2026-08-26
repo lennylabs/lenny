@@ -491,7 +491,11 @@ func assertNoCrashLoop(t *testing.T, c *kind.Cluster, deployment, selector strin
 // the `mc mb` step in tests/testinfra/kind/install.sh: a one-shot mc
 // pod connecting straight to the MinIO pod IP (the lenny-system
 // default-deny NetworkPolicy denies a throwaway pod's egress to
-// CoreDNS, so the Service DNS name would not resolve).
+// CoreDNS, so the Service DNS name would not resolve). MinIO serves
+// https on :9000, and the pod IP never matches the serving cert's DNS
+// SAN, so this throwaway bootstrap pod runs mc with --insecure. The
+// gateway and the chart's bucket-lifecycle Job verify the cert against
+// the mounted CA; only this pod skips verification.
 func ensureMinIOBucket(t *testing.T, c *kind.Cluster) {
 	t.Helper()
 	podIP, err := c.KubectlOut(
@@ -508,8 +512,8 @@ func ensureMinIOBucket(t *testing.T, c *kind.Cluster) {
 	_, _ = c.KubectlOut(t, "-n", lennySystemNamespace, "delete", "pod",
 		"chaos-minio-mb", "--ignore-not-found", "--wait=true")
 	script := "set -e; " +
-		"mc alias set e2e http://" + podIP + ":9000 lennyminio lennyminio123 >/dev/null 2>&1; " +
-		"mc mb --ignore-existing e2e/lenny-artifacts"
+		"mc --insecure alias set e2e https://" + podIP + ":9000 lennyminio lennyminio123 >/dev/null 2>&1; " +
+		"mc --insecure mb --ignore-existing e2e/lenny-artifacts"
 	if out, err := c.KubectlOut(
 		t,
 		"-n", lennySystemNamespace, "run", "chaos-minio-mb",

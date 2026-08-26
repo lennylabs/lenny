@@ -379,9 +379,10 @@ func TestCertManagerOutage(t *testing.T) {
 }
 
 // credCredReadersGID is the §13.1 lenny-cred-readers GID. The
-// pod-security webhook requires every agent pod to set fsGroup to this
-// value (the credential-file read group); the cred-guard target pod
-// carries it so the pod-security webhook admits it.
+// pod-security webhook requires every agent pod to set both fsGroup and
+// a pod-level supplementalGroups entry to this value (the
+// credential-file read group); the cred-guard target pod carries both so
+// the pod-security webhook admits it.
 const credCredReadersGID = 65534
 
 // credGuardTargetPod renders a pod manifest the cred-guard outage test
@@ -389,7 +390,8 @@ const credCredReadersGID = 65534
 // namespace, where both the cred-guard webhook and the §13.1
 // lenny-pod-security webhook are scoped, so the manifest carries the
 // full §13.1 hardened security context — pod-level runAsNonRoot,
-// fsGroup set to the lenny-cred-readers GID, seccompProfile, and
+// fsGroup and supplementalGroups set to the lenny-cred-readers GID,
+// seccompProfile, and
 // per-container hardening — or the pod-security webhook would reject
 // the pod before the test could use it. The curl image is used merely
 // as a long-lived sleeping process.
@@ -410,6 +412,8 @@ func credGuardTargetPod(ns, name string) string {
 		"    runAsUser: 100\n" +
 		"    runAsGroup: 100\n" +
 		fmt.Sprintf("    fsGroup: %d\n", credCredReadersGID) +
+		"    supplementalGroups:\n" +
+		fmt.Sprintf("      - %d\n", credCredReadersGID) +
 		"    seccompProfile:\n" +
 		"      type: RuntimeDefault\n" +
 		"  containers:\n" +

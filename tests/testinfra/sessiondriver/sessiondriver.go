@@ -294,6 +294,70 @@ func (d *Driver) BootstrapTenant(ctx context.Context, tenantID string) error {
 	return nil
 }
 
+// AllowSessionsWithNoEnvironment sets the tenant's noEnvironmentPolicy
+// to allow-all through the admin rbac-config surface, preserving every
+// other field the configuration carries. A tenant carries the stricter
+// deny-all policy unless it is relaxed: a freshly bootstrapped tenant
+// starts there, and on a long-lived, reused Kind install an earlier run
+// can leave the built-in "default" tenant pinned there too. The session
+// server's environment admission gate then answers every
+// session-creation request that names no environment with 403 FORBIDDEN
+// and reason no_environment_policy_deny_all. A test whose assertions sit
+// on another axis pins the precondition through this documented admin
+// path rather than depending on the tenant's default policy or on the
+// state an earlier, unrelated run left behind.
+//
+// The call is idempotent: a tenant already on allow-all is left alone.
+//
+// spec: §10.6, §11.1
+func (d *Driver) AllowSessionsWithNoEnvironment(ctx context.Context, tenantID string) error {
+	path := "/v1/admin/tenants/" + tenantID + "/rbac-config"
+	getRes, err := d.doRequest(ctx, http.MethodGet, path, tenantAdmin(tenantID), nil)
+	if err != nil {
+		return fmt.Errorf("get rbac-config for tenant %q: %w", tenantID, err)
+	}
+	defer getRes.Body.Close()
+	raw, _ := io.ReadAll(getRes.Body)
+	if getRes.StatusCode != http.StatusOK {
+		return fmt.Errorf("get rbac-config for tenant %q: status %d, body %s",
+			tenantID, getRes.StatusCode, string(raw))
+	}
+	etag := getRes.Header.Get("ETag")
+	if etag == "" {
+		return fmt.Errorf("get rbac-config for tenant %q: response carried no ETag", tenantID)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return fmt.Errorf("decode rbac-config for tenant %q: %w; body %s", tenantID, err, string(raw))
+	}
+	if payload["noEnvironmentPolicy"] == "allow-all" {
+		return nil
+	}
+	payload["noEnvironmentPolicy"] = "allow-all"
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode rbac-config for tenant %q: %w", tenantID, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build rbac-config put for tenant %q: %w", tenantID, err)
+	}
+	addDevHeaders(req, tenantAdmin(tenantID))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", etag)
+	putRes, err := d.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("put rbac-config for tenant %q: %w", tenantID, err)
+	}
+	defer putRes.Body.Close()
+	putRaw, _ := io.ReadAll(putRes.Body)
+	if putRes.StatusCode != http.StatusOK {
+		return fmt.Errorf("put rbac-config for tenant %q: status %d, body %s",
+			tenantID, putRes.StatusCode, string(putRaw))
+	}
+	return nil
+}
+
 // CreateSession issues POST /v1/sessions for the tenant with the
 // runtimeRef, returning the §15.1 session row. The session lands in
 // state running (the minimal gateway skips the ready intermediate).

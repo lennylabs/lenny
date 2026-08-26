@@ -11,6 +11,7 @@ package sessiondriver_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -31,9 +32,17 @@ func TestHarnessCreateAndTerminate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	tenant := "sessiondriver-smoke-tenant"
+	tenant := uniqueTenant("sessiondriver-smoke-tenant")
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	// spec: §10.6, §11.1 — a bootstrapped tenant carries
+	// noEnvironmentPolicy deny-all, and this smoke test creates a
+	// session that names no environment. Relax the policy through the
+	// documented admin path so the create reaches the §15.1 lifecycle
+	// this test asserts on.
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenant); err != nil {
+		t.Fatalf("allow sessions with no environment: %v", err)
 	}
 
 	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
@@ -66,9 +75,17 @@ func TestHarnessGetSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	tenant := "sessiondriver-get-tenant"
+	tenant := uniqueTenant("sessiondriver-get-tenant")
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	// spec: §10.6, §11.1 — a bootstrapped tenant carries
+	// noEnvironmentPolicy deny-all, and this smoke test creates a
+	// session that names no environment. Relax the policy through the
+	// documented admin path so the create reaches the §15.1 lifecycle
+	// this test asserts on.
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenant); err != nil {
+		t.Fatalf("allow sessions with no environment: %v", err)
 	}
 
 	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
@@ -92,4 +109,15 @@ func TestHarnessGetSession(t *testing.T) {
 		t.Fatalf("get returned an empty state for session %s", sess.ID)
 	}
 	t.Logf("get session %s reports state %q", got.ID, got.State)
+}
+
+// uniqueTenant suffixes base with the current nanosecond so each run
+// bootstraps a tenant of its own. The driver's Close deletes the tenants
+// it bootstrapped, and a deleted row lingers in state "deleting" on this
+// long-lived, reused Kind install, where the session server answers a
+// create for it with 403 TENANT_NOT_ACTIVE. A per-run identifier keeps a
+// prior run's teardown from deciding whether this run can create a
+// session.
+func uniqueTenant(base string) string {
+	return base + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
