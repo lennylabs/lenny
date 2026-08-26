@@ -23,7 +23,7 @@ const STEP = {
 // cleanAfterCall: the review call index after which findings stop, so a
 // scenario can let judging fire at attempt 2 and still let the step finish.
 // Two review lenses run per attempt, so 4 means "clean from attempt 3".
-function run({ verdicts, cleanAfterCall = 0 }) {
+function run({ verdicts, cleanAfterCall = 0, minUnproductiveRounds, maxStepAttempts = 7 }) {
   const calls = [];
   const logs = [];
   let reviewRound = 0;
@@ -53,7 +53,8 @@ function run({ verdicts, cleanAfterCall = 0 }) {
   const fn = new Function("args","agent","parallel","pipeline","phase","log","workflow","budget",
     "return (async () => {\n" + SRC + "\n})();");
   return fn({ proposalPath: "p.md", repoRoot: "/repo", date: "d",
-              plan: { blastRadius: [], steps: [STEP] }, introspectEvery: 2, maxStepAttempts: 7 },
+              plan: { blastRadius: [], steps: [STEP] }, introspectEvery: 2, maxStepAttempts,
+              minUnproductiveRounds },
     agent, async (t) => Promise.all(t.map((f) => f())), async (i) => i, () => {},
     (m) => logs.push(String(m)), async () => ({}),
     { total: null, spent: () => 0, remaining: () => Infinity })
@@ -124,6 +125,45 @@ console.log("\n6. the judges are actually shown the round log");
   check("the log names a real round with its commit", j && /ROUND 1/.test(j.prompt) && /commit: c/.test(j.prompt));
   check("the log carries the round's finding", j && /T-4\.4\.21 is left OPEN/.test(j.prompt));
   check("the judge is told to read the commits first", j && /git show --stat/.test(j.prompt));
+}
+
+console.log("\n7. the unproductive floor: a pattern, not a bad round or two");
+{
+  // introspectEvery 2 fires the judges at attempt 2, when only 2 consecutive
+  // rounds have tried and failed. The floor is 5, so the verdict is refused
+  // even though all three judges returned it at high confidence. Capped at 3
+  // attempts so the run ends before the rounds legitimately reach the floor.
+  const { result, logs } = await run({ maxStepAttempts: 3, verdicts: {
+    motion: V("unproductive", "high"), "remaining-work": V("unproductive", "high"), forecast: V("unproductive", "high") } });
+  check("logged why it was refused", logs.some((l) => /only 2 consecutive round\(s\)/.test(l)));
+  check("no unproductive record was made",
+    !(result.stuckFindings || []).some((f) => f.kind === "unproductive"),
+    JSON.stringify((result.stuckFindings || []).map((f) => f.kind)));
+  check("it aborted on the ordinary cap, not on the judges",
+    logs.some((l) => /design-conformance divergences outstanding/.test(l)),
+    logs.filter((l) => /stuck \(/.test(l)).join(" | "));
+}
+
+console.log("\n8. the floor is met once the rounds add up");
+{
+  const { result, calls } = await run({ minUnproductiveRounds: 2, verdicts: {
+    motion: V("unproductive", "high"), "remaining-work": V("unproductive", "medium"), forecast: V("unproductive", "medium") } });
+  check("the step stops", result.status === "step-stuck");
+  const rec = (result.stuckFindings || [])[0];
+  check("records how many rounds failed", rec && rec.consecutiveFailedRounds === 2,
+    "got " + (rec && rec.consecutiveFailedRounds));
+  const j = calls.find((c) => c.label.startsWith("stuck:"));
+  check("the judges were told the count and the floor", j && /2 consecutive round\(s\)/.test(j.prompt) &&
+    /requires at least 2 such rounds/.test(j.prompt));
+}
+
+console.log("\n9. below the floor the judges are told not to return it");
+{
+  const { calls } = await run({ verdicts: {
+    motion: V("resolvable", "high"), "remaining-work": V("resolvable", "high"), forecast: V("resolvable", "high") } });
+  const j = calls.find((c) => c.label.startsWith("stuck:"));
+  check("the brief forbids it at 2 of 5", j && /you may NOT return it/.test(j.prompt));
+  check("and says the floor is not for unresolvable", j && /does not apply to .unresolvable./.test(j.prompt));
 }
 
 console.log(failures === 0 ? "\nAll checks passed.\n" : "\n" + failures + " check(s) FAILED.\n");

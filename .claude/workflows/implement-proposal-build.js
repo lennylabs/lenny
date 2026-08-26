@@ -83,6 +83,13 @@ const reverifyRepaired = [];
 // Every fifth attempt: a step that converges normally never reaches it, and a
 // step that does not has already told us something is wrong.
 const introspectEvery = input.introspectEvery || 5;
+// Consecutive rounds that must have tried and failed before the judges may
+// return "unproductive". That verdict says the loop will not do work that is
+// legal and real, which is a claim about a pattern; one or two rounds that
+// missed is trial and error, not a pattern. "unresolvable" carries no such
+// minimum: whether the proposal contradicts the code is a fact about the two
+// documents, and more rounds do not make it truer.
+const minUnproductiveRounds = input.minUnproductiveRounds || 5;
 // Divergences a human has already seen and accepted. The final review is
 // whole-change and re-derives everything, so without this it re-raises a
 // settled question every round and can never converge on a change that
@@ -728,6 +735,20 @@ function suppressedNote(step) {
 // returned the other steps' results and nothing at all about this one. The
 // judges were being asked whether a loop was stuck while being shown no round
 // of that loop.
+// Trailing rounds that produced a commit and still came back with findings.
+// Counted from the end, so a round that cleared the findings resets it: the
+// loop demonstrably moved, and what came after is a fresh stall rather than a
+// continuation of the old one.
+function unproductiveRunLength(rounds) {
+  let n = 0;
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const r = rounds[i];
+    if (!r.commit || (r.findingTitles || []).length === 0) break;
+    n++;
+  }
+  return n;
+}
+
 function formatRounds(rounds) {
   if (rounds.length === 0) return "(no rounds recorded yet)";
   return rounds
@@ -749,6 +770,7 @@ function formatRounds(rounds) {
 }
 
 async function judgeStuck(step, findings, rounds, attempt) {
+  const runLength = unproductiveRunLength(rounds);
   const brief =
     "You judge whether a build step's fix loop can still close the findings against it.\n\n" +
     READ_ONLY_NOTE +
@@ -775,6 +797,16 @@ async function judgeStuck(step, findings, rounds, attempt) {
     "genuinely falls short, and the work that would close it is real; but round after round produced " +
     "commits that did not touch it. Judge this on the rounds, not on the finding: the test is whether the " +
     "loop is approaching the work or circling it.\n\n" +
+    "HOW LONG THIS HAS BEEN STALLED. The rounds below include " + runLength + " consecutive round(s) that " +
+    "committed something and still came back with findings. \"unproductive\" requires at least " +
+    minUnproductiveRounds + " such rounds, because it is a claim about a pattern rather than about a bad " +
+    "round or two: a fix agent groping toward a hard change looks the same from one round as one that will " +
+    "never get there, and only a run of them tells the two apart. At " + runLength + " round(s) you may " +
+    (runLength >= minUnproductiveRounds
+      ? "return it if the evidence supports it."
+      : "NOT return it; answer resolvable or unresolvable on what you see.") +
+    " This floor does not apply to \"unresolvable\", which is a fact about the code and the proposal " +
+    "rather than about the loop.\n\n" +
     "The two non-resolvable verdicts have different consequences, so do not merge them. An unresolvable " +
     "finding is set aside and reported as a defect in the proposal. An unproductive one is NOT set aside: " +
     "the step stops and a human is told what work is outstanding, because the finding is real and setting " +
@@ -1177,6 +1209,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     // they weigh it, so agreement between them means something.
     if (!stepReviewClean && stepFindings.length > 0 && attempt % introspectEvery === 0) {
       log("Step " + step.id + ": " + attempt + " attempts without converging; asking whether the loop can still close its findings");
+      const runLength = unproductiveRunLength(stepRounds);
       const votes = await judgeStuck(step, stepFindings, stepRounds, attempt);
       const enough = (v) => v.confidence === "high" || v.confidence === "medium";
       const all = (verdict) =>
@@ -1206,6 +1239,16 @@ for (let i = 0; i < plan.steps.length; i++) {
             "\" (" + summary + "). The code is right and the proposal is wrong. Recorded for a human and " +
             "set aside for the rest of this step.",
         );
+      } else if (all("unproductive") && runLength < minUnproductiveRounds) {
+        // The judges agreed, but the loop has not been given enough rounds for
+        // that verdict to mean what it claims. Enforced here as well as in the
+        // brief: a judge that returns it anyway must not be able to stop a step
+        // the fixer has barely started on.
+        log(
+          "Step " + step.id + ": the judges called the loop unproductive, but only " + runLength +
+            " consecutive round(s) have tried and failed and " + minUnproductiveRounds +
+            " are required; the loop continues",
+        );
       } else if (all("unproductive")) {
         // A legal change exists and this loop is not making it. Setting the
         // finding aside would tick the step over a real gap, so the step stops
@@ -1216,6 +1259,7 @@ for (let i = 0; i < plan.steps.length; i++) {
           attempt,
           kind: "unproductive",
           title,
+          consecutiveFailedRounds: runLength,
           outstandingWork: pick("outstandingWork"),
           roundsMovedIt: pick("roundsMovedIt"),
           judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
