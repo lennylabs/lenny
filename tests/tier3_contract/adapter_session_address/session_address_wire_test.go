@@ -115,12 +115,16 @@ func TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (removed numbers and names stay reserved)
+// spec: 15.4 (breaking changes to the published adapter proto follow
+// buf-style breaking-change rules)
 //
 // diagnosis: a removed field number or name was recycled onto a message a
 // runtime author's generated code already compiles against, which changes
-// the bytes on the wire without changing the schema's field names.
-func TestRemovedAddressNumbersAndNamesStayReserved_spec_4_1(t *testing.T) {
+// the bytes on the wire without changing the schema's field names. §4.1
+// states that a session-scoped request carries one address; the rule that a
+// removed number and name stay reserved is §15.4's stability rule on the
+// published artifact, so the case is credited there.
+func TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
 	for name, num := range sessionScopedMessages {
@@ -137,12 +141,13 @@ func TestRemovedAddressNumbersAndNamesStayReserved_spec_4_1(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (the wrapper message is deleted with its last user)
+// spec: 15.4 (the published adapter proto is the contract a runtime author
+// implements against)
 //
 // diagnosis: the wrapper type survives with no field carrying it, so the
 // published schema still advertises a second address to a runtime author
 // reading it.
-func TestTheRetiredAddressWrapperIsGone_spec_4_1(t *testing.T) {
+func TestTheRetiredAddressWrapperIsGone_spec_15_4(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
 	for i := 0; i < msgs.Len(); i++ {

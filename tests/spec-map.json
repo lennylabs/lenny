@@ -86,7 +86,8 @@
         "tests/tier2_component/stores/tenantaccessstore_test.go",
         "tests/tier4_integration/ops_event_emission_test.go",
         "tests/tier5_e2e_kind/etcd_encryption_test.go",
-        "charts/lenny/tests/etcd-encryption_test.yaml"
+        "charts/lenny/tests/etcd-encryption_test.yaml",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/gateway",
@@ -169,7 +170,9 @@
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
         "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
-        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go"
+        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestTheCreditGateIsCreditedByNameUnderTheSectionItAnnotates"
       ],
       "packages": [
         "pkg/gateway"
@@ -445,7 +448,9 @@
         "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
         "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
         "tests/tier11_docs/frame_address_spec_citation_test.go::TestFrameAddressingCitesTheIntraPodSection",
-        "tests/tier5_e2e_kind/admission_test.go"
+        "tests/tier5_e2e_kind/admission_test.go",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorEvictStreamOnAnUnstreamedSession",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorEvictStreamReopensOverAFreshBinding"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -594,7 +599,9 @@
         "pkg/controller/sandbox/podspec/podspec_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "sdks/runtime/go/runtime/runtime_test.go",
-        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go"
+        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorEvictStreamOnAnUnstreamedSession",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorEvictStreamReopensOverAFreshBinding"
       ],
       "packages": [
         "pkg/adapter",
@@ -881,7 +888,10 @@
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
         "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
         "tests/tier9_security/credential_delivery_gate_test.go",
-        "tests/tier10_conformance/credential_path_resolution_conformance_test.go"
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
+        "tests/tier4_integration/token_service_unavailability_guard_test.go",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7",
+        "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7"
       ],
       "packages": [
         "pkg/credential",
@@ -1029,7 +1039,17 @@
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "pkg/gateway/sessionserver/messages_component_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
-        "tests/tier4_integration/checkpoint_concurrent_pool_test.go"
+        "tests/tier4_integration/checkpoint_concurrent_pool_test.go",
+        "pkg/adapter/oplock_test.go::TestOpLockPendingInterruptOccupiesNoCheckpointKey",
+        "pkg/adapter/oplock_test.go::TestOpLockContextCancelWithdrawsPendingCheckpoint",
+        "pkg/adapter/oplock_test.go::TestInterruptRPCOccupiesNoCheckpointKey",
+        "pkg/adapter/oplock_test.go::TestOpLockPromotesCheckpointsInSessionIdentifierOrder",
+        "pkg/adapter/oplock_test.go::TestOpLockCoalescesSameSessionAdmitsDistinctSession",
+        "pkg/adapter/sessionscrub_emit_test.go::TestShutdownSlotToleratesReporterError_spec_5_2",
+        "pkg/adapter/sessionscrub_emit_test.go::TestTerminateShutdownEmitsTheSessionScrub_spec_5_2",
+        "pkg/adapter/sessionscrub_emit_test.go::TestShutdownSlotWithdrawsReportWhenPodIDEmpty_spec_5_2",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorSendAddressesTheAttachStreamBySession",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1131,7 +1151,9 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
         "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
-        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go"
+        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestIsTransientPodClaimErrorSetupCommand_spec_7_3",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSetupCommandFailed_spec_7_3"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1183,7 +1205,9 @@
         "pkg/adapter/warmlayout_test.go",
         "tests/tier0_static/spec_map_slot_address_registration_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
-        "tests/tier5_e2e_kind/execution_modes_test.go"
+        "tests/tier5_e2e_kind/execution_modes_test.go",
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "tests/tier7a_load_local/tracing_context_release_race_test.go"
       ],
       "packages": [
         "pkg/workspace"
@@ -1268,7 +1292,11 @@
         "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "pkg/gateway/sessionserver/messages_component_test.go",
-        "sdks/runtime/go/runtime/runtime_test.go"
+        "sdks/runtime/go/runtime/runtime_test.go",
+        "pkg/adapter/manifest_test.go",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorSendAddressesTheAttachStreamBySession",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2",
+        "tests/tier2_component/rls/checkpoint_manifest_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1287,7 +1315,9 @@
         "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
         "pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
         "tests/tier11_docs/session_scoped_frame_example_address_doc_reconciliation_test.go",
-        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestIsTransientPodClaimErrorSetupCommand_spec_7_3",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSetupCommandFailed_spec_7_3"
       ],
       "packages": [
         "pkg/session/resume",
@@ -1400,7 +1430,9 @@
         "tests/tier9_security/delegation_credential_deny_leakage_test.go::TestDenyDelegationDeliversNoLeaseToken",
         "tests/tier9_security/tracing_context_platform_tool_isolation_test.go::TestPlatformTracingToolRefusesToWriteAnotherSession",
         "tests/tier9_security/tracing_context_platform_tool_isolation_test.go::TestPlatformTracingToolRegistersTheCallerWithNoSessionArgument",
-        "tests/tier11_docs/tracing_context_addressing_doc_reconciliation_test.go"
+        "tests/tier11_docs/tracing_context_addressing_doc_reconciliation_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier9_security/tracing_context_session_isolation_test.go::TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3"
       ],
       "packages": [
         "pkg/delegation/lease",
@@ -1731,7 +1763,9 @@
         "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
         "tests/tier2_component/stores/partialmanifeststore_test.go",
         "tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
-        "tests/tier4_integration/checkpoint_concurrent_pool_test.go"
+        "tests/tier4_integration/checkpoint_concurrent_pool_test.go",
+        "migrations/0178_checkpoint_manifest_test.go",
+        "tests/tier2_component/rls/checkpoint_manifest_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -2212,7 +2246,8 @@
         "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
         "pkg/adapter/holdstate_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
-        "tests/tier2_component/stores/partialmanifeststore_test.go"
+        "tests/tier2_component/stores/partialmanifeststore_test.go",
+        "pkg/adapter/usage_test.go"
       ],
       "packages": [
         "pkg/quota",
@@ -2352,7 +2387,8 @@
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
         "tests/tier9_security/write_before_issue_failclosed_test.go",
         "tests/tier9_security/audit_sequence_precondition_test.go",
-        "tests/tier9_security/audit_integrity_test.go"
+        "tests/tier9_security/audit_integrity_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/audit",
@@ -2444,7 +2480,8 @@
         "tests/tier2_component/rls/...",
         "tests/tier7b_load_kind/postgres_test.go::TestPostgresWriteBaseline",
         "tests/tier2_component/stores/storerouter_routing_test.go",
-        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
+        "migrations/0178_checkpoint_manifest_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -2588,7 +2625,8 @@
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier9_security/credential_leakage_test.go",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
-        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
+        "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/compliance/dataclassification"
@@ -2698,7 +2736,8 @@
         "tests/tier9_security/session_teardown_surface_test.go",
         "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
         "tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
-        "tests/tier11_docs/credential_path_literal_sweep_test.go"
+        "tests/tier11_docs/credential_path_literal_sweep_test.go",
+        "tests/tier9_security/tracing_context_session_isolation_test.go::TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -3155,7 +3194,10 @@
         "pkg/gateway/sessionserver/slotretry_test.go",
         "tests/testinfra/sessiondriver/sessiondriver_test.go",
         "tests/tier5_e2e_kind/gateway_probe_test.go",
-        "tests/tier9_security/audit_integrity_test.go"
+        "tests/tier9_security/audit_integrity_test.go",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSetupCommandFailed_spec_7_3",
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier5_e2e_kind/scaffolds_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -3272,7 +3314,12 @@
         "pkg/gateway/sessionserver/messages_test.go",
         "tests/tier3_contract/sdks/go_client_test.go",
         "tests/tier3_contract/sdks/python_client_test.go",
-        "tests/tier3_contract/sdks/typescript_client_test.go"
+        "tests/tier3_contract/sdks/typescript_client_test.go",
+        "cmd/runtimes/echo-concurrent/main_test.go::TestSlotErrorMapsExitCodes",
+        "cmd/runtimes/echo-concurrent/main_test.go::TestPerSlotProtocolErrorFailsTheRuntime",
+        "cmd/runtimes/echo-concurrent/main_test.go::TestProtocolErrorMessage",
+        "cmd/runtimes/echo-concurrent/main_test.go::TestMalformedFrameIsAProtocolError",
+        "tests/tier3_contract/adapter_session_address/session_address_wire_test.go"
       ],
       "packages": [
         "cmd/runtimes/echo",
@@ -3698,7 +3745,9 @@
         "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516",
         "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier8_chaos/pod_disruption_test.go",
-        "tests/tier5_e2e_kind/admission_test.go"
+        "tests/tier5_e2e_kind/admission_test.go",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestReflowedSpecAnnotationIsReadPastTheBlankCommentLine",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestAnnotationSectionsAreResolvedPerCase"
       ],
       "packages": [
         "charts/lenny"
@@ -5223,7 +5272,18 @@
         "pkg/gateway/sessionserver/messages_component_test.go",
         "pkg/gateway/sessionserver/messages_test.go",
         "tests/tier0_static/spec_map_slot_address_registration_test.go",
-        "tests/tier10_conformance/concurrent_slot_conformance_test.go"
+        "tests/tier10_conformance/concurrent_slot_conformance_test.go",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextUnreadableAddressIsTheEmptyAddress_spec_28_5_3",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextUnaddressedWhileASecondSlotIsUnboundIsRejected_spec_28_5_3",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextAddressedToOwnSessionRegistersOnce_spec_28_5_3",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextUnaddressedOnAMultiSlotPodIsRejected_spec_28_5_3",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextUnaddressedOnASingleSlotPodResolvesToTheStream_spec_28_5_3",
+        "pkg/adapter/tracingcontext_addressing_test.go::TestSetTracingContextAddressedToACoTenantNeverReachesStream_spec_28_5_3",
+        "pkg/gateway/session/executor/pod_test.go::TestPodExecutorSendAddressesTheAttachStreamBySession",
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "tests/tier7a_load_local/tracing_context_release_race_test.go",
+        "tests/tier9_security/tracing_context_session_isolation_test.go::TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3"
       ],
       "packages": [
         "pkg/adapter",
