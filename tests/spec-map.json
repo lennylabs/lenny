@@ -176,7 +176,10 @@
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestReflowedSpecAnnotationIsReadPastTheBlankCommentLine",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestAnnotationSectionsAreResolvedPerCase",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestTrailingBareSectionIDSurvivesAFollowingProseParagraph",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSemicolonAndEmDashCitationFormsAreRead"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSemicolonAndEmDashCitationFormsAreRead",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditIsDemandedAtTheMapGranularity",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditIsNotDemandedForATestingDocumentSectionID",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditsMissingReportsTheUncreditedAncestorKey"
       ],
       "packages": [
         "pkg/gateway"
@@ -2308,7 +2311,8 @@
         "pkg/adapter/usage_test.go",
         "pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",
         "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
-        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go"
+        "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [
         "pkg/quota",
@@ -3394,7 +3398,8 @@
         "cmd/runtimes/echo-concurrent/main_test.go::TestProtocolErrorMessage",
         "cmd/runtimes/echo-concurrent/main_test.go::TestMalformedFrameIsAProtocolError",
         "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
-        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestMessageBodyIgnoresStaleSlotAddress_spec_7_2"
+        "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestMessageBodyIgnoresStaleSlotAddress_spec_7_2",
+        "pkg/adapter/holdstate_test.go"
       ],
       "packages": [
         "cmd/runtimes/echo",
@@ -4003,7 +4008,8 @@
       "title": "Build Sequence",
       "spec_file": "spec/18_build-sequence.md",
       "tests": [
-        "tests/tier11_docs/docs_test.go::TestTESTINGmdContractDirectoryReferencesResolve"
+        "tests/tier11_docs/docs_test.go::TestTESTINGmdContractDirectoryReferencesResolve",
+        "tests/tier2_component/migrations/prod_columns_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "0",
@@ -4997,7 +5003,8 @@
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
         "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney",
-        "tests/tier10_conformance/reference_battery_test.go::TestImageDeploymentConformance"
+        "tests/tier10_conformance/reference_battery_test.go::TestImageDeploymentConformance",
+        "cmd/lenny-ctl/runtimescaffold/scaffold_test.go"
       ],
       "packages": [
         "cmd/runtimes/"
@@ -5148,7 +5155,8 @@
         "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
-        "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial"
+        "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
+        "tests/tier11_docs/redis_key_prefix_registry_test.go"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
@@ -5237,7 +5245,8 @@
         "tests/tier11_docs/spec_28_index_rows_test.go",
         "tests/tier11_docs/spec_28_taxonomy_test.go",
         "tests/tier11_docs/spec_28_register_writers_test.go",
-        "tests/tier11_docs/spec_28_reserved_phrase_test.go"
+        "tests/tier11_docs/spec_28_reserved_phrase_test.go",
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "0",
@@ -5410,6 +5419,26 @@
       ],
       "blocked_until_phase": "0",
       "notes": "The matrix carries exactly one row per channel identifier in the channel register, so a channel added to the register without a failure row fails tier 0."
+    },
+    "29.4": {
+      "title": "Interrupt, terminate, and delete",
+      "spec_file": "spec/29_communication-scenarios.md",
+      "tests": [
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go"
+      ],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "The trace's intra-pod leg: the nonce the adapter arms a session's pod-local MCP listener with, and the teardown that retires it, are reconciled between the trace and the documentation that mirrors it."
+    },
+    "29.10": {
+      "title": "Co-tenancy on a concurrent-session pod",
+      "spec_file": "spec/29_communication-scenarios.md",
+      "tests": [
+        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go"
+      ],
+      "packages": [],
+      "blocked_until_phase": "0",
+      "notes": "What a concurrent-session pod partitions per slot and what it shares: the per-slot scope of a session's substate is reconciled between the structural analysis and the documentation that mirrors it."
     }
   }
 }

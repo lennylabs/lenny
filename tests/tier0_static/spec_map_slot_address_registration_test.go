@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -482,6 +483,85 @@ func specMapCredits(t *testing.T, file string) (declared, wholeFile map[string]b
 	return declared, wholeFile, perCase
 }
 
+// specHeadingNumbers returns every dotted section number the specification
+// under spec/ declares as a heading.
+//
+// An id a `// spec:` annotation cites that this set does not carry names a
+// TESTING.md section rather than a specification heading. The tier phase-gate
+// groups are cited that way, so §13.7 and §13.19 in the Kind admission and
+// scaffold cases name TESTING.md headings, and tests/spec-map.json keys
+// specification sections alone. No map key can exist for such an id, so the
+// credit gate carves it out rather than demanding one.
+func specHeadingNumbers(t *testing.T) map[string]bool {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "spec"))
+	if err != nil {
+		t.Fatalf("read spec/: %v", err)
+	}
+	out := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(root, "spec", entry.Name()))
+		if err != nil {
+			t.Fatalf("read spec/%s: %v", entry.Name(), err)
+		}
+		for _, h := range citation.Headings(string(body)) {
+			if h.Number != "" {
+				out[h.Number] = true
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("spec/ declares no numbered heading")
+	}
+	return out
+}
+
+// creditKey resolves one annotated section id to the tests/spec-map.json key
+// that must carry the case's credit, and reports whether a credit is required
+// at all.
+//
+// The map records a section at whatever granularity it chose, so requiring a
+// key spelled exactly as the annotation spells it lets any finer citation pass
+// uncredited. An id the map does not key exactly is resolved to its nearest
+// declared ancestor: 15.4.2 is credited under 15.4, and 28.6 under 28. An id
+// that names a specification heading the map declares at no granularity
+// resolves to itself, so the gate reports it and the row is entered. An id
+// that names no specification heading is carved out per specHeadingNumbers.
+func creditKey(id string, declared, headings map[string]bool) (string, bool) {
+	if !headings[id] {
+		return "", false
+	}
+	for key := id; ; {
+		if declared[key] {
+			return key, true
+		}
+		dot := strings.LastIndex(key, ".")
+		if dot < 0 {
+			return id, true
+		}
+		key = key[:dot]
+	}
+}
+
+// creditsMissing returns the spec-map keys that the annotated sections require
+// and neither the whole-file credits nor the per-case credits supply. Pass a
+// nil perCase for a file the map registers as a whole rather than case by case.
+func creditsMissing(sections, declared, headings, wholeFile, perCase map[string]bool) map[string]bool {
+	missing := map[string]bool{}
+	for section := range sections {
+		key, required := creditKey(section, declared, headings)
+		if !required || wholeFile[key] || perCase[key] {
+			continue
+		}
+		missing[key] = true
+	}
+	return missing
+}
+
 // spec: 4.1 (one address per gRPC request)
 //
 // Every case that landed with the per-session slot address contract is
@@ -490,27 +570,18 @@ func specMapCredits(t *testing.T, file string) (declared, wholeFile map[string]b
 // against it in the coverage view, and `lenny-test --spec <section>` does not
 // select the case that pins it.
 func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
+	headings := specHeadingNumbers(t)
 	for _, file := range slotAddressCaseFiles {
 		declared, wholeFile, perCase := specMapCredits(t, file)
 		if len(perCase) == 0 {
-			missing := map[string]bool{}
-			for section := range annotatedSectionsInFile(t, file) {
-				if declared[section] && !wholeFile[section] {
-					missing[section] = true
-				}
-			}
+			missing := creditsMissing(annotatedSectionsInFile(t, file), declared, headings, wholeFile, nil)
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s to section(s) %v its `// spec:` annotation names", file, sortedSectionIDs(missing))
 			}
 			continue
 		}
 		for fn, sections := range annotatedSectionsPerCase(t, file) {
-			missing := map[string]bool{}
-			for section := range sections {
-				if declared[section] && !wholeFile[section] && !perCase[fn][section] {
-					missing[section] = true
-				}
-			}
+			missing := creditsMissing(sections, declared, headings, wholeFile, perCase[fn])
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s::%s to section(s) %v its own `// spec:` annotation names", file, fn, sortedSectionIDs(missing))
 			}
@@ -648,5 +719,75 @@ func TestSemicolonAndEmDashCitationFormsAreRead(t *testing.T) {
 				t.Errorf("sectionsFromLines read %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// An annotated section id the map records at a coarser granularity is
+// credited at the granularity the map chose. Demanding a key spelled exactly
+// as the annotation spells it lets every finer citation pass uncredited, so a
+// case can pin a section with no entry against it and the gate stays green.
+func TestCreditIsDemandedAtTheMapGranularity(t *testing.T) {
+	declared := map[string]bool{"15.4": true, "28": true}
+	headings := map[string]bool{"15.4": true, "15.4.2": true, "28": true, "28.6": true, "29.4": true}
+	for _, tc := range []struct {
+		id   string
+		want string
+	}{
+		{id: "15.4.2", want: "15.4"},
+		{id: "28.6", want: "28"},
+		{id: "15.4", want: "15.4"},
+		// A heading the map declares at no granularity resolves to itself,
+		// so the gate names the row that has to be entered.
+		{id: "29.4", want: "29.4"},
+	} {
+		got, required := creditKey(tc.id, declared, headings)
+		if !required || got != tc.want {
+			t.Errorf("creditKey(%s) = %q, %v, want %q, true", tc.id, got, required, tc.want)
+		}
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// A `// spec:` annotation that cites a TESTING.md section rather than a
+// specification heading demands no spec-map credit, because the map keys
+// specification sections alone and no key for such an id can exist.
+func TestCreditIsNotDemandedForATestingDocumentSectionID(t *testing.T) {
+	headings := specHeadingNumbers(t)
+	for _, id := range []string{"13.7", "13.19"} {
+		if headings[id] {
+			t.Fatalf("spec/ declares heading %s, so it is no longer a TESTING.md-only citation", id)
+		}
+		if _, required := creditKey(id, map[string]bool{"13": true}, headings); required {
+			t.Errorf("creditKey(%s) demands a credit for a TESTING.md section", id)
+		}
+	}
+	for _, id := range []string{"29.4", "29.10", "27.3.1", "15.4.2", "28.6"} {
+		if !headings[id] {
+			t.Errorf("spec/ declares no heading %s, so the credit gate carves it out", id)
+		}
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// creditsMissing reports the ancestor key an annotation's finer citation
+// resolves to when nothing credits it, and stays silent once either the
+// whole-file or the per-case credit supplies that key.
+func TestCreditsMissingReportsTheUncreditedAncestorKey(t *testing.T) {
+	sections := map[string]bool{"15.4.2": true, "13.7": true}
+	declared := map[string]bool{"15.4": true}
+	headings := map[string]bool{"15.4": true, "15.4.2": true}
+	missing := creditsMissing(sections, declared, headings, map[string]bool{}, nil)
+	if got := sortedSectionIDs(missing); strings.Join(got, ",") != "15.4" {
+		t.Errorf("creditsMissing reported %v, want [15.4]", got)
+	}
+	if got := creditsMissing(sections, declared, headings, map[string]bool{"15.4": true}, nil); len(got) != 0 {
+		t.Errorf("creditsMissing reported %v for a whole-file credit, want none", sortedSectionIDs(got))
+	}
+	if got := creditsMissing(sections, declared, headings, map[string]bool{}, map[string]bool{"15.4": true}); len(got) != 0 {
+		t.Errorf("creditsMissing reported %v for a per-case credit, want none", sortedSectionIDs(got))
 	}
 }
