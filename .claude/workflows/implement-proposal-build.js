@@ -160,7 +160,9 @@ const PREFLIGHT_NOTE =
   "the pod-spec renderer and must be rebuilt and reloaded, not worked around in code. (c) A warm pool at " +
   "zero ready recreates failing pods indefinitely, so the pile rebuilds itself; read one of its pods' logs " +
   "before running anything. (d) Reap orphaned envtest processes with `pkill -f kubebuilder-envtest`. " +
-  "(e) Treat a tier failure above 1 as an environment failure until you have ruled that out, and never " +
+  "(e) A test that creates cluster-scoped state must sweep it at START, not only in t.Cleanup, which does " +
+  "not run when a process is killed; a fixture minting a unique name per run leaks a whole object per " +
+  "killed run otherwise. (f) Treat a tier failure above 1 as an environment failure until you have ruled that out, and never " +
   "rebuild landed code to make a broken fixture pass. When the environment is broken and fixing it is out " +
   "of scope here, record the precondition and skip the case with a reason in " +
   "tests/registers/skip-reasons.yaml, then say so in your result; that is a correct outcome, not a failure." +

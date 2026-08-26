@@ -119,6 +119,22 @@ change, confirm the same tier fails on a clean checkout of the merge base. A fai
 change is a pre-existing condition to record, not work for this step, and rebuilding a landed step to make
 somebody else's broken fixture pass is how a step enters a loop it cannot leave.
 
+**6. A test that creates cluster-scoped state sweeps it at START, not only at exit.** `t.Cleanup` does not
+run when the process is killed, and between the harness watchdog, the wall-clock timeout around a tier, and
+an interrupted run, that happens routinely. A fixture that mints a unique name per run — which it must when
+the name is a database primary key and a soft-deleted row keeps it occupied — therefore does not leak a name
+the next run reclaims by reusing it. It leaks a whole object nothing will ever collect, once per killed run.
+Three such pools had accumulated on the long-lived e2e cluster before anyone noticed, each holding a warm
+member that could never become Ready.
+
+The leak is not inert. Any pod it leaves carries the platform's `lenny.dev/managed=true` label, so every
+later test that waits on that label waits on the wreckage until the wait times out. Exit-time cleanup stays,
+because it keeps a passing run tidy, but it cannot be the only cleanup. Give the fixture a start-time sweep
+that lists objects matching its own prefix or its own label, deletes every one that is not this run's, and
+logs what it reclaimed. Make it best-effort and never fatal: a sweep failure must not fail a run whose own
+subject is intact. `sweepStaleNonceOnlyPools` in `tests/tier8_chaos/nonce_only_degradation_test.go` is the
+worked example.
+
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
 skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to

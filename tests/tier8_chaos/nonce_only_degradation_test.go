@@ -53,6 +53,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -178,6 +179,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// not be pullable: the §4.7 carrier and the SOPeercredDisabled condition
 	// are resolved from config before the pod is created, so the warm member's
 	// pod failing to pull does not affect the surfaced degradation.
+	sweepStaleNonceOnlyRuntimes(t, c, runtimeName)
 	runtime := nonceOnlyRuntimeManifest(runtimeName, false)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, runtime) })
 	if out, err := c.ApplyStdin(t, runtime); err != nil {
@@ -210,6 +212,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// a requireSoPeercred=false runtime; standard isolation + the explicit
 	// allowStandardIsolation opt-in match the dev-mode runc RuntimeClass on
 	// this cluster so the pool is not RuntimeClass-Degraded.
+	sweepStaleNonceOnlyPools(t, gatewayURL, pool)
 	t.Cleanup(func() { deleteNonceOnlyPool(t, gatewayURL, pool) })
 	createNonceOnlyPool(t, gatewayURL, pool, runtimeName)
 	t.Logf("created: Postgres-authoritative pool %s (warmCount=1, acknowledgeNonceOnlyAuth=true, runtimeRef=%s)",
@@ -480,6 +483,76 @@ func deleteNonceOnlyPool(t *testing.T, gatewayURL, pool string) {
 	default:
 		t.Logf("cleanup: admin DELETE /v1/admin/pools/%s returned status %d: %s",
 			pool, status, respBody)
+	}
+}
+
+// sweepStaleNonceOnlyPools deletes every nonce-only pool a PRIOR run left
+// behind, before this run creates its own.
+//
+// Teardown here is t.Cleanup and therefore best-effort by construction: it
+// does not run when the process is killed, which the harness watchdog, the
+// wall-clock timeout wrappers around a tier, and an interrupted run all do
+// routinely. Each run mints a fresh suffixed name because the pool name is the
+// Postgres primary key and a soft-deleted row keeps it occupied, so a killed
+// run does not leak a name that the next run reclaims by reusing it: it leaks a
+// whole pool that nothing will ever collect. Three had accumulated on the
+// long-lived e2e cluster before this sweep existed.
+//
+// A leaked pool is not inert. Its warm member's pod carries the platform's
+// lenny.dev/managed=true label and never becomes Ready, because the Runtime's
+// image digest is deliberately unpullable (see nonceOnlyRuntimeManifest), so
+// every later test that waits on that label waits on it until the wait times
+// out. Sweeping at START rather than only at exit is what makes the cleanup
+// survive a kill: the leak self-heals on the next run instead of accumulating.
+//
+// Best-effort and logged, never fatal: a sweep failure must not fail a run
+// whose own subject is intact.
+func sweepStaleNonceOnlyPools(t *testing.T, gatewayURL, keep string) {
+	t.Helper()
+	status, body, err := adminPoolRequest(http.MethodGet, gatewayURL+"/v1/admin/pools", "")
+	if err != nil || status != http.StatusOK {
+		t.Logf("sweep: could not list pools to reclaim earlier runs (status %d): %v", status, err)
+		return
+	}
+	// Names are extracted with a pattern rather than by decoding the listing,
+	// so the sweep does not depend on the admin listing's envelope shape. The
+	// pattern is anchored on this test's own prefix and the fixed-width suffix
+	// uniqueNonceOnlyName writes, so it cannot match a pool another suite owns.
+	re := regexp.MustCompile(regexp.QuoteMeta(nonceOnlyPoolPrefix) + `-[0-9a-f]{8}`)
+	seen := map[string]bool{}
+	for _, name := range re.FindAllString(body, -1) {
+		if name == keep || seen[name] {
+			continue
+		}
+		seen[name] = true
+		t.Logf("sweep: deleting nonce-only pool %s left by an earlier run", name)
+		deleteNonceOnlyPool(t, gatewayURL, name)
+	}
+}
+
+// sweepStaleNonceOnlyRuntimes deletes the Runtime CRs earlier runs left behind,
+// for the same reason and with the same best-effort discipline as
+// sweepStaleNonceOnlyPools. The CRs are cluster-scoped and carry the
+// lenny.dev/test: chaos-nonce-only label the fixture stamps, so one labelled
+// delete reclaims every leaked one; this run's own Runtime is excluded because
+// it is registered immediately after.
+func sweepStaleNonceOnlyRuntimes(t *testing.T, c *kind.Cluster, keep string) {
+	t.Helper()
+	out, err := c.KubectlOut(t, "get", "runtimes",
+		"-l", "lenny.dev/test=chaos-nonce-only",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+	if err != nil {
+		t.Logf("sweep: could not list nonce-only Runtime CRs: %v\n%s", err, out)
+		return
+	}
+	for _, name := range strings.Fields(out) {
+		if name == keep {
+			continue
+		}
+		t.Logf("sweep: deleting nonce-only Runtime %s left by an earlier run", name)
+		if o, err := c.KubectlOut(t, "delete", "runtime", name, "--wait=false"); err != nil {
+			t.Logf("sweep: deleting Runtime %s did not complete: %v\n%s", name, err, o)
+		}
 	}
 }
 
