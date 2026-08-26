@@ -12,7 +12,9 @@ import (
 )
 
 // spec: §9.1/§4.7 — the §4.7 reconciler renders the platform MCP flags
-// (--mcp-socket, --gateway-grpc-addr) onto the embedded-model runtime
+// (--mcp-socket, --gateway-grpc-addr) and the §4.4/§13.2
+// checkpoint-probe flags (--workspace-size-limit-bytes,
+// --objectstore-ca-bundle) onto the embedded-model runtime
 // container, the same flags the sidecar adapter accepts. The embedded
 // main must define them; the default flag.ExitOnError parser exits 2 on
 // an unknown flag, which would crash-loop every §4.7 embedded pool. This
@@ -30,6 +32,8 @@ func TestEmbeddedMainAcceptsPlatformMCPFlags_spec_9_1(t *testing.T) {
 		"--addr=:-1", // invalid port: net.Listen fails fast, log.Fatalf exits 1.
 		"--mcp-socket=@lenny-platform-mcp",
 		"--gateway-grpc-addr=lenny-gateway.lenny-system.svc:50051",
+		"--workspace-size-limit-bytes=1073741824",
+		"--objectstore-ca-bundle=/etc/lenny/objectstore-ca/ca.crt",
 		"--credentials-dir="+t.TempDir(),
 		"--workspace-base="+t.TempDir(),
 		"--staging-dir="+filepath.Join(t.TempDir(), "staging"),

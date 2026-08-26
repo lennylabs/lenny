@@ -78,6 +78,15 @@ func main() {
 		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent runtime; empty disables it")
 	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
 		"§9.1/§8.6 gateway GatewayControl address the embedded runtime dials to forward platform tool calls; empty serves an empty catalog")
+	// spec: §4.4/§13.2 — the reconciler renders the checkpoint-probe flags
+	// onto the pod's gateway-facing container, which in the embedded model
+	// is the runtime. They are accepted and ignored: this fixture never
+	// checkpoints, so it needs no size probe and dials no object store.
+	// Without them flag.Parse exits 2 and the pool crash-loops.
+	_ = flag.Int64("workspace-size-limit-bytes", 0,
+		"§4.4 per-pod workspace-size limit for the pre-checkpoint size probe; accepted and ignored by this fixture")
+	_ = flag.String("objectstore-ca-bundle", "",
+		"§13.2 mounted object-store CA trust bundle; accepted and ignored by this fixture")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)

@@ -1916,6 +1916,14 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
 
 ---
 
+### - [ ] F-4.7.23 — The embedded-model reference runtimes carry a hand-kept copy of the flags the reconciler injects, and it drifts [Medium]
+
+- **Spec:** §4.7.10 makes the runtime container the pod's gateway-facing process under the embedded deployment model, so the reconciler renders onto it the flags the adapter container receives under the sidecar model. `checkpointProbeArgs` (`pkg/controller/sandbox/podspec/podspec.go`) renders `--workspace-size-limit-bytes` (§4.4) and `--objectstore-ca-bundle` (§13.2) onto that container, and `injectObjectStoreCAVolume`'s doc comment states the rule: the mount target is "the adapter in the sidecar model, the runtime in the embedded model".
+- **Evidence:** `cmd/runtimes/echo-embedded` and `cmd/runtimes/preconnect-echo` parse with the default `flag.ExitOnError` set, so an injected flag they do not declare exits the process with status 2 before it serves. Each already carries a block declaring the §9.1 platform-MCP flags for exactly this reason, added when the same class of failure surfaced as F-9.1.1. Neither declared the checkpoint-probe flags. Once a `lenny-objectstore-ca` ConfigMap exists in the agent namespace, `ObjectStoreCAConfigMap` is non-empty and the reconciler renders `--objectstore-ca-bundle` onto both fixtures, which crash-loop. On the long-lived e2e cluster this produced 425 terminal pods across `echo-pool-embedded` and `preconnect-echo-pool`, recreated at roughly one every two seconds, while both pools still reported their warm member Ready.
+- **Gap:** The guard against this class is a literal list of flags repeated in two fixture test files (`TestEmbeddedMainAcceptsPlatformMCPFlags_spec_9_1` and its preconnect counterpart). Nothing ties that list to `podspec`, so every flag the renderer gains onto the embedded runtime container silently breaks both fixtures until someone reads a pod log. This is the second occurrence.
+- **Suggested resolution:** Drive the assertion from the renderer rather than from a list: build an embedded-model pod spec through `podspec.Build` with every optional feature enabled, take the rendered args of the runtime container, and pass them to the fixture binary, so a newly injected flag fails the fixture test at tier 1 instead of a pool at tier 5. The declarations added here close the immediate breakage and are the fallback if a renderer-driven test proves too coupled to `Inputs`.
+- **Provenance:** Surfaced during the environment preflight before a proposal 0073 build run. The immediate breakage is fixed; this finding records the drift risk the fix does not remove.
+
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
 ### Summary
 
