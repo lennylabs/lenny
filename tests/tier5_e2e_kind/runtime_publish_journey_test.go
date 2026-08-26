@@ -219,9 +219,12 @@ spec:
 		t.Fatalf("lenny-ctl admin pools create: %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
-		_, _ = runCLI(t, lennyCtl, repo,
-			"--api-url", d.BaseURL(), "--dev-tenant", "platform", "--dev-roles", "platform-admin",
-			"admin", "pools", "delete", poolName)
+		// A pool that survives its delete keeps a Ready member pod
+		// carrying lenny.dev/managed=true, which every later tier-5 case
+		// that waits on that label then has to reconcile against a
+		// Runtime this run removed. Report what the delete did rather
+		// than discarding it.
+		newJourneyPoolReclaim(t, c, lennyCtl, repo, d.BaseURL()).reclaim(poolName)
 	})
 
 	// The tenant row must exist before granting it runtime access (the
@@ -567,10 +570,10 @@ func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, ap
 			continue
 		}
 		runtimeName := strings.TrimSuffix(pool, "-pool")
-		if cliOut, err := runCLI(t, lennyCtl, repo,
-			"--api-url", apiURL, "--dev-tenant", "platform", "--dev-roles", "platform-admin",
-			"admin", "pools", "delete", pool); err != nil {
-			t.Logf("sweep: delete stale pool %s: %v\n%s (continuing)", pool, err, cliOut)
+		// The pool is swept whether or not its Runtime is still there: a
+		// half-completed cleanup leaves the pool alive with the Runtime
+		// already gone, and that is the residue this sweep exists for.
+		if !newJourneyPoolReclaim(t, c, lennyCtl, repo, apiURL).reclaim(pool) {
 			continue
 		}
 		if kOut, err := c.KubectlOut(t, "delete", "runtime", runtimeName, "--ignore-not-found"); err != nil {
@@ -578,4 +581,93 @@ func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, ap
 		}
 		t.Logf("sweep: reclaimed stale pool %s and Runtime %s from an earlier run", pool, runtimeName)
 	}
+}
+
+// journeyPoolReclaim deletes one warm pool through the admin surface the
+// test creates it with and confirms the reconciled SandboxWarmPool
+// object left the cluster. A pool row is authoritative in Postgres, so
+// deleting the CRD alone would let the pool controller rebuild it, and a
+// delete whose failure is discarded leaves a Ready member pod behind
+// that later cases mistake for live workload. Its dependencies are
+// injected so the reporting path is exercised without a cluster.
+//
+// spec: §4.6
+type journeyPoolReclaim struct {
+	deletePool  func(pool string) (string, error)
+	poolPresent func(pool string) (bool, error)
+	// removeObjects deletes the reconciled SandboxWarmPool and
+	// SandboxTemplate pair directly. It runs only once the admin delete
+	// has removed the authoritative Postgres row, so the pool controller
+	// has nothing left to rebuild the pair from.
+	removeObjects func(pool string) (string, error)
+	logf          func(format string, args ...any)
+	sleep         func(d time.Duration)
+	attempts      int
+	interval      time.Duration
+}
+
+// newJourneyPoolReclaim binds a reclaimer to the live cluster and the
+// admin API the test drives.
+func newJourneyPoolReclaim(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL string) journeyPoolReclaim {
+	t.Helper()
+	return journeyPoolReclaim{
+		deletePool: func(pool string) (string, error) {
+			return runCLI(t, lennyCtl, repo,
+				"--api-url", apiURL, "--dev-tenant", "platform", "--dev-roles", "platform-admin",
+				"admin", "pools", "delete", pool)
+		},
+		poolPresent: func(pool string) (bool, error) {
+			out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxwarmpool", pool,
+				"--ignore-not-found", "-o", "name")
+			if err != nil {
+				return false, fmt.Errorf("read SandboxWarmPool %s back: %w", pool, err)
+			}
+			return strings.TrimSpace(out) != "", nil
+		},
+		removeObjects: func(pool string) (string, error) {
+			out, err := c.KubectlOut(t, "-n", "lenny-agents", "delete",
+				"sandboxwarmpool,sandboxtemplate", pool, "--ignore-not-found", "--timeout=60s")
+			if err != nil {
+				return out, fmt.Errorf("delete the reconciled objects of pool %s: %w", pool, err)
+			}
+			return out, nil
+		},
+		logf:     t.Logf,
+		sleep:    time.Sleep,
+		attempts: 12,
+		interval: 5 * time.Second,
+	}
+}
+
+// reclaim deletes the pool and reports whether the cluster is rid of it.
+// Every outcome that leaves the pool behind is logged, so a failed
+// delete is visible in the run that caused it.
+func (r journeyPoolReclaim) reclaim(pool string) bool {
+	out, err := r.deletePool(pool)
+	if err != nil {
+		r.logf("pool %s: admin delete failed: %v\n%s (the pool is left on the cluster)", pool, err, out)
+		return false
+	}
+	for attempt := 0; attempt < r.attempts; attempt++ {
+		present, err := r.poolPresent(pool)
+		if err != nil {
+			r.logf("pool %s: %v (cannot confirm the pool left the cluster)", pool, err)
+			return false
+		}
+		if !present {
+			return true
+		}
+		r.sleep(r.interval)
+	}
+	// The admin delete removed the pool row, so the reconciled pair is
+	// residue no controller will rebuild. Its member pod carries
+	// lenny.dev/managed=true, which later cases read as live workload, so
+	// the pair is removed here rather than left for a later run.
+	r.logf("pool %s: the SandboxWarmPool object is still present after the admin delete; "+
+		"removing the reconciled objects directly", pool)
+	if out, err := r.removeObjects(pool); err != nil {
+		r.logf("pool %s: %v\n%s (the pool is left on the cluster)", pool, err, out)
+		return false
+	}
+	return true
 }

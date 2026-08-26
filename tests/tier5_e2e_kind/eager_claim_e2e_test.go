@@ -201,7 +201,11 @@ func TestEagerClaimPoolExhaustionAtCreate(t *testing.T) {
 	idlePods := idlePodsInPool(t, c, pods, eagerFinitePool)
 	idle := len(idlePods)
 	if idle == 0 {
-		t.Skip("no idle agent pods in " + eagerFinitePool + " to exhaust")
+		// The pool name is spelled as a literal so the reason is fixed at
+		// parse time, which the TESTING.md §17.9 skip-reason classifier
+		// requires of every skip reason it reads.
+		t.Skip("blocked: no idle agent pods in echo-pool-embedded to exhaust; " +
+			"the route back is a run whose warm members of that pool are not already claimed")
 	}
 	before := claimCount(t, c)
 	var created []string

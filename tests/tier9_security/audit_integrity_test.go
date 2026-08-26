@@ -308,6 +308,11 @@ func requireTenantAuditSequenceProvisioned(
 	t *testing.T, c *kind.Cluster, probe, gatewayIP, pgIP, tenant, bootstrapBody string,
 ) {
 	t.Helper()
+	if auditSequenceProbeBlocked(pgIP) {
+		t.Skip("blocked: could not resolve the lenny-postgres pod IP, so the per-tenant audit " +
+			"sequence cannot be probed; the route back is a cluster whose lenny-postgres pod " +
+			"reports a pod IP")
+	}
 	res := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/bootstrap",
 		gwRole{tenant: tenant, roles: "platform-admin", user: "alice"}, bootstrapBody)
 	if res.curlExit != 0 || (res.statusCode != 200 && res.statusCode != 207) {
@@ -324,4 +329,17 @@ func requireTenantAuditSequenceProvisioned(
 			"§15.1 tenant-create sequence provisioning; the route back is a deployment that supplies "+
 			"the billing/audit DDL DSN", seq, tenant)
 	}
+}
+
+// auditSequenceProbeBlocked reports whether the per-tenant audit
+// sequence can be probed at all, given the store address the caller
+// resolved. The probe reads the sequence out of Postgres directly, so an
+// address the caller could not resolve is an environment gap rather than
+// a chain defect: querying with an empty host fails the case for a
+// reason that has nothing to do with the behavior under test, so the
+// caller states the precondition and skips instead.
+//
+// spec: §11.7, §15.1
+func auditSequenceProbeBlocked(pgIP string) bool {
+	return strings.TrimSpace(pgIP) == ""
 }

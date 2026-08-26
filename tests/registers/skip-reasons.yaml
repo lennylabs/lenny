@@ -1054,11 +1054,6 @@ sites:
       call: Skip
       reason: 'precondition not met: the lenny-ops-sa ServiceAccount cannot get/list/watch/patch cert-manager.io Certificates or delete Secrets in lenny-system yet; the §25.6 certManagerExpiring auto-remediation needs this RBAC grant (charts/lenny/templates/ops-rbac.yaml) deployed to this cluster (a `helm upgrade`) before the live-cluster fix path is reachable'
     - path: tests/tier5_e2e_kind/eager_claim_e2e_test.go
-      function: TestEagerClaimPoolExhaustionAtCreate
-      site: 1
-      call: Skip
-      reason: no warm agent pods to exhaust
-    - path: tests/tier5_e2e_kind/eager_claim_e2e_test.go
       function: TestEagerClaimTerminateReadySessionReleasesPodAndLease
       site: 1
       call: Skip
