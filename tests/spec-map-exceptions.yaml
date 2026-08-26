@@ -355,6 +355,11 @@ exceptions:
     justification: The interactive message-send trace. Message-plane durability and the cross-replica input wait are the legs the trace turns on and they are unimplemented.
     blocker: R20
     opened_at: 2026-08-15
+  - section: "29.4"
+    reason: pending-implementation
+    justification: The interrupt, terminate, and delete trace. The session terminate route never reaches the pod today; the coordinator gate on the session REST surface is the step that makes the trace assertable.
+    blocker: R10
+    opened_at: 2026-08-15
   - section: "29.5"
     reason: pending-implementation
     justification: The checkpoint-capture trace. The barrier acknowledgement and the hold state the trace passes through land with the adapter-to-gateway control direction.
@@ -379,4 +384,9 @@ exceptions:
     reason: pending-implementation
     justification: The agent-pod eviction trace. The adapter emits no eviction event and the preStop hook drives no checkpoint today; both land with the holder eviction path.
     blocker: R16
+    opened_at: 2026-08-15
+  - section: "29.10"
+    reason: pending-implementation
+    justification: The structural analysis of the concurrent-session pod. What a pod partitions per slot and what it shares is assertable once the concurrent-slot harness exists.
+    blocker: R7
     opened_at: 2026-08-15
