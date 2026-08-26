@@ -162,7 +162,8 @@
         "tests/tier3_contract/sdks/go_client_test.go::TestGoClientMessageBodyOmitsSlotAddress",
         "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientMessageBodyOmitsSlotAddress",
         "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientMessageBodyOmitsSlotAddress",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise",
+        "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -426,7 +427,9 @@
         "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestFallbackDoubleClaimFencedByDeterministicName",
         "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces",
-        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteCrossRefsResolve"
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteCrossRefsResolve",
+        "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+        "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -556,7 +559,17 @@
         "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces",
         "tests/tier7a_load_local/sole_session_concurrent_release_test.go",
         "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
-        "tests/tier10_conformance/credential_path_resolution_conformance_test.go"
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
+        "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
+        "tests/tier11_docs/adapter_manifest_rewrite_trigger_doc_test.go",
+        "tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
+        "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
+        "tests/tier11_docs/credential_path_literal_sweep_test.go",
+        "tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
+        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
+        "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
+        "tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -657,7 +670,8 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/adapter/manifest_test.go",
-        "pkg/adapter/warmlayout_test.go"
+        "pkg/adapter/warmlayout_test.go",
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -950,7 +964,23 @@
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1",
         "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise",
+        "pkg/adapter/podmcp_arming_internal_test.go",
+        "pkg/gateway/checkpoint/checkpointer/checkpointstart_test.go",
+        "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+        "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
+        "pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
+        "tests/tier0_static/slot_absence_claim_comment_test.go",
+        "tests/tier0_static/slot_assignment_attribution_test.go",
+        "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
+        "tests/tier11_docs/checkpoint_scoping_key_test.go",
+        "tests/tier11_docs/session_policy_table_mirror_reconciliation_test.go",
+        "tests/tier11_docs/session_scoped_frame_example_address_doc_reconciliation_test.go",
+        "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
+        "tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go",
+        "tests/tier11_docs/slot_definition_glossary_reconciliation_test.go",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointSourcesCiteNoCredentialLeasingSection",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCredentialLeasingCitationExtractorReadsTheAnnotationOnly"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1011,7 +1041,11 @@
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestConfidentialContainersIsolation",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
-        "tests/tier10_conformance/credential_path_resolution_conformance_test.go"
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
+        "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
+        "tests/tier11_docs/credential_path_literal_sweep_test.go",
+        "tests/tier11_docs/pod_filesystem_layout_doc_reconciliation_test.go",
+        "tests/tier11_docs/workspace_path_literal_sweep_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1037,7 +1071,8 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
-        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go"
+        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
+        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1069,7 +1104,16 @@
         "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
         "tests/tier7a_load_local/racestart_testsupport_test.go",
         "tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
-        "tests/tier2_component/warmlayout/warm_layout_test.go"
+        "tests/tier2_component/warmlayout/warm_layout_test.go",
+        "pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
+        "tests/tier0_static/slot_assignment_attribution_test.go",
+        "tests/tier11_docs/adapter_manifest_rewrite_trigger_doc_test.go",
+        "tests/tier11_docs/pod_filesystem_layout_doc_reconciliation_test.go",
+        "tests/tier11_docs/retirement_sweep_surfaces_test.go",
+        "tests/tier11_docs/session_policy_table_mirror_reconciliation_test.go",
+        "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
+        "tests/tier11_docs/workspace_path_literal_sweep_test.go",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
       ],
       "packages": [
         "pkg/workspace"
@@ -1124,7 +1168,9 @@
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise",
+        "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+        "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -1148,7 +1194,8 @@
         "tests/tier3_contract/sdks/go_client_test.go::TestGoClientMessageBodyOmitsSlotAddress",
         "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientMessageBodyOmitsSlotAddress",
         "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientMessageBodyOmitsSlotAddress",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise",
+        "tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1163,7 +1210,11 @@
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace",
         "tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
-        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3"
+        "pkg/gateway/sessionserver/slotretry_test.go::TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3",
+        "pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
+        "pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
+        "tests/tier11_docs/session_scoped_frame_example_address_doc_reconciliation_test.go",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
       ],
       "packages": [
         "pkg/session/resume",
@@ -1581,7 +1632,21 @@
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "tests/tier9_security/adapter_hold_termination_surface_test.go",
         "tests/tier7a_load_local/sole_session_concurrent_release_test.go",
-        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go"
+        "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
+        "tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
+        "tests/tier0_static/checkpoint_scoping_key_comment_test.go",
+        "tests/tier11_docs/checkpoint_scoping_key_test.go",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDroppedColumnExceptionDrainsOnItsRecordedConditions",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDroppedColumnExceptionRecordResolves",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDroppedColumnSuppressionIsTableScoped",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestMigrationDropMatcherIsTableScopedAndAdmitsIfExists",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDropMigrationResolutionReadsTheMigrationTree",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointSlotDropCitesTheOwningSpecSections",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointSourcesCiteNoCredentialLeasingSection",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCredentialLeasingCitationExtractorReadsTheAnnotationOnly",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointSourcesFileNoPersistenceClaimUnderPostgresHA",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestPostgresHACitationGateReadsTheGlossOnly"
       ],
       "packages": [
         "pkg/gateway"
@@ -1700,7 +1765,8 @@
         "tests/tier7a_load_local/checkpoint_grant_window_test.go",
         "tests/tier3_contract/checkpoint_stream/...",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0178",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree",
+        "pkg/gateway/checkpoint/checkpointer/checkpointstart_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -1856,7 +1922,8 @@
         "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromExpanding",
         "tests/tier4_integration/pool_upgrade_journey_test.go::TestPoolUpgradeJourney_RollbackFromDrainingRequiresRestoreOldPool",
         "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_ExpandGateContract",
-        "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart"
+        "tests/tier4_integration/schema_migration_journey_test.go::TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
       ],
       "packages": [
         "pkg/runtime/upgrade/state"
@@ -2046,7 +2113,8 @@
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecReportUsageDirectionIsGatewayPull_F15_3_7",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecPodReportedCumulativeCitesRuntimeOpsChannel_F11_2_20",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecAnomalyMetricNotLabeledBySessionID_F11_2_20",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
       ],
       "packages": [
         "pkg/quota",
@@ -2272,7 +2340,8 @@
         "tests/tier2_component/migrations/migrations_test.go::TestPostgresMeetsMinimumVersion",
         "tests/tier2_component/rls/...",
         "tests/tier7b_load_kind/postgres_test.go::TestPostgresWriteBaseline",
-        "tests/tier2_component/stores/storerouter_routing_test.go"
+        "tests/tier2_component/stores/storerouter_routing_test.go",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -2297,7 +2366,9 @@
         "tests/tier8_chaos/redis_ha_failover_kind_test.go::TestRedisHAFailoverKind",
         "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock",
         "tests/tier8_chaos/slot_counter_redis_outage_test.go::TestSlotCounterSurvivesRedisOutageAndRecovers",
-        "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go"
+        "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go",
+        "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec"
       ],
       "packages": [
         "pkg/store/lease",
@@ -2319,7 +2390,17 @@
         "tests/tier2_component/preflight/minio_sse_test.go",
         "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestBackstopSweepPredicateReadsIdenticallyAcrossSpec12",
-        "tests/tier2_component/stores/checkpointretention_test.go"
+        "tests/tier2_component/stores/checkpointretention_test.go",
+        "tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
+        "tests/tier0_static/checkpoint_scoping_key_comment_test.go",
+        "tests/tier11_docs/checkpoint_scoping_key_test.go",
+        "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDroppedColumnExceptionDrainsOnItsRecordedConditions",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDroppedColumnExceptionRecordResolves",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestDroppedColumnSuppressionIsTableScoped",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointSlotDropCitesTheOwningSpecSections",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointSourcesFileNoPersistenceClaimUnderPostgresHA",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestPostgresHACitationGateReadsTheGlossOnly"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -2507,7 +2588,9 @@
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointDocsMirrorsAgreeWithSpec131",
         "tests/tier9_security/adapter_hold_termination_surface_test.go",
         "tests/tier9_security/adapter_shared_mcp_surface_test.go",
-        "tests/tier9_security/session_teardown_surface_test.go"
+        "tests/tier9_security/session_teardown_surface_test.go",
+        "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
+        "tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -3068,7 +3151,8 @@
         "tests/tier9_security/tracing_context_session_isolation_test.go",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSessionDispatchConformance",
-        "tests/tier7a_load_local/shutdown_drain_gate_race_test.go"
+        "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
+        "tests/tier11_docs/frame_identifier_schema_reconciliation_test.go"
       ],
       "packages": [
         "cmd/runtimes/echo",
@@ -3098,7 +3182,11 @@
         "cmd/lenny-compliance/sessionecho_test.go::TestResponseEchoesSessionIDRejects_spec_28_5_3",
         "tests/tier10_conformance/scaffold_battery_test.go::TestScaffoldedBinaryMinimalPassesTheBasicBattery_spec_24_18",
         "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
-        "tests/tier9_security/session_teardown_surface_test.go"
+        "tests/tier9_security/session_teardown_surface_test.go",
+        "pkg/adapter/podmcp_arming_internal_test.go",
+        "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
+        "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
@@ -3130,7 +3218,9 @@
     "15.5": {
       "title": "API Versioning and Stability",
       "spec_file": "spec/15_external-api-surface.md",
-      "tests": [],
+      "tests": [
+        "pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go"
+      ],
       "packages": [
         "pkg/api/version"
       ],
@@ -3250,7 +3340,9 @@
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts",
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing",
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent",
-        "tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go::TestMetricsReferenceCarriesCRDSSAConflictCounter"
+        "tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go::TestMetricsReferenceCarriesCRDSSAConflictCounter",
+        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
+        "tests/tier11_docs/runtime_page_metric_names_resolve_test.go"
       ],
       "packages": [
         "pkg/observability/metrics",
@@ -3346,7 +3438,8 @@
         "pkg/tokenservice/promemit/promemit_test.go::TestEmitterRegistersAndServesCatalog",
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertFires_SEC_TS_1",
         "tests/tier9_security/token_revocation_propagation_alert_test.go::TestTokenRevocationPropagationLagAlertQuietWhenFast_SEC_TS_1",
-        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestTokenUsageAnomalyResolvesToRunbook_spec_16_5"
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestTokenUsageAnomalyResolvesToRunbook_spec_16_5",
+        "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go"
       ],
       "packages": [
         "pkg/alerting/rules",
@@ -4980,7 +5073,13 @@
         "tests/tier3_contract/adapter_observedlevel/intrapod_pointer_wire_test.go",
         "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go",
         "tests/tier10_conformance/scaffolds_test.go::TestBasicAdapterProtocol",
-        "tests/tier11_docs/frame_address_spec_citation_test.go::TestFrameAddressingCitesTheIntraPodSection"
+        "tests/tier11_docs/frame_address_spec_citation_test.go::TestFrameAddressingCitesTheIntraPodSection",
+        "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
+        "tests/tier11_docs/frame_identifier_schema_reconciliation_test.go",
+        "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
+        "tests/tier11_docs/runtime_page_metric_names_resolve_test.go",
+        "tests/tier11_docs/session_scoped_frame_example_address_doc_reconciliation_test.go",
+        "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go"
       ],
       "packages": [
         "pkg/adapter",
