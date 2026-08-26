@@ -47,33 +47,21 @@ The code sides with §4.4: `ConsistencyForLevel` (`pkg/checkpoint/checkpoint.go:
 code contradicts, and a runtime author reading it will neither implement nor expect snapshotting that the
 gateway performs.
 
-### 1.3 A restore that lands where nothing reads it
+### 1.3 Dropped: a restore that lands where nothing reads it
 
-`spec/10_gateway-internals.md:171` states the reassembly pipeline writes into `/workspace/current.partial`
-and renames atomically onto `/workspace/current`. The same paragraph selects the manifest by
-`(session_id, slot_id)`, where `:157` defines `slot_id` as carried "when the pool sets
-`sessionPolicy.maxConcurrentSessions > 1`". So §10.1.7 restores a slot-scoped manifest into a pod-global
-directory, against `spec/06_warm-pod-model.md:392`: "The runtime MUST NOT assume a global
-`/workspace/current` path when `maxConcurrentSessions > 1`."
+Superseded by proposal 0073 and dropped from this proposal. This section recorded that §10.1.7's
+reassembly pipeline restored a slot-scoped manifest into a pod-global `/workspace/current`, which the
+adapter's `checkpointRoots()` also returned on every restore, so a slot's checkpoint extracted into a
+directory no slot's runtime reads and the resumed agent saw an empty workspace under a `resumeMode` that
+reported a full restore.
 
-The defect has propagated: `spec/29_communication-scenarios.md:1094-1095` mirrors the unqualified wording,
-while the capture leg of the same document qualifies correctly at `:834-835`. Other sections qualify the
-path properly, so this is specific rather than a repo-wide omission
-(`spec/15_external-api-surface.md:2267`).
-
-It is reachable rather than latent, and it fails silently. Capture is slot-scoped:
-`pkg/adapter/checkpoint.go:100` resolves `checkpointRootsForSlot`, which swaps in
-`/workspace/slots/{slotId}/current` (`pkg/adapter/slot.go:147`). Restore is not:
-`pkg/adapter/resume.go:179` calls `ExtractTree(s.checkpointRoots(), pr)`, and `checkpointRoots()`
-(`pkg/adapter/checkpoint.go:28`) always returns `/workspace/current`. A slot's checkpoint therefore
-extracts into a directory no slot's runtime reads, no error is returned, and the resumed agent sees an
-empty workspace while `resumeMode` reports a normal full restore. On a `maxConcurrentSessions > 1` pool, a
-pod loss loses every slot's workspace.
-
-Two further deltas against the same paragraph: the `/workspace/current.partial` staging directory and the
-atomic rename do not exist. `ExtractTree` (`pkg/adapter/workspace/tree.go:145-170`) writes members
-straight into the named roots, so a mid-stream failure leaves partially-extracted files visible, which
-step (4) forbids in terms.
+Proposal 0073 removes the condition the defect rested on. Every session is bound to a slot on every pod
+whatever the pool's concurrency, the per-slot tree is the only layout, and `/workspace/current` is retired
+rather than kept as a second name for the slot root. Its SPEC-3 collapses the two filesystem layouts in
+the specification and its CODE-2 re-points restore, `ExportPaths`, and the gateway's workspace-root
+derivation onto the root the session's own identifier resolves, so there is no qualified-versus-unqualified
+wording left for this proposal to correct. The staging directory and the atomic rename that §10.1.7 states
+and `ExtractTree` does not perform are a separate divergence, and §6 keeps them out of scope here.
 
 ### 1.4 A headroom argument measured against the wrong pod
 
@@ -165,30 +153,29 @@ handshake there is `NegotiateVersion` (`:210`) and the adapter-to-gateway stream
 (`:227`). The prose predates the current contract, and because it names no identifier a reader cannot
 search the channel register for what it means.
 
-### 1.11 A register row that contradicts its neighbour
+### 1.11 Dropped: a register row that contradicts its neighbour
 
-`tests/claim-map.json` carries `"Checkpoint restore onto a concurrent pod"` as `ABSENT` with surface
-"no `slot_id` on `ResumeRequest`", and `"ResumeRequest.slot_id"` as `UNWIRED` with surface
-`schemas/lenny-adapter.proto`. §28.4 defines `UNWIRED` as implemented with no production caller and
-`ABSENT` as specified and not implemented. The field is on no message in that file
-(`ResumeRequest` carries fields 1 through 13 and no `slot_id`), so the row's status is wrong and it
-contradicts the row above it.
+Superseded by proposal 0073 and dropped from this proposal. This section recorded that
+`tests/claim-map.json` carried `"ResumeRequest.slot_id"` as `UNWIRED` while its neighbour
+`"Checkpoint restore onto a concurrent pod"` carried `ABSENT`, and that §28.4 defines `UNWIRED` as
+implemented with no production caller, which a field the proto does not declare cannot be.
 
-The row was seeded by this branch. Its status was inferred from the deferral step's scope note, which says
-the proto fields land in an earlier step, rather than read off the tree. A validator that trusts `UNWIRED`
-to mean the field exists reads the register wrong.
+The correction this section staged has no subject left. Proposal 0073 removes the duplicate `slot_id`
+fields from both gRPC services, and its REG-1 retires the rows those fields name along with them, so the
+row is deleted rather than restatused. Neither proposal makes the status correction, and 0073's own
+record says so.
 
 ## 2. Decisions
 
 1. **The specification is corrected to what the code does, except where the code is the defect.** §1.2,
-   §1.4, §1.5, §1.6 and §1.7 are spec-side corrections. §1.8 and §1.9 are code-side. §1.3 is both, and §3
-   splits it.
+   §1.4, §1.5, §1.6 and §1.7 are spec-side corrections. §1.8 and §1.9 are code-side.
 
-2. **§1.3's code half is deferred, and its spec half is not.** Slot-aware restore is already owned:
-   `TEST-GAPS.md:692` carries T-4.4.21 OPEN, `PROPOSAL-QUEUE.md:570-576` files cluster C-53, and
-   `tests/claim-map.json` carries an `ABSENT` row deferred to R22. Neither C-53 nor R22 covers the
-   *specification text*, which states a pod-global extraction root today and will still state it when the
-   code lands. The text is corrected here so the two halves cannot diverge further.
+2. **§1.3 is dropped rather than staged.** When this proposal was written, slot-aware restore was owned as
+   a point fix by cluster C-53 and finding T-4.4.21, neither of which covered the specification text, so
+   the text was corrected here to keep the two halves from diverging further. Proposal 0073 took both
+   halves: it retires the pod-global path from the specification and from every pod, and it re-points the
+   restore, the export, and the workspace-root derivation onto the session's own slot tree. Nothing this
+   proposal would have staged survives that, so §1.3 and its SPEC-3 are dropped.
 
 3. **§1.8 is fixed by making the declaration true rather than by changing the bytes.** The archive format
    is gzip on both legs and has always been; only the declared value is wrong. Changing `ArchiveTree` would
@@ -203,9 +190,9 @@ to mean the field exists reads the register wrong.
    not carry, and correcting them requires knowing what the handshake is now, which §3 stages against
    `NegotiateVersion` rather than guessing at a channel identifier.
 
-6. **The register row is corrected to `ABSENT` and the seeding script's inference is removed.** A status
-   read off a plan's scope note rather than off the tree is the defect, and the script that produced it
-   would reproduce it.
+6. **The register row is dropped rather than corrected.** Proposal 0073 removes the field the row names
+   from both gRPC services and retires the row with it, so there is no status left to correct and no
+   seeded row for the script's inference to reproduce. §1.11 and its REG-1 are dropped.
 
 7. **One flag is recorded as fixed and not restaged.** The retry-budget classes now cover the drain-driver
    checkpoint: proposal 0037 (`a474c89f`) collapsed both drain finalisations onto the `eviction` trigger,
@@ -231,17 +218,11 @@ states the limitation accurately, which is the absence of a *consistent* checkpo
 checkpoint. The Credential-rotation row's conditional "If checkpoint unsupported" is removed, being dead
 under §4.4.
 
-### SPEC-3. Qualify the restore extraction root (§1.3, spec half)
+### SPEC-3. Dropped (§1.3)
 
-`spec/10_gateway-internals.md:171` states the extraction root as `/workspace/current` on a pod serving one
-session and `/workspace/slots/{slotId}/current/` on a pod whose pool sets
-`sessionPolicy.maxConcurrentSessions > 1`, with the staging directory and atomic rename stated per root.
-`spec/29_communication-scenarios.md:1094-1095` takes the same qualification, matching the capture leg at
-`:834-835`.
-
-The paragraph also gains a sentence recording that the slot-aware restore path is not implemented, naming
-the claim-register row that tracks it, so a reader of §10.1.7 is not left to infer that the qualified text
-describes shipped behaviour.
+Superseded by proposal 0073's SPEC-3 and CODE-2, which collapse the two filesystem layouts into the
+per-slot tree and resolve every restore root from the session identifier. This proposal stages no edit to
+`spec/10_gateway-internals.md` or to the §10.1.7 restatement in `spec/29_communication-scenarios.md`.
 
 ### SPEC-4. Measure the eviction budget against the agent pod (§1.4)
 
@@ -300,17 +281,16 @@ the contract carries — the `NegotiateVersion` RPC (`schemas/lenny-adapter.prot
 contract never carried, the correct edit is deletion rather than repair, and §5 records that as the open
 question.
 
-### REG-1. Correct the claim-register row and the script that seeded it (§1.11)
+### REG-1. Dropped (§1.11)
 
-`tests/claim-map.json`'s `"ResumeRequest.slot_id"` row becomes `ABSENT`, matching its neighbour and the
-tree. `scripts/seed-claim-register.py` stops inferring a status from a deferral step's scope note: a row
-for a field is `ABSENT` unless the field is present in the tree at seeding time.
+Superseded by proposal 0073's REG-1, which retires the register rows the removed `slot_id` fields name
+rather than restatusing them. This proposal stages no edit to `tests/claim-map.json` or to
+`scripts/seed-claim-register.py`.
 
 ## 4. Testing
 
 **Tier 0.** The naming lint over the live tree, green after CODE-3 and SPEC-8 together, with a fixture case
-pinning that "control stream" is now reported. The claim-register validator, unchanged, over the corrected
-row.
+pinning that "control stream" is now reported.
 
 **Tier 1, `pkg/gateway/checkpoint/checkpointer`.** `Run` schedules a session's first checkpoint within
 `[interval, interval × 1.2]` and two sessions registered in the same tick do not share a first-checkpoint
@@ -335,13 +315,10 @@ general form of §1.7 and would have caught it.
 - **§1.4's arithmetic.** Correcting the citation shows the agent pod's 120s default is exactly consumed by
   the §10.1 floor at one slot, leaving no headroom for the 30-second retry budget. Whether the remedy is a
   larger default, a smaller budget, or an accepted overrun is a decision this proposal does not make.
-- **§1.3's silence.** A slot-scoped restore currently extracts into an unread directory and returns no
-  error. Whether the interim behaviour should fail loudly rather than silently, before C-53 lands the real
-  path, is worth deciding now.
 
 ## 6. Out of scope
 
-Slot-aware restore itself (C-53, R22, T-4.4.21). The missing `.partial` staging directory and atomic
+Slot-aware restore itself, which proposal 0073 builds. The missing `.partial` staging directory and atomic
 rename on the extract path, which are a second §10.1.7-versus-code divergence and belong with the restore
 work. Any change to `Merge`'s no-overwrite rule or the retry budgets' values.
 
@@ -349,14 +326,12 @@ work. Any change to `Merge`'s no-overwrite rule or the retry budgets' values.
 
 - `spec/04_system-components.md` — SPEC-1, SPEC-4.
 - `spec/07_session-lifecycle.md` — SPEC-5.
-- `spec/10_gateway-internals.md` — SPEC-3.
 - `spec/15_external-api-surface.md` — SPEC-2, SPEC-6, SPEC-8.
 - `spec/16_observability.md` and `docs/reference/metrics.md` — SPEC-7.
-- `spec/29_communication-scenarios.md` — SPEC-1 and SPEC-3 restatements.
+- `spec/29_communication-scenarios.md` — the SPEC-1 restatement.
 - `docs/reference/adapter-contract.md` — SPEC-8.
 - `pkg/gateway/checkpoint/checkpointer/uploaddriver.go` — CODE-1.
 - `pkg/gateway/checkpoint/checkpointer/checkpointer.go` — CODE-2.
 - `pkg/checkpoint/checkpoint.go` — the SPEC-1 comment.
 - `scripts/specshift/name/phrase.go` — CODE-3.
-- `tests/claim-map.json` and `scripts/seed-claim-register.py` — REG-1.
 - The tier-0, tier-1, tier-3, tier-4, and tier-11 cases in §4, and their `tests/spec-map.json` entries.
