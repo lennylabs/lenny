@@ -4,6 +4,7 @@ package tier0_static
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -163,8 +164,10 @@ var slotAddressCaseFiles = []string{
 	"pkg/adapter/shutdown_demote_test.go",
 	"pkg/adapter/slot_test.go",
 	"pkg/adapter/slotframe_test.go",
+	"pkg/adapter/slotlayout/slotlayout_test.go",
 	"pkg/adapter/socketruntime_e2e_test.go",
 	"pkg/adapter/staging_test.go",
+	"pkg/adapter/statelessslot/statelessslot_test.go",
 	"pkg/adapter/tracing_external_test.go",
 	"pkg/adapter/tracing_internal_test.go",
 	"pkg/adapter/tracingcontext_addressing_test.go",
@@ -179,18 +182,24 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
 	"pkg/gateway/coordination/barrier/wiring_test.go",
 	"pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go",
+	"pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go",
 	"pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
+	"pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go",
+	"pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_archive_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_readopt_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_test.go",
+	"pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
 	"pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
 	"pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
 	"pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
 	"pkg/gateway/podlifecycle/podsession/workspace_base_propagation_test.go",
 	"pkg/gateway/runtime/adapterclient/checkpointbarrier_test.go",
 	"pkg/gateway/runtime/adapterclient/client_test.go",
+	"pkg/gateway/runtime/slothealth/slothealth_test.go",
 	"pkg/gateway/session/executor/pod_test.go",
+	"pkg/gateway/session/sessionstore/memstore/reserve_slot_under_lock_test.go",
 	"pkg/gateway/sessionserver/create_test.go",
 	"pkg/gateway/sessionserver/delegated_child_materialize_test.go",
 	"pkg/gateway/sessionserver/messages_component_test.go",
@@ -201,11 +210,15 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/sessionserver/recycle_scrub_fold_component_test.go",
 	"pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
 	"pkg/gateway/sessionserver/resume_external_effect_regression_test.go",
+	"pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
+	"pkg/gateway/sessionserver/slotretry_load_test.go",
 	"pkg/gateway/sessionserver/slotretry_test.go",
 	"pkg/gateway/sessionserver/start_pod_lease_component_test.go",
 	"pkg/gateway/sessionserver/start_pod_test.go",
 	"pkg/gateway/sessionserver/upload_to_session_test.go",
 	"pkg/gateway/sessionserver/workspace_root_persist_test.go",
+	"pkg/gateway/storage/slotcounter/slotcounter_test.go",
+	"pkg/sandbox/slotstate/slotstate_test.go",
 	"sdks/runtime/go/runtime/runtime_test.go",
 	"tests/testinfra/sessiondriver/sessiondriver_test.go",
 	"tests/tier0_static/adapter_proto_message_scope_test.go",
@@ -234,6 +247,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
 	"tests/tier11_docs/checkpoint_pipeline_consistency_test.go",
 	"tests/tier11_docs/checkpoint_scoping_key_test.go",
+	"tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go",
 	"tests/tier11_docs/credential_path_literal_sweep_test.go",
 	"tests/tier11_docs/embedded_manifests_sync_test.go",
 	"tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
@@ -263,6 +277,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
 	"tests/tier2_component/stores/checkpointretention_test.go",
 	"tests/tier2_component/stores/partialmanifeststore_test.go",
+	"tests/tier2_component/stores/reserve_slot_under_lock_test.go",
 	"tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
 	"tests/tier2_component/warmlayout/warm_layout_test.go",
 	"tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
@@ -298,6 +313,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier4_integration/eager_claim_lifecycle_test.go",
 	"tests/tier4_integration/mcp_runtime_lifecycle_test.go",
 	"tests/tier4_integration/recycle_scrub_path_test.go",
+	"tests/tier4_integration/slot_counter_redis_outage_fallback_test.go",
 	"tests/tier4_integration/token_service_unavailability_guard_test.go",
 	"tests/tier5_e2e_kind/admission_test.go",
 	"tests/tier5_e2e_kind/checkpoint_resume_test.go",
@@ -319,12 +335,14 @@ var slotAddressCaseFiles = []string{
 	"tests/tier8_chaos/config_drift_test.go",
 	"tests/tier8_chaos/credential_rotation_ceiling_test.go",
 	"tests/tier8_chaos/live_session_test.go",
+	"tests/tier8_chaos/slot_counter_redis_outage_test.go",
 	"tests/tier8_chaos/token_service_unavailability_guard_test.go",
 	"tests/tier9_security/adapter_hold_termination_surface_test.go",
 	"tests/tier9_security/adapter_mcp_nonce_test.go",
 	"tests/tier9_security/adapter_shared_mcp_surface_test.go",
 	"tests/tier9_security/audit_integrity_test.go",
 	"tests/tier9_security/audit_sequence_precondition_test.go",
+	"tests/tier9_security/concurrent_slot_isolation_test.go",
 	"tests/tier9_security/credential_delivery_gate_test.go",
 	"tests/tier9_security/delegation_child_materialization_cred_test.go",
 	"tests/tier9_security/delegation_credential_deny_leakage_test.go",
@@ -679,16 +697,142 @@ func TestTheCreditInventoryCarriesEveryAddressGuardCaseFile(t *testing.T) {
 	for _, file := range slotAddressCaseFiles {
 		inventory[file] = true
 	}
-	files := []string{addressRuleGateFile}
+	files := map[string]string{addressRuleGateFile: "the address-guard gate inventories"}
 	for file := range addressRuleCases {
-		files = append(files, file)
+		files[file] = "the address-guard gate inventories"
 	}
-	sort.Strings(files)
-	for _, file := range files {
-		if !inventory[file] {
-			t.Errorf("slotAddressCaseFiles omits %s, which the address-guard gate inventories", file)
+	for file, reason := range derivedInventoryCaseFiles(t) {
+		if _, seen := files[file]; !seen {
+			files[file] = reason
 		}
 	}
+	names := make([]string, 0, len(files))
+	for file := range files {
+		names = append(names, file)
+	}
+	sort.Strings(names)
+	for _, file := range names {
+		if !inventory[file] {
+			t.Errorf("slotAddressCaseFiles omits %s, which %s", file, files[file])
+		}
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// The completeness rules derived from the tree report the case files a
+// hand-written inventory silently dropped: the claimer's own unit cases, the
+// concurrent slot-retry load case, and the gateway-side half of the
+// one-session-per-pod invariant. A completeness check that resolves only
+// against a sibling gate's five-file subset reports none of them, so the
+// inventory stays short and every section those cases pin shows no test
+// against it in the coverage view.
+func TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops(t *testing.T) {
+	derived := derivedInventoryCaseFiles(t)
+	for _, file := range []string{
+		"pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go",
+		"pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
+		"pkg/gateway/sessionserver/slotretry_load_test.go",
+	} {
+		if _, ok := derived[file]; !ok {
+			t.Errorf("the derived completeness rules do not report %s, so the inventory can omit it with tier 0 green", file)
+		}
+	}
+}
+
+// slotSurfaceCallRE matches a call into the pod-side slot surface the
+// per-session address contract is built on: the claimer's claim, release, and
+// reservation entry points, and the slot state package the contract keys on.
+var slotSurfaceCallRE = regexp.MustCompile(`slotstate\.|ClaimSlot\(|ReleaseSlot\(|ReserveSlotOnPod\(`)
+
+// slotSubjectFileRE matches a case file whose own name states that its subject
+// is the slot or the one-session-per-pod invariant the address contract binds
+// a session to.
+var slotSubjectFileRE = regexp.MustCompile(`(slot|one_session_only|sole_session)[^/]*_test\.go$`)
+
+// inventoryWalkRoots are the top-level directories that hold test files. The
+// derived inventory rules walk these rather than the whole tree so that build
+// output, fixtures, and vendored trees are out of the walk.
+var inventoryWalkRoots = []string{"cmd", "migrations", "pkg", "scripts", "sdks", "tests"}
+
+// derivedInventoryCaseFiles returns the case files the credit inventory must
+// carry that are derived from the tree rather than read off a sibling gate's
+// hand-written list, mapped to the reason each one is required.
+//
+// The inventory is hand-maintained, and a hand-maintained list checked only
+// against a five-file subset of itself cannot report the case file nobody
+// entered. Two rules derived from the tree close the common omissions:
+//
+//  1. A case that calls the slot claim surface asserts the contract directly,
+//     whatever package it sits in.
+//  2. A case file whose name states the slot or the one-session-per-pod
+//     invariant as its subject carries the contract by construction. This is
+//     how an invariant enforced on both the adapter side and the gateway side
+//     goes half-entered, with one side's case file in the inventory and the
+//     other side's, under the same name in another package, left out.
+//
+// Neither rule reconstructs the whole inventory, and a case file outside both
+// is still entered by hand. Each rule turns one class of silent omission into
+// a tier-0 failure.
+func derivedInventoryCaseFiles(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, file := range repoTestFiles(t) {
+		if slotSurfaceCallRE.Match(repoFileBytes(t, file)) {
+			out[file] = "calls the slot claim surface the address contract is built on"
+			continue
+		}
+		if slotSubjectFileRE.MatchString(file) {
+			out[file] = "names the slot contract as its own subject"
+		}
+	}
+	return out
+}
+
+// repoTestFiles returns every `_test.go` file under the walk roots, as
+// repo-relative paths. Test fixtures under a `testdata` directory record a
+// case as it was written rather than assert one, so they are out of the walk.
+func repoTestFiles(t *testing.T) []string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	var out []string
+	for _, dir := range inventoryWalkRoots {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == "testdata" {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(d.Name(), "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			out = append(out, rel)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// repoFileBytes reads a repo-relative file.
+func repoFileBytes(t *testing.T, file string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), file))
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	return body
 }
 
 // spec: 4.1 (one address per gRPC request)

@@ -182,7 +182,8 @@
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditIsDemandedAtTheMapGranularity",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditIsNotDemandedForATestingDocumentSectionID",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestCreditsMissingReportsTheUncreditedAncestorKey",
-        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestTheCreditInventoryCarriesEveryAddressGuardCaseFile"
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestTheCreditInventoryCarriesEveryAddressGuardCaseFile",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops"
       ],
       "packages": [
         "pkg/gateway"
@@ -485,7 +486,12 @@
         "pkg/gateway/sessionserver/create_test.go",
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go",
         "pkg/gateway/sessionserver/start_pod_lease_component_test.go",
-        "pkg/gateway/sessionserver/start_pod_test.go"
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2",
+        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -559,7 +565,8 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathScrubReportedReuses_spec_5_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathScrubReportedReuses_spec_5_2",
+        "pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -1175,7 +1182,17 @@
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathDroppedReportRetires_spec_3_4",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2",
+        "pkg/gateway/sessionserver/slotretry_load_test.go::TestSlotRetryConcurrentLeaksReachThreshold_spec_6_2",
+        "pkg/adapter/statelessslot/statelessslot_test.go",
+        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestLeaksCountPersistentlyAcrossWindows_spec_6_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestRollingWindowExpiry_spec_5_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestFailuresReachThreshold_spec_5_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestUnhealthyThreshold_spec_5_2",
+        "pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
+        "pkg/gateway/storage/slotcounter/slotcounter_test.go",
+        "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReserveSlotUnderLock"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1200,7 +1217,8 @@
         "tests/tier9_security/pool_admission_isolation_test.go::TestNonceOnlyAcknowledgmentGate_spec_4_7",
         "tests/tier5_e2e_kind/gvisor_isolation_test.go::TestGvisorIsolation",
         "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
-        "pkg/gateway/sessionserver/create_test.go"
+        "pkg/gateway/sessionserver/create_test.go",
+        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go"
       ],
       "packages": [
         "pkg/isolation"
@@ -1260,7 +1278,9 @@
         "pkg/adapter/sdkwarm_test.go",
         "pkg/adapter/shutdown_demote_test.go",
         "pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
-        "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go"
+        "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
+        "pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
+        "pkg/adapter/slotlayout/slotlayout_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1307,7 +1327,14 @@
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathDroppedReportRetires_spec_3_4",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2",
+        "pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotKeepsUnderUptimePod_spec_6_2",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2",
+        "pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
+        "pkg/sandbox/slotstate/slotstate_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -2746,7 +2773,10 @@
         "pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go",
         "pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec",
-        "tests/tier11_docs/redis_key_prefix_registry_test.go"
+        "tests/tier11_docs/redis_key_prefix_registry_test.go",
+        "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRequiresCounter",
+        "pkg/gateway/session/sessionstore/memstore/reserve_slot_under_lock_test.go",
+        "tests/tier4_integration/slot_counter_redis_outage_fallback_test.go"
       ],
       "packages": [
         "pkg/store/lease",
@@ -2981,7 +3011,8 @@
         "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
         "tests/tier11_docs/ephemeral_container_cred_guard_path_reconciliation_test.go",
         "tests/tier11_docs/credential_path_literal_sweep_test.go",
-        "tests/tier9_security/tracing_context_session_isolation_test.go::TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3"
+        "tests/tier9_security/tracing_context_session_isolation_test.go::TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3",
+        "tests/tier9_security/concurrent_slot_isolation_test.go::TestPerSlotCredentialFileReadScope_spec_6_60"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -4042,7 +4073,8 @@
         "tests/tier2_component/admission/pool_config_validator_test.go::TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516",
         "tests/tier9_security/pool_admission_isolation_test.go::TestPoolAdmissionDerivedPropertyGates_spec_5_2",
         "tests/tier8_chaos/pod_disruption_test.go",
-        "tests/tier5_e2e_kind/admission_test.go"
+        "tests/tier5_e2e_kind/admission_test.go",
+        "pkg/gateway/podlifecycle/podclaim/tenant_label_test.go"
       ],
       "packages": [
         "charts/lenny"
