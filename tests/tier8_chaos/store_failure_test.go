@@ -498,15 +498,9 @@ func assertNoCrashLoop(t *testing.T, c *kind.Cluster, deployment, selector strin
 // the mounted CA; only this pod skips verification.
 func ensureMinIOBucket(t *testing.T, c *kind.Cluster) {
 	t.Helper()
-	podIP, err := c.KubectlOut(
-		t,
-		"-n", lennySystemNamespace, "get", "pod",
-		"-l", "lenny.dev/e2e-datastore=minio",
-		"-o", "jsonpath={.items[0].status.podIP}",
-	)
-	podIP = strings.TrimSpace(podIP)
-	if err != nil || podIP == "" {
-		t.Errorf("could not resolve the lenny-minio pod IP to recreate the artifact bucket: %v", err)
+	podIP := dataStorePodIP(t, c, "minio")
+	if podIP == "" {
+		t.Errorf("could not resolve a live lenny-minio pod IP to recreate the artifact bucket")
 		return
 	}
 	_, _ = c.KubectlOut(t, "-n", lennySystemNamespace, "delete", "pod",

@@ -324,16 +324,32 @@ func runPsql(t *testing.T, c *kind.Cluster, pgIP, podName, sql string) {
 // (postgres, redis, or minio). The test process runs kubectl from
 // outside the cluster, so it resolves the pod IP without needing
 // in-cluster DNS.
+//
+// A store the outage tests scaled to zero and back keeps its
+// predecessor listed, Running and carrying a deletionTimestamp, for as
+// long as the graceful termination takes. The API server does not
+// order that list by liveness, so reading {.items[0]} returns the
+// dying pod's address about half the time and every dial against it is
+// refused. The query therefore prints the deletion timestamp beside
+// each address and this function takes the first pod that is not
+// terminating.
 func dataStorePodIP(t *testing.T, c *kind.Cluster, store string) string {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
 		"-n", lennySystemNamespace, "get", "pod",
 		"-l", "lenny.dev/e2e-datastore="+store,
-		"-o", "jsonpath={.items[0].status.podIP}",
+		"-o", `jsonpath={range .items[*]}{.metadata.deletionTimestamp}{"|"}{.status.podIP}{"\n"}{end}`,
 	)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(out)
+	for _, line := range strings.Split(out, "\n") {
+		terminatingAt, ip, ok := strings.Cut(strings.TrimSpace(line), "|")
+		if !ok || terminatingAt != "" || ip == "" {
+			continue
+		}
+		return ip
+	}
+	return ""
 }
