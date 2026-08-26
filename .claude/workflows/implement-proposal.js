@@ -774,6 +774,7 @@ try {
       repoRoot: repo,
       reverifyDoneSteps: !!input.reverifyDoneSteps,
       acceptedDivergences: input.acceptedDivergences,
+      plan: input.plan,
     },
   );
 } catch (e) {

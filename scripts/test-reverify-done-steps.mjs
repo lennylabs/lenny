@@ -279,5 +279,53 @@ console.log("\n6. accepted divergences reach the FINAL review lenses and nothing
   }
 }
 
+console.log("\n7. a caller-supplied plan replaces the planning phase");
+{
+  const SUPPLIED = { blastRadius: [], steps: [
+    { id: "S20", title: "supplied", work: "w", targets: ["pkg/a"], tiers: ["unit"], specRefs: [], checklistStep: "S20", dependsOn: [] },
+  ]};
+  const runPlan = (plan) => {
+    const calls = [];
+    const agent = async (prompt, opts = {}) => {
+      const label = opts.label || "";
+      calls.push({ label, prompt });
+      if (label === "plan") return { blastRadius: [], steps: [{ id: "DERIVED", title: "d", work: "w", targets: [], tiers: [], specRefs: [], checklistStep: "DERIVED", dependsOn: [] }] };
+      if (label.startsWith("plan-critique")) return { complete: true, gaps: [] };
+      if (label === "checklist-ticks") return { ticked: [] };
+      if (label.startsWith("baseline") || label.endsWith(":base")) return { sha: "deadbeef" };
+      if (label.startsWith("review:")) return { findings: [] };
+      if (label.startsWith("build:")) return { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1" };
+      if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["unit"] };
+      if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
+      if (label === "proposal-edit-audit") return { edited: false, commits: [] };
+      return {};
+    };
+    const logs = [];
+    const fn = new Function("args","agent","parallel","pipeline","phase","log","workflow","budget",
+      "return (async () => {\n" + SRC + "\n})();");
+    return fn({ proposalPath: "p.md", repoRoot: "/repo", date: "d", plan },
+      agent, async (t) => Promise.all(t.map((f) => f())), async (i) => i, () => {},
+      (m) => logs.push(String(m)), async () => ({}), { total: null, spent: () => 0, remaining: () => Infinity })
+      .then((r) => ({ result: r, calls, logs }));
+  };
+  {
+    const { calls, logs } = await runPlan(SUPPLIED);
+    check("no planner agent ran", !calls.some((c) => c.label === "plan"));
+    check("no plan-critique ran", !calls.some((c) => c.label.startsWith("plan-critique")));
+    check("the supplied step is the one built", calls.some((c) => c.label.startsWith("build:S20")));
+    check("the derived step is NOT built", !calls.some((c) => c.label.includes("DERIVED")));
+    check("logged the skip", logs.some((l) => /supplied by the caller/.test(l)));
+  }
+  {
+    const { calls } = await runPlan(undefined);
+    check("absent: the planner still runs", calls.some((c) => c.label === "plan"));
+    check("absent: the derived step is built", calls.some((c) => c.label.startsWith("build:DERIVED")));
+  }
+  {
+    const { calls } = await runPlan({ steps: [] });
+    check("an empty supplied plan falls back to planning", calls.some((c) => c.label === "plan"));
+  }
+}
+
 console.log(failures === 0 ? "\nAll checks passed.\n" : "\n" + failures + " check(s) FAILED.\n");
 process.exit(failures ? 1 : 0);

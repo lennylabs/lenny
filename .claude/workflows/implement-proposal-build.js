@@ -52,6 +52,16 @@ const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
 const maxPlanRounds = input.maxPlanRounds || 2;
+// A caller-supplied build sequence, which replaces the planning phase outright.
+// Planning exists to derive a sequence from the proposal, and once the
+// proposal's checklist carries every step with its tiers and dependencies, that
+// derivation re-reads a very large document to reproduce what is already
+// written. A resumed run pays it again on every relaunch. When the caller
+// already knows the sequence, it hands it over and the run starts building.
+// The startup tick reconciliation still applies, so a supplied step whose box
+// is ticked is skipped exactly as a derived one is.
+const suppliedPlan =
+  input.plan && Array.isArray(input.plan.steps) && input.plan.steps.length > 0 ? input.plan : null;
 const maxStepAttempts = input.maxStepAttempts || 50;
 // Consecutive dead agents (see the loop below) that stop the run. Small,
 // because the condition it detects is an account or transport failure that a
@@ -459,7 +469,11 @@ const SHA = {
 
 phase("Plan");
 log("Planning the blast radius and build sequence for " + proposal);
-let plan = skipBuild ? { steps: [] } : await agentTry(
+let plan = skipBuild
+  ? { steps: [] }
+  : suppliedPlan
+    ? suppliedPlan
+    : await agentTry(
   "Turn a proposal's implementation checklist into the build sequence for its code phase.\n\n" +
     "You are a read-only planner; do not edit any file. Work in " +
     repo +
@@ -502,7 +516,13 @@ let plan = skipBuild ? { steps: [] } : await agentTry(
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
+if (suppliedPlan) {
+  log(
+    "Build sequence supplied by the caller: " + plan.steps.length +
+      " step(s); the planning and plan-critique phases are skipped",
+  );
+}
+for (let round = 1; !skipBuild && !suppliedPlan && round < maxPlanRounds; round++) {
   const critique = await agentTry(
     "Adversarially check whether a build plan covers the entire blast radius of an applied spec proposal.\n\n" +
       "You are a read-only critic; do not edit any file. Work in " +
