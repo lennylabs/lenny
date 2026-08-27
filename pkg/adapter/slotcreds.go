@@ -53,12 +53,17 @@ func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[s
 }
 
 // rotateCredentialsSlot replaces the named providers' leases in the
-// slot's per-slot file. Per §6.1 the rotation is independent: a sibling
-// slot's file and in-flight requests are unaffected. The §4.7 Full-level
-// in-flight gate / ceiling / ack protocol is the runtime's concern over
-// its CH-RUNTIMEOPS; the concurrent slot's runtime owns its own
-// channel, so this path performs the file rewrite and lets the slot's
-// runtime rebind. spec: §6.1; §4.7.
+// session's own credential file. The file rewrite is per session: a
+// sibling session's file is untouched, and so is the acknowledgement
+// wait, which is keyed on this rotation's lease. The §4.7 Full-level
+// in-flight gate and its ceiling are not per session. One runtime
+// process serves every slot on the pod over the pod's single
+// CH-RUNTIMEOPS, so the gate counts outstanding requests pod-wide per
+// provider: a co-tenant session's outstanding request for the same
+// provider gates this rotation and can drive it into the ceiling on its
+// own. The protocol runs in the merged RotateCredentials handler, which
+// calls rotateProviderFull per provider once this rewrite returns.
+// spec: §6.1; §4.7.
 func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.RotateCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

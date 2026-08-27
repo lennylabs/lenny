@@ -29,111 +29,21 @@
 package tier8_chaos_test
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/rotationgate"
 )
-
-// rotationFrame is one §4.7 runtime<->adapter lifecycle JSONL frame, in the
-// subset this test needs to speak from the external runtime peer. Field
-// names match the §4.7 message-schema table (camelCase).
-type rotationFrame struct {
-	Type            string   `json:"type"`
-	ProtocolVersion string   `json:"protocolVersion,omitempty"`
-	Capabilities    []string `json:"capabilities,omitempty"`
-	Provider        string   `json:"provider,omitempty"`
-	CredentialsPath string   `json:"credentialsPath,omitempty"`
-	LeaseID         string   `json:"leaseId,omitempty"`
-	RequestID       string   `json:"requestId,omitempty"`
-	Status          string   `json:"status,omitempty"`
-}
-
-// runtimePeer is the external §4.7 CH-RUNTIMEOPS runtime, dialing the
-// adapter's Unix socket and driving frames over the wire. It models a
-// direct-mode Full-level runtime that can start an LLM request and then
-// withhold the completion frame to hold the in-flight gate open.
-type runtimePeer struct {
-	t    *testing.T
-	conn net.Conn
-	r    *bufio.Reader
-	enc  *json.Encoder
-}
-
-// dialRuntimePeer connects to the adapter lifecycle socket, completes the
-// lifecycle_capabilities / lifecycle_support handshake advertising
-// credential_rotation, and returns the connected peer.
-func dialRuntimePeer(t *testing.T, socketPath string) *runtimePeer {
-	t.Helper()
-	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("dial lifecycle socket: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	p := &runtimePeer{t: t, conn: conn, r: bufio.NewReader(conn), enc: json.NewEncoder(conn)}
-
-	// The adapter opens with lifecycle_capabilities; the runtime replies
-	// with lifecycle_support naming the subset it implements.
-	cap := p.read()
-	if cap.Type != "lifecycle_capabilities" {
-		t.Fatalf("handshake: got %q, want lifecycle_capabilities", cap.Type)
-	}
-	p.send(rotationFrame{
-		Type:            "lifecycle_support",
-		ProtocolVersion: "1.0",
-		Capabilities:    []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"},
-	})
-	return p
-}
-
-func (p *runtimePeer) send(f rotationFrame) {
-	p.t.Helper()
-	if err := p.enc.Encode(f); err != nil {
-		p.t.Fatalf("send %q frame: %v", f.Type, err)
-	}
-}
-
-// read blocks for the next frame from the adapter.
-func (p *runtimePeer) read() rotationFrame {
-	p.t.Helper()
-	line, err := p.r.ReadBytes('\n')
-	if err != nil {
-		p.t.Fatalf("read lifecycle frame: %v", err)
-	}
-	var f rotationFrame
-	if err := json.Unmarshal(line, &f); err != nil {
-		p.t.Fatalf("decode lifecycle frame: %v", err)
-	}
-	return f
-}
-
-// expectSilence asserts the adapter sends no frame within d. The in-flight
-// gate must hold credentials_rotated while the withheld request is counted
-// as in flight (§4.7 in-flight request completion gate).
-func (p *runtimePeer) expectSilence(d time.Duration) {
-	p.t.Helper()
-	_ = p.conn.SetReadDeadline(time.Now().Add(d))
-	defer func() { _ = p.conn.SetReadDeadline(time.Time{}) }()
-	if _, err := p.r.ReadBytes('\n'); err == nil {
-		p.t.Fatal("adapter sent a frame while the in-flight gate should have blocked it")
-	} else if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
-		p.t.Fatalf("expected read timeout while gate holds, got %v", err)
-	}
-}
 
 // startAdapter brings up a real adapter.Server bound to a real
 // CH-RUNTIMEOPS on a Unix socket, with sessionID bound to a slot on the pod
@@ -144,38 +54,9 @@ func (p *runtimePeer) expectSilence(d time.Duration) {
 // §4.9.2 EventStore hook, and the session's resolved §6.1 credential file.
 //
 // spec: §6.1; §6.4.
-func startAdapter(t *testing.T, pool, sessionID string) (*adapter.Server, string, *recordingCeilingAudit, string) {
+func startAdapter(t *testing.T, pool, sessionID string) (*adapter.Server, string, *rotationgate.CeilingAudit, string) {
 	t.Helper()
-	// t.TempDir() embeds the (long) test name, so a socket path under it can
-	// overflow the platform sun_path limit (~104 bytes on darwin); bind under
-	// os.MkdirTemp's short root to stay within it.
-	sockDir, err := os.MkdirTemp("", "lenny-rot-*")
-	if err != nil {
-		t.Fatalf("temp socket dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	socketPath := filepath.Join(sockDir, "lc.sock")
-	lc, err := adapter.NewRuntimeOps(socketPath)
-	if err != nil {
-		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = lc.Run(ctx) }()
-
-	audit := &recordingCeilingAudit{}
-	base := t.TempDir()
-	s := adapter.New("rotation-chaos")
-	// The pod roots the per-slot trees nest under (§6.4); the slot the
-	// assignment binds is created beneath them.
-	s.CredentialsDir = filepath.Join(base, "run", "lenny")
-	s.WorkspaceBase = filepath.Join(base, "workspace")
-	s.SessionsRoot = filepath.Join(base, "sessions")
-	s.ArtifactsRoot = filepath.Join(base, "artifacts")
-	s.CheckpointPoolLabel = pool
-	s.RuntimeName = "claude-code"
-	s.Lifecycle = lc
-	s.RotationAudit = audit
+	s, socketPath, audit := rotationgate.NewPodAdapter(t, pool)
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Leases: map[string]*adapterv1.CredentialLease{
@@ -224,33 +105,6 @@ func rotateRequest(sessionID, leaseID, trigger string) *adapterv1.RotateCredenti
 	}
 }
 
-// recordingCeilingAudit captures the durable credential.rotation_ceiling_hit
-// audit events the adapter emits to the §4.9.2 EventStore at the ceiling
-// code point.
-type recordingCeilingAudit struct {
-	hits []adapter.RotationCeilingHit
-}
-
-func (r *recordingCeilingAudit) EmitRotationCeilingHit(_ context.Context, e adapter.RotationCeilingHit) {
-	r.hits = append(r.hits, e)
-}
-
-// startWithheldInflight has the peer report one llm_request_started and
-// waits until the adapter's in-flight counter observes it, then returns
-// without ever sending the matching llm_request_completed. This models the
-// compromised/buggy runtime that never completes.
-func (p *runtimePeer) startWithheldInflight(s *adapter.Server, provider string) {
-	p.t.Helper()
-	p.send(rotationFrame{Type: "llm_request_started", Provider: provider, RequestID: "r1"})
-	deadline := time.Now().Add(2 * time.Second)
-	for s.Lifecycle.InflightCount(provider) != 1 {
-		if time.Now().After(deadline) {
-			p.t.Fatal("adapter never observed the withheld in-flight request")
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
 // TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime pins the
 // §4.7 "Revocation-triggered rotation ceiling": for a fault trigger, a
 // runtime that never completes the in-flight request cannot hold the gate
@@ -275,13 +129,13 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	s.RotationInflightCeiling = 150 * time.Millisecond
 	s.CredentialsAckTimeout = 5 * time.Second
 
-	peer := dialRuntimePeer(t, socketPath)
+	peer := rotationgate.DialPeer(t, socketPath)
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
-	peer.startWithheldInflight(s, "anthropic")
+	peer.StartWithheldInflight(s, "anthropic", "r1")
 
-	before := counterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
+	before := rotationgate.CounterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
 		map[string]string{"pool": pool, "trigger": "fault_rate_limited"})
 
 	errc := make(chan error, 1)
@@ -293,7 +147,7 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	// The ceiling fires despite the in-flight request never draining, so the
 	// runtime sees credentials_rotated. The runtime then acknowledges so the
 	// RPC completes cleanly on the rotated path.
-	got := peer.read()
+	got := peer.Read()
 	if got.Type != "credentials_rotated" || got.LeaseID != "l-new" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated for lease l-new", got)
 	}
@@ -302,7 +156,7 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	if got.CredentialsPath != credFile {
 		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
 	}
-	peer.send(rotationFrame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
+	peer.Send(rotationgate.Frame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
 	if err := <-errc; err != nil {
 		t.Fatalf("RotateCredentials at ceiling: %v", err)
 	}
@@ -310,15 +164,15 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	// pod-global one.
 	assertCredentialFileHasLease(t, credFile, "l-new")
 
-	if after := counterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
+	if after := rotationgate.CounterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
 		map[string]string{"pool": pool, "trigger": "fault_rate_limited"}); after != before+1 {
 		t.Errorf("ceiling counter = %v, want %v", after, before+1)
 	}
 
-	if len(audit.hits) != 1 {
-		t.Fatalf("credential.rotation_ceiling_hit audit events = %d, want 1", len(audit.hits))
+	if len(audit.Hits) != 1 {
+		t.Fatalf("credential.rotation_ceiling_hit audit events = %d, want 1", len(audit.Hits))
 	}
-	h := audit.hits[0]
+	h := audit.Hits[0]
 	if h.Trigger != "fault_rate_limited" {
 		t.Errorf("audit trigger = %q, want fault_rate_limited", h.Trigger)
 	}
@@ -360,13 +214,13 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 	s.RotationInflightCeiling = 150 * time.Millisecond
 	s.CredentialsAckTimeout = 5 * time.Second
 
-	peer := dialRuntimePeer(t, socketPath)
+	peer := rotationgate.DialPeer(t, socketPath)
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
-	peer.startWithheldInflight(s, "anthropic")
+	peer.StartWithheldInflight(s, "anthropic", "r1")
 
-	before := counterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
+	before := rotationgate.CounterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
 		map[string]string{"pool": pool, "trigger": "proactive_renewal"})
 
 	errc := make(chan error, 1)
@@ -377,28 +231,28 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 
 	// The gate holds well past the configured ceiling: no credentials_rotated
 	// frame arrives while the request is in flight.
-	peer.expectSilence(10 * s.RotationInflightCeiling)
+	peer.ExpectSilence(10 * s.RotationInflightCeiling)
 
 	// Completing the in-flight request drains the gate the natural way.
-	peer.send(rotationFrame{Type: "llm_request_completed", Provider: "anthropic", RequestID: "r1", Status: "ok"})
-	got := peer.read()
+	peer.Send(rotationgate.Frame{Type: "llm_request_completed", Provider: "anthropic", RequestID: "r1", Status: "ok"})
+	got := peer.Read()
 	if got.Type != "credentials_rotated" || got.LeaseID != "l-new" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated after natural drain", got)
 	}
 	if got.CredentialsPath != credFile {
 		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
 	}
-	peer.send(rotationFrame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
+	peer.Send(rotationgate.Frame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
 	if err := <-errc; err != nil {
 		t.Fatalf("RotateCredentials (proactive_renewal): %v", err)
 	}
 
-	if after := counterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
+	if after := rotationgate.CounterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
 		map[string]string{"pool": pool, "trigger": "proactive_renewal"}); after != before {
 		t.Errorf("proactive_renewal ceiling counter moved: got %v, want %v", after, before)
 	}
-	if len(audit.hits) != 0 {
-		t.Errorf("proactive_renewal emitted %d ceiling audit events, want 0", len(audit.hits))
+	if len(audit.Hits) != 0 {
+		t.Errorf("proactive_renewal emitted %d ceiling audit events, want 0", len(audit.Hits))
 	}
 }
 
@@ -423,12 +277,12 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 	s, socketPath, _, credFile := startAdapter(t, pool, session)
 	s.CredentialsAckTimeout = 150 * time.Millisecond
 
-	peer := dialRuntimePeer(t, socketPath)
+	peer := rotationgate.DialPeer(t, socketPath)
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
 
-	beforeGrace := histogramCount(t, "lenny_credential_rotation_grace_period_seconds",
+	beforeGrace := rotationgate.HistogramCount(t, "lenny_credential_rotation_grace_period_seconds",
 		map[string]string{"pool": pool, "provider": "anthropic"})
 
 	errc := make(chan error, 1)
@@ -439,7 +293,7 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 
 	// The adapter sends credentials_rotated; the runtime deliberately never
 	// acknowledges, so the ack timeout must elapse.
-	got := peer.read()
+	got := peer.Read()
 	if got.Type != "credentials_rotated" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated", got)
 	}
@@ -453,7 +307,7 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 
 	// The grace-period metric is recorded on the timeout outcome too: the old
 	// credential stayed valid until the 60 s (here scaled) timeout elapsed.
-	if afterGrace := histogramCount(t, "lenny_credential_rotation_grace_period_seconds",
+	if afterGrace := rotationgate.HistogramCount(t, "lenny_credential_rotation_grace_period_seconds",
 		map[string]string{"pool": pool, "provider": "anthropic"}); afterGrace != beforeGrace+1 {
 		t.Errorf("grace-period histogram count = %d, want %d", afterGrace, beforeGrace+1)
 	}
@@ -472,61 +326,4 @@ func assertCredentialFileHasLease(t *testing.T, credFile, leaseID string) {
 	if !strings.Contains(string(data), leaseID) {
 		t.Errorf("session credential file %s does not carry the rotated lease %s", credFile, leaseID)
 	}
-}
-
-// counterValue reads the current value of the named counter with the exact
-// label set from the default Prometheus registry, or 0 if absent. The
-// adapter registers its §4.7 rotation metrics on prometheus.DefaultRegisterer.
-func counterValue(t *testing.T, name string, labels map[string]string) float64 {
-	t.Helper()
-	m := findMetric(t, name, labels)
-	if m == nil {
-		return 0
-	}
-	return m.GetCounter().GetValue()
-}
-
-// histogramCount reads the sample count of the named histogram with the
-// exact label set, or 0 if absent.
-func histogramCount(t *testing.T, name string, labels map[string]string) uint64 {
-	t.Helper()
-	m := findMetric(t, name, labels)
-	if m == nil {
-		return 0
-	}
-	return m.GetHistogram().GetSampleCount()
-}
-
-// findMetric gathers the default registry and returns the metric whose name
-// and label set match exactly, or nil.
-func findMetric(t *testing.T, name string, labels map[string]string) *dto.Metric {
-	t.Helper()
-	fams, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		t.Fatalf("gather metrics: %v", err)
-	}
-	for _, f := range fams {
-		if f.GetName() != name {
-			continue
-		}
-		for _, m := range f.GetMetric() {
-			if labelsMatch(m, labels) {
-				return m
-			}
-		}
-	}
-	return nil
-}
-
-func labelsMatch(m *dto.Metric, want map[string]string) bool {
-	got := make(map[string]string, len(m.GetLabel()))
-	for _, lp := range m.GetLabel() {
-		got[lp.GetName()] = lp.GetValue()
-	}
-	for k, v := range want {
-		if got[k] != v {
-			return false
-		}
-	}
-	return true
 }

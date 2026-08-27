@@ -662,7 +662,8 @@
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2",
         "tests/tier2_component/migrations/prod_columns_test.go",
-        "pkg/gateway/sessionserver/start_preclaim_internal_test.go"
+        "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
+        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -966,7 +967,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
-        "pkg/adapter/slotsession_test.go"
+        "pkg/adapter/slotsession_test.go",
+        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -1295,7 +1297,8 @@
         "pkg/adapter/slotlayout/slotlayout_test.go",
         "pkg/adapter/manifest_fields_test.go",
         "pkg/adapter/slotsession_test.go",
-        "tests/tier9_security/adapter_credential_assignment_precondition_test.go::TestMergedCredentialHandlersRefuseASessionWithNoAssignment_spec_6_1"
+        "tests/tier9_security/adapter_credential_assignment_precondition_test.go::TestMergedCredentialHandlersRefuseASessionWithNoAssignment_spec_6_1",
+        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
