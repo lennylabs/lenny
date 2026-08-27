@@ -1534,7 +1534,8 @@
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorSendAddressesTheAttachStreamBySession",
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2",
         "tests/tier2_component/rls/checkpoint_manifest_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3566,7 +3567,8 @@
         "pkg/gateway/mcpfabric/mcp/...",
         "tests/tier4_integration/gateway_full_e2e_test.go",
         "tests/tier3_contract/rest_mcp_consistency/published_schema_test.go",
-        "tests/tier5_e2e_kind/mcp_conformance_test.go"
+        "tests/tier5_e2e_kind/mcp_conformance_test.go",
+        "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/mcp"

@@ -348,6 +348,10 @@
       "component": ["tests/tier2_component/alerting/..."],
       "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
+    "tests/testinfra/rotationgate": {
+      "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
+      "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
+    },
     "tests/testinfra/mocks/otelcollector": {
       "unit": ["tests/testinfra/mocks/otelcollector/..."],
       "component": ["tests/tier2_component/observability/..."]
