@@ -804,7 +804,8 @@ func TestClaimAtCreateConcurrentPoolPreCheckRuns(t *testing.T) {
 	}
 }
 
-// spec: §4.1 (proposal), §7.1, §5.2 — when the
+// spec: §7.1 (create-time claim: the slot reservation is attempted at
+// create), §5.2 (pool exhaustion) — when the
 // credential pre-check passes but the concurrent pool has no idle pod to
 // reserve a slot on, claimAtCreate surfaces the exhaustion as the §7.1
 // SESSION_CREATION_FAILED atomicity envelope (errCreateClaimExhausted
@@ -824,8 +825,8 @@ func TestClaimAtCreateConcurrentPoolExhaustionAtCreate(t *testing.T) {
 	}
 }
 
-// spec: §4.4, §5.2 (proposal: /start is launch-only; a service-mode pool is
-// claimless).
+// spec: §15.1 (/start precondition: launch-only), §5.2 (a service-mode pool
+// is claimless).
 // launchOnPod on a service-mode pool returns (nil, nil): there is no pod to
 // launch on, so the two-step /start runs no launch RPC and binds no pod. A
 // service-mode session is a connection handle routed through the pool's
@@ -858,8 +859,9 @@ func TestLaunchOnPodServiceModeClaimless(t *testing.T) {
 	}
 }
 
-// spec: §4.4, §5.2 (proposal: a concurrent-workspace pool materializes and
-// launches its reserved slot together at /start), §4.6.1 (pool exhaustion).
+// spec: §15.1 (/start precondition), §5.2 (a concurrent-workspace pool
+// materializes and launches its reserved slot together at /start), §4.6.1
+// (pool exhaustion).
 // launchOnPod on a concurrent-workspace pool routes through bindConcurrentSlot.
 // With no idle pod and a row carrying no live reservation, the fresh-slot
 // reservation surfaces ErrNoIdlePod (the §5.2 exhaustion sentinel), proving

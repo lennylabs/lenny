@@ -142,7 +142,7 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 
 // spec: §4.7 connectorServers is never absent — with no forwarder wired,
 // the manifest still carries an empty array. F-9.1.2.
-func TestConnectorServersEmptyWithoutForwarder_spec_9_3_142(t *testing.T) {
+func TestConnectorServersEmptyWithoutForwarder_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortSocketName(t, "m")

@@ -288,9 +288,9 @@ func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credr
 // pre-check must run exactly once (at the create-time claim), not again at
 // the prepare dispatch. A failure here means startOnPod re-ran
 // resolveCredentialPools after claimAtCreate already ran it, so the pre-check
-// executed twice for one combined create-and-start, contradicting the
-// proposal's "pre-check runs once, before the claim" placement.
-func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
+// executed twice for one combined create-and-start, contradicting the §7.1
+// step-3 placement of the pre-check ahead of the step-4 claim.
+func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -609,10 +609,9 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 // (pre-check) and /finalize (lease assignment), never at /start. The router
 // Resolve count must be unchanged across the /start call. A failure here
 // (the count grows at /start) means handleStart still routed through a path
-// that re-runs resolveCredentialPools (the pre-0007-S4 startOnPod front),
-// re-doing credential work the lease assignment at /finalize already
-// completed.
-func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
+// that re-runs resolveCredentialPools, re-doing credential work the lease
+// assignment at /finalize already completed.
+func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
@@ -693,7 +692,7 @@ func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
 	// router Resolve count is unchanged across the call.
 	if resolveCount != beforeStart {
 		t.Errorf("CredentialRouter.Resolve called %d times across /start (was %d before); "+
-			"/start must be launch-only and run no credential work (proposal §4.4)",
+			"/start must be launch-only and run no §4.9 credential work (the §15.1 /start precondition)",
 			resolveCount-beforeStart, beforeStart)
 	}
 }
@@ -1010,7 +1009,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 // USER_CREDENTIAL_NOT_FOUND (a 404 the proposal forbids at finalize) or the
 // create-time pod was left holding its claim after the pre-Prepare resolution
 // failed.
-func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
+func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
@@ -1173,7 +1172,7 @@ func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
 // failure leaks the credential's active-session slot for a session that never
 // reaches ready. A failure here means reclaimFinalizedPod did not run on the
 // finalizing → ready write-failure branch, so the lease leaked.
-func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
+func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()

@@ -215,6 +215,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/sessionserver/slotretry_test.go",
 	"pkg/gateway/sessionserver/start_pod_lease_component_test.go",
 	"pkg/gateway/sessionserver/start_pod_test.go",
+	"pkg/gateway/sessionserver/start_preclaim_internal_test.go",
 	"pkg/gateway/sessionserver/upload_to_session_test.go",
 	"pkg/gateway/sessionserver/workspace_root_persist_test.go",
 	"pkg/gateway/storage/slotcounter/slotcounter_test.go",
@@ -796,6 +797,82 @@ func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
 	}
 }
 
+// caseNameSectionRE captures the section id a test function name carries in
+// its `_spec_<id>` suffix, with the id's dots written as underscores.
+var caseNameSectionRE = regexp.MustCompile(`_spec_(\d+(?:_\d+)*)$`)
+
+// caseNameSection returns the spec-section id a test function name asserts in
+// its suffix, and reports whether the name carries one.
+func caseNameSection(fn string) (string, bool) {
+	m := caseNameSectionRE.FindStringSubmatch(fn)
+	if m == nil {
+		return "", false
+	}
+	return strings.ReplaceAll(m[1], "_", "."), true
+}
+
+// sectionAgreesWithCitation reports whether a section id a case name asserts
+// is answered by one of the ids the case's own annotation cites. An exact
+// match agrees; so does a citation at a finer or a coarser granularity than
+// the name, because a name carrying a parent id over an annotation citing one
+// of that id's subsections states the same heading at the granularity a name
+// can carry.
+func sectionAgreesWithCitation(named string, cited map[string]bool) bool {
+	for id := range cited {
+		if id == named || strings.HasPrefix(id, named+".") || strings.HasPrefix(named, id+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// A case whose name carries a `_spec_X_Y` suffix names a section its own
+// `// spec:` annotation cites. The suffix is the citation a reader sees in the
+// verdict and in any per-case spec-map row entered later, so a name left
+// behind when the annotation was re-pointed at the heading that states the
+// behavior travels an unrelated section with the case. Nothing mechanical
+// reads the suffix, so the disagreement is invisible until a reader chases the
+// number.
+func TestAddressCaseNamesAgreeWithTheirOwnCitations(t *testing.T) {
+	for _, file := range slotAddressCaseFiles {
+		for fn, cited := range annotatedSectionsPerCase(t, file) {
+			named, ok := caseNameSection(fn)
+			if !ok || len(cited) == 0 {
+				continue
+			}
+			if !sectionAgreesWithCitation(named, cited) {
+				t.Errorf("%s::%s names section %s, which its own `// spec:` annotation does not cite (it names %v)", file, fn, named, sortedSectionIDs(cited))
+			}
+		}
+	}
+}
+
+// proposalNumberedProseRE matches a citation of a proposal document's own
+// section number written in prose or in an assertion string, where the
+// annotation gate does not look. The section sign is what makes the number a
+// citation: a bare reference to a numbered proposal document ("proposal 0024")
+// names the document rather than one of its sections.
+var proposalNumberedProseRE = regexp.MustCompile(`(?i)proposal\s+§\s*\d`)
+
+// spec: 4.1 (one address per gRPC request)
+//
+// No case file cites a proposal document's own section number outside a
+// `// spec:` annotation. A failure message is the text a reader is handed when
+// the case fails, so a proposal section number in one sends that reader to an
+// unrelated specification heading, and the annotation gate does not see it
+// because it reads annotation lines alone.
+func TestAddressCaseTextCitesNoProposalSectionNumber(t *testing.T) {
+	for _, file := range slotAddressCaseFiles {
+		for i, line := range repoFileLines(t, file) {
+			if proposalNumberedProseRE.MatchString(line) {
+				t.Errorf("%s:%d cites a proposal document's own section number; name the specification heading that states the behavior", file, i+1)
+			}
+		}
+	}
+}
+
 // proposalMarkedAnnotationSites returns, for one repo-relative file, the
 // 1-based line numbers of the `// spec:` annotations that cite a proposal
 // document's own section number.
@@ -875,17 +952,19 @@ func TestTheCreditInventoryCarriesEveryAddressGuardCaseFile(t *testing.T) {
 //
 // The completeness rules derived from the tree report the case files a
 // hand-written inventory silently dropped: the claimer's own unit cases, the
-// concurrent slot-retry load case, and the gateway-side half of the
-// one-session-per-pod invariant. A completeness check that resolves only
-// against a sibling gate's five-file subset reports none of them, so the
-// inventory stays short and every section those cases pin shows no test
-// against it in the coverage view.
+// concurrent slot-retry load case, the gateway-side half of the
+// one-session-per-pod invariant, and the create-time claim cases that reserve
+// a session's slot without naming the claimer or the slot in the file name. A
+// completeness check that resolves only against a sibling gate's five-file
+// subset reports none of them, so the inventory stays short and every section
+// those cases pin shows no test against it in the coverage view.
 func TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops(t *testing.T) {
 	derived := derivedInventoryCaseFiles(t)
 	for _, file := range []string{
 		"pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go",
 		"pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
 		"pkg/gateway/sessionserver/slotretry_load_test.go",
+		"pkg/gateway/sessionserver/start_preclaim_internal_test.go",
 	} {
 		if _, ok := derived[file]; !ok {
 			t.Errorf("the derived completeness rules do not report %s, so the inventory can omit it with tier 0 green", file)
@@ -895,8 +974,16 @@ func TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops(t *testing.T) {
 
 // slotSurfaceCallRE matches a call into the pod-side slot surface the
 // per-session address contract is built on: the claimer's claim, release, and
-// reservation entry points, and the slot state package the contract keys on.
-var slotSurfaceCallRE = regexp.MustCompile(`slotstate\.|ClaimSlot\(|ReleaseSlot\(|ReserveSlotOnPod\(`)
+// reservation entry points, the gateway-side create-time claim and reserved-slot
+// bind that drive them, and the slot state package the contract keys on.
+//
+// The create-time claim and the reserved-slot bind are named because a case
+// can reserve a session's slot without naming the claimer: it calls
+// claimAtCreate, which reserves through the claimer underneath, and its file
+// name states neither the slot nor the one-session-per-pod invariant. Such a
+// file falls outside both derived rules and is dropped from the inventory
+// silently.
+var slotSurfaceCallRE = regexp.MustCompile(`slotstate\.|ClaimSlot\(|ReleaseSlot\(|ReserveSlotOnPod\(|claimAtCreate\(|BindReservedSlot\(`)
 
 // slotSubjectFileRE matches a case file whose own name states that its subject
 // is the slot or the one-session-per-pod invariant the address contract binds

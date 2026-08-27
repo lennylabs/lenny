@@ -90,7 +90,7 @@ sites:
       call: Skip
       reason: SO_PEERCRED self-test is Linux-only
     - path: pkg/adapter/slotlayout/slotlayout_test.go
-      function: TestEnsureTreeSetsExactModes_spec_6_4
+      function: TestEnsureTreeSetsExactModes_spec_6_1
       site: 1
       call: Skip
       reason: POSIX modes not meaningful on windows

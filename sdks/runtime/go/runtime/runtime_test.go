@@ -343,7 +343,7 @@ func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 // empty `annotations: {}` object.
 //
 // spec: §28.5.3 / §15.5. F-15.5.5.
-func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
+func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_5(t *testing.T) {
 	env := MessageEnvelope{Type: "message", ID: "m1"}
 	out, err := json.Marshal(env)
 	if err != nil {

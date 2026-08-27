@@ -145,7 +145,7 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 // concatenation into one decompress→untar pipeline. This pins that the
 // adapter reassembles across chunk boundaries rather than treating each
 // chunk as an independent archive.
-func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
+func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_7(t *testing.T) {
 	s, _, root := sessionServer(t)
 	archive := archiveOf(t, map[string]string{"multi.txt": "reassembled from two chunks"})
 	// Split the single archive at an arbitrary byte offset into two chunks,

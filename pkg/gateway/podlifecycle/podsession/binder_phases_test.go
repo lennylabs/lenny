@@ -219,7 +219,7 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 // diagnosis: a failure means the pre-credential reclaim either fails to drain
 // the pod or spuriously calls ReleaseSession for a session that never held a
 // lease.
-func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_3(t *testing.T) {
+func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
 	// No WorkspaceRoot: FinalizeWorkspace fails before assignCredentials.
 	srv := adapter.New("adapter-test")
 	srv.Runtime = &fakeRuntime{}
@@ -374,7 +374,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 // diagnosis: a failure means the created-expiry / pre-running terminate path
 // leaks the claimed pod or the finalize-assigned credential lease, because the
 // claimless reclaim entry point does not return both to the pool.
-func TestReclaimClaimedReleasesPodAndLease_spec_4_5(t *testing.T) {
+func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
@@ -415,7 +415,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_5(t *testing.T) {
 // diagnosis: a failure means the created-expiry sweep cannot release a pod
 // claimed at create when the session never reached finalize, leaving the warm
 // pod stranded.
-func TestReclaimClaimedNoLeaseIsNoOp_spec_4_5(t *testing.T) {
+func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}

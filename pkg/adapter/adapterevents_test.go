@@ -153,7 +153,7 @@ func TestControlEventDroppedWhenNoStream_spec_4_7(t *testing.T) {
 
 // spec: §6.1 one-session-per-pod — a second concurrent control stream is
 // rejected so events fan out to a single gateway connection.
-func TestAdapterEventsRejectsSecondStream_spec_4_7(t *testing.T) {
+func TestAdapterEventsRejectsSecondStream_spec_6_1(t *testing.T) {
 	s := New("served")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
