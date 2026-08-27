@@ -139,43 +139,47 @@ func TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1(t *te
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	conn, err := net.Dial("unix", m.PlatformMcpServer.Socket)
-	if err != nil {
-		t.Fatalf("dial platform MCP socket: %v", err)
-	}
-	defer conn.Close()
-	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
-
-	if err := enc.Encode(map[string]any{
-		"jsonrpc": "2.0", "id": 1, "method": "initialize",
-		"params": map[string]any{"_lennyNonce": m.MCPNonce, "protocolVersion": "2025-03-26"},
-	}); err != nil {
-		t.Fatalf("send initialize: %v", err)
-	}
-	var initResp map[string]json.RawMessage
-	if err := dec.Decode(&initResp); err != nil {
-		t.Fatalf("read initialize response: %v", err)
-	}
-	if _, isErr := initResp["error"]; isErr {
-		t.Fatalf("nonce-bearing initialize errored: %s", initResp["error"])
+	// The pod-surface cancellation is the release step after the close, so
+	// the sole-session wait above can return while it is still to run. Give
+	// it a bounded window to clear the arming before probing, and probe
+	// anyway when it does not, so the assertions below report the surviving
+	// surface rather than a timeout.
+	for deadline = time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if armed, _ := s.PodMCPArming(); armed == "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
-	if err := enc.Encode(map[string]any{
-		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-		"params": map[string]any{"name": privilegedPlatformTool, "arguments": map[string]any{}},
-	}); err != nil {
-		t.Fatalf("send tools/call: %v", err)
+	connectorSocket := soleConnectorSocket(t, m)
+
+	// The termination ended the pod's occupancy, so it runs the same
+	// pod-wide MCP teardown a Shutdown release runs: the terminated
+	// session's manifest nonce must open neither the platform socket nor
+	// the connector socket. The hold path is the one path on which no
+	// coordinator is left to reclaim the pod, so a surviving surface
+	// persists for the life of the pod rather than until the next claim.
+	reachable, authenticated, dispatched := platformToolCallOutcome(t, m.PlatformMcpServer.Socket, m.MCPNonce)
+	if authenticated || dispatched {
+		t.Errorf("after the coordinator-lost termination the platform socket authenticated=%v dispatched=%v for the ended session's nonce, want both false",
+			authenticated, dispatched)
 	}
-	var callResp map[string]json.RawMessage
-	if err := dec.Decode(&callResp); err != nil {
-		t.Fatalf("read tools/call response: %v", err)
+	if reachable && authenticated {
+		t.Error("the terminated session's manifest nonce still opens the pod's platform tool surface")
 	}
-	if _, isErr := callResp["error"]; !isErr {
-		t.Error("tools/call after the coordinator-lost termination succeeded; the surface must refuse " +
-			"rather than forward under a terminated session's principal")
+	reachable, authenticated, dispatched = connectorToolCallOutcome(t, connectorSocket, m.MCPNonce)
+	if authenticated || dispatched {
+		t.Errorf("after the coordinator-lost termination the connector socket authenticated=%v dispatched=%v for the ended session's nonce, want both false",
+			authenticated, dispatched)
+	}
+	if reachable && authenticated {
+		t.Error("the terminated session's manifest nonce still opens the pod's connector tool surface")
 	}
 	if got := fwd.platformCallCount(); got != 0 {
 		t.Errorf("the surface forwarded %d platform call(s) after the terminated session's close, want 0", got)
+	}
+	if got := fwd.connectorCallCount(); got != 0 {
+		t.Errorf("the surface forwarded %d connector call(s) after the terminated session's close, want 0", got)
 	}
 }
 

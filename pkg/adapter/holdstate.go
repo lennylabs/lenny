@@ -247,6 +247,17 @@ func (s *Server) terminateHeldSession(ctx context.Context, m heldSession, gen in
 	// The second release step. It follows the close so the agent process is
 	// not reading a credential file the teardown has already removed.
 	_ = removeSlotTree(m.state)
+	// The third release step, on the same terms as every other release that
+	// ends the pod's occupancy: the pod-wide platform and per-connector MCP
+	// servers are cancelled once this member's close leaves the shared
+	// runtime process serving no session and the arming session holds no
+	// slot. On a pod still holding a co-tenant the predicate fails closed
+	// and cancels nothing, so the surviving member keeps the surface it is
+	// using. Without it, an ended session's manifest nonce would keep
+	// authenticating the pod's tool surface for the life of a pod that no
+	// coordinator is left to reclaim.
+	// spec: §4.11; §15.4.3.
+	s.cancelPodMCPIfRuntimeIdle()
 
 	// §10.1.4 — notify the gateway so it can transition this session
 	// without waiting for the 60s orphan-session reconciler. The event
