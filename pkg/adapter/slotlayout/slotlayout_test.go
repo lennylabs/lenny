@@ -132,7 +132,7 @@ func TestEnsureTreeCreatesAllDirs_spec_6_4(t *testing.T) {
 }
 
 // EnsureTree pins the exact mode so the inherited umask cannot strip the
-// runtime/group bits. spec: §6.1 / §6.1.
+// runtime/group bits. spec: §6.1.
 func TestEnsureTreeSetsExactModes_spec_6_1(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX modes not meaningful on windows")

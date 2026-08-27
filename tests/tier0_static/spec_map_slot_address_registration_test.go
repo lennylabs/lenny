@@ -267,7 +267,10 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
 	"tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go",
 	"tests/tier11_docs/slot_definition_glossary_reconciliation_test.go",
+	"tests/tier11_docs/runbook_index_count_test.go",
 	"tests/tier11_docs/successor_pointer_test.go",
+	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go",
+	"tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
 	"tests/tier11_docs/tracing_context_addressing_doc_reconciliation_test.go",
 	"tests/tier11_docs/workspace_path_literal_sweep_test.go",
 	"tests/tier2_component/legalholdreconciler/reconciler_test.go",
@@ -560,13 +563,6 @@ func announcesItselfAsACitation(run string) bool {
 	return m != nil && strings.Contains(m[2], ".")
 }
 
-// annotatedSectionsInFile returns every spec-section id that the `// spec:`
-// annotations anywhere in the given file name.
-func annotatedSectionsInFile(t *testing.T, file string) map[string]bool {
-	t.Helper()
-	return sectionsFromLines(repoFileLines(t, file))
-}
-
 // sectionsFromLines returns every spec-section id the `// spec:` annotations
 // in the given lines name.
 func sectionsFromLines(lines []string) map[string]bool {
@@ -631,6 +627,66 @@ func perCaseSectionsFromLines(lines []string) map[string]map[string]bool {
 		if trimmed != "" && !strings.HasPrefix(trimmed, "//") {
 			pending = map[string]bool{}
 		}
+	}
+	return out
+}
+
+// caseNameSectionsFromLines returns, per test function declared in the given
+// lines, the spec-section id that function's own `_spec_X_Y` name suffix
+// asserts. A case that carries its citation in its name alone cites a section
+// as surely as one that writes a `// spec:` comment: the suffix is the
+// citation a reader sees in the verdict, and the sibling naming gate holds it
+// to the same standard.
+func caseNameSectionsFromLines(lines []string) map[string]string {
+	out := map[string]string{}
+	for _, line := range lines {
+		m := testFuncRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if id, ok := caseNameSection(m[1]); ok {
+			out[m[1]] = id
+		}
+	}
+	return out
+}
+
+// citedSectionsPerCase returns, per test function declared in the given file,
+// every spec-section id that case cites, in either form the repo writes a
+// citation: the ids of its own `// spec:` annotation and the id its
+// `_spec_X_Y` name suffix asserts.
+//
+// The credit gate resolves against this union rather than against the
+// annotation alone. A case whose section id lives only in its name contributes
+// no demand under the narrower reading, so the sweep never looks at it and the
+// section it pins keeps showing no test against it in the coverage view.
+func citedSectionsPerCase(t *testing.T, file string) map[string]map[string]bool {
+	t.Helper()
+	return citedSectionsPerCaseFromLines(repoFileLines(t, file))
+}
+
+// citedSectionsPerCaseFromLines returns, per test function declared in the
+// given lines, the union of the sections its `// spec:` annotation cites and
+// the section its `_spec_X_Y` name suffix asserts.
+func citedSectionsPerCaseFromLines(lines []string) map[string]map[string]bool {
+	out := perCaseSectionsFromLines(lines)
+	for fn, id := range caseNameSectionsFromLines(lines) {
+		if out[fn] == nil {
+			out[fn] = map[string]bool{}
+		}
+		out[fn][id] = true
+	}
+	return out
+}
+
+// citedSectionsInFile returns every spec-section id the given file cites in
+// either form, for a file tests/spec-map.json registers as a whole.
+func citedSectionsInFile(t *testing.T, file string) map[string]bool {
+	t.Helper()
+	lines := repoFileLines(t, file)
+	out := sectionsFromLines(lines)
+	for _, id := range caseNameSectionsFromLines(lines) {
+		out[id] = true
 	}
 	return out
 }
@@ -782,13 +838,13 @@ func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
 	for _, file := range slotAddressCaseFiles {
 		declared, wholeFile, perCase := specMapCredits(t, file)
 		if len(perCase) == 0 {
-			missing := creditsMissing(annotatedSectionsInFile(t, file), declared, headings, wholeFile, nil)
+			missing := creditsMissing(citedSectionsInFile(t, file), declared, headings, wholeFile, nil)
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s to section(s) %v its `// spec:` annotation names", file, sortedSectionIDs(missing))
 			}
 			continue
 		}
-		for fn, sections := range annotatedSectionsPerCase(t, file) {
+		for fn, sections := range citedSectionsPerCase(t, file) {
 			missing := creditsMissing(sections, declared, headings, wholeFile, perCase[fn])
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s::%s to section(s) %v its own `// spec:` annotation names", file, fn, sortedSectionIDs(missing))
@@ -965,6 +1021,7 @@ func TestDerivedInventoryRulesReportTheCaseFilesAHandListDrops(t *testing.T) {
 		"pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
 		"pkg/gateway/sessionserver/slotretry_load_test.go",
 		"pkg/gateway/sessionserver/start_preclaim_internal_test.go",
+		"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go",
 	} {
 		if _, ok := derived[file]; !ok {
 			t.Errorf("the derived completeness rules do not report %s, so the inventory can omit it with tier 0 green", file)
@@ -989,6 +1046,19 @@ var slotSurfaceCallRE = regexp.MustCompile(`slotstate\.|ClaimSlot\(|ReleaseSlot\
 // is the slot or the one-session-per-pod invariant the address contract binds
 // a session to.
 var slotSubjectFileRE = regexp.MustCompile(`(slot|one_session_only|sole_session)[^/]*_test\.go$`)
+
+// coverageAuditGateDir is the tier-11 documentation directory that holds the
+// gates reconciling the coverage audit at TEST-GAPS.md against the tree.
+const coverageAuditGateDir = "tests/tier11_docs/"
+
+// coverageAuditRE matches a case file that reads the coverage audit. Such a
+// gate asserts a behavior under the section its own citation names while
+// holding the audit that records which sections have a case against them, so a
+// gate the map does not credit leaves its own section showing no test in the
+// view it exists to keep honest. This is the third derived rule, and it closes
+// the class the two slot-surface rules cannot see: a gate whose subject is the
+// coverage view rather than the slot.
+var coverageAuditRE = regexp.MustCompile(`TEST-GAPS\.md`)
 
 // inventoryWalkRoots are the top-level directories that hold test files. The
 // derived inventory rules walk these rather than the whole tree so that build
@@ -1018,12 +1088,17 @@ func derivedInventoryCaseFiles(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, file := range repoTestFiles(t) {
-		if slotSurfaceCallRE.Match(repoFileBytes(t, file)) {
+		body := repoFileBytes(t, file)
+		if slotSurfaceCallRE.Match(body) {
 			out[file] = "calls the slot claim surface the address contract is built on"
 			continue
 		}
 		if slotSubjectFileRE.MatchString(file) {
 			out[file] = "names the slot contract as its own subject"
+			continue
+		}
+		if strings.HasPrefix(file, coverageAuditGateDir) && coverageAuditRE.Match(body) {
+			out[file] = "reconciles the coverage audit against the tree"
 		}
 	}
 	return out
@@ -1335,5 +1410,52 @@ func TestCreditsMissingReportsTheUncreditedAncestorKey(t *testing.T) {
 	}
 	if got := creditsMissing(sections, declared, headings, map[string]bool{}, map[string]bool{"15.4": true}); len(got) != 0 {
 		t.Errorf("creditsMissing reported %v for a per-case credit, want none", sortedSectionIDs(got))
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// A case whose only citation is the `_spec_X_Y` suffix of its own name
+// demands a spec-map credit for the section that suffix names. A credit sweep
+// that reads `// spec:` comment blocks alone never looks at such a case, so it
+// contributes no demand, and the section it pins keeps showing no test against
+// it however complete the sweep reports itself to be.
+func TestASuffixOnlyCitationDemandsItsCredit(t *testing.T) {
+	lines := []string{
+		"// EnsureTree pins the per-slot tree the session-scoped handlers resolve",
+		"// through.",
+		"func TestEnsureTreeCreatesAllDirs_spec_6_4(t *testing.T) {",
+		"}",
+	}
+	cited := citedSectionsPerCaseFromLines(lines)["TestEnsureTreeCreatesAllDirs_spec_6_4"]
+	if got := sortedSectionIDs(cited); strings.Join(got, ",") != "6.4" {
+		t.Fatalf("the credit path read %v from a suffix-only citation, want [6.4]", got)
+	}
+	declared := map[string]bool{"6.4": true}
+	headings := map[string]bool{"6.4": true}
+	missing := creditsMissing(cited, declared, headings, map[string]bool{}, nil)
+	if got := sortedSectionIDs(missing); strings.Join(got, ",") != "6.4" {
+		t.Errorf("creditsMissing reported %v for an uncredited suffix-only citation, want [6.4]", got)
+	}
+	if got := creditsMissing(cited, declared, headings, map[string]bool{"6.4": true}, nil); len(got) != 0 {
+		t.Errorf("creditsMissing reported %v once the credit is entered, want none", sortedSectionIDs(got))
+	}
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// The naming gate keeps reading a case's `// spec:` annotation alone, so
+// widening the credit gate to accept a name suffix as a citation does not make
+// the naming gate vacuous. A gate that resolved the name against a set the
+// name itself contributed to would agree with every name it was handed.
+func TestTheNamingGateReadsTheAnnotationWithoutTheNameSuffix(t *testing.T) {
+	lines := []string{
+		"// spec: 15.4 (the published artifact is the runtime author's contract)",
+		"func TestSomethingElse_spec_6_4(t *testing.T) {",
+		"}",
+	}
+	cited := perCaseSectionsFromLines(lines)["TestSomethingElse_spec_6_4"]
+	if sectionAgreesWithCitation("6.4", cited) {
+		t.Errorf("the naming gate accepted section 6.4 against an annotation naming %v", sortedSectionIDs(cited))
 	}
 }
