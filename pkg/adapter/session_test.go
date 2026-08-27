@@ -4,6 +4,7 @@ package adapter_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -313,7 +314,12 @@ func TestStartSessionRequiresConfiguration(t *testing.T) {
 	}
 }
 
-func TestSendMessageForwardsEnvelopeToRuntime(t *testing.T) {
+// TestSendMessageForwardsStampedEnvelopeToRuntime pins that the handler
+// hands the shared runtime the gateway's envelope carrying the session's
+// address, since §4.6.1 makes the population of the per-session
+// identifier an adapter-side obligation on every session-scoped frame.
+// spec: §4.6.1; §5.2; §28.5.3.
+func TestSendMessageForwardsStampedEnvelopeToRuntime(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
@@ -326,8 +332,18 @@ func TestSendMessageForwardsEnvelopeToRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if len(rt.envelopes) != 1 || string(rt.envelopes[0]) != string(envelope) {
-		t.Errorf("runtime received envelopes %v, want one matching the request", rt.envelopes)
+	if len(rt.envelopes) != 1 {
+		t.Fatalf("runtime received %d envelopes, want 1", len(rt.envelopes))
+	}
+	var frame map[string]any
+	if err := json.Unmarshal(rt.envelopes[0], &frame); err != nil {
+		t.Fatalf("the envelope the adapter wrote is not a JSON object: %v (%s)", err, rt.envelopes[0])
+	}
+	if frame["sessionId"] != "sess-1" {
+		t.Errorf("runtime received %s, want the request's session address stamped on it", rt.envelopes[0])
+	}
+	if frame["type"] != "message" || frame["input"] == nil {
+		t.Errorf("the stamp dropped the gateway's own fields: %s", rt.envelopes[0])
 	}
 }
 

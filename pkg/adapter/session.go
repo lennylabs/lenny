@@ -166,9 +166,13 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 
 // SendMessage delivers a content message to the pod's runtime (§4.7).
 // The request carries a §28.5.3 message envelope already encoded by
-// the gateway; the adapter writes it verbatim to the runtime's stdin.
-// The runtime's response is surfaced asynchronously, so SendMessage
-// returns once the envelope is delivered.
+// the gateway. The adapter stamps the session's address onto it and
+// writes it to the shared runtime's stdin, through the same helper the
+// Attach leg uses, because §4.6.1 makes the population of the
+// per-session identifier an adapter-side obligation on every
+// session-scoped frame on every pod. The runtime's response is surfaced
+// asynchronously, so SendMessage returns once the envelope is delivered.
+// spec: §4.6.1; §5.2; §28.5.3.
 func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageRequest) (*adapterv1.SendMessageResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -187,7 +191,7 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"session %s has no running runtime", sessionID)
 	}
-	if err := rt.WriteEnvelope(sessionID, req.GetEnvelopeJson()); err != nil {
+	if err := s.writeSessionEnvelope(rt, sessionID, req.GetEnvelopeJson()); err != nil {
 		return nil, status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
 	}
 	return &adapterv1.SendMessageResponse{}, nil
