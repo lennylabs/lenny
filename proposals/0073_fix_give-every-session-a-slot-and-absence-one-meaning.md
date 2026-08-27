@@ -365,7 +365,7 @@ rule, the text moves to the code's step, and the step that carries it names the 
       is implemented, and a landed proposal is a record of what was decided at the time rather than a
       running summary of what later became true (`.claude/rules/spec-driven-development.md`). The
       revert disclosure itself stays in §4.5(f), where it belongs; only the amendment to 0064 is dropped.
-- [ ] **S22 · test** — `tests/spec-map.json`, which the proposal names twice and no step carried. The two
+- [x] **S22 · test** — `tests/spec-map.json`, which the proposal names twice and no step carried. The two
       rows commit 01d19af0 added are dropped per §4.5(f) and the exact-count assertion in the tier-3
       reportusage case returns to its earlier form. Every §8 case that landed without a mapping is entered,
       swept against the case inventory rather than by adding the known gaps alone, and the tier-0 spec-map
