@@ -22,14 +22,12 @@ import (
 // the workspace root. Restore-side path containment is Materialize's
 // responsibility.
 //
-// spec: §6.4 — single-session pods (maxConcurrentSessions == 1)
-// use the single `/workspace/current` tree, so callers pass that path and
-// Archive captures the whole session workspace in one snapshot. The
-// concurrent-workspace per-slot layout (`/workspace/slots/{slotId}/` plus
-// `/artifacts/{slotId}/`) is unbuilt in v1; once it lands, the caller —
-// not Archive — decides whether to snapshot the per-slot tree alone or
-// include the slot's `/artifacts/{slotId}/`. Archive itself is layout-
-// agnostic: it walks root verbatim.
+// spec: §6.4 — every session is bound to a slot on every pod, whatever
+// the pool's concurrency, so the tree a caller passes is that session's
+// own `/workspace/slots/{sessionId}/current`. Whether to snapshot the
+// per-slot workspace alone or also the session's `/artifacts/{sessionId}/`
+// is the caller's decision. Archive itself is layout-agnostic: it walks
+// root verbatim.
 func Archive(root string, w io.Writer) (int64, error) {
 	counter := &countingWriter{w: w}
 	gz := gzip.NewWriter(counter)

@@ -363,6 +363,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
 	"tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go",
 	"tests/tier11_docs/slot_definition_glossary_reconciliation_test.go",
+	"tests/tier11_docs/slot_placeholder_literal_sweep_test.go",
 	"tests/tier11_docs/runbook_index_count_test.go",
 	"tests/tier11_docs/successor_pointer_test.go",
 	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go",

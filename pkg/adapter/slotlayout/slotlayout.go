@@ -185,13 +185,13 @@ func SessionCurrentDir(base, sessionID string) string {
 	return paths.Current
 }
 
-// slotRoot returns `/workspace/slots/{slotId}` for the workspace-side
+// slotRoot returns `/workspace/slots/{sessionId}` for the workspace-side
 // removal, the parent of both current/ and staging/.
 func (p SlotPaths) slotRoot() string {
 	if p.Current == "" {
 		return ""
 	}
-	// Current is `<root>/slots/<slotId>/current`; its parent is the slot
+	// Current is `<root>/slots/<sessionId>/current`; its parent is the slot
 	// root removed wholesale on cleanup.
 	return filepath.Dir(p.Current)
 }

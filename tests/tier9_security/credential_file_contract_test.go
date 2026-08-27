@@ -64,7 +64,7 @@ func TestCredentialFileDeliveryContract(t *testing.T) {
 
 	// Locate the adapter-materialized credential file. Single-session
 	// pods use /run/lenny/credentials.json; maxConcurrentSessions > 1
-	// pods use the per-slot /run/lenny/slots/{slotId}/credentials.json
+	// pods use the per-slot /run/lenny/slots/{sessionId}/credentials.json
 	// (§13.1 per-slot clause). A find over the mount covers both.
 	found, err := execContainer(t, c, pod, "runtime", "find", "/run/lenny", "-name", credfile.FileName, "-type", "f")
 	if err != nil {

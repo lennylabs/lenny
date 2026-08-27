@@ -1219,7 +1219,8 @@
         "tests/tier7a_load_local/tracing_context_release_race_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindErrorReason_spec_5_2",
-        "pkg/adapter/slotsession_test.go"
+        "pkg/adapter/slotsession_test.go",
+        "tests/tier11_docs/slot_placeholder_literal_sweep_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1288,6 +1289,7 @@
         "tests/tier11_docs/credential_path_literal_sweep_test.go",
         "tests/tier11_docs/pod_filesystem_layout_doc_reconciliation_test.go",
         "tests/tier11_docs/workspace_path_literal_sweep_test.go",
+        "tests/tier11_docs/slot_placeholder_literal_sweep_test.go",
         "cmd/lenny-compliance/full_test.go",
         "tests/tier11_docs/retirement_sweep_surfaces_test.go",
         "tests/tier11_docs/rotation_ceiling_cotenant_reconciliation_test.go",
@@ -1415,6 +1417,7 @@
         "tests/tier11_docs/session_policy_table_mirror_reconciliation_test.go",
         "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
         "tests/tier11_docs/workspace_path_literal_sweep_test.go",
+        "tests/tier11_docs/slot_placeholder_literal_sweep_test.go",
         "tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
         "tests/tier3_contract/adapter_frame_resolution/session_scoped_frame_resolution_test.go::TestInboundEnvelopeCarriesTheAddressedSession_spec_28_5_3",
         "cmd/lenny-ctl/runtimescaffold/scaffold_test.go",

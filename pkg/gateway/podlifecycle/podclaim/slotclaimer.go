@@ -210,7 +210,7 @@ type SlotRequest struct {
 	// SessionID is the §15.1 session the slot serves. It is also used as
 	// the slot's SlotID: one session occupies exactly one slot, the
 	// SandboxClaim name is deterministic per session, and the §6.4
-	// per-slot workspace path /workspace/slots/{slotId}/ is therefore
+	// per-slot workspace path /workspace/slots/{sessionId}/ is therefore
 	// stable and collision-free for the slot's lifetime.
 	SessionID string
 	// TenantID is the tenant that owns the session. §5.2 tenant pinning
@@ -360,7 +360,7 @@ func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool
 // on a per-pod occupancy claim (§4.6.1, §5.2). The session-to-pod binding
 // is recorded on the Postgres session row's pod_assignment column by the
 // session server; SlotResult.SlotID carries the session identifier so the
-// per-slot workspace path /workspace/slots/{slotId}/ stays stable.
+// per-slot workspace path /workspace/slots/{sessionId}/ stays stable.
 //
 // Placement (§5.2 concurrent-session slot assignment):
 //

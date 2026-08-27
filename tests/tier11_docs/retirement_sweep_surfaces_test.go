@@ -42,6 +42,15 @@ var retirementSweepRoots = []string{
 	"sdks",
 }
 
+// placeholderSweepRoots are the directories a retired path-template
+// placeholder reaches. A placeholder lives in a path template, and path
+// templates are documented in package and field comments and quoted in
+// test headers as often as they are in prose, so the token's carriers
+// extend past the reader-facing roots into the libraries that resolve the
+// path and the suites that assert it. A comment naming a placeholder that
+// addresses nothing is invisible to the compiler wherever it stands.
+var placeholderSweepRoots = append(append([]string{}, retirementSweepRoots...), "pkg", "tests")
+
 // The sweep has no carrier whitelist. The predicate is stated over the
 // directory set, so every authored file under a swept root is read
 // whatever its extension: a Helm helper template (.tpl), a packaging
@@ -67,9 +76,22 @@ var retirementSweepSkipDirs = map[string]bool{
 // which is generated rather than authored and so is swept by path
 // rather than by directory.
 func retirementSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, retirementSweepRoots)
+}
+
+// placeholderSweepSurfaces returns every file the retired-placeholder
+// sweep reads: the retirement surfaces widened with the library and test
+// roots the placeholder's carriers reach.
+func placeholderSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, placeholderSweepRoots)
+}
+
+// sweepSurfaces walks the given roots and returns every authored carrier
+// under them, plus the served OpenAPI document.
+func sweepSurfaces(t *testing.T, root string, roots []string) []string {
 	t.Helper()
 	var swept []string
-	for _, rel := range retirementSweepRoots {
+	for _, rel := range roots {
 		dir := filepath.Join(root, rel)
 		walked := 0
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -165,7 +187,7 @@ func retirementSweepSkipsPath(name string) bool {
 func missingFromRetirementSweep(t *testing.T, root string, swept map[string]bool) []string {
 	t.Helper()
 	var missing []string
-	for _, rel := range retirementSweepRoots {
+	for _, rel := range placeholderSweepRoots {
 		for _, name := range trackedFilesUnder(t, root, rel) {
 			if retirementSweepSkipsPath(name) {
 				continue
@@ -201,7 +223,7 @@ func missingFromRetirementSweep(t *testing.T, root string, swept map[string]bool
 func TestRetirementSweepReadsEveryAuthoredFileUnderItsRoots(t *testing.T) {
 	root := repoRoot(t)
 	swept := map[string]bool{}
-	for _, path := range retirementSweepSurfaces(t, root) {
+	for _, path := range placeholderSweepSurfaces(t, root) {
 		swept[path] = true
 	}
 	for _, name := range missingFromRetirementSweep(t, root, swept) {
@@ -223,7 +245,7 @@ func TestRetirementSweepCoverageGateReportsANarrowedCarrierFilter(t *testing.T) 
 	// The whitelist the sweep used to carry: prose and schema carriers only.
 	whitelisted := map[string]bool{".md": true, ".json": true, ".yaml": true, ".go": true}
 	narrowed := map[string]bool{}
-	for _, path := range retirementSweepSurfaces(t, root) {
+	for _, path := range placeholderSweepSurfaces(t, root) {
 		if whitelisted[filepath.Ext(path)] {
 			narrowed[path] = true
 		}

@@ -15,7 +15,7 @@ import (
 )
 
 // assignCredentialsSlot writes the §6.1 per-slot credential file
-// /run/lenny/slots/{slotId}/credentials.json from the slot's independent
+// /run/lenny/slots/{sessionId}/credentials.json from the slot's independent
 // lease set, leaving sibling slots' files untouched. The slot must
 // already hold the session (StartSession ran first); credentials may also
 // be assigned before start during the §4.7 bind sequence, in which case

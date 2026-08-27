@@ -270,7 +270,7 @@ func TestSessionModePoolMaterializesIntoTheSlotTree_spec_6_4(t *testing.T) {
 
 // spec: §5.2 (spec/05_runtime-registry-and-pool-model.md, "Concurrent
 // sessions (`maxConcurrentSessions > 1`)") — "Each slot gets its own
-// workspace under `/workspace/slots/{slotId}/`... Cross-slot isolation
+// workspace under `/workspace/slots/{sessionId}/`... Cross-slot isolation
 // is process-level and filesystem-level." And §6.4 (spec/
 // 06_warm-pod-model.md) — "No global `/workspace/current` path exists,
 // and the runtime MUST NOT assume one."

@@ -46,7 +46,7 @@ type SlotBindRequest struct {
 	// leaves uptime retirement off.
 	MaxPodUptimeSeconds int64
 	// Plan is the per-slot workspace the adapter materializes under
-	// /workspace/slots/{slotId}/ before start. spec: §5.2 — concurrent
+	// /workspace/slots/{sessionId}/ before start. spec: §5.2 — concurrent
 	// sessions always materialize a per-slot workspace.
 	Plan *adapterv1.WorkspacePlan
 	// ExperimentContext and TracingContext are delivered to the runtime
@@ -118,7 +118,7 @@ type SlotBindRequest struct {
 // and finalizes the workspace, runs setup, assigns credentials (a
 // per-slot lease per §6), and starts the session, exactly as
 // session-mode Bind does. The §6.4 per-slot directory tree under
-// /workspace/slots/{slotId}/ is the adapter's responsibility, and the
+// /workspace/slots/{sessionId}/ is the adapter's responsibility, and the
 // pod's /workspace/shared/ tree is shared read-only across the pod's
 // slots.
 //
@@ -267,7 +267,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
 	// extraction runs gateway-side (§7.4) exactly as in
 	// session-mode Bind; the adapter re-validates symlinks against the
-	// slot's actual /workspace/slots/{slotId}/current after promotion.
+	// slot's actual /workspace/slots/{sessionId}/current after promotion.
 	allow := upload.RuntimeAllow{
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
 		// spec: §6.4; §13.4 — the containment root symlink targets are

@@ -11,7 +11,7 @@
 // mode promises hold across the combined workload:
 //
 //   - Per-slot credential isolation. Each slot's independent credential
-//     lease is written to its own /run/lenny/slots/{slotId}/credentials.json
+//     lease is written to its own /run/lenny/slots/{sessionId}/credentials.json
 //     (§6.1) and neither slot's lease leaks into the other's file or into
 //     the single-slot /run/lenny/credentials.json path.
 //   - Independent budget accounting. The delegating slot's child budget is
@@ -47,7 +47,7 @@
 // spec: §5.2 (concurrent sessions: per-slot credential-file group-read,
 // per-slot cleanup via ReportSessionScrub on every session release),
 // §6.1 (per-slot credential lease lifecycle:
-// /run/lenny/slots/{slotId}/credentials.json, each active slot an
+// /run/lenny/slots/{sessionId}/credentials.json, each active slot an
 // independent lease, revoked independently), §8.2 (delegation budget
 // carved from the parent's remaining budget), §4.9 (LLM reverse proxy).
 package tier4_integration_test
@@ -120,7 +120,7 @@ func (r *recordingScrubReporter) snapshot() []scrubReport {
 //
 //	via ReportSessionScrub on every session release; each slot an
 //	independent, simultaneous session), 6.1 (per-slot credential lease
-//	lifecycle: /run/lenny/slots/{slotId}/credentials.json, revoked
+//	lifecycle: /run/lenny/slots/{sessionId}/credentials.json, revoked
 //	independently), 8.2 (delegation budget carved from the parent's
 //	remaining budget), 4.9 (LLM reverse proxy)
 //
@@ -353,7 +353,7 @@ func seedConcurrentSession(t *testing.T, ctx context.Context, store *memstore.St
 // asserts it holds only that slot's lease, that neither slot's lease leaked
 // into the sibling's file, and that the single-slot /run/lenny/credentials.json
 // path was never written (a concurrent pod has no pod-global credential file).
-// spec: §6.1 (per-slot credential files at /run/lenny/slots/{slotId}/).
+// spec: §6.1 (per-slot credential files at /run/lenny/slots/{sessionId}/).
 func assertSlotCredentialIsolation(t *testing.T, srv *adapter.Server, alice, bob concurrentSlotSession) {
 	t.Helper()
 	for _, s := range []concurrentSlotSession{alice, bob} {
@@ -377,14 +377,14 @@ func assertSlotCredentialIsolation(t *testing.T, srv *adapter.Server, alice, bob
 		t.Errorf("slot %s credential file leaked sibling provider %q; per-slot credential isolation broken", bob.sessionID, alice.provider)
 	}
 	// The single-slot pod-global credential file must never exist on a
-	// concurrent pod; each slot has its own file under slots/{slotId}/.
+	// concurrent pod; each slot has its own file under slots/{sessionId}/.
 	if _, err := os.Stat(filepath.Join(srv.CredentialsDir, "credentials.json")); !os.IsNotExist(err) {
 		t.Errorf("pod-global /run/lenny/credentials.json exists on a concurrent pod (err=%v); credentials were not written per slot", err)
 	}
 }
 
 // slotCredentialFile returns the slot's per-slot credential file path,
-// /run/lenny/slots/{slotId}/credentials.json. spec: §6.1.
+// /run/lenny/slots/{sessionId}/credentials.json. spec: §6.1.
 func slotCredentialFile(srv *adapter.Server, slotID string) string {
 	return filepath.Join(srv.CredentialsDir, "slots", slotID, "credentials.json")
 }

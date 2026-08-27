@@ -77,7 +77,7 @@ type Server struct {
 	// this base and the session identifier; the pod carries no pod-global
 	// `current` directory. Empty disables workspace materialization.
 	WorkspaceBase string
-	// ArtifactsRoot is the §6.4 base the per-slot `/artifacts/{slotId}`
+	// ArtifactsRoot is the §6.4 base the per-slot `/artifacts/{sessionId}`
 	// trees nest under (production /artifacts). Empty omits the per-slot
 	// artifacts directory.
 	ArtifactsRoot string
