@@ -63,7 +63,7 @@ func TestBuildSidecarInjectsEgressCaptureWhenConfigured(t *testing.T) {
 // pod-level fsGroup nonetheless grants lenny-cred-readers supplementary
 // membership — mounts only its capture volume at /run/lenny-capture and
 // never the credential volume or a path under /run/lenny, so it cannot
-// reach /run/lenny/credentials.json. This is the real-world case behind
+// reach any session's credential file under /run/lenny/slots/. This is the real-world case behind
 // F-13.1.10 and cross-checks the F-6.4.16 sibling-path invariant.
 func TestBuildEgressCaptureSidecarStaysOffCredentialPath_spec_13_1(t *testing.T) {
 	in := inputs()

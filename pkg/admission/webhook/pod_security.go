@@ -39,7 +39,7 @@ import (
 // deployment: a pod the webhook cannot inspect must not be admitted
 // with a pod-security posture it could not verify (§13.1).
 // credVolumeName is the name of the pod-level credential tmpfs volume
-// carrying /run/lenny/credentials.json. The §13.1 membership boundary
+// carrying the per-session credential files under /run/lenny/slots/. The §13.1 membership boundary
 // (POD_SPEC_CRED_GROUP_OVERBROAD) rejects a non-adapter, non-agent
 // container that mounts it; the binary passes podspec.CredVolumeName.
 func PodSecurity(credReadersGID int64, credVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {

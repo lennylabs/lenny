@@ -8,10 +8,11 @@
 // occupancy reaches zero on a recycle-enabled pod; its ordering is:
 //
 //	occupancy reaches zero (claim patched bound → recycling)
-//	  → step 0: remove /run/lenny/credentials.json
+//	  → step 0: remove every per-slot credential file under /run/lenny/slots/
 //	  → cleanupCommands (deployer code, with LENNY_PREV_* env, no cred file)
-//	  → steps 1-6: kill user procs, ipcrm shm, rm -rf workspace, env reset,
-//	    clear /tmp + /dev/shm + scratch, truncate log buffers, stat-verify
+//	  → steps 1-6: kill user procs, ipcrm shm, rm -rf every per-slot
+//	    workspace tree under /workspace/slots/, env reset, clear /tmp +
+//	    /dev/shm + scratch, truncate log buffers, stat-verify
 //
 // Steps 0-6 run uniformly for every profile. §5.2 step 7 (the vm-restart
 // profile's fresh-guest reprovision) is not an in-guest operation: an
@@ -381,10 +382,10 @@ func (r *Report) verify(ops Ops, cfg Config) {
 		checkEmpty(d)
 	}
 
-	// The credential file must be absent, not merely empty: step 0 removes
-	// it and step 6 confirms removal. spec line 436 — "if
-	// /run/lenny/credentials.json still exists despite step 0, the scrub is
-	// marked failed".
+	// A per-slot credential file must be absent rather than merely empty:
+	// step 0 removes each one and step 6 confirms the removal. A file
+	// /run/lenny/slots/{sessionId}/credentials.json left present despite
+	// step 0 marks the scrub failed. spec: §5.2; §6.1.
 	for _, f := range cfg.CredentialFiles {
 		exists, _, err := ops.PathState(f)
 		if err != nil {

@@ -114,8 +114,9 @@ func TestValidateRejectsWrongCredSupplementalGroups_spec_13_1(t *testing.T) {
 
 // TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1
 // asserts §13.1: a non-adapter, non-agent container that mounts
-// the credential volume by name reaches /run/lenny/credentials.json and
-// is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. This closes the
+// the credential volume by name reaches every session's credential file
+// under /run/lenny/slots/ and is rejected with
+// POD_SPEC_CRED_GROUP_OVERBROAD. This closes the
 // fsGroup-inheritance side-channel the per-container runAsGroup check
 // alone cannot (F-13.1.10).
 func TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1(t *testing.T) {

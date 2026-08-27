@@ -42,6 +42,16 @@ var retirementSweepRoots = []string{
 	"sdks",
 }
 
+// credentialSweepRoots are the directories the retired pod-global
+// credential file reaches. The credential path is written into a struct
+// field comment, a constant's doc comment, and a test header as often as
+// it is into prose, and the library that resolves the per-slot path and
+// the validator that guards the credential mount both state it, so the
+// literal's carriers extend past the reader-facing roots into the
+// libraries. A comment naming a credential file no pod writes is
+// invisible to the compiler wherever it stands.
+var credentialSweepRoots = append(append([]string{}, retirementSweepRoots...), "pkg")
+
 // placeholderSweepRoots are the directories a retired path-template
 // placeholder reaches. A placeholder lives in a path template, and path
 // templates are documented in package and field comments and quoted in
@@ -77,6 +87,13 @@ var retirementSweepSkipDirs = map[string]bool{
 // rather than by directory.
 func retirementSweepSurfaces(t *testing.T, root string) []string {
 	return sweepSurfaces(t, root, retirementSweepRoots)
+}
+
+// credentialSweepSurfaces returns every file the retired-credential
+// sweep reads: the retirement surfaces widened with the library root the
+// credential literal's carriers reach.
+func credentialSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, credentialSweepRoots)
 }
 
 // placeholderSweepSurfaces returns every file the retired-placeholder

@@ -151,7 +151,7 @@ func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
 		"/proc/self/environ",
 		"/sys/kernel/debug",
 		"/dev/null",
-		"/run/lenny/credentials.json",
+		"/run/lenny/slots/sess-1/credentials.json",
 	}
 	for _, target := range cases {
 		err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: target}, allow)

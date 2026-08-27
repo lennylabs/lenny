@@ -102,7 +102,7 @@ func stepErr(rep *Report, step StepName) error {
 func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
-		CredentialFiles: []string{"/run/lenny/credentials.json"},
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
 		WorkspaceDirs:   []string{"/workspace/current"},
 		CleanupDir:      "/workspace/current",
 	})
@@ -127,7 +127,7 @@ func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
-		CredentialFiles: []string{"/run/lenny/credentials.json"},
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
 		CleanupCommands: []string{"true"},
 		WorkspaceDirs:   []string{"/workspace/current"},
 		CleanupDir:      "/workspace/current",
@@ -188,7 +188,7 @@ func TestRun_DirtyWorkspaceFailsVerify_spec_5_2_436(t *testing.T) {
 	}
 }
 
-// spec: §5.2 — if /run/lenny/credentials.json still exists despite
+// spec: §5.2 — if a per-slot credential file still exists despite
 // step 0, the scrub is marked failed.
 func TestRun_CredentialStillPresentFailsVerify_spec_5_2_436(t *testing.T) {
 	ops := newFakeOps()
@@ -361,7 +361,7 @@ func stepSequence(rep *Report) []StepName {
 // second verify for a MicrovmRestart config).
 func TestRun_VMRestartRunsIdenticalSteps0To6AsStandard_spec_5_2_step7(t *testing.T) {
 	cfg := Config{
-		CredentialFiles: []string{"/run/lenny/credentials.json"},
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
 		WorkspaceDirs:   []string{"/workspace/current"},
 		CleanupDir:      "/workspace/current",
 		ScratchDirs:     []string{"/var/adapter-scratch"},

@@ -26,9 +26,9 @@ import "fmt"
 const SeccompRuntimeDefault = "RuntimeDefault"
 
 // CredMountPathPrefix is the in-pod directory carrying the §4.7
-// credential file (`/run/lenny/credentials.json`) and the adapter
-// manifest. A volume mount at this path or below reaches the
-// credential file. §13.1 confines that read boundary to the adapter
+// per-session credential files (`/run/lenny/slots/{sessionId}/credentials.json`)
+// and the adapter manifest. A volume mount at this path or below reaches
+// every session's credential file. §13.1 confines that read boundary to the adapter
 // and agent containers; a non-credential container that mounts this
 // prefix is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. It mirrors the
 // lenny-ephemeral-container-cred-guard condition (iv) for the regular
@@ -82,7 +82,8 @@ type PodSpec struct {
 	CredentialContainerNames []string
 
 	// CredVolumeName is the name of the pod-level credential tmpfs
-	// volume carrying /run/lenny/credentials.json. §13.1: a
+	// volume carrying the per-session credential files under
+	// /run/lenny/slots/. §13.1: a
 	// non-adapter, non-agent container that mounts this volume (by name)
 	// or mounts the /run/lenny path prefix reaches the credential file
 	// and is rejected with POD_SPEC_CRED_GROUP_OVERBROAD. Empty disables
@@ -309,7 +310,8 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 		// close the fsGroup-inheritance side-channel on its own. A
 		// non-adapter, non-agent container that mounts the credential
 		// volume by name, or mounts a path at or under /run/lenny, reaches
-		// /run/lenny/credentials.json and is rejected. This mirrors the
+		// every session's credential file under /run/lenny/slots/ and is
+		// rejected. This mirrors the
 		// lenny-ephemeral-container-cred-guard condition (iv) for the
 		// regular containers this webhook validates.
 		if !credentialContainer[c.Name] {
