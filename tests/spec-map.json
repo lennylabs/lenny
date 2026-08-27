@@ -980,7 +980,8 @@
         "tests/tier4_integration/credential_delivery_gate_test.go",
         "pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
-        "pkg/gateway/sessionserver/start_preclaim_internal_test.go"
+        "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
+        "pkg/adapter/slotsession_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -1214,7 +1215,8 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier7a_load_local/tracing_context_release_race_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
-        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindErrorReason_spec_5_2"
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindErrorReason_spec_5_2",
+        "pkg/adapter/slotsession_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1304,7 +1306,8 @@
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
         "pkg/adapter/slotlayout/slotlayout_test.go",
-        "pkg/adapter/manifest_fields_test.go"
+        "pkg/adapter/manifest_fields_test.go",
+        "pkg/adapter/slotsession_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1433,7 +1436,8 @@
         "pkg/adapter/tracingcontext_sampling_test.go",
         "tests/tier0_static/claim_register_proto_agreement_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
-        "pkg/adapter/slotlayout/slotlayout_test.go"
+        "pkg/adapter/slotlayout/slotlayout_test.go",
+        "pkg/adapter/slotsession_test.go"
       ],
       "packages": [
         "pkg/workspace"
@@ -3681,7 +3685,8 @@
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestMessageBodyIgnoresStaleSlotAddress_spec_7_2",
         "pkg/adapter/holdstate_test.go",
         "pkg/adapter/drain_test.go",
-        "tests/tier4_integration/mcp_runtime_lifecycle_test.go"
+        "tests/tier4_integration/mcp_runtime_lifecycle_test.go",
+        "pkg/adapter/slotsession_test.go"
       ],
       "packages": [
         "cmd/runtimes/echo",

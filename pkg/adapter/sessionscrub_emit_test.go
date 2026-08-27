@@ -21,6 +21,10 @@ type recordingSessionScrubReporter struct {
 	mu      sync.Mutex
 	reports []sessionScrubCall
 	err     error
+	// beforeReport runs at the head of every ReportSessionScrub call, so a
+	// case can observe the pod at the moment the cleanup outcome is
+	// reported rather than only after the handler has returned.
+	beforeReport func()
 }
 
 type sessionScrubCall struct {
@@ -30,6 +34,9 @@ type sessionScrubCall struct {
 }
 
 func (r *recordingSessionScrubReporter) ReportSessionScrub(_ context.Context, podID, sessionID string, outcome gatewaycontrol.SessionScrubOutcome) error {
+	if r.beforeReport != nil {
+		r.beforeReport()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reports = append(r.reports, sessionScrubCall{podID: podID, sessionID: sessionID, outcome: outcome})
