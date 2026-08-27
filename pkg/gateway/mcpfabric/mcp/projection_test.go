@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,7 +223,7 @@ func TestProjectElicitationCreate_spec_15_2_1362(t *testing.T) {
 // tool_use_requested event (emitted by the approval gate) is always
 // approval-required.
 func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
-	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"},"slotId":"slot-1"}`
+	data := `{"tool_call_id":"tc-1","tool":"shell","args":{"cmd":"ls"}}`
 	m := decodeFrame(t, projectMCPSessionEvent(ev("tool_use_requested", "sess-4", data)))
 	if m["method"] != "elicitation/create" {
 		t.Fatalf("approval-required requested phase must project to elicitation/create, got %v", m["method"])
@@ -236,6 +237,16 @@ func TestProjectToolUseApprovalElicitation_spec_15_2_1363(t *testing.T) {
 	}
 	if meta["lenny/kind"] != "tool_use_approval" {
 		t.Errorf("kind=%v", meta["lenny/kind"])
+	}
+	// The call is addressed by its session alone: a session-mode slot's
+	// identifier is its session's identifier. spec: §5.2.
+	if meta["lenny/sessionId"] != "sess-4" {
+		t.Errorf("_meta lenny/sessionId=%v want sess-4", meta["lenny/sessionId"])
+	}
+	for k := range meta {
+		if strings.Contains(strings.ToLower(k), "slot") {
+			t.Errorf("_meta carries the retired slot key %q: %v", k, meta)
+		}
 	}
 }
 
