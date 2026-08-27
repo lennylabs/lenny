@@ -27,8 +27,9 @@ func (fr *fakeRuntime) readWithin(d time.Duration) (lifecycleFrame, bool) {
 // probeRuntime is a RuntimeProcess that runs a probe on entry to Close,
 // before it records the session it closed. The merged shutdown handler runs
 // the drain, the close, and the per-slot tree removal in that order, so a
-// probe taken here observes the pod exactly as the agent process inside the
-// §15.4.2 grace window observes it.
+// probe taken here observes the pod one step after the §15.4.2 grace window
+// opens. The window's own opening is observed from the runtime side instead,
+// by a reader that probes as soon as the terminate frame arrives.
 type probeRuntime struct {
 	onClose func(sessionID string)
 	closed  []string
@@ -105,14 +106,26 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T
 		current, credentials bool
 	}
 	var atDrain, atClose, atReport probe
-	rt := &probeRuntime{onClose: func(string) {
-		// The frame is on the socket before Close runs, so reading it here
-		// is the moment the runtime end learns the drain has started.
-		if got := fr.read(); got.Type != "terminate" {
-			t.Errorf("frame read on entry to Runtime.Close = %q, want terminate", got.Type)
+	// The drain observation is taken from the runtime side, at the moment
+	// the peer reads the terminate frame, which is where the §15.4.2 grace
+	// window opens. Close's own observation is taken independently one step
+	// later, so the two assertions below read two samples rather than one.
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		got, ok := fr.readWithin(4 * time.Second)
+		if !ok {
+			t.Errorf("no CH-RUNTIMEOPS frame reached the runtime end before Runtime.Close")
+			return
+		}
+		if got.Type != "terminate" {
+			t.Errorf("frame read at the drain = %q, want terminate", got.Type)
 		}
 		atDrain.current, atDrain.credentials = slotTreeProbe(t, s, "alice")
-		atClose = atDrain
+	}()
+	rt := &probeRuntime{onClose: func(string) {
+		<-drained
+		atClose.current, atClose.credentials = slotTreeProbe(t, s, "alice")
 	}}
 	s.Runtime = rt
 	reporterProbe := func() { atReport.current, atReport.credentials = slotTreeProbe(t, s, "alice") }
