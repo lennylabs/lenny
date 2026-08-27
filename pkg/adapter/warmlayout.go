@@ -94,7 +94,7 @@ const warmStagingMode = 0o700
 // It creates no `current` leaf. Under §6.4 the per-slot tree is the only
 // workspace layout: a session's cwd is
 // `<base>/slots/{sessionId}/current`, created at slot assignment, and no
-// pod-global `/workspace/current` exists for a runtime to fall back on.
+// pod-global current tree exists for a runtime to fall back on.
 //
 // It is idempotent: re-creating an existing directory is a no-op.
 // Either directory being unconfigured (empty string) skips that

@@ -168,8 +168,8 @@ func sourceUploadRefField(i int, _ string) string {
 // prepareAtFinalize runs the §4.3 finalize-time preparation barrier against
 // the pod claimed at /create. It reconnects to the pod named in the row's
 // persisted §4.6 binding (PodAssignment + PoolRef), streams the buffered
-// upload content into /workspace/staging (PrepareWorkspace), materializes
-// /workspace/current with the §7.4 post-promotion symlink re-validation
+// upload content into the session's staging tree (PrepareWorkspace),
+// materializes its current tree with the §7.4 post-promotion symlink re-validation
 // (FinalizeWorkspace), runs the plan's setup commands (RunSetup), and assigns
 // the §4.9 credential lease (AssignCredentials), recording the §6.3
 // workspace_materialization / setup_commands / credential_assignment phase

@@ -3034,8 +3034,8 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // transitioning created → finalizing, it reconnects to the pod claimed at
 // /create and runs the §7.1 step 11-13 prepare phase against it:
 // PrepareWorkspace streams the buffered lenny-blob:// upload content into
-// /workspace/staging, FinalizeWorkspace materializes /workspace/current
-// with the §7.4 post-promotion symlink re-validation, RunSetup runs the
+// the session's staging tree, FinalizeWorkspace materializes that
+// session's current tree with the §7.4 post-promotion symlink re-validation, RunSetup runs the
 // plan's setup commands, and AssignCredentials delivers the §4.9
 // credential lease. Only when the session is fully prepared does it
 // transition finalizing → ready and return.
@@ -3106,8 +3106,8 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// spec: §4.3 / §7.1 steps 11-13 — run the prepare phase against the pod
-	// claimed at /create: stream the buffered uploads into /workspace/staging,
-	// materialize /workspace/current, run setup commands, and assign the §4.9
+	// claimed at /create: stream the buffered uploads into the session's
+	// staging tree, materialize its current tree, run setup commands, and assign the §4.9
 	// credential lease. prepareAtFinalize returns (nil, nil) for the
 	// dispositions that materialize nothing at finalize (no binder, service
 	// mode, a concurrent-workspace slot, or a row with no live binding).

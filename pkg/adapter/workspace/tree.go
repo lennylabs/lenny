@@ -19,7 +19,7 @@ import (
 //
 // spec: §7.3 — a session resume replays the workspace
 // checkpoint (step e) and restores the session file to its expected
-// path (step f). The workspace (`/workspace/current`, §6.4)
+// path (step f). The workspace (`/workspace/slots/{sessionId}/current`, §6.4)
 // and the session-file tmpfs (`/sessions`, §6.4 / §6.1)
 // are distinct mounts, so the checkpoint bundles both under distinct
 // prefixes rather than archiving a single tree.
@@ -35,7 +35,7 @@ type NamedRoot struct {
 }
 
 // Reserved checkpoint-bundle prefixes. WorkspacePrefix carries the
-// session workspace (`/workspace/current`); SessionsPrefix carries the
+// session workspace (`/workspace/slots/{sessionId}/current`); SessionsPrefix carries the
 // `/sessions` session-file tmpfs the §7.3 step-f restore replays.
 const (
 	WorkspacePrefix = "workspace"

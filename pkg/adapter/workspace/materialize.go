@@ -107,9 +107,9 @@ func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) 
 const (
 	// promotionStagingName is the §7.4 /workspace/staging build
 	// tree. MaterializeWithPolicy lays the resolved workspace down here,
-	// then atomically promotes it onto the workspace root
-	// (/workspace/current). It is a sibling of the root so the promotion
-	// rename never crosses a filesystem boundary. spec: §7.4 —
+	// then atomically promotes it onto the workspace root (the session's
+	// /workspace/slots/{sessionId}/current). It is a sibling of the root so
+	// the promotion rename never crosses a filesystem boundary. spec: §7.4 —
 	// F-7.4.12, F-13.4.5.
 	promotionStagingName = "staging"
 	// promotionBackupSuffix names the directory the pre-promotion workspace
@@ -142,7 +142,7 @@ const (
 // /workspace/staging directory and atomically promoted onto root only
 // after every source succeeds, so the runtime never observes a partial
 // workspace and a failure in any source (not only the last) leaves the
-// prior /workspace/current untouched. After promotion every symlink is
+// prior root untouched. After promotion every symlink is
 // re-validated against its new location under root; an escape rolls the
 // whole promotion back and restores the previous root. spec: §7.4 and the §7.4 symlink-handling bullet — F-7.4.12, F-13.4.5.
 //
@@ -159,8 +159,9 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 	if archive.WorkspaceRoot == "" {
 		archive.WorkspaceRoot = root
 	}
-	// spec: §7.4 — build into /workspace/staging, not directly
-	// into /workspace/current. Symlink targets are validated against the
+	// spec: §7.4 — build into the session's staging tree and
+	// promote from there rather than writing the root in place. Symlink
+	// targets are validated against the
 	// intended final root (archive.WorkspaceRoot) at extraction time; the
 	// definitive check runs against root after promotion.
 	buildDir := promotionBuildDir(root, stagingDir)
@@ -188,9 +189,9 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 // MaterializeOverlayWithPolicy is the §7.4 mid-session upload
 // path. The session is already running, so unlike MaterializeWithPolicy it
 // must not replace the whole workspace: the resolved sources are overlaid
-// onto the existing /workspace/current, preserving the files the agent has
-// created since session start. The sources are built in /workspace/staging
-// and validated exactly as the pre-start path, then each built file,
+// onto the session's existing workspace root, preserving the files the
+// agent has created since session start. The sources are built in the
+// session's staging tree and validated exactly as the pre-start path, then each built file,
 // symlink, and directory is moved into its final location under root with
 // an atomic per-file rename so the runtime never observes a partially
 // written file. A build failure or a symlink-containment violation aborts
@@ -382,8 +383,8 @@ type promotion struct {
 }
 
 // promoteStaging atomically replaces root with the build tree. The prior
-// root (the warm-time empty /workspace/current, or a previously
-// materialized tree) is moved aside to a backup so a failed
+// root (the empty current tree the slot assignment created, or a
+// previously materialized tree) is moved aside to a backup so a failed
 // post-promotion check can restore it. The build→root rename is a single
 // atomic syscall, so the runtime sees either the complete promoted tree
 // or the prior root, never a partial workspace. spec: §7.4 —
@@ -415,9 +416,9 @@ func promoteStaging(build, root string) (*promotion, error) {
 func (p *promotion) commit() { _ = os.RemoveAll(p.backup) }
 
 // rollback removes the promoted tree and restores the previous root. When
-// no prior root existed it recreates an empty one so the §6.1 warm-time
-// invariant ("/workspace/current exists") holds after a rolled-back
-// promotion. spec: §7.4 symlink-handling bullet, §6.1 — F-7.4.12.
+// no prior root existed it recreates an empty one so the §6.4 invariant
+// that the session's current tree exists holds after a rolled-back
+// promotion. spec: §7.4 symlink-handling bullet, §6.4 — F-7.4.12.
 func (p *promotion) rollback() {
 	_ = os.RemoveAll(p.root)
 	if p.hadPrev {
@@ -431,8 +432,8 @@ func (p *promotion) rollback() {
 // tree against its new location under root and fails when any target
 // escapes root or traverses a forbidden pseudo-filesystem mount. The
 // staging-time check resolves targets relative to the symlink's location
-// in /workspace/staging; because the promoted location differs, §7.4
-// mandates this second pass against /workspace/current. spec: §7.4
+// in the session's staging tree; because the promoted location differs,
+// §7.4 mandates this second pass against the promoted root. spec: §7.4
 // symlink-handling bullet — F-7.4.12, F-7.4.4.
 func revalidatePromotedSymlinks(root string) error {
 	root = filepath.Clean(root)
@@ -479,7 +480,7 @@ func materializeSource(root, stagingDir string, sourceIndex int, src *adapterv1.
 		// The gateway already validated the target against the workspace
 		// root; the adapter recreates the link and the post-promotion
 		// re-validation pass (revalidatePromotedSymlinks) re-checks the
-		// target against /workspace/current. F-7.4.1.
+		// target against the promoted root. F-7.4.1.
 		written, err := writeSymlink(root, src, archive)
 		return written, nil, err
 	case "uploadArchive":

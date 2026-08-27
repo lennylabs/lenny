@@ -385,7 +385,7 @@ type RuntimeCapabilities struct {
 	// flag. When true (and the deployer policy permits it) clients may
 	// upload files into the workspace of an already-running session via
 	// the mid-session upload surface; the adapter overlays the files onto
-	// /workspace/current and signals the runtime once promotion completes.
+	// the session's current tree and signals the runtime once promotion completes.
 	// Clients discover the flag through the GET /v1/runtimes capabilities
 	// block. Default false. spec: §7.4 — F-7.4.6.
 	MidSessionUpload bool `json:"midSessionUpload,omitempty"`
@@ -826,11 +826,11 @@ func (c *DefaultPoolConfig) Clone() *DefaultPoolConfig {
 }
 
 // WorkspaceFile is one §5.1 workspaceDefaults.files entry: a default
-// workspace file the §14 path materializes into /workspace/current
+// workspace file the §14 path materializes into the session's workspace root
 // before client uploads. Small files carry inline Content; large files
 // carry a Ref (a lenny-blob:// reference materialized in its place).
 type WorkspaceFile struct {
-	// Path is the destination path, relative to /workspace/current.
+	// Path is the destination path, relative to the session's workspace root.
 	Path string `json:"path"`
 
 	// Content is the inline file content. Empty when the file is

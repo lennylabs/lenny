@@ -32,7 +32,11 @@ import (
 )
 
 // retirementSweepRoots are the directories a retirement reaches,
-// relative to the repository root.
+// relative to the repository root. The libraries under pkg are among
+// them, because a retired pod path is written into a struct field
+// comment, a constant's doc comment, and a served tool schema's
+// description string as often as it is into prose, and a statement in
+// any of those places is invisible to the compiler.
 var retirementSweepRoots = []string{
 	"spec",
 	"docs",
@@ -40,26 +44,20 @@ var retirementSweepRoots = []string{
 	"charts",
 	"cmd",
 	"sdks",
+	"pkg",
 }
 
 // credentialSweepRoots are the directories the retired pod-global
-// credential file reaches. The credential path is written into a struct
-// field comment, a constant's doc comment, and a test header as often as
-// it is into prose, and the library that resolves the per-slot path and
-// the validator that guards the credential mount both state it, so the
-// literal's carriers extend past the reader-facing roots into the
-// libraries. A comment naming a credential file no pod writes is
-// invisible to the compiler wherever it stands.
-var credentialSweepRoots = append(append([]string{}, retirementSweepRoots...), "pkg")
+// credential file reaches.
+var credentialSweepRoots = retirementSweepRoots
 
 // placeholderSweepRoots are the directories a retired path-template
 // placeholder reaches. A placeholder lives in a path template, and path
-// templates are documented in package and field comments and quoted in
-// test headers as often as they are in prose, so the token's carriers
-// extend past the reader-facing roots into the libraries that resolve the
-// path and the suites that assert it. A comment naming a placeholder that
-// addresses nothing is invisible to the compiler wherever it stands.
-var placeholderSweepRoots = append(append([]string{}, retirementSweepRoots...), "pkg", "tests")
+// templates are quoted in test headers as often as they are in prose, so
+// the token's carriers extend past the library roots into the suites that
+// assert the path. A comment naming a placeholder that addresses nothing
+// is invisible to the compiler wherever it stands.
+var placeholderSweepRoots = append(append([]string{}, retirementSweepRoots...), "tests")
 
 // The sweep has no carrier whitelist. The predicate is stated over the
 // directory set, so every authored file under a swept root is read
@@ -90,15 +88,14 @@ func retirementSweepSurfaces(t *testing.T, root string) []string {
 }
 
 // credentialSweepSurfaces returns every file the retired-credential
-// sweep reads: the retirement surfaces widened with the library root the
-// credential literal's carriers reach.
+// sweep reads.
 func credentialSweepSurfaces(t *testing.T, root string) []string {
 	return sweepSurfaces(t, root, credentialSweepRoots)
 }
 
 // placeholderSweepSurfaces returns every file the retired-placeholder
-// sweep reads: the retirement surfaces widened with the library and test
-// roots the placeholder's carriers reach.
+// sweep reads: the retirement surfaces widened with the test root the
+// placeholder's carriers reach.
 func placeholderSweepSurfaces(t *testing.T, root string) []string {
 	return sweepSurfaces(t, root, placeholderSweepRoots)
 }
@@ -138,8 +135,16 @@ func sweepSurfaces(t *testing.T, root string, roots []string) []string {
 			t.Fatalf("walk %s: no files swept (moved or renamed?)", rel)
 		}
 	}
-	return append(swept,
-		filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json"))
+	// The served OpenAPI document is generated rather than authored, so it
+	// is swept by path. A root that already walks it must not yield it
+	// twice, or a sweep reports the same line under two names.
+	openapi := filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json")
+	for _, path := range swept {
+		if path == openapi {
+			return swept
+		}
+	}
+	return append(swept, openapi)
 }
 
 // isBinaryFile reports whether a swept candidate holds binary content,

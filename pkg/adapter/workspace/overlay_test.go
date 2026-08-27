@@ -13,7 +13,7 @@ import (
 
 // TestMaterializeOverlayPreservesExistingFiles is the core §7.4
 // mid-session invariant: an overlay adds the named files without wiping the
-// files the running agent already created in /workspace/current. F-7.4.6.
+// files the running agent already created in its workspace. F-7.4.6.
 func TestMaterializeOverlayPreservesExistingFiles_spec_7_4_433(t *testing.T) {
 	root := t.TempDir()
 	// The agent's existing workspace: a file and a nested file.

@@ -88,7 +88,7 @@ func sdkWarmServer(t *testing.T) (*adapter.Server, *fakeSDKWarmRuntime) {
 // pod-warm adapter returns Unimplemented.
 func TestConfigureWorkspacePodWarmUnimplemented_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t) // plain fakeRuntime: pod-warm
-	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current"))
+	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current"))
 	if status.Code(err) != codes.Unimplemented {
 		t.Errorf("ConfigureWorkspace on pod-warm pod: code = %v, want Unimplemented", status.Code(err))
 	}
@@ -108,11 +108,11 @@ func TestDemoteSDKPodWarmUnimplemented_spec_4_7(t *testing.T) {
 // finalized cwd and claims the session.
 func TestConfigureWorkspaceConfiguresPreConnected_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
-	if len(rt.configured) != 1 || rt.configured[0] != "/workspace/current" {
-		t.Errorf("runtime configured = %v, want [/workspace/current]", rt.configured)
+	if len(rt.configured) != 1 || rt.configured[0] != "/workspace/slots/sess-1/current" {
+		t.Errorf("runtime configured = %v, want [/workspace/slots/sess-1/current]", rt.configured)
 	}
 	// The pod now holds the session: a StartSession for another session is
 	// Unavailable.
@@ -128,12 +128,12 @@ func TestConfigureWorkspaceIdempotent_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
 	s.ManifestDir = t.TempDir()
 
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("first ConfigureWorkspace: %v", err)
 	}
 	first := readManifest(t, s.ManifestDir).MCPNonce
 
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("repeat ConfigureWorkspace: %v", err)
 	}
 	second := readManifest(t, s.ManifestDir).MCPNonce
@@ -149,10 +149,10 @@ func TestConfigureWorkspaceIdempotent_spec_4_7(t *testing.T) {
 // spec: §4.7 — a different session on an already-claimed pod is Unavailable.
 func TestConfigureWorkspaceDifferentSessionUnavailable_spec_4_7(t *testing.T) {
 	s, _ := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("ConfigureWorkspace sess-1: %v", err)
 	}
-	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-2", "/workspace/current"))
+	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-2", "/workspace/slots/sess-1/current"))
 	if status.Code(err) != codes.Unavailable {
 		t.Errorf("ConfigureWorkspace for a second session: code = %v, want Unavailable", status.Code(err))
 	}
@@ -164,12 +164,12 @@ func TestConfigureWorkspaceDifferentSessionUnavailable_spec_4_7(t *testing.T) {
 func TestConfigureWorkspaceRuntimeErrorReleases_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
 	rt.configErr = errors.New("sdk rejected workspace")
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); status.Code(err) != codes.Internal {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); status.Code(err) != codes.Internal {
 		t.Fatalf("ConfigureWorkspace error: code = %v, want Internal", status.Code(err))
 	}
 	// The session was released: a fresh ConfigureWorkspace can claim the pod.
 	rt.configErr = nil
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Errorf("ConfigureWorkspace after a released failure: %v", err)
 	}
 }
@@ -178,7 +178,7 @@ func TestConfigureWorkspaceRuntimeErrorReleases_spec_4_7(t *testing.T) {
 // pod to pod-warm (idle), so a subsequent StartSession can claim it.
 func TestDemoteSDKTearsDown_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
 	resp, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{Reason: "blocking-path"})
@@ -199,7 +199,7 @@ func TestDemoteSDKTearsDown_spec_4_7(t *testing.T) {
 
 func TestConfigureWorkspaceMissingArgs_spec_4_7(t *testing.T) {
 	s, _ := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("", "/workspace/current")); status.Code(err) != codes.InvalidArgument {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("", "/workspace/slots/sess-1/current")); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("ConfigureWorkspace with no session id: code = %v, want InvalidArgument", status.Code(err))
 	}
 	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "")); status.Code(err) != codes.InvalidArgument {

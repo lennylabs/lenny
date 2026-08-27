@@ -46,7 +46,7 @@ const (
 	// the pool carrying residual-state risk from a failed cleanup; it
 	// persists through the §6.2 preConnect re-warm because the residual-state
 	// risk is orthogonal to SDK readiness. The §5.2 workspace materializer
-	// removes all files from /workspace/current before reuse regardless of
+	// removes all files from each slot's current tree before reuse regardless of
 	// the annotation. The gateway's `get`/`patch` on agent Pods grant covers
 	// this annotation write alongside the lenny.dev/drain-request stamp and
 	// the lenny.dev/tenant-id pin; the gateway never writes Sandbox.status

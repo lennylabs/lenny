@@ -699,7 +699,7 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 
 // spec: §7.1 steps 11-13, §15.1 (finalize precondition).
 // diagnosis: /finalize is the §7.1 preparation barrier — it materializes
-// /workspace/current and runs setup before returning, and the session reaches
+// the session's workspace and runs setup before returning, and the session reaches
 // `ready` only once prepared. A failure here means /finalize transitioned to
 // `ready` without materializing the workspace, so the workspace plan was not
 // applied until /start (the pre-0007 deferred-claim behavior) or the row

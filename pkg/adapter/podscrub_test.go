@@ -549,9 +549,9 @@ func TestScrubOutcomeMapping_spec_5_2(t *testing.T) {
 	}
 
 	// Failed report with only a dirty verification path → detail names the path.
-	dirty := &scrub.Report{Result: scrub.Failed, VerifyDirty: []string{"/workspace/current"}}
+	dirty := &scrub.Report{Result: scrub.Failed, VerifyDirty: []string{"/workspace/slots/sess-1/current"}}
 	_, detail = scrubOutcome(dirty, nil)
-	if !strings.Contains(detail, "/workspace/current") {
+	if !strings.Contains(detail, "/workspace/slots/sess-1/current") {
 		t.Errorf("dirty report detail = %q, want it to name the dirty path", detail)
 	}
 

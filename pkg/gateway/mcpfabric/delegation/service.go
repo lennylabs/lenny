@@ -148,7 +148,7 @@ type Request struct {
 
 	// FileExport carries the §8.7 `fileExport` entries declared on the
 	// `lenny/delegate_task` lease: each names a source glob resolved
-	// inside the parent's /workspace/current and the relative destPrefix
+	// inside the parent's /workspace/slots/{sessionId}/current and the relative destPrefix
 	// the matched files are rebased under in the child workspace. Empty
 	// (the spec default) skips the §8.7 export-materialization phase
 	// entirely. When non-empty, Delegate runs the export Materializer to

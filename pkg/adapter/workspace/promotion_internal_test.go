@@ -113,13 +113,14 @@ func TestPromoteStagingRollback_spec_7_4_433(t *testing.T) {
 }
 
 // TestPromotionBuildDirAvoidsAliasing_spec_7_4_433 confirms the build
-// tree is the spec-named /workspace/staging sibling but never aliases the
+// tree is the slot's staging sibling but never aliases the
 // configured raw-upload staging directory or the root itself. F-7.4.12.
 func TestPromotionBuildDirAvoidsAliasing_spec_7_4_433(t *testing.T) {
-	if got := promotionBuildDir("/workspace/current", "/workspace/.staging"); got != "/workspace/staging" {
-		t.Errorf("build dir = %q, want /workspace/staging", got)
+	const slotRoot = "/workspace/slots/sess-1/current"
+	if got := promotionBuildDir(slotRoot, "/workspace/slots/sess-1/.staging"); got != "/workspace/slots/sess-1/staging" {
+		t.Errorf("build dir = %q, want /workspace/slots/sess-1/staging", got)
 	}
-	if got := promotionBuildDir("/workspace/current", "/workspace/staging"); got != "/workspace/current"+promotionBuildFallbackSuffix {
+	if got := promotionBuildDir(slotRoot, "/workspace/slots/sess-1/staging"); got != slotRoot+promotionBuildFallbackSuffix {
 		t.Errorf("colliding build dir = %q, want the %q fallback", got, promotionBuildFallbackSuffix)
 	}
 }

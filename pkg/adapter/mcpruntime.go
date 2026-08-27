@@ -52,7 +52,8 @@ type MCPRuntime struct {
 	// Args are the arguments passed to Command.
 	Args []string
 	// Dir is the process working directory — the materialized workspace
-	// (/workspace/current). Empty inherits the adapter's directory.
+	// (the session's /workspace/slots/{sessionId}/current). Empty inherits
+	// the adapter's directory.
 	Dir string
 	// Env is the process environment. Nil inherits the adapter's
 	// environment.

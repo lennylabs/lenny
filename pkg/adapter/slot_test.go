@@ -90,7 +90,7 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 
 	// Each slot materializes distinct content into its own per-slot
 	// workspace, proving the two concurrent slots have isolated workspaces
-	// rather than a shared /workspace/current.
+	// rather than a shared pod-global current tree.
 	finalize := func(session, slot, content string) {
 		t.Helper()
 		req := &adapterv1.FinalizeWorkspaceRequest{
@@ -121,7 +121,7 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 			t.Errorf("%s workspace marker = %q, want %q; per-slot workspaces are not isolated", slot, got, want)
 		}
 	}
-	// The global whole-pod /workspace/current was never used by either slot.
+	// The whole-pod current tree was never used by either slot.
 	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "current", "marker.txt")); !os.IsNotExist(err) {
 		t.Errorf("global workspace/current was written; concurrent slots are not isolated")
 	}
@@ -164,7 +164,7 @@ func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	if string(got) != "hi" {
 		t.Errorf("file content = %q, want %q", got, "hi")
 	}
-	// The global /workspace/current must not have been used.
+	// The pod-global current tree must not have been used.
 	if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "current", "hello.txt")); !os.IsNotExist(err) {
 		t.Errorf("global workspace/current was written; per-slot isolation broken")
 	}

@@ -492,7 +492,7 @@ func (lc *RuntimeOps) Terminate(deadlineMs int32, reason string) error {
 }
 
 // SignalFilesUpdated tells the runtime that a §7.4 mid-session upload
-// promoted new files into /workspace/current, so the agent re-reads the
+// promoted new files into the session's workspace root, so the agent re-reads the
 // workspace. The adapter sends it only after the atomic overlay completes,
 // so the runtime never observes partially written files. One-way: the
 // runtime is not required to acknowledge. When no runtime is connected

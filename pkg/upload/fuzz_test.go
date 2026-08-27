@@ -14,13 +14,13 @@ import (
 //   - Absolute-path targets outside workspaceRoot are rejected.
 //
 // The fuzz seed covers known attack shapes: a/../../etc/passwd,
-// /etc/passwd, /workspace/current/../../..., and the empty string.
+// /etc/passwd, /workspace/slots/sess-1/current/../../..., and the empty string.
 func FuzzValidateSymlinkTarget(f *testing.F) {
-	f.Add("a/link", "b", "/workspace/current")
-	f.Add("a/link", "../../../etc/passwd", "/workspace/current")
-	f.Add("a/link", "/etc/passwd", "/workspace/current")
-	f.Add("a/link", "", "/workspace/current")
-	f.Add("a/link", "a/b/c", "/workspace/current")
+	f.Add("a/link", "b", "/workspace/slots/sess-1/current")
+	f.Add("a/link", "../../../etc/passwd", "/workspace/slots/sess-1/current")
+	f.Add("a/link", "/etc/passwd", "/workspace/slots/sess-1/current")
+	f.Add("a/link", "", "/workspace/slots/sess-1/current")
+	f.Add("a/link", "a/b/c", "/workspace/slots/sess-1/current")
 
 	f.Fuzz(func(t *testing.T, linkPath, target, root string) {
 		_ = ValidateSymlinkTarget(linkPath, target, root)

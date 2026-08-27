@@ -239,8 +239,8 @@ func (c *Client) ExtendCredentialLease(ctx context.Context, sessionID, provider,
 // prepareWorkspaceChunkSize bounds each PrepareWorkspace upload frame.
 const prepareWorkspaceChunkSize = 64 * 1024
 
-// PrepareWorkspace streams uploaded workspace files into the pod's
-// staging area (§4.7, the first session-assignment RPC). uploads maps
+// PrepareWorkspace streams uploaded workspace files into the session's
+// staging tree (§4.7, the first session-assignment RPC). uploads maps
 // each §14 WorkspaceSource upload_ref to its content; each upload is
 // sent in frames bounded by prepareWorkspaceChunkSize. The response
 // reports the staged byte and file totals the adapter persisted.
@@ -300,7 +300,7 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // the materialization had nothing to report. F-7.4.15.
 //
 // midSession marks a §7.4 mid-session upload: the adapter overlays
-// the plan's sources onto the running session's existing /workspace/current
+// the plan's sources onto the running session's existing workspace root
 // and signals the runtime once promotion completes, rather than replacing
 // the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
 func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
@@ -481,8 +481,8 @@ func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordi
 }
 
 // ExportSpec is one §8.7 fileExport entry passed to the adapter's
-// ExportPaths RPC: a source glob resolved inside the parent pod's
-// /workspace/current and the relative destPrefix the matched files are
+// ExportPaths RPC: a source glob resolved inside the parent session's
+// /workspace/slots/{sessionId}/current and the relative destPrefix the matched files are
 // rebased under in the child workspace.
 type ExportSpec struct {
 	Source     string
@@ -501,7 +501,7 @@ type ExportedFile struct {
 
 // ExportPaths runs the §4.7 / §8.7 ExportPaths RPC against the parent
 // session's pod adapter, asking it to resolve the export specs inside
-// /workspace/current, reject symlink-escaping matches, strip each
+// that session's /workspace/slots/{sessionId}/current, reject symlink-escaping matches, strip each
 // glob's base path, and re-root the matched files under each spec's
 // destPrefix. The gateway applies the lease fileExportLimits and the
 // optional content scan to the returned set before persisting it for

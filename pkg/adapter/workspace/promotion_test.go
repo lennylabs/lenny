@@ -47,7 +47,7 @@ func TestMaterializePromotesIntoRoot_spec_7_4_433(t *testing.T) {
 // adapter wrote each source straight into the workspace root, so a failure
 // in a later source left earlier sources committed. With the build-then-
 // promote pattern a failure in any source discards the whole build tree,
-// so no partial plan reaches /workspace/current. spec: §7.4.
+// so no partial plan reaches the session's current tree. spec: §7.4.
 func TestMaterializeRollsBackEntirePlanOnLaterSourceFailure_spec_7_4_460(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir() // empty: the uploadFile ref below is never staged
@@ -65,7 +65,7 @@ func TestMaterializeRollsBackEntirePlanOnLaterSourceFailure_spec_7_4_460(t *test
 }
 
 // TestMaterializePreservesPriorRootOnFailure_spec_7_4_460 confirms a
-// failed materialization leaves the pre-existing /workspace/current
+// failed materialization leaves the pre-existing current tree
 // untouched: the build tree is discarded and root is never moved aside.
 // spec: §7.4. F-7.4.12.
 func TestMaterializePreservesPriorRootOnFailure_spec_7_4_460(t *testing.T) {

@@ -61,8 +61,16 @@ var permittedWorkspaceRetirementStatements = map[string][]string{
 	filepath.Join("docs", "runtime-author-guide", "lifecycle.md"): {
 		"No pod-global working directory (`/workspace/current`) exists.",
 	},
+	filepath.Join("pkg", "adapter", "slotlayout", "slotlayout.go"): {
+		"No pod-global `/workspace/current` path exists:",
+	},
 	filepath.Join("cmd", "runtimes", "echo-concurrent", "main_test.go"): {
 		"// pod-global /workspace/current alternative.",
+	},
+	filepath.Join("pkg", "controller", "sandbox", "podspec", "podspec_test.go"): {
+		"// the pod-global `/workspace/current` exists on no pod. The builder",
+		`if strings.Contains(joined, "/workspace/current") {`,
+		`t.Errorf("%s argv names the retired pod-global /workspace/current: %v", tc.container, args)`,
 	},
 	filepath.Join("cmd", "lenny-ctl", "runtimescaffold", "scaffold_test.go"): {
 		`// collapsed each language template declared "/workspace/current" as a`,

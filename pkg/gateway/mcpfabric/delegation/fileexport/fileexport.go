@@ -3,7 +3,8 @@
 // Package fileexport implements the §8.7 delegation file-export
 // validation rules: destPrefix rebasing constraints, the
 // fileExportLimits structural ceilings, and the realpath
-// symlink-containment check against the parent's /workspace/current.
+// symlink-containment check against the parent session's
+// /workspace/slots/{sessionId}/current.
 //
 // These are the validators the §8.7 materialization path (delegate_task
 // fileExport resolution → parent-pod file fetch → child-workspace

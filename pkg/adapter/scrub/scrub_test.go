@@ -103,8 +103,8 @@ func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
 		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
-		WorkspaceDirs:   []string{"/workspace/current"},
-		CleanupDir:      "/workspace/current",
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -129,8 +129,8 @@ func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
 	rep, err := Run(context.Background(), ops, Config{
 		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
 		CleanupCommands: []string{"true"},
-		WorkspaceDirs:   []string{"/workspace/current"},
-		CleanupDir:      "/workspace/current",
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -222,8 +222,8 @@ func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
 		CleanupCommands: []string{"false"}, // exits non-zero
-		WorkspaceDirs:   []string{"/workspace/current"},
-		CleanupDir:      "/workspace/current",
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -240,7 +240,7 @@ func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
 	}
 	removedWorkspace := false
 	for _, p := range ops.removed {
-		if p == "/workspace/current" {
+		if p == "/workspace/slots/sess-1/current" {
 			removedWorkspace = true
 		}
 	}
@@ -362,8 +362,8 @@ func stepSequence(rep *Report) []StepName {
 func TestRun_VMRestartRunsIdenticalSteps0To6AsStandard_spec_5_2_step7(t *testing.T) {
 	cfg := Config{
 		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
-		WorkspaceDirs:   []string{"/workspace/current"},
-		CleanupDir:      "/workspace/current",
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 		ScratchDirs:     []string{"/var/adapter-scratch"},
 	}
 

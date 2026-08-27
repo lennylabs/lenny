@@ -20,8 +20,8 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// PrepareWorkspace accepts streamed upload-file content into the pod's
-// staging area. It is the first RPC of the §4.7 session assignment
+// PrepareWorkspace accepts streamed upload-file content into the
+// session's own staging tree. It is the first RPC of the §4.7 session assignment
 // sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
 // StartSession). Frames sharing an upload_ref are concatenated in
 // arrival order into one staged file; FinalizeWorkspace materializes
@@ -152,8 +152,9 @@ func (s *Server) resolvePrepareStagingDir(sessionID string) (string, error) {
 // Validation of the streamed PrepareWorkspace content against the plan
 // arrives with the PrepareWorkspace RPC; this RPC materializes the
 // filesystem-native plan sources via workspace.Materialize, which builds
-// the resolved tree in /workspace/staging and atomically promotes it onto
-// /workspace/current so the runtime never observes a partial workspace.
+// the resolved tree in the session's /workspace/slots/{sessionId}/staging
+// and atomically promotes it onto that slot's current tree so the runtime
+// never observes a partial workspace.
 // spec: §7.4 — F-7.4.12.
 func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
 	// spec: §16.3 — `session.finalize_workspace` is emitted by the
@@ -231,7 +232,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	sources := req.GetWorkspacePlan().GetSources()
 	span.SetAttributes(attribute.Int("workspace.source_count", len(sources)))
 	// spec: §7.4 — a mid-session upload overlays the sources onto
-	// the running session's existing /workspace/current rather than
+	// the running session's existing current tree rather than
 	// replacing the whole tree, then signals the runtime once promotion
 	// completes. The pre-start path (mid_session false) keeps the §4.7
 	// whole-tree promotion the assignment sequence relies on. F-7.4.6.

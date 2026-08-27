@@ -3,9 +3,9 @@
 // Package slotlayout derives and materializes the §6.4 per-slot
 // directory tree and the §6.1 per-slot credential path.
 //
-// Every session is bound to a slot on every pod, whatever the pool's
-// `sessionPolicy.maxConcurrentSessions`, and no pod-global
-// `/workspace/current` path exists. Each active slot owns an isolated tree
+// No pod-global `/workspace/current` path exists: every session is bound
+// to a slot on every pod, whatever the pool's
+// `sessionPolicy.maxConcurrentSessions`. Each active slot owns an isolated tree
 // the adapter creates on its first reference to the identifier the gateway
 // minted at claim time, and removes on slot cleanup (spec §6.4):
 //
@@ -36,8 +36,8 @@ import (
 // listable so a reader opens the known credentials.json path while other
 // slots' directory names stay unenumerable.
 const (
-	// CurrentMode is the per-slot cwd directory mode (spec §6.1
-	// "/workspace/current ... 0755 for the runtime").
+	// CurrentMode is the per-slot cwd directory mode: the runtime reads
+	// and writes its own `slots/{sessionId}/current` tree. spec: §6.4.
 	CurrentMode = 0o755
 	// StagingMode is the per-slot upload-staging directory mode: only the
 	// adapter UID stages content before FinalizeWorkspace promotes it.

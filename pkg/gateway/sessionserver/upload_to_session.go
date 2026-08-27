@@ -23,7 +23,7 @@ import (
 // request uses the caller's normal session-scoped bearer credential; per
 // §7.4 no uploadToken is reissued for the mid-session path. spec: §7.4 — F-7.4.6.
 type UploadToSessionRequest struct {
-	// Files are the files to write into /workspace/current. Each entry is
+	// Files are the files to write into the session's workspace root. Each entry is
 	// overlaid onto the existing workspace, preserving the agent's other
 	// files.
 	Files []UploadToSessionFile `json:"files"`
@@ -45,7 +45,7 @@ type UploadToSessionFile struct {
 // UploadToSessionResponse is the success envelope for a mid-session upload.
 type UploadToSessionResponse struct {
 	// Status is always "filesUpdated" on success — the files were promoted
-	// into /workspace/current and the runtime was signaled.
+	// into the session's workspace root and the runtime was signaled.
 	Status string `json:"status"`
 	// Files is the number of files promoted.
 	Files int `json:"files"`
@@ -63,8 +63,8 @@ const uploadToSessionMaxTotalBytes = UploadMaxBodyBytes
 // capabilities.midSessionUpload and the deployer policy
 // (MidSessionUploadEnabled) permits it, then pushes the files to the
 // session's pod over the existing adapter binding: PrepareWorkspace streams
-// the bytes into /workspace/staging and FinalizeWorkspace(midSession)
-// overlays them onto /workspace/current and signals the runtime once
+// the bytes into the session's staging tree and FinalizeWorkspace(midSession)
+// overlays them onto that session's current tree and signals the runtime once
 // promotion completes, so the agent never sees partially-written files.
 // spec: §7.4 — F-7.4.6.
 func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
@@ -121,8 +121,8 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stream the staged bytes into the pod's /workspace/staging, then overlay
-	// them onto /workspace/current. A PrepareWorkspace or FinalizeWorkspace
+	// Stream the bytes into the session's staging tree, then overlay
+	// them onto that session's current tree. A PrepareWorkspace or FinalizeWorkspace
 	// failure leaves the live workspace untouched (the adapter aborts before
 	// promotion) — surface it as a transient upstream error.
 	if _, err := bind.Adapter.PrepareWorkspace(ctx, row.ID, uploads); err != nil {

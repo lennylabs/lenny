@@ -254,8 +254,8 @@ func TestRunSetupAppliesEnvWhitelist(t *testing.T) {
 // DefaultSetupEnv exposes the §7.5 minimal whitelist; the
 // returned list seeds only PATH/HOME/USER/LANG/LC_ALL/PWD/TMPDIR.
 func TestDefaultSetupEnv(t *testing.T) {
-	env := workspace.DefaultSetupEnv("/workspace/current")
-	required := []string{"PATH=", "HOME=", "USER=", "LANG=", "LC_ALL=", "PWD=/workspace/current", "TMPDIR=/tmp"}
+	env := workspace.DefaultSetupEnv("/workspace/slots/sess-1/current")
+	required := []string{"PATH=", "HOME=", "USER=", "LANG=", "LC_ALL=", "PWD=/workspace/slots/sess-1/current", "TMPDIR=/tmp"}
 	for _, prefix := range required {
 		var found bool
 		for _, e := range env {

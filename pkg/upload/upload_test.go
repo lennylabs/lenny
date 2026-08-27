@@ -43,7 +43,7 @@ func TestForbiddenEntryKinds(t *testing.T) {
 }
 
 func TestValidateEntryAcceptsRegularInWorkspace(t *testing.T) {
-	allow := RuntimeAllow{WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	cases := []Entry{
 		{Path: "src/main.go", Kind: KindRegular, Size: 1024},
 		{Path: "docs/README.md", Kind: KindRegular, Size: 4096},
@@ -128,7 +128,7 @@ func TestValidateEntryRejectsOversizedEntry(t *testing.T) {
 }
 
 func TestValidateEntryRejectsSymlinkByDefault(t *testing.T) {
-	err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: "target"}, RuntimeAllow{WorkspaceRoot: "/workspace/current"})
+	err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: "target"}, RuntimeAllow{WorkspaceRoot: "/workspace/slots/sess-1/current"})
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Reason != ReasonSymlink {
 		t.Errorf("symlink default reject: want symlink, got %v", err)
@@ -136,7 +136,7 @@ func TestValidateEntryRejectsSymlinkByDefault(t *testing.T) {
 }
 
 func TestValidateEntrySymlinkOptInWorkspaceLocalTarget(t *testing.T) {
-	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	err := ValidateEntry(Entry{Path: "src/link", Kind: KindSymlink, LinkTarget: "../docs/README.md"}, allow)
 	if err != nil {
 		t.Errorf("workspace-local symlink with opt-in: want nil, got %v", err)
@@ -144,7 +144,7 @@ func TestValidateEntrySymlinkOptInWorkspaceLocalTarget(t *testing.T) {
 }
 
 func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
-	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	cases := []string{
 		"/etc/passwd",
 		"../../etc/passwd",
@@ -167,7 +167,7 @@ func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
 }
 
 func TestValidateSymlinkTargetRejectsEmpty(t *testing.T) {
-	err := ValidateSymlinkTarget("link", "", "/workspace/current")
+	err := ValidateSymlinkTarget("link", "", "/workspace/slots/sess-1/current")
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Reason != ReasonSymlink {
 		t.Errorf("empty target: want symlink, got %v", err)
@@ -258,7 +258,7 @@ func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
 		{name: "relative root", root: "workspace/current"},
 		{name: "windows root", root: `C:\workspace\current`},
 		{name: "empty root", root: ""},
-		{name: "trailing slash", root: "/workspace/current/"},
+		{name: "trailing slash", root: "/workspace/slots/sess-1/current/"},
 		{name: "dotdot in root", root: "/workspace/../current"},
 		{name: "dot in root", root: "/workspace/./current"},
 	}
@@ -272,7 +272,7 @@ func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
 		})
 	}
 	// The canonical §13.4 root must remain valid.
-	if err := ValidateSymlinkTarget("link", "sub/file.txt", "/workspace/current"); err != nil {
+	if err := ValidateSymlinkTarget("link", "sub/file.txt", "/workspace/slots/sess-1/current"); err != nil {
 		t.Fatalf("canonical root must be accepted, got %v", err)
 	}
 }

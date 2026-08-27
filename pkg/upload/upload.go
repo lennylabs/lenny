@@ -102,11 +102,11 @@ type Archive struct {
 
 // RuntimeAllow captures the per-runtime opt-ins from §13.4: the
 // AllowSymlinks flag plus the workspace-root the post-promotion
-// symlink target check uses (`/workspace/current` in the default
-// shape; concurrent-workspace pools use slot-scoped paths).
+// symlink target check uses. Every session is bound to a slot, so the
+// root is always that session's `/workspace/slots/{sessionId}/current`.
 type RuntimeAllow struct {
 	AllowSymlinks bool
-	WorkspaceRoot string // typically "/workspace/current"
+	WorkspaceRoot string // the session's slot current tree
 }
 
 // Reason is the §13.4 sub-code the validator surfaces to clients as

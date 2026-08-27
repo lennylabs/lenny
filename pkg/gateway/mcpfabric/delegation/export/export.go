@@ -32,7 +32,7 @@ import (
 )
 
 // Spec is one §8.7 fileExport entry: a source glob resolved inside the
-// parent's /workspace/current and the relative destPrefix the matched
+// parent's /workspace/slots/{sessionId}/current and the relative destPrefix the matched
 // files are rebased under in the child workspace.
 type Spec struct {
 	Source     string
@@ -51,7 +51,7 @@ type ExportedFile struct {
 
 // ParentExporter performs the §8.2 step 3 export: it asks the parent
 // runtime to resolve a single fileExport Spec against its
-// /workspace/current and return the rebased files. The orchestrator
+// /workspace/slots/{sessionId}/current and return the rebased files. The orchestrator
 // calls it once per Spec, in declared order, so cross-Spec path
 // collisions are observable at the gateway (the §8.7 overwrite
 // audit) rather than being silently collapsed inside one RPC. The

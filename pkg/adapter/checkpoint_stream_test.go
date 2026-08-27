@@ -259,7 +259,7 @@ func seedFile(t *testing.T, path, content string) {
 // a CheckpointStart carrying a slot_id captures only that slot's live
 // workspace and session subtree, not the pod-global base tree. The
 // non-happy path this pins is a concurrent-session pod whose checkpoint
-// archives the empty pod-global /workspace/current base tree and no slot's
+// archives the empty pod-global workspace base tree and no slot's
 // live workspace, which the pre-fix pod-global checkpointRoots() did.
 func TestCheckpointStreamCapturesSlotSubtree_spec_5_2(t *testing.T) {
 	transport := &recordingTransport{}

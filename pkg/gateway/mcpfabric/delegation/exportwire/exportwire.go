@@ -53,7 +53,7 @@ func NewPodExporter(reg *podsession.Registry) *PodExporter {
 }
 
 // ErrParentUnbound reports that the parent session has no pod binding on
-// this gateway replica, so its /workspace/current cannot be reached for
+// this gateway replica, so its workspace root cannot be reached for
 // the §8.2-step-3 export.
 var ErrParentUnbound = fmt.Errorf("exportwire: parent session has no bound pod adapter on this replica")
 

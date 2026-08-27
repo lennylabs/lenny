@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/upload/archive"
 )
 
-const wsRoot = "/workspace/current"
+const wsRoot = "/workspace/slots/sess-1/current"
 
 // --- builders ---------------------------------------------------------
 
