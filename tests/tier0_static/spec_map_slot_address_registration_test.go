@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -812,14 +813,37 @@ func creditKey(id string, declared, headings map[string]bool) (string, bool) {
 	}
 }
 
+// deferredSections returns the spec sections tests/spec-map-exceptions.yaml
+// carries under a pending-implementation deferral. Such a section is recorded
+// in the exception register rather than in the spec map, and it must stay
+// there: the heading walker reads the spec-map key before the exception row,
+// so a key minted for a deferred section switches that row's validation off
+// and records coverage the section's trace does not have. A case that cites a
+// deferred section therefore needs no spec-map credit for it.
+func deferredSections(t *testing.T) map[string]bool {
+	t.Helper()
+	coverage, err := loadHeadingCoverage(scope.DirReader(schematest.RepoRoot(t)))
+	if err != nil {
+		t.Fatalf("load the spec map and its exception register: %v", err)
+	}
+	out := map[string]bool{}
+	for section, row := range coverage.exceptions {
+		if row.Reason == reasonPendingImplementation {
+			out[section] = true
+		}
+	}
+	return out
+}
+
 // creditsMissing returns the spec-map keys that the annotated sections require
 // and neither the whole-file credits nor the per-case credits supply. Pass a
 // nil perCase for a file the map registers as a whole rather than case by case.
-func creditsMissing(sections, declared, headings, wholeFile, perCase map[string]bool) map[string]bool {
+// A section under a pending-implementation deferral requires no credit.
+func creditsMissing(sections, declared, headings, wholeFile, perCase, deferred map[string]bool) map[string]bool {
 	missing := map[string]bool{}
 	for section := range sections {
 		key, required := creditKey(section, declared, headings)
-		if !required || wholeFile[key] || perCase[key] {
+		if !required || wholeFile[key] || perCase[key] || deferred[key] {
 			continue
 		}
 		missing[key] = true
@@ -836,17 +860,18 @@ func creditsMissing(sections, declared, headings, wholeFile, perCase map[string]
 // select the case that pins it.
 func TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate(t *testing.T) {
 	headings := specHeadingNumbers(t)
+	deferred := deferredSections(t)
 	for _, file := range slotAddressCaseFiles {
 		declared, wholeFile, perCase := specMapCredits(t, file)
 		if len(perCase) == 0 {
-			missing := creditsMissing(citedSectionsInFile(t, file), declared, headings, wholeFile, nil)
+			missing := creditsMissing(citedSectionsInFile(t, file), declared, headings, wholeFile, nil, deferred)
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s to section(s) %v its `// spec:` annotation names", file, sortedSectionIDs(missing))
 			}
 			continue
 		}
 		for fn, sections := range citedSectionsPerCase(t, file) {
-			missing := creditsMissing(sections, declared, headings, wholeFile, perCase[fn])
+			missing := creditsMissing(sections, declared, headings, wholeFile, perCase[fn], deferred)
 			if len(missing) > 0 {
 				t.Errorf("spec-map.json does not credit %s::%s to section(s) %v its own `// spec:` annotation names", file, fn, sortedSectionIDs(missing))
 			}
@@ -1402,15 +1427,22 @@ func TestCreditsMissingReportsTheUncreditedAncestorKey(t *testing.T) {
 	sections := map[string]bool{"15.4.2": true, "13.7": true}
 	declared := map[string]bool{"15.4": true}
 	headings := map[string]bool{"15.4": true, "15.4.2": true}
-	missing := creditsMissing(sections, declared, headings, map[string]bool{}, nil)
+	missing := creditsMissing(sections, declared, headings, map[string]bool{}, nil, nil)
 	if got := sortedSectionIDs(missing); strings.Join(got, ",") != "15.4" {
 		t.Errorf("creditsMissing reported %v, want [15.4]", got)
 	}
-	if got := creditsMissing(sections, declared, headings, map[string]bool{"15.4": true}, nil); len(got) != 0 {
+	if got := creditsMissing(sections, declared, headings, map[string]bool{"15.4": true}, nil, nil); len(got) != 0 {
 		t.Errorf("creditsMissing reported %v for a whole-file credit, want none", sortedSectionIDs(got))
 	}
-	if got := creditsMissing(sections, declared, headings, map[string]bool{}, map[string]bool{"15.4": true}); len(got) != 0 {
+	if got := creditsMissing(sections, declared, headings, map[string]bool{}, map[string]bool{"15.4": true}, nil); len(got) != 0 {
 		t.Errorf("creditsMissing reported %v for a per-case credit, want none", sortedSectionIDs(got))
+	}
+	// A section the exception register defers is recorded there rather than
+	// in the spec map, so it demands no credit and the gate does not push
+	// the sweep into minting a key that would silence the deferral.
+	if got := creditsMissing(sections, declared, headings, map[string]bool{}, nil,
+		map[string]bool{"15.4": true, "13.7": true}); len(got) != 0 {
+		t.Errorf("creditsMissing reported %v for a deferred section, want none", sortedSectionIDs(got))
 	}
 }
 
@@ -1434,11 +1466,11 @@ func TestASuffixOnlyCitationDemandsItsCredit(t *testing.T) {
 	}
 	declared := map[string]bool{"6.4": true}
 	headings := map[string]bool{"6.4": true}
-	missing := creditsMissing(cited, declared, headings, map[string]bool{}, nil)
+	missing := creditsMissing(cited, declared, headings, map[string]bool{}, nil, nil)
 	if got := sortedSectionIDs(missing); strings.Join(got, ",") != "6.4" {
 		t.Errorf("creditsMissing reported %v for an uncredited suffix-only citation, want [6.4]", got)
 	}
-	if got := creditsMissing(cited, declared, headings, map[string]bool{"6.4": true}, nil); len(got) != 0 {
+	if got := creditsMissing(cited, declared, headings, map[string]bool{"6.4": true}, nil, nil); len(got) != 0 {
 		t.Errorf("creditsMissing reported %v once the credit is entered, want none", sortedSectionIDs(got))
 	}
 }

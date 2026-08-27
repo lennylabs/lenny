@@ -92,4 +92,25 @@ func TestSpecMapExceptionsKeepTraceDeferralsUntilTheirBlockerLands(t *testing.T)
 				"remediation step %s", section, row.Blocker, blocker)
 		}
 	}
+
+	// The heading walker's coverage conjunct is a disjunction that reads
+	// the spec-map key first, so a key minted for a section that carries a
+	// pending-implementation deferral switches the deferral's own
+	// validation off: the walker stops checking the reason, the blocker,
+	// and the opened_at, and the section reads as covered while its trace
+	// is still unassertable. A deferral is retired by its blocker landing,
+	// so the two records may not stand together.
+	for section, row := range coverage.exceptions {
+		if row.Reason != reasonPendingImplementation {
+			continue
+		}
+		if coverage.keys[section] {
+			t.Errorf("§%s carries a %s deferral on blocker %q and a tests/spec-map.json key at "+
+				"the same time; the key satisfies the heading walker's coverage conjunct before "+
+				"it reads the deferral, so the deferral's reason, blocker, and opened_at stop "+
+				"being validated and the section records coverage its trace does not have. "+
+				"Remove the tests/spec-map.json entry for §%s, or retire the deferral because "+
+				"its blocker has landed", section, reasonPendingImplementation, row.Blocker, section)
+		}
+	}
 }
