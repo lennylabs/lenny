@@ -94,6 +94,100 @@ func TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise(t *testing.T)
 	}
 }
 
+// documentConsistencyGates is the register of tier-0 and tier-11 gates whose
+// subject is a repository document rather than a specification behavior. Such
+// a gate reads a document and asserts that document's own internal contract,
+// so it exercises no spec section: a `// spec:` annotation on it names a
+// section only because an annotation was required, and a tests/spec-map.json
+// registration under that section credits it with coverage no regression in it
+// could break, while the case that would break stays unwritten. Each entry
+// records the document the gate reads. An entry carries neither a
+// section citation nor a spec-map credit; the gate states the document
+// contract it holds instead.
+var documentConsistencyGates = map[string]string{
+	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go": "TEST-GAPS.md, whose resolved " +
+		"findings cite the case that closed them as a `path::TestName` reference",
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// A gate whose subject is a repository document carries no spec-section
+// citation and no tests/spec-map.json credit. Registering one under a
+// behavioral section puts a test against that section in the coverage view
+// that reads none of the section's code, which is how a section comes to look
+// exercised by a case no regression in it could break.
+func TestDocumentConsistencyGatesCarryNoSpecSectionCredit(t *testing.T) {
+	for file, document := range documentConsistencyGates {
+		if cited := citedSectionsInFile(t, file); len(cited) > 0 {
+			t.Errorf("%s asserts the contract of %s and cites spec section(s) %v; it reads none "+
+				"of those sections' behavior, so name the document contract it holds instead",
+				file, document, sortedSectionIDs(cited))
+		}
+		_, wholeFile, perCase := specMapCredits(t, file)
+		credited := map[string]bool{}
+		for section := range wholeFile {
+			credited[section] = true
+		}
+		for _, sections := range perCase {
+			for section := range sections {
+				credited[section] = true
+			}
+		}
+		if len(credited) > 0 {
+			t.Errorf("tests/spec-map.json credits %s to section(s) %v; the gate asserts the "+
+				"contract of %s rather than any section's behavior, so the credit records "+
+				"coverage a regression in those sections would not break",
+				file, sortedSectionIDs(credited), document)
+		}
+	}
+}
+
+// consistencyGateFiles is the inventory of tier-0 and tier-11 consistency
+// gates the per-session address change entered into tests/spec-map.json or
+// touched there. A gate of this kind reads a document, a register, or the map
+// itself rather than platform behavior, so it has no behavioral section to be
+// credited to: registering one under a behavioral section credits that section
+// with coverage no regression in it could break, and the section it appears to
+// pin keeps showing a test that would not catch a defect in it. The per-case
+// gate above reads only `::TestName` entries, and a whole-file entry is how
+// such a credit lands, so the whole-file arm below is what holds this class.
+var consistencyGateFiles = []string{
+	"tests/tier0_static/spec_map_exception_blocker_retention_test.go",
+	creditGateFile,
+	"tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
+	"tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go",
+	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go",
+}
+
+// spec: 4.1 (one address per gRPC request)
+//
+// Every whole-file spec-map registration of a consistency gate names a section
+// some annotation in that file carries. A tier-0 or tier-11 gate registered
+// under a behavioral section it never reads gives that section coverage in the
+// map that no regression in the section could break.
+func TestConsistencyGatesAreMappedOnlyToSectionsTheyAnnotate(t *testing.T) {
+	headings := specHeadingNumbers(t)
+	for _, file := range consistencyGateFiles {
+		declared, wholeFile, _ := specMapCredits(t, file)
+		resolved := map[string]bool{}
+		for section := range citedSectionsInFile(t, file) {
+			if key, ok := creditKey(section, declared, headings); ok {
+				resolved[key] = true
+			}
+		}
+		for section := range wholeFile {
+			if resolved[section] {
+				continue
+			}
+			t.Errorf("spec-map.json section %s registers %s as a whole, and no `// spec:` "+
+				"annotation in that file names %s or a section under it; the gate reads a "+
+				"document or the map rather than §%s's behavior, so the registration credits "+
+				"§%s with coverage a regression in it would not break",
+				section, file, section, section, section)
+		}
+	}
+}
+
 // sortedSectionIDs renders a section-id set in a stable order for failure
 // messages.
 func sortedSectionIDs(set map[string]bool) []string {

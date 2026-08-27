@@ -24,7 +24,12 @@
 // This test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
 //
-// spec: 7.1 (session lifecycle preparation barrier)
+// It asserts a documentation contract rather than a platform behavior, so
+// it cites TEST-GAPS.md's own "How findings are formatted" section
+// ("pointers to tests that already cover part of the requirement") rather
+// than a spec section: no spec heading states how the audit's evidence
+// references are written, and registering the case under one would credit
+// that section with coverage no regression in it could break.
 
 package tier11_docs_test
 
@@ -61,7 +66,9 @@ func renamedSuffixes(body, stem string) []string {
 	return names
 }
 
-// spec: 7.1
+// TEST-GAPS.md, "How findings are formatted" (`**Existing tests:**` —
+// pointers to tests that already cover part of the requirement).
+//
 // diagnosis: TEST-GAPS.md cites a test function under a name the tree no
 //
 //	longer declares, while the same file declares that name under a different

@@ -166,6 +166,8 @@
         "tests/tier3_contract/sdks/python_client_test.go::TestPythonClientMessageBodyOmitsSlotAddress",
         "tests/tier3_contract/sdks/typescript_client_test.go::TestTypeScriptClientMessageBodyOmitsSlotAddress",
         "tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestConsistencyGatesAreMappedOnlyToSectionsTheyAnnotate",
+        "tests/tier0_static/spec_map_slot_address_registration_test.go::TestDocumentConsistencyGatesCarryNoSpecSectionCredit",
         "tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go",
         "tests/tier0_static/adapter_proto_message_scope_test.go::TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage",
         "pkg/adapter/checkpoint_stream_test.go",
@@ -1513,8 +1515,7 @@
         "pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseReturnsCredentialLeasesToPool_spec_7_1",
-        "tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseReturnsCredentialLeasesToPool_spec_7_1"
       ],
       "packages": [
         "pkg/session"
