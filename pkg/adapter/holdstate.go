@@ -256,7 +256,7 @@ func (s *Server) terminateHeldSession(ctx context.Context, m heldSession, gen in
 	// using. Without it, an ended session's manifest nonce would keep
 	// authenticating the pod's tool surface for the life of a pod that no
 	// coordinator is left to reclaim.
-	// spec: §4.11; §15.4.3.
+	// spec: §4.7; §15.4.3.
 	s.cancelPodMCPIfRuntimeIdle()
 
 	// §10.1.4 — notify the gateway so it can transition this session
