@@ -35,6 +35,18 @@ type slotState struct {
 	// creds is the slot's independent credential lease set, keyed by
 	// provider. Written to paths.CredentialsFile.
 	creds map[string]*adapterv1.CredentialLease
+	// assigned records that AssignCredentials has run for this entry. It
+	// is the fail-closed was-assigned precondition the rotate and revoke
+	// handlers restate: the registry lookup those handlers open with
+	// tests registration rather than assignment, and every live session
+	// holds a registry entry seeded with an empty lease map by the
+	// workspace-prep RPCs. Nothing clears the marker while the entry
+	// lives, because creds is the live lease set the platform empties on
+	// its own (a direct-mode expiry deletes the provider's entry, and a
+	// revocation deletes the revoked ones), and a predicate keyed on the
+	// lease set would refuse the replacement lease the expiry fallback
+	// pushes over RotateCredentials. spec: §6.1; §4.9.
+	assigned bool
 	// timers holds the slot's §4.9 direct-mode lease-expiry timers, keyed
 	// by provider, independent of sibling slots and the single-slot set.
 	timers map[string]*expiryTimer

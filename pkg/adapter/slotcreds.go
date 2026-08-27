@@ -45,6 +45,7 @@ func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[s
 		return nil, err
 	}
 	st.creds = leases
+	st.assigned = true
 	// §4.9: arm a per-slot expiry timer for each direct-mode lease,
 	// independent of sibling slots.
 	s.reconcileSlotExpiryTimersLocked(st, slotID, leases)
@@ -68,6 +69,9 @@ func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[s
 	if st.sessionID != sessionID {
 		return nil, status.Errorf(codes.NotFound,
 			"slot %s credentials are assigned to session %s, not %s", slotID, st.sessionID, sessionID)
+	}
+	if err := requireAssigned(st); err != nil {
+		return nil, err
 	}
 	leases := cloneLeases(st.creds)
 	for provider, lease := range reqLeases {
@@ -121,6 +125,9 @@ func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []str
 		return nil, status.Errorf(codes.NotFound,
 			"slot %s credentials are assigned to session %s, not %s", slotID, st.sessionID, sessionID)
 	}
+	if err := requireAssigned(st); err != nil {
+		return nil, err
+	}
 	leases := cloneLeases(st.creds)
 	for _, provider := range providers {
 		delete(leases, provider)
@@ -131,6 +138,22 @@ func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []str
 	st.creds = leases
 	s.reconcileSlotExpiryTimersLocked(st, slotID, leases)
 	return &adapterv1.RevokeCredentialsResponse{}, nil
+}
+
+// requireAssigned is the fail-closed was-assigned precondition the
+// rotate and revoke handlers share. A slot that is registered and bound
+// but never received AssignCredentials has no credential file, and
+// admitting a rotation or a revocation there would materialize one for a
+// session the gateway never assigned credentials to. The predicate reads
+// the entry's was-assigned marker rather than its live lease set,
+// because a direct-mode expiry empties the lease set on a session that
+// is still live and whose replacement lease arrives over
+// RotateCredentials. spec: §6.1; §4.9.
+func requireAssigned(st *slotState) error {
+	if st.assigned {
+		return nil
+	}
+	return status.Error(codes.FailedPrecondition, "no credentials have been assigned to this pod")
 }
 
 // cloneLeases returns a shallow copy of a lease map so a rewrite is

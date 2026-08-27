@@ -971,6 +971,7 @@
         "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7",
         "tests/tier8_chaos/credential_rotation_ceiling_test.go::TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7",
         "pkg/adapter/credexpiry_test.go",
+        "pkg/adapter/credentials_test.go",
         "pkg/adapter/manifest_fields_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476",
@@ -1307,7 +1308,8 @@
         "pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
         "pkg/adapter/slotlayout/slotlayout_test.go",
         "pkg/adapter/manifest_fields_test.go",
-        "pkg/adapter/slotsession_test.go"
+        "pkg/adapter/slotsession_test.go",
+        "tests/tier9_security/adapter_credential_assignment_precondition_test.go::TestMergedCredentialHandlersRefuseASessionWithNoAssignment_spec_6_1"
       ],
       "packages": [
         "pkg/controller/warmpool",
