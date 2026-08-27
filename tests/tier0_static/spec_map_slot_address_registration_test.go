@@ -1,5 +1,23 @@
 // SPDX-License-Identifier: MIT
 
+// Tier-0 consistency check between tests/spec-map.json and the `// spec:`
+// annotations the cases it registers carry.
+//
+// The cases here read the map, the annotations, and the inventories that
+// derive from them. They assert the map's own registration contract: a
+// per-case entry names a section the registered case annotates, every
+// annotated section has a credit, and a gate whose subject is a document
+// takes no credit at all. Several of them exercise the citation parser and
+// the credit-key resolution those rules are computed with.
+//
+// The subject is tests/spec-map.json rather than any platform behavior, so
+// this file carries no `// spec:` citation and tests/spec-map.json credits
+// none of its cases to a spec section. Registering them under a behavioral
+// section would credit that section with coverage no regression in it could
+// break, which is the rule
+// TestDocumentConsistencyGatesCarryNoSpecSectionCredit holds, and this file
+// is one of the entries it holds it against.
+
 package tier0_static
 
 import (
@@ -31,7 +49,9 @@ const slotAddressAbsenceTestFile = "tests/tier3_contract/rest_sessions/slot_addr
 const addressRuleGateFile = "tests/tier0_static/address_rule_citation_test.go"
 
 // creditGateFile is this file, whose own cases the credit gate must account
-// for as it accounts for every other file in the inventory.
+// for as it accounts for every other file in the inventory. Its subject is
+// tests/spec-map.json, so the accounting it owes is that it carries no
+// citation and takes no credit.
 const creditGateFile = "tests/tier0_static/spec_map_slot_address_registration_test.go"
 
 // specMapFunctionEntries returns, per spec-section id, the test function
@@ -66,9 +86,6 @@ func specMapFunctionEntries(t *testing.T, file string) map[string][]string {
 	return out
 }
 
-// spec: 5.2 (client error on exhaustion), 7.1 (session lifecycle normal
-// flow), 7.2 (message dispatch), 4.1 (message scope)
-//
 // Every per-case spec-map registration of a slot-address-absence test names
 // a section that case's own `// spec:` annotation carries. A registration
 // under a section the case does not exercise credits that section with
@@ -107,10 +124,10 @@ func TestSlotAddressAbsenceCasesAreMappedToTheSectionsTheyExercise(t *testing.T)
 var documentConsistencyGates = map[string]string{
 	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go": "TEST-GAPS.md, whose resolved " +
 		"findings cite the case that closed them as a `path::TestName` reference",
+	creditGateFile: "tests/spec-map.json, whose per-case registrations must name a section the " +
+		"registered case annotates and whose credit rules this file's cases compute",
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // A gate whose subject is a repository document carries no spec-section
 // citation and no tests/spec-map.json credit. Registering one under a
 // behavioral section puts a test against that section in the coverage view
@@ -159,8 +176,6 @@ var consistencyGateFiles = []string{
 	"tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go",
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // Every whole-file spec-map registration of a consistency gate names a section
 // some annotation in that file carries. A tier-0 or tier-11 gate registered
 // under a behavioral section it never reads gives that section coverage in the
@@ -548,7 +563,7 @@ func isIndentedCommentContinuation(lines []string, idx int) bool {
 
 // specTagRE matches the `spec:` tag of an annotation inside a comment line.
 // The tag opens the comment line in the canonical position and also follows
-// the line's own prose ("// rejected. spec: §7.4"), so the reader locates it
+// the line's own prose (`// rejected. spec: §7.4`), so the reader locates it
 // anywhere in the comment text rather than at the head alone.
 var specTagRE = regexp.MustCompile(`(^|[^\pL\pN_])spec:`)
 
@@ -946,8 +961,6 @@ func creditsMissing(sections, declared, headings, wholeFile, perCase, deferred m
 	return missing
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // Every case that landed with the per-session slot address contract is
 // credited in tests/spec-map.json under each spec section its own annotation
 // names. A section an annotation names but no map entry records has no test
@@ -1003,8 +1016,6 @@ func sectionAgreesWithCitation(named string, cited map[string]bool) bool {
 	return false
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // A case whose name carries a `_spec_X_Y` suffix names a section its own
 // `// spec:` annotation cites. The suffix is the citation a reader sees in the
 // verdict and in any per-case spec-map row entered later, so a name left
@@ -1033,8 +1044,6 @@ func TestAddressCaseNamesAgreeWithTheirOwnCitations(t *testing.T) {
 // names the document rather than one of its sections.
 var proposalNumberedProseRE = regexp.MustCompile(`(?i)proposal\s+§\s*\d`)
 
-// spec: 4.1 (one address per gRPC request)
-//
 // No case file cites a proposal document's own section number outside a
 // `// spec:` annotation. A failure message is the text a reader is handed when
 // the case fails, so a proposal section number in one sends that reader to an
@@ -1074,8 +1083,6 @@ func proposalMarkedAnnotationSites(t *testing.T, file string) []int {
 	return sites
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // A `// spec:` annotation names a specification heading. A proposal numbers
 // its own sections independently, and those numbers exist only under
 // proposals/, so an annotation that cites one records no traceable coverage:
@@ -1092,8 +1099,6 @@ func TestAddressCaseAnnotationsCiteSpecificationHeadingsOnly(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // Every file a sibling gate inventories as carrying the address contract is
 // also carried by the credit inventory. A gate that names a case file the
 // credit inventory omits leaves that file's citations uncredited: the case
@@ -1125,8 +1130,6 @@ func TestTheCreditInventoryCarriesEveryAddressGuardCaseFile(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // The completeness rules derived from the tree report the case files a
 // hand-written inventory silently dropped: the claimer's own unit cases, the
 // concurrent slot-retry load case, the gateway-side half of the
@@ -1271,8 +1274,6 @@ func repoFileBytes(t *testing.T, file string) []byte {
 	return body
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // A `// spec:` annotation that gofumpt has reflowed into a first physical
 // line, a bare `//`, and tab-indented continuation lines is read whole. A
 // parser that stops at the bare `//` sees only the sections on the first
@@ -1298,8 +1299,6 @@ func TestReflowedSpecAnnotationIsReadPastTheBlankCommentLine(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // Sections are resolved per test function, so a section one case cites is
 // not attributed to a sibling case in the same file. Attributing the union
 // of a file's annotations to every case in it lets a per-case spec-map
@@ -1329,23 +1328,6 @@ func TestAnnotationSectionsAreResolvedPerCase(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (message scope)
-//
-// The credit gate is itself credited by name under the section its own
-// `// spec:` annotation cites. tests/spec-map.json registers this file case
-// by case, so a section credited to a sibling case does not select this one:
-// without its own row, `lenny-test --spec 4.1` runs every other case in the
-// file and skips the gate.
-func TestTheCreditGateIsCreditedByNameUnderTheSectionItAnnotates(t *testing.T) {
-	const gate = "TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate"
-	_, wholeFile, perCase := specMapCredits(t, creditGateFile)
-	if !wholeFile["4.1"] && !perCase[gate]["4.1"] {
-		t.Errorf("spec-map.json section 4.1 credits neither %s as a whole nor %s::%s", creditGateFile, creditGateFile, gate)
-	}
-}
-
-// spec: 4.1 (one address per gRPC request)
-//
 // A citation list that ends in a bare section id with no parenthesised gloss
 // keeps that id when an ordinary prose paragraph follows the blank comment
 // line. A reader that treats every `// text` line as a wrapped-annotation
@@ -1366,8 +1348,6 @@ func TestTrailingBareSectionIDSurvivesAFollowingProseParagraph(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // Citations separated by semicolons, and a citation whose gloss follows an
 // em-dash rather than a parenthesis, are both read. The repo's `// spec:`
 // annotations use each form, and a reader that recognises only the
@@ -1464,8 +1444,6 @@ func TestSemicolonAndEmDashCitationFormsAreRead(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // An annotated section id the map records at a coarser granularity is
 // credited at the granularity the map chose. Demanding a key spelled exactly
 // as the annotation spells it lets every finer citation pass uncredited, so a
@@ -1491,8 +1469,6 @@ func TestCreditIsDemandedAtTheMapGranularity(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // A `// spec:` annotation that cites a TESTING.md section rather than a
 // specification heading demands no spec-map credit, because the map keys
 // specification sections alone and no key for such an id can exist.
@@ -1513,8 +1489,6 @@ func TestCreditIsNotDemandedForATestingDocumentSectionID(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // creditsMissing reports the ancestor key an annotation's finer citation
 // resolves to when nothing credits it, and stays silent once either the
 // whole-file or the per-case credit supplies that key.
@@ -1541,8 +1515,6 @@ func TestCreditsMissingReportsTheUncreditedAncestorKey(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // A case whose only citation is the `_spec_X_Y` suffix of its own name
 // demands a spec-map credit for the section that suffix names. A credit sweep
 // that reads `// spec:` comment blocks alone never looks at such a case, so it
@@ -1570,8 +1542,6 @@ func TestASuffixOnlyCitationDemandsItsCredit(t *testing.T) {
 	}
 }
 
-// spec: 4.1 (one address per gRPC request)
-//
 // The naming gate keeps reading a case's `// spec:` annotation alone, so
 // widening the credit gate to accept a name suffix as a citation does not make
 // the naming gate vacuous. A gate that resolved the name against a set the
