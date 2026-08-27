@@ -174,12 +174,15 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T
 // spec: §5.2 (the slot registry holds one entry per session on every pod),
 // §15.4.2 (the pod-global drain signal names no session)
 //
-// A session ending on a co-tenanted pod sends no drain. The signal is
-// pod-global and terminates the shared runtime process, so sending it while
-// a co-tenant is still bound tears down a runtime that is still serving. The
-// co-tenant keeps its slot entry, its message path, and its runtime, and the
-// ending session's final usage report and cleanup outcome name that session
-// alone.
+// The pair of teardowns on one two-slot pod pins both arms of the
+// bound-entry quantity the drain is gated on. A session ending on a
+// co-tenanted pod sends no drain: the signal is pod-global and terminates
+// the shared runtime process, so sending it while a co-tenant is still bound
+// tears down a runtime that is still serving. The co-tenant keeps its slot
+// entry, its message path, and its runtime, and the ending session's final
+// usage report and cleanup outcome name that session alone. The second
+// session's shutdown then sends the drain before closing that session's
+// runtime, because deregistering it leaves no bound entry.
 func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
@@ -240,6 +243,57 @@ func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
 	reports := reporter.snapshot()
 	if len(reports) != 1 || reports[0].sessionID != "alice" {
 		t.Errorf("session scrub reports = %+v, want one naming alice", reports)
+	}
+
+	// The second teardown on the same pod deregisters the last bound entry,
+	// so the drain the first teardown withheld goes out, and it goes out
+	// before the runtime the co-tenant was being served by is closed. The
+	// bound-entry answer is therefore read from the registry the
+	// deregistration left behind rather than from how many entries the pod
+	// has ever held.
+	var (
+		drainFrame lifecycleFrame
+		drainRead  bool
+	)
+	drained := make(chan struct{})
+	go func() {
+		drainFrame, drainRead = fr.readWithin(30 * time.Second)
+		close(drained)
+	}()
+	closedBeforeDrain := false
+	rt.onClose = func(sessionID string) {
+		if sessionID != "bob" {
+			return
+		}
+		select {
+		case <-drained:
+		case <-time.After(5 * time.Second):
+			closedBeforeDrain = true
+		}
+	}
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId:  &adapterv1.SessionId{Value: "bob"},
+		DeadlineMs: 3500,
+		Reason:     "session_complete",
+	}); err != nil {
+		t.Fatalf("Shutdown bob: %v", err)
+	}
+
+	<-drained
+	if !drainRead {
+		t.Fatal("no CH-RUNTIMEOPS drain signal reached the runtime once the last bound entry was " +
+			"deregistered; the pod is serving no session and its runtime is closed without a graceful drain")
+	}
+	if drainFrame.Type != "terminate" || drainFrame.DeadlineMs != 3500 || drainFrame.Reason != "session_complete" {
+		t.Errorf("drain frame = %+v, want terminate with deadlineMs 3500 and reason session_complete", drainFrame)
+	}
+	if closedBeforeDrain {
+		t.Error("the co-tenant's runtime was closed before the drain signal reached it; the grace " +
+			"window the drain opens is the window the close ends")
+	}
+	if len(rt.closed) != 2 || rt.closed[0] != "alice" || rt.closed[1] != "bob" {
+		t.Errorf("runtime closed = %v, want [alice bob]", rt.closed)
 	}
 }
 
