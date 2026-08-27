@@ -36,6 +36,12 @@ import (
 // no pod.
 const retiredPodGlobalWorkspacePath = "/workspace/current"
 
+// workspaceSweepSource is this file, which the widened sweep reads. Its
+// every occurrence of the retired literal is a specimen: the constant,
+// the recorded exemptions, and the table-driven cases that pin each
+// predicate.
+const workspaceSweepSource = "tests/tier11_docs/workspace_path_literal_sweep_test.go"
+
 // workspaceSlotRoot is the prefix of every per-session tree that
 // replaced it.
 const workspaceSlotRoot = "/workspace/slots/"
@@ -77,6 +83,76 @@ var permittedWorkspaceRetirementStatements = map[string][]string{
 		`if strings.Contains(string(raw), "/workspace/current") {`,
 		`t.Errorf("%s names the retired pod-global /workspace/current", name)`,
 	},
+	// The suites state the retirement as an assertion that the path is
+	// absent and as the diagnosis that explains the assertion. Each such
+	// occurrence is recorded here, so a suite that instead restates the
+	// retired path as the current layout is reported.
+	filepath.Join("tests", "tier11_docs", "pod_filesystem_layout_doc_reconciliation_test.go"): {
+		"// `/workspace/slots/{sessionId}/current` and no pod-global `/workspace/current`",
+		"//\tnames the retired pod-global `/workspace/current` and the per-session",
+		"\"No pod-global working directory (`/workspace/current`) exists\",",
+		"//\t`/workspace/current`. That path exists on no pod, so a runtime written",
+	},
+	filepath.Join("tests", "tier11_docs", "session_scoped_frame_population_doc_reconciliation_test.go"): {
+		"//\t`/workspace/current` that no pod has. A failure here means the page the",
+	},
+	filepath.Join("tests", "tier2_component", "migrations", "checkpoint_slot_id_drop_test.go"): {
+		`//	retired pod-global /workspace/current fails every resume against a pod that`,
+		`{retired, "/workspace/current"},`,
+		"VALUES ($1, 'acme', 'created', 'echo', $1, '/workspace/current')`, session); err != nil {",
+	},
+	filepath.Join("tests", "tier2_component", "warmlayout", "warm_layout_test.go"): {
+		`// /workspace/current is absent. EnsureWarmWorkspaceLayout takes no pool`,
+		`// on, a pod-global /workspace/current. Under §6.4 a session's cwd is its own`,
+	},
+	filepath.Join("tests", "tier4_integration", "concurrent_workspace_test.go"): {
+		`// workspace or into a pod-global /workspace/current. Second, per-slot`,
+		`// into a pod-global /workspace/current), or the per-slot response was not`,
+		`// pod-global /workspace/current appears. This pins the §6.4 per-slot layout:`,
+		`// the runtime MUST NOT assume a global /workspace/current.`,
+		`// The pod-global /workspace/current is retired on every pool class, so`,
+		`t.Errorf("pod-global /workspace/current exists (err=%v); §6.4 retires the path on every pod", err)`,
+	},
+	filepath.Join("tests", "tier5_e2e_kind", "execution_modes_test.go"): {
+		`// A's. The pod-global /workspace/current is retired on every pool class,`,
+		`"[ -e /workspace/current ] && echo present || echo absent",`,
+		`t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path on every pool class, "+`,
+		"// `/workspace/current` path exists.",
+		`// materializes into a pod-global /workspace/current on a real agent pod.`,
+		`t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path", pod, podGlobal)`,
+		"// 06_warm-pod-model.md) — \"No global `/workspace/current` path exists,",
+		`// a sibling slot's tree, or a pod-global /workspace/current appeared on a`,
+		`// §6.4: the pod-global /workspace/current is retired rather than kept as`,
+		`t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path, and every session "+`,
+		`"pod-global /workspace/current exists", pod, sessA.ID, sessB.ID)`,
+	},
+}
+
+// spec: 6.4
+// diagnosis: the retired-workspace sweep reads the reader-facing and
+//
+//	library roots alone. The retired working directory is restated in a
+//	test header and in a diagnosis comment under tests/ as often as it is
+//	in prose, and a suite that names it as the current layout is the one
+//	surface a sweep over the other roots never reads. A failure means the
+//	root set no longer reaches the suites.
+func TestTheWorkspaceSweepReadsTheTestRoot(t *testing.T) {
+	roots := map[string]bool{}
+	for _, rel := range workspaceSweepRoots {
+		roots[rel] = true
+	}
+	for _, rel := range append(append([]string{}, retirementSweepRoots...), "tests") {
+		if !roots[rel] {
+			t.Errorf("workspaceSweepRoots omits %s, so a retired workspace literal under it is unread", rel)
+		}
+	}
+	root := repoRoot(t)
+	for _, path := range workspaceSweepSurfaces(t, root) {
+		if strings.HasPrefix(mustRel(t, root, path), "tests"+string(filepath.Separator)) {
+			return
+		}
+	}
+	t.Fatal("the workspace sweep walked no file under tests")
 }
 
 // spec: 6.4
@@ -91,7 +167,7 @@ var permittedWorkspaceRetirementStatements = map[string][]string{
 func TestNoSurfaceNamesTheRetiredPodGlobalWorkingDirectory(t *testing.T) {
 	root := repoRoot(t)
 	seen := map[string]map[string]bool{}
-	for _, path := range retirementSweepSurfaces(t, root) {
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
 		rel := mustRel(t, root, path)
 		permitted := permittedWorkspaceRetirementStatements[rel]
 		for i, line := range strings.Split(readSweptFile(t, path), "\n") {
@@ -136,7 +212,7 @@ func TestNoSurfaceNamesTheRetiredPodGlobalWorkingDirectory(t *testing.T) {
 //	names the line to restate whole.
 func TestNoSurfaceStatesThePodGlobalStagingTreeBesideASlotTree(t *testing.T) {
 	root := repoRoot(t)
-	for _, path := range retirementSweepSurfaces(t, root) {
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
 		for i, line := range strings.Split(readSweptFile(t, path), "\n") {
 			if !strings.Contains(line, podGlobalStagingPath) || !strings.Contains(line, workspaceSlotRoot) {
 				continue
@@ -181,7 +257,7 @@ func statesBareSessionsRoot(line string) bool {
 //	files. A failure names the line to restate whole.
 func TestNoSurfaceStatesTheBareSessionsRootBesideASlotTree(t *testing.T) {
 	root := repoRoot(t)
-	for _, path := range retirementSweepSurfaces(t, root) {
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
 		for i, line := range strings.Split(readSweptFile(t, path), "\n") {
 			if !strings.Contains(line, workspaceSlotRoot) {
 				continue
@@ -375,7 +451,7 @@ func stripStatementMarkers(line string) string {
 //	per-session staging tree.
 func TestNoSurfaceLandsStagedContentInThePodStagingArea(t *testing.T) {
 	root := repoRoot(t)
-	for _, path := range retirementSweepSurfaces(t, root) {
+	for _, path := range withoutSweepSource(t, root, workspaceSweepSurfaces(t, root), workspaceSweepSource) {
 		for _, window := range stagingStatements(readSweptFile(t, path)) {
 			if !podAttributedStaging.MatchString(window.text) {
 				continue

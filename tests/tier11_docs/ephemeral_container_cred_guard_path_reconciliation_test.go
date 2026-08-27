@@ -6,7 +6,7 @@
 // The guard exists to keep an attached ephemeral container away from the
 // credential material on an agent pod. That material is written per session at
 // /run/lenny/slots/{sessionId}/credentials.json, and no pod carries a
-// pod-global /run/lenny/credentials.json. The chart template that declares the
+// pod-global credential file directly under /run/lenny/. The chart template that declares the
 // webhook and the Go package that carries its decision logic both state, in
 // prose, which file the guard protects. When one half names a location the
 // platform no longer writes, an operator reading it concludes the guard covers
@@ -43,7 +43,7 @@ var credGuardDecisionSource = []string{
 // spec: 13.1, 4.7
 // diagnosis: one half of the ephemeral-container credential guard still names
 //
-//	the retired pod-global /run/lenny/credentials.json. The guard protects the
+//	the retired pod-global credential file directly under /run/lenny/. The guard protects the
 //	per-session credential files under /run/lenny/slots/, so the surviving
 //	statement describes a file no pod carries and misreports what the deployed
 //	webhook covers. A failure names the half to restate onto the per-session

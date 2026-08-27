@@ -47,9 +47,26 @@ var retirementSweepRoots = []string{
 	"pkg",
 }
 
+// sweepRootsWith returns the retirement roots widened with the extra
+// roots one literal's carriers reach. Each sweep names its own widening
+// rather than aliasing the base set, so widening one sweep does not
+// silently widen its siblings.
+func sweepRootsWith(extra ...string) []string {
+	return append(append([]string{}, retirementSweepRoots...), extra...)
+}
+
 // credentialSweepRoots are the directories the retired pod-global
-// credential file reaches.
-var credentialSweepRoots = retirementSweepRoots
+// credential file reaches. The suites are among them: a retired path
+// stands in a test header and a diagnosis comment as a statement of the
+// current delivery contract, and a suite that still names the pod-global
+// file as the single-session layout is the one surface a sweep over the
+// library and reader-facing roots alone never reads.
+var credentialSweepRoots = sweepRootsWith("tests")
+
+// workspaceSweepRoots are the directories the retired pod-global working
+// directory reaches. They include the suites for the same reason the
+// credential roots do.
+var workspaceSweepRoots = sweepRootsWith("tests")
 
 // placeholderSweepRoots are the directories a retired path-template
 // placeholder reaches. A placeholder lives in a path template, and path
@@ -57,7 +74,7 @@ var credentialSweepRoots = retirementSweepRoots
 // the token's carriers extend past the library roots into the suites that
 // assert the path. A comment naming a placeholder that addresses nothing
 // is invisible to the compiler wherever it stands.
-var placeholderSweepRoots = append(append([]string{}, retirementSweepRoots...), "tests")
+var placeholderSweepRoots = sweepRootsWith("tests")
 
 // The sweep has no carrier whitelist. The predicate is stated over the
 // directory set, so every authored file under a swept root is read
@@ -79,12 +96,12 @@ var retirementSweepSkipDirs = map[string]bool{
 	".git":         true,
 }
 
-// retirementSweepSurfaces returns every file a retirement sweep reads:
-// the carriers under the swept roots, plus the served OpenAPI document,
-// which is generated rather than authored and so is swept by path
-// rather than by directory.
-func retirementSweepSurfaces(t *testing.T, root string) []string {
-	return sweepSurfaces(t, root, retirementSweepRoots)
+// workspaceSweepSurfaces returns every file the retired-workspace sweep
+// reads: the carriers under the swept roots, plus the served OpenAPI
+// document, which is generated rather than authored and so is swept by
+// path rather than by directory.
+func workspaceSweepSurfaces(t *testing.T, root string) []string {
+	return sweepSurfaces(t, root, workspaceSweepRoots)
 }
 
 // credentialSweepSurfaces returns every file the retired-credential
@@ -98,6 +115,34 @@ func credentialSweepSurfaces(t *testing.T, root string) []string {
 // placeholder's carriers reach.
 func placeholderSweepSurfaces(t *testing.T, root string) []string {
 	return sweepSurfaces(t, root, placeholderSweepRoots)
+}
+
+// withoutSweepSource returns the surfaces with one sweep's own source
+// removed. A sweep that reads the tests root reads the file that defines
+// it, and every occurrence of a retired literal in that file is a
+// specimen rather than a statement of the contract: the constant that
+// names the subject, the exemption that quotes the line it permits, and
+// the table-driven case that pins the predicate all spell the literal by
+// construction. Reading them back makes the sweep report itself, so the
+// defining file is excluded from its own walk. It stays inside the swept
+// set of every sibling sweep, which reports a retired literal restated
+// there as prose.
+func withoutSweepSource(t *testing.T, root string, surfaces []string, self string) []string {
+	t.Helper()
+	source := filepath.Join(root, filepath.FromSlash(self))
+	kept := make([]string, 0, len(surfaces))
+	excluded := false
+	for _, path := range surfaces {
+		if path == source {
+			excluded = true
+			continue
+		}
+		kept = append(kept, path)
+	}
+	if !excluded {
+		t.Fatalf("%s was not among the swept surfaces; the sweep's own source moved or was renamed", self)
+	}
+	return kept
 }
 
 // sweepSurfaces walks the given roots and returns every authored carrier

@@ -4,7 +4,7 @@
 //
 // The credential file is written per session at
 // /run/lenny/slots/{sessionId}/credentials.json. No pod carries a
-// pod-global /run/lenny/credentials.json, so every reader-facing surface
+// pod-global credential file directly under /run/lenny/, so every reader-facing surface
 // that names one sends an author or an operator to a file that is never
 // written, and every SDK default or template comment that names one
 // documents a location no session resolves to.
@@ -36,15 +36,21 @@ import (
 // reported.
 var permittedCredentialRetirementStatements = map[string][]string{
 	filepath.Join("pkg", "adapter", "slotlayout", "slotlayout_test.go"): {
-		"// global /run/lenny/credentials.json so a rotation on one slot does not",
-		`if a.CredentialsFile == "/run/lenny/credentials.json" {`,
+		"// global " + retiredPodGlobalCredentialPath + " so a rotation on one slot does not",
+		`if a.CredentialsFile == "` + retiredPodGlobalCredentialPath + `" {`,
+	},
+	filepath.Join("tests", "tier4_integration", "concurrent_delegation_proxy_test.go"): {
+		"//     the retired pod-global " + retiredPodGlobalCredentialPath + ", which no pod",
+		"// " + retiredPodGlobalCredentialPath + ", which no pod writes, was never created.",
+		`t.Errorf("the retired pod-global ` + retiredPodGlobalCredentialPath +
+			`, which no pod writes, exists (err=%v); credentials were not written per slot", err)`,
 	},
 }
 
 // spec: 6.1, 4.7
 // diagnosis: a swept surface still names the pod-global
 //
-//	/run/lenny/credentials.json. That path exists on no pod: the adapter
+//	credential file directly under /run/lenny/. That path exists on no pod: the adapter
 //	writes one credential file per session under
 //	/run/lenny/slots/{sessionId}/. A runtime author who follows the
 //	surviving site reads a file that is never written, and an SDK whose
@@ -72,29 +78,37 @@ func TestNoSurfaceNamesTheRetiredPodGlobalCredentialFile(t *testing.T) {
 // diagnosis: the credential sweep reads the reader-facing roots alone.
 //
 //	The path is stated in a constant's doc comment, in a struct-field
-//	comment, and in a package header under pkg/, which the earlier root
-//	set did not read, so a retired pod-global credential file left in a
-//	Go doc comment shipped green while every reader-facing surface was
-//	clean. A failure means the root set no longer reaches the libraries.
-func TestTheCredentialSweepReadsTheLibraryRoot(t *testing.T) {
+//	comment, and in a package header under pkg/, and in a test header and
+//	a diagnosis comment under tests/, which the earlier root set did not
+//	read, so a retired pod-global credential file left in a Go doc comment
+//	or restated in a suite header as the single-session layout shipped
+//	green while every reader-facing surface was clean. A failure means the
+//	root set no longer reaches the libraries and the suites.
+func TestTheCredentialSweepReadsTheLibraryAndTestRoots(t *testing.T) {
 	roots := map[string]bool{}
 	for _, rel := range credentialSweepRoots {
 		roots[rel] = true
 	}
-	for _, rel := range append(append([]string{}, retirementSweepRoots...), "pkg") {
+	for _, rel := range append(append([]string{}, retirementSweepRoots...), "pkg", "tests") {
 		if !roots[rel] {
 			t.Errorf("credentialSweepRoots omits %s, so a retired credential literal under it is unread", rel)
 		}
 	}
 	root := repoRoot(t)
-	want := filepath.Join(root, "pkg", "adapter", "scrub", "scrub.go")
+	want := []string{
+		filepath.Join(root, "pkg", "adapter", "scrub", "scrub.go"),
+		filepath.Join(root, "tests", "tier9_security", "credential_file_contract_test.go"),
+	}
+	swept := map[string]bool{}
 	for _, path := range credentialSweepSurfaces(t, root) {
-		if path == want {
-			return
+		swept[path] = true
+	}
+	for _, path := range want {
+		if !swept[path] {
+			t.Errorf("%s was not swept; a retired credential literal restated there would ship green",
+				mustRel(t, root, path))
 		}
 	}
-	t.Fatalf("%s was not swept; the step 0 credential purge is documented there",
-		mustRel(t, root, want))
 }
 
 // spec: 6.1, 4.7

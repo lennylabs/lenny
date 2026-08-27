@@ -1845,7 +1845,7 @@ sites:
       function: TestCredentialFileDeliveryContract
       site: 1
       call: Skip
-      reason: no §4.9 credential lease is delivered to any e2e agent pod, so the adapter never materializes /run/lenny/credentials.json; the real-pod §4.7 delivery-contract assertion needs a credential-bearing session first
+      reason: no §4.9 credential lease is delivered to any e2e agent pod, so the adapter never materializes /run/lenny/slots/{sessionId}/credentials.json; the real-pod §4.7 delivery-contract assertion needs a credential-bearing session first
     - path: tests/tier9_security/credential_file_contract_test.go
       function: TestCredentialFileDeliveryContract
       site: 2

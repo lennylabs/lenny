@@ -3,9 +3,11 @@
 //go:build security
 
 // Tier-9 §4.7 / §13.1 credential-file delivery contract probe. The
-// adapter writes the runtime's LLM credentials to a tmpfs-backed
-// /run/lenny/credentials.json with mode 0440, owned by the adapter
-// UID and group-owned by the shared lenny-cred-readers group. §4.7
+// adapter materializes each session's LLM credentials on a tmpfs-backed
+// /run/lenny/slots/{sessionId}/credentials.json with mode 0440, owned by
+// the adapter UID and group-owned by the shared lenny-cred-readers
+// group. Every session is bound to a slot on every pod, so the file is
+// per session and no pod-global credential file exists. §4.7
 // states: "mode 0440, owned by the adapter UID and group-owned by
 // the shared lenny-cred-readers supplementary group ... Mode 0440
 // grants read to owner (adapter) and group (agent via
@@ -38,7 +40,7 @@ import (
 
 // spec: 4.7 (runtime adapter credential file), 13.1 (pod security credential-file read boundary)
 // diagnosis: a failure means the adapter-materialized
-// /run/lenny/credentials.json in a live agent pod does not carry the
+// /run/lenny/slots/{sessionId}/credentials.json in a live agent pod does not carry the
 // §4.7 delivery contract (mode 0440, owner = adapter UID, group =
 // lenny-cred-readers GID, no "other" read access). A wrong mode or
 // ownership would let a third UID in the pod read upstream LLM
@@ -47,7 +49,7 @@ func TestCredentialFileDeliveryContract(t *testing.T) {
 	// The e2e overlay configures no §4.9 credential provider or pool,
 	// and cred-shell-echo-runtime declares no credentialPoolRefs, so
 	// the gateway never calls AssignCredentials for it and the adapter
-	// never writes /run/lenny/credentials.json in any real pod (the
+	// never writes a session's credential file in any real pod (the
 	// binder calls AssignCredentials only when the BindRequest names
 	// credential pools). Without a lease-bearing session against a
 	// credential-declaring runtime, this contract cannot be exercised
@@ -57,15 +59,16 @@ func TestCredentialFileDeliveryContract(t *testing.T) {
 	// runtime, and a session driver that binds a lease), which is left
 	// as an open coverage decision.
 	t.Skip("no §4.9 credential lease is delivered to any e2e agent pod, so the adapter never materializes " +
-		"/run/lenny/credentials.json; the real-pod §4.7 delivery-contract assertion needs a credential-bearing session first")
+		"/run/lenny/slots/{sessionId}/credentials.json; the real-pod §4.7 delivery-contract assertion needs a credential-bearing session first")
 
 	c := kind.InstallLenny(t)
 	pod := findCredShellPod(t, c)
 
-	// Locate the adapter-materialized credential file. Single-session
-	// pods use /run/lenny/credentials.json; maxConcurrentSessions > 1
-	// pods use the per-slot /run/lenny/slots/{sessionId}/credentials.json
-	// (§13.1 per-slot clause). A find over the mount covers both.
+	// Locate the adapter-materialized credential file. Every session is
+	// bound to a slot, so the adapter materializes the session's own
+	// /run/lenny/slots/{sessionId}/credentials.json (§13.1 per-slot
+	// clause) and no pod of any concurrency carries a pod-global file. A
+	// find over the mount locates whichever session's file is live.
 	found, err := execContainer(t, c, pod, "runtime", "find", "/run/lenny", "-name", credfile.FileName, "-type", "f")
 	if err != nil {
 		t.Skipf("§4.7 credential-file probe: could not enumerate /run/lenny in cred-shell-echo pod %s: %v\noutput:\n%s",

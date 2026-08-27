@@ -5,7 +5,7 @@
 //
 // The credential file is written per session at
 // /run/lenny/slots/{sessionId}/credentials.json, and no pod carries a
-// pod-global /run/lenny/credentials.json. A construction-time default cannot
+// pod-global credential file directly under /run/lenny/. A construction-time default cannot
 // name a session-scoped file, so the resolved path is delivered on the adapter
 // manifest, which the adapter writes before spawning each session's runtime
 // binary. A runtime that reads credential material therefore reads
@@ -34,8 +34,10 @@ const credentialSlotPath = "/run/lenny/slots/{sessionId}/credentials.json"
 
 // retiredPodGlobalCredentialPath is the pod-global path the per-slot layout
 // retires. It exists on no pod, so a page naming it sends a runtime author or
-// an operator to a file that is never written.
-const retiredPodGlobalCredentialPath = "/run/lenny/credentials.json"
+// an operator to a file that is never written. It is built from its parts so
+// that this package, which the widened credential sweep reads, does not report
+// its own subject.
+const retiredPodGlobalCredentialPath = "/run/lenny/" + "credentials.json"
 
 // spec: 4.7, 6.1
 // diagnosis: the reader-facing adapter contract disagrees with the §4.7

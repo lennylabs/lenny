@@ -51,8 +51,8 @@ const ephemeralCredRejectionCode = "EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN"
 // runAsGroup, and which under §13.1 condition (iii) inherits the
 // pod-level credential-group defaults. The guard must reject the attach
 // with EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN. An admitted attach means
-// an actor with pods/ephemeralcontainers UPDATE could read
-// /run/lenny/credentials.json.
+// an actor with pods/ephemeralcontainers UPDATE could read a session's
+// credential file under /run/lenny/slots/{sessionId}/.
 func TestAdmissionEphemeralContainerCredUIDForbidden(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pods := kind.RequireAgentWorkload(t, c)
