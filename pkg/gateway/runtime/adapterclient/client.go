@@ -844,7 +844,7 @@ type RecycleScrub struct {
 }
 
 // ShutdownRecycle is the §4.7 recycle-disposition variant of the proto
-// Shutdown RPC (the row the §4.7 table names Terminate). It marks the
+// Shutdown RPC (the row the §4.7 table names Shutdown). It marks the
 // occupancy-zero recycle boundary: the adapter closes the ending session's
 // runtime, keeps the pod process alive across the boundary, runs the §5.2
 // whole-pod scrub with the carried parameters, and reports its binary

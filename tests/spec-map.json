@@ -632,6 +632,7 @@
         "tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go",
         "cmd/lenny-compliance/full_test.go",
         "tests/tier11_docs/recycle_scrub_trigger_consistency_test.go",
+        "tests/tier11_docs/spec_47_rpc_row_naming_test.go::TestGoCommentsNameOnlyLiveSpec47RPCRows",
         "tests/tier7a_load_local/coordinator_hold_termination_race_test.go",
         "tests/tier7a_load_local/podmcp_arming_handoff_test.go::TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3",
         "pkg/controller/sandbox/podspec/podspec_test.go",
