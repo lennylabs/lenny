@@ -405,6 +405,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier3_contract/adapter_jsonl/subprocess_envelope_address_test.go",
 	"tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
 	"tests/tier3_contract/adapter_reportusage/reportusage_wire_test.go",
+	"tests/tier3_contract/adapter_session_address/send_message_stamp_test.go",
 	"tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
 	"tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
 	"tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",

@@ -316,9 +316,9 @@ func TestStartSessionRequiresConfiguration(t *testing.T) {
 
 // TestSendMessageForwardsStampedEnvelopeToRuntime pins that the handler
 // hands the shared runtime the gateway's envelope carrying the session's
-// address, since §4.6.1 makes the population of the per-session
+// address, since §28.5.3 makes the population of the per-session
 // identifier an adapter-side obligation on every session-scoped frame.
-// spec: §4.6.1; §5.2; §28.5.3.
+// spec: §28.5.3; §5.2.
 func TestSendMessageForwardsStampedEnvelopeToRuntime(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {

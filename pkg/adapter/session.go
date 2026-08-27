@@ -168,11 +168,11 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 // The request carries a §28.5.3 message envelope already encoded by
 // the gateway. The adapter stamps the session's address onto it and
 // writes it to the shared runtime's stdin, through the same helper the
-// Attach leg uses, because §4.6.1 makes the population of the
+// Attach leg uses, because §28.5.3 makes the population of the
 // per-session identifier an adapter-side obligation on every
 // session-scoped frame on every pod. The runtime's response is surfaced
 // asynchronously, so SendMessage returns once the envelope is delivered.
-// spec: §4.6.1; §5.2; §28.5.3.
+// spec: §28.5.3; §5.2.
 func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageRequest) (*adapterv1.SendMessageResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {

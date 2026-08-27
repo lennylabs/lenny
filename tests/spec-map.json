@@ -1201,7 +1201,8 @@
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindErrorReason_spec_5_2",
         "pkg/adapter/slotsession_test.go",
-        "tests/tier11_docs/slot_placeholder_literal_sweep_test.go"
+        "tests/tier11_docs/slot_placeholder_literal_sweep_test.go",
+        "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -5690,7 +5691,9 @@
         "tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go::TestSetTracingContextRejectsNonStringSessionID",
         "tests/tier3_contract/adapter_jsonl/set_tracing_context_test.go::TestSetTracingContextFrameCarriesSessionID",
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
-        "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go"
+        "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
+        "pkg/adapter/session_test.go",
+        "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3"
       ],
       "packages": [
         "pkg/adapter",

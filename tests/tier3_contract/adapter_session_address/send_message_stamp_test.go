@@ -69,10 +69,9 @@ func stampPod(t *testing.T, sessions ...string) (*adapter.Server, *capturingRunt
 	return s, rt
 }
 
-// spec: 4.6.1 (the adapter populates the per-session identifier on every
+// spec: 28.5.3 (the adapter populates the per-session identifier on every
 // session-scoped frame, on every pod), 5.2 (a session-mode slot's
-// identifier is its session's identifier), 28.5.3 (the message frame is
-// session-scoped)
+// identifier is its session's identifier)
 //
 // diagnosis: the SendMessage handler forwarded the gateway's envelope to
 // the shared runtime without stamping the session's address, so a
@@ -80,7 +79,7 @@ func stampPod(t *testing.T, sessions ...string) (*adapter.Server, *capturingRunt
 // session it addresses. On a pod holding one slot the frame is
 // indistinguishable from the retired pod-global form, so the defect is
 // silent there; the two-slot arm is where the runtime has to guess.
-func TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_4_6_1(t *testing.T) {
+func TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name     string
