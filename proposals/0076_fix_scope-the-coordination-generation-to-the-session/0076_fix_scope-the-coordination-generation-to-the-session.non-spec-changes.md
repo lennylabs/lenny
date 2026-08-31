@@ -3,8 +3,8 @@
 The staged changes below target the schema, the adapter code, and the tests. The caveat that opens the
 proposal's "Proposed changes" section applies to them.
 
-**IMPLEMENTOR TO FILL THE BLANKS.** Indicative targets; the text is written during convergence, against the
-post-0073 state of each file.
+**IMPLEMENTOR TO FILL THE BLANKS.** These are indicative targets; the text is written during convergence,
+against the post-0073 state of each file.
 
 ### SCHEMA-1. Make the comments true
 
@@ -31,9 +31,9 @@ wire gate's behavior), 7a (concurrent handoffs), and 8 (crash takeover). Proposa
 gateway harness and tier-8 crash-takeover coverage for §10.1; read what it built before designing here,
 because the per-session fencing case probably belongs in that harness rather than in a new one.
 
-The case that pins this defect: two sessions co-tenant on one pod, each handed off independently, asserting
-that the second handoff is accepted, that its barrier is accepted, that no gap is logged, and that the
-first session's hold is not released by the second's fence. It must fail against the pre-fix code.
+The case that pins this defect is two sessions co-tenant on one pod, each handed off independently,
+asserting that the second handoff is accepted, that its barrier is accepted, that no gap is logged, and
+that the first session's hold is not released by the second's fence. It must fail against the pre-fix code.
 
 ## 9. Files touched on application
 
