@@ -261,4 +261,92 @@ t.section("C12. an unproductive verdict stops the step and writes NO deviation")
   t.check("the outstanding work is carried out", JSON.stringify(result.stuckFindings).includes("tier-3 case"));
 }
 
+
+
+// ---- Phase 8b: one execution sequence ------------------------------------
+
+const SPEC_STEP = { id: "S1", lane: "spec", title: "the §16.1 row", work: "SPEC-1", targets: ["spec/16.md"], tiers: ["static"], checklistStep: "S1", dependsOn: [] };
+const CODE_STEP = { ...STEP, id: "S2", lane: "code", checklistStep: "S2", dependsOn: ["S1"] };
+
+const specBase = (over = {}) => base({
+  "spec-targets:*": { files: ["spec/16_observability.md"] },
+  "lease-open:*": "{}",
+  "lease-release:*": "{}",
+  "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
+  "verify:S1:spec": { discrepancies: [] },
+  "commit-spec:*": "committed",
+  ...over,
+});
+
+t.section("C16. spec and code steps run in one sequence, in checklist order");
+{
+  const { calls, result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP, CODE_STEP] } }), specBase(),
+  );
+  t.check("the spec step applies its staged edits", !never(calls, "apply:S1"));
+  t.check("before the code step builds", firstIndex(calls, "apply:S1") < firstIndex(calls, "build:S2"));
+  t.check("the spec step ticks its own box", calls.some((c) => c.label === "tick:S1"));
+  t.check("and both steps are recorded", (result.steps || []).length === 2, String((result.steps || []).length));
+  t.check("the spec step records the files it wrote", (result.steps || [])[0].specFiles.join().includes("spec/16"));
+}
+
+t.section("C17. the lease is per spec step, scoped to its files, and no code step holds one");
+{
+  const { calls } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP, CODE_STEP] } }), specBase(),
+  );
+  const open = calls.filter((c) => c.label.startsWith("lease-open:"));
+  t.check("exactly one lease is opened", open.length === 1, String(open.length));
+  t.check("it belongs to the spec step", open[0].label === "lease-open:S1");
+  t.check("its allow list is that step's files only", /--allow 'spec\/16_observability\.md'/.test(open[0].prompt));
+  t.check("it is a dedicated one-command haiku agent", open[0].opts.model === "haiku" && /Do nothing else/.test(open[0].prompt));
+  t.check("it is released", !never(calls, "lease-release:S1"));
+  t.check("before the code step runs", firstIndex(calls, "lease-release:S1") < firstIndex(calls, "build:S2"));
+  t.check("the code step opens none", open.every((c) => c.label !== "lease-open:S2"));
+}
+
+t.section("C21. a failing spec step still releases its lease");
+{
+  const { calls, result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP, CODE_STEP] } }),
+    specBase({ "apply:*": { applied: [], unappliable: [{ id: "SPEC-1", reason: "the anchor drifted" }], deviations: [] } }),
+  );
+  t.check("the run stops", result.status === "spec-step-failed", result.status);
+  t.check("it names why", /anchor drifted/.test(result.reason || ""));
+  t.check("the lease is released anyway", !never(calls, "lease-release:S1"));
+  t.check("and the code step never runs", never(calls, "build:S2"));
+}
+{
+  const { calls, result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP] } }),
+    specBase({ "verify:S1:spec": { discrepancies: [{ title: "d", file: "spec/16.md", where: "w", expected: "e", observed: "o", fix: "f" }] } }),
+  );
+  t.check("a verification discrepancy stops the step", result.status === "spec-step-failed");
+  t.check("the discrepancies are carried out", (result.discrepancies || []).length === 1);
+  t.check("nothing is committed", never(calls, "commit-spec"));
+  t.check("the lease is still released", !never(calls, "lease-release:S1"));
+}
+
+t.section("C20. a lane that selects no handler is an error, not a guess");
+{
+  const { result } = await runWorkflow(
+    WF, ARGS({ plan: { blastRadius: [], steps: [{ ...CODE_STEP, id: "SX", lane: "everything" }] } }), specBase(),
+  );
+  t.check("the run stops", result.status === "bad-lane", result.status);
+  t.check("it names the step and the lane", /SX/.test(result.reason) && /everything/.test(result.reason));
+}
+
+t.section("specReviewFocus survives as a per-spec-step reviewer");
+{
+  const { calls, logs } = await runWorkflow(
+    WF,
+    ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP] }, specReviewFocus: ["the slotId rename"] }),
+    specBase({ "verify:S1:spec:focus": { discrepancies: [] } }),
+  );
+  t.check("a focused reviewer runs beside the normal one", !never(calls, "verify:S1:spec:focus"));
+  t.check("it carries the areas", /the slotId rename/.test(calls.find((c) => c.label === "verify:S1:spec:focus").prompt));
+  t.check("the normal reviewer does not", !/the slotId rename/.test(calls.find((c) => c.label === "verify:S1:spec").prompt));
+  t.check("and it is logged", logs.some((l) => /Spec review focus: 1 area/.test(l)));
+}
+
 t.done();

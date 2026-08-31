@@ -57,6 +57,34 @@ const proposal = input.proposalPath.startsWith("/")
 // Where this proposal's parts live. Folder layout or legacy single file.
 const P = proposalFiles(input.proposalPath, repo);
 const maxPlanRounds = input.maxPlanRounds || 2;
+// Areas the caller already suspects a spec step will get wrong. Each spec
+// step's verification gains a dedicated reviewer that hunts these specifically,
+// beside the normal one rather than replacing it, and their findings are
+// concatenated with no dedup: two phrasings of one defect reaching the fixer is
+// cheap, and anything that can drop a finding on this path is not worth the
+// fidelity it costs.
+const specReviewFocus = (
+  Array.isArray(input.specReviewFocus)
+    ? input.specReviewFocus
+    : input.specReviewFocus
+      ? [input.specReviewFocus]
+      : []
+)
+  .map((a) => String(a).trim())
+  .filter(Boolean);
+if (specReviewFocus.length > 0) {
+  log("Spec review focus: " + specReviewFocus.length + " area(s) get a dedicated reviewer per spec step");
+}
+const FOCUS_BLOCK =
+  specReviewFocus.length === 0
+    ? ""
+    : "\n\nAREAS TO CONCENTRATE ON. The caller has reason to believe the spec drifts from the proposal " +
+      "in these places specifically:\n" +
+      specReviewFocus.map((a, i) => i + 1 + ". " + a).join("\n") +
+      "\n\nGo after each directly and exhaustively: find every site it covers, including sites outside " +
+      "the anchors the proposal names, and check each against what the proposal stages. These are where " +
+      "to look hardest, not the limit of what to report; a discrepancy elsewhere is still a discrepancy. " +
+      "Reporting nothing for an area is a valid answer when the area is genuinely clean.";
 // A caller-supplied build sequence, which replaces the planning phase outright.
 // Planning exists to derive a sequence from the proposal, and once the
 // proposal's checklist carries every step with its tiers and dependencies, that
@@ -305,12 +333,94 @@ const BLANKS_BLOCK =
 // Everything the per-step agents need beyond their own instructions.
 const RULES_FULL = RULES + SUMMARY_BLOCK + BLANKS_BLOCK;
 
+// ---- What a spec-lane step needs -----------------------------------------
+//
+// These came from implement-proposal.js, where spec application used to be a
+// phase of its own. Under one execution sequence a spec step is a step like
+// any other, so its rules and schemas live beside the loop that runs it.
+
+const SPEC_RULES =
+  "Spec content rules (these take precedence over verbatim application; record every deviation they force):\n" +
+  "- The spec never references source code files or implementation paths (pkg/, cmd/, charts/, sdks/, tests/, migrations/, .go or other source files). Rephrase staged text carrying such a reference into behavioral spec language, or drop the reference.\n" +
+  "- The spec cross-references other spec content by section number only: §X.Y or a relative markdown link to a section anchor. Replace a line-number cross-reference in staged text with the containing section's number.\n" +
+  "- Line numbers in the proposal's ANCHOR INSTRUCTIONS are location hints for you and never become spec content. Locate anchors by the quoted text and section headings; line numbers drift.\n" +
+  "- A staged edit that introduces a brand-new section or subsection is appended at the end of its level, after the last existing sibling at that level, and numbered as the next ordinal. Never insert a new section or subsection between existing ones: inserting in the middle forces every following section to be renumbered and breaks existing cross-references. When a staged anchor instruction would place a new section or subsection between existing ones, append it at the end of that level instead, renumber it to the next ordinal, and record the deviation. Editing the body of an existing section in place is unaffected by this rule; it applies only to introducing a new numbered section or subsection.\n" +
+  "- Apply staged prose as written otherwise; do not restyle it.\n" +
+  "- These rules govern text you author from a staged block. For a mechanical edit you do not author the text: if the script's output violates one of them, that is a defect in the script or its register, so record it as a deviation and stop, rather than hand-correcting the output, which would put the tree and the register out of step.";
+
+const APPLY_RESULT = {
+  type: "object",
+  required: ["applied", "unappliable", "deviations"],
+  properties: {
+    applied: { type: "array", items: { type: "string" } },
+    unappliable: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "reason"],
+        properties: { id: { type: "string" }, reason: { type: "string" } },
+      },
+    },
+    deviations: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "rule", "original", "replacement"],
+        properties: {
+          id: { type: "string" },
+          rule: { type: "string" },
+          original: { type: "string" },
+          replacement: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+const DISCREPANCIES = {
+  type: "object",
+  required: ["discrepancies"],
+  properties: {
+    discrepancies: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["title", "file", "where", "expected", "observed", "fix"],
+        properties: {
+          title: { type: "string" },
+          file: { type: "string" },
+          where: { type: "string" },
+          expected: { type: "string", description: "What the proposal stages, quoted exactly" },
+          observed: { type: "string", description: "What the spec now says, quoted exactly" },
+          fix: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+// The spec files one step's staged deliverables write, which becomes the
+// lease's allow list: the narrowest grant that still lets the step work.
+const SPEC_TARGETS = {
+  type: "object",
+  required: ["files"],
+  properties: {
+    files: { type: "array", items: { type: "string" }, description: "repo-relative paths under spec/" },
+  },
+};
+
 // One build step, shared by the initial plan and the tail re-plan.
 const STEP_ITEM = {
   type: "object",
-  required: ["id", "title", "work", "targets", "tiers"],
+  required: ["id", "lane", "title", "work", "targets", "tiers"],
   properties: {
     id: { type: "string", description: "stable short id, e.g. S1" },
+    lane: {
+      type: "string",
+      enum: ["spec", "code", "schema", "migration", "test", "docs"],
+      description:
+        "The lane selects which handler runs for this step, so a step carries exactly ONE and a step naming both a spec deliverable and a non-spec one is a defect. `spec` applies the staged spec edits its deliverables name; every other lane builds code and tests.",
+    },
     title: { type: "string" },
     work: { type: "string", description: "what to implement in this step" },
     targets: { type: "array", items: { type: "string" }, description: "files or packages" },
@@ -1119,6 +1229,133 @@ async function reviewStep(step, ref, tag) {
 
 }
 
+// ---- A spec-lane step ------------------------------------------------------
+//
+// Spec used to be a PHASE that landed every staged edit before the build began,
+// which meant the checklist's spec lane was decorative: the proposal wrote
+// `S1 · spec`, review validated that ordering, and the executor ignored it and
+// used its own. Two orderings of one proposal, and a progress record for each
+// that could disagree.
+//
+// One sequence now. A spec step applies the SPEC-n deliverables its line names,
+// under a lease scoped to exactly the files those deliverables target, verifies
+// what landed against what the proposal stages, and commits. Then it ticks the
+// same box a code step ticks, so progress is per-deliverable in one place.
+//
+// The lease is opened and released HERE rather than around the whole run, which
+// is what makes spec/ locked for the great majority of a run's wall-clock: a
+// code step holds none, and refuses to start if one is somehow still held.
+async function runSpecStep(step) {
+  const ids = (step.work || "").match(/SPEC-[A-Za-z0-9.-]+/g) || [];
+  log("Step " + step.id + " (spec): applying " + (ids.join(", ") || "its staged edits"));
+
+  const targets = await agentTry(
+    "List the spec files one checklist step's staged edits target. Do not edit anything.\n\n" +
+      "Work in " + repo + ". Read " + P.spec + " and find the staged edits this step names: " +
+      (ids.join(", ") || step.work) + ".\n\n" +
+      "Return every distinct path under spec/ they write, repo-relative. Nothing else.",
+    { schema: SPEC_TARGETS, label: "spec-targets:" + step.id, phase: "Build" },
+  );
+  const files = (targets && targets.files) || [];
+  if (files.length === 0) {
+    return { ok: false, reason: "no spec file could be resolved for the edits step " + step.id + " names" };
+  }
+
+  await agentTry(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "node " + repo + "/.claude/tools/spec-lease.mjs open '" + P.root + "' --step '" + step.id +
+      "' --allow '" + files.join(",") + "'" +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "lease-open:" + step.id, model: "haiku", phase: "Build" },
+  );
+
+  let ok = false;
+  let reason = "";
+  try {
+    const applied = await agentTry(
+      "Apply one checklist step's staged spec edits.\n\n" +
+        "HARD CONSTRAINT: the only files you may edit are " + files.join(", ") + ". A write lease is open " +
+        "for exactly those and the guard hook refuses everything else under spec/.\n\n" +
+        "Work in " + repo + ". The staged edits are in " + P.spec + ": " + (ids.join(", ") || step.work) +
+        ".\n\n" + SPEC_RULES + SUMMARY_BLOCK + BLANKS_BLOCK +
+        "\n\nLocate every anchor by its quoted text and its heading rather than by a line number, which " +
+        "will have drifted. If an anchor cannot be located WITH CERTAINTY, stop: record that edit as " +
+        "unappliable and apply nothing further. Never guess a location and never skip an edit to continue " +
+        "with the ones after it -- a partially applied file is a state the verification cannot converge " +
+        "out of, because a later discrepancy cannot be told from an edit that never ran.",
+      { schema: APPLY_RESULT, label: "apply:" + step.id, phase: "Build" },
+    );
+    if (!applied || (applied.unappliable || []).length > 0) {
+      reason =
+        "an edit could not be located with certainty: " +
+        ((applied && (applied.unappliable || []).map((u) => u.id + " (" + u.reason + ")").join("; ")) ||
+          "the applier did not return");
+      return { ok: false, reason };
+    }
+
+    const checks = [
+      () => agentTry(
+      "Verify one step's applied spec edits match what the proposal stages.\n\n" +
+        "You are read-only. Work in " + repo + ". Proposal staging: " + P.spec + ".\n" +
+        "Files this step touched: " + files.join(", ") + ". Run `git diff -- " + files.join(" ") + "`.\n\n" +
+        "Confirm: every staged block appears at its anchor, character-exact except where a content rule " +
+        "forced a deviation; text the edit replaces or removes is gone; the diff contains nothing beyond " +
+        "the staged edits; every cross-reference the applied text adds resolves; and no added line cites a " +
+        "source path or a line number.\n\n" +
+        (applied.deviations || []).length
+          ? "RECORDED RULE-FORCED DEVIATIONS, which are expected and are NOT discrepancies:\n" +
+            JSON.stringify(applied.deviations, null, 2)
+          : "",
+      { schema: DISCREPANCIES, label: "verify:" + step.id + ":spec", phase: "Build" },
+      ),
+    ];
+    if (specReviewFocus.length > 0) {
+      checks.push(() =>
+        agentTry(
+          "Verify one step's applied spec edits against what the proposal stages, concentrating on areas " +
+            "the caller singled out.\n\nYou are read-only. Work in " + repo + ". Proposal staging: " +
+            P.spec + ". Files: " + files.join(", ") + ". Run `git diff -- " + files.join(" ") + "`." +
+            FOCUS_BLOCK,
+          { schema: DISCREPANCIES, label: "verify:" + step.id + ":spec:focus", phase: "Build" },
+        ),
+      );
+    }
+    const results = (await parallel(checks)).filter(Boolean);
+    // Fail closed: a reviewer that did not return is not evidence of alignment.
+    const check = results.length === checks.length ? { discrepancies: results.flatMap((r) => r.discrepancies || []) } : null;
+    const found = (check && check.discrepancies) || [];
+    if (!check || found.length > 0) {
+      reason = found.length
+        ? found.length + " discrepancy(ies) between the applied spec and what the proposal stages"
+        : "the spec verifier did not return";
+      return { ok: false, reason, discrepancies: found };
+    }
+
+    await agentTry(
+      "Commit the spec edits just applied and verified for one checklist step.\n\n" +
+        "HARD CONSTRAINT: commit only the files under spec/ this step touched (" + files.join(", ") +
+        "). Do not edit anything and do not amend an existing commit.\n\n" +
+        "Work in " + repo + ". Write the message in the repository's convention (read `git log " +
+        "--oneline -5`), describing what the spec now says. It references durable sources only: it may " +
+        "name the proposal path, and it must NOT carry the proposal's internal change, decision, review " +
+        "pass, or step labels.",
+      { label: "commit-spec:" + step.id, phase: "Build" },
+    );
+    ok = true;
+    return { ok: true, files, deviations: applied.deviations || [] };
+  } finally {
+    // On every path, including a failure. A lease left open leaves spec/
+    // writable for whatever runs next, and the code steps that follow assert it
+    // is closed and stop the run if it is not.
+    await agentTry(
+      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+        "node " + repo + "/.claude/tools/spec-lease.mjs release --step '" + step.id + "'" +
+        "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+      { label: "lease-release:" + step.id, model: "haiku", phase: "Build" },
+    );
+  }
+}
+
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
   // A step the planner found already present builds nothing. It stays in the
@@ -1139,6 +1376,22 @@ for (let i = 0; i < plan.steps.length; i++) {
     stepResults.push({ step: step.id, blocked: step.blocked });
     continue;
   }
+  // The lane is the dispatch key, so an absent or unrecognised one is an error
+  // rather than a guess: there is no safe default between "apply spec text" and
+  // "write code".
+  if (step.lane && !["spec", "code", "schema", "migration", "test", "docs"].includes(step.lane)) {
+    return {
+      status: "bad-lane",
+      stuckStep: step.id,
+      reason:
+        "step " + step.id + " declares lane " + JSON.stringify(step.lane) + ", which selects no handler. " +
+        "A step carries exactly one of spec, code, schema, migration, test, or docs.",
+      steps: stepResults,
+      green: false,
+      reviewClean: false,
+    };
+  }
+
   const blockedDeps = (step.dependsOn || []).filter((d) =>
     stepResults.some((r) => r.step === d && r.blocked),
   );
@@ -1149,6 +1402,41 @@ for (let i = 0; i < plan.steps.length; i++) {
     stepResults.push({ step: step.id, blocked: why });
     continue;
   }
+  // A spec-lane step applies staged specification text; it does not build code,
+  // so it does not enter the implement/review/test loop below.
+  if (step.lane === "spec") {
+    const r = await runSpecStep(step);
+    if (!r.ok) {
+      log("Step " + step.id + " (spec) failed: " + r.reason);
+      return {
+        status: "spec-step-failed",
+        stuckStep: step.id,
+        reason: r.reason,
+        discrepancies: r.discrepancies || [],
+        steps: stepResults,
+        commits: stepResults.map((x) => x.commit).filter(Boolean),
+        green: false,
+        reviewClean: false,
+        resumeNote:
+          "Spec step " + step.id + " did not land. The steps before it are committed. Fix the staged " +
+          "text or the anchor it names, then re-run; a step whose box is already ticked is skipped.",
+      };
+    }
+    stepResults.push({ step: step.id, title: step.title, lane: "spec", specFiles: r.files, stepGreen: true, reviewClean: true, attempts: 1 });
+    if (step.checklistStep) {
+      await agentTry(
+        "In " + P.checklist + ", find the implementation-checklist line for step " + step.checklistStep +
+          ". It begins `- [ ] **" + step.checklistStep + "`. Change that line's `- [ ]` to `- [x]` and " +
+          "change NOTHING else in the file. If there is no such line, or its box is already `[x]`, change " +
+          "nothing. Reply DONE either way.",
+        { label: "tick:" + step.checklistStep, model: "haiku" },
+      );
+      log("Checklist: marked " + step.checklistStep + " complete");
+    }
+    log("Step " + step.id + " (spec) applied, verified and committed");
+    continue;
+  }
+
   const stepHeader =
     "Step " +
     step.id +

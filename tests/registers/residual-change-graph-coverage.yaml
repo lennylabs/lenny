@@ -36,18 +36,6 @@ entries:
     reason: |-
       a shell test over the spec/ guard hook, run with bash rather than selected by a test tier
   - member: |-
-      .claude/tests/implement-proposal-focus.test.mjs
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
-  - member: |-
-      .claude/tests/implement-proposal-lease.test.mjs
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
-  - member: |-
       .claude/tests/implement-proposal-reverify.test.mjs
     class: change-graph-coverage
     disposition: excluded

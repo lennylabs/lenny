@@ -875,4 +875,28 @@ t.section("B26. a stopping verdict carries proposed next steps");
   t.check("the pass is told to fill them", true);
 }
 
+
+// ---- Phase 8b: the applicability lens under one execution sequence -------
+
+t.section("B31. the lens states the lane rules and no longer forbids an interleave");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  const app = calls.filter(isLens).find((c) => c.label.endsWith(":applicability"));
+  t.check("the applicability lens runs", !!app);
+  t.check("EXECUTION-MODEL INVERSION is gone", !/EXECUTION-MODEL INVERSION/.test(app.prompt));
+  t.check("the old spec-edits-first claim is gone", !/lands its spec\/ edits\s+FIRST/.test(app.prompt));
+  t.check("one lane per step is a finding", /A step\s+naming both a spec deliverable and a non-spec one is a finding/.test(app.prompt));
+  t.check("the leading-spec-block norm is stated", /standard pattern is every spec step first, in a leading block/.test(app.prompt));
+  t.check("an unjustified interleave is a finding", /WITHOUT stating on its own line why the interleave is necessary/.test(app.prompt));
+  t.check("and a bad justification is judged", /Efficiency, convenience, and a\s+preference for building before writing do not qualify/.test(app.prompt));
+  t.check("the guarantee is restated as a dependency rule", /implementing a statement staged by a LATER step is a finding/.test(app.prompt));
+  t.check("the checklist is named the one execution sequence", /THE ONE EXECUTION SEQUENCE/.test(app.prompt));
+}
+{
+  const { calls } = await runWorkflow(WF, NEW_ARGS, newStubs());
+  const w = calls.find((c) => c.label === "write");
+  t.check("the writer is told one lane per step", /ONE lane only/.test(w.prompt));
+  t.check("and that spec steps lead by default", /standard pattern is every\s+spec step first/.test(w.prompt));
+}
+
 t.done();
