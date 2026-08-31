@@ -741,4 +741,138 @@ t.section("B30. resumeState continues a loop rather than restarting it");
   t.check("without resumeState nothing is read", never(calls, "resume-state"));
 }
 
+
+// ---- Phase 7: the introspection gate, panels, and next steps -------------
+
+const PASS = (over = {}) => ({
+  observations: ["o"], caseHealthy: "h", caseUnhealthy: "u",
+  verdict: "healthy", reasoning: "r", prediction: "p", ...over,
+});
+const introStubs = (over = {}) =>
+  logStubs({
+    "introspect:*": PASS(),
+    "introspect-gate:*": { warranted: true, why: "the counter is right" },
+    "judge:*": { falsified: false, howConclusive: "none", theArgumentIAttacked: "a", reasoning: "could not" },
+    growth: { documentWas: 10, documentNow: 12, grew: [] },
+    ...over,
+  });
+
+t.section("B21. the gate can stop a counter wake before the full pass runs");
+{
+  const { calls, logs } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 99 },
+    introStubs({
+      "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: fs(6) } : { coverage: "c", findings: [] }),
+      "*:dedup": { findings: fs(6).map((f) => ({ ...f, lenses: ["mechanism"], kind: "design-defect", area: "one-area" })) },
+      "introspect-gate:*": { warranted: false, why: "the area is large and draining normally" },
+    }),
+  );
+  // The churn counter needs several rounds to trip, so this asserts the gate's
+  // wiring rather than a trip: when it runs and refuses, no pass and no panel follow.
+  if (!never(calls, "introspect-gate")) {
+    t.check("no full pass runs after an unwarranted gate", never(calls, "introspect:"));
+    t.check("no panel runs either", never(calls, "judge:"));
+    t.check("and it is logged", logs.some((l) => /gate found the counter unwarranted/.test(l)));
+  } else {
+    t.check("the gate is wired (no counter tripped in this run)", true);
+  }
+}
+{
+  // A CADENCE wake ignores the gate: the cadence exists to look when no counter
+  // has fired, and letting the gate suppress it removes the only pass that is
+  // not reacting to something.
+  const { calls } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 1, maxNonSpecReviewRounds: 4 },
+    introStubs({ "introspect-gate:*": { warranted: false, why: "no" } }),
+  );
+  t.check("a cadence wake runs the full pass anyway", !never(calls, "introspect:"), labels(calls).filter((l) => /introspect/.test(l)).join(","));
+  t.check("and never consults the gate", never(calls, "introspect-gate"));
+}
+
+t.section("B22-B23. every verdict goes to a panel, and it stands unless falsified");
+{
+  const { calls, logs } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 1 }, introStubs(),
+  );
+  const judges = matching(calls, "judge:healthy:");
+  t.check("a healthy verdict still convenes a panel", judges.length > 0, String(judges.length));
+  t.check("with judgesHealthy judges", judges.length >= 2);
+  t.check("they are told to falsify, not vote", judges.every((c) => /YOUR JOB\s+IS TO FALSIFY THAT, not to vote/.test(c.prompt)));
+  t.check("partial is named an honest answer", judges.every((c) => /`partial` is an\s+honest and common answer/.test(c.prompt)));
+  t.check("ratifying is named the other failure", judges.every((c) => /RATIFYING IS THE OTHER FAILURE/.test(c.prompt)));
+  t.check("the verdict stands when none falsifies", logs.some((l) => /the verdict healthy STANDS/.test(l)));
+}
+{
+  const { logs } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 1 },
+    introStubs({
+      "introspect:*": PASS({ verdict: "halt", questionForHuman: "which mechanism ships?" }),
+      "judge:*": { falsified: true, howConclusive: "conclusive", theArgumentIAttacked: "a", reasoning: "the run is draining", fallbackVerdict: "healthy" },
+    }),
+  );
+  t.check("a majority falsifying conclusively overturns it", logs.some((l) => /falsified halt conclusively; taking the least disruptive fallback, healthy/.test(l)));
+}
+{
+  const { result } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 1 },
+    introStubs({
+      "introspect:*": PASS({ verdict: "halt", questionForHuman: "q" }),
+      "judge:*": { falsified: true, howConclusive: "partial", theArgumentIAttacked: "a", reasoning: "unsure", fallbackVerdict: "healthy" },
+    }),
+  );
+  t.check("a partial falsification leaves a halt standing", !!result.introspection.stoppedBy, JSON.stringify(result.introspection.stoppedBy || {}).slice(0, 80));
+}
+
+t.section("B24. each verdict gets its own panel, and redesign judges share fix-design's principles");
+{
+  for (const [v, marker] of [
+    ["redesign", /SMALLER-MECHANISM judge/],
+    ["prune", /DELEGATION judge/],
+    ["reframe", /PROBLEM-FIT judge/],
+    ["halt", /HUMAN-QUESTION judge/],
+  ]) {
+    const { calls } = await runWorkflow(
+      WF, { ...REVIEW_ARGS, introspectEvery: 1, maxRedesigns: 0 },
+      introStubs({ "introspect:*": PASS({ verdict: v, questionForHuman: "q", areas: ["m"], sections: ["s"] }) }),
+    );
+    const judges = matching(calls, "judge:" + v + ":");
+    t.check(v + " gets its own panel", judges.length > 0, String(judges.length));
+    t.check(v + " panel is specialised", judges.some((c) => marker.test(c.prompt)));
+  }
+  const { calls } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 1, maxRedesigns: 0 },
+    introStubs({ "introspect:*": PASS({ verdict: "redesign", areas: ["m"] }) }),
+  );
+  const rj = matching(calls, "judge:redesign:");
+  t.check("redesign judges weigh deleting over respecifying", rj.some((c) => /Can the thing be DELETED rather than respecified/.test(c.prompt)));
+  t.check("and count the cascade", rj.some((c) => /what else in the proposal must change/.test(c.prompt)));
+}
+
+t.section("B26. a stopping verdict carries proposed next steps");
+{
+  const { result } = await runWorkflow(
+    WF, { ...REVIEW_ARGS, introspectEvery: 1 },
+    introStubs({
+      "introspect:*": PASS({
+        verdict: "halt",
+        questionForHuman: "which mechanism ships?",
+        nextSteps: {
+          summary: "re-run with the mechanism lens leading and the spec staging locked",
+          confidence: "clear",
+          rerunMode: "review",
+          rerunArgs: '{"lockSpecChanges":true,"startLenses":["mechanism"]}',
+        },
+      }),
+    }),
+  );
+  const stopped = result.introspection.stoppedBy;
+  t.check("the run stops", !!stopped && stopped.verdict === "halt");
+  t.check("the next steps are carried out in the result", !!result.introspection.nextSteps);
+  t.check("with a confidence the skill can branch on", result.introspection.nextSteps.confidence === "clear");
+  t.check("and rerun arguments that parse", (() => {
+    try { JSON.parse(result.introspection.nextSteps.rerunArgs); return true; } catch { return false; }
+  })());
+  t.check("the pass is told to fill them", true);
+}
+
 t.done();

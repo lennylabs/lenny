@@ -301,6 +301,10 @@ const ARG_CLASS = {
   churnStrikes: "forward",
   maxRedesigns: "forward",
   redesignReviewRounds: "forward",
+  introspectGate: "forward",
+  judgesPerVerdict: "forward",
+  judgesHealthy: "forward",
+  falsificationBar: "forward",
 };
 
 const READ_ONLY =
@@ -2347,6 +2351,27 @@ async function growthSince(snapPath) {
   };
 }
 
+// What a stopping verdict has to say about what happens next, so a `halt` is
+// actionable rather than merely a stop.
+const NEXT_STEPS = {
+  type: "object",
+  required: ["summary", "confidence"],
+  properties: {
+    summary: { type: "string", description: "what should happen next, in two sentences" },
+    confidence: {
+      type: "string",
+      enum: ["clear", "needs-human"],
+      description:
+        "clear: the next run's arguments and prompts follow from what this run learned, and a caller could launch it without deciding anything. needs-human: a person must decide something first.",
+    },
+    humanDecision: { type: "string", description: "for needs-human: the decision, stated so it can be answered without reading the proposal" },
+    rerunMode: { type: "string", enum: ["review", "redesign", "new"] },
+    rerunArgs: { type: "string", description: "a JSON object of arguments for the next run, as a string" },
+    rerunPrompts: { type: "string", description: "a JSON object of per-agent prompts for the next run, as a string" },
+    problemStatementEdit: { type: "string", description: "for reframe: the restatement to write before re-entering" },
+  },
+};
+
 const INTROSPECTION = {
   type: "object",
   required: ["observations", "caseHealthy", "caseUnhealthy", "verdict", "reasoning"],
@@ -2390,6 +2415,7 @@ const INTROSPECTION = {
       description:
         "What you expect the next few rounds to look like if the run continues. The next introspection is shown this and held to it, so make it falsifiable.",
     },
+    nextSteps: NEXT_STEPS,
   },
 };
 
@@ -2406,134 +2432,184 @@ const INTROSPECTION = {
 // wrong "stop" costs a human interruption and the run's momentum, and nothing
 // self-corrects it. So the burden of proof is on stopping, and a panel that
 // cannot agree takes the least disruptive verdict any member reached.
-const PANEL_VOTE = {
+// ---- The judges ----------------------------------------------------------
+//
+// A judge does not vote on the verdict. It tries to FALSIFY the argument the
+// introspection pass made for it, and the verdict stands unless a majority
+// falsifies it conclusively. That is the right shape for two reasons. Handing
+// a reviewer a conclusion and asking it to check produces agreement rather
+// than examination, which is the failure mode a vote invites. And an
+// unfalsified argument is the only kind worth acting on, whichever direction
+// it points.
+//
+// Every verdict goes to a panel now, including `healthy`. A wrong `healthy` is
+// the most expensive verdict in the loop -- it spends every remaining round --
+// and nothing was checking it.
+const FALSIFICATION = {
   type: "object",
-  required: ["verdict", "reasoning", "whatWouldChangeMyMind"],
+  required: ["falsified", "howConclusive", "theArgumentIAttacked", "reasoning"],
   properties: {
-    verdict: {
+    falsified: { type: "boolean", description: "true when you showed the pass's argument does not hold" },
+    howConclusive: {
+      type: "string",
+      enum: ["conclusive", "partial", "none"],
+      description:
+        "conclusive: you have evidence the argument is wrong, not merely unproven. partial: you have doubt you can articulate but cannot settle. none: you could not falsify it.",
+    },
+    theArgumentIAttacked: { type: "string", description: "the pass's claim, in your words, so a reader can see you attacked the real one" },
+    reasoning: { type: "string" },
+    evidence: { type: "array", items: { type: "string" }, description: "file:line or round numbers you personally checked" },
+    fallbackVerdict: {
       type: "string",
       enum: ["healthy", "redesign", "prune", "reframe", "halt"],
-    },
-    reasoning: { type: "string" },
-    whatWouldChangeMyMind: {
-      type: "string",
-      description:
-        "The specific evidence that would move you to the adjacent verdict. A vote nothing could change is a vote that did not examine the evidence.",
+      description: "when you falsified it: the verdict the evidence actually supports",
     },
   },
 };
 
+// One panel per verdict. The judges within a panel read the same evidence and
+// differ in what they weigh, which is what makes their agreement informative;
+// judges asked three unrelated questions make the narrowest of them the decider.
+const PANELS = {
+  healthy: [
+    "You are the TRAJECTORY SKEPTIC. The pass says this run is draining. Find the evidence that it is not: " +
+      "findings per round flat or rising, deep defects arriving late, growth concentrated in sections that " +
+      "were already large, the loop repeatedly correcting text it wrote itself. Numbers, not impressions.",
+    "You are the BLIND-SPOT SKEPTIC. A quiet area reads identically whether it is clean or whether no lens " +
+      "is examining it, and those are opposite conditions. For each area the pass calls settled, say which " +
+      "lens would have found a defect there and whether it actually ran recently.",
+  ],
+  prune: [
+    "You are the NECESSITY judge. Is the text the pass wants deleted genuinely redundant, or is it the only " +
+      "place something is stated? Read it.",
+    "You are the DEPENDENCY judge. Does anything else in the proposal cite, enumerate, or depend on the " +
+      "text that would be deleted? A prune that orphans a cross-reference trades one defect for another.",
+    "You are the DELEGATION judge. Would an IMPLEMENTOR'S CHOICE marker actually BOUND the choice here, or " +
+      "would it delegate without a constraint? A blank with no constraint is a licence, and the convention " +
+      "forbids it for a wire contract, a fail-closed predicate, an ordering another step depends on, or " +
+      "anything a test must assert.",
+  ],
+  redesign: [
+    "You are the ARCHITECTURE judge. Is the mechanism actually WRONG, or is it right and merely " +
+      "under-described? Those need opposite treatments, and a redesign of a sound mechanism costs a full " +
+      "subworkflow to produce the same design in different words.",
+    "You are the SMALLER-MECHANISM judge. Can the thing be DELETED rather than respecified? A smaller " +
+      "mechanism beats a better-specified larger one, and if the answer here is deletion then a redesign " +
+      "aimed at specifying it whole is aimed at the wrong outcome.",
+    "You are the CASCADE judge. If this is respecified, what else in the proposal must change? Name it. A " +
+      "redesign whose blast radius the pass has not counted leaves the loop with more work than it started " +
+      "with, in sections no lens is currently reading.",
+  ],
+  reframe: [
+    "You are the PROBLEM-FIT judge. Read the problem statement. Is the framing the pass wants to abandon " +
+      "actually wrong, or is the design merely hard? Those look identical from inside a difficult run.",
+    "You are the SCOPE judge. Is this one proposal or several? If several, say where the cut is and whether " +
+      "reframing is really the instrument, since a split is not a reframe.",
+    "You are the EVIDENCE judge. Does the tree still support the framing the proposal rests on? Check the " +
+      "citations the problem statement makes, not the pass's summary of them.",
+  ],
+  halt: [
+    "You are the HUMAN-QUESTION judge. Can a person actually ANSWER the question as stated, in one sitting, " +
+      "without reading the whole proposal? A halt whose question comes back unresolved has cost a human's " +
+      "attention and bought nothing.",
+    "You are the COST judge. What does continuing buy against what it costs? What did the recent rounds " +
+      "produce, and what would the next several plausibly find given that?",
+    "You are the SELF-HELP judge. Is there a legal move this loop has not tried -- a redesign, a prune, a " +
+      "lens it has not run, a decision it could record rather than resolve? Halting when one remains is " +
+      "spending a human on work the loop can do.",
+  ],
+};
+
 const DISRUPTION = ["healthy", "prune", "redesign", "reframe", "halt"];
 
-async function reviewStopDecision(rnd, verdict, growth, churn) {
+async function judgePanel(rnd, verdict, growth, churn) {
+  const panel = PANELS[verdict.verdict] || PANELS.halt;
+  const judges = panel.slice(0, verdict.verdict === "healthy" ? judgesHealthy : judgesPerVerdict);
   log(
-    "Round " + rnd + ": introspection returned " + verdict.verdict +
-      "; putting the decision to a panel before stopping",
+    "Round " + rnd + ": introspection returned " + verdict.verdict + "; putting it to " + judges.length +
+      " judge(s) who will try to falsify it",
   );
   const brief =
     READ_ONLY +
-    "\n\nPROPOSAL: " + path + ". Round " + rnd + ".\n\n" +
-    "An introspection pass has concluded that this adversarial convergence run should STOP and put a " +
-    "question to a human, rather than continue reviewing. You are one of three reviewers of that decision. " +
-    "The panel's majority decides; the pass does not decide alone.\n\n" +
-    "RATIFYING IS THE FAILURE MODE HERE. You have been handed a conclusion and asked to check it, which is " +
-    "the situation in which reviewers agree most and examine least. Reach your own verdict from the evidence " +
-    "and let the pass's reasoning inform it rather than set it.\n\n" +
-    "THE BURDEN IS ON STOPPING, and the reason is asymmetric cost rather than optimism. A wrong decision to " +
-    "continue corrects itself: the next introspection runs within a few rounds, sees more evidence, and can " +
-    "stop then. A wrong decision to stop costs a human's attention and the run's momentum, and nothing " +
-    "corrects it. So vote to stop only if the evidence convinces you, and prefer the least disruptive verdict " +
-    "that answers what the evidence actually shows.\n\n" +
-    "YOU MAY DOWNGRADE RATHER THAN VETO. If the pass is right that something is wrong but wrong about how " +
-    "serious it is, say so with the verdict that fits: `redesign` when a named mechanism is being repaired a " +
-    "facet at a time, `prune` when a section has grown past its value, `healthy` when the run is draining and " +
-    "the pass has over-read a rough patch. `reframe` and `halt` both stop the run.\n\n" +
-    "THE PASS'S FULL OUTPUT, including the case it made for the run being healthy:\n" +
+    "\n\nPROPOSAL: " + P.dir + ". Round " + rnd + ".\n\n" +
+    "An introspection pass has concluded that this convergence run is `" + verdict.verdict + "`. YOUR JOB " +
+    "IS TO FALSIFY THAT, not to vote on it. Reach for the evidence that would show the pass wrong, and " +
+    "report honestly whether you found it.\n\n" +
+    "THE VERDICT STANDS UNLESS A MAJORITY OF THIS PANEL FALSIFIES IT CONCLUSIVELY. So `partial` is an " +
+    "honest and common answer: it means you have doubt you can articulate and cannot settle, and it leaves " +
+    "the verdict standing. Do not inflate it to `conclusive` to be heard, and do not deflate a real " +
+    "refutation to `partial` to avoid disrupting the run.\n\n" +
+    "RATIFYING IS THE OTHER FAILURE. You have been handed a conclusion and asked to check it, which is the " +
+    "situation in which reviewers agree most and examine least. Attack the argument the pass actually made, " +
+    "which is why you must restate it in your own words before you attack it.\n\n" +
+    "THE PASS'S FULL OUTPUT, including the case it made against its own verdict:\n" +
     JSON.stringify(verdict, null, 2) +
     "\n\nHOW THE DOCUMENT GREW since the previous introspection:\n" +
     JSON.stringify(growth, null, 2) +
-    "\n\nCONFIRMED FINDINGS BY AREA, over the whole run, each with its round, kind, and whether it corrected " +
-    "text this loop itself wrote:\n" +
+    "\n\nCONFIRMED FINDINGS BY AREA over the whole run, each with its round, kind, and whether it " +
+    "corrected text this loop itself wrote:\n" +
     JSON.stringify(Object.fromEntries([...areaLog].map(([a, es]) => [a, es])), null, 2).slice(0, 10000) +
     "\n\nMECHANISMS THIS LOOP'S FIXER INVENTED, and how many later findings each caused:\n" +
     JSON.stringify(introducedMechanisms, null, 2) +
     "\n\nROUND HISTORY:\n" +
     JSON.stringify(
-      history.map((h) => ({
-        round: h.round,
-        sweep: h.sweep,
-        confirmed: h.confirmed,
-        newMechanisms: h.newMechanisms,
-      })),
+      history.map((h) => ({ loop: h.loop, round: h.round, sweep: h.sweep, confirmed: h.confirmed, newMechanisms: h.newMechanisms })),
       null,
       2,
     ).slice(0, 8000) +
     (churn && churn.length ? "\n\nCOUNTERS THAT TRIPPED:\n" + JSON.stringify(churn, null, 2) : "") +
-    "\n\nRead the proposal yourself before voting. The evidence above is a summary and the document is the " +
-    "subject.";
-
-  const lenses = [
-    "You are the TRAJECTORY reviewer. Judge only the direction of travel. Are findings per round falling, and " +
-      "are deep defects giving way to shallow ones? A run whose confirmed counts are dropping and whose late " +
-      "findings are citations and companion sites is draining, however large it has become. A run whose design " +
-      "defects arrive late, or whose counts are flat across several rounds, is not. Say which pattern this run " +
-      "shows, with the numbers.",
-    "You are the DESIGN reviewer. Ignore the trajectory and judge the document. Read the sections the pass " +
-      "names and decide whether the design in front of you is sound, whether a mechanism is described more " +
-      "than once in different words, and whether the accumulated fixes still satisfy the proposal's own " +
-      "Decisions. A proposal can be converging numerically onto something that should not be built.",
-    "You are the COST reviewer. Judge what continuing buys against what it costs. How much has this run spent " +
-      "and what has the recent spend produced? What would the next several rounds plausibly find, given what " +
-      "the last several found? And what does stopping cost: is the question the pass wants to ask a human " +
-      "one that a human can actually answer, or would it come back with the same problem unresolved?",
-  ];
+    "\n\nRead the proposal and its review log yourself before answering. The evidence above is a summary " +
+    "and the documents are the subject.";
 
   const votes = (
     await parallel(
-      lenses.map((l, i) => () =>
-        robustAgent(brief + "\n\nYOUR LENS. " + l, {
-          label: "stop-review:" + (i + 1) + ":r" + rnd,
+      judges.map((l, i) => () =>
+        robustAgent(brief + "\n\nYOUR LENS. " + l + promptFor("judge." + verdict.verdict), {
+          label: "judge:" + verdict.verdict + ":" + (i + 1) + ":r" + rnd,
           phase: "Round " + rnd + ": introspect",
-          schema: PANEL_VOTE,
+          schema: FALSIFICATION,
         }),
       ),
     )
   ).filter(Boolean);
 
-  if (votes.length < 2) {
-    log(
-      "Round " + rnd + ": only " + votes.length +
-        " of 3 stop-decision reviewers returned, which is no quorum; continuing, because a wrong continue " +
-        "self-corrects at the next introspection and a wrong stop does not",
-    );
-    return { decision: "healthy", votes, quorum: false };
+  if (votes.length === 0) {
+    log("Round " + rnd + ": no judge returned; the verdict stands unexamined");
+    return { decision: verdict.verdict, votes, quorum: false, upheld: true };
   }
 
-  const tally = new Map();
-  for (const v of votes) tally.set(v.verdict, (tally.get(v.verdict) || 0) + 1);
-  let decision = null;
-  for (const [k, n] of tally) if (n > votes.length / 2) decision = k;
-  if (!decision) {
-    // No majority. Take the least disruptive verdict any reviewer reached, on the
-    // same asymmetry: continuing is recoverable and stopping is not.
-    decision = [...tally.keys()].sort(
-      (a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b),
-    )[0];
+  const conclusive = votes.filter((v) => v.falsified && v.howConclusive === falsificationBar);
+  const falsified = conclusive.length > votes.length / 2;
+  if (!falsified) {
     log(
-      "Round " + rnd + ": stop-decision panel split " +
-        [...tally].map(([k, n]) => k + "×" + n).join(", ") +
-        "; taking the least disruptive, " + decision,
+      "Round " + rnd + ": " + conclusive.length + "/" + votes.length +
+        " judge(s) falsified it " + falsificationBar + "ly; the verdict " + verdict.verdict + " STANDS",
     );
-  } else {
-    log(
-      "Round " + rnd + ": stop-decision panel returned " + decision + " (" +
-        [...tally].map(([k, n]) => k + "×" + n).join(", ") + ")",
-    );
+    return { decision: verdict.verdict, votes, quorum: true, upheld: true };
   }
-  return { decision, votes, quorum: true };
+  // Falsified. Take the least disruptive verdict any falsifier named, on the
+  // same asymmetry the loop has always used: a wrong continue self-corrects at
+  // the next introspection and a wrong stop does not.
+  const fallbacks = conclusive.map((v) => v.fallbackVerdict).filter(Boolean);
+  const decision = fallbacks.length
+    ? fallbacks.sort((a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b))[0]
+    : "healthy";
+  log(
+    "Round " + rnd + ": " + conclusive.length + "/" + votes.length + " judge(s) falsified " +
+      verdict.verdict + " conclusively; taking the least disruptive fallback, " + decision,
+  );
+  return { decision, votes, quorum: true, upheld: false };
 }
 
 let introspectEvery = input.introspectEvery || 5;
+// The warrant gate: introspection's first act is to ask whether it should be
+// running. On by default; a cadence wake ignores it either way.
+const introspectGate = input.introspectGate !== false;
+const judgesPerVerdict = input.judgesPerVerdict || 3;
+const judgesHealthy = input.judgesHealthy || 2;
+// How conclusively a majority must falsify the pass's argument before its
+// verdict is overturned. "partial" makes the panel easier to convince.
+const falsificationBar = input.falsificationBar === "partial" ? "partial" : "conclusive";
 const introspections = [];
 let lastGrowthSnap = null;
 let lastIntrospectRound = 0;
@@ -2542,7 +2618,58 @@ let lastIntrospectRound = 0;
 // mechanism is under-designed or a section is over-specified, and an agent that
 // only ran on a fixed cadence would miss a runaway between its turns. Together:
 // the counter cannot miss, the agent can judge.
-async function introspect(rnd, reason, churn) {
+const GATE = {
+  type: "object",
+  required: ["warranted", "why"],
+  properties: {
+    warranted: { type: "boolean" },
+    why: { type: "string" },
+    whatTheCounterMissedOrOverread: { type: "string" },
+  },
+};
+
+async function introspect(rnd, reason, churn, byCadence) {
+  // The counters that wake this pass are crude and are often wrong in both
+  // directions, so the pass's first act is to decide whether it should be
+  // running at all. A counter wake that is not warranted returns healthy
+  // without paying for the full pass or a panel.
+  //
+  // A CADENCE wake runs regardless. The cadence exists precisely to look when
+  // no counter has fired, and letting the gate suppress it would remove the one
+  // pass that is not reacting to something.
+  if (introspectGate && !byCadence) {
+    const gate = await robustAgent(
+      "Decide whether an introspection pass is warranted right now, before one runs.\n\n" +
+        READ_ONLY +
+        "\n\nPROPOSAL: " + P.dir + ". Round " + rnd + ". A counter woke this: " + reason + ".\n\n" +
+        "The counters are crude and are wrong in both directions. Your job is to say whether the thing " +
+        "they detected is really there, cheaply, before a full pass and a panel are paid for.\n\n" +
+        "READ: the `## Standing context` of " + P.log + ", and the round history below. Then answer one " +
+        "question: does the evidence show what the counter claims, or is this an area that is simply large " +
+        "and draining normally?\n\n" +
+        "COUNTER OUTPUT:\n" + JSON.stringify(churn || [], null, 2) +
+        "\n\nROUND HISTORY:\n" +
+        JSON.stringify(
+          history.map((h) => ({ loop: h.loop, round: h.round, confirmed: h.confirmed, sweep: h.sweep })),
+          null,
+          2,
+        ).slice(0, 6000) +
+        "\n\nSay warranted: false when the counter over-read a large area draining normally, and true " +
+        "when the pattern is really there. Erring toward false is cheap here: the cadence pass runs within " +
+        "a few rounds regardless and sees more evidence." +
+        promptFor("introspect.gate"),
+      { schema: GATE, label: "introspect-gate:r" + rnd, phase: "Round " + rnd + ": introspect" },
+    );
+    if (gate && gate.warranted === false) {
+      log(
+        "Round " + rnd + ": the introspection gate found the counter unwarranted (" +
+          String(gate.why || "").slice(0, 120) + "); skipping the full pass",
+      );
+      introspections.push({ round: rnd, verdict: "healthy", gated: true, why: gate.why });
+      lastIntrospectRound = rnd;
+      return { verdict: "healthy", gated: true, reasoning: gate.why };
+    }
+  }
   const growth = await growthSince(lastGrowthSnap);
   lastGrowthSnap = await snapshot("introspect-r" + rnd);
   lastIntrospectRound = rnd;
@@ -2606,6 +2733,10 @@ async function introspect(rnd, reason, churn) {
             2,
           )
         : "") +
+      "\n\nTHE REVIEW LOG is at " + P.log + ". Read its `## Standing context` in full, and read every " +
+      "`CORRECTS` entry in its ledger. A log full of corrections is direct evidence that this loop is " +
+      "misleading itself, and no counter can see it. Read every outstanding `OPEN` and `UNVERIFIED` too: " +
+      "an area quiet because nobody checked it looks exactly like an area that is clean.\n" +
       "\n\nANSWER THESE, each with evidence, in observations, BEFORE you reach a verdict:\n" +
       "1. Which sections grew most, and did each growth buy something proportionate to its size? Growth that " +
       "answered real findings is the loop working; growth that restates a mechanism a third time is not.\n" +
@@ -2632,6 +2763,12 @@ async function introspect(rnd, reason, churn) {
       "  reframe — the proposal's scope or framing is wrong, and no amount of reviewing fixes that. Say what " +
       "the framing should be.\n" +
       "  halt — something needs a human decision before more rounds are worth spending.\n\n" +
+      "FOR `reframe` OR `halt` YOU MUST ALSO FILL nextSteps. A stop that says only to stop costs a human " +
+      "the work of deciding what to do, which is the work you are best placed to do: you have just read " +
+      "the whole run. Say what the next run should be, and set confidence `clear` only when its arguments " +
+      "and prompts follow from what this run learned and a caller could launch it without deciding " +
+      "anything. Set `needs-human` when a person must settle something first, and state that decision so " +
+      "it can be answered without reading the proposal.\n\n" +
       "DEFAULT TO healthy ONLY IF THE EVIDENCE SUPPORTS IT. A run that is converging looks like this: findings " +
       "per round falling, deep defects giving way to shallow ones, growth concentrated where work is genuinely " +
       "being added. A run that is not looks like this: findings flat or rising, design defects appearing late, " +
@@ -3620,7 +3757,40 @@ async function runReviewLoop(cfg) {
         : dueBySweep
           ? "a full sweep confirmed findings, which is when the loop learns most about itself"
           : introspectEvery + " rounds since the last introspection";
-      const verdict = await introspect(round, why, churn);
+      const pass = await introspect(round, why, churn, dueByCadence);
+
+      // EVERY verdict goes to a panel now, including `healthy`. A wrong healthy
+      // is the most expensive verdict in the loop -- it spends every remaining
+      // round -- and nothing was checking it. A gated pass is the exception: it
+      // made no argument, so there is nothing to falsify.
+      let verdict = pass;
+      if (pass && !pass.gated) {
+        const panel = await judgePanel(round, pass, await growthSince(lastGrowthSnap), churn);
+        history[history.length - 1].panel = {
+          proposed: pass.verdict,
+          decision: panel.decision,
+          upheld: panel.upheld,
+          votes: panel.votes.map((v) => ({
+            falsified: v.falsified,
+            howConclusive: v.howConclusive,
+            reasoning: String(v.reasoning || "").slice(0, 400),
+          })),
+        };
+        if (!panel.upheld) {
+          // Falsified. Recorded against the pass so the next one sees that it
+          // reached this verdict on evidence like today's and was overturned,
+          // and must answer that rather than restate itself.
+          overruledStops.push({
+            round,
+            proposed: pass.verdict,
+            decidedInstead: panel.decision,
+            panelReasoning: panel.votes
+              .filter((v) => v.falsified)
+              .map((v) => v.howConclusive + ": " + v.reasoning),
+          });
+          verdict = { ...pass, verdict: panel.decision };
+        }
+      }
 
       if (verdict && verdict.verdict === "redesign" && redesignsRun < redesignsAllowed) {
         const named = (verdict.areas || []).map((a) => {
@@ -3680,69 +3850,31 @@ async function runReviewLoop(cfg) {
       }
 
       if (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe")) {
-        // The pass observes; a panel decides. It may uphold the stop, downgrade it
-        // to a redesign or a prune, or find the run healthy.
-        const panel = await reviewStopDecision(
+        // The panel above has already had its chance to falsify this and could
+        // not, so the stop stands.
+        stoppedByIntrospection = {
           round,
-          verdict,
-          await growthSince(lastGrowthSnap),
-          churn,
-        );
-        history[history.length - 1].stopDecision = {
-          proposed: verdict.verdict,
-          decision: panel.decision,
-          quorum: panel.quorum,
-          votes: panel.votes.map((v) => ({ verdict: v.verdict, reasoning: v.reasoning })),
+          loop: LOOP.name,
+          verdict: verdict.verdict,
+          proposedBy: pass.verdict,
+          question: verdict.questionForHuman || verdict.reasoning,
+          reasoning: verdict.reasoning,
+          caseHealthy: verdict.caseHealthy,
+          caseUnhealthy: verdict.caseUnhealthy,
+          // What the next run should be. A stop that says only to stop leaves a
+          // human the work of deciding what to do next, which is work the pass
+          // is best placed to do: it has just read the whole run.
+          nextSteps: verdict.nextSteps || null,
+          panel: (history[history.length - 1].panel || {}).votes || [],
         };
-
-        if (panel.decision === "halt" || panel.decision === "reframe") {
-          stoppedByIntrospection = {
-            round,
-            verdict: panel.decision,
-            proposedBy: verdict.verdict,
-            question: verdict.questionForHuman || verdict.reasoning,
-            reasoning: verdict.reasoning,
-            caseHealthy: verdict.caseHealthy,
-            caseUnhealthy: verdict.caseUnhealthy,
-            panel: panel.votes,
-          };
-          break;
-        }
-
-        // Overruled. Record it against the pass so the next introspection sees that
-        // it called a stop and was not upheld, together with why. Without that the
-        // pass would re-reach the same verdict on the same evidence every time it
-        // ran, and the panel would re-litigate it every time.
-        overruledStops.push({
-          round,
-          proposed: verdict.verdict,
-          decidedInstead: panel.decision,
-          panelReasoning: panel.votes.map((v) => v.verdict + ": " + v.reasoning),
-        });
         log(
-          "Round " + round + ": the panel overruled a " + verdict.verdict + " with " +
-            panel.decision + "; the run continues",
+          "Round " + round + ": stopping with " + verdict.verdict +
+            (verdict.nextSteps
+              ? " — next steps are " + (verdict.nextSteps.confidence || "unstated") + ": " +
+                String(verdict.nextSteps.summary || "").slice(0, 160)
+              : " — the pass proposed no next steps"),
         );
-
-        // Carry out the downgrade the panel chose, rather than dropping it.
-        if (panel.decision === "redesign" && redesignsRun < redesignsAllowed) {
-          const named = (verdict.areas || []).length
-            ? verdict.areas.map((a) => ({
-                area: String(a).toLowerCase().trim(),
-                findings: 0,
-                designDefects: 0,
-                selfInflicted: 0,
-                reason: "downgraded from " + verdict.verdict + " by the stop-decision panel",
-              }))
-            : churn;
-          if (named && named.length) {
-            const did = await runRedesign(named, round, "panel downgrade from " + verdict.verdict);
-            if (did) {
-              retired.clear();
-              history[history.length - 1].redesignApplied = true;
-            }
-          }
-        }
+        break;
       }
     }
 
@@ -3954,6 +4086,11 @@ return {
   introspection: {
     passes: introspections,
     stoppedBy: stoppedByIntrospection,
+    // The next run, when a stopping verdict proposed one. The skill relaunches
+    // automatically on a `halt` whose next steps are clear, and puts the
+    // question to a human otherwise.
+    nextSteps: (stoppedByIntrospection && stoppedByIntrospection.nextSteps) || null,
+    gatedPasses: introspections.filter((i) => i.gated).length,
     overruledStops,
     byArea: Object.fromEntries(
       [...areaLog].map(([a, es]) => [

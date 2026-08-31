@@ -165,6 +165,39 @@ for (const file of targets) {
     break;
   }
 
+  // 2b. An UPPERCASE constant used BEFORE its declaration. `new Function`
+  //     parses this fine and it throws only when the line executes, which in a
+  //     workflow is after hours of agent work. Distinct from check 2: the
+  //     identifier IS declared, just not yet.
+  {
+    const declLine = new Map();
+    const lines = code.split("\n");
+    lines.forEach((l, i) => {
+      for (const m of l.matchAll(/\b(?:const|let|var|function|class)\s+([A-Z][A-Z0-9_]{2,})\b/g)) {
+        if (!declLine.has(m[1])) declLine.set(m[1], i);
+      }
+    });
+    // Only top-level uses can run before the declaration; a use inside a
+    // function body runs when that function is called, which is later.
+    let depth = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (depth === 0) {
+        for (const m of line.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
+          const at = declLine.get(m[1]);
+          if (at !== undefined && at > i && !/\b(?:const|let|var|function|class)\s+$/.test(line.slice(0, m.index))) {
+            fail(file, m[1] + " is used at line " + (i + 1) + " but declared at line " + (at + 1));
+          }
+        }
+      }
+      for (const ch of line) {
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+      }
+      if (depth < 0) depth = 0;
+    }
+  }
+
   // 3. A global the sandbox does not define. `require("fs")` inside a
   //    try/catch degraded silently and disabled three features at once.
   for (const name of ABSENT) {
