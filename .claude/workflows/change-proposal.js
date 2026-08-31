@@ -71,11 +71,26 @@ const maxNonSpecReviewRounds = input.maxNonSpecReviewRounds || maxRounds;
 const lockSpecChanges = !!input.lockSpecChanges;
 // The only cap on the fix split. More groups is more focus and more agents;
 // fewer is cheaper and regresses more. Group SIZE is uncapped by design.
-const maxFixGroups = input.maxFixGroups || 7;
+let maxFixGroups = input.maxFixGroups || 7;
+// Namespaces the log shards, the snapshots, and the run state, so two runs
+// against one proposal do not read each other's.
+const runTag =
+  (typeof input.runTag === "string" && input.runTag.trim()) ||
+  String(input.proposalPath || input.nextNumber || "cp")
+    .replace(/^.*\//, "")
+    .replace(/\.md$/, "")
+    .replace(/[^A-Za-z0-9._-]/g, "-");
+// The review log's ledger is compacted when it passes either threshold. The
+// figures are carriage cost rather than taste: every lens prompt already
+// carries several thousand tokens of standing text, and a 400-line ledger adds
+// roughly that again to each of a dozen lenses every round.
+let compactAtLines = input.compactAtLines || 400;
+let compactGrowthLines = input.compactGrowthLines || 150;
+const standingContextMaxLines = input.standingContextMaxLines || 80;
 // "auto" lets the design stage triage each finding by effort. "shallow" forces
 // every finding to the trivial path, for a round of pure bookkeeping findings;
 // "deep" forces the architect path, for a run already known to be design-bound.
-const fixDesignDepth = input.fixDesignDepth || "auto";
+let fixDesignDepth = input.fixDesignDepth || "auto";
 // Which skeptic runs first, and whether the second is skipped when the first
 // refuses. Materiality first by default: see the verification block below.
 const verifyOrder =
@@ -227,8 +242,51 @@ function promptFor(key) {
   );
 }
 
+// READ_ONLY has to permit ONE write, or every reviewing agent carries two
+// incompatible instructions: "do not create, edit, or delete any file" and
+// "append your entries to the review log". Which one it follows is not
+// something to leave to chance, so the exception is stated in the constant.
+// The shard path is per-agent because a dozen lenses appending to one file in
+// parallel lose writes; the round-boundary script folds them in afterwards.
 const READ_ONLY =
-  "You are a read-only investigator. Do not create, edit, or delete any file. Cite evidence as file:line.";
+  "You are a read-only investigator. Do not create, edit, or delete any file " +
+  "EXCEPT your own log shard, named below, which you append to before you return. " +
+  "Cite evidence as file:line.";
+
+// What every agent is told about the review log: read the curated part, write
+// your own shard. The tag vocabulary is fixed so a compaction pass can act on
+// it rather than paraphrase it.
+function logBlock(label, round) {
+  // The round is in the shard name because two rounds of the same lens would
+  // otherwise write the same path and the second would overwrite the first.
+  const rnd = round === undefined ? "0" : String(round);
+  const shard =
+    repo + "/scratchpad/cp-log/" + runTag + "/" +
+    (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
+    label.replace(/[^A-Za-z0-9._-]/g, "-") + ".md";
+  return (
+    "\n\nTHE REVIEW LOG carries what earlier agents on this proposal learned. Read the " +
+    "`## Standing context` section of " + P.log + " BEFORE you start: it is curated, it is short, and it " +
+    "is where a trap someone already fell into is recorded.\n" +
+    "BEFORE YOU RETURN, append what a future agent on this proposal would need, to " + shard +
+    " (create it; write to no other log file, because a dozen agents write in parallel and appending to " +
+    "the log itself loses entries). Head your block `### [" + (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
+    label + ".<n>]` and use these tags, one per line, so the compaction pass can act on them:\n" +
+    "  DECISION: what you chose — BECAUSE why — ALTERNATIVES: what you rejected and why\n" +
+    "  WATCHOUT: a trap the next agent will hit — EVIDENCE: file:line\n" +
+    "  FACT: something durable about the tree that cost you effort — EVIDENCE: file:line\n" +
+    "  MISTAKE: what an earlier round got wrong, and what it cost\n" +
+    "  UNVERIFIED: a claim nobody has checked, and who should\n" +
+    "  OPEN: a question for a later round or a human\n" +
+    "  CORRECTS [id]: a named earlier entry is wrong or misleading, and what is true instead\n" +
+    "  USEFUL [id]: a named earlier entry saved you real work\n" +
+    "Write nothing you would not want read aloud to the next twelve agents. An empty shard is fine when " +
+    "you learned nothing durable; padding it is worse than leaving it out, because every future agent " +
+    "pays to carry it.\n" +
+    "CORRECTS and USEFUL are the two that matter most: they are what lets compaction tell an entry worth " +
+    "promoting from one worth deleting."
+  );
+}
 const EVIDENCE =
   "Verify every claim directly against spec/, schemas/, pkg/, cmd/, charts/, and git history in " +
   repo +
@@ -1607,6 +1665,7 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
     "\n\n" +
     lens.text +
     LOOP.scopeNote +
+    logBlock("review-" + lens.key, round) +
     history +
     (lensPrompt
       ? "\n\nAdditional instruction from the caller of this run. It adds context or " +
@@ -1744,6 +1803,7 @@ function fixDesignPrompt(group, confirmed, round) {
     "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
     "THE FINDINGS IN THIS GROUP:\n" +
     JSON.stringify(picked, null, 2) +
+    logBlock("fix-design-" + group.id, round) +
     promptFor("fix-design")
   );
 }
@@ -1796,6 +1856,7 @@ function fixPrompt(confirmed, round, strikes, group, design) {
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
     JSON.stringify(confirmed, null, 2) +
     designBlock +
+    logBlock("fix-" + (group ? group.id : "all"), round) +
     "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
     promptFor("fix")
   );
@@ -2386,7 +2447,7 @@ async function reviewStopDecision(rnd, verdict, growth, churn) {
   return { decision, votes, quorum: true };
 }
 
-const introspectEvery = input.introspectEvery || 5;
+let introspectEvery = input.introspectEvery || 5;
 const introspections = [];
 let lastGrowthSnap = null;
 let lastIntrospectRound = 0;
@@ -2604,6 +2665,94 @@ function newLoop(cfg) {
 // findings and would otherwise retire itself by failing.
 
 
+// ---- Compaction and mid-run overrides ------------------------------------
+//
+// The review log is what carries a run's memory between agents. Left alone it
+// grows without bound and every lens pays to read it every round, so it is
+// compacted when the round-boundary script says it has passed a threshold.
+//
+// Compaction is age-graded rather than uniform. The current round is untouched,
+// the last few are merged, and anything older is reduced to its durable residue
+// and promoted into the standing context or retired. CORRECTS and USEFUL are
+// what make that possible: they are the only signals that separate an entry
+// worth promoting from one worth deleting.
+async function compactLog(round, ledgerLines) {
+  log(
+    "Round " + round + ": the review log's ledger is at " + ledgerLines +
+      " lines; compacting",
+  );
+  await robustAgent(
+    "Compact a review log so the agents that read it next pay less to carry it, and so what they carry " +
+      "is true.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.log + ". Change nothing else.\n\n" +
+      "The log has three sections. `## Standing context` is curated and is what every future agent reads " +
+      "first. `## Ledger` is the chronological record. `## Retired` holds what no longer applies, one line " +
+      "each, with why.\n\n" +
+      "RULES, in order of precedence.\n\n" +
+      "1. AGE-GRADE. Leave round " + round + "'s entries exactly as they are. Merge entries from the last " +
+      "two or three rounds where they share a subject. Reduce anything older to its durable residue — the " +
+      "FACT, WATCHOUT and DECISION lines — move that into `## Standing context`, and move or delete the " +
+      "rest, with a one-line reason under `## Retired` for anything you retire.\n\n" +
+      "2. HONOUR `CORRECTS`. An entry another agent marked as wrong is rewritten to what is true, or " +
+      "retired. A superseded WATCHOUT is DELETED rather than kept for the record: a warning about a trap " +
+      "that no longer exists costs every future agent a detour, which is worse than not warning them.\n\n" +
+      "3. HONOUR `USEFUL`. An entry another agent said saved it work is promoted into `## Standing " +
+      "context` and is never dropped while its subject stands.\n\n" +
+      "4. RESOLVE CONTRADICTIONS ACTIVELY. Where two entries disagree and neither corrects the other, " +
+      "check the repository yourself and keep the true one, retiring the other with the evidence. You have " +
+      "Grep and Read; use them rather than guessing which is newer.\n\n" +
+      "5. NEVER DROP AN `OPEN` OR AN `UNVERIFIED` until something closes it. An UNVERIFIED a later round " +
+      "verified is rewritten as a FACT with its evidence.\n\n" +
+      "6. TARGETS. `## Standing context` at most " + standingContextMaxLines + " lines; the ledger at " +
+      "most half what it is now. If you cannot reach them without deleting something that matters, do not: " +
+      "say so in the changelog and leave it longer.\n\n" +
+      "7. LEAVE A CHANGELOG. The first lines of `## Standing context` record what this pass merged, " +
+      "promoted, and retired, so the next compaction can be judged against it.\n\n" +
+      "You are compacting, not editing the proposal. Do not act on anything the log says, do not fix a " +
+      "defect it names, and do not add a finding of your own." +
+      promptFor("compact") +
+      "\n\nFollow " + repo + "/.claude/rules/doc-style.md.",
+    { label: "r" + round + ":compact", phase: "Round " + round + ": fix" },
+  );
+}
+
+// Arguments a caller may change WHILE a run is going, by writing
+// scratchpad/cp-args/<runTag>.json. Only forward-looking knobs are mergeable:
+// one that is already baked into prompts the run has issued cannot be changed
+// without invalidating them, and silently accepting it would produce a run that
+// did not do what the caller asked while reporting success.
+const OVERRIDABLE = {
+  maxFixGroups: (v) => { maxFixGroups = Number(v) || maxFixGroups; },
+  fixDesignDepth: (v) => { fixDesignDepth = String(v); },
+  lockSpecChanges: (v) => { lockSpecChanges = !!v; },
+  compactAtLines: (v) => { compactAtLines = Number(v) || compactAtLines; },
+  compactGrowthLines: (v) => { compactGrowthLines = Number(v) || compactGrowthLines; },
+  introspectEvery: (v) => { introspectEvery = Number(v) || introspectEvery; },
+};
+
+function applyOverrides(overrides, round) {
+  const took = [];
+  const refused = [];
+  for (const [k, v] of Object.entries(overrides)) {
+    if (OVERRIDABLE[k]) {
+      OVERRIDABLE[k](v);
+      took.push(k + "=" + JSON.stringify(v));
+    } else {
+      refused.push(k);
+    }
+  }
+  if (took.length) {
+    log("Round " + round + ": caller overrides applied for the next round: " + took.join(", "));
+  }
+  if (refused.length) {
+    log(
+      "Round " + round + ": ignoring override(s) " + refused.join(", ") +
+        " — only forward-looking knobs are mergeable mid-run, because a value already baked into prompts " +
+        "this run has issued cannot be changed without invalidating them",
+    );
+  }
+}
+
 // ---- The review loop, run twice -----------------------------------------
 //
 // The SPEC loop runs first and converges the staged spec edits alone. The
@@ -2711,6 +2860,71 @@ async function runReviewLoop(cfg) {
     }
   }
 
+  // ---- Closing a round ---------------------------------------------------
+  //
+  // One agent, one command. It merges this round's log shards into the review
+  // log and deletes them, counts the ledger for the compaction trigger,
+  // compares the proposal's file hashes against the ones it recorded a round
+  // ago and reports anything that moved outside its owner's allowance, takes
+  // the snapshot the NEXT round's lenses diff against, counts the hunks this
+  // round changed, and reads the caller's mid-run overrides.
+  //
+  // The state of the tree at the end of round N is the state at the start of
+  // round N+1, so one call does both halves. The logic lives in
+  // .claude/tools/cp-round-boundary.sh rather than in this prompt: it is in
+  // version control, it is testable without an agent, and a failure is an exit
+  // code rather than an instruction an agent skipped at the end of a long
+  // prompt.
+  //
+  // It runs on EVERY path out of a round, including the ones that found
+  // nothing. A round that returns early still wrote log shards and still owes
+  // the next round a snapshot, and skipping it there orphaned both.
+  async function closeRound(rnd, complete) {
+    const raw = await robustAgent(
+      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+        "bash " + repo + "/.claude/tools/cp-round-boundary.sh" +
+        " --dir '" + P.dir + "'" +
+        " --tag '" + runTag + "'" +
+        " --loop '" + LOOP.name + "'" +
+        " --round " + rnd +
+        " --repo '" + repo + "'" +
+        " --compact-at " + compactAtLines +
+        " --compact-growth " + compactGrowthLines +
+        "\n\nIt prints one line of JSON. Reply with that line verbatim. If it exits non-zero, reply " +
+        "with the single word FAILED followed by its stderr. Do nothing else: do not read, summarise, " +
+        "or edit any file.",
+      { label: "r" + rnd + ":round-boundary", model: "haiku", phase: "Round " + rnd + ": fix" },
+    );
+    let boundary = null;
+    try {
+      const m = String(raw || "").match(/\{[\s\S]*\}/);
+      if (m) boundary = JSON.parse(m[0]);
+    } catch (e) {
+      boundary = null;
+    }
+    if (!boundary) {
+      // The bookkeeping is not optional: without it the log is unmerged, the
+      // audit did not run, and the next round has no snapshot to diff against.
+      // A round that could not close is not a round that can certify.
+      log(
+        "Round " + rnd + ": the round-boundary script did not complete; round INCONCLUSIVE " +
+          "(the log is unmerged and the next round has no snapshot)",
+      );
+      return false;
+    }
+    const h = history[history.length - 1];
+    if (h && h.round === rnd) {
+      h.sectionsChanged = boundary.hunks || 0;
+      if ((boundary.changedFiles || []).length) h.filesChanged = boundary.changedFiles;
+    }
+    lastRoundSnap = boundary.snapshot || lastRoundSnap;
+    if (boundary.overrides && Object.keys(boundary.overrides).length) {
+      applyOverrides(boundary.overrides, rnd);
+    }
+    if (boundary.compactionDue) await compactLog(rnd, boundary.ledgerLines);
+    return complete;
+  }
+
   while (round < maxRounds && !converged) {
     round++;
     const roundStartSnap = await snapshot("r" + round + "-start");
@@ -2815,6 +3029,22 @@ async function runReviewLoop(cfg) {
       // Nobody found anything, so nobody has a survivor: every lens that genuinely
       // ran retires.
       applyRetirement(lenses, lensResults, new Set(), round, "found nothing");
+      history.push({
+        loop: LOOP.name,
+        round,
+        sweep: isSweep,
+        lenses: lenses.map((l) => l.key),
+        raw: 0,
+        deduped: 0,
+        confirmed: 0,
+        retiredAfter: [...retired],
+      });
+      // The round closes BEFORE it is allowed to certify. A round whose
+      // bookkeeping did not complete left its log unmerged and the next round
+      // without a snapshot, and a round in that state cannot be the one that
+      // ends the loop.
+      roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
+      history[history.length - 1].complete = roundComplete;
       if (isSweep && roundComplete) {
         converged = true;
         log("Round " + round + ": full sweep found nothing; CONVERGED");
@@ -2825,17 +3055,6 @@ async function runReviewLoop(cfg) {
             ": sweep found nothing but was incomplete; NOT converging (the failed lenses stay active and re-run)",
         );
       }
-      history.push({
-        loop: LOOP.name,
-        round,
-        sweep: isSweep,
-        lenses: lenses.map((l) => l.key),
-        raw: 0,
-        deduped: 0,
-        confirmed: 0,
-        complete: roundComplete,
-        retiredAfter: [...retired],
-      });
       continue;
     }
 
@@ -3021,6 +3240,8 @@ async function runReviewLoop(cfg) {
     });
 
     if (confirmed.length === 0) {
+      roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
+      history[history.length - 1].complete = roundComplete;
       if (isSweep && roundComplete) {
         converged = true;
         log(
@@ -3032,7 +3253,7 @@ async function runReviewLoop(cfg) {
         log(
           "Round " +
             round +
-            ": sweep incomplete (reviewer or verifier failures); NOT converging",
+            ": sweep incomplete (reviewer, verifier, or bookkeeping failures); NOT converging",
         );
       }
       continue;
@@ -3374,12 +3595,7 @@ async function runReviewLoop(cfg) {
       }
     }
 
-    // The delta the NEXT round's lenses read. Taken at the end of the round rather
-    // than after the fixer, so it also carries a follow-up fix, a prune, and an
-    // applied redesign, all of which rewrite text a lens is about to re-read.
-    history[history.length - 1].sectionsChanged = await diffHunks(roundStartSnap);
-    lastRoundSnap = roundStartSnap;
-
+    roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
   }
 
   LOOP.round = round;

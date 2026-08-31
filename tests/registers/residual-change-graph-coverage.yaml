@@ -72,6 +72,12 @@ entries:
     reason: |-
       a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
   - member: |-
+      .claude/tests/round-boundary.test.sh
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a shell test over the review loop's bookkeeping script, run with bash rather than selected by a test tier
+  - member: |-
       .claude/tests/run.mjs
     class: change-graph-coverage
     disposition: excluded
@@ -89,6 +95,12 @@ entries:
     disposition: excluded
     reason: |-
       a deterministic partition check the proposal migrator runs, invoked with node rather than selected by a test tier
+  - member: |-
+      .claude/tools/cp-round-boundary.sh
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the per-round bookkeeping of the change-proposal review loop, invoked by an agent with one command rather than selected by a test tier
   - member: |-
       .claude/tools/proposal-status.mjs
     class: change-graph-coverage

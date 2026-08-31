@@ -51,6 +51,7 @@ const newStubs = (over = {}) => ({
   conventions: "conforms",
   snap: "DONE",
   diffcount: "0",
+  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
   "*:review:*": { coverage: "read it all", findings: [] },
   default: {},
   ...over,
@@ -268,6 +269,9 @@ const loopStubs = (over = {}) => {
     "snap*": "DONE",
     diffcount: "0",
     "spec-nonspec-handoff": "reconciled",
+    // Every round now closes through the boundary script, so a stub table that
+    // omits it leaves every round unable to certify.
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": { coverage: "c", findings: [] },
     "*:dedup": { findings: [] },
     "*:verify-material": { confirmed: true, reason: "material" },
@@ -597,6 +601,84 @@ t.section("B17. one post-fix review per round, over the whole round's edits");
   t.check("it runs after the last group", firstIndex(calls, "r1:post-fix-review") > calls.map((c) => c.label).lastIndexOf("r1:fix:G3"));
   t.check("it diffs against the snapshot taken before the FIRST group", /r1-prefix/.test(post[0].prompt));
   t.check("it is shown every group's summary", /G1:[\s\S]*G2:[\s\S]*G3:/.test(post[0].prompt));
+}
+
+
+// ---- Phase 5: the review log, its shards, and the round boundary ---------
+
+const BOUNDARY = (over = {}) =>
+  JSON.stringify({ merged: 2, ledgerLines: 40, ledgerGrowth: 10, compactionDue: false, changedFiles: [], hunks: 3, snapshot: "/repo/scratchpad/cp-snap/t/spec-r2", overrides: {}, ...over });
+
+const logStubs = (over = {}) => fixStubs(2, { "*:round-boundary": BOUNDARY(), ...over });
+
+t.section("B18b. the round boundary is one exact command and nothing else");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  const b = matching(calls, "r1:round-boundary")[0];
+  t.check("a boundary agent runs", !!b);
+  t.check("it runs on haiku", b.opts.model === "haiku");
+  t.check("its prompt is one invocation of the script", /Run exactly this command/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
+  t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 400/.test(b.prompt));
+  t.check("and no other instruction", /Do nothing else: do not read, summarise,\s+or edit any file/.test(b.prompt));
+  t.check("exactly one per round", matching(calls, "r1:round-boundary").length === 1);
+}
+
+t.section("B18c. a failed boundary makes the round inconclusive");
+{
+  // A boundary that fails in a NON-sweep round is recoverable: the merge is
+  // idempotent and the next round's call sweeps the orphaned shards, so the
+  // property to pin is that the round itself cannot certify, not that the run
+  // can never converge afterwards.
+  const one = await runWorkflow(WF, REVIEW_ARGS, logStubs({ "r1:round-boundary": "FAILED: no such directory" }));
+  t.check("it is logged as inconclusive", one.logs.some((l) => /round-boundary script did not complete; round INCONCLUSIVE/.test(l)));
+  t.check("a later clean round still converges", one.result.review.converged === true, String(one.result.review.converged));
+  // One that fails in EVERY round leaves the log unmerged and no snapshot, and
+  // no round can certify, so the run exhausts its budget instead.
+  const all = await runWorkflow(WF, REVIEW_ARGS, logStubs({ "*:round-boundary": "FAILED: no such directory" }));
+  t.check("a boundary that never succeeds blocks convergence", all.result.review.converged === false, String(all.result.review.converged));
+}
+
+t.section("B19. every parallel agent writes its own shard, and none writes the log");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  const writers = calls.filter((c) => /scratchpad\/cp-log\//.test(c.prompt));
+  t.check("the reviewing agents carry a shard path", writers.length > 0, String(writers.length));
+  const shards = writers.map((c) => (c.prompt.match(/scratchpad\/cp-log\/[^\s]+\.md/) || [""])[0]);
+  t.check("each shard path is distinct", new Set(shards).size === shards.length, shards.slice(0, 4).join(" "));
+  t.check(
+    "no agent is told to append to the review log itself",
+    !calls.some((c) => /append[^.]*to .*review-log\.md/i.test(c.prompt)),
+  );
+  t.check("READ_ONLY permits exactly that one write", calls.some((c) => /EXCEPT your own log shard/.test(c.prompt)));
+  t.check("the tag vocabulary is fixed", writers.every((c) => /CORRECTS \[id\]/.test(c.prompt) && /USEFUL \[id\]/.test(c.prompt)));
+  t.check("the standing context is read first", writers.every((c) => /Read the\s+`## Standing context`/.test(c.prompt)));
+  t.check("padding is discouraged", writers.some((c) => /padding it is worse than leaving it out/.test(c.prompt)));
+}
+
+t.section("B20. compaction fires when the boundary says it is due, and not otherwise");
+{
+  const no = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  t.check("not due: no compaction agent", never(no.calls, "r1:compact"));
+  const yes = await runWorkflow(WF, REVIEW_ARGS, logStubs({ "*:round-boundary": BOUNDARY({ compactionDue: true, ledgerLines: 460 }) }));
+  const c = yes.calls.find((x) => /:compact$/.test(x.label));
+  t.check("due: a compaction agent runs", !!c);
+  t.check("it may edit only the review log", /only file you may edit is .*review-log\.md/.test(c.prompt));
+  t.check("it is age-graded", /AGE-GRADE/.test(c.prompt));
+  t.check("a superseded watchout is deleted rather than kept", /DELETED rather than kept for the record/.test(c.prompt));
+  t.check("a USEFUL entry is promoted", /HONOUR `USEFUL`/.test(c.prompt));
+  t.check("contradictions are resolved against the tree", /check the repository yourself/.test(c.prompt));
+  t.check("OPEN and UNVERIFIED are never dropped", /NEVER DROP AN `OPEN` OR AN `UNVERIFIED`/.test(c.prompt));
+  t.check("it must not act on what the log says", /do not fix a\s+defect it names/.test(c.prompt));
+}
+
+t.section("B29. mid-run overrides apply forward, and anchored keys are refused");
+{
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, logStubs({
+    "*:round-boundary": BOUNDARY({ overrides: { maxFixGroups: 3, lensPrompt: "steer the lenses" } }),
+  }));
+  t.check("a forward knob is taken", logs.some((l) => /overrides applied for the next round: maxFixGroups=3/.test(l)));
+  t.check("an anchored key is refused by name", logs.some((l) => /ignoring override\(s\) lensPrompt/.test(l)));
+  t.check("and the refusal says why", logs.some((l) => /already baked into prompts/.test(l)));
 }
 
 t.done();
