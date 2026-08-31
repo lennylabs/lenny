@@ -248,6 +248,61 @@ function promptFor(key) {
 // something to leave to chance, so the exception is stated in the constant.
 // The shard path is per-agent because a dozen lenses appending to one file in
 // parallel lose writes; the round-boundary script folds them in afterwards.
+// ---- Argument classification ---------------------------------------------
+//
+// Every argument is FORWARD, ANCHORED, or LAUNCH, and which one decides how a
+// caller changes it:
+//
+//   forward   read where it is used and present in no prompt this run has
+//             already issued. Safe to change mid-run through the override file
+//             (see applyOverrides), and safe to change on a resume.
+//   anchored  baked into prompts the run has issued. Changing it needs a fresh
+//             launch, because a resume would replay those prompts unchanged.
+//   launch    controls how a run starts; meaningless to change mid-run.
+//
+// This registry is what makes the choice a lookup rather than a judgement, and
+// the workflow lint holds every `input.<name>` the script reads to appearing in
+// it, so the classification cannot drift away from the code.
+const ARG_CLASS = {
+  mode: "launch",
+  problem: "anchored",
+  problemStatementPath: "launch",
+  proposalPath: "launch",
+  nextNumber: "launch",
+  kind: "launch",
+  date: "anchored",
+  exemplar: "anchored",
+  repoRoot: "launch",
+  context: "anchored",
+  planPath: "anchored",
+  lensPrompt: "anchored",
+  prompts: "anchored",
+  startLenses: "anchored",
+  excludeLenses: "forward",
+  focusAreas: "launch",
+  maxReviewRounds: "forward",
+  maxSpecReviewRounds: "forward",
+  maxNonSpecReviewRounds: "forward",
+  skipSpecReview: "launch",
+  skipNonSpecReview: "launch",
+  lockSpecChanges: "forward",
+  verifyOrder: "forward",
+  verifySequential: "forward",
+  maxFixGroups: "forward",
+  fixDesignDepth: "forward",
+  compactAtLines: "forward",
+  compactGrowthLines: "forward",
+  standingContextMaxLines: "forward",
+  runTag: "anchored",
+  resumeState: "launch",
+  introspectEvery: "forward",
+  churnWindow: "forward",
+  churnMinFindings: "forward",
+  churnStrikes: "forward",
+  maxRedesigns: "forward",
+  redesignReviewRounds: "forward",
+};
+
 const READ_ONLY =
   "You are a read-only investigator. Do not create, edit, or delete any file " +
   "EXCEPT your own log shard, named below, which you append to before you return. " +
@@ -1682,7 +1737,38 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
         "scope limit: your lens still owns the whole proposal, and the defect a rewrite leaves in text nobody " +
         "touched is exactly the drift this loop exists to catch.\n"
       : "") +
+    cacheBlock(lens.key, round) +
     "\n\nWork method: read the proposal fully, then investigate the repository with Grep and targeted Reads to verify or refute its claims under your lens. Report your findings via the structured output (empty array if you find nothing that meets the bar)."
+  );
+}
+
+// A lens that already ran this round over this exact text returns its cached
+// answer instead of reviewing again.
+//
+// The runtime's own journal replays a completed agent on a resume of the SAME
+// run. The gap this closes is a FRESH relaunch, which is what actually happens
+// after an auth expiry or a script edit, and where a dozen lens agents would
+// otherwise re-read a proposal none of them has changed.
+//
+// The key is (lens, round, content hash), and the hash is what removes the need
+// for any cleanup. A hit means the same lens, in the same round, over
+// byte-identical text -- exactly and only the crash-resume case. After a fix
+// lands the hash changes, every key misses, and the lenses re-read the changed
+// text because that is the only thing they can do. An earlier design keyed on
+// (lens, round) alone and needed the round's cache deleted in a specific window
+// between the fix landing and the state write, which a crash in the wrong place
+// defeats; this has no window to get wrong.
+function cacheBlock(key, round) {
+  const dir = repo + "/scratchpad/cp-cache/" + runTag;
+  return (
+    "\n\nCACHE. Before anything else, run:\n" +
+    "  mkdir -p " + dir + " && H=$(cat " + P.spec + " " + P.nonSpec + " " + P.checklist +
+    " 2>/dev/null | md5sum | cut -c1-12) && cat " + dir + "/" + key + "-r" + round +
+    "-$H.json 2>/dev/null\n" +
+    "If that printed JSON, return exactly it as your structured output and do no other work: it is your " +
+    "own answer to this same question over this same text, from a run that was interrupted.\n" +
+    "Otherwise do the review, and immediately before you return, write your findings JSON to that same " +
+    "path, recomputing $H the same way."
   );
 }
 
@@ -2773,6 +2859,51 @@ async function runReviewLoop(cfg) {
   let converged = false;
   let sweeps = 0;
   let reviewersFailed = false;
+  // A fresh relaunch with resumeState continues where an interrupted run
+  // stopped, rather than restarting the loop. This is the mechanism for
+  // changing an ANCHORED argument, which resumeFromRunId cannot do: the journal
+  // replays a call only when its prompt is unchanged, so a changed prompt busts
+  // the cache from round one and re-does everything under the new text.
+  if (input.resumeState) {
+    const raw = await robustAgent(
+      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+        "cat " + repo + "/scratchpad/cp-state/" + runTag + "/state-" + cfg.name + ".json 2>/dev/null || echo '{}'" +
+        "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+      { label: "resume-state:" + cfg.name, model: "haiku", phase: "Review" },
+    );
+    let st = null;
+    try {
+      const m = String(raw || "").match(/\{[\s\S]*\}/);
+      if (m) st = JSON.parse(m[0]);
+    } catch (e) {
+      st = null;
+    }
+    if (st && typeof st.round === "number" && st.round > 0) {
+      round = st.round;
+      sweeps = st.sweeps || 0;
+      for (const k of st.retired || []) retired.add(k);
+      log(
+        "Resuming the " + cfg.name + " loop at round " + round + " with " + retired.size +
+          " lens(es) already retired",
+      );
+      // An anchored argument that changed since the recorded run means the
+      // prompts this loop is about to issue differ from the ones it issued
+      // before. That is legitimate -- it is why resumeState exists -- but it is
+      // worth saying out loud, because a caller who changed one by accident
+      // gets a run that silently reviews under different instructions.
+      for (const [k, v] of Object.entries(st.args || {})) {
+        const now = typeof input[k] === "object" ? "(set)" : input[k];
+        if (input[k] !== undefined && now !== v) {
+          log(
+            "Resume: the anchored argument " + k + " changed since the recorded run (" +
+              JSON.stringify(v) + " -> " + JSON.stringify(now) + "); rounds from here run under the new value",
+          );
+        }
+      }
+    } else if (st) {
+      log("resumeState was set but no state was recorded for the " + cfg.name + " loop; starting at round 1");
+    }
+  }
   log(
     "Entering the " + cfg.name + " review loop over " + (POOL_FIXED.length + POOL_EXTRA.length) +
       " lens(es), budget " + maxRounds + " round(s)",
@@ -2880,8 +3011,28 @@ async function runReviewLoop(cfg) {
   // nothing. A round that returns early still wrote log shards and still owes
   // the next round a snapshot, and skipping it there orphaned both.
   async function closeRound(rnd, complete) {
+    // The state a fresh relaunch needs to continue this loop rather than
+    // restart it. Deliberately small: the round, what has retired, how many
+    // sweeps have run, and the arguments in force, which is what a later launch
+    // compares against to notice that an anchored one changed.
+    const stateJson = JSON.stringify({
+      loop: LOOP.name,
+      round: rnd,
+      sweeps,
+      retired: [...retired],
+      converged,
+      fixedTitles: fixedTitles.length,
+      args: Object.fromEntries(
+        Object.keys(ARG_CLASS)
+          .filter((k) => input[k] !== undefined && ARG_CLASS[k] === "anchored")
+          .map((k) => [k, typeof input[k] === "object" ? "(set)" : input[k]]),
+      ),
+    });
     const raw = await robustAgent(
-      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "Run exactly these two commands and reply with the stdout of the SECOND and nothing else:\n\n" +
+        "mkdir -p " + repo + "/scratchpad/cp-state/" + runTag + " && cat > " +
+        repo + "/scratchpad/cp-state/" + runTag + "/" + "state-" + LOOP.name + ".json" +
+        " <<'LENNYSTATE'\n" + stateJson + "\nLENNYSTATE\n\n" +
         "bash " + repo + "/.claude/tools/cp-round-boundary.sh" +
         " --dir '" + P.dir + "'" +
         " --tag '" + runTag + "'" +
@@ -2890,9 +3041,9 @@ async function runReviewLoop(cfg) {
         " --repo '" + repo + "'" +
         " --compact-at " + compactAtLines +
         " --compact-growth " + compactGrowthLines +
-        "\n\nIt prints one line of JSON. Reply with that line verbatim. If it exits non-zero, reply " +
-        "with the single word FAILED followed by its stderr. Do nothing else: do not read, summarise, " +
-        "or edit any file.",
+        "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
+        "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
+        "read, summarise, or edit any other file.",
       { label: "r" + rnd + ":round-boundary", model: "haiku", phase: "Round " + rnd + ": fix" },
     );
     let boundary = null;

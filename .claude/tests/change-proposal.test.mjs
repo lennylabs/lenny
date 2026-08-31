@@ -617,9 +617,10 @@ t.section("B18b. the round boundary is one exact command and nothing else");
   const b = matching(calls, "r1:round-boundary")[0];
   t.check("a boundary agent runs", !!b);
   t.check("it runs on haiku", b.opts.model === "haiku");
-  t.check("its prompt is one invocation of the script", /Run exactly this command/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
+  t.check("its prompt is the state write plus one invocation of the script", /Run exactly these two commands/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
+  t.check("it records the loop state for a resume", /scratchpad\/cp-state\/.*state-non-spec\.json/.test(b.prompt));
   t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 400/.test(b.prompt));
-  t.check("and no other instruction", /Do nothing else: do not read, summarise,\s+or edit any file/.test(b.prompt));
+  t.check("and no other instruction", /Do nothing else: do not\s+read, summarise, or edit any other file/.test(b.prompt));
   t.check("exactly one per round", matching(calls, "r1:round-boundary").length === 1);
 }
 
@@ -679,6 +680,65 @@ t.section("B29. mid-run overrides apply forward, and anchored keys are refused")
   t.check("a forward knob is taken", logs.some((l) => /overrides applied for the next round: maxFixGroups=3/.test(l)));
   t.check("an anchored key is refused by name", logs.some((l) => /ignoring override\(s\) lensPrompt/.test(l)));
   t.check("and the refusal says why", logs.some((l) => /already baked into prompts/.test(l)));
+}
+
+
+// ---- Phase 6: the lens cache, argument classes, and resume ---------------
+
+t.section("B18. every lens carries the cache instruction, keyed on content");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  const lenses = calls.filter(isLens);
+  t.check("every lens carries it", lenses.every((c) => /CACHE\. Before anything else/.test(c.prompt)));
+  t.check("the key is lens, round and a content hash", lenses.every((c) => {
+    const round = c.label.match(/^r(\d+):/)[1];
+    const lens = c.label.split(":")[2];
+    return /md5sum \| cut -c1-12/.test(c.prompt) && c.prompt.includes(lens + "-r" + round + "-$H.json");
+  }));
+  t.check("the hash covers the files a fix would change", lenses.every((c) => /spec-changes\.md .*non-spec-changes\.md .*implementation-checklist\.md/.test(c.prompt)));
+  t.check("a hit returns without reviewing", lenses.every((c) => /return exactly it as your structured output and do no other work/.test(c.prompt)));
+  t.check("a miss writes the answer back", lenses.every((c) => /immediately before you return, write your findings JSON/.test(c.prompt)));
+  t.check("NO cache-clear agent exists", never(calls, "cache-clear") && !calls.some((c) => /rm -rf .*cp-cache/.test(c.prompt)));
+}
+
+t.section("B29b. every argument the script reads is classified");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/change-proposal.js"), "utf8");
+  const reads = new Set([...src.matchAll(/\binput\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]));
+  const from = src.indexOf("const ARG_CLASS");
+  const registry = src.slice(from, src.indexOf("\n};", from));
+  const missing = [...reads].filter((k) => !new RegExp("\\b" + k + "\\s*:").test(registry));
+  t.check(reads.size + " argument(s) read, all classified", missing.length === 0, missing.join(", "));
+  const classes = [...registry.matchAll(/:\s*"([a-z]+)"/g)].map((m) => m[1]);
+  t.check(
+    "only forward, anchored and launch are used",
+    classes.length > 20 && classes.every((c) => ["forward", "anchored", "launch"].includes(c)),
+    [...new Set(classes)].join(","),
+  );
+}
+
+t.section("B30. resumeState continues a loop rather than restarting it");
+{
+  const state = JSON.stringify({ loop: "non-spec", round: 2, sweeps: 1, retired: ["citations", "security"], args: { exemplar: "old.md" } });
+  const { logs } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, resumeState: true },
+    logStubs({ "resume-state:*": state }),
+  );
+  t.check("it resumes at the recorded round", logs.some((l) => /Resuming the non-spec loop at round 2/.test(l)));
+  t.check("with the recorded lenses still retired", logs.some((l) => /with 2 lens\(es\) already retired/.test(l)));
+  t.check("and names an anchored argument that changed since", logs.some((l) => /anchored argument exemplar changed since the recorded run/.test(l)));
+}
+{
+  const { logs } = await runWorkflow(WF, { ...REVIEW_ARGS, resumeState: true }, logStubs({ "resume-state:*": "{}" }));
+  t.check("no recorded state starts at round 1", logs.some((l) => /no state was recorded/.test(l)));
+}
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  t.check("without resumeState nothing is read", never(calls, "resume-state"));
 }
 
 t.done();
