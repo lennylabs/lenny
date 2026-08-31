@@ -292,6 +292,23 @@ for (const file of targets) {
     }
   }
 
+  // 6b. Inside a review loop that runs twice, every phase label carries the
+  //     loop name. Without it the progress view shows "Round 1: review" twice
+  //     in one run with no way to tell which half of the proposal is being
+  //     certified, and answering "did the spec loop run?" means reading prompt
+  //     text out of a transcript.
+  {
+    const a = src.indexOf("async function runReviewLoop(");
+    const b = src.indexOf("// ---- Run the two loops ---");
+    if (a >= 0 && b > a) {
+      const body = src.slice(a, b);
+      const bare = [...body.matchAll(/phase(?::\s*|\()\s*"Round "/g)];
+      if (bare.length) {
+        softFail(file, bare.length + " phase label(s) inside runReviewLoop omit the loop name");
+      }
+    }
+  }
+
   // 7. Every input the script reads is classified in ARG_CLASS, which is what
   //    makes the resume decision table a lookup rather than a judgement.
   const inputs = new Set([...code.matchAll(/\binput\.([A-Za-z_$][\w$]*)/g)].map((m) => m[1]));
