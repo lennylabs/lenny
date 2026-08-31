@@ -18,6 +18,12 @@ version: 1
 class: change-graph-coverage
 entries:
   - member: |-
+      .claude/tests/change-proposal.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/harness.mjs
     class: change-graph-coverage
     disposition: excluded
