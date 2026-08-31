@@ -32,7 +32,7 @@
 
 set -uo pipefail
 
-DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=400; COMPACT_GROWTH=150
+DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=2000; STANDING_AT=80; COMPACT_GROWTH=400
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
@@ -41,6 +41,7 @@ while [ $# -gt 0 ]; do
     --round) ROUND="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --compact-at) COMPACT_AT="$2"; shift 2 ;;
+    --standing-at) STANDING_AT="$2"; shift 2 ;;
     --compact-growth) COMPACT_GROWTH="$2"; shift 2 ;;
     *) echo "cp-round-boundary: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -104,16 +105,28 @@ if [ -d "$SHARDS" ] && [ -f "$LOG" ]; then
   done
 fi
 
-# ---- 2. Ledger size, for the compaction trigger --------------------------
+# ---- 2. Sizes, for the compaction trigger --------------------------------
+#
+# The trigger is on the STANDING CONTEXT, not the ledger. Every agent is told to
+# read the standing context and nothing else, so that section is the only part
+# of the log anyone carries; the ledger is read end to end by exactly one agent,
+# the compactor itself. Triggering on ledger size fired an expensive pass to
+# protect against a cost that does not exist -- on one run, three compactions
+# averaging fifteen minutes each while the section they were protecting sat at
+# 92 lines against its 80-line target.
+#
+# The ledger keeps a bound, far higher, purely so it cannot grow without limit.
 ledger_lines=0
+standing_lines=0
 if [ -f "$LOG" ]; then
   ledger_lines=$(awk '/^## Ledger/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
+  standing_lines=$(awk '/^## Standing context/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
 fi
 prev_ledger=0
 [ -f "$STATE/ledger-lines" ] && prev_ledger=$(cat "$STATE/ledger-lines" 2>/dev/null || echo 0)
 growth=$((ledger_lines - prev_ledger))
 compaction_due=false
-if [ "$ledger_lines" -ge "$COMPACT_AT" ] || [ "$growth" -ge "$COMPACT_GROWTH" ]; then
+if [ "$standing_lines" -ge "$STANDING_AT" ] || [ "$ledger_lines" -ge "$COMPACT_AT" ]; then
   compaction_due=true
 fi
 echo "$ledger_lines" >"$STATE/ledger-lines"
@@ -155,5 +168,5 @@ if [ -f "$OV_FILE" ]; then
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$growth" "$compaction_due" "$changed" "$hunks" "$NEXT" "$OVERRIDES"
+printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$changed" "$hunks" "$NEXT" "$OVERRIDES"
