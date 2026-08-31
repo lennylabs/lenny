@@ -1,8 +1,26 @@
 # Proposal: Give every session a slot and absence one meaning
 
-- **Status:** Applied to spec (2026-08-19). Approved by jaf sign-off, with the §9 questions resolved to the
-  base case this document stages. Verified (2026-08-19). Converged after 13 adversarial review rounds (57
-  findings fixed).
+- **Status:** **Implemented (2026-08-31), independently verified on tiers 0, 3, and 11 after the final
+  change.** Approved by jaf sign-off, with the §9 questions resolved to the base case this document stages.
+  Applied to spec (2026-08-19). Verified (2026-08-19). Converged after 13 adversarial review rounds (57
+  findings fixed). All 22 implementation-checklist steps are complete. The final verification found two
+  registry gaps left by commits that landed after S22 had swept the inventory, `tests/testinfra/rotationgate`
+  covered by no change-graph glob and the tool-approval address case absent from the spec map; both were
+  registered and the map gates read 18 checks, 0 failed.
+
+  Five deliverables the document stages did not land, each deliberately and each recorded. Three are
+  accepted divergences where the tree is right and this document is wrong: the pod-MCP arming identifier
+  keeps the name commit `a8abf57e` gave it, the checkpoint accessor is `LatestActive` rather than
+  `LatestActiveForSession`, and REG-1's revocation row carries `WIRED` for the production call site that
+  exists. The other two are recorded on S21. T-4.4.21 stays OPEN because the tier-4 case §8 stages, a
+  concurrent pool that captures a slot's checkpoint, loses the pod, and resumes onto a replacement, is not
+  in the tree, and closing the finding against `checkpoint_concurrent_pool_test.go`'s capture-independence
+  case would record coverage that does not exist. Proposal 0064 is not amended, because a landed proposal
+  records what was decided at the time rather than tracking what later became true; the revert disclosure
+  itself stays in §4.5(f).
+
+  The limits §9 records were not cured. Four have since been taken by proposals 0075, 0076, 0078, and 0079,
+  and proposal 0080 inventories the rest.
 - **Date:** 2026-08-13
 - **Scope:** Every session is bound to a slot on every pod, whatever the pool's concurrency, so that the
   absence of a slot has exactly one meaning. The wire addresses that session by its session identifier on
