@@ -54,6 +54,12 @@ entries:
     reason: |-
       a static checker over the agent workflow drivers, which no test tier is selected from
   - member: |-
+      .claude/tests/migrate-proposal.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/run.mjs
     class: change-graph-coverage
     disposition: excluded
@@ -127,6 +133,12 @@ entries:
       an agent workflow driver, which no test tier is selected from
   - member: |-
       .claude/workflows/implement-proposal.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/migrate-proposal.js
     class: change-graph-coverage
     disposition: excluded
     reason: |-
