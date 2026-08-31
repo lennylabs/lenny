@@ -36,6 +36,20 @@ let ok = true;
 
 ok = run("lint", "node", [resolve(HERE, "lint-workflows.mjs"), ...(STRICT ? ["--strict"] : [])]) && ok;
 
+// The three pipeline workflows are held to the strict checks as well: the
+// argument-classification registry and the no-hardcoded-proposal-path rule are
+// what keep the resume decision table a lookup and the folder migration from
+// half-landing, and both are satisfiable there now.
+ok =
+  run("lint (strict, pipeline)", "node", [
+    resolve(HERE, "lint-workflows.mjs"),
+    "--strict",
+    ".claude/workflows/change-proposal.js",
+    ".claude/workflows/implement-proposal.js",
+    ".claude/workflows/implement-proposal-build.js",
+    ".claude/workflows/migrate-proposal.js",
+  ]) && ok;
+
 if (!LINT_ONLY) {
   const tests = readdirSync(HERE)
     .filter((f) => f.endsWith(".test.mjs"))

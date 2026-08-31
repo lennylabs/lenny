@@ -70,6 +70,17 @@ const ROLES = [
   "deviations",
 ];
 
+// ---- Argument classification ---------------------------------------------
+//
+// forward: read where it is used. launch: controls how a run starts.
+const ARG_CLASS = {
+  proposalPath: "launch",
+  repoRoot: "launch",
+  date: "anchored",
+  commit: "launch",
+  maxRepairs: "forward",
+};
+
 const ASSESS = {
   type: "object",
   required: ["state", "status"],

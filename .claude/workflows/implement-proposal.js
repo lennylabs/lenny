@@ -178,6 +178,27 @@ function roleRef(P, role, sectionName) {
     : "the `" + sectionName + "` section of " + P.root;
 }
 
+// ---- Argument classification ---------------------------------------------
+//
+// forward: read where it is used, present in no prompt already issued.
+// anchored: baked into prompts the run has issued.
+// launch: controls how a run starts.
+// The workflow lint holds every `input.<name>` this script reads to appearing
+// here, so the classification cannot drift away from the code.
+const ARG_CLASS = {
+  proposalPath: "launch",
+  repoRoot: "launch",
+  date: "anchored",
+  implementCode: "launch",
+  leaseTtlHours: "forward",
+  specReviewFocus: "anchored",
+  acceptedDivergences: "anchored",
+  plan: "anchored",
+  reverifyDoneSteps: "launch",
+  maxApplyRounds: "forward",
+  maxAlignRepairs: "forward",
+};
+
 const SPEC_RULES =
   "Spec content rules (these take precedence over verbatim application; record every deviation they force):\n" +
   "- The spec never references source code files or implementation paths (pkg/, cmd/, charts/, sdks/, tests/, migrations/, .go or other source files). Rephrase staged text carrying such a reference into behavioral spec language, or drop the reference.\n" +

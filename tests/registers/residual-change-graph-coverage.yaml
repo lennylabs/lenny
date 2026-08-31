@@ -24,6 +24,12 @@ entries:
     reason: |-
       a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
   - member: |-
+      .claude/tests/golden.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node prompt-digest regression test over the agent workflow drivers, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/harness.mjs
     class: change-graph-coverage
     disposition: excluded

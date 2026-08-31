@@ -333,6 +333,36 @@ const BLANKS_BLOCK =
 // Everything the per-step agents need beyond their own instructions.
 const RULES_FULL = RULES + SUMMARY_BLOCK + BLANKS_BLOCK;
 
+// ---- Argument classification ---------------------------------------------
+//
+// forward: read where it is used, present in no prompt already issued.
+// anchored: baked into prompts the run has issued.
+// launch: controls how a run starts.
+const ARG_CLASS = {
+  proposalPath: "launch",
+  repoRoot: "launch",
+  date: "anchored",
+  plan: "anchored",
+  skipBuild: "launch",
+  reverifyDoneSteps: "launch",
+  acceptedDivergences: "anchored",
+  specReviewFocus: "anchored",
+  maxPlanRounds: "forward",
+  maxStepAttempts: "forward",
+  maxDeadAttempts: "forward",
+  maxVerifyRounds: "forward",
+  maxReviewRounds: "forward",
+  maxReplans: "forward",
+  replanEvery: "forward",
+  replanStruggleAttempts: "forward",
+  coverageFloor: "forward",
+  introspectEvery: "forward",
+  minUnproductiveRounds: "forward",
+  maxPhaseOscillations: "forward",
+  maxFinalGateFailures: "forward",
+  expensiveTierSeconds: "forward",
+};
+
 // ---- What a spec-lane step needs -----------------------------------------
 //
 // These came from implement-proposal.js, where spec application used to be a
