@@ -84,6 +84,12 @@ entries:
     reason: |-
       the runner for the workflow test suite, run with node rather than selected by a test tier
   - member: |-
+      .claude/tests/step-loop.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/tools.test.mjs
     class: change-graph-coverage
     disposition: excluded
@@ -95,6 +101,12 @@ entries:
     disposition: excluded
     reason: |-
       a deterministic partition check the proposal migrator runs, invoked with node rather than selected by a test tier
+  - member: |-
+      .claude/tools/classify-diff.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a deterministic diff classifier the implementation pipeline runs to decide which test tiers a fix warrants, invoked with node rather than selected by a test tier
   - member: |-
       .claude/tools/cp-round-boundary.sh
     class: change-graph-coverage

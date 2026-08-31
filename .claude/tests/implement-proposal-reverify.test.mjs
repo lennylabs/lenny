@@ -160,10 +160,16 @@ console.log("\n4. tier scoping: full on the first implementation, scoped on a fi
   // scoped path, and the final gate must then run before it is marked done.
   const { calls, logs } = await run({ reverifyDoneSteps: true, reverifyFindings: FINDING });
   const v1 = calls.find((c) => c.label === "verify:S1:r1");
-  check("a fix attempt runs only the tiers the fix could affect",
-    v1 && /ONLY those of the step's higher tiers/.test(v1.prompt));
+  check("a fix attempt runs only the tiers the fix warrants",
+    v1 && /ONLY the tiers this fix warrants/.test(v1.prompt));
+  check("it classifies the real diff rather than the fixer's account of it",
+    v1 && /classify-diff\.mjs/.test(v1.prompt) && /the diff wins/.test(v1.prompt));
+  check("the script's verdict is authoritative where it fires",
+    v1 && /AUTHORITATIVE where it\s+fires/.test(v1.prompt));
+  check("an expensive tier needs a named hunk",
+    v1 && /No named hunk, no run/.test(v1.prompt));
   check("the fix attempt is told the skipped tiers get re-run",
-    v1 && /not the final gate/.test(v1.prompt));
+    v1 && /NOT the final gate/.test(v1.prompt));
   check("the fixer itself is scoped too",
     calls.some((c) => c.label.startsWith("build:S1") && !c.label.endsWith(":base") &&
       /TESTS FOR THIS ATTEMPT ARE SCOPED TO THE FIX/.test(c.prompt)));

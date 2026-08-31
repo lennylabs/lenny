@@ -85,6 +85,21 @@ const reverifyRepaired = [];
 // Every fifth attempt: a step that converges normally never reaches it, and a
 // step that does not has already told us something is wrong.
 const introspectEvery = input.introspectEvery || 5;
+// Detectors, not bounds. Reaching one wakes the stuck judges; none of them
+// stops a step. The only stopping conditions are maxStepAttempts, consecutive
+// dead agents, and an `unproductive` verdict.
+//
+// maxPhaseOscillations counts the conformance/test cycle: every fix to one
+// check breaking the other is a pattern the attempt cadence cannot see, because
+// it counts attempts across phases. maxFinalGateFailures counts a full tier
+// pass failing after the scoped runs called the tree done, which means the
+// scoping is systematically missing something.
+const maxPhaseOscillations = input.maxPhaseOscillations || 5;
+const maxFinalGateFailures = input.maxFinalGateFailures || 5;
+// Above this ledger median a tier must be justified by a named hunk before it
+// runs. An unknown cost is treated as expensive but is never a reason to skip a
+// first run.
+const expensiveTierSeconds = input.expensiveTierSeconds || 300;
 // Consecutive rounds that must have tried and failed before the judges may
 // return "unproductive". That verdict says the loop will not do work that is
 // legal and real, which is a claim about a pattern; one or two rounds that
@@ -544,6 +559,20 @@ const STUCK_VERDICT = {
   },
 };
 
+// The cheap gate that runs before the conformance review, plus the lease check
+// a code step owes: a reviewer handed code that does not compile produces
+// confident nonsense, and a code step running under an open spec lease means
+// spec/ is writable when it should not be.
+const COMPILE = {
+  type: "object",
+  required: ["compiles"],
+  properties: {
+    compiles: { type: "boolean" },
+    errors: { type: "array", items: { type: "string" } },
+    leaseHeld: { type: "boolean", description: "true when spec-lease.mjs status reports an open lease" },
+  },
+};
+
 const SHA = {
   type: "object",
   required: ["sha"],
@@ -704,6 +733,73 @@ const MEMORY_SAFE_NOTE =
   "`-p 1` and `KUBEBUILDER_ASSETS` set, then reap strays with `pkill -f kubebuilder-envtest` before the " +
   "next one. Let output stream rather than piping it through `tail` or `head`.";
 
+// How a fix's test scope is decided.
+//
+// "Be smarter about which tiers to run" has to be made mechanical or it
+// regresses to "run everything", which is what the loop did. Two mechanisms.
+//
+// FIRST, the classification is grounded in a real diff. The classifier is
+// handed a git RANGE and runs the diff itself; it is never handed diff text and
+// never takes the fixer's self-report as its subject. That lesson is already in
+// change-proposal.js, where the post-fix reviewer was asked about drift from
+// the fixer's own prose summary, "which is precisely the document that omits an
+// edit the fixer did not notice making". The omission is worse here, because
+// the consequence is a skipped tier rather than an extra round.
+//
+// SECOND, the three cheapest classes are decided by a SCRIPT, not by the agent.
+// comment-only, doc-only and test-only carry the most risk if wrong --
+// comment-only skips everything above tier 0 -- and all three are mechanically
+// decidable. classify-diff.mjs is authoritative where it fires: if it says a
+// diff is not comment-only, the agent may not say it is, whatever the fixer
+// reported. That closes the failure mode this exists for: a fixer adjusts one
+// line of logic while editing the comment above it, self-reports "updated a
+// comment", and every test that would catch it is skipped.
+const CLASS_TABLE =
+  "| class | minimum tiers |\n" +
+  "| comment-only | 0 |\n" +
+  "| doc-only (not runbook, alert, or metric) | 0 |\n" +
+  "| doc-only (runbook, alert, or metric page) | 0, 11 |\n" +
+  "| test-only | 0, plus the tier that owns the test |\n" +
+  "| rename-local (no exported identifier crosses a package boundary) | 0, 1 for the package |\n" +
+  "| logic | 0, 1, plus the step's tiers whose subject the diff touches |\n" +
+  "| wire (proto, JSONL, HTTP, CRD schema) | + 3 |\n" +
+  "| security (auth, isolation, egress, credentials) | + 9 |\n" +
+  "| concurrency (ordering, atomicity, rate) | + 7a |\n" +
+  "| schema | + 0 schema checks, + 3 |\n" +
+  "| chart | + 5 |\n";
+
+function SCOPING_BLOCK(step) {
+  return (
+    "ONLY the tiers this fix warrants, out of the step's set: " +
+    ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+    ".\n\nHOW TO DECIDE, in this order.\n\n" +
+    "1. CLASSIFY THE REAL DIFF. Run `node " + repo + "/.claude/tools/classify-diff.mjs HEAD~1..HEAD`. It " +
+    "decides comment-only, doc-only and test-only mechanically, and its verdict is AUTHORITATIVE where it " +
+    "fires: if it does not say comment-only, this fix is not comment-only whatever anyone reported. Then " +
+    "read `git diff HEAD~1..HEAD` YOURSELF to classify what it left open. Do not take the fixer's account " +
+    "of what it changed as your subject: where the diff and the report disagree, the diff wins, and the " +
+    "disagreement is worth reporting on its own, because a fixer that changed more than it said is worth " +
+    "knowing about.\n\n" +
+    "2. MAP THE CLASS TO A MINIMUM TIER SET:\n" + CLASS_TABLE +
+    "\nYou may go ABOVE the table, and must name the specific hunk that requires it. You may go BELOW it " +
+    "only for comment-only, doc-only, and rename-local — and for the first two the script has already " +
+    "decided, so you are acting on a mechanical fact rather than your own reading.\n\n" +
+    "3. WEIGH THE COST. Read " + repo + "/scratchpad/test-times/$(git rev-parse --abbrev-ref HEAD | tr / -)" +
+    ".json if it exists: it records what each tier has actually cost on this branch. For any tier whose " +
+    "median exceeds " + expensiveTierSeconds + " seconds, name in ONE sentence the hunk that requires it. " +
+    "No named hunk, no run. A tier with no ledger entry runs once and creates one: an unknown cost is " +
+    "treated as expensive but is never a reason to skip a first run.\n\n" +
+    "4. RECORD WHAT YOU RAN AND WHAT YOU SKIPPED. Put the classification, every tier you skipped, and the " +
+    "reason for each, in your notes. After each tier, append its wall-clock to the ledger file above " +
+    "(create it and its directory if absent; it is a JSON object keyed `tier|package` holding " +
+    "`{medianSeconds, runs, lastRun}`). Do not spawn a separate step for that: you just ran the tier and " +
+    "you know the number.\n\n" +
+    "This is NOT the final gate. The whole set runs again once the design review is clean, before the step " +
+    "is marked done, so a tier skipped here is re-run before anything is certified — and if that gate then " +
+    "fails, your skip is recorded as the miss that caused it."
+  );
+}
+
 const STEP_REVIEW_LENSES = [
   {
     key: "conformance",
@@ -736,6 +832,11 @@ if (!baseRef) {
 }
 
 const stepResults = [];
+// Every final-gate failure across the run. Each is a scoping miss: the scoped
+// runs said a tier could not be affected and the full pass proved otherwise.
+// The run returns them, because they are the evidence the change-class table is
+// tuned from.
+const gateMisses = [];
 let priorContext = "";
 let replanCount = 0;
 const skippedSteps = [];
@@ -1008,6 +1109,26 @@ for (let i = 0; i < plan.steps.length; i++) {
   let unproductiveStep = null;
   let issues = ""; // carried failures or divergences for the next attempt
   let attempt = 0;
+  // Which phase the current attempt is in, and how many rounds each phase has
+  // taken. The stuck judges read these: a loop that keeps clearing conformance,
+  // breaking tests, and returning to conformance is a pattern the attempt
+  // cadence cannot see, because it counts attempts across phases.
+  let phaseOfAttempt = "implement";
+  // What the classifier said about the last fix, and what the scoping agent
+  // skipped on the strength of it. A final-gate failure records both, so a miss
+  // traces back to the class and the hunk that justified the skip.
+  let lastClassification = null;
+  let lastSkipped = null;
+  let icRounds = 0;
+  let testRounds = 0;
+  let oscillations = 0;
+  let finalGateFailures = 0;
+  let lastPhase = null;
+  // A fired detector RE-ARMS rather than re-firing: without that, oscillation
+  // six, seven and eight each cost a three-judge panel, and the machinery meant
+  // to diagnose an expensive loop becomes the expensive part of it.
+  let oscillationsAtLastJudge = 0;
+  let gateFailuresAtLastJudge = 0;
 
   // A step an earlier run ticked is re-verified rather than rebuilt: its code
   // is committed and its tiers passed when it landed, so what is worth asking
@@ -1055,6 +1176,123 @@ for (let i = 0; i < plan.steps.length; i++) {
   // quickly, because the operator's move is to wait or re-authenticate rather
   // than to let the loop keep trying.
   let deadAttempts = 0;
+    // Every introspectEvery attempts, ask whether this loop can still close its
+    // findings. The judges read the round log and the commits before answering,
+    // because the question is about the loop's behaviour rather than the
+    // finding's merits, and a judge reasoning from the finding's text alone
+    // reaches the wrong answer confidently.
+    //
+    // The bar is every judge agreeing on the same non-resolvable verdict at
+    // medium or better. It was unanimous-at-high across three lenses that asked
+    // three different questions, which made the narrowest lens the decider:
+    // only what all three could see was ever detectable, and the two lenses
+    // that judged correctness could not see a loop failing to do work that was
+    // legal and real. These lenses read the same evidence and differ in how
+    // they weigh it, so agreement between them means something.
+  async function judgeAndAct(attempt) {
+    {
+      const runLength = unproductiveRunLength(stepRounds);
+      const votes = await judgeStuck(step, stepFindings, stepRounds, attempt);
+      const enough = (v) => v.confidence === "high" || v.confidence === "medium";
+      const all = (verdict) =>
+        votes.length === STUCK_LENSES.length &&
+        votes.every((v) => v.verdict === verdict && enough(v));
+      const summary = votes.map((v) => v.verdict + "/" + v.confidence).join(", ");
+      const titles = votes.map((v) => (v.findingTitle || "").trim()).filter(Boolean);
+      const title = titles[0] || (stepFindings[0] && stepFindings[0].title) || "";
+      const pick = (k) => votes.map((v) => v[k]).filter(Boolean)[0] || "";
+
+      if (all("unresolvable")) {
+        // No legal change closes it: the proposal is the defect. Set it aside
+        // so the loop can finish the rest of the step, and report it.
+        stuckFindings.push({
+          step: step.id,
+          checklistStep: step.checklistStep,
+          attempt,
+          kind: "unresolvable",
+          title,
+          whyCodeIsRight: pick("whyCodeIsRight"),
+          whyProposalIsWrong: pick("whyProposalIsWrong"),
+          roundsMovedIt: pick("roundsMovedIt"),
+          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
+        });
+        log(
+          "Step " + step.id + ": the judges agree no legal change closes \"" + title.slice(0, 110) +
+            "\" (" + summary + "). The code is right and the proposal is wrong. Recorded for a human and " +
+            "set aside for the rest of this step.",
+        );
+        return false;
+      } else if (all("unproductive") && runLength < minUnproductiveRounds) {
+        // The judges agreed, but the loop has not been given enough rounds for
+        // that verdict to mean what it claims. Enforced here as well as in the
+        // brief: a judge that returns it anyway must not be able to stop a step
+        // the fixer has barely started on.
+        log(
+          "Step " + step.id + ": the judges called the loop unproductive, but only " + runLength +
+            " consecutive round(s) have tried and failed and " + minUnproductiveRounds +
+            " are required; the loop continues",
+        );
+        return false;
+      } else if (all("unproductive")) {
+        // A legal change exists and this loop is not making it. Setting the
+        // finding aside would tick the step over a real gap, so the step stops
+        // here and the outstanding work goes to a human instead.
+        const rec = {
+          step: step.id,
+          checklistStep: step.checklistStep,
+          attempt,
+          kind: "unproductive",
+          title,
+          consecutiveFailedRounds: runLength,
+          outstandingWork: pick("outstandingWork"),
+          roundsMovedIt: pick("roundsMovedIt"),
+          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
+        };
+        stuckFindings.push(rec);
+        unproductiveStep = rec;
+        log(
+          "Step " + step.id + ": the judges agree the loop is not closing \"" + title.slice(0, 110) +
+            "\" (" + summary + "). The finding is real and the work is legal, so it is NOT set aside. " +
+            "Stopping the step and reporting the outstanding work.",
+        );
+        return true;
+      } else {
+        log("Step " + step.id + ": no agreed verdict (" + summary + "); the loop continues");
+      }
+    }
+    return false;
+  }
+
+  // Wake the stuck judges when a detector says so. Nothing here STOPS a step:
+  // the detectors are detectors, and the only three stopping conditions are the
+  // attempt cap, consecutive dead agents, and an `unproductive` verdict. A
+  // detector's output is a reason to look rather than a decision, which is the
+  // same division change-proposal.js records for its own introspection: a
+  // counter cannot tell a hard-but-converging step from a stuck one.
+  async function maybeJudge() {
+    const byCadence = attempt > 0 && attempt % introspectEvery === 0;
+    const byOscillation =
+      oscillations >= maxPhaseOscillations &&
+      oscillations - oscillationsAtLastJudge >= maxPhaseOscillations;
+    const byGate =
+      finalGateFailures >= maxFinalGateFailures &&
+      finalGateFailures - gateFailuresAtLastJudge >= maxFinalGateFailures;
+    if (!byCadence && !byOscillation && !byGate) return false;
+    if (byOscillation) oscillationsAtLastJudge = oscillations;
+    if (byGate) gateFailuresAtLastJudge = finalGateFailures;
+    if (stepFindings.length === 0) return false;
+    log(
+      "Step " + step.id + ": waking the stuck judges (" +
+        (byOscillation
+          ? oscillations + " conformance/test oscillation(s)"
+          : byGate
+            ? finalGateFailures + " final-gate failure(s)"
+            : attempt + " attempts") +
+        ")",
+    );
+    return await judgeAndAct(attempt);
+  }
+
   // Whether the tree as it now stands has had a full tier pass. Every attempt
   // commits, so any attempt invalidates it. A step is never marked done on a
   // false value: when the lenses come back clean and this is false, the full
@@ -1144,10 +1382,121 @@ for (let i = 0; i < plan.steps.length; i++) {
     // continuation of this one.
     deadAttempts = 0;
 
+    // ---- The compile gate --------------------------------------------------
+    //
+    // The conformance and invariants review now runs BEFORE the tests, which is
+    // what makes the loop cheap: most fixes in a step answer that review, and
+    // running the tier set for each of them ran the same suites over and over
+    // while they stayed green. But a reviewer handed code that does not compile
+    // produces confident nonsense, so a build of the changed packages comes
+    // first. It costs seconds and removes the failure mode.
+    const compiles = await agentTry(
+      "Report whether the changed packages compile. Work in " + repo + ". Do not edit anything.\n\n" +
+        "Run `git diff --name-only " + stepRef + "..HEAD` to see what changed, then `go build` over the " +
+        "Go packages among them (`go build ./<pkg>/...`). Nothing else: no tests, no linters, no " +
+        "whole-repo build. If the change touches no Go package, report compiles true.\n\n" +
+        "Also check the lease: run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report " +
+        "whether one is held. A code step must not run while a spec lease is open." +
+        MEMORY_SAFE_NOTE,
+      { schema: COMPILE, label: "compile:" + step.id + ":r" + attempt, phase: "Build" },
+    );
+    if (compiles && compiles.leaseHeld) {
+      // The lease is the security boundary of the spec phase and a code step
+      // must never run under one. Releasing on step exit is the primary
+      // mechanism; this is the check that makes the invariant hold rather than
+      // merely be intended, and it closes the one hazard interleaving
+      // introduces: a spec step that died mid-flight leaving spec/ writable for
+      // whatever runs next.
+      return {
+        status: "lease-leaked",
+        stuckStep: step.id,
+        reason:
+          "a spec write lease was still held when step " + step.id + " (a non-spec step) was about to " +
+          "run, which means an earlier spec step did not release it and spec/ is writable. Release it " +
+          "with `.claude/tools/spec-lease.mjs release` and re-run.",
+        steps: stepResults,
+        commits: stepResults.map((s) => s.commit).filter(Boolean),
+        green: false,
+        reviewClean: false,
+      };
+    }
+    if (compiles && compiles.compiles === false) {
+      stepGreen = false;
+      stepReviewClean = false;
+      phaseOfAttempt = "compile";
+      issues =
+        "The changed packages do not compile, so nothing can review or test them yet. Fix the build " +
+        "first:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n");
+      log("Step " + step.id + " attempt " + attempt + ": does not compile");
+      stepRounds.push({ attempt, phase: "compile", fix: true, commit: res.commit || "", green: false, findingTitles: [] });
+      continue;
+    }
+
+    // ---- Conformance and invariants, BEFORE any test runs ------------------
+    const reviewResults = await reviewStep(step, stepRef, "r" + attempt);
+    // Fail closed: a reviewer that died (null) is not evidence of conformance.
+    const liveReviews = reviewResults.filter(Boolean);
+    const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
+    stepFindings = liveReviews.flatMap((r) => r.findings);
+    stepReviewClean = stepFindings.length === 0 && allReviewersRan;
+
+    if (!stepReviewClean) {
+      stepGreen = false;
+      // Returning to conformance after the tests have run at least once is one
+      // oscillation: a fix answered the reviewer, the tests broke, the fix for
+      // that broke the reviewer again.
+      if (lastPhase === "tests") oscillations++;
+      phaseOfAttempt = "IC";
+      lastPhase = "IC";
+      icRounds++;
+      stepRounds.push({
+        attempt,
+        phase: "IC",
+        fix: attempt > 1 || firstAttemptWasFix,
+        commit: res.commit || "",
+        filesChanged: res.filesChanged || [],
+        testsAddedOrModified: res.testsAddedOrModified || [],
+        green: null,
+        findingTitles: stepFindings.map((f) => f.title).filter(Boolean),
+      });
+      log(
+        "Step " + step.id + " attempt " + attempt + ": " + stepFindings.length +
+          " conformance finding(s)" + (allReviewersRan ? "" : " (a reviewer did not return)") +
+          "; no tests run this round",
+      );
+      // The judges run BEFORE the fixer's brief is written, so a finding they
+      // have just set aside appears as suppressed in the very next brief rather
+      // than one round later.
+      if (await maybeJudge()) break;
+      issues =
+        stepFindings.length > 0
+          ? "This step's code does not match the proposal's design. Fix the code (do not change scope, do " +
+            "not touch spec/). THE PROPOSAL FILE IS OUT OF SCOPE FOR EVERY FINDING BELOW. The findings are " +
+            "reproduced verbatim, and one may name the proposal as the thing to change, or ask for an edit " +
+            "to it to be reverted or restored. Disregard that part of any such finding: it is outside what " +
+            "this step does, the current content of the proposal stands as written whatever its history, " +
+            "and a human has already decided to keep it and review it separately. Do not edit, revert, or " +
+            "restore that file, and do not treat leaving it alone as leaving the finding unaddressed. Take " +
+            "from each finding only what it says about the CODE; where a finding says nothing about the " +
+            "code, note that you left it alone and move on. Each divergence is a defect the step's tests " +
+            "passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO " +
+            "add or strengthen an automated test that asserts the corrected behavior and would FAIL " +
+            "against the pre-fix code, at the tier that owns it. Keep all tests green:\n" +
+            JSON.stringify(stepFindings, null, 2) + suppressedNote(step)
+          : "A design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that " +
+            "this step's code matches the proposal's design for its sections; fix any divergence.";
+      continue;
+    }
+
+    // ---- Conformance is clean, so now the tests --------------------------
+    //
     // Full tiers on the first implementation of a step; scoped on a fix, whose
     // blast radius is usually far narrower than the step's. The final gate
     // below restores the full set, so nothing is marked done on a scoped pass.
     const fullPass = attempt === 1 && !firstAttemptWasFix;
+    phaseOfAttempt = "tests";
+    lastPhase = "tests";
+    testRounds++;
     // Independent verify: a different agent re-runs the step's tiers and
     // gates green. The implementer's self-report is advisory.
     const sv = await agentTry(
@@ -1166,13 +1515,7 @@ for (let i = 0; i < plan.steps.length; i++) {
         (fullPass
           ? "each higher tier this step must run: " +
             ((step.tiers || []).join(", ") || "(none beyond tier 0/1)")
-          : "ONLY those of the step's higher tiers whose subject the LAST FIX changed, out of: " +
-            ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
-            ". Read `git diff HEAD~1..HEAD` first to see what that fix was. Skip a tier it cannot affect and " +
-            "list every tier you skipped, and why, in your notes: a comment, a rename, or a doc line does not " +
-            "need an envtest or an integration tier re-run and those cost tens of minutes each. Err toward " +
-            "running one tier too many rather than skipping one that mattered. This is not the final gate — " +
-            "the whole set runs again once the design review is clean, before the step is marked done"
+          : SCOPING_BLOCK(step)
         ) +
         ". " + PREFLIGHT_NOTE + " MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
       { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
@@ -1192,35 +1535,18 @@ for (let i = 0; i < plan.steps.length; i++) {
       continue;
     }
 
-    // Adversarial design-conformance review of THIS step's diff only.
-    const reviewResults = await reviewStep(step, stepRef, "r" + attempt);
-    // Fail closed: a reviewer that died (null) is not evidence of conformance.
-    // Only declare the step review-clean when every reviewer ran and none
-    // found a divergence.
-    const liveReviews = reviewResults.filter(Boolean);
-    const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
-    stepFindings = liveReviews.flatMap((r) => r.findings);
-    stepReviewClean = stepFindings.length === 0 && allReviewersRan;
     stepRounds.push({
       attempt,
+      phase: "tests",
       fix: attempt > 1 || firstAttemptWasFix,
       commit: res.commit || "",
       filesChanged: res.filesChanged || [],
       testsAddedOrModified: res.testsAddedOrModified || [],
       green: !!(sv && sv.green),
       failures: (sv && sv.failures) || [],
-      findingTitles: stepFindings.map((f) => f.title).filter(Boolean),
+      findingTitles: [],
     });
-    log(
-      "Step " +
-        step.id +
-        " attempt " +
-        attempt +
-        ": green, " +
-        stepFindings.length +
-        " design-conformance finding(s)" +
-        (allReviewersRan ? "" : " (a reviewer did not return; not treated as clean)"),
-    );
+    log("Step " + step.id + " attempt " + attempt + ": conformance clean, tests green");
     // FINAL GATE. The lenses are clean, but if the tree reached this state
     // through scoped runs then no full tier pass has covered it. Run the whole
     // set now, against the exact tree about to be marked done. This is the
@@ -1249,8 +1575,22 @@ for (let i = 0; i < plan.steps.length; i++) {
         fullVerifyCurrent = true;
         log("Step " + step.id + ": full tier pass green");
       } else {
+        // A final-gate failure is a SCOPING MISS by definition: the scoped runs
+        // asserted a fix could not affect some tier and the full pass just
+        // proved otherwise. That is the only direct evidence available about
+        // whether the change-class table is calibrated, so it is recorded
+        // rather than thrown away.
+        finalGateFailures++;
+        gateMisses.push({
+          step: step.id,
+          attempt,
+          failures: (fg && fg.failures) || [],
+          classification: lastClassification,
+          whatWasSkippedAndWhy: lastSkipped,
+        });
         stepGreen = false;
         stepReviewClean = false;
+        lastPhase = "tests";
         issues =
           "The design review is clean, but the full tier pass run against the finished tree is not green. " +
           "Earlier rounds ran only the tiers each fix could affect, so these failures are in tiers those " +
@@ -1258,92 +1598,15 @@ for (let i = 0; i < plan.steps.length; i++) {
           (((fg && fg.failures) || []).map((f) => "- " + f).join("\n") ||
             "- (the final verifier reported not green without listing failures)") +
           ((fg && fg.notes) ? "\nVerifier notes: " + fg.notes : "");
-        log("Step " + step.id + ": full tier pass FAILED after a clean review; returning to the fix loop");
+        log(
+          "Step " + step.id + ": full tier pass FAILED after a clean review (" + finalGateFailures +
+            " so far); returning to the fix loop. Every one of these is a scoping miss and is recorded.",
+        );
+        await maybeJudge();
         continue;
       }
     }
-    // Every introspectEvery attempts, ask whether this loop can still close its
-    // findings. The judges read the round log and the commits before answering,
-    // because the question is about the loop's behaviour rather than the
-    // finding's merits, and a judge reasoning from the finding's text alone
-    // reaches the wrong answer confidently.
-    //
-    // The bar is every judge agreeing on the same non-resolvable verdict at
-    // medium or better. It was unanimous-at-high across three lenses that asked
-    // three different questions, which made the narrowest lens the decider:
-    // only what all three could see was ever detectable, and the two lenses
-    // that judged correctness could not see a loop failing to do work that was
-    // legal and real. These lenses read the same evidence and differ in how
-    // they weigh it, so agreement between them means something.
-    if (!stepReviewClean && stepFindings.length > 0 && attempt % introspectEvery === 0) {
-      log("Step " + step.id + ": " + attempt + " attempts without converging; asking whether the loop can still close its findings");
-      const runLength = unproductiveRunLength(stepRounds);
-      const votes = await judgeStuck(step, stepFindings, stepRounds, attempt);
-      const enough = (v) => v.confidence === "high" || v.confidence === "medium";
-      const all = (verdict) =>
-        votes.length === STUCK_LENSES.length &&
-        votes.every((v) => v.verdict === verdict && enough(v));
-      const summary = votes.map((v) => v.verdict + "/" + v.confidence).join(", ");
-      const titles = votes.map((v) => (v.findingTitle || "").trim()).filter(Boolean);
-      const title = titles[0] || (stepFindings[0] && stepFindings[0].title) || "";
-      const pick = (k) => votes.map((v) => v[k]).filter(Boolean)[0] || "";
 
-      if (all("unresolvable")) {
-        // No legal change closes it: the proposal is the defect. Set it aside
-        // so the loop can finish the rest of the step, and report it.
-        stuckFindings.push({
-          step: step.id,
-          checklistStep: step.checklistStep,
-          attempt,
-          kind: "unresolvable",
-          title,
-          whyCodeIsRight: pick("whyCodeIsRight"),
-          whyProposalIsWrong: pick("whyProposalIsWrong"),
-          roundsMovedIt: pick("roundsMovedIt"),
-          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
-        });
-        log(
-          "Step " + step.id + ": the judges agree no legal change closes \"" + title.slice(0, 110) +
-            "\" (" + summary + "). The code is right and the proposal is wrong. Recorded for a human and " +
-            "set aside for the rest of this step.",
-        );
-      } else if (all("unproductive") && runLength < minUnproductiveRounds) {
-        // The judges agreed, but the loop has not been given enough rounds for
-        // that verdict to mean what it claims. Enforced here as well as in the
-        // brief: a judge that returns it anyway must not be able to stop a step
-        // the fixer has barely started on.
-        log(
-          "Step " + step.id + ": the judges called the loop unproductive, but only " + runLength +
-            " consecutive round(s) have tried and failed and " + minUnproductiveRounds +
-            " are required; the loop continues",
-        );
-      } else if (all("unproductive")) {
-        // A legal change exists and this loop is not making it. Setting the
-        // finding aside would tick the step over a real gap, so the step stops
-        // here and the outstanding work goes to a human instead.
-        const rec = {
-          step: step.id,
-          checklistStep: step.checklistStep,
-          attempt,
-          kind: "unproductive",
-          title,
-          consecutiveFailedRounds: runLength,
-          outstandingWork: pick("outstandingWork"),
-          roundsMovedIt: pick("roundsMovedIt"),
-          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
-        };
-        stuckFindings.push(rec);
-        unproductiveStep = rec;
-        log(
-          "Step " + step.id + ": the judges agree the loop is not closing \"" + title.slice(0, 110) +
-            "\" (" + summary + "). The finding is real and the work is legal, so it is NOT set aside. " +
-            "Stopping the step and reporting the outstanding work.",
-        );
-        break;
-      } else {
-        log("Step " + step.id + ": no agreed verdict (" + summary + "); the loop continues");
-      }
-    }
 
     if (!stepReviewClean) {
       issues =
@@ -1416,13 +1679,17 @@ for (let i = 0; i < plan.steps.length; i++) {
     // running is resumable as soon as that clears, while a genuinely stuck
     // step needs someone to read the findings; reporting the first as the
     // second sends the operator to the wrong place.
+    // Name the phase the step is actually stuck in. Under the conformance-first
+    // order a step can exhaust its attempts without the tests ever running, and
+    // reporting that as "tests not green" sends the reader to the wrong place.
     const reason = unproductiveStep
       ? "the judges agreed the loop was not closing a real finding: " + unproductiveStep.title
       : deadAttempts >= maxDeadAttempts
       ? "subagents are not running (rate limit, exhausted credit, or expired auth), so the step was never attempted on its merits"
-      : !stepGreen
-        ? "tests not green"
-        : "design-conformance divergences outstanding";
+      : !stepReviewClean
+        ? "design-conformance divergences outstanding" +
+          (testRounds === 0 ? " (the tests never ran: the step never got past conformance)" : "")
+        : "tests not green";
     log(
       "Step " +
         step.id +
@@ -1437,6 +1704,10 @@ for (let i = 0; i < plan.steps.length; i++) {
     return {
       status: "step-stuck",
       stuckStep: step.id,
+      // Every final-gate failure across the run. Each is direct evidence about
+      // whether the change-class table is calibrated, which is otherwise
+      // unobtainable, so it is reported rather than thrown away.
+      gateMisses,
       // Recorded even here: a step that aborts is the case where a suppressed
       // proposal defect is most likely to be the reason it could not finish.
       stuckFindings,
@@ -1897,6 +2168,10 @@ return {
   // rather than prevented or reverted; see PROPOSAL_EDITS.
   proposalEdits: proposalEditReport,
   skippedSteps,
+  // Every final-gate failure across the run: a tier the scoped runs said could
+  // not be affected, which the full pass proved otherwise. A class that keeps
+  // appearing here gets its minimum tier set raised.
+  gateMisses,
   commits: stepResults.map((s) => s.commit).filter(Boolean),
   green: finalGreen,
   reviewClean,
