@@ -8,13 +8,12 @@
 // most: the proposal reads "Applied to spec", the presence check runs, and its
 // findings drive the repair loop.
 //
-// Run: node scripts/test-spec-review-focus.mjs
+// Run: node .claude/tests/implement-proposal-focus.test.mjs
+import { loadWorkflow, REPO } from "./harness.mjs";
 import { readFileSync } from "fs";
+import { resolve } from "path";
 
-const SRC = readFileSync(".claude/workflows/implement-proposal.js", "utf8").replace(
-  /^export\s+const\s+meta/m,
-  "const meta",
-);
+const SRC = loadWorkflow(".claude/workflows/implement-proposal.js");
 
 const PLAN = {
   approved: true,
@@ -129,7 +128,7 @@ console.log("\n5. a reviewer that dies fails closed", "");
   // focusMissing empty + base empty means aligned; but if a reviewer returns
   // null the run must not call it aligned. Simulated by an empty run list is
   // not reachable here, so assert the guard exists in source instead.
-  const src = readFileSync(".claude/workflows/implement-proposal.js", "utf8");
+  const src = readFileSync(resolve(REPO, ".claude/workflows/implement-proposal.js"), "utf8");
   check("alignment requires every reviewer to have returned",
     /out\.length === runs\.length && missing\.length === 0/.test(src));
 }

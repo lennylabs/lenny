@@ -7,13 +7,12 @@
 // repair, which prompt the repair sends) is made by the script itself, and the
 // test only supplies the answers an agent would have returned.
 //
-// Run: node scripts/test-reverify-done-steps.mjs
+// Run: node .claude/tests/implement-proposal-reverify.test.mjs
+import { loadWorkflow, REPO } from "./harness.mjs";
 import { readFileSync } from "fs";
+import { resolve } from "path";
 
-const SRC = readFileSync(".claude/workflows/implement-proposal-build.js", "utf8").replace(
-  /^export\s+const\s+meta/m,
-  "const meta",
-);
+const SRC = loadWorkflow(".claude/workflows/implement-proposal-build.js");
 
 // Two planned steps: S1 is ticked in the checklist, S2 is not.
 const PLAN = {

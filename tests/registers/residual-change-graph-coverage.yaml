@@ -18,6 +18,42 @@ version: 1
 class: change-graph-coverage
 entries:
   - member: |-
+      .claude/tests/harness.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the shared harness the workflow behavioural tests run through, executed with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/implement-proposal-focus.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/implement-proposal-reverify.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/implement-proposal-stuck.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/lint-workflows.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a static checker over the agent workflow drivers, which no test tier is selected from
+  - member: |-
+      .claude/tests/run.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the runner for the workflow test suite, run with node rather than selected by a test tier
+  - member: |-
       .claude/workflows/build-gaps-spec-unblock.js
     class: change-graph-coverage
     disposition: excluded
@@ -443,30 +479,6 @@ entries:
     disposition: in-class
     reason: |-
       a schema under the schema tree that no glob key covers while its siblings carry one; it leaves the class when that tree gains a key for it
-  - member: |-
-      scripts/check-workflow-scripts.mjs
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a checker over the agent workflow drivers, which no test tier is selected from
-  - member: |-
-      scripts/test-reverify-done-steps.mjs
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
-  - member: |-
-      scripts/test-stuck-judging.mjs
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
-  - member: |-
-      scripts/test-spec-review-focus.mjs
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
   - member: |-
       scripts/reconcile-test-gaps.py
     class: change-graph-coverage

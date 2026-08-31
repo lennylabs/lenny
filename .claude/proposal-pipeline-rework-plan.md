@@ -1990,7 +1990,6 @@ pipeline itself forced, and every substantive conflict still goes to a person.
 | `scripts/check-workflow-scripts.mjs` | **moved** to `.claude/tests/lint-workflows.mjs` and extended |
 | `scripts/test-stuck-judging.mjs`, `test-reverify-done-steps.mjs`, `test-spec-review-focus.mjs` | **moved** into `.claude/tests/*.test.mjs` |
 | `tests/registers/residual-change-graph-coverage.yaml` | four rows deleted, eight added for the new `.mjs`/`.sh` files. Tier 0 fails without this |
-| `Makefile` | new `check-workflows` target, deliberately not a dependency of `make test` |
 | `close-build-gaps.sh` | rules B, S1, P: lease and status-tool wording, and proposal resolution that accepts **both** layouts |
 | `.claude/workflows/build-gaps-spec-unblock.js` | proposal-path handling for folders |
 | `BUILD-GAPS.md`, `PROPOSAL-QUEUE.md`, `tests/tier11_docs/spec_28_index_rows_test.go` | **not touched by this work.** Each is retargeted by the migrator, per proposal, at the moment that proposal migrates (§2.4) |
@@ -2037,13 +2036,13 @@ the two tools the *pipeline itself* calls (`proposal-status.mjs`, which the
 guard hook and both skills invoke, and `check-proposal-split.mjs`, which the
 migrator invokes), because those are production tooling rather than tests.
 
-Entry point: a `Makefile` target `check-workflows` running `node
-.claude/tests/run.mjs`. It is **not** a dependency of `make test` and not
-wired into any tier, so a red workflow test never blocks a product build and a
-red product build never hides a workflow regression. The two SKILL.md lines
-that today say "run `node scripts/check-workflow-scripts.mjs
-.claude/workflows/*.js` after editing a workflow" become "run `make
-check-workflows`".
+Entry point: `node .claude/tests/run.mjs`. **Nothing outside `.claude/`
+references it** — no `Makefile` target, no tier, no CI job — so the suite is
+self-contained with the workflows and skills it tests, a red workflow test
+never blocks a product build, and a red product build never hides a workflow
+regression. The two SKILL.md lines that say "run `node
+scripts/check-workflow-scripts.mjs .claude/workflows/*.js` after editing a
+workflow" become "run `node .claude/tests/run.mjs`".
 
 **One chore not to forget.** `tests/registers/residual-change-graph-coverage.yaml`
 requires a disposition row for every tracked file that no change-graph glob key
@@ -2373,7 +2372,7 @@ than either end state.
 
 | Phase | Content | Gate |
 |:--|:--|:--|
-| 0 | `.claude/tests/` runner and harness, `lint-workflows.mjs` with its five checks, the four moved files, the register rows, the `check-workflows` Makefile target | `make check-workflows` green on the **unchanged** workflows, and tier 0 still green after the register edit |
+| 0 | `.claude/tests/` runner and harness, `lint-workflows.mjs` with its checks, the four moved files, the register rows | `node .claude/tests/run.mjs` green on the **unchanged** workflows, and tier 0 still green after the register edit |
 | 1 | `proposalFiles()` resolver in both workflows, `proposal-status.mjs`, `check-proposal-split.mjs`, `migrate-proposal.js` and its call from both parents, the status frontmatter, the lease and the new hook, `close-build-gaps.sh` accepting both layouts | H1–H9, T1–T6, M1–M6, C13 |
 | 2 | change-proposal `Init`, six-lens `Validate`, six-stance `Draft`, folder-aware `Bootstrap`, `Conventions` over the file set | B1–B6 |
 | 3 | Split `runReviewLoop`, the spec/non-spec loops, `lockSpecChanges`, sequential verification | B7–B12, B27 |

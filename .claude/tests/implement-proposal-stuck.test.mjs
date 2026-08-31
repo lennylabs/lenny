@@ -6,13 +6,12 @@
 // genuinely incomplete. The old mechanism could not detect it, because its
 // only non-resolvable verdict was "the proposal is wrong".
 //
-// Run: node scripts/test-stuck-judging.mjs
+// Run: node .claude/tests/implement-proposal-stuck.test.mjs
+import { loadWorkflow, REPO } from "./harness.mjs";
 import { readFileSync } from "fs";
+import { resolve } from "path";
 
-const SRC = readFileSync(".claude/workflows/implement-proposal-build.js", "utf8").replace(
-  /^export\s+const\s+meta/m,
-  "const meta",
-);
+const SRC = loadWorkflow(".claude/workflows/implement-proposal-build.js");
 
 const STEP = {
   id: "S21", title: "docs", work: "w", targets: ["TEST-GAPS.md"],
