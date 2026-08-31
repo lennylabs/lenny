@@ -69,6 +69,13 @@ const maxNonSpecReviewRounds = input.maxNonSpecReviewRounds || maxRounds;
 // Off by default, because a non-spec finding that genuinely needs a small spec
 // correction is better fixed than escalated.
 const lockSpecChanges = !!input.lockSpecChanges;
+// The only cap on the fix split. More groups is more focus and more agents;
+// fewer is cheaper and regresses more. Group SIZE is uncapped by design.
+const maxFixGroups = input.maxFixGroups || 7;
+// "auto" lets the design stage triage each finding by effort. "shallow" forces
+// every finding to the trivial path, for a round of pure bookkeeping findings;
+// "deep" forces the architect path, for a run already known to be design-bound.
+const fixDesignDepth = input.fixDesignDepth || "auto";
 // Which skeptic runs first, and whether the second is skipped when the first
 // refuses. Materiality first by default: see the verification block below.
 const verifyOrder =
@@ -516,6 +523,99 @@ const FIX_RESULT = {
       items: { type: "string" },
       description: "Findings closed by recording an open decision rather than by editing, with the constraint any solution must satisfy.",
     },
+    designRejected: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "One entry per finding whose supplied design you judged wrong, naming what you did instead and why. Silently substituting your own design is the failure the design stage exists to remove, so an empty array is the expected answer and a non-empty one is reported.",
+    },
+  },
+};
+
+// The split of one round's confirmed findings into groups that are fixed
+// together. The planner's only cap is the group COUNT; see the fix stage for
+// why group size is deliberately unbounded.
+const FIX_PLAN = {
+  type: "object",
+  required: ["groups"],
+  properties: {
+    groups: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "title", "rationale", "findings", "order"],
+        properties: {
+          id: { type: "string", description: "G1, G2, ..." },
+          title: { type: "string" },
+          rationale: { type: "string", description: "why these findings belong together" },
+          sharedSubject: { type: "string", description: "the text, section, or mechanism they share" },
+          findings: {
+            type: "array",
+            items: { type: "integer" },
+            description: "indices into the confirmed-findings array. Every index appears in exactly one group, and every finding appears.",
+          },
+          risk: { type: "string", enum: ["low", "medium", "high"], description: "how likely fixing this group is to cascade" },
+          order: { type: "integer", description: "1-based; the order the groups are fixed in, so no group's edits destroy a later group's anchors" },
+        },
+      },
+    },
+    notes: { type: "string" },
+  },
+};
+
+// How each finding in one group should be fixed, decided before anything is
+// edited. The effort field is load-bearing: it is what stops a trivial
+// citation correction being handed to an architect.
+const FIX_DESIGN = {
+  type: "object",
+  required: ["designs"],
+  properties: {
+    designs: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["findingTitle", "effort", "chosen"],
+        properties: {
+          findingTitle: { type: "string", description: "copied verbatim from the finding you are designing for" },
+          effort: {
+            type: "string",
+            enum: ["trivial", "moderate", "deep"],
+            description:
+              "trivial: the suggested fix is unambiguous, lands in one place, and changes nothing another section states. moderate: clear but touching more than one statement, or a choice between two obvious options. deep: it needs a mechanism invented or changed, the reviewer left it open-ended, or closing it plausibly cascades.",
+          },
+          chosen: {
+            type: "object",
+            required: ["approach", "why"],
+            properties: {
+              approach: { type: "string" },
+              why: { type: "string" },
+              edits: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["file", "where", "what"],
+                  properties: { file: { type: "string" }, where: { type: "string" }, what: { type: "string" } },
+                },
+              },
+            },
+          },
+          alternatives: {
+            type: "array",
+            description: "what you considered and did not choose, so the fixer neither re-derives them nor silently picks one",
+            items: {
+              type: "object",
+              required: ["approach", "whyNot"],
+              properties: { approach: { type: "string" }, whyNot: { type: "string" } },
+            },
+          },
+          cascades: { type: "array", items: { type: "string" }, description: "every other part of the proposal this fix forces a change to" },
+          invariantsToPreserve: { type: "array", items: { type: "string" } },
+          doNotDo: { type: "array", items: { type: "string" }, description: "the tempting wrong fix, and why it is wrong" },
+        },
+      },
+    },
+    groupNote: { type: "string", description: "one change that closes several of these findings at once, if there is one" },
+    newMechanisms: FIX_RESULT.properties.newMechanisms,
   },
 };
 
@@ -1558,12 +1658,117 @@ function materialityPrompt(f) {
   );
 }
 
-function fixPrompt(confirmed, round, strikes) {
+function fixPlanPrompt(confirmed, round) {
+  return (
+    "Split one round's confirmed review findings into groups that will be fixed together.\n\n" +
+    READ_ONLY +
+    "\n\nPROPOSAL: " + P.dir + ". Loop: " + LOOP.name + ". Round " + round + ".\n\n" +
+    "WHY THIS EXISTS. One fixer holding every finding at once reads none of them closely, and findings " +
+    "that share a root produce edits that contradict each other and become findings of their own a round " +
+    "later. Each group you make gets its own design and its own fixer.\n\n" +
+    "THE ONE CAP is " + maxFixGroups + " groups. There is NO cap on how many findings a group holds, and " +
+    "size is the wrong axis to balance on: forty trivial citation corrections that share a subject belong " +
+    "in ONE group, where one fixer applies them consistently, while three deep design findings belong in " +
+    "three groups however few they are. Balance COHESION and EFFORT, not size.\n\n" +
+    "HOW TO GROUP.\n" +
+    "- Together: findings that touch the same text, the same section, or the same mechanism. Closing those " +
+    "separately is what produces contradictory edits.\n" +
+    "- Alone: a finding whose fix will cascade into other sections. It needs the design stage's full " +
+    "attention and it will move text the other groups are editing.\n" +
+    "- FEWER than the cap when the findings genuinely cluster into fewer subjects. Every group costs a " +
+    "design agent and a fix agent, so an unnecessary group is pure waste.\n\n" +
+    "ORDER the groups so that no group's edits destroy an anchor a later group needs. Fixing happens in " +
+    "the order you give.\n\n" +
+    "EVERY finding index appears in EXACTLY ONE group, and every finding appears. A partition that drops " +
+    "or duplicates a finding is rejected and the whole round falls back to one group, which is worse than " +
+    "any split you could make.\n\n" +
+    "THE CONFIRMED FINDINGS, indexed from 0:\n" +
+    JSON.stringify(confirmed.map((f, i) => ({ i, title: f.title, where: f.where, area: f.area, kind: f.kind })), null, 2) +
+    promptFor("fix-plan")
+  );
+}
+
+function fixDesignPrompt(group, confirmed, round) {
+  const picked = (group.findings || []).map((i) => confirmed[i]).filter(Boolean);
+  const forced =
+    fixDesignDepth === "shallow"
+      ? "\n\nTHE CALLER HAS FORCED SHALLOW MODE. Treat every finding as trivial: apply the reviewer's " +
+        "suggested fix and do no investigation. Use this budget even where you would otherwise dig.\n"
+      : fixDesignDepth === "deep"
+        ? "\n\nTHE CALLER HAS FORCED DEEP MODE. Treat every finding as deep and give each the architect " +
+          "treatment below, including the ones that look trivial.\n"
+        : "";
+  return (
+    "Decide HOW each finding in one group should be fixed, before anything is edited.\n\n" +
+    READ_ONLY +
+    " You produce a design; a different agent applies it.\n\n" +
+    CONTEXT +
+    "\n\nLoop: " + LOOP.name + ". Round " + round + ". Group " + group.id + " — " + (group.title || "") +
+    "\nWhy these are together: " + (group.rationale || "not stated") +
+    (group.sharedSubject ? "\nWhat they share: " + group.sharedSubject : "") +
+    "\n\n" +
+    "TRIAGE FIRST, AND LET THE TRIAGE GOVERN YOUR BUDGET. Classify each finding as trivial, moderate, or " +
+    "deep BEFORE you investigate anything, and then spend accordingly. Spending deep effort on a trivial " +
+    "finding is a defect in your work, not thoroughness: a group of eight trivial findings should cost a " +
+    "fraction of what a single deep one costs.\n" +
+    "  trivial — the reviewer's suggested fix is unambiguous, lands in one place, and changes nothing " +
+    "another section states. Output one line: apply as suggested. Read nothing. Most citation, " +
+    "bookkeeping, and attribution findings are trivial.\n" +
+    "  moderate — clear, but touching more than one statement or choosing between two obvious options. " +
+    "Output the choice, the sites, and one sentence of why.\n" +
+    "  deep — a mechanism must be invented or changed, the reviewer left it open-ended, or closing it " +
+    "plausibly cascades. Only these get what follows." +
+    forced +
+    "\n\nON A DEEP FINDING YOU ARE THE ARCHITECT. Establish ground truth in the repository BEFORE you read " +
+    "what the proposal says about the mechanism: specifying against the proposal's own prose is how a " +
+    "mechanism gets into the state that produced this finding. Then answer, in order:\n" +
+    "  1. Does an existing spec surface, RPC, frame, field, or code path already carry this? Project " +
+    "principles: " + PRINCIPLES + "\n" +
+    "  2. Is there ONE change that closes several findings in this group at once? Say so in groupNote.\n" +
+    "  3. Is the strongest answer to DELETE something rather than specify it? A smaller mechanism beats a " +
+    "better-specified larger one, and this is the outcome most worth reaching for.\n" +
+    "  4. If a new mechanism is unavoidable: what state does it read, which sites set and clear that " +
+    "state, who are ALL its callers including every type satisfying a changed interface, what happens when " +
+    "it does not fire and what observes that, and which test pins it at which tier? Declare it in " +
+    "newMechanisms with those filled in. An unspecified mechanism is a defect handed to a later round.\n" +
+    "  5. What else in the proposal must change as a consequence? Name every section in cascades.\n\n" +
+    "Read " + repo + "/.claude/rules/code-best-practices.md, doc-content.md, and channel-naming.md when " +
+    "the design touches their domains.\n\n" +
+    "PREVENT THE PROPOSAL GROWING HAIR. It should read as ONE coherent design when this loop ends, not as " +
+    "a design plus forty patches. A fix that adds a conditional to avoid restating a rule, adds a second " +
+    "mechanism that nearly duplicates an existing one, or answers a finding with an exception clause, is " +
+    "hair. Say so when you are proposing one, and give the coherent alternative even when it is larger, so " +
+    "the choice is made deliberately rather than by accretion.\n\n" +
+    "RECORD WHAT YOU REJECTED. The fixer is given your alternatives so it neither re-derives them nor " +
+    "quietly picks one you already ruled out. And fill doNotDo with the tempting wrong fix: this loop's " +
+    "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
+    "THE FINDINGS IN THIS GROUP:\n" +
+    JSON.stringify(picked, null, 2) +
+    promptFor("fix-design")
+  );
+}
+
+function fixPrompt(confirmed, round, strikes, group, design) {
+  const designBlock = design
+    ? "\n\nTHE DESIGN FOR THIS GROUP. A separate agent established ground truth in the repository and " +
+      "decided how each finding should be closed, before anything was edited. APPLY IT. Your scope for " +
+      "design decisions is narrow here: you are applying a design rather than inventing one.\n" +
+      "  The alternatives are listed so you neither re-derive them nor quietly pick one that was already " +
+      "ruled out. `doNotDo` is the tempting wrong fix; do not take it.\n" +
+      "  `cascades` names what else must change as a consequence, and it is part of the fix rather than a " +
+      "note about it.\n" +
+      "  If you judge a design WRONG, say so in designRejected with what you did instead and why. Do not " +
+      "substitute your own silently: that is the failure this stage exists to remove.\n\n" +
+      JSON.stringify(design, null, 2)
+    : "\n\nNo design was produced for this group, so decide the fix yourself, with the care the design " +
+      "stage would have applied: establish ground truth in the repository before you specify a mechanism, " +
+      "and prefer deleting something to specifying it.";
   return (
     "You are the fixer for round " +
     round +
     " of the " + LOOP.name + " convergence loop on the proposal at " +
     P.dir +
+    (group ? ", working on group " + group.id + " of this round's findings" : "") +
     ".\n\n" +
     CONTEXT +
     "\n\nHARD CONSTRAINT. " + LOOP.editable +
@@ -1590,7 +1795,9 @@ function fixPrompt(confirmed, round, strikes) {
     repo +
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
     JSON.stringify(confirmed, null, 2) +
-    "\n\nReturn a short summary listing each finding and the exact edit you made for it."
+    designBlock +
+    "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
+    promptFor("fix")
   );
 }
 
@@ -2840,43 +3047,147 @@ async function runReviewLoop(cfg) {
       .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
       .join("\n");
     const preFixSnap = await snapshot("r" + round + "-prefix");
-    const fixOut = await robustAgent(
-      fixPrompt(confirmed, round, strikeLines || null),
-      { label: "r" + round + ":fix", phase: "Round " + round + ": fix", schema: FIX_RESULT },
+
+    // ---- Plan the split ---------------------------------------------------
+    //
+    // One fixer for every confirmed finding was the loop's largest source of
+    // its own defects: findings that share a root produce edits that
+    // contradict each other, and a fixer holding twenty findings at once
+    // reads none of them closely. The findings are split into cohesive
+    // groups, each group gets a design, and each design gets its own fixer.
+    //
+    // The ONLY cap is on the number of groups. Group size is deliberately
+    // unbounded: forty trivial citation corrections that share a subject
+    // belong in one group, where the design stage triages them in a handful
+    // of tokens and one fixer applies them consistently, while three deep
+    // design findings belong in three groups however few they are. A size cap
+    // would split the first case for no reason, would not help the second,
+    // and combined with a group cap would silently bound how many findings a
+    // round can fix at all.
+    let groups = [{ id: "G1", title: "all findings", findings: confirmed.map((_, i) => i), order: 1 }];
+    if (confirmed.length > 1) {
+      const planned = await robustAgent(fixPlanPrompt(confirmed, round), {
+        label: "r" + round + ":fix-plan",
+        phase: "Round " + round + ": fix",
+        schema: FIX_PLAN,
+      });
+      // A planner that drops a finding loses it silently, so the partition is
+      // checked rather than trusted. Any violation falls back to one group of
+      // everything, which is the old behaviour and is safe.
+      const seen = [];
+      let ok = !!(planned && Array.isArray(planned.groups) && planned.groups.length > 0);
+      if (ok) {
+        for (const g of planned.groups) {
+          for (const i of g.findings || []) {
+            if (typeof i !== "number" || i < 0 || i >= confirmed.length || seen.includes(i)) ok = false;
+            else seen.push(i);
+          }
+        }
+        if (seen.length !== confirmed.length) ok = false;
+      }
+      if (ok && planned.groups.length > maxFixGroups) {
+        log(
+          "Round " + round + ": the planner returned " + planned.groups.length +
+            " groups against a cap of " + maxFixGroups + "; merging the tail",
+        );
+        const head = planned.groups.slice(0, maxFixGroups - 1);
+        const tail = planned.groups.slice(maxFixGroups - 1);
+        head.push({
+          id: "G" + maxFixGroups,
+          title: "merged tail",
+          rationale: "the planner exceeded the group cap; these were combined",
+          findings: tail.flatMap((g) => g.findings || []),
+          order: maxFixGroups,
+        });
+        planned.groups = head;
+      }
+      if (ok) {
+        groups = planned.groups
+          .slice()
+          .sort((a, b) => (a.order || 0) - (b.order || 0));
+        log(
+          "Round " + round + ": " + confirmed.length + " finding(s) split into " +
+            groups.length + " group(s): " + groups.map((g) => g.id + "(" + (g.findings || []).length + ")").join(" "),
+        );
+      } else {
+        log(
+          "Round " + round + ": the fix planner did not return a clean partition of the findings; " +
+            "falling back to one group of all " + confirmed.length,
+        );
+      }
+    }
+
+    // ---- Design each group, then fix it -----------------------------------
+    //
+    // Design runs in parallel across groups (nothing is being edited yet) and
+    // fixing runs sequentially (the groups edit the same files, and concurrent
+    // edits to one markdown file lose writes). A design that dies leaves its
+    // group to the old fixer brief, which is safe, and marks the group so the
+    // introspection pass can see a run whose design stage keeps failing.
+    const designs = await parallel(
+      groups.map((g) => () =>
+        robustAgent(fixDesignPrompt(g, confirmed, round), {
+          label: "r" + round + ":fix-design:" + g.id,
+          phase: "Round " + round + ": fix",
+          schema: FIX_DESIGN,
+        }),
+      ),
     );
-    const fixSummary = fixOut && fixOut.summary ? fixOut.summary : fixOut;
-    // What the fixer actually did, as against what it says it did: the post-fix
-    // reviewer diffs against the pre-fix snapshot rather than trusting the summary.
-    const roundMechanisms = (fixOut && fixOut.newMechanisms) || [];
-    roundMechanisms.forEach((m) =>
-      introducedMechanisms.push({ name: m.name, round, strikes: 0 }),
-    );
-    if (roundMechanisms.length) {
+    const designless = groups.filter((_, i) => !designs[i]).map((g) => g.id);
+    if (designless.length) {
       log(
-        "Round " + round + ": fixer introduced " + roundMechanisms.length +
-        " new mechanism(s): " + roundMechanisms.map((m) => m.name).join(", "),
+        "Round " + round + ": no design returned for " + designless.join(", ") +
+          "; those groups are fixed from the findings alone",
       );
+      history[history.length - 1].designless = designless;
     }
-    if (fixOut && fixOut.escalated && fixOut.escalated.length) {
-      log("Round " + round + ": " + fixOut.escalated.length + " finding(s) closed by escalation");
-      history[history.length - 1].escalated = fixOut.escalated;
+
+    const fixSummaries = [];
+    const roundMechanisms = [];
+    const escalatedAll = [];
+    const designRejected = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      const picked = (g.findings || []).map((i) => confirmed[i]).filter(Boolean);
+      if (picked.length === 0) continue;
+      const out = await robustAgent(
+        fixPrompt(picked, round, strikeLines || null, g, designs[gi]),
+        {
+          label: "r" + round + ":fix:" + g.id,
+          phase: "Round " + round + ": fix",
+          schema: FIX_RESULT,
+        },
+      );
+      if (!out) {
+        log("Round " + round + ": the fixer for " + g.id + " did not return");
+        continue;
+      }
+      fixSummaries.push(g.id + ": " + (out.summary || ""));
+      for (const m of out.newMechanisms || []) roundMechanisms.push(m);
+      for (const e of out.escalated || []) escalatedAll.push(e);
+      for (const d of out.designRejected || []) designRejected.push(g.id + ": " + d);
     }
-    history[history.length - 1].newMechanisms = roundMechanisms.map((m) => m.name);
-    confirmed.forEach((f) => fixedTitles.push(f.title));
-    history[history.length - 1].fixSummary = fixSummary || "fixer unavailable";
-    // A non-spec round that edited the staged spec edits is worth surfacing:
-    // the spec staging converged in an earlier loop and every edit here
-    // reopens it, so a run that quietly rewrote it should not look the same as
-    // one that did not.
-    if (
-      LOOP.name === "non-spec" &&
-      !lockSpecChanges &&
-      /spec-changes\.md/.test(String(fixSummary || ""))
-    ) {
-      LOOP.specTouched.push({ round, note: String(fixSummary).slice(0, 200) });
-      history[history.length - 1].specTouched = true;
-      log("Round " + round + ": the non-spec fixer edited the staged spec edits");
+    const fixOut = {
+      summary: fixSummaries.join("\n\n"),
+      newMechanisms: roundMechanisms,
+      escalated: escalatedAll,
+    };
+    const fixSummary = fixOut.summary;
+    if (designRejected.length) {
+      // A fixer that silently substitutes its own design is the failure this
+      // whole stage exists to remove, so the substitution is surfaced.
+      log(
+        "Round " + round + ": " + designRejected.length +
+          " design(s) the fixer judged wrong and departed from",
+      );
+      history[history.length - 1].designRejected = designRejected;
     }
+    history[history.length - 1].groups = groups.map((g) => ({
+      id: g.id,
+      title: g.title,
+      size: (g.findings || []).length,
+      risk: g.risk,
+    }));
 
     // Narrow post-fix review of the fixer's own edits, then at most ONE follow-up
     // fix. The cap is deliberate: this is a correction pass on fresh text, not a

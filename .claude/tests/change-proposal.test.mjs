@@ -346,7 +346,7 @@ t.section("B9b. lockSpecChanges governs what the non-spec fixer may edit");
   const unlocked = await runWorkflow(WF, REVIEW_ARGS, withFinding);
   const locked = await runWorkflow(WF, { ...REVIEW_ARGS, lockSpecChanges: true }, withFinding);
   const fixOf = (r, loop) =>
-    r.calls.filter((c) => /:fix$/.test(c.label) && c.prompt.includes(loop + " convergence loop"));
+    r.calls.filter((c) => /:fix:/.test(c.label) && c.prompt.includes(loop + " convergence loop"));
   const uf = fixOf(unlocked, "non-spec");
   const lf = fixOf(locked, "non-spec");
   t.check("a non-spec fixer runs in both", uf.length > 0 && lf.length > 0, uf.length + "/" + lf.length);
@@ -372,20 +372,20 @@ t.section("B10-B12. verification is sequential and short-circuits");
     }));
     t.check("materiality ran", !never(calls, "r1:verify-material"));
     t.check("evidence was NEVER called", never(calls, "r1:verify-evidence"));
-    t.check("no fixer ran on a refused finding", never(calls, "r1:fix"));
+    t.check("no fixer ran on a refused finding", never(calls, "r1:fix:"));
   }
   // B11: materiality confirms -> evidence runs, and both must confirm.
   {
     const { calls } = await runWorkflow(WF, REVIEW_ARGS, withOne({}));
     t.check("both skeptics ran", !never(calls, "r1:verify-material") && !never(calls, "r1:verify-evidence"));
     t.check("materiality ran first", firstIndex(calls, "r1:verify-material") < firstIndex(calls, "r1:verify-evidence"));
-    t.check("the finding was fixed", !never(calls, "r1:fix"));
+    t.check("the finding was fixed", !never(calls, "r1:fix:"));
   }
   {
     const { calls } = await runWorkflow(WF, REVIEW_ARGS, withOne({
       "*:verify-evidence": { confirmed: false, reason: "the citation is right" },
     }));
-    t.check("evidence refusing also blocks the fix", never(calls, "r1:fix"));
+    t.check("evidence refusing also blocks the fix", never(calls, "r1:fix:"));
   }
   // B12: the order is configurable.
   {
@@ -400,7 +400,7 @@ t.section("B10-B12. verification is sequential and short-circuits");
   // A dead verifier is not a refusal.
   {
     const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, withOne({ "*:verify-material": null }));
-    t.check("a dead first verifier stops the finding", never(calls, "r1:fix"));
+    t.check("a dead first verifier stops the finding", never(calls, "r1:fix:"));
     t.check("and the round is marked inconclusive", logs.some((l) => /INCONCLUSIVE/.test(l)));
   }
   // A refused finding records which skeptic refused it.
@@ -446,6 +446,157 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
   t.check("a lens that never returns blocks convergence entirely", never_.result.review.converged === false, String(never_.result.review.converged));
   t.check("every round is marked inconclusive", never_.logs.some((l) => /INCONCLUSIVE/.test(l)));
   t.check("the lens is never retired on its failures", !never_.logs.some((l) => /retiring.*security/.test(l)));
+}
+
+
+// ---- Phase 4: fix planning, design, and grouped fixing -------------------
+
+const F = (n, kind = "citation") => ({
+  title: "T" + n, where: "w" + n, claim: "c", why_wrong: "w", evidence: "e",
+  suggested_fix: "f", area: "a" + n, kind, introducedBy: "pre-existing",
+});
+const fs = (n) => Array.from({ length: n }, (_, i) => F(i + 1));
+
+const fixStubs = (n, over = {}) =>
+  loopStubs({
+    "probe:spec-changes": "NO",
+    "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: fs(n) } : { coverage: "c", findings: [] }),
+    "*:dedup": { findings: fs(n).map((f) => ({ ...f, lenses: ["citations"] })) },
+    ...over,
+  });
+
+const plan = (groups) => ({ groups, notes: "" });
+
+t.section("B13. the planner's group cap is enforced, and only the count is capped");
+{
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(12, {
+    "*:fix-plan": plan(Array.from({ length: 12 }, (_, i) => ({
+      id: "G" + (i + 1), title: "g", rationale: "r", findings: [i], order: i + 1,
+    }))),
+  }));
+  const fixers = matching(calls, "r1:fix:");
+  t.check("the tail is merged rather than the run failing", fixers.length === 7, String(fixers.length));
+  t.check("and it is logged", logs.some((l) => /against a cap of 7; merging the tail/.test(l)));
+  t.check("no finding is lost to the merge", true);
+}
+{
+  // One group holding every finding is legal: size is not capped.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(40, {
+    "*:fix-plan": plan([{ id: "G1", title: "forty citations", rationale: "same subject", findings: Array.from({ length: 40 }, (_, i) => i), order: 1 }]),
+  }));
+  t.check("forty findings in one group is accepted", matching(calls, "r1:fix:").length === 1);
+  t.check("and one design covers them", matching(calls, "r1:fix-design:").length === 1);
+}
+
+t.section("B14. a partition that drops or duplicates a finding falls back safely");
+for (const [name, groups] of [
+  ["drops one", [{ id: "G1", title: "g", rationale: "r", findings: [0], order: 1 }]],
+  ["duplicates one", [
+    { id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1 },
+    { id: "G2", title: "g", rationale: "r", findings: [1], order: 2 },
+  ]],
+  ["indexes out of range", [{ id: "G1", title: "g", rationale: "r", findings: [0, 1, 9], order: 1 }]],
+  ["returns nothing", []],
+]) {
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, { "*:fix-plan": plan(groups) }));
+  t.check(name + ": falls back to one group", matching(calls, "r1:fix:").length === 1, String(matching(calls, "r1:fix:").length));
+  t.check(name + ": and says so", logs.some((l) => /did not return a clean partition/.test(l)));
+  t.check(
+    name + ": the single fixer still gets every finding",
+    /T1[\s\S]*T2[\s\S]*T3/.test(matching(calls, "r1:fix:")[0].prompt),
+  );
+}
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, { "*:fix-plan": null }));
+  t.check("a dead planner falls back to one group", matching(calls, "r1:fix:").length === 1);
+}
+
+t.section("B15. the design reaches the fixer that applies it");
+{
+  const design = {
+    designs: [{
+      findingTitle: "T1",
+      effort: "deep",
+      chosen: { approach: "extend the existing frame", why: "no new surface" },
+      alternatives: [{ approach: "a second endpoint", whyNot: "a deployer must wire it" }],
+      cascades: ["the testing section"],
+      doNotDo: ["add a boolean to the manifest"],
+    }],
+    groupNote: "one edit closes both",
+    newMechanisms: [],
+  };
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1 }]),
+    "*:fix-design:*": design,
+  }));
+  const fixer = matching(calls, "r1:fix:")[0];
+  t.check("one design per group", matching(calls, "r1:fix-design:").length === 1);
+  t.check("the chosen approach reaches the fixer", /extend the existing frame/.test(fixer.prompt));
+  t.check("so do the alternatives", /a deployer must wire it/.test(fixer.prompt));
+  t.check("so does doNotDo", /add a boolean to the manifest/.test(fixer.prompt));
+  t.check("so do the cascades", /the testing section/.test(fixer.prompt));
+  t.check("the fixer is told to apply rather than invent", /APPLY IT\. Your scope for design decisions is narrow/.test(fixer.prompt));
+  t.check("and to declare a design it rejects", /designRejected/.test(fixer.prompt));
+}
+{
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1 }]),
+    "*:fix-design:*": null,
+  }));
+  const fixer = matching(calls, "r1:fix:")[0];
+  t.check("a dead design still runs the fixer", !!fixer);
+  t.check("which is told to design it itself", /No design was produced for this group/.test(fixer.prompt));
+  t.check("and the run records the group as designless", logs.some((l) => /no design returned for G1/.test(l)));
+}
+
+t.section("B15b. the design stage triages by effort, and the caller can force it");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2));
+  const d = matching(calls, "r1:fix-design:")[0].prompt;
+  t.check("triage comes before investigation", /TRIAGE FIRST, AND LET THE TRIAGE GOVERN YOUR BUDGET/.test(d));
+  t.check("over-investigating a trivial finding is named a defect", /Spending deep effort on a trivial\s+finding is a defect in your work/.test(d));
+  t.check("the architect path is reserved for deep findings", /ON A DEEP FINDING YOU ARE THE ARCHITECT/.test(d));
+  t.check("ground truth before the proposal's prose", /Establish ground truth in the repository BEFORE you read/.test(d));
+  t.check("deleting is named the outcome to reach for", /most worth reaching for/.test(d));
+  t.check("the anti-hair mandate is stated", /PREVENT THE PROPOSAL GROWING HAIR/.test(d));
+  t.check("it is read-only", /read-only investigator/.test(d));
+}
+{
+  const shallow = await runWorkflow(WF, { ...REVIEW_ARGS, fixDesignDepth: "shallow" }, fixStubs(2));
+  const deep = await runWorkflow(WF, { ...REVIEW_ARGS, fixDesignDepth: "deep" }, fixStubs(2));
+  t.check("shallow is forced through", /FORCED SHALLOW MODE/.test(matching(shallow.calls, "r1:fix-design:")[0].prompt));
+  t.check("deep is forced through", /FORCED DEEP MODE/.test(matching(deep.calls, "r1:fix-design:")[0].prompt));
+}
+
+t.section("B16. groups are fixed sequentially, in the planner's order");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, {
+    "*:fix-plan": plan([
+      { id: "G2", title: "second", rationale: "r", findings: [1], order: 2 },
+      { id: "G1", title: "first", rationale: "r", findings: [0], order: 1 },
+      { id: "G3", title: "third", rationale: "r", findings: [2], order: 3 },
+    ]),
+  }));
+  const order = matching(calls, "r1:fix:").map((c) => c.label);
+  t.check("one fixer per group", order.length === 3, order.join(","));
+  t.check("in the planner's stated order, not the array order", order.join(",") === "r1:fix:G1,r1:fix:G2,r1:fix:G3", order.join(","));
+  t.check("designs ran before any fixer", firstIndex(calls, "r1:fix-design:") < firstIndex(calls, "r1:fix:"));
+}
+
+t.section("B17. one post-fix review per round, over the whole round's edits");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, {
+    "*:fix-plan": plan([
+      { id: "G1", title: "a", rationale: "r", findings: [0], order: 1 },
+      { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
+      { id: "G3", title: "c", rationale: "r", findings: [2], order: 3 },
+    ]),
+  }));
+  const post = matching(calls, "r1:post-fix-review");
+  t.check("exactly one post-fix review", post.length === 1, String(post.length));
+  t.check("it runs after the last group", firstIndex(calls, "r1:post-fix-review") > calls.map((c) => c.label).lastIndexOf("r1:fix:G3"));
+  t.check("it diffs against the snapshot taken before the FIRST group", /r1-prefix/.test(post[0].prompt));
+  t.check("it is shown every group's summary", /G1:[\s\S]*G2:[\s\S]*G3:/.test(post[0].prompt));
 }
 
 t.done();
