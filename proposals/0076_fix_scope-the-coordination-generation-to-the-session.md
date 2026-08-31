@@ -106,20 +106,25 @@ unconditionally on a successful fence, and `holdState` (`pkg/adapter/holdstate.g
 increments on legitimate handoffs, so the metric the specification designates for detecting split-brain
 reports healthy ones.
 
-### 1.4 Why this is not visible today, and why it soon will be
+### 1.4 What kept this out of sight, and why it is now exposed
 
-`CoordinatorFence` calls `checkSession` (`pkg/adapter/session.go:346`), which reads the pod-global
-`Server.sessionID`. Only `claimSession` and `claimSessionForConfigure` write that field, and a concurrent
-pod's `StartSession` returns early into `startSessionSlot` (`pkg/adapter/slotsession.go:27`), which records
-the session on the slot-registry entry and never touches `Server.sessionID`. On a concurrent pod the guard
-therefore fails first, and the fence never reaches the pod-wide counter. Coordinator handoff is already
-broken on those pods, but it **fails closed**.
+Until proposal 0073 landed, `CoordinatorFence` called `checkSession`, which read the pod-global
+`Server.sessionID`. Only `claimSession` and `claimSessionForConfigure` wrote that field, and a concurrent
+pod's `StartSession` returned early into `startSessionSlot` (`pkg/adapter/slotsession.go`), which recorded
+the session on the slot-registry entry and never touched `Server.sessionID`. On a concurrent pod the guard
+therefore failed first, the fence never reached the pod-wide counter, and coordinator handoff was already
+broken on those pods while **failing closed**.
 
-Proposal 0073 merges `checkSession` and `checkSlotSession` into a single `checkSessionBound` resolving
-through the slot registry, which repairs the guard on every pod. 0073 §1.9 records this consequence for the
-five handlers that call `checkSession` with no slot branch, of which `CoordinatorFence` and
-`CheckpointBarrier` are two. The repaired guard is correct and necessary. Its effect here is to unmask this
-defect: the fence stops failing closed and starts succeeding against a pod-wide counter.
+Proposal 0073 merged `checkSession` and `checkSlotSession` into a single `checkSessionBound`
+(`pkg/adapter/slotsession.go:267`) resolving through the slot registry, and removed the `Server.sessionID`
+field the old guard read. `CoordinatorFence` now calls `checkSessionBound` (`pkg/adapter/coordination.go:89`),
+so the guard is repaired on every pod. 0073 §1.9 records this consequence for the five handlers that called
+`checkSession` with no slot branch, of which `CoordinatorFence` and `CheckpointBarrier` are two. The
+repaired guard is correct and necessary. Its effect here is to unmask this defect: the fence no longer fails
+closed and instead succeeds against a pod-wide counter.
+
+That masking is gone as of 0073's implementation, so the transition below has already happened in the tree
+rather than being a consequence this proposal anticipates.
 
 The transition is from *fails closed* to *succeeds incorrectly*. On availability that is an improvement. On
 correctness it is a regression, and it is the kind that surfaces as an unexplained stuck session rather

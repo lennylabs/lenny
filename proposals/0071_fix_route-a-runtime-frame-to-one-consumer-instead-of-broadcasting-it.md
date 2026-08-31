@@ -25,9 +25,16 @@ A pod runs one runtime process behind one socket and one reader.
 `SocketRuntimeProcess.broadcast` hands the identical line to every registered subscriber
 (`pkg/adapter/socketruntime.go:248-258`), and `Output` ignores its session-id argument entirely — the
 parameter is declared `_ string` (`:340`). Addressing happens afterwards, N times over, in a
-`demuxSlotOutput` goroutine per Attach stream (`pkg/adapter/attach.go:275-303`) whose filter is
+`demuxSessionOutput` goroutine per Attach stream (`pkg/adapter/attach.go:314`), whose per-frame predicate
+`deliverToSession` (`:345`) keeps a frame only when its address matches the stream's own session:
 
-    if fs := frameSlotID(line); fs != "" && fs != slotID { continue }
+    switch addr := frameSessionID(line); {
+    case addr == sessionID:
+        return true
+    case addr != "":
+        // A co-tenant's frame belongs to a sibling Attach stream.
+        return false
+    }
 
 On a four-slot pod, four goroutines each receive every frame and discard three-quarters of them. A frame
 reaches the right session because every other consumer agreed to drop it.
@@ -72,7 +79,7 @@ is a no-op before that. And it identifies the behaviour the hoist must reproduce
 ## 2. Decisions
 
 1. **The reader resolves the address; consumers do not filter.** `SocketRuntimeProcess` holds a map from
-   address to one consumer and delivers each frame to at most one. `demuxSlotOutput` and the per-stream
+   address to one consumer and delivers each frame to at most one. `demuxSessionOutput` and the per-stream
    filtering it performs are removed, and with them 0069's `set_tracing_context` predicate, which routing
    subsumes.
 
@@ -116,10 +123,10 @@ current `subscriber` carries plus the `sessionID` the registration was made for.
 `Output` gains the address it currently ignores. Its signature stops taking a session id it does not use
 and takes `(ctx, address string)`; `Attach` passes its own `slotID`. Registering an address already
 present is refused, which makes the one-consumer-per-address invariant enforced rather than assumed —
-`startSessionSlot` already refuses a claim on an occupied slot with `Unavailable`
+`claimSessionSlot` (`pkg/adapter/slotsession.go:52`) already refuses a claim on an occupied slot with `Unavailable`
 (`pkg/adapter/slotsession.go:41`), so the refusal is reachable only on an adapter bug.
 
-`fanOut` reads a line, extracts its address with the existing `frameSlotID` (`pkg/adapter/slotframe.go`),
+`fanOut` reads a line, extracts its address with the existing `frameSessionID` (`pkg/adapter/slotframe.go:18`),
 and delivers to `consumers[address]` if present. Absent, it increments a counter and logs a protocol error
 naming the address and the frame type. `broadcast` is deleted.
 
@@ -192,7 +199,8 @@ purpose is to be excepted.
 duplicate registration, the unknown-address counter and log, and the deletion of `broadcast`. `Output`
 takes an address.
 
-`pkg/adapter/attach.go`: pass `slotID` to `Output`; delete `demuxSlotOutput` and its call site; delete
+`pkg/adapter/attach.go`: pass the session identifier to `Output`; delete `demuxSessionOutput`, its
+call site (`:70`), and `deliverToSession`; delete
 0069's `set_tracing_context` predicate.
 
 ### CODE-2. One heartbeat per runtime process
@@ -235,7 +243,7 @@ model of one runtime process per pod is stated by both the specification and the
 - `pkg/adapter/socketruntime.go` — CODE-1 and the process-owned monitor.
 - `pkg/adapter/attach.go` — CODE-1 and CODE-2 removals.
 - `pkg/adapter/heartbeat.go` — CODE-2.
-- `pkg/adapter/slotframe.go` — unchanged; `frameSlotID` becomes the reader's address extractor.
+- `pkg/adapter/slotframe.go` — unchanged; `frameSessionID` becomes the reader's address extractor.
 - `spec/28_communication-channels.md` §28.5.3 — SPEC-1.
 - `pkg/adapter` tier-1 cases, `tests/tier7a_load_local`, `tests/tier8_chaos`, `tests/tier9_security`, and
   their `tests/spec-map.json` entries, per §4.
