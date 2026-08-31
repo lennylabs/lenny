@@ -1,136 +1,156 @@
 ---
 name: implement-proposal
-description: Implement an approved spec proposal end to end. Applies the proposal's staged spec edits to spec/ and verifies them, then (by default) implements the spec change in code via the build subworkflow and closes the BUILD-GAPS.md findings that reference it. Pass "spec-only" to land and verify the spec without touching code. Use after a proposal is approved.
-argument-hint: <path to proposals/*.md> [spec-only]
+description: Implement an approved proposal end to end by running its implementation checklist as one sequence, landing each spec-lane step's staged edits under a scoped write lease and building each code-lane step with tests, then closing the BUILD-GAPS.md findings that reference it. Pass "spec-only" to run the leading spec-lane prefix and stop. Use after a proposal is approved.
+argument-hint: <path to a proposal> [spec-only]
 allowed-tools: Workflow Agent Bash Read Write Edit Grep Glob TaskStop
 ---
 
 # Implement proposal
 
-This skill takes an approved spec proposal and carries it through to implementation. It applies the staged spec edits to `spec/` and verifies exact alignment, then implements the spec change in code through the `implement-proposal-build` subworkflow (blast radius, ordered build sequence, step-by-step implementation with tests), and closes the findings that reference the proposal. The spec always lands and is verified before any code.
+This skill takes an approved proposal and carries it through to implementation. It is the implementation stage of the pipeline: `change-proposal` writes and converges a proposal, a human approves it, and this runs it.
 
-It is the implementation stage of the proposal pipeline: `change-proposal` writes and converges a proposal, a human approves it, and `implement-proposal` lands the spec and implements the code. It unifies the former `spec-apply` (land and verify spec) and `spec-implement` (plan, build code, close findings) into one entry point.
+## One execution sequence
 
-## Modes
+There is no spec phase and no build phase. There is **one sequence, the proposal's implementation checklist**, and each step is dispatched on its lane:
 
-- **Full (default)** — apply and verify the spec, then implement the code and close the findings. Invoke with the proposal path alone.
-- **Apply-only** — apply and verify the spec, commit it, and stop. Invoke with `spec-only` after the path. This is the former `spec-apply` behavior; use it when the code is implemented elsewhere (for example the `close-build-gaps.sh --mode proposals` loop, which lands the spec this way and then implements the code itself).
+- a **`spec`** step applies the `SPEC-n` deliverables its line names, under a write lease scoped to exactly the files those deliverables target, verifies what landed against what the proposal stages, commits, and ticks its box;
+- a **`code`**, **`schema`**, **`migration`**, **`test`**, or **`docs`** step builds, through the loop below, and ticks the same box.
+
+Progress is therefore per-deliverable, in the checklist, which is also the resumption record. That is why `.status.md` carries four states and no fifth: "the spec is applied" can only be a status if spec application is a phase, and it is not one.
+
+**One lane per step**, as a hard rule: the lane selects the handler, and a step naming both a spec deliverable and a non-spec one has none. An absent or unrecognised lane stops the run rather than being guessed.
+
+**Spec steps lead, as the standard pattern.** An interleave is permitted, must state on its own line why it is necessary, and qualifies only when the spec text cannot be written or applied until the earlier step lands — the staged edit is the output of a tool this proposal builds, or its content depends on a fact only the built artifact fixes. Efficiency and convenience do not qualify. The `applicability` lens enforces this when the proposal is reviewed.
+
+The safety the old spec-first phase provided is not lost. It protected code from being written against unlanded spec text by landing all of it first, which said nothing about whether the *right* statement had landed. The rule is now that **a step may only depend on spec deliverables whose steps are already ticked**, which is checkable from the checklist's own `Depends on` lines and is the sharper statement.
+
+## The spec/ write lease
+
+`spec/` is read-only unless a lease is open. The lease names one proposal, one step, and the exact files that step's deliverables target, and it expires.
+
+- It is opened for a `spec`-lane step and released when that step ends, **pass or fail**.
+- A `code`-lane step holds none, and **refuses to start if one is somehow still held**, which is the check that makes the invariant hold rather than merely be intended. That closes the one hazard interleaving introduces: a spec step that died mid-flight leaving `spec/` writable for whatever runs next.
+- Every failure path refuses: no lease, a malformed lease, an expired one, an unreadable status, or a path outside the allow list. There is no path that allows on an error.
+
+One honest limit: the hook trusts the lease, and the lease file is not under `spec/`, so nothing stops an agent writing one. That raises the bar from "any approved proposal anywhere unlocks everything" to "an agent must forge a lease naming an Approved proposal", which is the right bar for a threat model of accidental writes. It is not a sandbox.
+
+Check it with `node .claude/tools/spec-lease.mjs status`. Release a stale one with `release`; that is an operator action, never automatic.
 
 ## What the proposal gives you
 
-A converged proposal carries two sections written for this skill, and the pipeline consumes both rather than re-deriving them.
+- **`.summary.md`** is injected into every agent in the run: the top-level changes, the decisions that are closed, and the traps. It is the one file all of them read.
+- **`.implementation-checklist.md`** is the sequence, maintained while the proposal was reviewed. The Plan phase carries its steps across with their ids, lanes, deliverables, tiers, and dependencies rather than inventing an order. Pass `plan` to skip planning entirely when the checklist already carries everything.
+- **`.deviations.md`** is written by this skill and read by every reviewer in it. An `accepted` entry is adjudicated and must not be re-raised.
 
-- **Summary.** Injected verbatim into every agent in the apply phase and the build phase: the top-level changes, the decisions that are closed and must not be reopened, and the traps. It is the one section all of them read, so an implementer on step nine orients the same way as one on step one.
-- **Implementation checklist.** The ordered implementation sequence, maintained while the proposal was reviewed. The Plan phase carries its steps across, keeping their ids, deliverables, tiers, and dependencies, and checks them against the tree rather than inventing an order. The order encodes review decisions the planner cannot see, so it is never discarded in favour of a fresh derivation. A proposal without a checklist falls back to deriving the sequence, which is what every proposal needed before checklists existed.
+An imperfect checklist does not stop the run. A step whose surface is already present is marked `alreadyDone`, one whose prerequisite is elsewhere is re-sequenced, one that cannot be built as written is built from the proposal's stated intent, and only when the intent cannot be recovered does it carry a `blocked` reason. Every mismatch is reported in `checklistDeviations`.
 
-**A checklist that is imperfect does not stop the run.** It was written before the tree reached its current state, so three mismatches are expected and each is recovered rather than raised as a failure. A step whose surface is already present is marked `alreadyDone` and kept in the sequence so dependencies still resolve. A step whose prerequisite turns out to be elsewhere is re-sequenced locally. A step that cannot be built as written is marked `needsIntent` and built from the proposal's stated intent, and only when the intent cannot be recovered either does it carry a `blocked` reason. A blocked step does not stop the steps that do not depend on it; the run ends when nothing runnable remains. Every mismatch is reported in `checklistDeviations` so the proposal can be corrected afterwards.
+## The step build loop
 
-**Blanks.** A proposal may delegate a detail with an explicit `**IMPLEMENTOR'S CHOICE:**` marker naming what is open and the constraint any answer must satisfy. That is a delegation, not an unappliable edit: the agent makes the choice, satisfies the constraint, and records the choice in the commit message and its result. An unmarked gap in a staged edit is still unappliable and still stops the sub-step.
+For a non-spec step:
 
-**Checkboxes.** The build phase ticks a step's box in the proposal file once that step is green and conformant. The ticks are the resumption record: a later run reads them to find where to continue.
+```
+0.  compile gate         go build over the changed packages, and assert no lease is held
+1.  implement, or fix what the last round left
+2.  conformance and invariants review of the step's diff       <- no tests run
+3.  findings? fix and return to 2
+4.  tests, scoped to what the fix warrants
+5.  failures? fix and return to 2, which re-checks conformance before re-testing
+6.  FINAL GATE: the full tier set the checklist names, over the finished tree
+      not green -> record the miss, then back to the fix loop; the gate re-runs
+7.  tick the checklist box
+```
+
+The review runs **before** the tests because most fixes in a step answer that review, and running the tier set after each of them ran the same suites over and over while they stayed green. The compile gate exists because a reviewer handed code that does not build produces confident nonsense.
+
+**A step is never ticked on a gate that did not pass.** The full set runs against the exact tree being ticked, which is the guarantee every scoped run in between borrows against.
+
+### Which tiers a fix runs
+
+Two mechanisms, because "be smarter" has to be made mechanical or it regresses to running everything.
+
+**The classification is grounded in a real diff.** The scoping agent is handed a git range and reads the diff itself. The fixer's account of what it changed is adversarial input: where the two disagree the diff wins, and the disagreement is reported on its own, because a fixer that changed more than it said is worth knowing about.
+
+**The three cheapest classes are decided by a script.** `classify-diff.mjs` decides `comment-only`, `doc-only`, and `test-only` mechanically, and its verdict is authoritative where it fires. That closes the failure this exists for: a fixer adjusts one line of logic while editing the comment above it, reports "updated a comment", and every test that would catch it is skipped. A class maps to a minimum tier set; going above it needs a named hunk, and going below it is allowed only where the script has already decided.
+
+**A cost ledger** at `scratchpad/test-times/<branch>.json` records what each tier has actually cost. A tier whose median exceeds `expensiveTierSeconds` runs only when a named hunk requires it. The verifier that ran the tiers appends its own timings, since it knows them.
+
+**Every final-gate failure is a scoping miss** and is recorded with the classification and the skip that caused it, then returned as `gateMisses`. That is the only direct evidence available about whether the class table is calibrated; a class that keeps appearing there gets its minimum tiers raised.
+
+### When a step will not converge
+
+Three conditions stop a step, and nothing else does: the attempt cap, consecutive dead agents, and an `unproductive` verdict from the judges. Everything else is a **detector** that wakes the judges — the attempt cadence, `maxPhaseOscillations` on the conformance/test cycle, and `maxFinalGateFailures`. A counter cannot tell a hard-but-converging step from a stuck one, so its output is a reason to look. A fired detector re-arms rather than re-firing, so the machinery meant to diagnose an expensive loop does not become the expensive part of it.
+
+The judges return one of three verdicts. `resolvable` is the default. `unresolvable` means no legal change closes the finding, because the landed code is right and the proposal is wrong and the proposal is read-only here; the judges write an **accepted deviation**, the finding is set aside, and the step continues. `unproductive` means a legal change exists and this loop is not making it; the step stops and the outstanding work goes to a human, and no deviation is written, because setting it aside would tick a step over a real gap.
+
+`unproductive` needs at least `minUnproductiveRounds` consecutive rounds that committed something and still came back with findings. It is a claim about a pattern, and a fix agent groping toward a hard change looks identical from any one round to one that will never get there.
+
+## Deviations
+
+`.deviations.md` records where the landed code departs from what the proposal states: what it says, what the code does with file:line, why no legal change closes the gap, what a later reader would get wrong, and a suggested next step.
+
+Only the judges accept one. Every reviewer in the run is given the file and told that an `accepted` entry is adjudicated and must not be re-raised in any phrasing; the script also drops a finding whose normalised title matches one, because prompt suppression has been observed to leak. The `acceptedDivergences` argument feeds the same filter, so the two mechanisms are one.
+
+Nothing in this run edits the proposal to close a deviation. That would make the conformance review vacuous and silently amend an approved design. The only edit any agent makes to the proposal is ticking a checklist box, and a dedicated agent does that.
 
 ## Hard constraints
 
-- Spec first. The staged spec edits are applied and verified before any code is written, **one sub-step at a time**: each sub-step is applied, verified to clean, and committed on its own before the next begins. Later sub-steps consume what earlier ones produce, so applying every file at once discards that order and leaves the verification loop unable to tell which sub-step is wrong. Per sub-step, a defect is attributable to the sub-step that introduced it and a bad sub-step is revertable without discarding the ones that already verified clean.
-- An edit the proposal stages as a **script run is applied by running that script**, never by hand. The plan classifies every staged edit as `authored` (the proposal stages the literal text and an anchor) or `mechanical` (the proposal stages a command over a register and deliberately enumerates no edit sites). For a mechanical edit the dry run is inspected first and the applied diff must match it, because the script resolves each site from a register and fails closed on a site the register does not carry; hand-editing substitutes a guess for that guarantee. A mechanical edit whose script exits non-zero, whose applied diff does not match its dry run, or whose command is absent from the tree stops the run rather than falling back to a hand edit.
-- An edit whose anchor cannot be located with certainty **stops the run** (`status: "spec-unappliable"`); it is never skipped so the remaining edits can proceed. Skipping leaves a file in which a later discrepancy cannot be told apart from an edit that never ran, which is the state the verification loop cannot converge out of. A clean stop names what blocked; a partial tree does not.
-- Spec edits are applied only through this skill's verified apply loop, never by hand. The guard hook blocks direct `spec/` writes unless an approved proposal is pending; once the proposal reads "Applied to spec" the hook blocks spec writes again, so the code phase cannot touch `spec/`.
-- Spec content rules hold over verbatim application: the spec never references source code paths, and cross-references other spec content by section number, never line number. A new section or subsection is appended at the end of its level and numbered as the next ordinal, never inserted between existing siblings, so existing numbering and cross-references stay stable. The apply loop rephrases or drops staged text that would violate these and records the deviation.
-- Code changes follow `.claude/rules/spec-driven-development.md`, `.claude/rules/code-best-practices.md`, and `.claude/rules/test-coverage.md`: every behavior traces to a spec section, tests run across every tier the change reaches, and they pass.
-- No proposal-internal identifiers leak into the shipped artifacts. Code, comments (including test-file comments and test names), and every git commit message reference durable sources only: cite the spec section with the `// spec: §X.Y` convention, or describe the behavior. They MUST NOT carry the proposal's own scaffolding labels — its change/section IDs (`S1`, `S-A1`, `C-A2`, `CODE-A`, `SPEC-D`), decision IDs (`D8`, `D9`, `RES-1`), review pass numbers (`Pass 7`), or a step/item number that exists only in the proposal's numbering — because those name parts of the proposal document and mean nothing to a later reader of the code. A numbered step or section the spec itself defines (a §5.2 scrub "step 7") is a spec reference and may be cited by that number; the proposal's own build-sequence or change-list step is not. A commit message may include the proposal file path or a BUILD-GAPS finding id for traceability, never the internal change/decision/pass/step labels — even when `git log` shows prior commits that used them.
-- The code phase writes to the proposal file, which nothing before it did: it ticks a checklist box when a step lands green and conformant, and that is the only edit it makes there. The ticks are how a later run finds where to resume, so a run that is interrupted leaves its progress recorded in the document rather than only in the branch log.
-- Findings close only after the implementation verifies green. The skill never opens or re-opens a finding. A proposal with no referencing finding still implements; the close step is a no-op.
-
-- The workflow sandbox gives a script only `agent`, `parallel`, `pipeline`, `phase`, `log`, `workflow`, `budget`, and `args`. There is no `require` and no filesystem access, so a script cannot read or write a file; anything that touches one goes through an agent, which has Bash and Read. Run `node scripts/check-workflow-scripts.mjs .claude/workflows/*.js` after editing a workflow: it parses each script the way the runtime does and rejects a `require(` call, both of which `node --check` misses.
+- Spec edits land only through a spec-lane step, under a lease, never by hand. An edit whose anchor cannot be located with certainty stops the step rather than being skipped: a partially applied file is a state verification cannot converge out of, because a later discrepancy cannot be told from an edit that never ran.
+- Spec content rules hold over verbatim application. The spec never references source paths, cross-references by section number rather than line, and a new section is appended at the end of its level rather than inserted between siblings. The applier records every rule-forced deviation.
+- Code follows `.claude/rules/spec-driven-development.md`, `code-best-practices.md`, and `test-coverage.md`.
+- No proposal-internal identifiers reach the shipped artifacts. Code, comments, test names, and commit messages cite the spec section or describe the behaviour; they never carry the proposal's own change, decision, review-pass, or step labels, even when `git log` shows prior commits that did.
+- Findings close only after the implementation verifies green and the review is clean. The skill never opens or re-opens a finding.
+- The workflow sandbox has no filesystem access; see the change-proposal skill. Run `node .claude/tests/run.mjs` after editing a workflow.
 
 ## Procedure
 
-### Step 1: Preconditions (inline, before the workflow)
+### Step 1: preconditions
 
-1. Resolve the proposal path and the optional `spec-only` modifier from the arguments. Read the proposal's Status bullet. It must begin "Approved" (or "Applied to spec" for an idempotent re-run). A "Draft" or "Verified" status is not approved: stop and report that it needs sign-off.
-2. Run `git status --porcelain -- spec/`. The apply verification diffs the working tree against a clean `spec/` baseline, so `spec/` must be clean. If it is dirty, stop and report.
-3. Compute `repoRoot` (the absolute repository root) and `date` (today's `YYYY-MM-DD`; workflow scripts cannot call Date).
+1. Resolve the proposal path and the optional `spec-only` modifier.
+2. Read the status: `node .claude/tools/proposal-status.mjs <proposal> --field status`. It must be `Approved`. Anything else stops the run.
+3. Check for a stale lease: `node .claude/tools/spec-lease.mjs status`. One naming another proposal, or an expired one, stops the run and is reported; releasing it is an explicit operator action.
+4. Run `git status --porcelain -- spec/` and confirm it is clean, so a step's verification diffs against a clean baseline.
+5. Compute `repoRoot` and `date`.
 
-### Step 2: Run the workflow
+### Step 2: run the workflow
 
-The script lives at `.claude/workflows/implement-proposal.js` (subworkflow at `.claude/workflows/implement-proposal-build.js`). Invoke it with `{scriptPath}` pointing at that absolute path, never by name: a name resolves to a cached copy of the script, so a run launched by name after an edit silently executes the previous version. The parent invokes the subworkflow the same way, by path, for the same reason.
+Invoke by `{scriptPath}`, never by name: a name resolves to a cached copy, so a run launched after an edit executes the previous version. The parent invokes the subworkflow the same way, for the same reason.
 
 ```json
 {
-  "proposalPath": "proposals/<file>.md",
-  "repoRoot": "<absolute repo root>",
-  "date": "<YYYY-MM-DD>",
+  "proposalPath": "proposals/0081_fix_slug",
+  "repoRoot": "/abs/path",
+  "date": "2026-08-31",
   "implementCode": true,
-  "reverifyDoneSteps": false,
-  "specReviewFocus": []
+  "specReviewFocus": [],
+  "acceptedDivergences": []
 }
 ```
 
-Set `implementCode` to `false` for spec-only; every tier each step and the final verify reach is run.
+Arguments, all with defaults: `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
 
-Pass `specReviewFocus` as a list of areas the spec review should concentrate on, for example `["the {slotId} to {sessionId} placeholder rename", "the Basic-level echo obligation in the conformance battery"]`. Each round then runs one extra reviewer alongside the normal per-file verifiers and the rules sweep, scoped to those areas across every file the sub-step touched rather than to one file. Its findings are concatenated onto the others with no deduplication, so a site both reviewers name is reported twice and landed once; nothing between the reviewers and the fix agents can drop a finding. Use it when a previous run left drift you can already name. Omit it and the review behaves exactly as before.
+`spec-only` runs the leading spec-lane prefix. Under the standard pattern that prefix is every spec step and the mode is total, which is what `close-build-gaps.sh --mode proposals` relies on. On a proposal that genuinely interleaves it is not, and the run returns `spec-only-incomplete` naming the step behind the interleave rather than silently skipping it.
 
-Pass `plan` as `{steps: [...]}` to skip the planning and plan-critique phases entirely and build that sequence. Planning derives a sequence from the proposal, so once the checklist carries every step with its tiers and dependencies there is nothing left to derive, and a resumed run otherwise re-reads the whole proposal on every relaunch to reproduce what is already written. Each step needs at least `id`, `title`, `work`, `targets`, `tiers`, and `checklistStep`. The startup tick reconciliation still applies, so a supplied step whose box is ticked is skipped like any other. An empty or missing `steps` falls back to planning.
+Run with a strong model at high effort. Before a run whose steps reach tier 5 or above, work through the Environment preflight in `.claude/rules/test-coverage.md` yourself: stale images, terminal pods from an earlier run, a warm pool that cannot reach Ready, and orphaned envtest processes all produce failures that look exactly like a defect in the step under test.
 
-Pass `acceptedDivergences` as a list of divergences a human has already reviewed and accepted, where the landed code is what should ship and the proposal is what is wrong. The final whole-change review re-derives everything from the proposal, so without this it re-raises a settled question every round and cannot converge on a change that deliberately departs from its proposal. Seeded entries are quoted to every final lens as adjudicated, with the rest of the change explicitly still in scope.
+### Step 3: interruptions
 
-Every `introspectEvery` attempts (default 5) of a step that has not converged, three judges are asked whether the loop can still close its findings. Each one first reads a round-by-round log of what the step has actually done, then reads the commits behind it, and only then answers. The question is about the loop's behaviour rather than the finding's merits, because a judge reasoning from the finding's text alone reaches the wrong answer confidently.
+Stop the stale task with `TaskStop`, then relaunch with `{scriptPath, resumeFromRunId}`. Steps commit as they land and tick their boxes, so a resumed run skips what is done. Relaunching fresh is often better once several steps have landed: their boxes are ticked, and passing `plan` with only the remaining steps avoids re-deriving a sequence the checklist already states. Check the lease first: an interrupted spec step may have left one open.
 
-They return one of three verdicts. `resolvable` is the default: a legal change closes the finding and the rounds are converging on it. `unresolvable` means no legal change closes it, because the landed code is right and the proposal is wrong and the proposal is read-only to this phase. `unproductive` means a legal change exists and this loop is not making it: the reviewer is right and the work is real, but round after round commits something else.
+### Step 4: report
 
-The two failure verdicts have different consequences, so the run does not merge them. An unresolvable finding is set aside for the rest of the step, so the loop can finish the rest of the work, and is reported as a defect in the proposal. An unproductive one is never set aside: the step stops, and the outstanding work goes to a human. Setting that one aside would tick a step over a real gap.
-
-`unproductive` additionally requires a run of at least `minUnproductiveRounds` (default 5) consecutive rounds that committed something and still came back with findings. It is a claim about a pattern rather than about a bad round or two: a fix agent groping toward a hard change looks, from any one round, exactly like one that will never get there, and only a run of them tells the two apart. A round that clears the findings resets the count. The floor is stated to the judges and enforced on the result, so a judge that returns the verdict early cannot stop a step the fixer has barely started on. `unresolvable` carries no such floor, because whether the code and the proposal contradict each other is a fact about the two documents and more rounds do not make it truer.
-
-A verdict needs every judge to agree at medium confidence or better. The earlier rule asked three different questions and required unanimity at high confidence, which made the narrowest lens the decider: only what all three lenses could see was ever detectable, and the two that judged correctness were structurally unable to see a loop failing to do work that was both legal and real. The lenses now read the same evidence and differ in how they weigh it, so their agreement carries information.
-
-Both kinds are written into the commit trail whether the step ticks or aborts, and returned as `stuckFindings`, each carrying its `kind`. Report them: an `unresolvable` entry is a proposal defect for a human, and an `unproductive` entry is work that still has to be done, and its `consecutiveFailedRounds` and `roundsMovedIt` are the evidence the judges acted on.
-
-Test tiers are run in full on a step's initial implementation and again as a final gate once its design review comes back clean, and are scoped to the fix in between. A fix round therefore runs tier 0 and tier 1 on the packages it touched plus only those of the step's higher tiers whose subject it changed, and names the ones it skipped. No step is ever marked done without a full tier pass against the exact tree being marked done, so a correct-first-try step costs one full pass and a step that takes several rounds costs two.
-
-Set `reverifyDoneSteps` to `true` to re-check the steps a previous run already ticked. Each is reviewed for design conformance and invariants without being rebuilt or re-tested, because its code is committed and its tiers passed when it landed. A step that passes is skipped as usual; one that fails enters the normal fix, verify, and review loop and is held to the same green-and-conformant bar as a fresh step. Use it when the checklist may be optimistic, after an interrupted run or when the proposal changed once some steps had landed. It costs two review agents per ticked step, so it defaults to `false`. Agents inherit the session model and effort level; run this skill with a strong model at high effort.
-
-Every loop in the run is bounded, and each bound is an input with a default: `maxApplyRounds` for the spec apply, `maxAlignRepairs` (3) for the alignment repair described below, `maxPlanRounds` for plan critique, `maxStepAttempts` (50) per build step, `maxReplans` (6), `maxVerifyRounds` (25), `maxReviewRounds` (50), `introspectEvery` (5) and `minUnproductiveRounds` (5) for the stuck-finding judges, and `coverageFloor` (80). Raise one only with a reason; a loop that needs a larger bound usually has a cause the bound will not fix. `skipBuild` runs the subworkflow's verify and review phases over the existing tree without building any step.
-
-When the proposal reads "Applied to spec" the run checks that every staged edit is actually present before it builds anything. A missing edit is landed rather than reported: the run applies the absent edits and re-checks, up to `maxAlignRepairs` times, and only returns `not-aligned` if the gap survives. An earlier version stopped at the first mismatch and left a human to hand-apply the edit, which is slower and puts the tree in a state the run did not verify.
-
-A step's agents may not edit the proposal, and the instruction saying so is explicit. Nothing enforces it mechanically, because a block would hide the attempt. Instead every step's commit range is audited afterwards: an edit that happened is kept, reported with its diff as `proposalEdits`, and surfaced at the end. Report it. Deciding what the proposal should have said is a human's call, and a silently reverted edit destroys the evidence that call needs.
-
-Before any tier above 1 runs, agents are told to work through the Environment preflight in `.claude/rules/test-coverage.md` and to read a failure there as an environment failure until it is ruled out. Stale images, terminal pods left by an earlier run, a warm pool that cannot reach Ready, and orphaned envtest processes all produce failures that look exactly like a defect in the step under test. Check the cluster yourself before launching a run whose steps run tier 5 or above, and say in the step's `work` what you found, so the run does not rebuild a landed step to satisfy a broken fixture.
-
-An agent that dies on a terminal API error is retried, and a dead attempt does not consume one of the step's attempts. `maxDeadAttempts` (3) consecutive deaths stop the run, because that pattern is an account or transport failure rather than anything a retry clears.
-
-### Step 3: Interruptions
-
-On interruption (auth expiry, crash): stop the stale task with TaskStop, then relaunch with `{scriptPath, resumeFromRunId}` from the original tool result. The spec apply commits before the code phase and the build steps commit per step, so a resumed run re-plans against the current tree; confirm the plan accounts for work already committed before letting it re-run. Relaunching fresh rather than resuming is often the better move once several steps have landed: their boxes are ticked, so the startup reconciliation skips them, and passing `plan` with only the steps that remain avoids re-deriving a sequence the checklist already states.
-
-### Step 4: Report
-
-1. Run `git status --porcelain` and `git log --oneline` for the run's commits. Confirm the spec landed as its own commit, the code changes are under `pkg/`, `cmd/`, `charts/`, `schemas/`, and `tests/`, and `BUILD-GAPS.md` carries the closed findings.
-2. Report `proposalEdits` whenever `edited` is true: a step's agent modified the proposal despite the instruction not to. The edit was kept rather than reverted, so report it with its commits and let a human decide whether the proposal or the code is wrong.
-3. Report `reverifyRepaired` whenever it is non-empty: each entry is a step the checklist recorded as done that no longer matched the proposal and had to be repaired, which means the tick was wrong and the proposal or the earlier run needs a second look. Report `checklistDeviations` and `skippedSteps` whenever either is non-empty, whatever the status. They are where the proposal's implementation checklist did not match the tree, and they are the input to correcting it. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
-4. On `status: "implemented"`: report the spec commit, the blast radius, the build steps with their commits, the final green status, the changed-line coverage, that the design-conformance review came back clean, and the findings closed. Suggest pushing; do not push unless asked.
-5. On `status: "spec-only"`: the spec is landed, verified, and committed; report it and the findings left for the code stage.
-6. On `status: "implemented-not-green"`: report which tiers failed, whether coverage fell below the floor, and any unresolved design-conformance findings (`reviewFindings`); the findings are left OPEN and the commits remain on the branch. The `resumeNote` says how to continue.
-7. On `status: "build-step-stuck"`: a build step stayed red after `maxStepAttempts`, or the judges agreed its loop was not closing a real finding, so the sequence aborted before its dependents. When a `stuckFindings` entry carries `kind: "unproductive"`, the step stopped on that judgment: report its `outstandingWork` as work still to be done rather than as a failure of the run. Report the `stuckStep`, the spec and partial code commits on the branch, and the `resumeNote`; the findings are left OPEN.
-8. On `status: "spec-unappliable"`: an edit could not be applied, so the run stopped at it rather than skipping it. For an authored edit that means its anchor could not be located; for a mechanical edit it means its script exited non-zero, its applied diff did not match its dry run, or its command is not in the tree (which is also what a missing prerequisite proposal looks like). Report the `substep`, the unappliable edits with their reasons, and that sub-steps before it are already committed. The proposal must state the missing anchor, title, or value before a re-run; revert `spec/` to the last sub-step commit first.
-9. On `status: "not-approved"`, `"spec-not-clean"`, `"spec-applied-with-blockers"`, or `"not-aligned"`: report the reason. `spec-not-clean` now names the `substep` that failed to converge. `spec-not-clean` and `spec-applied-with-blockers` leave the spec edits in the working tree for inspection; `not-aligned` means a re-run found the spec drifted from the proposal.
-10. On `status: "aborted"`: the build subworkflow threw rather than returning a verdict, and `abortReason` carries the error. This is a fault in the run rather than in the proposal: the usual cause is a defect in the subworkflow script itself, which parses clean and throws at execution (a reference to a constant defined below its first use, for example). The spec phase already committed, so report `specStatus`, fix the script, and relaunch. `node scripts/check-workflow-scripts.mjs` catches this class before a run does.
-11. Do not push or open a PR unless the user asks.
-
-## The subworkflow
-
-`implement-proposal-build` is the code-implementation engine, stored separately so it is reusable and matches the plan-then-build structure:
-
-1. **Plan** — a planner reads the proposal's Summary and implementation checklist and carries the checklist across as the build sequence, keeping its step ids, deliverables, tiers, and dependencies, then checks each step against the tree and records where the two disagree. It greps the codebase for the blast radius as a check on the checklist rather than as the source of the order. A proposal with no checklist falls back to deriving the sequence: the planner maps the blast radius and produces an ordered sequence itself. Whether carried across or derived, the blast radius and sequence cover the surfaces the proposal **removes** as well as those it adds: every eliminated mode, field, RPC, frame, metric, enum value, or file gets an explicit removal step that also deletes the code, tests, and fixtures orphaned by it, so no removed surface is left compiling-but-dead. A completeness critic checks the plan covers the whole proposal (including the removals), and sequences prerequisites first; the plan revises once if it finds gaps.
-2. **Build** — each step is implemented in order (sequential, because later steps depend on earlier ones and share the working tree). Each step is **gated before the sequence advances** by an inner loop: an implementer writes the code and tests, an **independent agent verifies** the step's tiers are green (the implementer's self-report is advisory), and an **adversarial design-conformance review** reads the step's own diff against the proposal through two lenses (design conformance, and named invariants and edge cases) scoped to that step — a surface this step adds for a later step to consume is out of scope. The step advances only when it is both green and review-clean; otherwise the loop fixes and re-checks, bounded by `maxStepAttempts` (default 50). Catching a divergence at the step that introduced it is cheaper than catching it in the final review and keeps a wrong foundation from propagating. A step ends the sequence in one of two ways. It is still red or divergent after the cap, or the judges agreed its loop had stopped closing a real finding (see the stuck-finding judges above). Either way the sequence **aborts** rather than building dependent steps on it: the subworkflow returns `status: "step-stuck"`, which the parent reports as `build-step-stuck`, with the `stuckStep`, the reason, and a `resumeNote`, and the spec and completed steps stay committed. The plan is a prediction made before any code exists, so the Build phase re-checks it as reality lands: every `replanEvery` completed steps (default 4) and after any step that struggled (took at least `replanStruggleAttempts` attempts), a read-only critic checks whether the **remaining** plan still matches what was built — an unplanned surface that got touched, a removal that orphaned more than foreseen, a step now redundant or mis-sequenced. On evidenced drift it re-plans the remaining steps **forward-only**: completed steps are immutable, only the not-yet-built tail is replaced, bounded by `maxReplans` (default 6). This is distinct from the per-step review, which judges completed work rather than the correctness of the plan ahead.
-3. **Verify** — a final pass runs the reached tiers across the whole change with `lenny-test --changed`, reports changed-line coverage, and runs a **dead-code sweep** (grep for every removed identifier, mode, field, RPC, frame, metric, and enum value and confirm none survives as a live reference; a surviving removed surface or orphaned caller is a failure). It also applies a **coverage gate**: `green` requires every reached tier to pass *and* changed-line coverage at the floor (`coverageFloor`, default 80%), with a behavior-preserving refactor exempt; below-floor coverage is a failure the fix loop closes by adding tests. And it applies a **regression-test gate**: every behavioral *fix* in the diff (a corrected error/status code, an authz/scope/admission gate, a cross-tenant scoping check, a state transition, a retry/recovery or fail-open/fail-closed path, a wire field) must be pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — line coverage of the changed lines by a pre-existing happy-path test does not satisfy it. A fix that lands with no such regression test, even at 100% line coverage, is a failure the fix loop closes by writing the test at the owning tier (security → 9, reliability → 7a/8, wire → 3, state-machine → 2). It iterates fix-and-re-run until green, the sweep is clean, coverage meets the floor, and every fix carries its regression test, bounded by `maxVerifyRounds` (default 25, with an early exit when a non-green result lists no actionable failures). The standing dead-code rule and the no-proposal-internal-identifiers rule (code, comments, tests, and commit messages cite the spec section or describe the behavior, never the proposal's own change/decision/pass/step labels) are in the build subworkflow's injected rules and apply to every step; the per-step and final design-conformance lenses also flag such a leak.
-4. **Review** — each step was already reviewed against its own diff during Build; this final pass reads the **whole change** against the pre-implementation baseline to catch what a step-scoped review cannot — cross-step interactions, a surface one step added and another was meant to consume, and whole-change completeness — through three lenses (design conformance, named invariants and edge cases, and blast-radius completeness). A fix round applies the findings and the loop re-reviews until clean, bounded by `maxReviewRounds` (default 50); a non-trivial review re-confirms green afterward. A design-conformance finding is, by construction, a defect the automated tests passed over (the build was green when the review ran), so a review that fixes only the code lets the same class of issue recur: every review fix — per-step and whole-change — MUST add a regression test that asserts the corrected behavior and would fail against the pre-fix code, at the tier that owns it, and `verify-postreview` gates on those tests existing. Findings close only when the build is green **and** the review is clean (`reviewClean`); otherwise the run returns `implemented-not-green` with the unresolved `reviewFindings`.
+1. Run `git status --porcelain` and `git log --oneline` for the run's commits. Confirm spec commits are per spec step, code is under `pkg/`, `cmd/`, `charts/`, `schemas/`, and `tests/`, and `BUILD-GAPS.md` carries the closed findings.
+2. Report `deviationsFile` and its contents whenever entries exist. This is the run's statement of what did not land as proposed, and it is the input a human needs to decide whether the proposal or the code was wrong.
+3. Report `gateMisses` whenever non-empty: each is a tier the scoped runs said could not be affected and the full pass proved otherwise.
+4. Report `proposalEdits` whenever `edited` is true. An agent modified the proposal despite the instruction; the edit was kept rather than reverted, so a human decides.
+5. Report `reverifyRepaired`, `checklistDeviations`, and `skippedSteps` whenever non-empty. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
+6. On `implemented`: the spec commits, the steps with their commits, the coverage, that the review is clean, and the findings closed. Suggest pushing; do not push unless asked.
+7. On `spec-step-failed`: the step, why, and that earlier steps are committed. On `lease-leaked`: a spec step did not release its lease and `spec/` is writable; release it and re-run. On `bad-lane`: the checklist has a step whose lane selects no handler. On `build-step-stuck`: the step, the reason, and the `resumeNote`; when a `stuckFindings` entry is `unproductive`, report its `outstandingWork` as work still to do rather than as a failure of the run.
+8. Do not push or open a PR unless asked.
 
 ## Relationship to the build loop
 
-`close-build-gaps.sh --mode proposals` (driven by `build-gaps-spec-unblock`) drains many approved-proposal findings autonomously in a `claude -p` batch loop; it lands each proposal's spec by invoking this skill in spec-only mode, then implements the code itself. Use `implement-proposal` directly for one proposal with a large or ordering-sensitive blast radius; use the build loop to drain many.
+`close-build-gaps.sh --mode proposals` drains many approved-proposal findings autonomously; it lands each proposal's spec through this skill in spec-only mode and implements the code itself. Use this skill directly for one proposal with a large or ordering-sensitive blast radius, and the build loop to drain many.
 
 ## Maintenance
 
-The workflow scripts are canonical at `.claude/workflows/implement-proposal.js` and `.claude/workflows/implement-proposal-build.js`; this file carries the procedure and rationale only. Keep the subworkflow description here in sync with the script. When the implementation surfaces a recurring planning or sequencing gap, strengthen the completeness-critic prompt in the subworkflow.
+The workflows are canonical at `.claude/workflows/implement-proposal.js` and `implement-proposal-build.js`; this file carries the procedure and the rationale. The behavioural tests are `.claude/tests/step-loop.test.mjs` and `implement-proposal-*.test.mjs`, and the guard's own test is `.claude/tests/hook.test.sh`; run `node .claude/tests/run.mjs`. When implementation surfaces a recurring planning or sequencing gap, strengthen the completeness critic in the subworkflow.

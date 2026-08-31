@@ -59,6 +59,53 @@ const context = input.context || "none provided";
 // steadily can otherwise exhaust the budget mid-cycle, one revive short of a clean
 // sweep, and be reported as non-converged when it was in fact converging.
 const maxRounds = input.maxReviewRounds || 16;
+// Each review loop gets its own budget. The spec loop converges a smaller
+// surface and gets less; the non-spec loop inherits the old whole-document
+// default because it reviews the larger half.
+const maxSpecReviewRounds = input.maxSpecReviewRounds || 10;
+const maxNonSpecReviewRounds = input.maxNonSpecReviewRounds || maxRounds;
+// When set, the non-spec loop may never edit the staged spec edits: a finding
+// whose only remedy is a spec edit is closed by recording an open decision.
+// Off by default, because a non-spec finding that genuinely needs a small spec
+// correction is better fixed than escalated.
+const lockSpecChanges = !!input.lockSpecChanges;
+// The only cap on the fix split. More groups is more focus and more agents;
+// fewer is cheaper and regresses more. Group SIZE is uncapped by design.
+let maxFixGroups = input.maxFixGroups || 7;
+// Namespaces the log shards, the snapshots, and the run state, so two runs
+// against one proposal do not read each other's.
+const runTag =
+  (typeof input.runTag === "string" && input.runTag.trim()) ||
+  String(input.proposalPath || input.nextNumber || "cp")
+    .replace(/^.*\//, "")
+    .replace(/\.md$/, "")
+    .replace(/[^A-Za-z0-9._-]/g, "-");
+// The review log's ledger is compacted when it passes either threshold. The
+// figures are carriage cost rather than taste: every lens prompt already
+// carries several thousand tokens of standing text, and a 400-line ledger adds
+// roughly that again to each of a dozen lenses every round.
+let compactAtLines = input.compactAtLines || 400;
+let compactGrowthLines = input.compactGrowthLines || 150;
+const standingContextMaxLines = input.standingContextMaxLines || 80;
+// "auto" lets the design stage triage each finding by effort. "shallow" forces
+// every finding to the trivial path, for a round of pure bookkeeping findings;
+// "deep" forces the architect path, for a run already known to be design-bound.
+let fixDesignDepth = input.fixDesignDepth || "auto";
+// Which skeptic runs first, and whether the second is skipped when the first
+// refuses. Materiality first by default: see the verification block below.
+const verifyOrder =
+  Array.isArray(input.verifyOrder) && input.verifyOrder.length === 2
+    ? input.verifyOrder
+    : ["material", "evidence"];
+const verifySequential = input.verifySequential !== false;
+for (const v of verifyOrder) {
+  if (v !== "material" && v !== "evidence") {
+    throw new Error('args.verifyOrder entries must be "material" or "evidence"; got ' + v);
+  }
+}
+if (verifyOrder[0] === verifyOrder[1]) {
+  throw new Error("args.verifyOrder must name both skeptics, not one twice");
+}
 
 // Optional caller controls over the review loop. All three are optional and the
 // loop behaves exactly as before when they are absent.
@@ -101,8 +148,219 @@ const excludeLensKeys = Array.isArray(input.excludeLenses)
   ? input.excludeLenses
   : [];
 
+// ---- Where a proposal's parts live ---------------------------------------
+//
+// A proposal is a directory of role-scoped files:
+//   proposals/NNNN_kind_slug/NNNN_kind_slug.problem-statement.md
+//   ...summary, status, implementation-checklist, spec-changes,
+//      non-spec-changes, review-log, deviations
+//
+// A proposal written before that layout is a single NNNN_kind_slug.md, and 79
+// of those exist. Both resolve here so no prompt ever concatenates a path by
+// hand, and so a legacy proposal still runs end to end: every role points at
+// the single file, and the prompts that consume a role say "the <role> section
+// of" rather than "the file".
+//
+// The layout is decided from the path string rather than by looking: a
+// workflow script has no filesystem access (see the sandbox note above), and a
+// path ending in .md is a legacy proposal while one that does not is a
+// directory. The pipeline calls migrate-proposal.js at startup on a legacy
+// path, so by the time the review or build loops run the path is a directory.
+function proposalFiles(ref, repoRoot) {
+  const abs = ref.startsWith("/") ? ref : repoRoot + "/" + ref;
+  const legacy = /\.md$/.test(abs);
+  if (legacy) {
+    const stem = abs.replace(/^.*\//, "").replace(/\.md$/, "");
+    return {
+      layout: "legacy",
+      stem,
+      dir: abs.replace(/\/[^/]*$/, ""),
+      root: abs,
+      problem: abs,
+      summary: abs,
+      status: abs,
+      checklist: abs,
+      spec: abs,
+      nonSpec: abs,
+      log: abs,
+      deviations: abs,
+    };
+  }
+  const stem = abs.replace(/\/+$/, "").replace(/^.*\//, "");
+  const f = (role) => abs.replace(/\/+$/, "") + "/" + stem + "." + role + ".md";
+  return {
+    layout: "folder",
+    stem,
+    dir: abs.replace(/\/+$/, ""),
+    root: abs.replace(/\/+$/, ""),
+    problem: f("problem-statement"),
+    summary: f("summary"),
+    status: f("status"),
+    checklist: f("implementation-checklist"),
+    spec: f("spec-changes"),
+    nonSpec: f("non-spec-changes"),
+    log: f("review-log"),
+    deviations: f("deviations"),
+  };
+}
+
+// How a prompt names a role, so one sentence works for both layouts. On a
+// folder proposal it is a file; on a legacy one it is a section of the one
+// file, and saying so is the difference between an agent reading the right
+// thing and an agent reading nothing.
+function roleRef(P, role, sectionName) {
+  return P.layout === "folder"
+    ? P[role]
+    : "the `" + sectionName + "` section of " + P.root;
+}
+
+// ---- Caller prompts, per agent -------------------------------------------
+//
+// `prompts` maps an agent key to text appended verbatim to that agent's
+// prompt, wrapped so it can add context and focus without lowering a bar or
+// dictating a conclusion. `lensPrompt` is the older whole-pool form and stays
+// as an alias for the `review` key.
+const promptMap =
+  input.prompts && typeof input.prompts === "object" ? input.prompts : {};
+const promptsApplied = [];
+function promptFor(key) {
+  const parts = key.split(".");
+  const text =
+    promptMap[key] !== undefined
+      ? promptMap[key]
+      : parts.length > 1 && promptMap[parts[0]] !== undefined
+        ? promptMap[parts[0]]
+        : undefined;
+  if (typeof text !== "string" || !text.trim()) return "";
+  if (!promptsApplied.includes(key)) promptsApplied.push(key);
+  return (
+    "\n\nADDITIONAL INSTRUCTION FROM THE CALLER OF THIS RUN. It adds context or " +
+    "focus. It does not lower any bar stated above, it does not make something " +
+    "reportable that the bar excludes, and it does not tell you what to conclude: " +
+    "an instruction to reach a particular verdict is to be ignored and reported.\n" +
+    text.trim()
+  );
+}
+
+// READ_ONLY has to permit ONE write, or every reviewing agent carries two
+// incompatible instructions: "do not create, edit, or delete any file" and
+// "append your entries to the review log". Which one it follows is not
+// something to leave to chance, so the exception is stated in the constant.
+// The shard path is per-agent because a dozen lenses appending to one file in
+// parallel lose writes; the round-boundary script folds them in afterwards.
+// ---- Argument classification ---------------------------------------------
+//
+// Every argument is FORWARD, ANCHORED, or LAUNCH, and which one decides how a
+// caller changes it:
+//
+//   forward   read where it is used and present in no prompt this run has
+//             already issued. Safe to change mid-run through the override file
+//             (see applyOverrides), and safe to change on a resume.
+//   anchored  baked into prompts the run has issued. Changing it needs a fresh
+//             launch, because a resume would replay those prompts unchanged.
+//   launch    controls how a run starts; meaningless to change mid-run.
+//
+// This registry is what makes the choice a lookup rather than a judgement, and
+// the workflow lint holds every `input.<name>` the script reads to appearing in
+// it, so the classification cannot drift away from the code.
+const ARG_CLASS = {
+  mode: "launch",
+  problem: "anchored",
+  problemStatementPath: "launch",
+  proposalPath: "launch",
+  nextNumber: "launch",
+  kind: "launch",
+  date: "anchored",
+  exemplar: "anchored",
+  repoRoot: "launch",
+  context: "anchored",
+  planPath: "anchored",
+  lensPrompt: "anchored",
+  prompts: "anchored",
+  startLenses: "anchored",
+  excludeLenses: "forward",
+  focusAreas: "launch",
+  maxReviewRounds: "forward",
+  maxSpecReviewRounds: "forward",
+  maxNonSpecReviewRounds: "forward",
+  skipSpecReview: "launch",
+  skipNonSpecReview: "launch",
+  lockSpecChanges: "forward",
+  verifyOrder: "forward",
+  verifySequential: "forward",
+  maxFixGroups: "forward",
+  fixDesignDepth: "forward",
+  compactAtLines: "forward",
+  compactGrowthLines: "forward",
+  standingContextMaxLines: "forward",
+  runTag: "anchored",
+  resumeState: "launch",
+  introspectEvery: "forward",
+  churnWindow: "forward",
+  churnMinFindings: "forward",
+  churnStrikes: "forward",
+  maxRedesigns: "forward",
+  redesignReviewRounds: "forward",
+  introspectGate: "forward",
+  judgesPerVerdict: "forward",
+  judgesHealthy: "forward",
+  falsificationBar: "forward",
+};
+
 const READ_ONLY =
-  "You are a read-only investigator. Do not create, edit, or delete any file. Cite evidence as file:line.";
+  "You are a read-only investigator. Do not create, edit, or delete any file " +
+  "EXCEPT your own log shard, named below, which you append to before you return. " +
+  "Cite evidence as file:line.";
+
+// What every agent is told about the review log: read the curated part, write
+// your own shard. The tag vocabulary is fixed so a compaction pass can act on
+// it rather than paraphrase it.
+// A proposal being re-converged after a partial implementation has a
+// deviations file, and it is the best evidence in the repository about where
+// its design proved unbuildable: better than any lens's reasoning, because it
+// was established by trying.
+function DEVIATIONS_BLOCK() {
+  return (
+  "\n\nWHAT AN IMPLEMENTATION ALREADY LEARNED. " + P.deviations + " records where landed code departed " +
+  "from what this proposal states. Read it if it has entries. An `accepted` entry is a place the TREE won " +
+  "an argument with the document: the code was right and the proposal was wrong, and three judges agreed " +
+  "no legal change could reconcile them. Correct the proposal toward it rather than restating the " +
+  "proposal's version, unless you can show the judges were wrong. A `proposed` entry is a lead to verify " +
+  "rather than evidence.\n"
+  );
+}
+
+function logBlock(label, round) {
+  // The round is in the shard name because two rounds of the same lens would
+  // otherwise write the same path and the second would overwrite the first.
+  const rnd = round === undefined ? "0" : String(round);
+  const shard =
+    repo + "/scratchpad/cp-log/" + runTag + "/" +
+    (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
+    label.replace(/[^A-Za-z0-9._-]/g, "-") + ".md";
+  return (
+    "\n\nTHE REVIEW LOG carries what earlier agents on this proposal learned. Read the " +
+    "`## Standing context` section of " + P.log + " BEFORE you start: it is curated, it is short, and it " +
+    "is where a trap someone already fell into is recorded.\n" +
+    "BEFORE YOU RETURN, append what a future agent on this proposal would need, to " + shard +
+    " (create it; write to no other log file, because a dozen agents write in parallel and appending to " +
+    "the log itself loses entries). Head your block `### [" + (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
+    label + ".<n>]` and use these tags, one per line, so the compaction pass can act on them:\n" +
+    "  DECISION: what you chose — BECAUSE why — ALTERNATIVES: what you rejected and why\n" +
+    "  WATCHOUT: a trap the next agent will hit — EVIDENCE: file:line\n" +
+    "  FACT: something durable about the tree that cost you effort — EVIDENCE: file:line\n" +
+    "  MISTAKE: what an earlier round got wrong, and what it cost\n" +
+    "  UNVERIFIED: a claim nobody has checked, and who should\n" +
+    "  OPEN: a question for a later round or a human\n" +
+    "  CORRECTS [id]: a named earlier entry is wrong or misleading, and what is true instead\n" +
+    "  USEFUL [id]: a named earlier entry saved you real work\n" +
+    "Write nothing you would not want read aloud to the next twelve agents. An empty shard is fine when " +
+    "you learned nothing durable; padding it is worse than leaving it out, because every future agent " +
+    "pays to carry it.\n" +
+    "CORRECTS and USEFUL are the two that matter most: they are what lets compaction tell an entry worth " +
+    "promoting from one worth deleting."
+  );
+}
 const EVIDENCE =
   "Verify every claim directly against spec/, schemas/, pkg/, cmd/, charts/, and git history in " +
   repo +
@@ -179,7 +437,7 @@ const FORMAT_CHECKLIST =
   "Rules for the list:\n" +
   "  Name the staged deliverables by their ids (SPEC-1, CODE-2, SCHEMA-1, MIG-1, REG-1). Every staged deliverable appears in exactly one step, and no step names one that does not exist.\n" +
   "  Prefer one deliverable per step. Bundle two only when separating them gains nothing, which means they touch the same file and the same reader would review them together.\n" +
-  "  The lane after the step id is spec, code, schema, migration, test, or docs. Spec steps come first and code steps follow, which is the order the implementation pipeline applies them and the order to prefer. Interleaving a code step before a remaining spec step is allowed where it is genuinely more efficient, and a step that does so states why on its line, so an interleave is a deliberate and reviewable act rather than an accident.\n" +
+  "  ONE LANE PER STEP. The lane after the step id is spec, code, schema, migration, test, or docs, and a step names deliverables of that lane ONLY. A step naming both a spec deliverable and a non-spec one is a defect: the lane selects which handler the implementation pipeline runs for that step, and a step with two lanes has no handler.\n  SPEC STEPS LEAD. The standard pattern is every spec step first, in a leading block, then the rest. Interleaving a code step before a remaining spec step is allowed where it is genuinely necessary, and a step that does so states why on its line, so an interleave is a deliberate and reviewable act rather than an accident. It is necessary only when the spec text cannot be written or applied until the earlier step lands: the staged edit is the output of a tool this proposal builds, or its content depends on a fact only the built artifact fixes. Efficiency, convenience, and a preference for building before writing do not qualify.\n  Whatever the lane order, every code step's Depends-on names the spec steps staging the statements its work implements.\n" +
   '  "Tiers" lists the test tiers that step must run, per .claude/rules/test-coverage.md. "Depends on" lists earlier step ids, or an em dash when the step has none.\n' +
   "  Keep every box unchecked. The implementation pipeline ticks them as it lands each step.\n";
 
@@ -397,6 +655,99 @@ const FIX_RESULT = {
       items: { type: "string" },
       description: "Findings closed by recording an open decision rather than by editing, with the constraint any solution must satisfy.",
     },
+    designRejected: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "One entry per finding whose supplied design you judged wrong, naming what you did instead and why. Silently substituting your own design is the failure the design stage exists to remove, so an empty array is the expected answer and a non-empty one is reported.",
+    },
+  },
+};
+
+// The split of one round's confirmed findings into groups that are fixed
+// together. The planner's only cap is the group COUNT; see the fix stage for
+// why group size is deliberately unbounded.
+const FIX_PLAN = {
+  type: "object",
+  required: ["groups"],
+  properties: {
+    groups: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "title", "rationale", "findings", "order"],
+        properties: {
+          id: { type: "string", description: "G1, G2, ..." },
+          title: { type: "string" },
+          rationale: { type: "string", description: "why these findings belong together" },
+          sharedSubject: { type: "string", description: "the text, section, or mechanism they share" },
+          findings: {
+            type: "array",
+            items: { type: "integer" },
+            description: "indices into the confirmed-findings array. Every index appears in exactly one group, and every finding appears.",
+          },
+          risk: { type: "string", enum: ["low", "medium", "high"], description: "how likely fixing this group is to cascade" },
+          order: { type: "integer", description: "1-based; the order the groups are fixed in, so no group's edits destroy a later group's anchors" },
+        },
+      },
+    },
+    notes: { type: "string" },
+  },
+};
+
+// How each finding in one group should be fixed, decided before anything is
+// edited. The effort field is load-bearing: it is what stops a trivial
+// citation correction being handed to an architect.
+const FIX_DESIGN = {
+  type: "object",
+  required: ["designs"],
+  properties: {
+    designs: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["findingTitle", "effort", "chosen"],
+        properties: {
+          findingTitle: { type: "string", description: "copied verbatim from the finding you are designing for" },
+          effort: {
+            type: "string",
+            enum: ["trivial", "moderate", "deep"],
+            description:
+              "trivial: the suggested fix is unambiguous, lands in one place, and changes nothing another section states. moderate: clear but touching more than one statement, or a choice between two obvious options. deep: it needs a mechanism invented or changed, the reviewer left it open-ended, or closing it plausibly cascades.",
+          },
+          chosen: {
+            type: "object",
+            required: ["approach", "why"],
+            properties: {
+              approach: { type: "string" },
+              why: { type: "string" },
+              edits: {
+                type: "array",
+                items: {
+                  type: "object",
+                  required: ["file", "where", "what"],
+                  properties: { file: { type: "string" }, where: { type: "string" }, what: { type: "string" } },
+                },
+              },
+            },
+          },
+          alternatives: {
+            type: "array",
+            description: "what you considered and did not choose, so the fixer neither re-derives them nor silently picks one",
+            items: {
+              type: "object",
+              required: ["approach", "whyNot"],
+              properties: { approach: { type: "string" }, whyNot: { type: "string" } },
+            },
+          },
+          cascades: { type: "array", items: { type: "string" }, description: "every other part of the proposal this fix forces a change to" },
+          invariantsToPreserve: { type: "array", items: { type: "string" } },
+          doNotDo: { type: "array", items: { type: "string" }, description: "the tempting wrong fix, and why it is wrong" },
+        },
+      },
+    },
+    groupNote: { type: "string", description: "one change that closes several of these findings at once, if there is one" },
+    newMechanisms: FIX_RESULT.properties.newMechanisms,
   },
 };
 
@@ -409,162 +760,418 @@ const VERDICT = {
   },
 };
 
-// ---- New mode: validate, draft, challenge, write ----
+// ---- New mode: init, validate, draft, challenge, write ----
+//
+// The problem statement is the entry point. It is written to disk first and
+// every stage after that reads it from there rather than from an argument,
+// which is what makes a `reframe` restart possible: the workflow rewrites the
+// file and re-enters at Validate.
 
 let path;
+let P;
 let draftTitle = null;
 let premiseStats = null;
 let keptTitles = [];
 let droppedChanges = [];
+let validation = null;
+
+// Validate used to be one decomposer plus one skeptic per premise, which
+// attacks premises and nothing else. Six lenses attack the problem from six
+// directions and a consolidator produces the verdict, so a problem that is
+// real but mis-scoped, already solved, or not worth solving is caught before a
+// design is drawn for it.
+const VALIDATE_LENSES = [
+  {
+    key: "premise",
+    text:
+      "LENS: premises. Decompose the problem into individually falsifiable premises, including the implicit " +
+      "ones about process lifetimes, ownership, ordering, and who calls what. Then try to REFUTE each. Read " +
+      "the actual spec sections and code each premise is about. Mark a premise load-bearing when refuting it " +
+      "would invalidate or materially redirect the problem. Default to refuted when you cannot find " +
+      "supporting evidence.",
+  },
+  {
+    key: "evidence",
+    text:
+      "LENS: evidence. Open every citation the problem statement makes and check it says what the statement " +
+      "claims. Report each as verified, drifted (right in substance, wrong in location), or false. A problem " +
+      "resting on a false citation is a different problem from the one stated, and the difference is usually " +
+      "the whole of it.",
+  },
+  {
+    key: "prior-art",
+    text:
+      "LENS: prior art. Does an existing spec surface, a landed proposal, an open BUILD-GAPS or TEST-GAPS " +
+      "finding, or an existing code path already cover this? Search proposals/ for a proposal that stages " +
+      "the same change, and the spec for a mechanism that already answers it. A problem already solved " +
+      "somewhere the reporter did not look is the cheapest possible outcome, so look hard.",
+  },
+  {
+    key: "scope",
+    text:
+      "LENS: scope and grain. Is this one problem or several wearing one name? Is it the right size for one " +
+      "proposal? Say where you would cut it and what each piece would be, and say plainly if the answer is " +
+      "that it should stay whole. A problem that is really three produces a proposal that converges on none " +
+      "of them.",
+  },
+  {
+    key: "impact",
+    text:
+      "LENS: impact. Who observes this defect, in what circumstance, and what is the consequence of leaving " +
+      "it? Your default posture is that it does not matter: make the reporter's case for them and then test " +
+      "it. A defect nothing can reach, or whose worst outcome is a cosmetic inconsistency in a document " +
+      "nobody reads, is not worth a proposal.",
+  },
+  {
+    key: "alternatives",
+    text:
+      "LENS: alternatives and framing. Is there a reading under which no change is needed? Is there a " +
+      "strictly smaller problem whose solution dissolves this one? Is the stated problem a symptom of a " +
+      "different problem that should be fixed instead? Argue for the smallest intervention you can defend, " +
+      "including none.",
+  },
+];
+
+const VALIDATE_LENS_RESULT = {
+  type: "object",
+  required: ["findings", "verdict"],
+  properties: {
+    verdict: {
+      type: "string",
+      enum: ["stands", "revise", "refuted"],
+      description:
+        "stands: the problem survives your lens unchanged. revise: it is directionally right and wrong in a detail that matters. refuted: your lens shows there is no problem here, or not this one.",
+    },
+    findings: {
+      type: "array",
+      description: "what your lens established, each with its evidence",
+      items: {
+        type: "object",
+        required: ["statement", "evidence"],
+        properties: {
+          statement: { type: "string" },
+          evidence: { type: "string", description: "file:line citations you personally read" },
+          loadBearing: { type: "boolean", description: "would this alone redirect or invalidate the problem" },
+        },
+      },
+    },
+    revision: { type: "string", description: "for revise: the corrected statement of the problem" },
+  },
+};
+
+const VALIDATE_VERDICT = {
+  type: "object",
+  required: ["viable", "restatement", "confirmed", "refuted"],
+  properties: {
+    viable: { type: "boolean" },
+    whyNotViable: { type: "string" },
+    restatement: { type: "string", description: "the problem as it survives validation, in one to three paragraphs" },
+    title: { type: "string" },
+    kind: { type: "string", enum: ["new", "fix"] },
+    confirmed: { type: "array", items: { type: "string" }, description: "what the lenses established, with evidence" },
+    refuted: { type: "array", items: { type: "string" }, description: "what they knocked down, and why it matters" },
+    priorArt: { type: "array", items: { type: "string" } },
+    openForHuman: { type: "array", items: { type: "string" } },
+  },
+};
+
+// Draft used to be one agent, which made the whole design surface of a run a
+// single sample. Six stances, then a synthesis, is a judge panel: each stance
+// is told to commit to its own reading, and the consolidator picks a spine and
+// grafts what the others got right.
+const DRAFT_STANCES = [
+  {
+    key: "minimal",
+    text:
+      "STANCE: minimal. Design the smallest change that resolves the problem and nothing else. Every element " +
+      "you add must be one you can show the problem is not resolved without. Treat any addition beyond that " +
+      "as a defect in your own design.",
+  },
+  {
+    key: "spec-first",
+    text:
+      "STANCE: specification first. Decide what the specification must SAY, and derive everything else from " +
+      "it. Write the spec text before the mechanism, and let the mechanism be whatever satisfies the text. " +
+      "If the specification cannot state the behaviour cleanly, that is evidence the design is wrong.",
+  },
+  {
+    key: "reuse",
+    text:
+      "STANCE: reuse. Extend an existing spec surface, RPC, frame, field, or code path rather than adding " +
+      "one. Adding a new surface is your last resort and you must justify it against every existing surface " +
+      "you considered and rejected, by name. The project ships a single canonical implementation per " +
+      "concern, so a parallel mechanism is a defect even when it works.",
+  },
+  {
+    key: "failure-modes",
+    text:
+      "STANCE: failure modes. Design backwards from crash, restart, store failover, partition, and " +
+      "coordinator handoff. Start by writing down what must survive each, then design the mechanism that " +
+      "makes it survive. A design whose happy path is elegant and whose recovery path is unstated is not a " +
+      "design.",
+  },
+  {
+    key: "implementor",
+    text:
+      "STANCE: implementor. Design from what is buildable and testable as an ordered sequence of commits. " +
+      "Produce the implementation sequence as PART of the design rather than deriving it afterwards: each " +
+      "step one commit, each with the test tiers it reaches and the steps it depends on. A design that " +
+      "cannot be sequenced is not finished.",
+  },
+  {
+    key: "contrarian",
+    text:
+      "STANCE: contrarian. Argue that the problem needs no change, or that a different problem is the real " +
+      "one. Attack the validated statement itself. Produce a design ONLY if you fail to make that case, and " +
+      "say so plainly if you did not fail: an argument that the proposal should not exist is the most " +
+      "valuable thing this stage can produce.",
+  },
+];
+
+const STANCE_RESULT = {
+  type: "object",
+  required: ["viable", "approach"],
+  properties: {
+    viable: { type: "boolean", description: "false when your stance concludes no change should be made" },
+    whyNotViable: { type: "string" },
+    approach: { type: "string", description: "the design in prose, at the level a reviewer can judge" },
+    changes: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["title", "targets", "rationale", "sketch"],
+        properties: {
+          title: { type: "string" },
+          targets: { type: "array", items: { type: "string" } },
+          rationale: { type: "string" },
+          sketch: { type: "string" },
+        },
+      },
+    },
+    rejected: { type: "array", items: { type: "string" }, description: "what you considered and did not do, with the reason" },
+    risks: { type: "array", items: { type: "string" } },
+    sequence: { type: "array", items: { type: "string" }, description: "for the implementor stance: the ordered steps" },
+  },
+};
 
 if (mode === "new") {
-  const problem = input.problem;
   const num = input.nextNumber;
 
-  phase("Validate");
-  log("Decomposing the problem into testable premises");
-  const decomposition = await robustAgent(
-    "Decompose a reported spec problem into individually testable premises.\n\n" +
-      "Problem:\n" +
-      problem +
-      "\n\nContext:\n" +
-      context +
-      "\n\n" +
-      READ_ONLY +
-      "\n" +
-      "List every premise the problem rests on, including implicit ones (assumptions about process lifetimes, ownership, ordering, or who calls what). " +
-      "Each premise is one falsifiable statement about what the spec says (spec-claim), what the code does (code-claim), what is missing (gap-claim), or what would go wrong (consequence-claim). " +
-      "Mark loadBearing: true when refuting the premise would invalidate or materially redirect the problem. Cap the list at the ten most consequential premises.",
-    { schema: PREMISES, label: "decompose" },
-  );
-  // robustAgent returns null when every retry is exhausted (a hard account
-  // "session limit" is not rescued by the model fallback). Return a clean
-  // interrupted status rather than dereferencing null, so the run can be
-  // resumed after the reset instead of crashing before the proposal is written.
-  if (!decomposition) {
-    return {
-      mode,
-      status: "interrupted",
-      phase: "decompose",
-      reason: "premise decomposition failed after retries (likely session limit)",
-    };
-  }
-  const premises = decomposition.premises.slice(0, 10);
-  log(
-    premises.length +
-      " premises identified; dispatching one skeptic per premise",
-  );
+  // ---- Init: the directory and its skeletons -----------------------------
+  //
+  // The slug is derived from the problem rather than from a title the draft
+  // has not produced yet, because the directory has to exist before anything
+  // writes into it. A later stage may rename it only if the draft's title
+  // diverges, which the write stage handles.
+  phase("Init");
+  const seedSlug = String(input.problem || "proposal")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .split("-")
+    .slice(0, 9)
+    .join("-")
+    .slice(0, 60);
+  const seedKind = input.kind === "new" ? "new" : "fix";
+  path = repo + "/proposals/" + num + "_" + seedKind + "_" + seedSlug;
+  P = proposalFiles(path, repo);
 
-  const verdicts = (
+  await robustAgent(
+    "Create the directory and skeleton files for a new change proposal.\n\n" +
+      "HARD CONSTRAINT: the only files you may create are the eight named below, all inside " + P.dir +
+      ". Create nothing else and edit nothing else. Never touch spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+      "Create the directory, then write each file with its heading and section headings and NO content " +
+      "beyond what is specified here. These are skeletons: the stages that follow fill them.\n\n" +
+      "1. " + P.problem + "\n" +
+      "   `# Problem: <a short title you derive from the statement below>`, then these headings, with the " +
+      "   statement placed under `## Statement` VERBATIM and nothing invented under the others:\n" +
+      "   `## Statement`, `## Evidence`, `## Who observes it`, `## What breaks if nothing changes`, " +
+      "`## Findings this unblocks`, `## Prior art considered`, `## Validated premises`.\n\n" +
+      "   The problem statement to place verbatim:\n---\n" + input.problem + "\n---\n\n" +
+      (context && context !== "none provided"
+        ? "   Under `## Evidence`, place these citations the caller gathered, each marked `unverified` " +
+          "because nothing has checked them yet:\n---\n" + context + "\n---\n\n"
+        : "") +
+      "2. " + P.summary + " — `# Summary: <title>` then `## What changes`, `## Goals`, `## Non-goals`, " +
+      "`## Fixed decisions`, `## Watch out for`, `## Deliverable index`. All empty.\n\n" +
+      "3. " + P.status + " — frontmatter and nothing else:\n" +
+      "```\n---\nproposal: " + P.stem + "\ntitle: <the title>\nkind: " + seedKind + "\nstatus: Draft\n" +
+      "drafted-date: " + date + "\ndrafted-by: change-proposal\nreviewed-date: \nreviewed-by: \n" +
+      "approved-date: \napproved-by: \nimplemented-date: \nimplemented-by: \n---\n```\n\n" +
+      "4. " + P.checklist + " — `# Implementation checklist — " + P.stem + "` and nothing else yet.\n\n" +
+      "5. " + P.spec + " — `# Spec changes — <title>` then `## Design (as the spec must state it)`, " +
+      "`## Edge cases and accepted failure modes`, `## Staged edits`, `## Spec files touched`. All empty.\n\n" +
+      "6. " + P.nonSpec + " — `# Non-spec changes — <title>` then `## Design (implementation-facing)`, " +
+      "`## Staged code changes`, `## Staged schema, chart, and migration changes`, `## Staged docs changes`, " +
+      "`## Testing`, `## Edge cases and accepted failure modes`, `## Open decisions for review`, " +
+      "`## Files touched on application (non-spec)`. All empty.\n\n" +
+      "7. " + P.log + " — `# Review log — " + P.stem + "` then `## Standing context`, `## Ledger`, " +
+      "`## Retired`. All empty.\n\n" +
+      "8. " + P.deviations + " — `# Deviations — " + P.stem + "` and one line saying the implementor owns " +
+      "this file and it stays empty until an implementation records a departure from what the proposal " +
+      "states.\n\n" +
+      "Follow " + repo + "/.claude/rules/doc-style.md for any sentence you author.",
+    { label: "init", phase: "Init" },
+  );
+  log("Created " + P.dir + " with its eight skeleton files");
+
+  // ---- Validate ----------------------------------------------------------
+
+  phase("Validate");
+  log("Six validation lenses over the problem statement");
+  const lensOut = (
     await parallel(
-      premises.map(
-        (p) => () =>
-          robustAgent(
-            "Try to REFUTE this premise about the spec or implementation.\n\n" +
-              "Premise (" +
-              p.kind +
-              "): " +
-              p.statement +
-              "\n\n" +
-              "Original problem statement, for context only:\n" +
-              problem +
-              "\n\n" +
-              READ_ONLY +
-              "\n" +
-              EVIDENCE +
-              "\n" +
-              "Read the actual spec sections and code the premise is about. Return confirmed only when you found direct supporting evidence, refuted when the evidence contradicts the premise, and revised when the premise is directionally right but wrong in a detail that matters (provide revisedStatement). " +
-              "Default to refuted when you cannot find supporting evidence.",
-            {
-              schema: PREMISE_VERDICT,
-              label: "skeptic:" + p.id,
-              phase: "Validate",
-            },
-          ).then((v) => ({ premise: p, ...v })),
+      VALIDATE_LENSES.map((l) => () =>
+        robustAgent(
+          "You are one of six independent validators of a reported problem. Another agent consolidates " +
+            "your verdicts; yours is one reading, not the answer.\n\n" +
+            READ_ONLY + "\n" + EVIDENCE + "\n\n" +
+            "THE PROBLEM STATEMENT is at " + P.problem + ". Read it in full first.\n\n" +
+            l.text +
+            promptFor("validate." + l.key) +
+            "\n\nReturn your findings with the evidence you personally read for each. An empty findings " +
+            "list is a valid answer only when your lens genuinely has nothing to say about this problem.",
+          { schema: VALIDATE_LENS_RESULT, label: "validate:" + l.key, phase: "Validate" },
+        ).then((v) => (v ? { lens: l.key, ...v } : null)),
       ),
     )
   ).filter(Boolean);
 
-  const refuted = verdicts.filter((v) => v.verdict === "refuted");
-  const standing = verdicts.filter((v) => v.verdict !== "refuted");
-  premiseStats = { standing: standing.length, refuted: refuted.length };
+  if (lensOut.length === 0) {
+    return { mode, status: "interrupted", phase: "validate", reason: "every validation lens failed after retries" };
+  }
+  const refutedLenses = lensOut.filter((v) => v.verdict === "refuted");
   log(
-    "Premises: " +
-      standing.length +
-      " standing, " +
-      refuted.length +
-      " refuted",
+    "Validation: " + lensOut.length + "/" + VALIDATE_LENSES.length + " lenses returned, " +
+      refutedLenses.length + " refuted the problem",
   );
 
-  const loadBearing = verdicts.filter((v) => v.premise.loadBearing);
-  if (
-    loadBearing.length > 0 &&
-    loadBearing.every((v) => v.verdict === "refuted")
-  ) {
+  validation = await robustAgent(
+    "Consolidate six independent validations of a reported problem into one verdict, and rewrite the " +
+      "problem statement to what survives.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.problem + ". Create or edit nothing else.\n\n" +
+      EVIDENCE + "\n\n" +
+      "THE SIX VERDICTS, from lenses that did not see each other's work:\n" +
+      JSON.stringify(lensOut, null, 2) +
+      "\n\nWhere two lenses disagree, prefer the one whose claim you can verify in the repository, and " +
+      "verify it rather than trusting either. A refutation with evidence beats a confirmation without.\n\n" +
+      "THE PROBLEM IS NOT VIABLE when every load-bearing premise was refuted, when prior art shows it is " +
+      "already solved, or when the impact lens shows nothing observes it. Say so with `viable: false` and " +
+      "the evidence; that is a good outcome, not a failure of this run.\n\n" +
+      "Otherwise rewrite " + P.problem + " in place: the surviving statement under `## Statement`, the " +
+      "citations the evidence lens verified under `## Evidence` marked verified, what the impact lens " +
+      "established under `## Who observes it` and `## What breaks if nothing changes`, what the prior-art " +
+      "lens found under `## Prior art considered`, and every lens's findings with their verdicts under " +
+      "`## Validated premises`. Keep a refuted premise in the record with its refutation: a later stage " +
+      "reading only the survivors will re-derive the refuted one.\n\n" +
+      "Also return a title and a kind: `fix` corrects or reconciles existing behaviour, `new` adds a " +
+      "capability the spec or implementation lacks." +
+      promptFor("validate.consolidate") +
+      "\n\nFollow " + repo + "/.claude/rules/doc-style.md.",
+    { schema: VALIDATE_VERDICT, label: "validate:consolidate", phase: "Validate" },
+  );
+
+  if (!validation) {
+    return { mode, status: "interrupted", phase: "validate-consolidate", reason: "the consolidator failed after retries" };
+  }
+  premiseStats = {
+    lenses: lensOut.length,
+    confirmed: (validation.confirmed || []).length,
+    refuted: (validation.refuted || []).length,
+  };
+  if (!validation.viable) {
     return {
       mode,
       status: "not-viable",
-      reason: "every load-bearing premise was refuted",
-      verdicts,
+      reason: validation.whyNotViable,
+      path: P.dir,
+      validation,
     };
   }
+  draftTitle = validation.title;
+  log('Validated: "' + (validation.title || "untitled") + '" (' + (validation.kind || "fix") + ")");
+
+  // ---- Draft -------------------------------------------------------------
 
   phase("Draft");
-  const dossier = verdicts
-    .map(
-      (v) =>
-        "- [" +
-        v.verdict.toUpperCase() +
-        "] " +
-        (v.revisedStatement || v.premise.statement) +
-        "\n  evidence: " +
-        v.evidence.join("; ") +
-        "\n  notes: " +
-        v.notes,
+  log("Six design stances over the validated problem");
+  const stances = (
+    await parallel(
+      DRAFT_STANCES.map((st) => () =>
+        robustAgent(
+          "You are one of six independent designers answering the same validated problem. Another agent " +
+            "consolidates the six into one design, so commit to YOUR stance rather than hedging toward a " +
+            "compromise: a stance that argues its own case at full strength is worth more to the " +
+            "consolidator than six agents converging on the same cautious middle.\n\n" +
+            READ_ONLY + " Output the design as structured data only; another agent writes the files.\n" +
+            EVIDENCE + "\n\n" +
+            "Project principles: " + PRINCIPLES + "\n\n" +
+            "THE VALIDATED PROBLEM is at " + P.problem + ". Read it in full, including the refuted premises: " +
+            "a design that rests on one is already wrong.\n\n" +
+            "Read " + exemplar + " for the level of specificity expected, and read the spec sections your " +
+            "design targets.\n\n" +
+            st.text +
+            promptFor("draft." + st.key) +
+            "\n\nName every change's targets concretely: spec files and sections, code packages and files, " +
+            "or test files. Record what you considered and rejected, with the reason, because the " +
+            "consolidator needs to know which alternatives are already dead.",
+          { schema: STANCE_RESULT, label: "draft:" + st.key, phase: "Draft" },
+        ).then((v) => (v ? { stance: st.key, ...v } : null)),
+      ),
     )
-    .join("\n");
+  ).filter(Boolean);
+
+  if (stances.length === 0) {
+    return { mode, status: "interrupted", phase: "draft", reason: "every design stance failed after retries" };
+  }
+  const dissent = stances.filter((s) => !s.viable);
+  log(
+    "Draft: " + stances.length + "/" + DRAFT_STANCES.length + " stances returned" +
+      (dissent.length ? ", " + dissent.length + " argued for no change" : ""),
+  );
 
   const draft = await robustAgent(
-    "Draft a change proposal.\n\n" +
-      "Problem:\n" +
-      problem +
-      "\n\n" +
-      "Premise verdicts from independent skeptics (refuted premises are course corrections; the draft must not rest on them):\n" +
-      dossier +
-      "\n\n" +
-      READ_ONLY +
-      " Output the draft as structured data only; another agent writes the file.\n" +
-      EVIDENCE +
-      "\n" +
-      "Project principles: " +
-      PRINCIPLES +
-      "\n" +
-      "Read " +
-      exemplar +
-      " for the level of specificity expected, and read the spec sections each change targets. " +
-      "Produce: a title; kind (fix corrects or reconciles existing behavior — spec text, core-product code, or test infrastructure; new adds a capability the spec or implementation lacks); a problem restatement grounded in the confirmed evidence; the review decisions that constrain the design; the change set (each change names its targets — spec files and sections, code packages and files, or test files — the rationale, and a concrete sketch of the staged edit); non-goals; open questions only for decisions that genuinely belong to the human reviewer. " +
-      "Set viable: false with whyNotViable when the confirmed evidence shows no change is needed.",
-    { schema: DRAFT, label: "draft" },
+    "Consolidate six independent designs for the same validated problem into one.\n\n" +
+      READ_ONLY + " Output the consolidated draft as structured data only; another agent writes the files.\n" +
+      EVIDENCE + "\n\n" +
+      "Project principles: " + PRINCIPLES + "\n\n" +
+      "THE VALIDATED PROBLEM is at " + P.problem + ".\n\n" +
+      "THE SIX DESIGNS, produced in parallel by agents that did not see each other's work:\n" +
+      JSON.stringify(stances, null, 2) +
+      "\n\nHOW TO CONSOLIDATE. Pick a SPINE: the one design whose shape you would defend, named. Then graft " +
+      "what the others got right onto it, one element at a time, and say for each what it came from. Do not " +
+      "average the six; a design assembled from the median of six is a design nobody argued for.\n\n" +
+      (dissent.length
+        ? "TAKE THE DISSENT SERIOUSLY. " + dissent.length + " stance(s) argued that no change should be " +
+          "made. Read their reasoning and answer it explicitly. If they are right, set viable: false and " +
+          "say so; that is the most valuable outcome available here.\n\n"
+        : "") +
+      "Where two designs conflict on a factual matter, verify it in the repository rather than choosing. " +
+      "Where they conflict on a genuine design choice, pick one, and record the other in nonGoals with the " +
+      "reason it lost. Every alternative any stance rejected goes into nonGoals too, so a later round does " +
+      "not re-derive a dead option.\n\n" +
+      "Produce: a title; kind (fix or new); a problem restatement grounded in the validated evidence; the " +
+      "decisions that constrain the design; the change set, each naming its targets, rationale, and a " +
+      "concrete sketch of the staged edit; non-goals; and open questions ONLY for decisions that genuinely " +
+      "belong to the human reviewer." +
+      promptFor("draft.consolidate"),
+    { schema: DRAFT, label: "draft:consolidate", phase: "Draft" },
   );
 
-  // Same guard as the decompose phase: a null draft (retries exhausted, likely a
-  // session limit) must not crash on draft.viable — return a resumable status.
   if (!draft) {
-    return {
-      mode,
-      status: "interrupted",
-      phase: "draft",
-      reason: "draft failed after retries (likely session limit)",
-      verdicts,
-    };
+    return { mode, status: "interrupted", phase: "draft-consolidate", reason: "the draft consolidator failed after retries", path: P.dir };
   }
   if (!draft.viable) {
-    return { mode, status: "not-viable", reason: draft.whyNotViable, verdicts };
+    return { mode, status: "not-viable", reason: draft.whyNotViable, path: P.dir, validation };
   }
   draftTitle = draft.title;
-  log(
-    'Draft "' + draft.title + '" proposes ' + draft.changes.length + " changes",
-  );
+  log('Consolidated draft "' + draft.title + '" proposes ' + draft.changes.length + " changes");
+
+  // ---- Challenge ---------------------------------------------------------
+  //
+  // The panel produced the design; this tries to kill each piece of it. Kept
+  // exactly as it was: the six stances argue for their own reading, and this
+  // is the only stage whose default posture is that a change is unnecessary.
 
   phase("Challenge");
   const challenged = (
@@ -595,7 +1202,8 @@ if (mode === "new") {
               PRINCIPLES +
               "\n" +
               "Answer each question with evidence: (1) Does an existing spec surface, RPC, frame, field, or code path already cover this? (2) Is every factual premise under the change true in both the spec and the code, including process-lifetime and ownership assumptions? (3) Does the change contradict any other spec section? (4) Does it violate the project principles? (5) Is there a strictly smaller change that resolves the same problem? " +
-              "Return drop when the change is unnecessary or rests on a false premise, revise with a concrete revision when the need is real but the change is wrong or oversized, and keep only when it survives all five questions.",
+              "Return drop when the change is unnecessary or rests on a false premise, revise with a concrete revision when the need is real but the change is wrong or oversized, and keep only when it survives all five questions." +
+              promptFor("challenge"),
             {
               schema: CHALLENGE,
               label: "challenge:" + c.id,
@@ -635,105 +1243,150 @@ if (mode === "new") {
     return {
       mode,
       status: "no-change-needed",
+      path: P.dir,
       dropped: droppedChanges,
-      verdicts,
+      validation,
     };
   }
 
-  phase("Write");
-  const slug = draft.title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-  path = repo + "/proposals/" + num + "_" + draft.kind + "_" + slug + ".md";
+  // ---- Write -------------------------------------------------------------
+  //
+  // Six files rather than one. The split is not cosmetic: the review loop that
+  // follows converges the spec staging first and the rest after, and it can
+  // only do that if the two are separable.
 
+  phase("Write");
   await robustAgent(
-    "Write a change proposal file.\n\n" +
-      "HARD CONSTRAINT: the only file you may create or edit is " +
-      path +
-      ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/. The proposal stages its changes — spec edits, code changes, and test changes — as fenced markdown blocks or precise change descriptions; it never applies them.\n\n" +
-      "Draft (apply the challenge revisions in each sketch verbatim):\n" +
+    "Fill in a change proposal's files from a consolidated, challenged draft.\n\n" +
+      "HARD CONSTRAINT: the only files you may edit are the six named below, all inside " + P.dir +
+      ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/. This proposal STAGES its " +
+      "changes as fenced blocks and precise change descriptions; it never applies them.\n\n" +
+      "Read the skeletons first; they already carry the headings, and " + P.problem + " already carries " +
+      "the validated problem. Do not restructure them.\n\n" +
+      "THE DRAFT (apply each challenge revision in the sketch verbatim):\n" +
       JSON.stringify({ ...draft, changes: kept }, null, 2) +
-      "\n\n" +
-      "Dropped alternatives to record in Non-goals with their reasons:\n" +
+      "\n\nDROPPED ALTERNATIVES, which go under `## Non-goals` in the summary with their reasons:\n" +
       JSON.stringify(droppedChanges, null, 2) +
-      "\n\n" +
-      "Date: " +
-      date +
-      "\n" +
-      "Format. Two unnumbered sections open the proposal, before the numbered ones:\n\n" +
-      FORMAT_SUMMARY + "\n" + FORMAT_CHECKLIST + "\n" + FORMAT_BLANKS +
-      "\nThen follow the structure of " +
-      exemplar +
-      ' exactly (read it first): the "# Proposal:" title; Status ("Draft for review."), Date, and Scope bullets; the staging boilerplate paragraph; numbered sections (Problem with file:line citations and any finding IDs the input named; Decisions; design sections; Edge cases and accepted failure modes (every edge case or failure mode the design accepts or defers — not only those it changes — each row naming the observable outcome and the exact spec text and docs/ page that states it, so a deferred mechanism still records its accepted behavior and stages the sentence that documents it; omit only when the change has no accepted or deferred failure mode); Proposed changes with one subsection per target (spec file and section, code package, or test) and an anchor instruction plus a fenced block of the exact text to insert or a precise change description; Non-goals; Testing (list the specific, insightful, relevant new tests to add during implementation — one per behavior the proposal changes, mapped to the tiers the change reaches per .claude/rules/test-coverage.md, each covering the non-happy-path it needs (empty, error, concurrent, boundary, and spec-named-failure) and carrying a // spec: tie, rather than a vague "add tests" note); Findings closed on application; Resolved in adversarial review, initially noting that review rounds populate it; Open decisions for review when the draft has open questions; Files touched on application consistent with the staged changes).\n' +
-      "Prose rules: follow " +
-      repo +
-      "/.claude/rules/doc-style.md (read it first). " +
-      "Read the spec sections each staged edit targets so anchors and surrounding text are quoted accurately.",
+      "\n\nDate: " + date + "\n\n" +
+      "WHAT GOES WHERE.\n\n" +
+      P.summary + " — " + FORMAT_SUMMARY +
+      "  Plus `## Goals` and `## Non-goals`, and `## Deliverable index`: one line per staged deliverable, " +
+      "`SPEC-1 — <file it lands in> — <one line>`. The index is the ONLY place a deliverable id resolves, " +
+      "and the checklist and both change files cite it, so every id you use anywhere must appear here " +
+      "exactly once.\n\n" +
+      P.spec + " — the staged SPEC edits and nothing else. Under `## Design (as the spec must state it)`, " +
+      "the mechanism as the specification must state it. Under `## Staged edits`, one `### SPEC-n · " +
+      "spec/<file> § <section>` per edit, each with an anchor instruction (\"Append after …\", \"Replace the " +
+      "row …\") and a fenced block of the exact text to insert. Under `## Edge cases and accepted failure " +
+      "modes`, every case the SPEC text owns. Under `## Spec files touched`, the file list.\n" +
+      "  A proposal that changes no spec text leaves this file with its headings and no staged edits, which " +
+      "is a valid and common outcome; do not invent a spec edit to fill it.\n\n" +
+      P.nonSpec + " — everything else staged: `### CODE-n`, `### SCHEMA-n`, `### CHART-n`, `### MIG-n`, " +
+      "`### DOCS-n`, each naming its target and giving the exact change. Under `## Testing`, the specific, " +
+      "insightful tests to add during implementation: one per behaviour the proposal changes, mapped to the " +
+      "tiers the change reaches per .claude/rules/test-coverage.md, each covering the non-happy path it " +
+      "needs (empty, error, concurrent, boundary, and spec-named-failure) and carrying a `// spec:` tie. A " +
+      'vague "add tests" note is not a Testing section. Under `## Open decisions for review`, only ' +
+      "decisions that genuinely belong to the human reviewer.\n\n" +
+      P.checklist + " — " + FORMAT_CHECKLIST +
+      "  One lane per step: a step names deliverables of ONE lane only, because the lane selects which " +
+      "handler the implementation pipeline runs and a step with two has none. The standard pattern is every " +
+      "spec step first, in a leading block, then the rest; a step that breaks that order states on its own " +
+      "line why the interleave is necessary, and it qualifies only when the spec text cannot be written or " +
+      "applied until the earlier step lands.\n\n" +
+      P.problem + " — leave the statement and evidence alone. Fill `## Findings this unblocks` with the " +
+      "finding ids the input named, or \"none\".\n\n" +
+      P.status + " — leave it alone. The status is Draft and the review loop changes it.\n\n" +
+      FORMAT_BLANKS +
+      "\nProse rules: follow " + repo + "/.claude/rules/doc-style.md (read it first). Read the spec " +
+      "sections each staged edit targets so anchors and surrounding text are quoted accurately." +
+      promptFor("write"),
     { label: "write", phase: "Write" },
   );
-  log("Proposal written to " + path);
+  log("Proposal written to " + P.dir);
 } else {
   path = input.proposalPath.startsWith("/")
     ? input.proposalPath
     : repo + "/" + input.proposalPath;
+  P = proposalFiles(path, repo);
 }
 
 
-// ---- Bootstrap: give an existing proposal the two sections it predates ----
+// ---- Bootstrap: bring an existing proposal up to the current layout ----
 //
-// The writer produces the Summary and the implementation checklist in new mode.
-// A proposal written before those existed has neither, and everything downstream
-// assumes both: the fixer is told to keep the checklist current, the
-// applicability lens to validate it, and the end-of-run pass to reconcile it.
-// Without this step each of those improvises separately.
+// Two jobs, in order. A legacy single-file proposal is MIGRATED into the
+// folder layout, by the migrate-proposal subworkflow, which is the one
+// implementation of that split and is invoked identically by
+// implement-proposal. Then whatever the split, or an older run, left thin is
+// BACKFILLED from what the document already says.
 //
-// The sections are created ONCE, here, and then maintained and lens-checked like
-// any other section for the rest of the run. That is the whole point of doing it
-// at round zero rather than at the end: a checklist asserted after convergence is
-// a guess at a sequence dressed as a decision, while one created here is
-// validated by every round that follows it.
-//
-// Whether the sections are already there is decided by the agent rather than by
-// this script, because the script cannot read the proposal (see the note on the
-// sandbox above `snapshot` below). The step runs on every review-mode run and
-// returns immediately when both sections exist.
+// The backfill is not a review round and invents nothing. Where the document
+// does not settle something it says so rather than guessing, because a marked
+// inference is something the rounds that follow can check and a confident
+// guess is not.
+
 if (mode !== "new") {
   phase("Bootstrap");
+
+  if (P.layout === "legacy") {
+    log("Legacy single-file proposal; migrating to the folder layout before review");
+    const mig = await workflow(
+      { scriptPath: repo + "/.claude/workflows/migrate-proposal.js" },
+      { proposalPath: path.replace(repo + "/", ""), repoRoot: repo, date },
+    );
+    if (!mig || (mig.status !== "migrated" && mig.status !== "already")) {
+      return {
+        mode,
+        status: "migration-failed",
+        reason:
+          "the proposal could not be migrated to the folder layout, so the review loop did not start: " +
+          ((mig && (mig.reason || mig.status)) || "the migrator returned nothing"),
+        migration: mig || null,
+        path,
+      };
+    }
+    path = repo + "/" + (mig.dir || "proposals/" + P.stem);
+    P = proposalFiles(path, repo);
+    log("Migrated; reviewing " + P.dir);
+  }
+
   await robustAgent(
-      "FIRST, read " + path + " and check whether it already contains BOTH a `## Summary` section AND an " +
-        "`## Implementation checklist` section. If both are present, change NOTHING, edit no file, and reply " +
-        "with the single word SKIPPED. Only if one or both are missing, do the following.\n\n" +
-      "Give an existing change proposal the two sections it was written before, deriving both from what the " +
-        "document already says rather than inventing anything new.\n\n" +
-        "HARD CONSTRAINT: the only file you may edit is " +
-        path +
-        ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/. Add the two sections and " +
-        "change nothing else: no decision is reopened here, no staged change is edited, and no wording " +
-        "elsewhere is improved. This is a structural addition.\n\n" +
-        "Read the whole proposal first. Then insert both sections, unnumbered, after the staging boilerplate " +
-        "paragraph and before the first numbered section, in this order.\n\n" +
-        FORMAT_SUMMARY +
-        "\nDerive the Summary from the document. Its top-level changes are the staged deliverables grouped by " +
-        "what they accomplish rather than listed one by one. Its fixed decisions are the proposal's own " +
-        "Decisions, reduced to the line an implementor needs and stripped of the reasoning. Its watch-outs come " +
-        "from the recorded limits, the open questions, the accepted failure modes, and the review history: a " +
-        "trap the loop already fell into is exactly what an implementor needs warning about, and the pass log " +
-        "is where those are recorded.\n\n" +
-        FORMAT_CHECKLIST +
-        "\nDerive the checklist from the staged deliverables and the dependencies the document states between " +
-        "them. Read the Proposed changes section, the detailed design, and the files-touched section together: " +
-        "a deliverable that edits a file another deliverable creates depends on it, and a code deliverable that " +
-        "consumes a specification statement depends on the deliverable that states it. Where the document " +
-        "already records an application order or a precondition, follow it rather than deriving your own.\n\n" +
-        "WHERE THE DOCUMENT DOES NOT SETTLE AN ORDER, say so rather than guessing silently: put the step where " +
-        "it seems to belong and note on its line that the order is inferred. The review rounds that follow will " +
-        "check it, and a marked inference is something they can check, while a confident guess is not.\n\n" +
-        "Follow " +
-        repo +
-        "/.claude/rules/doc-style.md.",
-      { label: "bootstrap-sections", phase: "Bootstrap" },
+    "Fill in whatever a change proposal's files are missing, deriving everything from what the document " +
+      "already says.\n\n" +
+      "HARD CONSTRAINT: the only files you may edit are the ones inside " + P.dir + ". Never modify " +
+      "anything under spec/, docs/, pkg/, charts/, or schemas/. This is a STRUCTURAL pass: no decision is " +
+      "reopened, no staged change is edited, and no wording elsewhere is improved.\n\n" +
+      "FIRST read every file in " + P.dir + " and decide which are missing or carry only their headings. " +
+      "If all of them have content, change NOTHING and reply SKIPPED.\n\n" +
+      "For each that is empty or absent, derive it.\n\n" +
+      P.summary + " — " + FORMAT_SUMMARY +
+      "  Plus `## Goals`, `## Non-goals`, and `## Deliverable index`. Its top-level changes are the staged " +
+      "deliverables grouped by what they accomplish rather than listed one by one. Its fixed decisions are " +
+      "the proposal's own decisions reduced to the line an implementor needs, stripped of the reasoning. " +
+      "Its watch-outs come from the recorded limits, the open questions, the accepted failure modes, and " +
+      "the review history: a trap the loop already fell into is exactly what an implementor needs warning " +
+      "about. The deliverable index lists every staged deliverable id with the file it lands in and one " +
+      "line; if the document uses no ids, assign them now (SPEC-1, CODE-1, TEST-1) and use the same ids " +
+      "everywhere.\n\n" +
+      P.checklist + " — " + FORMAT_CHECKLIST +
+      "  Derive it from the staged deliverables and the dependencies the document states between them. Read " +
+      "the staged changes and the files-touched list together: a deliverable that edits a file another " +
+      "creates depends on it, and a code deliverable that consumes a specification statement depends on the " +
+      "deliverable that states it. Where the document already records an application order, follow it " +
+      "rather than deriving your own. One lane per step.\n" +
+      "  WHERE THE DOCUMENT DOES NOT SETTLE AN ORDER, put the step where it seems to belong and note on its " +
+      "line that the order is inferred. The review rounds that follow will check a marked inference and " +
+      "cannot check a confident guess.\n\n" +
+      P.status + " — frontmatter whose `status:` is the state the proposal is actually in, read with " +
+      "`node " + repo + "/.claude/tools/proposal-status.mjs " + P.root + " --field status`. Do not invent " +
+      "a state.\n\n" +
+      P.log + " — the three headings `## Standing context`, `## Ledger`, and `## Retired`, with any " +
+      "existing adversarial-review history placed under `## Retired`.\n\n" +
+      P.deviations + " — the heading and the note that the implementor owns it.\n\n" +
+      FORMAT_BLANKS +
+      promptFor("bootstrap") +
+      "\nFollow " + repo + "/.claude/rules/doc-style.md.",
+    { label: "bootstrap", phase: "Bootstrap" },
   );
 }
 
@@ -741,16 +1394,17 @@ if (mode !== "new") {
 
 phase("Conventions");
 await robustAgent(
-  "Check one proposal file against the written conventions and fix only violations.\n\n" +
-    "HARD CONSTRAINT: the only file you may edit is " +
-    path +
+  "Check a proposal's files against the written conventions and fix only violations.\n\n" +
+    "HARD CONSTRAINT: the only files you may edit are the ones inside " +
+    P.dir +
     ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
     "The written rules: section structure and citation formats per the exemplar " +
     exemplar +
     " (read it first), and prose per " +
     repo +
     "/.claude/rules/doc-style.md (read it first). " +
-    "Fix structural deviations and doc-style violations (fragments, missing list conjunctions, decorative em-dashes, marketing language). Do not change technical content, citations, or design decisions. If the file already conforms, change nothing and say so.",
+    "Fix structural deviations and doc-style violations (fragments, missing list conjunctions, decorative em-dashes, marketing language). Do not change technical content, citations, or design decisions. If the files already conform, change nothing and say so." +
+    promptFor("conventions"),
   { label: "conventions" },
 );
 
@@ -843,12 +1497,23 @@ const LENSES = [
       "(3) RELOCATION THAT LOSES CONTENT. For every edit described as a move, relocation, carve-out, reduction, or supersession, verify BOTH legs are staged: the source's removal AND the destination's full replacement text. A reduction that deletes a table, tool list, schema, or rule set whose text appears nowhere in the destination staging is content loss rather than relocation, and it is a finding even when the proposal calls it a move. Also check that the destination text carries every element the source held, and that anything still pointing at the source is redirected.\n" +
       "(4) ORDERING AND GATE STATE. An edit whose sub-step ordering contradicts its dependencies, a step that leaves the tree in a state where an EXISTING gate hard-fails with no recorded disposition (a schema breaking-change check against a baseline ref, a lint, a no-drift test, a citation ratchet, a coverage floor), or a proposal that adds a gate which its own staged text would fail. State the gate, the command or test that runs it, and why it fails.\n" +
       "(5) UNRESOLVABLE ANCHOR. An anchor instruction quoting surrounding text that does not match the current file, or that matches in more than one place so the edit site is ambiguous.\n\n" +
-      "(6) EXECUTION-MODEL INVERSION. The pipeline that applies this proposal lands its spec/ edits FIRST, verifies them, and commits them as their own commit, before any code is written (.claude/skills/implement-proposal/SKILL.md states this as a hard constraint). A proposal whose spec edits depend on code that the same proposal builds therefore cannot be applied at all, in any order: at spec-apply time the code does not exist, and the pipeline will not build it first. Check for this explicitly, because it is invisible when you simulate the proposal's own stated order, where the dependency is satisfied.\n" +
-      "    The test: does applying any staged spec edit require running, reading, or consulting something this proposal builds under scripts/, cmd/, pkg/, or tests/? A migration script that performs the rewrite, a register or map that resolves each site's replacement, a generated artifact, a lint whose output selects the edit sites. If so, the spec edits will be hand-applied by an agent with none of it available. Report it, naming the spec sub-step, the code artifact it depends on, and the sub-step that builds that artifact.\n" +
-      "    Two signals make it near-certain and are worth grepping for: the proposal says it enumerates no edit sites, or states that completeness is proven by gates rather than by review, while still staging spec edits. Both mean the spec edits have no hand-appliable form by design.\n" +
-      "    The resolution is a split (the code lands as its own proposal, first) or an explicit entry criterion, so state the gap and let the author choose. A proposal that already records such a prerequisite is conformant and is NOT a finding. Do not report ordinary sequencing inside one phase, which is class 4; this class is only the spec-before-code boundary the pipeline imposes from outside the document.\n\n" +
+      "(6) A CODE STEP WRITTEN AGAINST SPEC TEXT THAT HAS NOT LANDED. The pipeline runs ONE sequence, the " +
+      "implementation checklist, and dispatches each step on its lane: a spec step applies the staged " +
+      "specification text its line names, a code step builds. So spec and code may interleave, and an " +
+      "interleave is not itself a defect.\n" +
+      "    What IS a defect is a step that consumes a specification statement whose own step has not run. " +
+      "For every code step, ask which spec statements its work implements, find the deliverables that " +
+      "stage them, and check that the steps carrying those deliverables are named in its Depends-on and " +
+      "come before it. A code step implementing a statement staged by a LATER step is a finding whatever " +
+      "the lanes' relative order, because it is written against text that is not in the tree yet.\n" +
+      "    This replaces a rule that forbade the interleave outright. It is the same guarantee stated " +
+      "more precisely: the old rule protected code from being written against unlanded spec text by " +
+      "landing ALL of it first, which said nothing about whether the RIGHT statement had landed.\n\n" +
       "Method: read the proposal's staged-changes section in full and in order, then open the actual target files to confirm each anchor and each referenced artifact. Build the existence model as you go; a forward reference is only visible if you track what each sub-step creates. That model and class 2's step-1 worklist are the same enumeration read two ways, so build it once: for each created artifact ask both WHEN it exists relative to the edits that reference it (class 1) and WHETHER every property those edits need is stated (class 2). Do not report an edit as unappliable because you would have written it differently, and do not report ordinary implementation judgment (choosing a variable name, formatting a table) as underspecification. The test is whether a competent implementor would be forced to guess at something the proposal was responsible for stating." +
-      "\n(CHECKLIST) THE IMPLEMENTATION CHECKLIST IS THE APPLICATION ORDER, so this lens owns it. Read it against the staged deliverables and report: a staged deliverable that appears in no step; a deliverable named by two steps; a step naming a deliverable the proposal does not stage; a Depends-on that names a later step or a step that does not exist; a step whose lane is code while a spec step it depends on comes after it, unless the step's line states why the interleave is deliberate; and a step whose tier list omits a tier its deliverable plainly reaches. Simulate the checklist as the order of application: if applying the steps in their stated order would hit a forward reference that applying them in another order would not, the checklist is the defect rather than the edit.\n" +
+      "\n(CHECKLIST) THE IMPLEMENTATION CHECKLIST IS THE ONE EXECUTION SEQUENCE, so this lens owns it. Read it against the staged deliverables and report: a staged deliverable that appears in no step; a deliverable named by two steps; a step naming a deliverable the proposal does not stage; a Depends-on that names a later step or a step that does not exist; and a step whose tier list omits a tier its deliverable plainly reaches.\n" +
+      "    LANES. Each step carries exactly ONE lane and names deliverables of that lane only. A step naming both a spec deliverable and a non-spec one is a finding: the lane selects which handler the pipeline runs for that step, and a step with two lanes has no handler.\n" +
+      "    ORDER. The standard pattern is every spec step first, in a leading block, then the rest. Report any step that breaks that order WITHOUT stating on its own line why the interleave is necessary. Then judge the stated reason: it qualifies only when the specification text cannot be written or applied until the earlier step lands, which means the staged edit is the output of a tool this proposal builds, or its content depends on a fact only the built artifact fixes. Efficiency, convenience, and a preference for building before writing do not qualify, and a step claiming one of those is a finding.\n" +
+      "    Simulate the checklist as the order of execution: if running the steps in their stated order would hit a forward reference that another order would not, the checklist is the defect rather than the edit.\n" +
       "A checked box is a finding. The proposal is not implemented, so every box is unchecked until the implementation pipeline ticks it.",
   },
   {
@@ -1015,11 +1680,11 @@ if (startSet) {
 const SNAPDIR = repo + "/scratchpad/cp-snap";
 
 async function snapshot(name) {
-  const dest = SNAPDIR + "/" + name + ".md";
+  const dest = SNAPDIR + "/" + name;
   const ok = await robustAgent(
     "Run exactly this command and reply with the single word DONE:\n\n" +
-      "mkdir -p " + SNAPDIR + " && cp " + path + " " + dest + "\n\n" +
-      "Do nothing else. Do not read, summarise, or edit either file.",
+      "rm -rf " + dest + " && mkdir -p " + SNAPDIR + " && cp -r " + P.dir + " " + dest + "\n\n" +
+      "Do nothing else. Do not read, summarise, or edit anything.",
     { label: "snap:" + name, model: "haiku" },
   );
   return ok ? dest : null;
@@ -1031,7 +1696,7 @@ async function diffHunks(snapPath) {
   if (!snapPath) return 0;
   const out = await robustAgent(
     "Run exactly this command and reply with ONLY the number it prints, and no other text:\n\n" +
-      "diff -u '" + snapPath + "' '" + path + "' | grep -c '^@@'\n\n" +
+      "diff -ru '" + snapPath + "' '" + P.dir + "' | grep -c '^@@'\n\n" +
       "`diff` exits non-zero when the files differ and `grep -c` exits non-zero on a zero count; both are " +
       "expected here and neither is an error. If nothing is printed, reply 0.",
     { label: "diffcount", model: "haiku" },
@@ -1046,10 +1711,10 @@ function diffInstruction(snapPath) {
   return (
     "A snapshot of the proposal as it stood before those edits is at " +
     snapPath +
-    ". Run `diff -u " +
+    ". Run `diff -ru " +
     snapPath +
     " " +
-    path +
+    P.dir +
     "` to see exactly what changed. Widen the context with `-U 20` on any hunk whose surroundings matter."
   );
 }
@@ -1066,7 +1731,11 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
     history +=
       "\n\nAlready examined and refuted in earlier rounds (do not re-report these or close variants):\n" +
       rejected
-        .map((r) => "- " + r.title + ": refuted because " + r.reason)
+        .map(
+          (r) =>
+            "- " + r.title + ": refuted by the " + (r.refutedBy || "unknown") +
+            " skeptic because " + r.reason,
+        )
         .join("\n");
   }
   return (
@@ -1080,6 +1749,9 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
     BAR +
     "\n\n" +
     lens.text +
+    LOOP.scopeNote +
+    DEVIATIONS_BLOCK() +
+    logBlock("review-" + lens.key, round) +
     history +
     (lensPrompt
       ? "\n\nAdditional instruction from the caller of this run. It adds context or " +
@@ -1096,7 +1768,38 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
         "scope limit: your lens still owns the whole proposal, and the defect a rewrite leaves in text nobody " +
         "touched is exactly the drift this loop exists to catch.\n"
       : "") +
+    cacheBlock(lens.key, round) +
     "\n\nWork method: read the proposal fully, then investigate the repository with Grep and targeted Reads to verify or refute its claims under your lens. Report your findings via the structured output (empty array if you find nothing that meets the bar)."
+  );
+}
+
+// A lens that already ran this round over this exact text returns its cached
+// answer instead of reviewing again.
+//
+// The runtime's own journal replays a completed agent on a resume of the SAME
+// run. The gap this closes is a FRESH relaunch, which is what actually happens
+// after an auth expiry or a script edit, and where a dozen lens agents would
+// otherwise re-read a proposal none of them has changed.
+//
+// The key is (lens, round, content hash), and the hash is what removes the need
+// for any cleanup. A hit means the same lens, in the same round, over
+// byte-identical text -- exactly and only the crash-resume case. After a fix
+// lands the hash changes, every key misses, and the lenses re-read the changed
+// text because that is the only thing they can do. An earlier design keyed on
+// (lens, round) alone and needed the round's cache deleted in a specific window
+// between the fix landing and the state write, which a crash in the wrong place
+// defeats; this has no window to get wrong.
+function cacheBlock(key, round) {
+  const dir = repo + "/scratchpad/cp-cache/" + runTag;
+  return (
+    "\n\nCACHE. Before anything else, run:\n" +
+    "  mkdir -p " + dir + " && H=$(cat " + P.spec + " " + P.nonSpec + " " + P.checklist +
+    " 2>/dev/null | md5sum | cut -c1-12) && cat " + dir + "/" + key + "-r" + round +
+    "-$H.json 2>/dev/null\n" +
+    "If that printed JSON, return exactly it as your structured output and do no other work: it is your " +
+    "own answer to this same question over this same text, from a run that was interrupted.\n" +
+    "Otherwise do the review, and immediately before you return, write your findings JSON to that same " +
+    "path, recomputing $H the same way."
   );
 }
 
@@ -1131,17 +1834,124 @@ function materialityPrompt(f) {
   );
 }
 
-function fixPrompt(confirmed, round, strikes) {
+function fixPlanPrompt(confirmed, round) {
+  return (
+    "Split one round's confirmed review findings into groups that will be fixed together.\n\n" +
+    READ_ONLY +
+    "\n\nPROPOSAL: " + P.dir + ". Loop: " + LOOP.name + ". Round " + round + ".\n\n" +
+    "WHY THIS EXISTS. One fixer holding every finding at once reads none of them closely, and findings " +
+    "that share a root produce edits that contradict each other and become findings of their own a round " +
+    "later. Each group you make gets its own design and its own fixer.\n\n" +
+    "THE ONE CAP is " + maxFixGroups + " groups. There is NO cap on how many findings a group holds, and " +
+    "size is the wrong axis to balance on: forty trivial citation corrections that share a subject belong " +
+    "in ONE group, where one fixer applies them consistently, while three deep design findings belong in " +
+    "three groups however few they are. Balance COHESION and EFFORT, not size.\n\n" +
+    "HOW TO GROUP.\n" +
+    "- Together: findings that touch the same text, the same section, or the same mechanism. Closing those " +
+    "separately is what produces contradictory edits.\n" +
+    "- Alone: a finding whose fix will cascade into other sections. It needs the design stage's full " +
+    "attention and it will move text the other groups are editing.\n" +
+    "- FEWER than the cap when the findings genuinely cluster into fewer subjects. Every group costs a " +
+    "design agent and a fix agent, so an unnecessary group is pure waste.\n\n" +
+    "ORDER the groups so that no group's edits destroy an anchor a later group needs. Fixing happens in " +
+    "the order you give.\n\n" +
+    "EVERY finding index appears in EXACTLY ONE group, and every finding appears. A partition that drops " +
+    "or duplicates a finding is rejected and the whole round falls back to one group, which is worse than " +
+    "any split you could make.\n\n" +
+    "THE CONFIRMED FINDINGS, indexed from 0:\n" +
+    JSON.stringify(confirmed.map((f, i) => ({ i, title: f.title, where: f.where, area: f.area, kind: f.kind })), null, 2) +
+    promptFor("fix-plan")
+  );
+}
+
+function fixDesignPrompt(group, confirmed, round) {
+  const picked = (group.findings || []).map((i) => confirmed[i]).filter(Boolean);
+  const forced =
+    fixDesignDepth === "shallow"
+      ? "\n\nTHE CALLER HAS FORCED SHALLOW MODE. Treat every finding as trivial: apply the reviewer's " +
+        "suggested fix and do no investigation. Use this budget even where you would otherwise dig.\n"
+      : fixDesignDepth === "deep"
+        ? "\n\nTHE CALLER HAS FORCED DEEP MODE. Treat every finding as deep and give each the architect " +
+          "treatment below, including the ones that look trivial.\n"
+        : "";
+  return (
+    "Decide HOW each finding in one group should be fixed, before anything is edited.\n\n" +
+    READ_ONLY +
+    " You produce a design; a different agent applies it.\n\n" +
+    CONTEXT +
+    "\n\nLoop: " + LOOP.name + ". Round " + round + ". Group " + group.id + " — " + (group.title || "") +
+    "\nWhy these are together: " + (group.rationale || "not stated") +
+    (group.sharedSubject ? "\nWhat they share: " + group.sharedSubject : "") +
+    "\n\n" +
+    "TRIAGE FIRST, AND LET THE TRIAGE GOVERN YOUR BUDGET. Classify each finding as trivial, moderate, or " +
+    "deep BEFORE you investigate anything, and then spend accordingly. Spending deep effort on a trivial " +
+    "finding is a defect in your work, not thoroughness: a group of eight trivial findings should cost a " +
+    "fraction of what a single deep one costs.\n" +
+    "  trivial — the reviewer's suggested fix is unambiguous, lands in one place, and changes nothing " +
+    "another section states. Output one line: apply as suggested. Read nothing. Most citation, " +
+    "bookkeeping, and attribution findings are trivial.\n" +
+    "  moderate — clear, but touching more than one statement or choosing between two obvious options. " +
+    "Output the choice, the sites, and one sentence of why.\n" +
+    "  deep — a mechanism must be invented or changed, the reviewer left it open-ended, or closing it " +
+    "plausibly cascades. Only these get what follows." +
+    forced +
+    "\n\nON A DEEP FINDING YOU ARE THE ARCHITECT. Establish ground truth in the repository BEFORE you read " +
+    "what the proposal says about the mechanism: specifying against the proposal's own prose is how a " +
+    "mechanism gets into the state that produced this finding. Then answer, in order:\n" +
+    "  1. Does an existing spec surface, RPC, frame, field, or code path already carry this? Project " +
+    "principles: " + PRINCIPLES + "\n" +
+    "  2. Is there ONE change that closes several findings in this group at once? Say so in groupNote.\n" +
+    "  3. Is the strongest answer to DELETE something rather than specify it? A smaller mechanism beats a " +
+    "better-specified larger one, and this is the outcome most worth reaching for.\n" +
+    "  4. If a new mechanism is unavoidable: what state does it read, which sites set and clear that " +
+    "state, who are ALL its callers including every type satisfying a changed interface, what happens when " +
+    "it does not fire and what observes that, and which test pins it at which tier? Declare it in " +
+    "newMechanisms with those filled in. An unspecified mechanism is a defect handed to a later round.\n" +
+    "  5. What else in the proposal must change as a consequence? Name every section in cascades.\n\n" +
+    "Read " + repo + "/.claude/rules/code-best-practices.md, doc-content.md, and channel-naming.md when " +
+    "the design touches their domains.\n\n" +
+    "PREVENT THE PROPOSAL GROWING HAIR. It should read as ONE coherent design when this loop ends, not as " +
+    "a design plus forty patches. A fix that adds a conditional to avoid restating a rule, adds a second " +
+    "mechanism that nearly duplicates an existing one, or answers a finding with an exception clause, is " +
+    "hair. Say so when you are proposing one, and give the coherent alternative even when it is larger, so " +
+    "the choice is made deliberately rather than by accretion.\n\n" +
+    "RECORD WHAT YOU REJECTED. The fixer is given your alternatives so it neither re-derives them nor " +
+    "quietly picks one you already ruled out. And fill doNotDo with the tempting wrong fix: this loop's " +
+    "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
+    "THE FINDINGS IN THIS GROUP:\n" +
+    JSON.stringify(picked, null, 2) +
+    DEVIATIONS_BLOCK() +
+    logBlock("fix-design-" + group.id, round) +
+    promptFor("fix-design")
+  );
+}
+
+function fixPrompt(confirmed, round, strikes, group, design) {
+  const designBlock = design
+    ? "\n\nTHE DESIGN FOR THIS GROUP. A separate agent established ground truth in the repository and " +
+      "decided how each finding should be closed, before anything was edited. APPLY IT. Your scope for " +
+      "design decisions is narrow here: you are applying a design rather than inventing one.\n" +
+      "  The alternatives are listed so you neither re-derive them nor quietly pick one that was already " +
+      "ruled out. `doNotDo` is the tempting wrong fix; do not take it.\n" +
+      "  `cascades` names what else must change as a consequence, and it is part of the fix rather than a " +
+      "note about it.\n" +
+      "  If you judge a design WRONG, say so in designRejected with what you did instead and why. Do not " +
+      "substitute your own silently: that is the failure this stage exists to remove.\n\n" +
+      JSON.stringify(design, null, 2)
+    : "\n\nNo design was produced for this group, so decide the fix yourself, with the care the design " +
+      "stage would have applied: establish ground truth in the repository before you specify a mechanism, " +
+      "and prefer deleting something to specifying it.";
   return (
     "You are the fixer for round " +
     round +
-    " of an iterative convergence loop on the proposal " +
-    path +
+    " of the " + LOOP.name + " convergence loop on the proposal at " +
+    P.dir +
+    (group ? ", working on group " + group.id + " of this round's findings" : "") +
     ".\n\n" +
     CONTEXT +
-    "\n\nHARD CONSTRAINT: the only file you may edit is " +
-    path +
-    ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\nApply EXACTLY the confirmed findings below using Edit (or Write for large restructures). Requirements:\n" +
+    "\n\nHARD CONSTRAINT. " + LOOP.editable +
+    "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/: this proposal STAGES its " +
+    "changes and never applies them.\n\nApply EXACTLY the confirmed findings below using Edit (or Write for large restructures). Requirements:\n" +
     "- Before each edit, re-verify the relevant spec/code citations yourself with Grep/Read; every claim that remains in the proposal must be accurate and carry file:line evidence. Re-verify every citation in text you touch, including stale line numbers.\n" +
     "- Make the smallest change that corrects each finding. Do not expand scope. Do not change design decisions beyond what the findings require; when a finding forces a design choice, pick the option most consistent with the cited spec precedent and the project principles (" +
     PRINCIPLES +
@@ -1163,7 +1973,10 @@ function fixPrompt(confirmed, round, strikes) {
     repo +
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
     JSON.stringify(confirmed, null, 2) +
-    "\n\nReturn a short summary listing each finding and the exact edit you made for it."
+    designBlock +
+    logBlock("fix-" + (group ? group.id : "all"), round) +
+    "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
+    promptFor("fix")
   );
 }
 
@@ -1222,13 +2035,11 @@ function followUpFixPrompt(findings, round) {
   return (
     "You are the follow-up fixer for round " +
     round +
-    ". A post-fix review of the previous fixer's edits to " +
-    path +
-    " found the defects below in that fixer's own work.\n\n" +
+    " of the " + LOOP.name + " loop. A post-fix review of the previous fixer's edits found the defects " +
+    "below in that fixer's own work.\n\n" +
     CONTEXT +
-    "\n\nHARD CONSTRAINT: the only file you may edit is " +
-    path +
-    ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+    "\n\nHARD CONSTRAINT. " + LOOP.editable +
+    "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
     "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. When a defect is drift between a changed statement and its parallels, make every statement agree rather than reverting the original fix. Append your corrections as bullets to the SAME numbered pass subsection the previous fixer created in the proposal's adversarial-review-history section, rather than opening a new pass, because these are corrections to that pass and not a separate round. Follow " +
     repo +
     "/.claude/rules/doc-style.md.\n\nDefects to correct (JSON):\n" +
@@ -1568,6 +2379,27 @@ async function growthSince(snapPath) {
   };
 }
 
+// What a stopping verdict has to say about what happens next, so a `halt` is
+// actionable rather than merely a stop.
+const NEXT_STEPS = {
+  type: "object",
+  required: ["summary", "confidence"],
+  properties: {
+    summary: { type: "string", description: "what should happen next, in two sentences" },
+    confidence: {
+      type: "string",
+      enum: ["clear", "needs-human"],
+      description:
+        "clear: the next run's arguments and prompts follow from what this run learned, and a caller could launch it without deciding anything. needs-human: a person must decide something first.",
+    },
+    humanDecision: { type: "string", description: "for needs-human: the decision, stated so it can be answered without reading the proposal" },
+    rerunMode: { type: "string", enum: ["review", "redesign", "new"] },
+    rerunArgs: { type: "string", description: "a JSON object of arguments for the next run, as a string" },
+    rerunPrompts: { type: "string", description: "a JSON object of per-agent prompts for the next run, as a string" },
+    problemStatementEdit: { type: "string", description: "for reframe: the restatement to write before re-entering" },
+  },
+};
+
 const INTROSPECTION = {
   type: "object",
   required: ["observations", "caseHealthy", "caseUnhealthy", "verdict", "reasoning"],
@@ -1611,6 +2443,7 @@ const INTROSPECTION = {
       description:
         "What you expect the next few rounds to look like if the run continues. The next introspection is shown this and held to it, so make it falsifiable.",
     },
+    nextSteps: NEXT_STEPS,
   },
 };
 
@@ -1627,134 +2460,184 @@ const INTROSPECTION = {
 // wrong "stop" costs a human interruption and the run's momentum, and nothing
 // self-corrects it. So the burden of proof is on stopping, and a panel that
 // cannot agree takes the least disruptive verdict any member reached.
-const PANEL_VOTE = {
+// ---- The judges ----------------------------------------------------------
+//
+// A judge does not vote on the verdict. It tries to FALSIFY the argument the
+// introspection pass made for it, and the verdict stands unless a majority
+// falsifies it conclusively. That is the right shape for two reasons. Handing
+// a reviewer a conclusion and asking it to check produces agreement rather
+// than examination, which is the failure mode a vote invites. And an
+// unfalsified argument is the only kind worth acting on, whichever direction
+// it points.
+//
+// Every verdict goes to a panel now, including `healthy`. A wrong `healthy` is
+// the most expensive verdict in the loop -- it spends every remaining round --
+// and nothing was checking it.
+const FALSIFICATION = {
   type: "object",
-  required: ["verdict", "reasoning", "whatWouldChangeMyMind"],
+  required: ["falsified", "howConclusive", "theArgumentIAttacked", "reasoning"],
   properties: {
-    verdict: {
+    falsified: { type: "boolean", description: "true when you showed the pass's argument does not hold" },
+    howConclusive: {
+      type: "string",
+      enum: ["conclusive", "partial", "none"],
+      description:
+        "conclusive: you have evidence the argument is wrong, not merely unproven. partial: you have doubt you can articulate but cannot settle. none: you could not falsify it.",
+    },
+    theArgumentIAttacked: { type: "string", description: "the pass's claim, in your words, so a reader can see you attacked the real one" },
+    reasoning: { type: "string" },
+    evidence: { type: "array", items: { type: "string" }, description: "file:line or round numbers you personally checked" },
+    fallbackVerdict: {
       type: "string",
       enum: ["healthy", "redesign", "prune", "reframe", "halt"],
-    },
-    reasoning: { type: "string" },
-    whatWouldChangeMyMind: {
-      type: "string",
-      description:
-        "The specific evidence that would move you to the adjacent verdict. A vote nothing could change is a vote that did not examine the evidence.",
+      description: "when you falsified it: the verdict the evidence actually supports",
     },
   },
 };
 
+// One panel per verdict. The judges within a panel read the same evidence and
+// differ in what they weigh, which is what makes their agreement informative;
+// judges asked three unrelated questions make the narrowest of them the decider.
+const PANELS = {
+  healthy: [
+    "You are the TRAJECTORY SKEPTIC. The pass says this run is draining. Find the evidence that it is not: " +
+      "findings per round flat or rising, deep defects arriving late, growth concentrated in sections that " +
+      "were already large, the loop repeatedly correcting text it wrote itself. Numbers, not impressions.",
+    "You are the BLIND-SPOT SKEPTIC. A quiet area reads identically whether it is clean or whether no lens " +
+      "is examining it, and those are opposite conditions. For each area the pass calls settled, say which " +
+      "lens would have found a defect there and whether it actually ran recently.",
+  ],
+  prune: [
+    "You are the NECESSITY judge. Is the text the pass wants deleted genuinely redundant, or is it the only " +
+      "place something is stated? Read it.",
+    "You are the DEPENDENCY judge. Does anything else in the proposal cite, enumerate, or depend on the " +
+      "text that would be deleted? A prune that orphans a cross-reference trades one defect for another.",
+    "You are the DELEGATION judge. Would an IMPLEMENTOR'S CHOICE marker actually BOUND the choice here, or " +
+      "would it delegate without a constraint? A blank with no constraint is a licence, and the convention " +
+      "forbids it for a wire contract, a fail-closed predicate, an ordering another step depends on, or " +
+      "anything a test must assert.",
+  ],
+  redesign: [
+    "You are the ARCHITECTURE judge. Is the mechanism actually WRONG, or is it right and merely " +
+      "under-described? Those need opposite treatments, and a redesign of a sound mechanism costs a full " +
+      "subworkflow to produce the same design in different words.",
+    "You are the SMALLER-MECHANISM judge. Can the thing be DELETED rather than respecified? A smaller " +
+      "mechanism beats a better-specified larger one, and if the answer here is deletion then a redesign " +
+      "aimed at specifying it whole is aimed at the wrong outcome.",
+    "You are the CASCADE judge. If this is respecified, what else in the proposal must change? Name it. A " +
+      "redesign whose blast radius the pass has not counted leaves the loop with more work than it started " +
+      "with, in sections no lens is currently reading.",
+  ],
+  reframe: [
+    "You are the PROBLEM-FIT judge. Read the problem statement. Is the framing the pass wants to abandon " +
+      "actually wrong, or is the design merely hard? Those look identical from inside a difficult run.",
+    "You are the SCOPE judge. Is this one proposal or several? If several, say where the cut is and whether " +
+      "reframing is really the instrument, since a split is not a reframe.",
+    "You are the EVIDENCE judge. Does the tree still support the framing the proposal rests on? Check the " +
+      "citations the problem statement makes, not the pass's summary of them.",
+  ],
+  halt: [
+    "You are the HUMAN-QUESTION judge. Can a person actually ANSWER the question as stated, in one sitting, " +
+      "without reading the whole proposal? A halt whose question comes back unresolved has cost a human's " +
+      "attention and bought nothing.",
+    "You are the COST judge. What does continuing buy against what it costs? What did the recent rounds " +
+      "produce, and what would the next several plausibly find given that?",
+    "You are the SELF-HELP judge. Is there a legal move this loop has not tried -- a redesign, a prune, a " +
+      "lens it has not run, a decision it could record rather than resolve? Halting when one remains is " +
+      "spending a human on work the loop can do.",
+  ],
+};
+
 const DISRUPTION = ["healthy", "prune", "redesign", "reframe", "halt"];
 
-async function reviewStopDecision(rnd, verdict, growth, churn) {
+async function judgePanel(rnd, verdict, growth, churn) {
+  const panel = PANELS[verdict.verdict] || PANELS.halt;
+  const judges = panel.slice(0, verdict.verdict === "healthy" ? judgesHealthy : judgesPerVerdict);
   log(
-    "Round " + rnd + ": introspection returned " + verdict.verdict +
-      "; putting the decision to a panel before stopping",
+    "Round " + rnd + ": introspection returned " + verdict.verdict + "; putting it to " + judges.length +
+      " judge(s) who will try to falsify it",
   );
   const brief =
     READ_ONLY +
-    "\n\nPROPOSAL: " + path + ". Round " + rnd + ".\n\n" +
-    "An introspection pass has concluded that this adversarial convergence run should STOP and put a " +
-    "question to a human, rather than continue reviewing. You are one of three reviewers of that decision. " +
-    "The panel's majority decides; the pass does not decide alone.\n\n" +
-    "RATIFYING IS THE FAILURE MODE HERE. You have been handed a conclusion and asked to check it, which is " +
-    "the situation in which reviewers agree most and examine least. Reach your own verdict from the evidence " +
-    "and let the pass's reasoning inform it rather than set it.\n\n" +
-    "THE BURDEN IS ON STOPPING, and the reason is asymmetric cost rather than optimism. A wrong decision to " +
-    "continue corrects itself: the next introspection runs within a few rounds, sees more evidence, and can " +
-    "stop then. A wrong decision to stop costs a human's attention and the run's momentum, and nothing " +
-    "corrects it. So vote to stop only if the evidence convinces you, and prefer the least disruptive verdict " +
-    "that answers what the evidence actually shows.\n\n" +
-    "YOU MAY DOWNGRADE RATHER THAN VETO. If the pass is right that something is wrong but wrong about how " +
-    "serious it is, say so with the verdict that fits: `redesign` when a named mechanism is being repaired a " +
-    "facet at a time, `prune` when a section has grown past its value, `healthy` when the run is draining and " +
-    "the pass has over-read a rough patch. `reframe` and `halt` both stop the run.\n\n" +
-    "THE PASS'S FULL OUTPUT, including the case it made for the run being healthy:\n" +
+    "\n\nPROPOSAL: " + P.dir + ". Round " + rnd + ".\n\n" +
+    "An introspection pass has concluded that this convergence run is `" + verdict.verdict + "`. YOUR JOB " +
+    "IS TO FALSIFY THAT, not to vote on it. Reach for the evidence that would show the pass wrong, and " +
+    "report honestly whether you found it.\n\n" +
+    "THE VERDICT STANDS UNLESS A MAJORITY OF THIS PANEL FALSIFIES IT CONCLUSIVELY. So `partial` is an " +
+    "honest and common answer: it means you have doubt you can articulate and cannot settle, and it leaves " +
+    "the verdict standing. Do not inflate it to `conclusive` to be heard, and do not deflate a real " +
+    "refutation to `partial` to avoid disrupting the run.\n\n" +
+    "RATIFYING IS THE OTHER FAILURE. You have been handed a conclusion and asked to check it, which is the " +
+    "situation in which reviewers agree most and examine least. Attack the argument the pass actually made, " +
+    "which is why you must restate it in your own words before you attack it.\n\n" +
+    "THE PASS'S FULL OUTPUT, including the case it made against its own verdict:\n" +
     JSON.stringify(verdict, null, 2) +
     "\n\nHOW THE DOCUMENT GREW since the previous introspection:\n" +
     JSON.stringify(growth, null, 2) +
-    "\n\nCONFIRMED FINDINGS BY AREA, over the whole run, each with its round, kind, and whether it corrected " +
-    "text this loop itself wrote:\n" +
+    "\n\nCONFIRMED FINDINGS BY AREA over the whole run, each with its round, kind, and whether it " +
+    "corrected text this loop itself wrote:\n" +
     JSON.stringify(Object.fromEntries([...areaLog].map(([a, es]) => [a, es])), null, 2).slice(0, 10000) +
     "\n\nMECHANISMS THIS LOOP'S FIXER INVENTED, and how many later findings each caused:\n" +
     JSON.stringify(introducedMechanisms, null, 2) +
     "\n\nROUND HISTORY:\n" +
     JSON.stringify(
-      history.map((h) => ({
-        round: h.round,
-        sweep: h.sweep,
-        confirmed: h.confirmed,
-        newMechanisms: h.newMechanisms,
-      })),
+      history.map((h) => ({ loop: h.loop, round: h.round, sweep: h.sweep, confirmed: h.confirmed, newMechanisms: h.newMechanisms })),
       null,
       2,
     ).slice(0, 8000) +
     (churn && churn.length ? "\n\nCOUNTERS THAT TRIPPED:\n" + JSON.stringify(churn, null, 2) : "") +
-    "\n\nRead the proposal yourself before voting. The evidence above is a summary and the document is the " +
-    "subject.";
-
-  const lenses = [
-    "You are the TRAJECTORY reviewer. Judge only the direction of travel. Are findings per round falling, and " +
-      "are deep defects giving way to shallow ones? A run whose confirmed counts are dropping and whose late " +
-      "findings are citations and companion sites is draining, however large it has become. A run whose design " +
-      "defects arrive late, or whose counts are flat across several rounds, is not. Say which pattern this run " +
-      "shows, with the numbers.",
-    "You are the DESIGN reviewer. Ignore the trajectory and judge the document. Read the sections the pass " +
-      "names and decide whether the design in front of you is sound, whether a mechanism is described more " +
-      "than once in different words, and whether the accumulated fixes still satisfy the proposal's own " +
-      "Decisions. A proposal can be converging numerically onto something that should not be built.",
-    "You are the COST reviewer. Judge what continuing buys against what it costs. How much has this run spent " +
-      "and what has the recent spend produced? What would the next several rounds plausibly find, given what " +
-      "the last several found? And what does stopping cost: is the question the pass wants to ask a human " +
-      "one that a human can actually answer, or would it come back with the same problem unresolved?",
-  ];
+    "\n\nRead the proposal and its review log yourself before answering. The evidence above is a summary " +
+    "and the documents are the subject.";
 
   const votes = (
     await parallel(
-      lenses.map((l, i) => () =>
-        robustAgent(brief + "\n\nYOUR LENS. " + l, {
-          label: "stop-review:" + (i + 1) + ":r" + rnd,
+      judges.map((l, i) => () =>
+        robustAgent(brief + "\n\nYOUR LENS. " + l + promptFor("judge." + verdict.verdict), {
+          label: "judge:" + verdict.verdict + ":" + (i + 1) + ":r" + rnd,
           phase: "Round " + rnd + ": introspect",
-          schema: PANEL_VOTE,
+          schema: FALSIFICATION,
         }),
       ),
     )
   ).filter(Boolean);
 
-  if (votes.length < 2) {
-    log(
-      "Round " + rnd + ": only " + votes.length +
-        " of 3 stop-decision reviewers returned, which is no quorum; continuing, because a wrong continue " +
-        "self-corrects at the next introspection and a wrong stop does not",
-    );
-    return { decision: "healthy", votes, quorum: false };
+  if (votes.length === 0) {
+    log("Round " + rnd + ": no judge returned; the verdict stands unexamined");
+    return { decision: verdict.verdict, votes, quorum: false, upheld: true };
   }
 
-  const tally = new Map();
-  for (const v of votes) tally.set(v.verdict, (tally.get(v.verdict) || 0) + 1);
-  let decision = null;
-  for (const [k, n] of tally) if (n > votes.length / 2) decision = k;
-  if (!decision) {
-    // No majority. Take the least disruptive verdict any reviewer reached, on the
-    // same asymmetry: continuing is recoverable and stopping is not.
-    decision = [...tally.keys()].sort(
-      (a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b),
-    )[0];
+  const conclusive = votes.filter((v) => v.falsified && v.howConclusive === falsificationBar);
+  const falsified = conclusive.length > votes.length / 2;
+  if (!falsified) {
     log(
-      "Round " + rnd + ": stop-decision panel split " +
-        [...tally].map(([k, n]) => k + "×" + n).join(", ") +
-        "; taking the least disruptive, " + decision,
+      "Round " + rnd + ": " + conclusive.length + "/" + votes.length +
+        " judge(s) falsified it " + falsificationBar + "ly; the verdict " + verdict.verdict + " STANDS",
     );
-  } else {
-    log(
-      "Round " + rnd + ": stop-decision panel returned " + decision + " (" +
-        [...tally].map(([k, n]) => k + "×" + n).join(", ") + ")",
-    );
+    return { decision: verdict.verdict, votes, quorum: true, upheld: true };
   }
-  return { decision, votes, quorum: true };
+  // Falsified. Take the least disruptive verdict any falsifier named, on the
+  // same asymmetry the loop has always used: a wrong continue self-corrects at
+  // the next introspection and a wrong stop does not.
+  const fallbacks = conclusive.map((v) => v.fallbackVerdict).filter(Boolean);
+  const decision = fallbacks.length
+    ? fallbacks.sort((a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b))[0]
+    : "healthy";
+  log(
+    "Round " + rnd + ": " + conclusive.length + "/" + votes.length + " judge(s) falsified " +
+      verdict.verdict + " conclusively; taking the least disruptive fallback, " + decision,
+  );
+  return { decision, votes, quorum: true, upheld: false };
 }
 
-const introspectEvery = input.introspectEvery || 5;
+let introspectEvery = input.introspectEvery || 5;
+// The warrant gate: introspection's first act is to ask whether it should be
+// running. On by default; a cadence wake ignores it either way.
+const introspectGate = input.introspectGate !== false;
+const judgesPerVerdict = input.judgesPerVerdict || 3;
+const judgesHealthy = input.judgesHealthy || 2;
+// How conclusively a majority must falsify the pass's argument before its
+// verdict is overturned. "partial" makes the panel easier to convince.
+const falsificationBar = input.falsificationBar === "partial" ? "partial" : "conclusive";
 const introspections = [];
 let lastGrowthSnap = null;
 let lastIntrospectRound = 0;
@@ -1763,7 +2646,58 @@ let lastIntrospectRound = 0;
 // mechanism is under-designed or a section is over-specified, and an agent that
 // only ran on a fixed cadence would miss a runaway between its turns. Together:
 // the counter cannot miss, the agent can judge.
-async function introspect(rnd, reason, churn) {
+const GATE = {
+  type: "object",
+  required: ["warranted", "why"],
+  properties: {
+    warranted: { type: "boolean" },
+    why: { type: "string" },
+    whatTheCounterMissedOrOverread: { type: "string" },
+  },
+};
+
+async function introspect(rnd, reason, churn, byCadence) {
+  // The counters that wake this pass are crude and are often wrong in both
+  // directions, so the pass's first act is to decide whether it should be
+  // running at all. A counter wake that is not warranted returns healthy
+  // without paying for the full pass or a panel.
+  //
+  // A CADENCE wake runs regardless. The cadence exists precisely to look when
+  // no counter has fired, and letting the gate suppress it would remove the one
+  // pass that is not reacting to something.
+  if (introspectGate && !byCadence) {
+    const gate = await robustAgent(
+      "Decide whether an introspection pass is warranted right now, before one runs.\n\n" +
+        READ_ONLY +
+        "\n\nPROPOSAL: " + P.dir + ". Round " + rnd + ". A counter woke this: " + reason + ".\n\n" +
+        "The counters are crude and are wrong in both directions. Your job is to say whether the thing " +
+        "they detected is really there, cheaply, before a full pass and a panel are paid for.\n\n" +
+        "READ: the `## Standing context` of " + P.log + ", and the round history below. Then answer one " +
+        "question: does the evidence show what the counter claims, or is this an area that is simply large " +
+        "and draining normally?\n\n" +
+        "COUNTER OUTPUT:\n" + JSON.stringify(churn || [], null, 2) +
+        "\n\nROUND HISTORY:\n" +
+        JSON.stringify(
+          history.map((h) => ({ loop: h.loop, round: h.round, confirmed: h.confirmed, sweep: h.sweep })),
+          null,
+          2,
+        ).slice(0, 6000) +
+        "\n\nSay warranted: false when the counter over-read a large area draining normally, and true " +
+        "when the pattern is really there. Erring toward false is cheap here: the cadence pass runs within " +
+        "a few rounds regardless and sees more evidence." +
+        promptFor("introspect.gate"),
+      { schema: GATE, label: "introspect-gate:r" + rnd, phase: "Round " + rnd + ": introspect" },
+    );
+    if (gate && gate.warranted === false) {
+      log(
+        "Round " + rnd + ": the introspection gate found the counter unwarranted (" +
+          String(gate.why || "").slice(0, 120) + "); skipping the full pass",
+      );
+      introspections.push({ round: rnd, verdict: "healthy", gated: true, why: gate.why });
+      lastIntrospectRound = rnd;
+      return { verdict: "healthy", gated: true, reasoning: gate.why };
+    }
+  }
   const growth = await growthSince(lastGrowthSnap);
   lastGrowthSnap = await snapshot("introspect-r" + rnd);
   lastIntrospectRound = rnd;
@@ -1827,6 +2761,10 @@ async function introspect(rnd, reason, churn) {
             2,
           )
         : "") +
+      "\n\nTHE REVIEW LOG is at " + P.log + ". Read its `## Standing context` in full, and read every " +
+      "`CORRECTS` entry in its ledger. A log full of corrections is direct evidence that this loop is " +
+      "misleading itself, and no counter can see it. Read every outstanding `OPEN` and `UNVERIFIED` too: " +
+      "an area quiet because nobody checked it looks exactly like an area that is clean.\n" +
       "\n\nANSWER THESE, each with evidence, in observations, BEFORE you reach a verdict:\n" +
       "1. Which sections grew most, and did each growth buy something proportionate to its size? Growth that " +
       "answered real findings is the loop working; growth that restates a mechanism a third time is not.\n" +
@@ -1853,6 +2791,12 @@ async function introspect(rnd, reason, churn) {
       "  reframe — the proposal's scope or framing is wrong, and no amount of reviewing fixes that. Say what " +
       "the framing should be.\n" +
       "  halt — something needs a human decision before more rounds are worth spending.\n\n" +
+      "FOR `reframe` OR `halt` YOU MUST ALSO FILL nextSteps. A stop that says only to stop costs a human " +
+      "the work of deciding what to do, which is the work you are best placed to do: you have just read " +
+      "the whole run. Say what the next run should be, and set confidence `clear` only when its arguments " +
+      "and prompts follow from what this run learned and a caller could launch it without deciding " +
+      "anything. Set `needs-human` when a person must settle something first, and state that decision so " +
+      "it can be answered without reading the proposal.\n\n" +
       "DEFAULT TO healthy ONLY IF THE EVIDENCE SUPPORTS IT. A run that is converging looks like this: findings " +
       "per round falling, deep defects giving way to shallow ones, growth concentrated where work is genuinely " +
       "being added. A run that is not looks like this: findings flat or rising, design defects appearing late, " +
@@ -1924,11 +2868,34 @@ const fixedTitles = [];
 // NEXT round's lenses read; the pre-fix copy yields the diff the post-fix reviewer
 // reads. They differ because a round can also prune, apply a redesign, and run a
 // follow-up fix after the post-fix review.
+// Run-wide, across BOTH review loops: a finding refuted in the spec loop must
+// not be re-litigated in the non-spec loop, and the round history is the run's
+// record of itself rather than one loop's.
 let lastRoundSnap = null;
 const rejected = [];
 const history = [];
-let round = 0;
-let reviewersFailed = false;
+
+// Per-loop. The spec loop and the non-spec loop each keep their own round
+// counter, retired set, sweep count and convergence, because each certifies a
+// different half of the proposal and a lens satisfied by the spec staging has
+// said nothing about the code staging.
+let LOOP = null;
+function newLoop(cfg) {
+  return {
+    name: cfg.name,
+    round: 0,
+    reviewersFailed: false,
+    retired: new Set(),
+    converged: false,
+    sweeps: 0,
+    maxRounds: cfg.maxRounds,
+    poolFixed: cfg.poolFixed,
+    poolExtra: cfg.poolExtra,
+    editable: cfg.editable,
+    scopeNote: cfg.scopeNote,
+    specTouched: [],
+  };
+}
 
 // Lens retirement. Re-running a lens that just found nothing, over text its own
 // domain did not change, is the loop's largest avoidable cost: on a long run it
@@ -1947,619 +2914,1143 @@ let reviewersFailed = false;
 // Retirement is keyed on a genuine zero-finding return; a lens that FAILED after
 // robustAgent's retries is never retired, because a dropped lens contributes zero
 // findings and would otherwise retire itself by failing.
-const retired = new Set();
-let converged = false;
-let sweeps = 0;
 
-// startLenses is implemented by seeding the retired set rather than by narrowing
-// round one. A held-back lens is therefore treated exactly as a lens that has
-// already returned nothing: it does not run while the starting lenses are still
-// finding defects, and it first reads the proposal in the sweep, over text those
-// lenses have already driven clean. It rejoins the active set the moment it finds
-// something in that sweep, and from then on behaves like any other lens.
+
+// ---- Compaction and mid-run overrides ------------------------------------
 //
-// This is strictly cheaper than deferring the held-back lenses to round two, and
-// it costs no guarantee, because convergence still requires a complete sweep of
-// every pool lens. The seeded state is provisional in exactly the way an earned
-// retirement is: no lens certifies text it never read.
-if (startSet) {
-  for (const l of POOL_FIXED.concat(POOL_EXTRA)) {
-    if (!startSet.has(l.key)) retired.add(l.key);
-  }
-}
-
-// applyRetirement closes out a round. A lens retires when NONE of its findings
-// survived verification, which covers two cases that cost the same and mean the
-// same thing for the loop: the lens that found nothing, and the lens whose every
-// finding two independent skeptics refuted. A lens that reliably produces findings
-// the verifiers reject is not earning the tokens it costs, and retiring it is safe
-// because the sweep re-runs every lens over the final text before anything is
-// certified.
+// The review log is what carries a run's memory between agents. Left alone it
+// grows without bound and every lens pays to read it every round, so it is
+// compacted when the round-boundary script says it has passed a threshold.
 //
-// survivors is the set of lens keys credited with at least one confirmed finding.
-// A lens with a survivor is (re)activated, which on a sweep is what puts a lens
-// back to work after it finds a real defect in text it had previously cleared.
-//
-// A lens whose agent FAILED is left exactly as it was: a dropped lens contributes
-// no findings and is indistinguishable from a satisfied one, so retiring on
-// failure would let an outage retire the pool and certify a proposal.
-function applyRetirement(lenses, lensResults, survivors, round, note) {
-  const out = [];
-  const back = [];
-  lenses.forEach((l, i) => {
-    if (!lensResults[i]) return;
-    if (survivors.has(l.key)) {
-      if (retired.delete(l.key)) back.push(l.key);
-    } else if (!retired.has(l.key)) {
-      retired.add(l.key);
-      out.push(l.key);
-    }
-  });
-  if (out.length > 0) {
-    log(
-      "Round " +
-        round +
-        ": retiring " +
-        out.join(", ") +
-        " (" +
-        note +
-        "; re-runs only in the sweep)",
-    );
-  }
-  if (back.length > 0) {
-    log(
-      "Round " +
-        round +
-        ": reactivating " +
-        back.join(", ") +
-        " (a finding of its own survived verification)",
-    );
-  }
-}
-
-// Redesign as an entry mode. The caller names the areas, so the loop does not
-// have to discover the churn first: a human who already knows which mechanism is
-// wrong should not have to pay six rounds for the detector to agree.
-if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.length)) {
-  // focusAreas takes either a bare slug or {area, reason}. A caller who already
-  // knows which mechanism is wrong usually knows why, and the per-area agents are
-  // briefed from that reason. On a run that has not yet classified any findings
-  // the reason is the only evidence they get, so a bare slug leaves them starting
-  // cold against a document the loop has not measured.
-  const named = (input.focusAreas || []).map((a) => {
-    const isObj = a && typeof a === "object";
-    return {
-      area: String(isObj ? a.area : a)
-        .toLowerCase()
-        .trim(),
-      findings: 0,
-      designDefects: 0,
-      selfInflicted: 0,
-      reason:
-        (isObj && a.reason) ||
-        "named by the caller as an area to redesign before review begins",
-    };
-  });
-  if (named.length) {
-    await runRedesign(named, 0, "requested by the caller");
-  } else {
-    log("Redesign mode with no focusAreas; nothing to redesign, entering review");
-  }
-}
-
-while (round < maxRounds && !converged) {
-  round++;
-  const roundStartSnap = await snapshot("r" + round + "-start");
-  const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
-  const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
-  const isSweep = activeFixed.length === 0 && activeExtras.length === 0;
-
-  let lenses;
-  if (isSweep) {
-    lenses = POOL_FIXED.concat(POOL_EXTRA);
-    sweeps++;
-  } else if (activeFixed.length === 0) {
-    // The fixed lenses are satisfied and only extras remain. Run every remaining
-    // extra in one round rather than rotating one per round, so the sweep is
-    // reached immediately instead of after one round per surviving extra.
-    lenses = activeExtras;
-  } else if (activeExtras.length === 0) {
-    lenses = activeFixed;
-  } else {
-    lenses = activeFixed.concat([
-      activeExtras[(round - 1) % activeExtras.length],
-    ]);
-  }
-
+// Compaction is age-graded rather than uniform. The current round is untouched,
+// the last few are merged, and anything older is reduced to its durable residue
+// and promoted into the standing context or retired. CORRECTS and USEFUL are
+// what make that possible: they are the only signals that separate an entry
+// worth promoting from one worth deleting.
+async function compactLog(round, ledgerLines) {
   log(
-    "Round " +
-      round +
-      (isSweep
-        ? ": FULL SWEEP " +
-          sweeps +
-          " over all " +
-          lenses.length +
-          " lenses (every lens had retired; a clean sweep converges)"
-        : ": launching " +
-          lenses.length +
-          " reviewers (" +
-          retired.size +
-          "/" +
-          (POOL_FIXED.length + POOL_EXTRA.length) +
-          " lenses retired)"),
+    "Round " + round + ": the review log's ledger is at " + ledgerLines +
+      " lines; compacting",
   );
-
-  // Barrier: the dedup step needs every reviewer's findings at once.
-  const lensResults = await parallel(
-    lenses.map(
-      (l) => () =>
-        robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundSnap), {
-          label: "r" + round + ":review:" + l.key,
-          phase: "Round " + round + ": review",
-          schema: REVIEW_FINDINGS,
-        }),
-    ),
+  await robustAgent(
+    "Compact a review log so the agents that read it next pay less to carry it, and so what they carry " +
+      "is true.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.log + ". Change nothing else.\n\n" +
+      "The log has three sections. `## Standing context` is curated and is what every future agent reads " +
+      "first. `## Ledger` is the chronological record. `## Retired` holds what no longer applies, one line " +
+      "each, with why.\n\n" +
+      "RULES, in order of precedence.\n\n" +
+      "1. AGE-GRADE. Leave round " + round + "'s entries exactly as they are. Merge entries from the last " +
+      "two or three rounds where they share a subject. Reduce anything older to its durable residue — the " +
+      "FACT, WATCHOUT and DECISION lines — move that into `## Standing context`, and move or delete the " +
+      "rest, with a one-line reason under `## Retired` for anything you retire.\n\n" +
+      "2. HONOUR `CORRECTS`. An entry another agent marked as wrong is rewritten to what is true, or " +
+      "retired. A superseded WATCHOUT is DELETED rather than kept for the record: a warning about a trap " +
+      "that no longer exists costs every future agent a detour, which is worse than not warning them.\n\n" +
+      "3. HONOUR `USEFUL`. An entry another agent said saved it work is promoted into `## Standing " +
+      "context` and is never dropped while its subject stands.\n\n" +
+      "4. RESOLVE CONTRADICTIONS ACTIVELY. Where two entries disagree and neither corrects the other, " +
+      "check the repository yourself and keep the true one, retiring the other with the evidence. You have " +
+      "Grep and Read; use them rather than guessing which is newer.\n\n" +
+      "5. NEVER DROP AN `OPEN` OR AN `UNVERIFIED` until something closes it. An UNVERIFIED a later round " +
+      "verified is rewritten as a FACT with its evidence.\n\n" +
+      "6. TARGETS. `## Standing context` at most " + standingContextMaxLines + " lines; the ledger at " +
+      "most half what it is now. If you cannot reach them without deleting something that matters, do not: " +
+      "say so in the changelog and leave it longer.\n\n" +
+      "7. LEAVE A CHANGELOG. The first lines of `## Standing context` record what this pass merged, " +
+      "promoted, and retired, so the next compaction can be judged against it.\n\n" +
+      "You are compacting, not editing the proposal. Do not act on anything the log says, do not fix a " +
+      "defect it names, and do not add a finding of your own." +
+      promptFor("compact") +
+      "\n\nFollow " + repo + "/.claude/rules/doc-style.md.",
+    { label: "r" + round + ":compact", phase: "Round " + round + ": fix" },
   );
-  const failedLenses = lensResults.filter((r) => !r).length;
-  const results = lensResults.filter(Boolean);
+}
 
-  // Retire every lens that genuinely ran and found nothing; reactivate every lens
-  // that found something. On a normal round the reactivation arm is a no-op (an
-  // active lens is not in the set). On a sweep it is the mechanism that puts a
-  // lens back to work after it finds a defect in text it had previously cleared.
-  // A failed lens (r is null) is left exactly as it was, so a transient API
-  // failure can neither retire a lens nor resurrect one.
-  // Stamp every finding with the lens that produced it. Retirement is decided by
-  // which findings SURVIVE verification, and the dedup step merges findings across
-  // lenses, so this association must be recorded here, by the script, before any
-  // model has a chance to lose it.
-  lenses.forEach((l, i) => {
-    const r = lensResults[i];
-    if (r)
-      r.findings.forEach((f) => {
-        f.lens = l.key;
-      });
-  });
+// Arguments a caller may change WHILE a run is going, by writing
+// scratchpad/cp-args/<runTag>.json. Only forward-looking knobs are mergeable:
+// one that is already baked into prompts the run has issued cannot be changed
+// without invalidating them, and silently accepting it would produce a run that
+// did not do what the caller asked while reporting success.
+const OVERRIDABLE = {
+  maxFixGroups: (v) => { maxFixGroups = Number(v) || maxFixGroups; },
+  fixDesignDepth: (v) => { fixDesignDepth = String(v); },
+  lockSpecChanges: (v) => { lockSpecChanges = !!v; },
+  compactAtLines: (v) => { compactAtLines = Number(v) || compactAtLines; },
+  compactGrowthLines: (v) => { compactGrowthLines = Number(v) || compactGrowthLines; },
+  introspectEvery: (v) => { introspectEvery = Number(v) || introspectEvery; },
+};
 
-  if (results.length === 0) {
-    log("Round " + round + ": every reviewer failed; stopping");
-    reviewersFailed = true;
-    break;
+function applyOverrides(overrides, round) {
+  const took = [];
+  const refused = [];
+  for (const [k, v] of Object.entries(overrides)) {
+    if (OVERRIDABLE[k]) {
+      OVERRIDABLE[k](v);
+      took.push(k + "=" + JSON.stringify(v));
+    } else {
+      refused.push(k);
+    }
   }
-  // A round may certify "clean" (advance the convergence streak) ONLY when every
-  // lens and every verifier actually ran. If any lens failed after robustAgent's
-  // retries, the round is INCONCLUSIVE: a partial reviewer set finding nothing is
-  // not evidence of convergence. Counting it would reproduce the 529-driven
-  // false-convergence bug. verifyComplete (below) extends the same guard to the
-  // two-skeptic verification of each finding.
-  let roundComplete = failedLenses === 0;
-  if (failedLenses > 0) {
+  if (took.length) {
+    log("Round " + round + ": caller overrides applied for the next round: " + took.join(", "));
+  }
+  if (refused.length) {
+    log(
+      "Round " + round + ": ignoring override(s) " + refused.join(", ") +
+        " — only forward-looking knobs are mergeable mid-run, because a value already baked into prompts " +
+        "this run has issued cannot be changed without invalidating them",
+    );
+  }
+}
+
+// ---- The review loop, run twice -----------------------------------------
+//
+// The SPEC loop runs first and converges the staged spec edits alone. The
+// NON-SPEC loop runs after it and converges everything else, reading both
+// change files as one document, because a non-spec change that contradicts a
+// staged spec edit is a finding only a reviewer holding both can see.
+//
+// Everything inside is shared: retirement, sweeps, dedup, verification,
+// fixing, the post-fix review, introspection, churn, and redesign. What
+// differs is the pool, which files the fixer may edit, and the budget.
+async function runReviewLoop(cfg) {
+  LOOP = newLoop(cfg);
+  const POOL_FIXED = cfg.poolFixed;
+  const POOL_EXTRA = cfg.poolExtra;
+  const maxRounds = cfg.maxRounds;
+  const retired = LOOP.retired;
+  let round = 0;
+  let converged = false;
+  let sweeps = 0;
+  let reviewersFailed = false;
+  // A fresh relaunch with resumeState continues where an interrupted run
+  // stopped, rather than restarting the loop. This is the mechanism for
+  // changing an ANCHORED argument, which resumeFromRunId cannot do: the journal
+  // replays a call only when its prompt is unchanged, so a changed prompt busts
+  // the cache from round one and re-does everything under the new text.
+  if (input.resumeState) {
+    const raw = await robustAgent(
+      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+        "cat " + repo + "/scratchpad/cp-state/" + runTag + "/state-" + cfg.name + ".json 2>/dev/null || echo '{}'" +
+        "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+      { label: "resume-state:" + cfg.name, model: "haiku", phase: "Review" },
+    );
+    let st = null;
+    try {
+      const m = String(raw || "").match(/\{[\s\S]*\}/);
+      if (m) st = JSON.parse(m[0]);
+    } catch (e) {
+      st = null;
+    }
+    if (st && typeof st.round === "number" && st.round > 0) {
+      round = st.round;
+      sweeps = st.sweeps || 0;
+      for (const k of st.retired || []) retired.add(k);
+      log(
+        "Resuming the " + cfg.name + " loop at round " + round + " with " + retired.size +
+          " lens(es) already retired",
+      );
+      // An anchored argument that changed since the recorded run means the
+      // prompts this loop is about to issue differ from the ones it issued
+      // before. That is legitimate -- it is why resumeState exists -- but it is
+      // worth saying out loud, because a caller who changed one by accident
+      // gets a run that silently reviews under different instructions.
+      for (const [k, v] of Object.entries(st.args || {})) {
+        const now = typeof input[k] === "object" ? "(set)" : input[k];
+        if (input[k] !== undefined && now !== v) {
+          log(
+            "Resume: the anchored argument " + k + " changed since the recorded run (" +
+              JSON.stringify(v) + " -> " + JSON.stringify(now) + "); rounds from here run under the new value",
+          );
+        }
+      }
+    } else if (st) {
+      log("resumeState was set but no state was recorded for the " + cfg.name + " loop; starting at round 1");
+    }
+  }
+  log(
+    "Entering the " + cfg.name + " review loop over " + (POOL_FIXED.length + POOL_EXTRA.length) +
+      " lens(es), budget " + maxRounds + " round(s)",
+  );
+
+  // startLenses is implemented by seeding the retired set rather than by narrowing
+  // round one. A held-back lens is therefore treated exactly as a lens that has
+  // already returned nothing: it does not run while the starting lenses are still
+  // finding defects, and it first reads the proposal in the sweep, over text those
+  // lenses have already driven clean. It rejoins the active set the moment it finds
+  // something in that sweep, and from then on behaves like any other lens.
+  //
+  // This is strictly cheaper than deferring the held-back lenses to round two, and
+  // it costs no guarantee, because convergence still requires a complete sweep of
+  // every pool lens. The seeded state is provisional in exactly the way an earned
+  // retirement is: no lens certifies text it never read.
+  if (startSet) {
+    for (const l of POOL_FIXED.concat(POOL_EXTRA)) {
+      if (!startSet.has(l.key)) retired.add(l.key);
+    }
+  }
+
+  function applyRetirement(lenses, lensResults, survivors, round, note) {
+    const retired = LOOP.retired;
+    const out = [];
+    const back = [];
+    lenses.forEach((l, i) => {
+      if (!lensResults[i]) return;
+      if (survivors.has(l.key)) {
+        if (retired.delete(l.key)) back.push(l.key);
+      } else if (!retired.has(l.key)) {
+        retired.add(l.key);
+        out.push(l.key);
+      }
+    });
+    if (out.length > 0) {
+      log(
+        "Round " +
+          round +
+          ": retiring " +
+          out.join(", ") +
+          " (" +
+          note +
+          "; re-runs only in the sweep)",
+      );
+    }
+    if (back.length > 0) {
+      log(
+        "Round " +
+          round +
+          ": reactivating " +
+          back.join(", ") +
+          " (a finding of its own survived verification)",
+      );
+    }
+  }
+
+  // Redesign as an entry mode. The caller names the areas, so the loop does not
+  // have to discover the churn first: a human who already knows which mechanism is
+  // wrong should not have to pay six rounds for the detector to agree.
+  if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.length)) {
+    // focusAreas takes either a bare slug or {area, reason}. A caller who already
+    // knows which mechanism is wrong usually knows why, and the per-area agents are
+    // briefed from that reason. On a run that has not yet classified any findings
+    // the reason is the only evidence they get, so a bare slug leaves them starting
+    // cold against a document the loop has not measured.
+    const named = (input.focusAreas || []).map((a) => {
+      const isObj = a && typeof a === "object";
+      return {
+        area: String(isObj ? a.area : a)
+          .toLowerCase()
+          .trim(),
+        findings: 0,
+        designDefects: 0,
+        selfInflicted: 0,
+        reason:
+          (isObj && a.reason) ||
+          "named by the caller as an area to redesign before review begins",
+      };
+    });
+    if (named.length) {
+      await runRedesign(named, 0, "requested by the caller");
+    } else {
+      log("Redesign mode with no focusAreas; nothing to redesign, entering review");
+    }
+  }
+
+  // ---- Closing a round ---------------------------------------------------
+  //
+  // One agent, one command. It merges this round's log shards into the review
+  // log and deletes them, counts the ledger for the compaction trigger,
+  // compares the proposal's file hashes against the ones it recorded a round
+  // ago and reports anything that moved outside its owner's allowance, takes
+  // the snapshot the NEXT round's lenses diff against, counts the hunks this
+  // round changed, and reads the caller's mid-run overrides.
+  //
+  // The state of the tree at the end of round N is the state at the start of
+  // round N+1, so one call does both halves. The logic lives in
+  // .claude/tools/cp-round-boundary.sh rather than in this prompt: it is in
+  // version control, it is testable without an agent, and a failure is an exit
+  // code rather than an instruction an agent skipped at the end of a long
+  // prompt.
+  //
+  // It runs on EVERY path out of a round, including the ones that found
+  // nothing. A round that returns early still wrote log shards and still owes
+  // the next round a snapshot, and skipping it there orphaned both.
+  async function closeRound(rnd, complete) {
+    // The state a fresh relaunch needs to continue this loop rather than
+    // restart it. Deliberately small: the round, what has retired, how many
+    // sweeps have run, and the arguments in force, which is what a later launch
+    // compares against to notice that an anchored one changed.
+    const stateJson = JSON.stringify({
+      loop: LOOP.name,
+      round: rnd,
+      sweeps,
+      retired: [...retired],
+      converged,
+      fixedTitles: fixedTitles.length,
+      args: Object.fromEntries(
+        Object.keys(ARG_CLASS)
+          .filter((k) => input[k] !== undefined && ARG_CLASS[k] === "anchored")
+          .map((k) => [k, typeof input[k] === "object" ? "(set)" : input[k]]),
+      ),
+    });
+    const raw = await robustAgent(
+      "Run exactly these two commands and reply with the stdout of the SECOND and nothing else:\n\n" +
+        "mkdir -p " + repo + "/scratchpad/cp-state/" + runTag + " && cat > " +
+        repo + "/scratchpad/cp-state/" + runTag + "/" + "state-" + LOOP.name + ".json" +
+        " <<'LENNYSTATE'\n" + stateJson + "\nLENNYSTATE\n\n" +
+        "bash " + repo + "/.claude/tools/cp-round-boundary.sh" +
+        " --dir '" + P.dir + "'" +
+        " --tag '" + runTag + "'" +
+        " --loop '" + LOOP.name + "'" +
+        " --round " + rnd +
+        " --repo '" + repo + "'" +
+        " --compact-at " + compactAtLines +
+        " --compact-growth " + compactGrowthLines +
+        "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
+        "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
+        "read, summarise, or edit any other file.",
+      { label: "r" + rnd + ":round-boundary", model: "haiku", phase: "Round " + rnd + ": fix" },
+    );
+    let boundary = null;
+    try {
+      const m = String(raw || "").match(/\{[\s\S]*\}/);
+      if (m) boundary = JSON.parse(m[0]);
+    } catch (e) {
+      boundary = null;
+    }
+    if (!boundary) {
+      // The bookkeeping is not optional: without it the log is unmerged, the
+      // audit did not run, and the next round has no snapshot to diff against.
+      // A round that could not close is not a round that can certify.
+      log(
+        "Round " + rnd + ": the round-boundary script did not complete; round INCONCLUSIVE " +
+          "(the log is unmerged and the next round has no snapshot)",
+      );
+      return false;
+    }
+    const h = history[history.length - 1];
+    if (h && h.round === rnd) {
+      h.sectionsChanged = boundary.hunks || 0;
+      if ((boundary.changedFiles || []).length) h.filesChanged = boundary.changedFiles;
+    }
+    lastRoundSnap = boundary.snapshot || lastRoundSnap;
+    if (boundary.overrides && Object.keys(boundary.overrides).length) {
+      applyOverrides(boundary.overrides, rnd);
+    }
+    if (boundary.compactionDue) await compactLog(rnd, boundary.ledgerLines);
+    return complete;
+  }
+
+  while (round < maxRounds && !converged) {
+    round++;
+    const roundStartSnap = await snapshot("r" + round + "-start");
+    const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
+    const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
+    const isSweep = activeFixed.length === 0 && activeExtras.length === 0;
+
+    let lenses;
+    if (isSweep) {
+      lenses = POOL_FIXED.concat(POOL_EXTRA);
+      sweeps++;
+    } else if (activeFixed.length === 0) {
+      // The fixed lenses are satisfied and only extras remain. Run every remaining
+      // extra in one round rather than rotating one per round, so the sweep is
+      // reached immediately instead of after one round per surviving extra.
+      lenses = activeExtras;
+    } else if (activeExtras.length === 0) {
+      lenses = activeFixed;
+    } else {
+      lenses = activeFixed.concat([
+        activeExtras[(round - 1) % activeExtras.length],
+      ]);
+    }
+
+    log(
+      "Round " +
+        round +
+        (isSweep
+          ? ": FULL SWEEP " +
+            sweeps +
+            " over all " +
+            lenses.length +
+            " lenses (every lens had retired; a clean sweep converges)"
+          : ": launching " +
+            lenses.length +
+            " reviewers (" +
+            retired.size +
+            "/" +
+            (POOL_FIXED.length + POOL_EXTRA.length) +
+            " lenses retired)"),
+    );
+
+    // Barrier: the dedup step needs every reviewer's findings at once.
+    const lensResults = await parallel(
+      lenses.map(
+        (l) => () =>
+          robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundSnap), {
+            label: "r" + round + ":review:" + l.key,
+            phase: "Round " + round + ": review",
+            schema: REVIEW_FINDINGS,
+          }),
+      ),
+    );
+    const failedLenses = lensResults.filter((r) => !r).length;
+    const results = lensResults.filter(Boolean);
+
+    // Retire every lens that genuinely ran and found nothing; reactivate every lens
+    // that found something. On a normal round the reactivation arm is a no-op (an
+    // active lens is not in the set). On a sweep it is the mechanism that puts a
+    // lens back to work after it finds a defect in text it had previously cleared.
+    // A failed lens (r is null) is left exactly as it was, so a transient API
+    // failure can neither retire a lens nor resurrect one.
+    // Stamp every finding with the lens that produced it. Retirement is decided by
+    // which findings SURVIVE verification, and the dedup step merges findings across
+    // lenses, so this association must be recorded here, by the script, before any
+    // model has a chance to lose it.
+    lenses.forEach((l, i) => {
+      const r = lensResults[i];
+      if (r)
+        r.findings.forEach((f) => {
+          f.lens = l.key;
+        });
+    });
+
+    if (results.length === 0) {
+      log("Round " + round + ": every reviewer failed; stopping");
+      reviewersFailed = true;
+      break;
+    }
+    // A round may certify "clean" (advance the convergence streak) ONLY when every
+    // lens and every verifier actually ran. If any lens failed after robustAgent's
+    // retries, the round is INCONCLUSIVE: a partial reviewer set finding nothing is
+    // not evidence of convergence. Counting it would reproduce the 529-driven
+    // false-convergence bug. verifyComplete (below) extends the same guard to the
+    // two-skeptic verification of each finding.
+    let roundComplete = failedLenses === 0;
+    if (failedLenses > 0) {
+      log(
+        "Round " +
+          round +
+          ": " +
+          failedLenses +
+          "/" +
+          lenses.length +
+          " lenses failed after retries; round INCONCLUSIVE (will not count toward convergence)",
+      );
+    }
+    const raw = results.flatMap((r) => r.findings);
+    log("Round " + round + ": " + raw.length + " raw findings");
+
+    if (raw.length === 0) {
+      // Nobody found anything, so nobody has a survivor: every lens that genuinely
+      // ran retires.
+      applyRetirement(lenses, lensResults, new Set(), round, "found nothing");
+      history.push({
+        loop: LOOP.name,
+        round,
+        sweep: isSweep,
+        lenses: lenses.map((l) => l.key),
+        raw: 0,
+        deduped: 0,
+        confirmed: 0,
+        retiredAfter: [...retired],
+      });
+      // The round closes BEFORE it is allowed to certify. A round whose
+      // bookkeeping did not complete left its log unmerged and the next round
+      // without a snapshot, and a round in that state cannot be the one that
+      // ends the loop.
+      roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
+      history[history.length - 1].complete = roundComplete;
+      if (isSweep && roundComplete) {
+        converged = true;
+        log("Round " + round + ": full sweep found nothing; CONVERGED");
+      } else if (isSweep) {
+        log(
+          "Round " +
+            round +
+            ": sweep found nothing but was incomplete; NOT converging (the failed lenses stay active and re-run)",
+        );
+      }
+      continue;
+    }
+
+    let deduped = raw;
+    if (raw.length > 1) {
+      const d = await robustAgent(dedupPrompt(raw), {
+        label: "r" + round + ":dedup",
+        phase: "Round " + round + ": review",
+        schema: DEDUP_FINDINGS,
+      });
+      if (d && d.findings.length > 0) deduped = d.findings;
+    }
     log(
       "Round " +
         round +
         ": " +
-        failedLenses +
-        "/" +
-        lenses.length +
-        " lenses failed after retries; round INCONCLUSIVE (will not count toward convergence)",
+        deduped.length +
+        " findings after dedup; verifying",
     );
-  }
-  const raw = results.flatMap((r) => r.findings);
-  log("Round " + round + ": " + raw.length + " raw findings");
 
-  if (raw.length === 0) {
-    // Nobody found anything, so nobody has a survivor: every lens that genuinely
-    // ran retires.
-    applyRetirement(lenses, lensResults, new Set(), round, "found nothing");
-    if (isSweep && roundComplete) {
-      converged = true;
-      log("Round " + round + ": full sweep found nothing; CONVERGED");
-    } else if (isSweep) {
+    // Sequential rather than parallel, and short-circuiting on the first
+    // refusal. Materiality goes first because it is the cheap one -- it assumes
+    // the evidence is true and reads only the proposal -- and because it is
+    // instructed to default to refuted, so it kills the largest share for the
+    // least cost. Evidence verification opens every cited file and is the
+    // expensive one, and a finding materiality has already refused never
+    // reaches it.
+    //
+    // Findings are still verified in parallel with each other; it is the two
+    // skeptics on ONE finding that are now ordered.
+    const verifySteps = {
+      material: (f) =>
+        robustAgent(materialityPrompt(f), {
+          label: "r" + round + ":verify-material",
+          phase: "Round " + round + ": verify",
+          schema: VERDICT,
+        }),
+      evidence: (f) =>
+        robustAgent(evidencePrompt(f), {
+          label: "r" + round + ":verify-evidence",
+          phase: "Round " + round + ": verify",
+          schema: VERDICT,
+        }),
+    };
+    const verdicts = await parallel(
+      deduped.map((f) => async () => {
+        if (!verifySequential) {
+          const vs = await parallel([
+            () => verifySteps[verifyOrder[0]](f),
+            () => verifySteps[verifyOrder[1]](f),
+          ]);
+          return { f, vs: vs.filter(Boolean), refutedBy: null };
+        }
+        const first = await verifySteps[verifyOrder[0]](f);
+        // A verifier that DIED is not a refusal. The finding reaches neither
+        // confirmed nor rejected, and the round is marked incomplete, because
+        // an outage must not be able to suppress a finding permanently.
+        if (!first) return { f, vs: [], refutedBy: null, dead: true };
+        if (!first.confirmed) return { f, vs: [first], refutedBy: verifyOrder[0] };
+        const second = await verifySteps[verifyOrder[1]](f);
+        if (!second) return { f, vs: [first], refutedBy: null, dead: true };
+        return {
+          f,
+          vs: [first, second],
+          refutedBy: second.confirmed ? null : verifyOrder[1],
+        };
+      }),
+    );
+
+    const live = verdicts.filter(Boolean);
+    // Extend the completeness guard to verification: a verifier that failed after
+    // retries leaves a finding with fewer than two verdicts, so it is neither
+    // confirmed nor safely dismissed. Such a round cannot certify convergence.
+    // A finding reached a terminal verdict when both skeptics confirmed, or
+    // when the first refused: under the short circuit a refusal is terminal
+    // with one verdict. A finding whose verifier died reached neither.
+    const verifyComplete =
+      live.length === deduped.length &&
+      live.every((v) => !v.dead && (v.vs.length === 2 || v.refutedBy !== null));
+    if (!verifyComplete) {
+      roundComplete = false;
       log(
         "Round " +
           round +
-          ": sweep found nothing but was incomplete; NOT converging (the failed lenses stay active and re-run)",
+          ": some verifiers failed after retries; round INCONCLUSIVE",
       );
     }
+    // Credit a later finding back to the mechanism it is about, so the strike table
+    // the next fixer sees reflects which of its own inventions keep failing.
+    const creditStrikes = (fs) => {
+      for (const m of introducedMechanisms) {
+        if (m.round >= round) continue;
+        const needle = String(m.name).toLowerCase();
+        if (needle.length < 4) continue;
+        for (const f of fs) {
+          const hay = (f.title + " " + f.where + " " + f.claim + " " + f.why_wrong).toLowerCase();
+          if (hay.includes(needle)) { m.strikes++; break; }
+        }
+      }
+    };
+
+    const confirmed = live
+      .filter((v) => v.vs.length === 2 && v.vs.every((x) => x.confirmed))
+      .map((v) => v.f);
+    creditStrikes(confirmed);
+    recordFindings(round, confirmed);
+    live
+      .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
+      .forEach((v) => {
+        // A finding whose verifier DIED is not refuted. It is carried: adding
+        // it to `rejected` would suppress it in every later round on the
+        // strength of an outage, which is the failure this guard exists for.
+        if (v.dead) return;
+        rejected.push({
+          title: v.f.title,
+          // Which skeptic refused it, because "not material" and "the evidence
+          // is wrong" are different signals to a later round's lens.
+          refutedBy: v.refutedBy || "unknown",
+          reason:
+            v.vs
+              .filter((x) => !x.confirmed)
+              .map((x) => x.reason)
+              .join(" | ") || "verifier unavailable",
+        });
+      });
+    log(
+      "Round " +
+        round +
+        ": " +
+        confirmed.length +
+        "/" +
+        deduped.length +
+        " findings confirmed",
+    );
+
+    // Credit each surviving finding back to the lens or lenses that produced it.
+    // A finding carries `lens` from the stamping above; a merged finding carries
+    // `lenses`, the union the dedup step was asked to preserve.
+    const survivors = new Set();
+    for (const f of confirmed) {
+      const tags =
+        Array.isArray(f.lenses) && f.lenses.length > 0
+          ? f.lenses
+          : f.lens
+            ? [f.lens]
+            : [];
+      tags.forEach((t) => survivors.add(t));
+    }
+    // Attribution can only fail one way: the dedup model dropped the tags while
+    // merging. Retiring on an empty survivor set would then retire every lens on a
+    // round that actually confirmed defects, so fall back to the weaker but safe
+    // rule (retire only a lens that reported nothing) and say so.
+    if (confirmed.length > 0 && survivors.size === 0) {
+      log(
+        "Round " +
+          round +
+          ": dedup dropped the lens attribution; falling back to retiring only lenses that reported nothing",
+      );
+      lenses.forEach((l, i) => {
+        const r = lensResults[i];
+        if (r && r.findings.length > 0) survivors.add(l.key);
+      });
+    }
+    applyRetirement(
+      lenses,
+      lensResults,
+      survivors,
+      round,
+      "no finding of its own survived verification",
+    );
+
     history.push({
+      loop: LOOP.name,
       round,
       sweep: isSweep,
       lenses: lenses.map((l) => l.key),
-      raw: 0,
-      deduped: 0,
-      confirmed: 0,
+      raw: raw.length,
+      deduped: deduped.length,
+      confirmed: confirmed.length,
+      confirmedTitles: confirmed.map((f) => f.title),
       complete: roundComplete,
       retiredAfter: [...retired],
     });
-    continue;
-  }
 
-  let deduped = raw;
-  if (raw.length > 1) {
-    const d = await robustAgent(dedupPrompt(raw), {
-      label: "r" + round + ":dedup",
-      phase: "Round " + round + ": review",
-      schema: DEDUP_FINDINGS,
-    });
-    if (d && d.findings.length > 0) deduped = d.findings;
-  }
-  log(
-    "Round " +
-      round +
-      ": " +
-      deduped.length +
-      " findings after dedup; verifying",
-  );
+    if (confirmed.length === 0) {
+      roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
+      history[history.length - 1].complete = roundComplete;
+      if (isSweep && roundComplete) {
+        converged = true;
+        log(
+          "Round " +
+            round +
+            ": full sweep produced no confirmed findings; CONVERGED",
+        );
+      } else if (isSweep) {
+        log(
+          "Round " +
+            round +
+            ": sweep incomplete (reviewer, verifier, or bookkeeping failures); NOT converging",
+        );
+      }
+      continue;
+    }
 
-  const verdicts = await parallel(
-    deduped.map(
-      (f) => () =>
-        parallel([
-          () =>
-            robustAgent(evidencePrompt(f), {
-              label: "r" + round + ":verify-evidence",
-              phase: "Round " + round + ": verify",
-              schema: VERDICT,
-            }),
-          () =>
-            robustAgent(materialityPrompt(f), {
-              label: "r" + round + ":verify-material",
-              phase: "Round " + round + ": verify",
-              schema: VERDICT,
-            }),
-        ]).then((vs) => ({ f, vs: vs.filter(Boolean) })),
-    ),
-  );
+    // Strike table: mechanisms this loop introduced in earlier rounds, with the
+    // number of later findings each has caused. The loop already has this
+    // information and has never used it, so a fixer repairing a mechanism for the
+    // third time has been doing so blind.
+    const strikeLines = introducedMechanisms
+      .filter((m) => m.strikes > 0)
+      .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
+      .join("\n");
+    const preFixSnap = await snapshot("r" + round + "-prefix");
 
-  const live = verdicts.filter(Boolean);
-  // Extend the completeness guard to verification: a verifier that failed after
-  // retries leaves a finding with fewer than two verdicts, so it is neither
-  // confirmed nor safely dismissed. Such a round cannot certify convergence.
-  const verifyComplete =
-    live.length === deduped.length && live.every((v) => v.vs.length === 2);
-  if (!verifyComplete) {
-    roundComplete = false;
-    log(
-      "Round " +
-        round +
-        ": some verifiers failed after retries; round INCONCLUSIVE",
-    );
-  }
-  // Credit a later finding back to the mechanism it is about, so the strike table
-  // the next fixer sees reflects which of its own inventions keep failing.
-  const creditStrikes = (fs) => {
-    for (const m of introducedMechanisms) {
-      if (m.round >= round) continue;
-      const needle = String(m.name).toLowerCase();
-      if (needle.length < 4) continue;
-      for (const f of fs) {
-        const hay = (f.title + " " + f.where + " " + f.claim + " " + f.why_wrong).toLowerCase();
-        if (hay.includes(needle)) { m.strikes++; break; }
+    // ---- Plan the split ---------------------------------------------------
+    //
+    // One fixer for every confirmed finding was the loop's largest source of
+    // its own defects: findings that share a root produce edits that
+    // contradict each other, and a fixer holding twenty findings at once
+    // reads none of them closely. The findings are split into cohesive
+    // groups, each group gets a design, and each design gets its own fixer.
+    //
+    // The ONLY cap is on the number of groups. Group size is deliberately
+    // unbounded: forty trivial citation corrections that share a subject
+    // belong in one group, where the design stage triages them in a handful
+    // of tokens and one fixer applies them consistently, while three deep
+    // design findings belong in three groups however few they are. A size cap
+    // would split the first case for no reason, would not help the second,
+    // and combined with a group cap would silently bound how many findings a
+    // round can fix at all.
+    let groups = [{ id: "G1", title: "all findings", findings: confirmed.map((_, i) => i), order: 1 }];
+    if (confirmed.length > 1) {
+      const planned = await robustAgent(fixPlanPrompt(confirmed, round), {
+        label: "r" + round + ":fix-plan",
+        phase: "Round " + round + ": fix",
+        schema: FIX_PLAN,
+      });
+      // A planner that drops a finding loses it silently, so the partition is
+      // checked rather than trusted. Any violation falls back to one group of
+      // everything, which is the old behaviour and is safe.
+      const seen = [];
+      let ok = !!(planned && Array.isArray(planned.groups) && planned.groups.length > 0);
+      if (ok) {
+        for (const g of planned.groups) {
+          for (const i of g.findings || []) {
+            if (typeof i !== "number" || i < 0 || i >= confirmed.length || seen.includes(i)) ok = false;
+            else seen.push(i);
+          }
+        }
+        if (seen.length !== confirmed.length) ok = false;
+      }
+      if (ok && planned.groups.length > maxFixGroups) {
+        log(
+          "Round " + round + ": the planner returned " + planned.groups.length +
+            " groups against a cap of " + maxFixGroups + "; merging the tail",
+        );
+        const head = planned.groups.slice(0, maxFixGroups - 1);
+        const tail = planned.groups.slice(maxFixGroups - 1);
+        head.push({
+          id: "G" + maxFixGroups,
+          title: "merged tail",
+          rationale: "the planner exceeded the group cap; these were combined",
+          findings: tail.flatMap((g) => g.findings || []),
+          order: maxFixGroups,
+        });
+        planned.groups = head;
+      }
+      if (ok) {
+        groups = planned.groups
+          .slice()
+          .sort((a, b) => (a.order || 0) - (b.order || 0));
+        log(
+          "Round " + round + ": " + confirmed.length + " finding(s) split into " +
+            groups.length + " group(s): " + groups.map((g) => g.id + "(" + (g.findings || []).length + ")").join(" "),
+        );
+      } else {
+        log(
+          "Round " + round + ": the fix planner did not return a clean partition of the findings; " +
+            "falling back to one group of all " + confirmed.length,
+        );
       }
     }
-  };
 
-  const confirmed = live
-    .filter((v) => v.vs.length === 2 && v.vs.every((x) => x.confirmed))
-    .map((v) => v.f);
-  creditStrikes(confirmed);
-  recordFindings(round, confirmed);
-  live
-    .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
-    .forEach((v) => {
-      rejected.push({
-        title: v.f.title,
-        reason:
-          v.vs
-            .filter((x) => !x.confirmed)
-            .map((x) => x.reason)
-            .join(" | ") || "verifier unavailable",
-      });
-    });
-  log(
-    "Round " +
-      round +
-      ": " +
-      confirmed.length +
-      "/" +
-      deduped.length +
-      " findings confirmed",
-  );
-
-  // Credit each surviving finding back to the lens or lenses that produced it.
-  // A finding carries `lens` from the stamping above; a merged finding carries
-  // `lenses`, the union the dedup step was asked to preserve.
-  const survivors = new Set();
-  for (const f of confirmed) {
-    const tags =
-      Array.isArray(f.lenses) && f.lenses.length > 0
-        ? f.lenses
-        : f.lens
-          ? [f.lens]
-          : [];
-    tags.forEach((t) => survivors.add(t));
-  }
-  // Attribution can only fail one way: the dedup model dropped the tags while
-  // merging. Retiring on an empty survivor set would then retire every lens on a
-  // round that actually confirmed defects, so fall back to the weaker but safe
-  // rule (retire only a lens that reported nothing) and say so.
-  if (confirmed.length > 0 && survivors.size === 0) {
-    log(
-      "Round " +
-        round +
-        ": dedup dropped the lens attribution; falling back to retiring only lenses that reported nothing",
+    // ---- Design each group, then fix it -----------------------------------
+    //
+    // Design runs in parallel across groups (nothing is being edited yet) and
+    // fixing runs sequentially (the groups edit the same files, and concurrent
+    // edits to one markdown file lose writes). A design that dies leaves its
+    // group to the old fixer brief, which is safe, and marks the group so the
+    // introspection pass can see a run whose design stage keeps failing.
+    const designs = await parallel(
+      groups.map((g) => () =>
+        robustAgent(fixDesignPrompt(g, confirmed, round), {
+          label: "r" + round + ":fix-design:" + g.id,
+          phase: "Round " + round + ": fix",
+          schema: FIX_DESIGN,
+        }),
+      ),
     );
-    lenses.forEach((l, i) => {
-      const r = lensResults[i];
-      if (r && r.findings.length > 0) survivors.add(l.key);
-    });
-  }
-  applyRetirement(
-    lenses,
-    lensResults,
-    survivors,
-    round,
-    "no finding of its own survived verification",
-  );
-
-  history.push({
-    round,
-    sweep: isSweep,
-    lenses: lenses.map((l) => l.key),
-    raw: raw.length,
-    deduped: deduped.length,
-    confirmed: confirmed.length,
-    confirmedTitles: confirmed.map((f) => f.title),
-    complete: roundComplete,
-    retiredAfter: [...retired],
-  });
-
-  if (confirmed.length === 0) {
-    if (isSweep && roundComplete) {
-      converged = true;
+    const designless = groups.filter((_, i) => !designs[i]).map((g) => g.id);
+    if (designless.length) {
       log(
-        "Round " +
-          round +
-          ": full sweep produced no confirmed findings; CONVERGED",
+        "Round " + round + ": no design returned for " + designless.join(", ") +
+          "; those groups are fixed from the findings alone",
       );
-    } else if (isSweep) {
-      log(
-        "Round " +
-          round +
-          ": sweep incomplete (reviewer or verifier failures); NOT converging",
-      );
+      history[history.length - 1].designless = designless;
     }
-    continue;
-  }
 
-  // Strike table: mechanisms this loop introduced in earlier rounds, with the
-  // number of later findings each has caused. The loop already has this
-  // information and has never used it, so a fixer repairing a mechanism for the
-  // third time has been doing so blind.
-  const strikeLines = introducedMechanisms
-    .filter((m) => m.strikes > 0)
-    .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
-    .join("\n");
-  const preFixSnap = await snapshot("r" + round + "-prefix");
-  const fixOut = await robustAgent(
-    fixPrompt(confirmed, round, strikeLines || null),
-    { label: "r" + round + ":fix", phase: "Round " + round + ": fix", schema: FIX_RESULT },
-  );
-  const fixSummary = fixOut && fixOut.summary ? fixOut.summary : fixOut;
-  // What the fixer actually did, as against what it says it did: the post-fix
-  // reviewer diffs against the pre-fix snapshot rather than trusting the summary.
-  const roundMechanisms = (fixOut && fixOut.newMechanisms) || [];
-  roundMechanisms.forEach((m) =>
-    introducedMechanisms.push({ name: m.name, round, strikes: 0 }),
-  );
-  if (roundMechanisms.length) {
-    log(
-      "Round " + round + ": fixer introduced " + roundMechanisms.length +
-      " new mechanism(s): " + roundMechanisms.map((m) => m.name).join(", "),
-    );
-  }
-  if (fixOut && fixOut.escalated && fixOut.escalated.length) {
-    log("Round " + round + ": " + fixOut.escalated.length + " finding(s) closed by escalation");
-    history[history.length - 1].escalated = fixOut.escalated;
-  }
-  history[history.length - 1].newMechanisms = roundMechanisms.map((m) => m.name);
-  confirmed.forEach((f) => fixedTitles.push(f.title));
-  history[history.length - 1].fixSummary = fixSummary || "fixer unavailable";
+    const fixSummaries = [];
+    const roundMechanisms = [];
+    const escalatedAll = [];
+    const designRejected = [];
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      const picked = (g.findings || []).map((i) => confirmed[i]).filter(Boolean);
+      if (picked.length === 0) continue;
+      const out = await robustAgent(
+        fixPrompt(picked, round, strikeLines || null, g, designs[gi]),
+        {
+          label: "r" + round + ":fix:" + g.id,
+          phase: "Round " + round + ": fix",
+          schema: FIX_RESULT,
+        },
+      );
+      if (!out) {
+        log("Round " + round + ": the fixer for " + g.id + " did not return");
+        continue;
+      }
+      fixSummaries.push(g.id + ": " + (out.summary || ""));
+      for (const m of out.newMechanisms || []) roundMechanisms.push(m);
+      for (const e of out.escalated || []) escalatedAll.push(e);
+      for (const d of out.designRejected || []) designRejected.push(g.id + ": " + d);
+    }
+    const fixOut = {
+      summary: fixSummaries.join("\n\n"),
+      newMechanisms: roundMechanisms,
+      escalated: escalatedAll,
+    };
+    const fixSummary = fixOut.summary;
+    if (designRejected.length) {
+      // A fixer that silently substitutes its own design is the failure this
+      // whole stage exists to remove, so the substitution is surfaced.
+      log(
+        "Round " + round + ": " + designRejected.length +
+          " design(s) the fixer judged wrong and departed from",
+      );
+      history[history.length - 1].designRejected = designRejected;
+    }
+    history[history.length - 1].groups = groups.map((g) => ({
+      id: g.id,
+      title: g.title,
+      size: (g.findings || []).length,
+      risk: g.risk,
+    }));
 
-  // Narrow post-fix review of the fixer's own edits, then at most ONE follow-up
-  // fix. The cap is deliberate: this is a correction pass on fresh text, not a
-  // second convergence loop, and an unbounded review-fix cycle here would hide a
-  // genuinely contested edit inside a round instead of surfacing it to the next
-  // round's lenses and, ultimately, to the sweep.
-  const postFix = await robustAgent(
-    postFixPrompt(confirmed, fixSummary, round, roundMechanisms, preFixSnap),
-    {
-      label: "r" + round + ":post-fix-review",
-      phase: "Round " + round + ": fix",
-      schema: FINDINGS,
-    },
-  );
-  if (!postFix) {
-    log("Round " + round + ": post-fix review unavailable after retries");
-    history[history.length - 1].postFixReview = "unavailable";
-  } else if (postFix.findings.length === 0) {
-    log("Round " + round + ": post-fix review found no defect in the fixer's work");
-    history[history.length - 1].postFixReview = "clean";
-  } else {
-    log(
-      "Round " +
-        round +
-        ": post-fix review found " +
-        postFix.findings.length +
-        " defect(s) in the fixer's own edits; correcting",
+    // Narrow post-fix review of the fixer's own edits, then at most ONE follow-up
+    // fix. The cap is deliberate: this is a correction pass on fresh text, not a
+    // second convergence loop, and an unbounded review-fix cycle here would hide a
+    // genuinely contested edit inside a round instead of surfacing it to the next
+    // round's lenses and, ultimately, to the sweep.
+    const postFix = await robustAgent(
+      postFixPrompt(confirmed, fixSummary, round, roundMechanisms, preFixSnap),
+      {
+        label: "r" + round + ":post-fix-review",
+        phase: "Round " + round + ": fix",
+        schema: FINDINGS,
+      },
     );
-    const followUp = await robustAgent(
-      followUpFixPrompt(postFix.findings, round),
-      { label: "r" + round + ":follow-up-fix", phase: "Round " + round + ": fix" },
-    );
-    // Recorded in fixedTitles so later rounds do not re-litigate them, and in
-    // history so a run where the fixer repeatedly needed correction is visible.
-    postFix.findings.forEach((f) => fixedTitles.push(f.title));
-    history[history.length - 1].postFixReview = postFix.findings.map(
-      (f) => f.title,
-    );
-    history[history.length - 1].followUpFixSummary =
-      followUp || "follow-up fixer unavailable";
-  }
+    if (!postFix) {
+      log("Round " + round + ": post-fix review unavailable after retries");
+      history[history.length - 1].postFixReview = "unavailable";
+    } else if (postFix.findings.length === 0) {
+      log("Round " + round + ": post-fix review found no defect in the fixer's work");
+      history[history.length - 1].postFixReview = "clean";
+    } else {
+      log(
+        "Round " +
+          round +
+          ": post-fix review found " +
+          postFix.findings.length +
+          " defect(s) in the fixer's own edits; correcting",
+      );
+      const followUp = await robustAgent(
+        followUpFixPrompt(postFix.findings, round),
+        { label: "r" + round + ":follow-up-fix", phase: "Round " + round + ": fix" },
+      );
+      // Recorded in fixedTitles so later rounds do not re-litigate them, and in
+      // history so a run where the fixer repeatedly needed correction is visible.
+      postFix.findings.forEach((f) => fixedTitles.push(f.title));
+      history[history.length - 1].postFixReview = postFix.findings.map(
+        (f) => f.title,
+      );
+      history[history.length - 1].followUpFixSummary =
+        followUp || "follow-up fixer unavailable";
+    }
 
-  // Churn test, after the round's fixes have landed. Running it here rather than
-  // before the fixes means the decision is taken on the text the next round will
-  // actually read.
-  // The counters wake the introspection agent; they no longer act on their own.
-  // A counter cannot tell a churning mechanism from a large area being drained,
-  // and cannot see over-specification at all, so its output is a reason to look
-  // rather than a decision. The agent also runs on a cadence, because a runaway
-  // between counter trips would otherwise go unexamined.
-  const churn = churningAreas(round);
-  if (churn.length) history[history.length - 1].churnDetected = churn.map((c) => c.area);
-  const dueByCadence = round - lastIntrospectRound >= introspectEvery;
-  const dueBySweep = isSweep && confirmed.length > 0;
-  if (churn.length || dueByCadence || dueBySweep) {
-    const why = churn.length
-      ? "a churn counter tripped on " + churn.map((c) => c.area).join(", ")
-      : dueBySweep
-        ? "a full sweep confirmed findings, which is when the loop learns most about itself"
-        : introspectEvery + " rounds since the last introspection";
-    const verdict = await introspect(round, why, churn);
+    // Churn test, after the round's fixes have landed. Running it here rather than
+    // before the fixes means the decision is taken on the text the next round will
+    // actually read.
+    // The counters wake the introspection agent; they no longer act on their own.
+    // A counter cannot tell a churning mechanism from a large area being drained,
+    // and cannot see over-specification at all, so its output is a reason to look
+    // rather than a decision. The agent also runs on a cadence, because a runaway
+    // between counter trips would otherwise go unexamined.
+    const churn = churningAreas(round);
+    if (churn.length) history[history.length - 1].churnDetected = churn.map((c) => c.area);
+    const dueByCadence = round - lastIntrospectRound >= introspectEvery;
+    const dueBySweep = isSweep && confirmed.length > 0;
+    if (churn.length || dueByCadence || dueBySweep) {
+      const why = churn.length
+        ? "a churn counter tripped on " + churn.map((c) => c.area).join(", ")
+        : dueBySweep
+          ? "a full sweep confirmed findings, which is when the loop learns most about itself"
+          : introspectEvery + " rounds since the last introspection";
+      const pass = await introspect(round, why, churn, dueByCadence);
 
-    if (verdict && verdict.verdict === "redesign" && redesignsRun < redesignsAllowed) {
-      const named = (verdict.areas || []).map((a) => {
-        const hit = churn.find((c) => c.area === String(a).toLowerCase().trim());
-        return (
-          hit || {
-            area: String(a).toLowerCase().trim(),
-            findings: 0,
-            designDefects: 0,
-            selfInflicted: 0,
-            reason: verdict.reasoning || "named by the introspection pass",
-          }
-        );
-      });
-      if (named.length) {
-        const did = await runRedesign(named, round, verdict.reasoning || why);
-        if (did) {
-          // The document in front of the lenses is materially different, so no
-          // lens may stay retired on the strength of having read the old one.
-          retired.clear();
-          history[history.length - 1].redesignApplied = true;
+      // EVERY verdict goes to a panel now, including `healthy`. A wrong healthy
+      // is the most expensive verdict in the loop -- it spends every remaining
+      // round -- and nothing was checking it. A gated pass is the exception: it
+      // made no argument, so there is nothing to falsify.
+      let verdict = pass;
+      if (pass && !pass.gated) {
+        const panel = await judgePanel(round, pass, await growthSince(lastGrowthSnap), churn);
+        history[history.length - 1].panel = {
+          proposed: pass.verdict,
+          decision: panel.decision,
+          upheld: panel.upheld,
+          votes: panel.votes.map((v) => ({
+            falsified: v.falsified,
+            howConclusive: v.howConclusive,
+            reasoning: String(v.reasoning || "").slice(0, 400),
+          })),
+        };
+        if (!panel.upheld) {
+          // Falsified. Recorded against the pass so the next one sees that it
+          // reached this verdict on evidence like today's and was overturned,
+          // and must answer that rather than restate itself.
+          overruledStops.push({
+            round,
+            proposed: pass.verdict,
+            decidedInstead: panel.decision,
+            panelReasoning: panel.votes
+              .filter((v) => v.falsified)
+              .map((v) => v.howConclusive + ": " + v.reasoning),
+          });
+          verdict = { ...pass, verdict: panel.decision };
         }
       }
-    } else if (verdict && verdict.verdict === "redesign") {
-      log(
-        "Round " + round + ": introspection asked for a redesign but the budget of " +
-          redesignsAllowed + " is spent; recording instead",
-      );
-    }
 
-    if (verdict && verdict.verdict === "prune" && (verdict.sections || []).length) {
-      // Over-specification is a defect in its own right: it is where two sections
-      // drift apart, and detail an implementor does not need costs more to keep
-      // true than it is worth. The cure is deletion with a stated constraint,
-      // which is what the blanks convention exists for.
-      await robustAgent(
-        "Prune over-specified sections of a change proposal.\n\n" +
-          "HARD CONSTRAINT: the only file you may edit is " + path +
-          ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
-          "An introspection pass judged these sections to have grown past their value:\n" +
-          JSON.stringify(verdict.sections, null, 2) +
-          "\n\nIts reasoning: " + (verdict.reasoning || "") +
-          "\n\nDelete the detail it names and replace each deletion with the blanks convention: " +
-          FORMAT_BLANKS +
-          "\nDelete nothing the convention bars from delegation, and nothing another section depends on: " +
-          "check before each deletion whether any other part of the proposal cites the text you are removing, " +
-          "and if it does, either keep it or update the citing section in the same edit. Then reconcile the " +
-          "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
-          'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
-          "Follow " + repo + "/.claude/rules/doc-style.md.",
-        { label: "prune:r" + round, phase: "Round " + round + ": prune" },
-      );
-      history[history.length - 1].pruned = verdict.sections;
-      // Pruned text is text the lenses have not read in its new form.
-      retired.clear();
-      log("Round " + round + ": pruned " + verdict.sections.length + " section(s)");
-    }
-
-    if (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe")) {
-      // The pass observes; a panel decides. It may uphold the stop, downgrade it
-      // to a redesign or a prune, or find the run healthy.
-      const panel = await reviewStopDecision(
-        round,
-        verdict,
-        await growthSince(lastGrowthSnap),
-        churn,
-      );
-      history[history.length - 1].stopDecision = {
-        proposed: verdict.verdict,
-        decision: panel.decision,
-        quorum: panel.quorum,
-        votes: panel.votes.map((v) => ({ verdict: v.verdict, reasoning: v.reasoning })),
-      };
-
-      if (panel.decision === "halt" || panel.decision === "reframe") {
-        stoppedByIntrospection = {
-          round,
-          verdict: panel.decision,
-          proposedBy: verdict.verdict,
-          question: verdict.questionForHuman || verdict.reasoning,
-          reasoning: verdict.reasoning,
-          caseHealthy: verdict.caseHealthy,
-          caseUnhealthy: verdict.caseUnhealthy,
-          panel: panel.votes,
-        };
-        break;
-      }
-
-      // Overruled. Record it against the pass so the next introspection sees that
-      // it called a stop and was not upheld, together with why. Without that the
-      // pass would re-reach the same verdict on the same evidence every time it
-      // ran, and the panel would re-litigate it every time.
-      overruledStops.push({
-        round,
-        proposed: verdict.verdict,
-        decidedInstead: panel.decision,
-        panelReasoning: panel.votes.map((v) => v.verdict + ": " + v.reasoning),
-      });
-      log(
-        "Round " + round + ": the panel overruled a " + verdict.verdict + " with " +
-          panel.decision + "; the run continues",
-      );
-
-      // Carry out the downgrade the panel chose, rather than dropping it.
-      if (panel.decision === "redesign" && redesignsRun < redesignsAllowed) {
-        const named = (verdict.areas || []).length
-          ? verdict.areas.map((a) => ({
+      if (verdict && verdict.verdict === "redesign" && redesignsRun < redesignsAllowed) {
+        const named = (verdict.areas || []).map((a) => {
+          const hit = churn.find((c) => c.area === String(a).toLowerCase().trim());
+          return (
+            hit || {
               area: String(a).toLowerCase().trim(),
               findings: 0,
               designDefects: 0,
               selfInflicted: 0,
-              reason: "downgraded from " + verdict.verdict + " by the stop-decision panel",
-            }))
-          : churn;
-        if (named && named.length) {
-          const did = await runRedesign(named, round, "panel downgrade from " + verdict.verdict);
+              reason: verdict.reasoning || "named by the introspection pass",
+            }
+          );
+        });
+        if (named.length) {
+          const did = await runRedesign(named, round, verdict.reasoning || why);
           if (did) {
+            // The document in front of the lenses is materially different, so no
+            // lens may stay retired on the strength of having read the old one.
             retired.clear();
             history[history.length - 1].redesignApplied = true;
           }
         }
+      } else if (verdict && verdict.verdict === "redesign") {
+        log(
+          "Round " + round + ": introspection asked for a redesign but the budget of " +
+            redesignsAllowed + " is spent; recording instead",
+        );
+      }
+
+      if (verdict && verdict.verdict === "prune" && (verdict.sections || []).length) {
+        // Over-specification is a defect in its own right: it is where two sections
+        // drift apart, and detail an implementor does not need costs more to keep
+        // true than it is worth. The cure is deletion with a stated constraint,
+        // which is what the blanks convention exists for.
+        await robustAgent(
+          "Prune over-specified sections of a change proposal.\n\n" +
+            "HARD CONSTRAINT: the only file you may edit is " + path +
+            ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+            "An introspection pass judged these sections to have grown past their value:\n" +
+            JSON.stringify(verdict.sections, null, 2) +
+            "\n\nIts reasoning: " + (verdict.reasoning || "") +
+            "\n\nDelete the detail it names and replace each deletion with the blanks convention: " +
+            FORMAT_BLANKS +
+            "\nDelete nothing the convention bars from delegation, and nothing another section depends on: " +
+            "check before each deletion whether any other part of the proposal cites the text you are removing, " +
+            "and if it does, either keep it or update the citing section in the same edit. Then reconcile the " +
+            "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
+            'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
+            "Follow " + repo + "/.claude/rules/doc-style.md.",
+          { label: "prune:r" + round, phase: "Round " + round + ": prune" },
+        );
+        history[history.length - 1].pruned = verdict.sections;
+        // Pruned text is text the lenses have not read in its new form.
+        retired.clear();
+        log("Round " + round + ": pruned " + verdict.sections.length + " section(s)");
+      }
+
+      if (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe")) {
+        // The panel above has already had its chance to falsify this and could
+        // not, so the stop stands.
+        stoppedByIntrospection = {
+          round,
+          loop: LOOP.name,
+          verdict: verdict.verdict,
+          proposedBy: pass.verdict,
+          question: verdict.questionForHuman || verdict.reasoning,
+          reasoning: verdict.reasoning,
+          caseHealthy: verdict.caseHealthy,
+          caseUnhealthy: verdict.caseUnhealthy,
+          // What the next run should be. A stop that says only to stop leaves a
+          // human the work of deciding what to do next, which is work the pass
+          // is best placed to do: it has just read the whole run.
+          nextSteps: verdict.nextSteps || null,
+          panel: (history[history.length - 1].panel || {}).votes || [],
+        };
+        log(
+          "Round " + round + ": stopping with " + verdict.verdict +
+            (verdict.nextSteps
+              ? " — next steps are " + (verdict.nextSteps.confidence || "unstated") + ": " +
+                String(verdict.nextSteps.summary || "").slice(0, 160)
+              : " — the pass proposed no next steps"),
+        );
+        break;
       }
     }
+
+    roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
   }
 
-  // The delta the NEXT round's lenses read. Taken at the end of the round rather
-  // than after the fixer, so it also carries a follow-up fix, a prune, and an
-  // applied redesign, all of which rewrite text a lens is about to re-read.
-  history[history.length - 1].sectionsChanged = await diffHunks(roundStartSnap);
-  lastRoundSnap = roundStartSnap;
-
+  LOOP.round = round;
+  LOOP.converged = converged && !reviewersFailed && !stoppedByIntrospection;
+  LOOP.sweeps = sweeps;
+  LOOP.reviewersFailed = reviewersFailed;
+  log(
+    "The " + cfg.name + " loop " +
+      (LOOP.converged ? "converged" : "did NOT converge") +
+      " after " + round + " round(s) and " + sweeps + " sweep(s)",
+  );
+  return LOOP;
 }
 
-converged = converged && !reviewersFailed && !stoppedByIntrospection;
+// ---- Run the two loops ---------------------------------------------------
+//
+// Spec first. A finding in the spec loop must have a fix that lands in the
+// staged spec edits; one whose only remedy is elsewhere is out of scope there
+// and belongs to the non-spec loop, which reads both change files together.
+//
+// The spec loop is SKIPPED when the proposal stages no spec edits, which is a
+// common and valid shape. A cheap probe decides that rather than the script,
+// because the script cannot read a file.
+
+const SPEC_EDITABLE =
+  "You may edit ONLY these files:\n" +
+  "  " + P.spec + " — the staged spec edits, which is what this loop converges\n" +
+  "  " + P.summary + " — because its deliverable index resolves the SPEC ids this loop adds and removes, " +
+  "and a loop that may not touch it leaves its own edits mis-indexed until the next one\n" +
+  "  " + P.log + " — your log shard\n" +
+  "Every other file in the proposal, and every file outside it, is out of bounds.";
+
+const NONSPEC_EDITABLE =
+  "You may edit ONLY these files:\n" +
+  "  " + P.nonSpec + " — the staged code, schema, chart, migration, docs and test changes\n" +
+  "  " + P.checklist + " — the implementation sequence\n" +
+  "  " + P.summary + " — so it stays true as the staging changes\n" +
+  "  " + P.log + " — your log shard\n" +
+  (lockSpecChanges
+    ? "  " + P.spec + " is LOCKED for this run. A finding whose only remedy is a spec edit is closed by " +
+      "recording an open decision in " + P.nonSpec + " with the constraint any answer must satisfy, which " +
+      "is a complete fix rather than a deferral."
+    : "  " + P.spec + " — permitted, but PREFER any resolution that does not touch it. The staged spec " +
+      "edits converged in an earlier loop and every edit here reopens that. When you do edit it, say so " +
+      "plainly in your summary so the round records it.");
+
+const SPEC_SCOPE_NOTE =
+  "\n\nSCOPE OF THIS LOOP. You are reviewing the STAGED SPEC EDITS in " + P.spec + ". Read whatever else " +
+  "you need — the problem statement, the non-spec staging, the checklist — but report only findings whose " +
+  "fix lands in the staged spec edits. A finding whose only remedy is a code, test, or docs change is out " +
+  "of scope here and the loop that follows this one owns it; raising it now costs two verifiers and " +
+  "cannot be closed.\n" +
+  "The implementation checklist and the summary's deliverable index are reconciled between the two loops, " +
+  "against a settled spec staging. Drift in them is expected here and is NOT a finding.";
+
+const NONSPEC_SCOPE_NOTE =
+  "\n\nSCOPE OF THIS LOOP. Read the staged spec edits in " + P.spec + " and the staged non-spec changes " +
+  "in " + P.nonSpec + " AS ONE DOCUMENT, together with the checklist and the summary. A non-spec change " +
+  "that contradicts a staged spec edit is a finding, and only a reviewer holding both can see it, which is " +
+  "why this loop reads both.\n" +
+  (lockSpecChanges
+    ? "The staged spec edits are LOCKED: they converged in an earlier loop and are not editable here. A " +
+      "finding whose only remedy is a spec edit is still worth reporting — it is closed by recording an " +
+      "open decision rather than by editing."
+    : "The staged spec edits converged in an earlier loop. Prefer a finding whose fix lands in the non-spec " +
+      "staging; report one that needs a spec edit when it is genuinely the only remedy.");
+
+let specLoop = null;
+let nonSpecLoop = null;
+
+const specProbe = await robustAgent(
+  "Report whether a proposal stages any spec edits. Do not edit anything.\n\n" +
+    "Read " + roleRef(P, "spec", "Proposed spec changes") + " and answer one question: does it stage at " +
+    "least one concrete edit to a file under spec/? A file carrying only its headings, or one whose staged " +
+    "list is empty, stages none. Reply with the single word YES or NO and nothing else.",
+  { label: "probe:spec-changes", model: "haiku", phase: "Review" },
+);
+const hasSpecChanges = /YES/i.test(String(specProbe || "YES"));
+
+if (!hasSpecChanges) {
+  log("The proposal stages no spec edits; skipping the spec review loop");
+} else if (input.skipSpecReview) {
+  log("skipSpecReview is set; the spec staging is NOT reviewed by this run");
+} else {
+  specLoop = await runReviewLoop({
+    name: "spec",
+    poolFixed: POOL_FIXED.filter((l) => l.key !== "test-coverage"),
+    poolExtra: POOL_EXTRA,
+    maxRounds: maxSpecReviewRounds,
+    editable: SPEC_EDITABLE,
+    scopeNote: SPEC_SCOPE_NOTE,
+    target: P.spec,
+  });
+}
+
+// Between the loops: the spec staging is settled and the checklist has not been
+// written against it. This is a reconciliation, not a review round.
+if (specLoop && specLoop.converged && !stoppedByIntrospection) {
+  await robustAgent(
+    "Reconcile a proposal's deliverable index and implementation checklist against a now-settled set of " +
+      "staged spec edits.\n\n" +
+      "HARD CONSTRAINT: the only files you may edit are " + P.summary + " and " + P.checklist + ". Change " +
+      "nothing else, and change nothing in them beyond what this pass names.\n\n" +
+      "The spec staging in " + P.spec + " has converged. It was reviewed for several rounds and " +
+      "deliverables were added, removed, and renumbered along the way, so the index and the checklist are " +
+      "behind it.\n\n" +
+      "Do three things.\n" +
+      "1. Rebuild `## Deliverable index` in " + P.summary + " from what " + P.spec + " and " + P.nonSpec +
+      " now stage. Every staged deliverable appears exactly once with the file it lands in and one line.\n" +
+      "2. Write the checklist's SPEC-lane steps against the settled SPEC ids, as a leading block, one lane " +
+      "per step, in the order the spec edits must be applied.\n" +
+      "3. Reconcile the existing non-spec steps' `Depends on:` against those step ids.\n\n" +
+      "This is not a review round: do not reopen a decision, do not edit a staged change, and do not " +
+      "improve any wording. " + FORMAT_CHECKLIST +
+      promptFor("handoff") +
+      "\nFollow " + repo + "/.claude/rules/doc-style.md.",
+    { label: "spec-nonspec-handoff", phase: "Review" },
+  );
+  log("Reconciled the deliverable index and the checklist against the settled spec staging");
+}
+
+if (!stoppedByIntrospection && !input.skipNonSpecReview) {
+  nonSpecLoop = await runReviewLoop({
+    name: "non-spec",
+    poolFixed: POOL_FIXED,
+    poolExtra: POOL_EXTRA,
+    maxRounds: maxNonSpecReviewRounds,
+    editable: NONSPEC_EDITABLE,
+    scopeNote: NONSPEC_SCOPE_NOTE,
+    target: P.nonSpec,
+  });
+} else if (input.skipNonSpecReview) {
+  log("skipNonSpecReview is set; the non-spec staging is NOT reviewed by this run");
+}
+
+// The run converged when every loop it ran converged. A skipped loop certifies
+// nothing about its half, which the result records.
+const ranLoops = [specLoop, nonSpecLoop].filter(Boolean);
+const converged =
+  ranLoops.length > 0 &&
+  ranLoops.every((l) => l.converged) &&
+  !stoppedByIntrospection;
+const round = ranLoops.reduce((n, l) => n + l.round, 0);
+const reviewersFailed = ranLoops.some((l) => l.reviewersFailed);
 
 // One verification pass over the implementation checklist and the Summary, after
 // convergence and before the proposal is marked verified. Both are maintained as
@@ -2623,6 +4114,11 @@ return {
   introspection: {
     passes: introspections,
     stoppedBy: stoppedByIntrospection,
+    // The next run, when a stopping verdict proposed one. The skill relaunches
+    // automatically on a `halt` whose next steps are clear, and puts the
+    // question to a human otherwise.
+    nextSteps: (stoppedByIntrospection && stoppedByIntrospection.nextSteps) || null,
+    gatedPasses: introspections.filter((i) => i.gated).length,
     overruledStops,
     byArea: Object.fromEntries(
       [...areaLog].map(([a, es]) => [
@@ -2642,8 +4138,22 @@ return {
     converged,
     reviewersFailed,
     rounds: round,
-    sweeps,
-    retiredLenses: [...retired],
+    sweeps: [specLoop, nonSpecLoop].filter(Boolean).reduce((n, l) => n + l.sweeps, 0),
+    loops: [specLoop, nonSpecLoop].filter(Boolean).map((l) => ({
+      name: l.name,
+      rounds: l.round,
+      sweeps: l.sweeps,
+      converged: l.converged,
+      reviewersFailed: l.reviewersFailed,
+      retiredLenses: [...l.retired],
+      specTouched: l.specTouched,
+    })),
+    // A skipped loop certifies nothing about its half of the proposal, so a
+    // reader of this result must be able to see which ran.
+    specReviewed: !!specLoop,
+    nonSpecReviewed: !!nonSpecLoop,
+    lockSpecChanges,
+    verifyOrder,
     // Echo the caller's lens controls. An excluded lens certifies nothing, so a
     // reader of this result must be able to see what the run did not review.
     excludedLenses: [...excludeSet],

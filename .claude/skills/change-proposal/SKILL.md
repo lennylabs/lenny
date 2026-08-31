@@ -1,232 +1,212 @@
 ---
 name: change-proposal
 description: Write an adversarially validated change proposal under proposals/, staging spec edits and/or core-product or test-infrastructure code changes, from an inline problem statement, or adversarially review and fix an existing proposal until it converges. Use when the user reports a spec or implementation defect, contradiction, or gap, asks for a fix or extension proposal, or asks to validate an existing proposal before sign-off. The proposal stages its changes for sign-off; it never modifies spec/, pkg/, or docs/ itself.
-argument-hint: <problem statement | path to notes | path to proposals/*.md>
+argument-hint: <problem statement | path to notes | path to a proposal>
 allowed-tools: Workflow Agent Bash Read Write Edit Grep Glob TaskStop
 ---
 
 # Change proposal writer and convergence loop
 
-This skill produces a reviewed proposal document in `proposals/` and converges it against the spec and the code. A proposal may stage spec edits, core-product code changes, test-infrastructure changes, or a combination; the review loop validates whichever it stages. It has three modes sharing one workflow:
+This skill produces a reviewed proposal under `proposals/` and converges it against the spec and the code. A proposal may stage spec edits, core-product code changes, test-infrastructure changes, or a combination. It has three modes sharing one workflow:
 
-- **new**: the input is a problem statement. The workflow validates the problem's premises, drafts a change set, adversarially challenges each change, writes the proposal file, and then enters the review loop.
-- **review**: the input is the path of an existing proposal under `proposals/`. The workflow enters the review loop directly.
-- **redesign**: the input is the path of an existing proposal and a list of `focusAreas`. The workflow runs the redesign subworkflow over those areas first, applies the result to the proposal, and then enters the review loop. Use it when you already know which mechanism is wrong and do not want to pay several rounds for the loop to discover it.
+- **new**: the input is a problem statement. The workflow writes it to disk, validates it through six lenses, drafts through six design stances, challenges each surviving change, writes the proposal files, and enters the review loops.
+- **review**: the input is the path of an existing proposal. The workflow migrates it to the folder layout if it predates that, backfills what is missing, and enters the review loops.
+- **redesign**: the input is a proposal path and a list of `focusAreas`. The workflow redesigns those areas first, applies the result, then reviews as `review` does. Use it when you already know which mechanism is wrong.
 
-The review loop is shared: rounds of multi-lens adversarial review, two-skeptic verification of every finding, and fixes. A lens that finds nothing retires; when every lens has retired, a full sweep of the whole pool runs over the final text, and a clean sweep converges.
+## A proposal is a directory
+
+```
+proposals/NNNN_kind_slug/
+  NNNN_kind_slug.problem-statement.md         what is wrong, and the evidence
+  NNNN_kind_slug.summary.md                   what changes, goals, non-goals, fixed decisions,
+                                              watch-outs, and the deliverable index
+  NNNN_kind_slug.status.md                    typed frontmatter: Draft, Reviewed, Approved, Implemented
+  NNNN_kind_slug.implementation-checklist.md  the one execution sequence
+  NNNN_kind_slug.spec-changes.md              every staged edit to spec/, and nothing else
+  NNNN_kind_slug.non-spec-changes.md          code, schemas, charts, migrations, docs, and Testing
+  NNNN_kind_slug.review-log.md                what earlier agents learned, curated
+  NNNN_kind_slug.deviations.md                owned by the implementor; empty until one departs
+```
+
+**Migration is lazy and automatic.** There is no batch script. A proposal written as a single `NNNN_kind_slug.md` migrates the first time this skill or `implement-proposal` touches it, through the `migrate-proposal` subworkflow, in the same commit as the work that triggered it. Nothing else moves. An `Implemented` or `Retired` proposal never migrates, because nothing ever triggers it: a landed proposal is a historical record and splitting it is an edit.
+
+A partition check asserts that every content line of the original survived the split, and the migrator stops rather than finishing if it cannot retarget an inbound reference. A failed migration ends the run rather than reviewing a half-split tree.
+
+**Who may write what.** `.summary.md` and `.spec-changes.md` are written by this skill alone. `.deviations.md` is written by `implement-proposal` alone and read here. `.implementation-checklist.md` is seeded here and maintained by the implementor. Every agent appends to `.review-log.md` through a per-agent shard the round boundary merges.
+
+**The status is typed.** Read and write it with `node .claude/tools/proposal-status.mjs <proposal> --field status`, never by parsing prose. It handles both layouts, and the spec-lease hook reads it through the same tool. A legacy proposal that reads `Retired` was superseded or withdrawn; that is a read-only outcome outside the four states, and every consumer refuses it.
 
 ## Hard constraints
 
-- The run creates or edits exactly one file: the proposal (the new file in new mode, the given file in review mode). Nothing under `spec/`, `docs/`, `pkg/`, `charts/`, or `schemas/` is modified. A proposal stages its changes (spec edits and/or code or test changes) as fenced markdown blocks or precise change descriptions to apply after sign-off.
-- All problem input is inline (the argument and the conversation). The skill reads no tracking documents; evidence comes from `spec/`, `schemas/`, `pkg/`, `cmd/`, `charts/`, and git history. Progress-tracking and audit prose elsewhere in the repository are leads to verify, never evidence.
+- The run edits only files inside the proposal's directory. Nothing under `spec/`, `docs/`, `pkg/`, `charts/`, or `schemas/` is modified. A proposal stages its changes and never applies them.
+- All problem input is inline. Evidence comes from `spec/`, `schemas/`, `pkg/`, `cmd/`, `charts/`, and git history. Progress-tracking prose elsewhere is a lead to verify, never evidence.
 - Prose follows `.claude/rules/doc-style.md`.
-- New proposal file names are `NNNN_[new|fix]_<kebab-slug>.md`. `NNNN` is the next free zero-padded number among existing numbered proposals. `fix` is for proposals that correct or reconcile existing behavior — spec text, core-product code, or test infrastructure (contradictions, wrong ownership assignments, unreachable features, code-to-spec divergences). `new` is for proposals that add a capability or component the spec or implementation does not yet provide.
-- Review findings are real errors only: false citations, infeasible actor assignments, contradictions, missing edit sites, broken mechanisms, and a Testing section that omits the tests the changed behavior requires. Style preferences, optional improvements, additional nice-to-have tests, and hypothetical hardening are excluded by construction (the materiality skeptic refuses them); conventions are handled by a dedicated one-shot pass outside the error loop.
+- New directory names are `NNNN_[new|fix]_<kebab-slug>`, where `NNNN` is the next free zero-padded number.
+- Review findings are real errors only. Style preferences, optional improvements, and hypothetical hardening are excluded by construction, because the materiality skeptic refuses them.
+- The workflow sandbox gives a script only `agent`, `parallel`, `pipeline`, `phase`, `log`, `workflow`, `budget`, and `args`. This was established by running a probe rather than read from a comment: there is no `require`, no `process`, no `fetch`, and the `Function`-constructor route out is closed at the V8 level. A script cannot touch a file; anything that does goes through an agent. Run `node .claude/tests/run.mjs` after editing a workflow.
 
-A proposal written before the Summary and the implementation checklist existed gets both at the start of a review or redesign run, derived from what the document already says. They are created once, at round zero, and then maintained by the fixer and validated by the `applicability` lens like any other section. Creating them there rather than after convergence is the point: a checklist asserted at the end is a guess at a sequence dressed as a decision, while one created at the start is checked by every round that follows. Where the document does not settle an order, the bootstrap marks the step as inferred rather than guessing silently, so the review rounds have something to check.
+## How the run is shaped, and why
 
-- The workflow sandbox gives a script only `agent`, `parallel`, `pipeline`, `phase`, `log`, `workflow`, `budget`, and `args`. There is no `require` and no filesystem access, so a script cannot read or write a file; anything that touches one goes through an agent, which has Bash and Read. Run `node scripts/check-workflow-scripts.mjs .claude/workflows/*.js` after editing a workflow: it parses each script the way the runtime does and rejects a `require(` call, both of which `node --check` misses.
+### Startup
 
-## Proposal format conventions
+**Init** writes the eight files first, placing the problem statement verbatim and the caller's citations as unverified. Every stage after that reads the problem from disk rather than from an argument, which is what makes a `reframe` restart possible: rewrite the file and re-enter at Validate.
 
-The writer and reviewer agents receive these conventions. They are derived from the existing files in `proposals/`; when those files and this list disagree, the existing files win.
+**Validate** runs six lenses and a consolidator. A decomposer plus a skeptic per premise attacked premises and nothing else, so a problem that was real but mis-scoped, already solved, or not worth solving passed straight through. The lenses are `premise`, `evidence` (opens every citation), `prior-art` (has the spec, a landed proposal, or an open finding already answered it), `scope` (one problem or several), `impact` (who observes it, with the default posture that it does not matter), and `alternatives` (is there a framing under which no change is needed). The consolidator rewrites the problem statement to what survives and keeps the refuted premises in the record, because a later stage reading only the survivors re-derives the refuted one.
 
-- Title line: `# Proposal: <title>`.
-- Header bullets: `**Status:**`, `**Date:**`, `**Scope:**` (one- or two-sentence summary naming the finding IDs from the inline input when applicable).
-- Status lifecycle: the writer creates the proposal with "Draft for review."; the workflow replaces the state with "Verified (<date>). Converged after N adversarial review rounds (M findings fixed); awaiting sign-off." when the review loop converges, and leaves it untouched otherwise. Sign-off (an approved state) is recorded by a human, or by the `build-gaps-spec-unblock` pipeline when it resolves a converged proposal's open decisions; `implement-proposal` acts only on approved proposals.
-- Staging boilerplate paragraph: "This document stages the proposed … changes. It does not modify any spec, code, or doc file. Apply the changes in the … section after sign-off."
-- Two **unnumbered** sections open the proposal, after the staging boilerplate and before the numbered ones, so that adding them shifts no existing `§N` cross-reference.
-  - **Summary**, in three labelled parts. *What changes*: three to six bullets, one per top-level change, each naming the surface it lands on. *Fixed decisions*: the decisions an implementor must not revisit, one line each, which is distinct from the Decisions section that says why a decision was taken. *Watch out for*: the traps, meaning a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, and a prior attempt that failed and why. Every agent in `implement-proposal` reads this section and only this one in full, so it orients rather than argues.
-  - **Implementation checklist**, the ordered implementation sequence, written as the proposal is written rather than derived later by whoever implements it. Each step is one commit. The form is `- [ ] **S1 · spec** — SPEC-1. What lands.` followed by an indented `Tiers 0, 11. Depends on: —`. Name deliverables by id; every staged deliverable appears in exactly one step and no step names one that does not exist. Prefer one deliverable per step, bundling two only when separating them gains nothing. The lane is `spec`, `code`, `schema`, `migration`, `test`, or `docs`; spec steps come first and code steps follow, which is the order the implementation pipeline applies them, and a step that interleaves the other way states on its line why. Boxes stay unchecked; `implement-proposal` ticks them as it lands each step, which is also how a later run finds where to resume.
-- A proposal may leave a detail to the implementor rather than specifying it, which keeps the document shorter and removes a place for two sections to drift apart. Mark every such gap `**IMPLEMENTOR'S CHOICE:** what is left open — the constraint any answer must satisfy`. The constraint is not optional: without it the marker delegates without bounding. A blank is allowed only where the choice is local, reversible, and has no consequence in another section, and is never allowed for a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering another step depends on, a name appearing in more than one place, or anything a test must assert. The review lenses treat a properly marked blank as conformant; an unmarked gap is still an underspecified-target finding.
-- Numbered sections in this order, omitting the ones with no content: Problem; Decisions; Design overview; Detailed design; Edge cases and accepted failure modes (every edge case and failure mode the design **accepts or defers**, not only the ones it changes — each as a row naming the observable outcome and the exact spec text and `docs/` page that states it, so an accepted or deferred case is documented where the reader or operator meets it rather than left only in the proposal's reasoning; a deferred *mechanism* still records its accepted behavior here and stages the sentence that documents it. Omit only when the change genuinely has no accepted or deferred failure mode); Observability surface; CRD and RBAC changes; Proposed changes (titled for the change type, e.g. "Proposed spec changes", with one subsection per target); Non-goals; Testing (the specific, insightful new tests to add during implementation — one per behavior the proposal changes, mapped to the tiers the change reaches and covering the non-happy-path, rather than a vague "add tests" note); Findings closed on application; Resolved in adversarial review; Open decisions for review; Files touched on application.
-- The Problem section cites spec text as `spec/<file>.md:<line>` or `§X.Y` relative links, cites code as `pkg/...:<line>`, and names the finding IDs the proposal unblocks, if the inline input provided any.
-- The Proposed changes section has one subsection per target (spec file and section, code package, or test file), each with an anchor instruction ("Append after …", "Replace the row …") and a fenced block containing the exact text to insert or a precise change description, written so it can be applied mechanically after sign-off.
-- Non-goals records the alternatives that were considered and dropped, with the reason.
-- Files touched on application is consistent with the Proposed changes section.
+**Draft** runs six stances and a consolidator. One drafter made the entire design surface of a run a single sample. The stances are `minimal`, `spec-first`, `reuse`, `failure-modes`, `implementor` (which produces the sequence as part of the design), and `contrarian` (which argues no change is needed and produces a design only if it fails). Each is told to commit to its own reading rather than hedge toward the others. The consolidator picks a spine it will defend by name and grafts onto it, rather than averaging six designs into one nobody argued for, and a stance that dissented reaches it as an argument to answer.
 
-## Why the review loop is built this way
+**Challenge** is unchanged and runs per surviving change, with the default posture that the change is unnecessary.
 
-These design points come from convergence runs on prior proposals in this repository. Keep them when editing the script.
+### Two review loops
 
-- **Lens retirement, then a full sweep.** A lens retires when none of its findings survive verification, which covers both the lens that found nothing and the lens whose every finding two skeptics refuted; a lens that reliably cries wolf is not earning the tokens it costs, and it stops running; when every lens has retired, one sweep round runs the whole pool again over the final text. A lens that finds something in the sweep is reactivated and the loop continues, and when the active set drains again another sweep runs. Convergence requires a complete sweep of every lens with zero confirmed findings. Re-running a satisfied lens against text its own domain did not change was the loop's largest avoidable cost, and retirement removes it while the sweep keeps the guarantee.
-- **Convergence is always certified over final text, never over text a lens has not seen.** This is what the earlier two-consecutive-clean-rounds rule protected, and the sweep preserves it. That rule existed because fixers introduce their own errors: fixers add predicate text that drifts from the design's invariants, and clean rounds have been followed by rounds with confirmed findings in fixer-written text. A retirement is therefore provisional. Every lens re-reads the final text in the sweep before the proposal is certified, so no lens ever certifies text it never saw. Keep this property when editing the loop; it is the reason the sweep exists rather than accepting the first all-retired state as convergence.
-- **Retirement is credited per lens, through the dedup merge.** The script stamps each finding with the lens that produced it before any model sees it, and the dedup step must return a `lenses` union for every merged entry, because a merge collapses several reviewers' findings into one and the loop has to credit a survivor back to all of them. If dedup drops the union, the round falls back to the weaker rule of retiring only a lens that reported nothing, and logs that it did; retiring on an empty survivor set would otherwise retire the whole pool on a round that confirmed real defects.
-- **Retirement is keyed on a genuine result, never on a failure.** A lens dropped by a transient API failure contributes zero findings and is indistinguishable from a satisfied lens, so retiring on failure would let an outage certify a proposal. A failed lens keeps its prior state and runs again.
-- **Every agent that reads text the loop wrote is shown what changed, as a real diff.** The proposal is snapshotted twice a round: immediately before the fixer, which gives the post-fix reviewer the edits that round actually made, and at the round's start, which gives the next round's lenses everything that changed including a follow-up fix, a prune, and an applied redesign. Both are diffed per section, so a reviewer checking drift works the way the document is organised. This replaced two weaker signals. The post-fix reviewer had the fixer's own prose summary of its work, which is exactly the document that omits an edit the fixer did not notice making, and that omission is where drift lives. The next round's lenses had only the titles of what was fixed, so a lens re-reading a rewritten section had no signal that the text was new, though fix-stage text is the least-examined in the proposal. The diff is given as a reading order rather than a scope limit: a lens still owns the whole document, because a defect a rewrite leaves in text nobody touched is by definition outside the diff.
-- **The fixer's own edits get a narrow review, then at most one follow-up fix.** Fix-stage text is the newest and least-examined text in the proposal, and this loop's history records that fixers introduce their own errors. Before this step the only scrutiny it received was the next round's whole-document lenses, which are told the TITLES of what was fixed but never what the fixer actually wrote; under lens retirement that gap widens, because a retired lens does not re-read anything until the sweep. The post-fix reviewer asks exactly three questions: did each fix land, did any edit leave a parallel statement stale (drift, the highest-yield check), and is every newly written citation real. Its scope is the edit plus its blast radius rather than the edit alone, because drift is by definition an inconsistency between changed text and text that did not change. The follow-up is capped at one pass: this is a correction on fresh text, not a second convergence loop, and an unbounded cycle here would bury a contested edit inside a round instead of surfacing it to the next round's lenses and to the sweep.
-- **The fixer declares any mechanism it invents, and specifies it whole.** Inventing one is often the only correct fix, and it is also the most dangerous edit in the loop: a mechanism added to close a single finding lands unspecified, nothing reads it as a design, and later rounds discover its facets one at a time. One measured run produced most of its late defects from three such mechanisms. So a fixer that must add a field, flag, report, compensating action, RPC, frame, or interface change states, in the same edit, the state it reads and every site that sets and clears that state, every caller and every type satisfying a changed interface, the failure mode and what observes it, and the test that pins it. It declares the mechanism in its structured result, and the post-fix reviewer that already runs each round then reads it as a design rather than as a diff. Escalating to an open decision instead is a complete fix; the preference order is a specified mechanism, then an escalation, and never an unspecified mechanism.
-- **The fixer is shown which of its own mechanisms keep failing.** The loop records every mechanism a fixer introduced and counts the later findings each has caused, then hands that table to the next fixer. A fixer repairing a mechanism for the third time was previously doing so blind. The same counter feeds the churn detector, where `churnStrikes` marks an area as churning by definition.
-- **The fixer may not write counts, and reconciles enumerations after editing.** Nine of twenty self-inflicted findings in one measured run were stale counts: a section saying "three staged edits" after another fix made it four. Counts in prose are banned outright, which removes the category by construction, and after editing the fixer reconciles every enumeration and cross-reference that names a section it touched, because a fix correcting one section and leaving another section's list of its contents stale is two findings rather than one.
-- **The fixer reads the whole batch before editing.** Findings that look independent often share a root, and closing them separately produces edits that contradict each other and become findings of their own a round later. Findings touching the same text, section, or mechanism are grouped and fixed as one change.
-- **Reviewers are told to be exhaustive in one pass.** Because a lens may not run again before certification, a withheld finding costs an entire extra round for every other reviewer. The finding bar is unchanged: exhaustiveness applies within it, and a speculative finding still wastes two verifiers and pollutes the refuted list.
-- **Two skeptics per finding, both must confirm.** One re-derives the evidence from the files; one judges materiality assuming the evidence is true, with instructions to default to refuted. The split kills plausible-but-wrong findings and nitpicks separately.
-- **Refuted findings are remembered and injected into later rounds.** Without the memory, a refuted finding resurfaces in a later round, wastes verification, and can block convergence.
-- **Dedup before verification.** Independent lenses converge on the same root error under different phrasings; verifying duplicates multiplies cost for nothing.
-- **Security, Kubernetes, performance, reliability, client-facing surfaces, documentation alignment, and test coverage are always-on fixed lenses.** Every round runs the structural lenses (citations, feasibility, edit-sites, mechanism) plus the non-functional lenses that must be present every round: `security` (control regression AND the trust boundary / durability of any security-bounding value), `kubernetes` (controller-runtime and API-convention soundness), `performance` (top-tier write rates, bottlenecks, and the survival of bindings and counters under store outage and coordinator handoff), `reliability` (recovery-mechanism correctness under crash, restart, and store failover: idempotency of retried or replayed operations, dedup on at-least-once delivery, reclamation of orphaned pods, leases, and finalizers, bounded retry backoff, drain, and fail-open recovery onto reconciled state), `client-surface` (client-facing contract integrity), and `docs-alignment` (the docs/ tree reflects every changed behavior and never drives a spec or product decision). Security, Kubernetes, and performance were promoted to always-on after dedicated passes caught a showstopper (a residual-state security bound sourced from an untrusted pod self-report with no durable fallback) that the rotating-lens loop had converged past. Reliability is always-on for the same class of reason: the performance lens accounts for which state survives a failover but not whether the recovery mechanism is correct, and the Kubernetes lens covers the finalizer and level-triggered idioms but not idempotency of a retried operation, reclamation of an abandoned resource, or whether a fail-open path resumes on reconciled state, so a dedicated lens owns those. The `reliability` lens bounds against its neighbors: the performance lens keeps the capacity and state-survival math, the security lens keeps fail-closed on security paths and the trust boundary of security-bounding values, and the Kubernetes lens keeps the finalizer and level-triggered idioms. The `client-surface` lens verifies that a change to one client-facing representation (the REST API and its OpenAPI document, the MCP/A2A surfaces and `lenny/*` tool schemas, the wire proto and JSONL schemas, the adapter manifest, the per-language SDK types, the CRD schemas, client-visible enums and error codes, and the client-facing docs) is mirrored across every parallel representation, and that a name an external standard defines is not renamed while one client vocabulary is left half-renamed; the `edit-sites` lens checks internal edit completeness but not the parallel-client-representation and standard-vs-Lenny-defined boundary this lens owns. The `docs-alignment` lens verifies that every behavior the proposal changes is mirrored in the docs/ pages that describe it, under the rule that docs follow the spec and the implementation and are never used to decide what the spec or product should do; a doc-described scenario may seed a test case only after the doc is verified against the spec. This lens also owns two cases beyond mirroring a *changed* behavior, because an approved edge case is made of exactly the two categories that do not register as a change: (a) an edge case or failure mode the proposal **accepts or defers** whose outcome is stated only in the proposal's reasoning and appears in neither the staged spec text nor the `docs/` page that owns it — deferring the *mechanism* to a later proposal does not defer documenting the accepted behavior in the text that lands now; and (b) a **new operator-facing failure mode, or a new cause of an existing failure or data-loss path**, absent from the *narrative* operator docs (`docs/operator-guide/`, `docs/runbooks/`) that enumerate that failure's causes — distinct from the companion-row check the `edit-sites` lens owns (a metric's `metrics.md` row, an alert's runbook page), this is the failure narrative itself, which enumerates causes and must gain the new one. Cross-check the proposal's "Edge cases and accepted failure modes" section against the staged spec and doc edits: every row must resolve to landing text, not to reasoning alone. The `test-coverage` lens verifies the proposal lists the specific, insightful, relevant tests the changed behavior requires — one per changed behavior, mapped to the tiers the change reaches (per `test-coverage.md`) and covering the non-happy-path (empty, error, concurrent, boundary, spec-named-failure) — so a proposal that changes behavior without naming its tests, omits a tier the change plainly reaches, or lists only happy-path coverage where the change adds an error, concurrent, boundary, security or fail-closed, or spec-named-failure path is a finding; an additional nice-to-have test beyond that required coverage stays excluded. Test coverage was promoted to always-on because the loop otherwise refused every test-gap finding by construction, so a proposal could converge while listing no tests for the behavior it changed. Do not demote any of them to rotating.
-- **Every finding is classified as it is raised, and the loop reads its own classifications.** A finding carries an `area` (a short stable slug for the part of the design it is about), a `kind` (design-defect, unstaged-site, contradiction, missing-test, test-disposition, bookkeeping, citation, attribution, other), and an `introducedBy` judgement of whether the text it corrects was written by this loop. Those three fields turn the loop's output into a measurement of itself. A run measured before they existed spent 73% of its tokens on full-pool sweeps at roughly 2M tokens per finding, and a quarter of its late findings were corrections of text a fixer had written a round earlier, concentrated in three mechanisms a fixer had invented one finding at a time. None of that was visible from inside the loop.
-- **An introspection pass judges the run, and the counters only wake it.** Counting classified findings says where reviewers looked; it cannot say whether a mechanism is under-designed, whether a section has grown past its value, whether a quiet area is clean or merely unexamined, or whether two deliverables now describe the same thing in different words. Those need judgement, so an agent runs every `introspectEvery` rounds, after any sweep that confirmed findings, and whenever a churn counter trips. It reads the per-section growth since its last pass, the classified finding history, the mechanisms the fixer invented, the recent rounds' fix logs, and its own previous verdicts with the predictions attached to them, so a prediction that failed is evidence against its current reading. It answers five specific questions before it is allowed a verdict, the last being what it would do differently writing the proposal fresh today, which is the question the round-by-round process cannot ask itself. It then states the strongest case that the run is healthy and the strongest that it is not, at their best, before choosing between `healthy`, `redesign`, `prune`, `reframe`, and `halt`. Asking an agent whether everything is fine gets a reassurance; asking it named questions and making it argue both sides gets an answer.
-- **`prune` treats over-specification as a defect.** A section that has grown past its value is where two parts of a proposal drift apart, and detail an implementor does not need costs more to keep true than it is worth. The cure is deletion with a stated constraint, which is what the blanks convention exists for, so a prune replaces text with an `IMPLEMENTOR'S CHOICE` marker rather than rewriting it. Pruned text is text no lens has read in its new form, so every lens is un-retired afterwards.
-- **A decision to stop is taken by a panel, not by the pass that proposed it.** Halting is the one verdict the loop cannot take back cheaply, and it is where a single agent's error costs most in both directions, so observing that something is wrong is separated from deciding to stop. When the pass returns `reframe` or `halt`, three reviewers read the same evidence through different lenses — trajectory, design, and cost — and vote on the full verdict set, so a reviewer who thinks the pass is right about the problem and wrong about its severity can downgrade to `redesign` or `prune` rather than only veto. The majority decides. Each is told that ratifying is the failure mode, because a reviewer handed a conclusion and asked to check it agrees most and examines least.
-- **The burden is on stopping, and the reason is asymmetric cost rather than optimism.** A wrong decision to continue corrects itself: the next pass runs within a few rounds, sees more evidence, and can stop then. A wrong decision to stop costs a human's attention and the run's momentum, and nothing corrects it. So a panel that splits three ways takes the least disruptive verdict any reviewer reached, and a panel that cannot reach a quorum of two continues rather than stopping.
-- **An overruled stop is remembered.** A pass whose stop was not upheld is shown that, with the panel's reasoning, at its next run. Without it the pass would re-reach the same verdict on the same evidence every time it ran and the panel would re-litigate it every time; with it, the pass must say what has changed and answer the panel rather than restate itself. A downgrade the panel chooses is carried out rather than dropped, so a `halt` the panel reads as a `redesign` becomes one.
-- **`reframe` and `halt` end the loop rather than the process.** Everything already fixed is kept, the proposal is not marked verified, and the run returns the question a human must answer. An agent able to stop a converging run is a new failure mode, so both verdicts surface rather than resolving silently, and every pass is returned with its evidence so the agent's calibration can be reviewed after a run.
-- **When an area churns, the loop stops reviewing and redesigns it.** More rounds are the wrong instrument for a mechanism that is under-designed: the fixer answers one finding at a time and cannot see a mechanism whole, so it repairs a facet and leaves the next to be found. An area is churning when, over the last `churnWindow` rounds, it produced at least `churnMinFindings` findings, at least half of them design defects or contradictions, and its rate is not falling; a mechanism the fixer invented and has since had to repair `churnStrikes` times is churning by definition. The counter does not act on that judgement itself: it wakes the introspection pass, which adjudicates and may find the area is simply large and draining. When the pass does call for a redesign, the loop runs the redesign subworkflow, resumes, and clears that area's history so the detector does not immediately re-fire on evidence the redesign has answered. Every lens is un-retired after a redesign, because the document in front of them is materially different from the one they last read.
-- **A redesign produces a reviewed subproposal rather than an edit.** One agent per churning area establishes ground truth in the repository *before* reading what the proposal says, since specifying against the proposal's own prose is how the mechanism reached this state, and each is explicitly permitted to conclude that what is there should be deleted rather than specified. A consolidation agent reconciles the parallel specifications, which contradict each other by construction, verifies every anchor is present and unique and survives the edits ordered before it, and writes the subproposal under `scratchpad/redesign/`. The subproposal is reviewed by a lighter pool (mechanism, applicability, edit-sites) before it is applied, because a redesign that lands unreviewed is the same defect at a larger grain. Applying it reconciles the Summary, the checklist, the files-touched section, and the testing section, since a redesign that deletes a mechanism otherwise leaves its steps and tests behind.
-- **A rotating extra lens, on top of the fixed set.** The fixed lenses develop shared blind spots over rounds because they re-read the same document. One extra lens rotates per round (operational consistency, then fresh holistic read) and has found confirmed errors in rounds the fixed lenses passed.
+The spec staging converges first, alone. Then the non-spec staging converges, with the lenses reading **both change files as one document**, because a non-spec change that contradicts a staged spec edit is a finding only a reviewer holding both can see. The spec loop is skipped when a cheap probe reports the proposal stages no spec edits, which is a common and valid shape.
 
-## The end-of-run reconciliation
+**Between them is a reconciliation, not a review round.** The spec staging is settled by then and the checklist has not been written against it, so one pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked.
 
-After a run converges and before the Status bullet is written, one pass reconciles the Summary and the implementation checklist against the rest of the document. Both are maintained round by round, so this confirms the maintenance held rather than producing them from scratch: every staged deliverable appears in exactly one step, no step names a deliverable that does not exist, every dependency names an earlier step, spec steps precede the code steps that consume them unless a step states why it interleaves, tier lists cover the tiers their deliverables reach, every box is unchecked, and the Summary's fixed decisions still match what the document stages. It corrects drift and changes nothing else, because the design is settled by then and this is not another review round.
+Each loop keeps its own rounds, retired set, sweeps, and convergence, because a lens satisfied by the spec staging has said nothing about the code staging. The refuted-findings memory and the round history stay run-wide, so a finding refuted in the first loop is not re-litigated in the second.
 
-## Error classes with a record of surviving verification
+Convergence is unchanged: a lens that finds nothing retires, a full sweep of the pool runs when every lens has retired, and a clean complete sweep converges. A round now **closes before it may certify**, because a round whose bookkeeping did not complete left its log unmerged and the next round without a snapshot.
 
-The lens prompts in the script enumerate these. They are the classes that have produced confirmed findings; extend the list when a new class surfaces.
+### Verification
 
-- A named actor that does not exist, or an actor assigned a write it cannot perform under the spec/04 §4.6.3 CRD field-ownership table and its RBAC paragraph.
-- A check placed at a layer that cannot see the data it needs (an in-process admission webhook resolving a cross-resource reference; a gateway surface evaluating a CRD-only field).
-- A data-flow direction asserted backwards (which side of a store-CRD mirror is authoritative; verify in the reconciler code, never from memory).
-- A mandatory gate that one write path bypasses (a field settable through a surface the gate never inspects, such as a directly applied custom resource).
-- Build-phase ordering violations: a `spec/18` deliverable depending on artifacts a later phase introduces.
-- Edits to generated artifacts instead of their authoring source (alert rules are authored in `pkg/alerting/rules` and rendered by `make generate`; check file headers for generation notes).
-- Revert and rollout races: a status condition that clears while pods rendered under the old configuration still run.
-- A recovery or retry mechanism that fails under the exact fault it handles: a retried or replayed operation that is not idempotent and lacks a dedup, fencing, or `deleted_at IS NULL` guard; an at-least-once delivery whose consumer has no dedup key; a failure path that abandons a pod, lease, sandbox, or finalizer with no reclaimer or GC; a retry without bounded jittered backoff that stampedes a recovering store; an outbound call with no timeout that stalls the path on one hung dependency; a drain or fail-open recovery that drops running work or resumes on stale, un-reconciled state.
-- Predicate drift: a trigger condition stated with different conjuncts in different sections of the proposal (design section, summary table, constant comment, proposed spec text, tests).
-- Missing companion edit sites: a metric without its `spec/16` inventory row and `docs/reference/metrics.md` row; an alert without its `docs/runbooks/` page (`tests/tier11_docs` enforces slug resolution); a classification table without its companion prose list; an operator-guide sentence describing superseded behavior.
-- A client-facing contract changed in one representation but not its parallels: a REST field missing from `pkg/gateway/openapi/openapi.json`, the MCP tool schema, a language SDK, or the docs; a `schemas/lenny-adapter.proto` or JSONL change missing a language SDK or its tier-3 wire-contract test; a removed or renamed client-facing field still advertised by the served schema, an SDK, a CRD, or a doc; a standard-defined name (an MCP/A2A primitive) renamed, or one client vocabulary left half-renamed across the surface.
-- A field defined in one spec section cross-referenced as living in another.
-- An alert defined on a metric that no spec-defined evaluation surface collects.
-- A behavior the proposal changes (a renamed or removed field, a changed default, a new error code, lifecycle step, metric, or alert) left undocumented or misdescribed in the `docs/` page that covers it: a `docs/` page describing superseded behavior, or an added metric or alert missing its `docs/reference/metrics.md` or `docs/runbooks/` companion. The fix is always a docs edit; docs follow the spec and never drive a spec or product change.
-- An accepted or deferred failure mode or edge case named in the proposal's analysis (Problem, Detailed design, Non-goals) whose observable outcome is stated only in that reasoning and appears in neither the staged spec text nor the `docs/` page that owns it — including the case where adversarial review deferred the *mechanism* to a later proposal but left the resulting accepted behavior undocumented in the text that lands now. Deferring a fix does not defer documenting the accepted behavior. The fix is a spec and/or doc edit that states the outcome the reader or operator observes at the section and page that own it, and an "Edge cases and accepted failure modes" row that points to that landing text.
-- A new operator-facing failure mode, or a **new cause** of an existing failure or data-loss path, absent from the *narrative* operator docs (`docs/operator-guide/`, `docs/runbooks/`) that enumerate that failure's causes. This is distinct from the companion-row class above (a metric's `metrics.md` row, an alert's runbook page): it is the failure narrative itself, which lists why the failure happens and must gain the new cause so an operator can recognize it. The fix is a docs edit adding the cause to the narrative that owns it.
-- A behavior the proposal changes with no test listed in the Testing section, an omitted tier the change plainly reaches (per `test-coverage.md`), or a listed test that exercises only the happy path where the change adds an error, concurrent, boundary, security or fail-closed, or spec-named-failure path (for a security or fail-closed change, no test asserting the deny path; for a recovery, idempotency, or dedup change, no test asserting the replay/crash/failover path). The fix is a Testing-section edit that names the specific, insightful tests to add during implementation. An additional nice-to-have test beyond that required coverage is not a finding.
+Materiality runs first and evidence only if it survives. Materiality reads only the proposal, defaults to refuted, and kills the largest share for the least cost; evidence opens every cited file and is the expensive one. A refusal records which skeptic made it, because "not material" and "the citation is wrong" are different signals to a later round's lens.
+
+A verifier that **died** is not a refusal. The finding reaches neither verdict, is not added to the refuted memory where an outage would suppress it permanently, and the round cannot certify convergence.
+
+### Fixing
+
+Three stages replace one fixer.
+
+**fix-plan** splits the round's confirmed findings into cohesive groups. The only cap is on the number of groups; **group size is uncapped**, because size is the wrong axis. Forty trivial citation corrections that share a subject belong in one group where one fixer applies them consistently, while three deep design findings belong in three groups however few they are. A partition that drops, duplicates, or invents an index is rejected in favour of one group of everything.
+
+**fix-design** designs each group, read-only, in parallel. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
+
+**fix** runs once per group, sequentially, applying a design rather than inventing one. It receives the alternatives so it neither re-derives them nor quietly picks one already ruled out, and a fixer that judges a design wrong declares it rather than substituting its own silently.
+
+One **post-fix review** runs per round over every group's edits, which catches the risk the split introduces: drift between two groups that each edited correctly.
+
+### The review log
+
+Every agent appends what a future agent would need, with a fixed tag vocabulary: `DECISION` with its alternatives, `WATCHOUT` with evidence, `FACT`, `MISTAKE`, `UNVERIFIED`, `OPEN`, and the two that make compaction possible, `CORRECTS` and `USEFUL`. Each writes its own shard, because a dozen lenses appending to one file in parallel lose writes.
+
+One agent per round runs `cp-round-boundary.sh`, which merges the shards, counts the ledger, compares file hashes for the write audit, snapshots the tree the next round reads, and returns the caller's mid-run overrides. Compaction is age-graded and acts on the log's own signals: a `CORRECTS` entry rewrites or retires its target, a superseded watchout is deleted rather than kept, a `USEFUL` entry is promoted and never dropped, and contradictions are resolved against the repository rather than by recency.
+
+### Introspection
+
+A **warrant gate** runs before the full pass. The counters that wake it are crude and wrong in both directions, so the pass first asks cheaply whether the pattern is really there; an unwarranted counter wake returns healthy without paying for a pass or a panel. A **cadence** wake ignores the gate, because the cadence exists to look when no counter has fired.
+
+**Every verdict goes to a panel, including healthy**, which is the most expensive verdict in the loop and had nothing checking it. Each verdict has its own panel whose judges read the same evidence and weigh different things; the `redesign` panel works to the same principles as `fix-design`.
+
+**The judges falsify rather than vote.** Handing a reviewer a conclusion and asking it to check produces agreement rather than examination. A judge attacks the pass's argument, must restate it first, and the verdict **stands unless a majority falsifies it conclusively**. `partial` is an honest answer that leaves the verdict standing.
+
+A stopping verdict carries **proposed next steps**, because a halt that says only to stop leaves a human work the pass is best placed to do.
+
+## Automatic restart on a clear halt
+
+When the run returns `introspection.stoppedBy` with `verdict: "halt"`, **and** `introspection.nextSteps.confidence` is `clear`, **and** the proposed `rerunArgs` parse and name only known arguments:
+
+**Relaunch the workflow immediately with those arguments, without asking first.** Report that you did, with the pass's reasoning and the arguments used.
+
+At most **two** automatic restarts per invocation; track the count yourself. On the third, stop and put the question to the user. Stop and ask also when `confidence` is `needs-human`, when the arguments do not parse, or when the verdict is `reframe` and the pass proposed no problem-statement edit: a reframe rewrites the problem, and rewriting it on a guess is worse than pausing.
+
+## Arguments
+
+Every argument carries a class, and the class decides how you change it. `forward` is read where it is used and appears in no prompt already issued. `anchored` is baked into prompts the run has issued. `launch` controls how a run starts.
+
+| arg | class | default | effect |
+|:--|:--|:--|:--|
+| `mode` | launch | — | `new`, `review`, or `redesign` |
+| `problem` | anchored | — | required in `new`: the problem dossier |
+| `proposalPath` | launch | — | required in `review` and `redesign`: the directory, or a legacy `.md` |
+| `nextNumber` | launch | — | required in `new`: the next free `NNNN` |
+| `date` | anchored | — | today as `YYYY-MM-DD`; scripts cannot call Date |
+| `repoRoot` | launch | — | absolute repository root |
+| `exemplar` | anchored | — | the highest-numbered other proposal |
+| `context` | anchored | none | citations gathered so far; the run re-verifies all of them |
+| `planPath` | anchored | none | a plan this proposal implements steps of; enables `plan-conformance` |
+| `maxSpecReviewRounds` | forward | 10 | budget for the spec loop |
+| `maxNonSpecReviewRounds` | forward | 16 | budget for the non-spec loop |
+| `skipSpecReview`, `skipNonSpecReview` | launch | false | a skipped loop certifies nothing about its half, echoed in the result |
+| `lockSpecChanges` | forward | false | the non-spec loop may never edit the spec staging; such a finding becomes an open decision |
+| `verifyOrder` | forward | `["material","evidence"]` | which skeptic short-circuits |
+| `verifySequential` | forward | true | false restores both skeptics in parallel |
+| `maxFixGroups` | forward | 7 | the only cap on the fix split; group size is uncapped by design |
+| `fixDesignDepth` | forward | `auto` | `shallow` forces the trivial path; `deep` forces the architect path |
+| `introspectEvery` | forward | 5 | rounds between mandatory passes |
+| `introspectGate` | forward | true | the warrant gate; a cadence wake ignores it either way |
+| `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts |
+| `judgesHealthy` | forward | 2 | panel size for `healthy` |
+| `falsificationBar` | forward | `conclusive` | `partial` makes the panel easier to convince |
+| `compactAtLines` | forward | 400 | ledger size that triggers compaction |
+| `compactGrowthLines` | forward | 150 | growth since the last compaction that triggers it |
+| `standingContextMaxLines` | forward | 80 | compaction target for the curated section |
+| `lensPrompt` | anchored | none | appended to every review lens; an alias for `prompts.review` |
+| `prompts` | anchored | `{}` | per-agent text, keyed by agent |
+| `startLenses` | anchored | none | lens keys to lead with; every other begins retired and first reads in the sweep |
+| `excludeLenses` | forward | none | lens keys removed entirely; convergence certifies nothing about those domains |
+| `focusAreas` | launch | none | required in `redesign`: a slug or `{area, reason}` each |
+| `churnWindow`, `churnMinFindings`, `churnStrikes` | forward | 6, 5, 3 | the churn detector's thresholds |
+| `maxRedesigns`, `redesignReviewRounds` | forward | 2, 2 | the redesign budget |
+| `runTag` | anchored | the stem | namespaces the log shards, snapshots, cache, and state |
+| `resumeState` | launch | false | continue a loop at its recorded round with its retired set |
+
+`prompts` keys: `init`, `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `review`, `review.<lensKey>`, `fix-plan`, `fix-design`, `fix`, `compact`, `introspect`, `introspect.gate`, `judge.<verdict>`. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
+
+Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, the rotating extras `operational` and `fresh`, and `plan-conformance` when `planPath` is set. An unknown key in `startLenses` or `excludeLenses` is a hard error.
+
+## Changing an argument on a run in flight
+
+| Situation | What to do |
+|:--|:--|
+| Run is live, changing a `forward` argument | Write `scratchpad/cp-args/<runTag>.json`. Do not stop the run; it takes effect at the next round boundary |
+| Run is live, changing an `anchored` argument | `TaskStop`, then relaunch with `resumeState: true` and the new arguments |
+| Run died, nothing changed | Relaunch with `{scriptPath, resumeFromRunId}` |
+| Run died, only `forward` arguments changed | Relaunch with `{scriptPath, resumeFromRunId}` and the new arguments |
+| Run died, any `anchored` argument changed | Relaunch fresh with `resumeState: true` and the new arguments |
+
+A wrong choice costs tokens, never correctness. `resumeFromRunId` after an anchored change busts the journal cache and re-does that work under the new argument. `resumeState` after only a forward change relaunches fresh and continues from the recorded round. An anchored key written into the override file is rejected by the whitelist and logged. The script compares the recorded arguments at startup and names any anchored one that changed, so a caller who changed one by accident finds out.
+
+Report the `runTag` and the override path when you launch, so the user has the affordance without asking.
 
 ## Procedure
 
-### Step 1: Determine the mode and assemble inputs (inline, before the workflow)
+### Step 1: assemble the inputs
 
-1. If the argument is the path of an existing file under `proposals/`, the mode is **review**. Otherwise the mode is **new** and the argument (plus the conversation) is the problem statement.
-2. Common inputs:
-   - `date`: today's date as `YYYY-MM-DD` (workflow scripts cannot call Date).
-   - `repoRoot`: the absolute repository root.
-   - `exemplar`: the path of the highest-numbered existing proposal (in review mode, excluding the proposal under review).
-   - `focusAreas` (required in redesign mode, optional otherwise): the areas to redesign before review begins, each either a bare slug or `{area, reason}`. Pass the reason whenever you have one: on a run that has not yet classified any findings it is the only evidence the per-area agents get, and a bare slug leaves them starting cold against a document the loop has not measured. Supplying it in review mode runs one redesign pass first, which is the same thing redesign mode does.
-   - `introspectEvery` (default 5): rounds between introspection passes, which also run after any sweep that confirmed findings and whenever a churn counter trips.
-   - `churnWindow` (default 6), `churnMinFindings` (default 5), `churnStrikes` (default 3), `maxRedesigns` (default 2), `redesignReviewRounds` (default 2): the churn detector's thresholds and the redesign budget. The defaults were calibrated on a single run and are expected to need tuning.
-   - `maxReviewRounds`: default 16. Sweeps spend rounds from this budget, so leave headroom above the number of review cycles you expect.
-   - `lensPrompt` (optional): text appended verbatim to every review lens's prompt. Use it to carry standing context the lenses would otherwise rediscover, or to put one surface in front of every lens for a run. It reaches the lenses only. The dedup, verifier, fixer, and post-fix agents never see it, because those have narrow mandates that caller text must not reshape; a verifier told what to conclude is not a verifier. It adds context and focus and never lowers the finding bar.
-   - `startLenses` (optional): array of lens keys the loop starts with. Every other lens begins **retired**, so it does not run while the starting lenses are still finding defects, and it first reads the proposal in the sweep, over text those lenses have already driven clean. A held-back lens rejoins the active set the moment it finds something in that sweep. Use it to lead with the lenses most likely to find structural defects, so the expensive pool reads corrected text once rather than draft text repeatedly. It costs no guarantee: convergence still requires a complete sweep of every pool lens.
-   - `excludeLenses` (optional): array of lens keys removed from the pool entirely, including from sweeps. Convergence then certifies nothing about those domains, so the run echoes `excludedLenses` in its result. An unknown key in either array is a hard error rather than a silent no-op.
-   - `planPath` (optional): path to a remediation or implementation plan the proposal implements one or more steps of. Supplying it enables the `plan-conformance` lens, which is the only lens that measures the proposal against a document rather than against the repository. Omit it and that lens is removed from the pool, because a conformance lens with nothing to conform to would either invent a standard or certify vacuously. Set it whenever the proposal implements part of a larger plan: every other lens reads the proposal against the tree, so a deliverable the plan required and the proposal never mentions is invisible to all of them.
-   - Valid lens keys, for both arrays: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability` (the always-on set), plus `operational` and `fresh` (the rotating extras), plus `plan-conformance` when `planPath` is set. `plan-conformance` is always a valid key in `excludeLenses`, so naming it without a plan is not an error; naming it in `startLenses` without a plan is, because it would lead with a lens that has nothing to read.
+1. A path under `proposals/` means **review** mode. Otherwise the mode is **new** and the argument plus the conversation is the problem statement.
+2. Compute `repoRoot`, `date`, and `exemplar` (the highest-numbered other proposal).
+3. New mode: read the spec sections and code the problem names, so `context` carries concrete citations, and compute `nextNumber` from the highest existing `NNNN`.
+4. Review mode: gather a short `context` of the spec sections and packages the proposal touches, by grepping for its main identifiers.
 
-   Two lenses read the proposal differently from the rest, and both exist because a proposal converged 34 review passes and a full sweep and then failed to apply:
+### Step 2: run the workflow
 
-   - `applicability` reads the proposal as an executable procedure rather than as a document, simulating application while tracking which files, headings, anchors, and identifiers exist at each point. It catches forward references to artifacts a later sub-step creates, edits whose target the proposal never states precisely enough to write, relocations that stage the removal but not the destination text, an existing gate left hard-failing with no recorded disposition, unresolvable or ambiguous anchors, and a proposal whose spec edits depend on code the same proposal builds. It is the most expensive lens in the pool, because simulating application means reading every staged edit in order and opening each target.
-
-     Two of its classes are worth understanding, because each was added after a proposal converged and then failed to apply.
-
-     The **underspecified target** class works by enumeration rather than by recognition. The lens first lists every artifact the proposal creates or renames, drawing on the staged changes, the target lists, and the files-touched section together, then lists the properties each one's referring edits need (a heading's exact title and derived anchor, an identifier's spelling and derived forms, a register's key and schema), then checks the proposal states each. Reading for suspicious passages does not find this defect, because it is invisible at the referring site: the staged index row looks complete and the missing title lives elsewhere or nowhere. The class also carries an explicit anti-anchoring rule, since it was first written around one instance and then missed the structurally identical instance a repair introduced two sections away: a property stated for one set of created artifacts is evidence the class is live, never evidence it is handled.
-
-     The **execution-model inversion** class checks the proposal's own sequencing against the constraint `implement-proposal` imposes from outside the document, which is that spec edits land, verify, and commit before any code is written. A proposal whose spec edits are the output of a script it also builds cannot be applied in any order, because the script does not exist at spec-apply time and the pipeline will not build it first. This is invisible when simulating the proposal's own stated order, where the dependency is satisfied, so the lens is told to check it explicitly. The resolution is a split or a recorded entry criterion, and a proposal that already records the prerequisite is conformant.
-   - `plan-conformance` reports **absence, never incompleteness**. A deliverable the proposal never mentions is invisible to every tree-facing lens; a deliverable it does stage is better judged against the repository by those lenses. So it reports only what is missing entirely, at the grain of things that must exist in the delivered system, and it excludes requirements about how the work is carried out and differences in wording. Every finding states its consequence in the repository rather than as a mismatch with the plan, which is both the bar the materiality judge applies and a filter against findings that have drifted below the grain. Each finding has two acceptable resolutions, staging the deliverable or recording a reasoned divergence, and a recorded divergence closes it permanently even if the lens disagrees with the reason, so a stale plan cannot produce a finding the fixer is unable to satisfy.
-3. New mode only:
-   - Read the spec sections and code paths the problem names so the dossier carries concrete citations rather than paraphrase.
-   - `problem`: a problem dossier of one to three paragraphs stating the problem.
-   - `context`: a block listing every citation gathered so far (spec file:line, code file:line, finding IDs from the inline input, prior conversation conclusions). Distinguish established facts from unverified claims; the workflow re-verifies both.
-   - `nextNumber`: list `proposals/`, take the highest `NNNN_` prefix among numbered files, add one, zero-pad to four digits. Ignore unnumbered files.
-4. Review mode only:
-   - `proposalPath`: the path of the proposal under review, relative to the repository root.
-   - `context`: a short list of the spec sections and code packages the proposal touches, with approximate line anchors, gathered by grepping for the proposal's main identifiers. This focuses reviewers; they re-verify everything themselves.
-
-5. Redesign mode only: `proposalPath` as in review mode, plus `focusAreas`, an array of area slugs. Name the mechanism rather than the symptom: `runtime-teardown` rather than `the Close findings`. The subworkflow reads the proposal's own finding history for those areas, so a slug that matches how reviewers have been labelling the area gives it more to work with.
-
-### Step 2: Run the workflow
-
-The workflow script lives at `.claude/workflows/change-proposal.js` and is invoked by name. Call `Workflow({name: "change-proposal", args: …})` with the mode-appropriate args:
-
-```json
-{
-  "mode": "new",
-  "problem": "<the problem dossier>",
-  "context": "<citations and prior conclusions>",
-  "date": "<YYYY-MM-DD>",
-  "nextNumber": "<NNNN>",
-  "exemplar": "proposals/<highest-numbered proposal>.md",
-  "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 16,
-  "planPath": "<optional: plan this proposal implements steps of; enables plan-conformance>",
-  "lensPrompt": "<optional: appended to every review lens prompt>",
-  "startLenses": ["<optional: lens keys for round 1 only>"],
-  "excludeLenses": ["<optional: lens keys never run>"],
-  "introspectEvery": 5,
-  "churnWindow": 6,
-  "churnMinFindings": 5,
-  "churnStrikes": 3,
-  "maxRedesigns": 2,
-  "redesignReviewRounds": 2,
-  "focusAreas": ["<optional: slug, or {area, reason}; required in redesign mode>"]
-}
-```
+Invoke by **path**, never by name: a name resolves to a cached copy, so a run launched by name after an edit executes the previous version.
 
 ```json
 {
   "mode": "review",
-  "proposalPath": "proposals/<file>.md",
-  "context": "<assembled notes, or empty>",
-  "date": "<YYYY-MM-DD>",
-  "exemplar": "proposals/<highest-numbered other proposal>.md",
-  "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 16,
-  "planPath": "<optional: plan this proposal implements steps of; enables plan-conformance>",
-  "lensPrompt": "<optional: appended to every review lens prompt>",
-  "startLenses": ["<optional: lens keys for round 1 only>"],
-  "excludeLenses": ["<optional: lens keys never run>"],
-  "introspectEvery": 5,
-  "churnWindow": 6,
-  "churnMinFindings": 5,
-  "churnStrikes": 3,
-  "maxRedesigns": 2,
-  "redesignReviewRounds": 2,
-  "focusAreas": ["<optional: slug, or {area, reason}; required in redesign mode>"]
+  "proposalPath": "proposals/0081_fix_slug",
+  "date": "2026-08-31",
+  "exemplar": "proposals/0080_fix_other",
+  "repoRoot": "/abs/path",
+  "context": "…"
 }
 ```
 
-```json
-{
-  "mode": "redesign",
-  "proposalPath": "proposals/<file>.md",
-  "focusAreas": [
-    { "area": "<mechanism slug>", "reason": "<what keeps going wrong there, and the evidence>" }
-  ],
-  "date": "<YYYY-MM-DD>",
-  "exemplar": "proposals/<highest-numbered other proposal>.md",
-  "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 16
-}
-```
+Agents inherit the session model and effort. Run this with the strongest available model at high effort: reviewer quality decides whether the loop converges on truth or on exhaustion.
 
-Redesign mode runs the redesign subworkflow over the named areas, applies the result, and then enters the review loop exactly as review mode does. Supplying `focusAreas` in review mode does the same thing; the separate mode exists to make the intent explicit.
+### Step 3: interruptions and non-convergence
 
+- On interruption, follow the table above rather than reflexively resuming.
+- On `introspection.stoppedBy`, apply the automatic-restart rule.
+- On a loop exhausting its budget without a clean sweep, read `review.loops`: each records its rounds, sweeps, and retired set. Counts falling with the retired set growing means raise the budget and resume. Counts flat, or one lens reviving on every sweep, means stop and report: a lens that revives every sweep is usually pointing at a design contradiction the loop cannot fix by editing prose.
 
-Pass `args` as a JSON object value in the tool call. The script tolerates a JSON-encoded object string by parsing it; anything else aborts on the args guard.
+### Step 4: report
 
-Agents inherit the session model and effort level. Run this skill with the strongest available model at high effort; reviewer quality determines whether the loop converges on truth or on exhaustion.
-
-### Step 3: Interruptions and non-convergence
-
-- On interruption (auth expiry, crash): stop the stale task with TaskStop, then relaunch with `{scriptPath, resumeFromRunId}` from the original tool result. Completed agents replay from the journal cache and the run continues live from the cut point.
-- On `review.introspection.stoppedBy` being set, the introspection pass ended the run with `reframe` or `halt` rather than a review round ending it. The proposal is not marked verified and everything fixed so far is kept. Report `question`, the two cases the pass argued, and its reasoning, and put the question to the user rather than raising `maxReviewRounds` and resuming: a pass that reached this verdict is saying more rounds will not help.
-- `review.introspection.passes` holds every introspection verdict with its observations, its predictions, and whether the previous prediction held. Read it before concluding anything about a run's trajectory from the round counts alone, and read it after a run to judge whether the pass itself was calibrated.
-- On hitting `maxReviewRounds` without a clean sweep: inspect the trajectory in the returned `review.history`, where each entry records whether it was a `sweep`, which `lenses` ran, and the `retiredAfter` set. Sweeps consume rounds, so a run that was draining steadily can exhaust the budget mid-cycle; if the confirmed-finding counts are decreasing and the retired set is growing, raise `maxReviewRounds` and resume with `{scriptPath, resumeFromRunId}`; the edit does not invalidate the cached prefix. If counts are flat or oscillating, or the same lens keeps reviving on each sweep, stop and report the recurring findings for a human decision instead of burning rounds: a lens that revives every sweep is usually pointing at a design contradiction the loop cannot fix by editing prose.
-
-### Step 4: Report
-
-1. Run `git status --porcelain` and confirm the only created or modified file is the proposal. If anything under `spec/` or any other path changed, restore it and report the violation.
-2. On `status: "written"` or `status: "reviewed"`: read the proposal, then report the file path, the title, the refuted premises and dropped changes with reasons (new mode), whether the loop converged, the rounds run, the findings fixed per round with their titles, and the findings the skeptics refuted. On convergence the workflow has set the proposal's Status bullet to "Verified (<date>) …; awaiting sign-off."; state that the next step is sign-off, which records an approved state, after which `implement-proposal` lands the staged edits in `spec/` and implements the code. Without convergence the Status bullet is unchanged; say so.
-3. On `status: "not-viable"` or `status: "no-change-needed"`: no file is written. Report the refuting evidence so the user can correct or withdraw the problem statement.
-4. Do not apply any staged edit to `spec/`, and do not commit, unless the user asks.
+1. Run `git status --porcelain` and confirm the only changes are inside the proposal directory, plus the reference retargeting if a migration ran. Restore anything else and report the violation.
+2. Report the path, the title, what validation refuted, what the challenge dropped, whether each loop converged, the rounds, and the findings fixed. Report `review.loops[].specTouched` when the non-spec loop edited the spec staging.
+3. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
+4. Do not apply any staged edit, and do not commit unless asked.
 
 ## Maintenance
 
-The workflow script is canonical at `.claude/workflows/change-proposal.js`; this file carries the procedure, conventions, and rationale only. Other workflows invoke the script by name (`workflow("change-proposal", args)`), so script edits must keep the args contract stable. When a convergence run surfaces a confirmed error class this file does not list, add it to the error-class list here and, when it fits an existing lens, to that lens's prompt in the script. Keep the finding bar's DO-NOT-report list intact; it is what keeps the loop from converging on nitpicks. When the proposal format conventions and the existing files in `proposals/` disagree, the existing files win; update the conventions list here.
+The workflow is canonical at `.claude/workflows/change-proposal.js`; this file carries the procedure and the rationale. The behavioural tests are `.claude/tests/change-proposal.test.mjs`; run `node .claude/tests/run.mjs`. When a convergence run surfaces a confirmed error class this file does not list, add it here and to the lens that owns it. Keep the finding bar's exclusions intact: they are what stops the loop converging on nitpicks.

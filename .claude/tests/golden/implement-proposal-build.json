@@ -1,0 +1,158 @@
+[
+  {
+    "label": "checklist-ticks",
+    "phase": "Plan",
+    "model": "haiku",
+    "schema": "ticked",
+    "blocks": []
+  },
+  {
+    "label": "baseline",
+    "phase": "Build",
+    "model": "",
+    "schema": "sha",
+    "blocks": []
+  },
+  {
+    "label": "spec-targets:S1",
+    "phase": "Build",
+    "model": "",
+    "schema": "files",
+    "blocks": []
+  },
+  {
+    "label": "lease-open:S1",
+    "phase": "Build",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "apply:S1",
+    "phase": "Build",
+    "model": "",
+    "schema": "applied+deviations+unappliable",
+    "blocks": [
+      "file-ownership",
+      "summary"
+    ]
+  },
+  {
+    "label": "verify:S1:spec",
+    "phase": "Build",
+    "model": "",
+    "schema": "discrepancies",
+    "blocks": []
+  },
+  {
+    "label": "commit-spec:S1",
+    "phase": "Build",
+    "model": "",
+    "schema": "",
+    "blocks": [
+      "file-ownership"
+    ]
+  },
+  {
+    "label": "lease-release:S1",
+    "phase": "Build",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "tick:S1",
+    "phase": "",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "build:S2:base",
+    "phase": "Build",
+    "model": "",
+    "schema": "sha",
+    "blocks": []
+  },
+  {
+    "label": "build:S2",
+    "phase": "Build",
+    "model": "",
+    "schema": "commit+deviations+filesChanged+implemented+notes+testsAddedOrModified+testsPassed+tiersRun",
+    "blocks": [
+      "file-ownership",
+      "summary",
+      "rules",
+      "preflight",
+      "memory-safe",
+      "branch-safety"
+    ]
+  },
+  {
+    "label": "compile:S2:r1",
+    "phase": "Build",
+    "model": "",
+    "schema": "compiles+errors+leaseHeld",
+    "blocks": [
+      "memory-safe"
+    ]
+  },
+  {
+    "label": "review:S2:conformance:r1",
+    "phase": "Build",
+    "model": "",
+    "schema": "findings",
+    "blocks": [
+      "read-only",
+      "deviations"
+    ]
+  },
+  {
+    "label": "review:S2:invariants:r1",
+    "phase": "Build",
+    "model": "",
+    "schema": "findings",
+    "blocks": [
+      "read-only",
+      "deviations"
+    ]
+  },
+  {
+    "label": "verify:S2:r1",
+    "phase": "Build",
+    "model": "",
+    "schema": "changedLineCoverage+failures+green+notes+tiersRun",
+    "blocks": [
+      "preflight",
+      "memory-safe",
+      "branch-safety"
+    ]
+  },
+  {
+    "label": "tick:S2",
+    "phase": "",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "verify",
+    "phase": "Verify",
+    "model": "",
+    "schema": "changedLineCoverage+failures+green+notes+tiersRun",
+    "blocks": [
+      "memory-safe"
+    ]
+  },
+  {
+    "label": "proposal-edit-audit",
+    "phase": "Review",
+    "model": "",
+    "schema": "commits+edited",
+    "blocks": []
+  }
+]

@@ -28,10 +28,27 @@ Never let code lead the spec. A spec change lands and is verified before the cod
 - A behavior is not done until a test pins it to its spec section and that test passes. Run the tests; writing them is half the work.
 - Tests are first-class spec artifacts. Every test carries a `// spec:` annotation mapping it to the sections it verifies, and every behavioral spec section has at least one test. The harness maps tests to sections through that annotation.
 
+## A proposal is a directory
+
+A proposal is a directory under `proposals/` holding its problem statement,
+summary, status, implementation checklist, spec changes, non-spec changes,
+review log, and deviations, each prefixed with the directory's own name. A
+proposal written before that layout is a single markdown file, and it migrates
+the first time `change-proposal` or `implement-proposal` touches it. There is no
+batch migration: a proposal nobody is working on stays as it is.
+
+Read and write the status with `.claude/tools/proposal-status.mjs`, never by
+parsing prose. The four states are Draft, Reviewed, Approved, and Implemented.
+Progress through an implementation is recorded per deliverable, by the ticked
+boxes in the implementation checklist, rather than as a state the proposal is
+in.
+
 ## A landed proposal is not edited
 
 A proposal whose status records it as implemented is a historical record of
-what was decided and done at the time. It is not edited afterwards, and that
+what was decided and done at the time. That applies to every file in its
+directory, and it is why an implemented proposal never migrates: splitting one
+into role-scoped files is an edit. It is not edited afterwards, and that
 includes adding a pointer recording that a later proposal retired or reverted
 part of its deliverable.
 

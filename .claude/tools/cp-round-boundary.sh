@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# The per-round bookkeeping of a change-proposal review loop, as one script.
+#
+# A workflow script has no filesystem access, so every file operation costs an
+# agent invocation. That makes agent COUNT the thing to design against, and the
+# rule that follows is: put the mechanical logic in a script the repository
+# owns, and give the agent one exact command. The agent becomes a transport
+# with no room to deviate, the logic is in version control where it is
+# reviewable and testable, and a failure is an exit code rather than an
+# instruction an agent quietly skipped at the end of a long prompt.
+#
+# The state of the tree at the END of round N is the state at the START of
+# round N+1 -- nothing runs between them -- so one call does both halves.
+#
+# Usage:
+#   cp-round-boundary.sh --dir <proposal-dir> --tag <runTag> --loop <name>
+#                        --round <N> [--repo <root>] [--compact-at <lines>]
+#                        [--compact-growth <lines>]
+#
+# Prints one JSON object on stdout and nothing else:
+#   {
+#     "merged": <shards folded into the review log>,
+#     "ledgerLines": <lines under ## Ledger>,
+#     "compactionDue": true|false,
+#     "changedFiles": [ files that changed since the previous call ],
+#     "hunks": <changed hunks against the previous round's snapshot>,
+#     "snapshot": "<path to the snapshot this round starts from>"
+#   }
+#
+# Exit non-zero on any failure, so the caller marks the round incomplete rather
+# than proceeding on unknown state.
+
+set -uo pipefail
+
+DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=400; COMPACT_GROWTH=150
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir) DIR="$2"; shift 2 ;;
+    --tag) TAG="$2"; shift 2 ;;
+    --loop) LOOP="$2"; shift 2 ;;
+    --round) ROUND="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --compact-at) COMPACT_AT="$2"; shift 2 ;;
+    --compact-growth) COMPACT_GROWTH="$2"; shift 2 ;;
+    *) echo "cp-round-boundary: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+[ -n "$DIR" ] && [ -n "$TAG" ] && [ -n "$LOOP" ] && [ -n "$ROUND" ] || {
+  echo "cp-round-boundary: --dir, --tag, --loop and --round are required" >&2; exit 2; }
+[ -d "$DIR" ] || { echo "cp-round-boundary: no such proposal directory: $DIR" >&2; exit 1; }
+
+[ -n "$REPO" ] || REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+STATE="$REPO/scratchpad/cp-state/$TAG"
+SHARDS="$REPO/scratchpad/cp-log/$TAG"
+SNAPS="$REPO/scratchpad/cp-snap/$TAG"
+mkdir -p "$STATE" "$SHARDS" "$SNAPS" || { echo "cp-round-boundary: cannot create state dirs" >&2; exit 1; }
+
+STEM="$(basename "$DIR")"
+LOG="$DIR/$STEM.review-log.md"
+
+# ---- 1. Merge this round's log shards into the review log -----------------
+#
+# Each parallel agent writes its own shard, because twelve lenses appending to
+# one file concurrently lose writes. The merge is idempotent: a shard is
+# appended and then deleted, one at a time, so a shard that survives a crash
+# mid-merge is one that was not yet appended.
+merged=0
+if [ -d "$SHARDS" ] && [ -f "$LOG" ]; then
+  # Every unmerged shard for this loop, not only this round's. A round whose
+  # boundary call failed leaves its shards behind, and selecting by round would
+  # orphan them permanently; the round is in the filename for uniqueness, not
+  # for selection.
+  for shard in $(find "$SHARDS" -maxdepth 1 -name "$LOOP.*.md" 2>/dev/null | sort); do
+    [ -s "$shard" ] || { rm -f "$shard"; continue; }
+    # Splice under ## Ledger rather than appending to the file, which would put
+    # every entry after ## Retired and leave the ledger permanently empty. The
+    # insertion point is the end of the Ledger section: just before the next
+    # top-level heading, or at EOF when Ledger is last.
+    grep -q '^## Ledger' "$LOG" || { echo "cp-round-boundary: $LOG has no '## Ledger' heading" >&2; exit 1; }
+    tmp="$LOG.merging"
+    awk -v shard="$shard" '
+      BEGIN { inledger = 0; done = 0 }
+      /^## Ledger[[:space:]]*$/ { print; inledger = 1; next }
+      inledger && /^## / {
+        printf "\n"
+        while ((getline line < shard) > 0) print line
+        close(shard)
+        printf "\n"
+        done = 1; inledger = 0
+        print; next
+      }
+      { print }
+      END {
+        if (inledger && !done) {
+          printf "\n"
+          while ((getline line < shard) > 0) print line
+          close(shard)
+        }
+      }
+    ' "$LOG" >"$tmp" || { rm -f "$tmp"; exit 1; }
+    mv "$tmp" "$LOG" || exit 1
+    rm -f "$shard"
+    merged=$((merged + 1))
+  done
+fi
+
+# ---- 2. Ledger size, for the compaction trigger --------------------------
+ledger_lines=0
+if [ -f "$LOG" ]; then
+  ledger_lines=$(awk '/^## Ledger/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
+fi
+prev_ledger=0
+[ -f "$STATE/ledger-lines" ] && prev_ledger=$(cat "$STATE/ledger-lines" 2>/dev/null || echo 0)
+growth=$((ledger_lines - prev_ledger))
+compaction_due=false
+if [ "$ledger_lines" -ge "$COMPACT_AT" ] || [ "$growth" -ge "$COMPACT_GROWTH" ]; then
+  compaction_due=true
+fi
+echo "$ledger_lines" >"$STATE/ledger-lines"
+
+# ---- 3. The write audit --------------------------------------------------
+#
+# Which files changed since the previous call. The loop knows which its fixer
+# was allowed to touch; anything else that moved is reported. This is not
+# appended to a reviewing agent's prompt on purpose: a skipped audit fails
+# silently and takes a guarantee with it.
+changed="[]"
+HASHES="$STATE/hashes-$LOOP"
+new_hashes="$(cd "$DIR" && find . -maxdepth 1 -name '*.md' -exec md5sum {} + 2>/dev/null | sort -k2)"
+if [ -f "$HASHES" ]; then
+  changed=$(diff <(cat "$HASHES") <(printf '%s\n' "$new_hashes") 2>/dev/null \
+    | grep '^[<>]' | awk '{print $3}' | sed 's|^\./||' | sort -u \
+    | awk 'BEGIN{printf "["} {printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}')
+  [ -n "$changed" ] || changed="[]"
+fi
+printf '%s\n' "$new_hashes" >"$HASHES"
+
+# ---- 4. Snapshot the tree the NEXT round reads ---------------------------
+PREV="$SNAPS/$LOOP-r$((ROUND))"
+NEXT="$SNAPS/$LOOP-r$((ROUND + 1))"
+hunks=0
+if [ -d "$PREV" ]; then
+  hunks=$(diff -ru "$PREV" "$DIR" 2>/dev/null | grep -c '^@@' || true)
+fi
+rm -rf "$NEXT" && cp -r "$DIR" "$NEXT" || { echo "cp-round-boundary: snapshot failed" >&2; exit 1; }
+
+# ---- 5. The caller's mid-run argument overrides --------------------------
+OVERRIDES="{}"
+OV_FILE="$REPO/scratchpad/cp-args/$TAG.json"
+if [ -f "$OV_FILE" ]; then
+  if node -e "JSON.parse(require('fs').readFileSync('$OV_FILE','utf8'))" >/dev/null 2>&1; then
+    OVERRIDES="$(cat "$OV_FILE")"
+  else
+    echo "cp-round-boundary: $OV_FILE is not valid JSON; ignoring it" >&2
+  fi
+fi
+
+printf '{"merged":%d,"ledgerLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$growth" "$compaction_due" "$changed" "$hunks" "$NEXT" "$OVERRIDES"
