@@ -91,7 +91,9 @@ One **post-fix review** runs per round over every group's edits, which catches t
 
 Every agent appends what a future agent would need, with a fixed tag vocabulary: `DECISION` with its alternatives, `WATCHOUT` with evidence, `FACT`, `MISTAKE`, `UNVERIFIED`, `OPEN`, and the two that make compaction possible, `CORRECTS` and `USEFUL`. Each writes its own shard, because a dozen lenses appending to one file in parallel lose writes.
 
-One agent per round runs `cp-round-boundary.sh`, which merges the shards, counts the ledger, compares file hashes for the write audit, snapshots the tree the next round reads, and returns the caller's mid-run overrides. Compaction is age-graded and acts on the log's own signals: a `CORRECTS` entry rewrites or retires its target, a superseded watchout is deleted rather than kept, a `USEFUL` entry is promoted and never dropped, and contradictions are resolved against the repository rather than by recency.
+One agent per round runs `cp-round-boundary.sh`, which merges the shards, measures the log, compares file hashes for the write audit, snapshots the tree the next round reads, and returns the caller's mid-run overrides.
+
+**Compaction triggers on the standing context, not the ledger.** Every agent is told to read `## Standing context` and nothing else, so that is the only section anyone carries; the ledger is read end to end by the compactor alone. Triggering on ledger length fired an expensive pass to protect against a cost that does not exist — on one measured run, three passes averaging fifteen minutes each while the section they were protecting sat at 92 lines against its 80-line target. The pass reads once and writes once, and does **not** check the repository: doing so turned a text operation into a mini-review. `MISTAKE` is named the most valuable tag and is never dropped, because an entry saying *"I spent this round hunting X; it is not there"* saves a later agent a whole round. Otherwise it acts on the log's own signals: a `CORRECTS` entry rewrites or retires its target, a superseded watchout is deleted rather than kept, a `USEFUL` entry is promoted and never dropped, and contradictions are resolved against the repository rather than by recency.
 
 ### Introspection
 
@@ -139,9 +141,8 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts |
 | `judgesHealthy` | forward | 2 | panel size for `healthy` |
 | `falsificationBar` | forward | `conclusive` | `partial` makes the panel easier to convince |
-| `compactAtLines` | forward | 400 | ledger size that triggers compaction |
-| `compactGrowthLines` | forward | 150 | growth since the last compaction that triggers it |
-| `standingContextMaxLines` | forward | 80 | compaction target for the curated section |
+| `standingContextMaxLines` | forward | 80 | the compaction **trigger** and its target: the standing context is the only section any agent reads |
+| `compactAtLines` | forward | 2000 | a backstop on ledger length, not the trigger |
 | `lensPrompt` | anchored | none | appended to every review lens; an alias for `prompts.review` |
 | `prompts` | anchored | `{}` | per-agent text, keyed by agent |
 | `startLenses` | anchored | none | lens keys to lead with; every other begins retired and first reads in the sweep |

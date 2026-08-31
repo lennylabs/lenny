@@ -54,15 +54,21 @@ contains "the changed file is named" "$OUT" '0099_fix_t.spec-changes.md'
 OUT="$(run spec 5)"
 contains "an unchanged tree reports nothing" "$OUT" '"changedFiles":[]'
 
-echo; echo "T11b. compaction fires on size and on growth, not otherwise"
-OUT="$(run spec 6 --compact-at 100000 --compact-growth 100000)"
+echo; echo "T11b. compaction fires on the STANDING CONTEXT, which is the only section agents read"
+OUT="$(run spec 6 --compact-at 100000 --standing-at 100000)"
 contains "not due below both thresholds" "$OUT" '"compactionDue":false'
-OUT="$(run spec 7 --compact-at 1 --compact-growth 100000)"
-contains "due on absolute size" "$OUT" '"compactionDue":true'
+contains "standing lines are reported" "$OUT" '"standingLines":'
+OUT="$(run spec 7 --compact-at 100000 --standing-at 1)"
+contains "due on standing-context size" "$OUT" '"compactionDue":true'
+# A long ledger alone does NOT trigger: nothing but the compactor reads it, so
+# firing an expensive pass on its length protects against a cost that does not
+# exist. It keeps a backstop bound, far higher.
 fresh_log
-for i in $(seq 1 40); do printf -- "- FACT: line %s\n" "$i" >> "$REPO/scratchpad/cp-log/$TAG/spec.8.g.md"; done
-OUT="$(run spec 8 --compact-at 100000 --compact-growth 20)"
-contains "due on growth alone" "$OUT" '"compactionDue":true'
+for i in $(seq 1 60); do printf -- "- FACT: line %s\n" "$i" >> "$REPO/scratchpad/cp-log/$TAG/spec.8.g.md"; done
+OUT="$(run spec 8 --compact-at 100000 --standing-at 100000)"
+contains "a long ledger alone does not trigger it" "$OUT" '"compactionDue":false'
+OUT="$(run spec 9 --compact-at 1 --standing-at 100000)"
+contains "but the ledger backstop still can" "$OUT" '"compactionDue":true'
 
 echo; echo "T11c. the snapshot for the next round is taken, and hunks are counted"
 OUT="$(run spec 9)"

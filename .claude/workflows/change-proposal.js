@@ -84,8 +84,13 @@ const runTag =
 // figures are carriage cost rather than taste: every lens prompt already
 // carries several thousand tokens of standing text, and a 400-line ledger adds
 // roughly that again to each of a dozen lenses every round.
-let compactAtLines = input.compactAtLines || 400;
-let compactGrowthLines = input.compactGrowthLines || 150;
+// The ledger's bound is a BACKSTOP against unbounded growth, not the trigger.
+// The trigger is the standing context, because that is the only section any
+// agent other than the compactor reads: every prompt says to read
+// `## Standing context` and nothing else. Triggering on ledger size fired an
+// expensive pass to protect against a cost that does not exist.
+let compactAtLines = input.compactAtLines || 2000;
+let compactGrowthLines = input.compactGrowthLines || 400;
 const standingContextMaxLines = input.standingContextMaxLines || 80;
 // "auto" lets the design stage triage each finding by effort. "shallow" forces
 // every finding to the trivial path, for a round of pure bookkeeping findings;
@@ -2984,43 +2989,54 @@ function newLoop(cfg) {
 // and promoted into the standing context or retired. CORRECTS and USEFUL are
 // what make that possible: they are the only signals that separate an entry
 // worth promoting from one worth deleting.
-async function compactLog(round, ledgerLines) {
+async function compactLog(round, standingLines) {
   log(
-    "Round " + round + ": the review log's ledger is at " + ledgerLines +
+    "Round " + round + ": the review log's standing context is at " + standingLines +
       " lines; compacting",
   );
   await robustAgent(
-    "Compact a review log so the agents that read it next pay less to carry it, and so what they carry " +
-      "is true.\n\n" +
+    "Compact a review log. This is a TEXT operation and it has a time budget: a run measured before this " +
+      "was rewritten spent fifteen minutes per pass and still missed its target.\n\n" +
       "HARD CONSTRAINT: the only file you may edit is " + P.log + ". Change nothing else.\n\n" +
-      "The log has three sections. `## Standing context` is curated and is what every future agent reads " +
-      "first. `## Ledger` is the chronological record. `## Retired` holds what no longer applies, one line " +
-      "each, with why.\n\n" +
-      "RULES, in order of precedence.\n\n" +
-      "1. AGE-GRADE. Leave round " + round + "'s entries exactly as they are. Merge entries from the last " +
-      "two or three rounds where they share a subject. Reduce anything older to its durable residue — the " +
-      "FACT, WATCHOUT and DECISION lines — move that into `## Standing context`, and move or delete the " +
-      "rest, with a one-line reason under `## Retired` for anything you retire.\n\n" +
-      "2. HONOUR `CORRECTS`. An entry another agent marked as wrong is rewritten to what is true, or " +
-      "retired. A superseded WATCHOUT is DELETED rather than kept for the record: a warning about a trap " +
-      "that no longer exists costs every future agent a detour, which is worse than not warning them.\n\n" +
-      "3. HONOUR `USEFUL`. An entry another agent said saved it work is promoted into `## Standing " +
-      "context` and is never dropped while its subject stands.\n\n" +
-      "4. RESOLVE CONTRADICTIONS ACTIVELY. Where two entries disagree and neither corrects the other, " +
-      "check the repository yourself and keep the true one, retiring the other with the evidence. You have " +
-      "Grep and Read; use them rather than guessing which is newer.\n\n" +
-      "5. NEVER DROP AN `OPEN` OR AN `UNVERIFIED` until something closes it. An UNVERIFIED a later round " +
-      "verified is rewritten as a FACT with its evidence.\n\n" +
-      "6. TARGETS. `## Standing context` at most " + standingContextMaxLines + " lines; the ledger at " +
-      "most half what it is now. If you cannot reach them without deleting something that matters, do not: " +
-      "say so in the changelog and leave it longer.\n\n" +
-      "7. LEAVE A CHANGELOG. The first lines of `## Standing context` record what this pass merged, " +
-      "promoted, and retired, so the next compaction can be judged against it.\n\n" +
-      "You are compacting, not editing the proposal. Do not act on anything the log says, do not fix a " +
-      "defect it names, and do not add a finding of your own." +
+      "READ THE FILE ONCE, with Read. Do not page through it with `sed -n`. WRITE IT ONCE, with Write, as " +
+      "a whole new file. A previous pass made forty Bash calls, paged the log in eight chunks, and " +
+      "assembled the result through heredocs into /tmp. That is a hand-rolled substitute for two tool " +
+      "calls and it is most of where the time went.\n\n" +
+      "DO NOT VERIFY ANYTHING AGAINST THE REPOSITORY. You are not reviewing the proposal and you are not " +
+      "checking whether an entry is true. Where two entries disagree and neither corrects the other, keep " +
+      "the NEWER one and move the older to `## Retired` with a one-line note that they disagreed; if the " +
+      "disagreement matters, write one `UNVERIFIED:` line for a later reviewer to settle. An earlier " +
+      "version of this pass was told to check the tree itself, and it turned a text pass into a " +
+      "mini-review that grepped pkg/ and read three spec files.\n\n" +
+      "THE THREE SECTIONS. `## Standing context` is curated and is THE ONLY PART ANY OTHER AGENT READS. " +
+      "`## Ledger` is the chronological record, and nothing but this pass reads it end to end. " +
+      "`## Retired` holds what no longer applies, one line each.\n\n" +
+      "WHAT TO DO, in order.\n\n" +
+      "1. Leave round " + round + "'s entries in the ledger exactly as they are.\n\n" +
+      "2. For every entry older than three rounds, LIFT ITS DURABLE RESIDUE into `## Standing context` and " +
+      "move the rest to `## Retired` as one line. The durable residue is every `FACT`, `WATCHOUT`, " +
+      "`DECISION` and `MISTAKE` line.\n" +
+      "   `MISTAKE` IS THE MOST VALUABLE TAG IN THE LOG AND IS NEVER DROPPED. An entry saying \"I spent " +
+      "this round hunting X; it is not there; do not re-derive this\" saves a later agent a whole round, " +
+      "which is worth more than most findings. Keep its reasoning rather than its headline: a one-line " +
+      "summary of a dead end is not enough for the next agent to recognise the same dead end.\n\n" +
+      "3. HONOUR `CORRECTS`. An entry another agent marked wrong is rewritten to what is true, or retired. " +
+      "A superseded `WATCHOUT` is DELETED rather than kept for the record: a warning about a trap that no " +
+      "longer exists costs every future agent a detour.\n\n" +
+      "4. HONOUR `USEFUL`. An entry another agent said saved it work goes into `## Standing context` and is " +
+      "never dropped while its subject stands.\n\n" +
+      "5. NEVER DROP AN `OPEN` OR AN `UNVERIFIED` until something closes it.\n\n" +
+      "6. THE TARGET IS `## Standing context` AT MOST " + standingContextMaxLines + " LINES. That is the " +
+      "only size that matters, because it is the only section anyone reads. The ledger may be long; do not " +
+      "spend effort shortening it beyond moving aged entries out of it. If you cannot reach the target " +
+      "without dropping something that matters, do not: say so in the changelog and leave it longer.\n\n" +
+      "7. LEAVE A CHANGELOG as the first lines of `## Standing context`: what this pass lifted, retired and " +
+      "deleted, so the next pass can be judged against it.\n\n" +
+      "Do not act on anything the log says, do not fix a defect it names, and do not add a finding of your " +
+      "own." +
       promptFor("compact") +
       "\n\nFollow " + repo + "/.claude/rules/doc-style.md.",
-    { label: "r" + round + ":compact", phase: "Round " + round + ": fix" },
+    { label: "r" + round + ":compact", phase: LOOP.name + " R" + round + ": fix" },
   );
 }
 
@@ -3262,11 +3278,12 @@ async function runReviewLoop(cfg) {
         " --round " + rnd +
         " --repo '" + repo + "'" +
         " --compact-at " + compactAtLines +
+        " --standing-at " + standingContextMaxLines +
         " --compact-growth " + compactGrowthLines +
         "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
         "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
         "read, summarise, or edit any other file.",
-      { label: "r" + rnd + ":round-boundary", model: "haiku", phase: "Round " + rnd + ": fix" },
+      { label: "r" + rnd + ":round-boundary", model: "haiku", phase: LOOP.name + " R" + rnd + ": fix" },
     );
     let boundary = null;
     try {
@@ -3294,7 +3311,7 @@ async function runReviewLoop(cfg) {
     if (boundary.overrides && Object.keys(boundary.overrides).length) {
       applyOverrides(boundary.overrides, rnd);
     }
-    if (boundary.compactionDue) await compactLog(rnd, boundary.ledgerLines);
+    if (boundary.compactionDue) await compactLog(rnd, boundary.standingLines);
     return complete;
   }
 
@@ -3346,7 +3363,7 @@ async function runReviewLoop(cfg) {
         (l) => () =>
           robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundSnap), {
             label: "r" + round + ":review:" + l.key,
-            phase: "Round " + round + ": review",
+            phase: LOOP.name + " R" + round + ": review",
             schema: REVIEW_FINDINGS,
           }),
       ),
@@ -3435,7 +3452,7 @@ async function runReviewLoop(cfg) {
     if (raw.length > 1) {
       const d = await robustAgent(dedupPrompt(raw), {
         label: "r" + round + ":dedup",
-        phase: "Round " + round + ": review",
+        phase: LOOP.name + " R" + round + ": review",
         schema: DEDUP_FINDINGS,
       });
       if (d && d.findings.length > 0) deduped = d.findings;
@@ -3462,13 +3479,13 @@ async function runReviewLoop(cfg) {
       material: (f) =>
         robustAgent(materialityPrompt(f), {
           label: "r" + round + ":verify-material",
-          phase: "Round " + round + ": verify",
+          phase: LOOP.name + " R" + round + ": verify",
           schema: VERDICT,
         }),
       evidence: (f) =>
         robustAgent(evidencePrompt(f), {
           label: "r" + round + ":verify-evidence",
-          phase: "Round " + round + ": verify",
+          phase: LOOP.name + " R" + round + ": verify",
           schema: VERDICT,
         }),
     };
@@ -3662,7 +3679,7 @@ async function runReviewLoop(cfg) {
     if (confirmed.length > 1) {
       const planned = await robustAgent(fixPlanPrompt(confirmed, round), {
         label: "r" + round + ":fix-plan",
-        phase: "Round " + round + ": fix",
+        phase: LOOP.name + " R" + round + ": fix",
         schema: FIX_PLAN,
       });
       // A planner that drops a finding loses it silently, so the partition is
@@ -3722,7 +3739,7 @@ async function runReviewLoop(cfg) {
       groups.map((g) => () =>
         robustAgent(fixDesignPrompt(g, confirmed, round), {
           label: "r" + round + ":fix-design:" + g.id,
-          phase: "Round " + round + ": fix",
+          phase: LOOP.name + " R" + round + ": fix",
           schema: FIX_DESIGN,
         }),
       ),
@@ -3773,7 +3790,7 @@ async function runReviewLoop(cfg) {
         {
           schema: DESIGN_RECONCILE,
           label: "r" + round + ":fix-design-reconcile",
-          phase: "Round " + round + ": fix",
+          phase: LOOP.name + " R" + round + ": fix",
         },
       );
       if (rec) {
@@ -3809,7 +3826,7 @@ async function runReviewLoop(cfg) {
         fixPrompt(picked, round, strikeLines || null, g, designs[gi], fixSummaries),
         {
           label: "r" + round + ":fix:" + g.id,
-          phase: "Round " + round + ": fix",
+          phase: LOOP.name + " R" + round + ": fix",
           schema: FIX_RESULT,
         },
       );
@@ -3853,7 +3870,7 @@ async function runReviewLoop(cfg) {
       postFixPrompt(confirmed, fixSummary, round, roundMechanisms, preFixSnap),
       {
         label: "r" + round + ":post-fix-review",
-        phase: "Round " + round + ": fix",
+        phase: LOOP.name + " R" + round + ": fix",
         schema: FINDINGS,
       },
     );
@@ -3873,7 +3890,7 @@ async function runReviewLoop(cfg) {
       );
       const followUp = await robustAgent(
         followUpFixPrompt(postFix.findings, round),
-        { label: "r" + round + ":follow-up-fix", phase: "Round " + round + ": fix" },
+        { label: "r" + round + ":follow-up-fix", phase: LOOP.name + " R" + round + ": fix" },
       );
       // Recorded in fixedTitles so later rounds do not re-litigate them, and in
       // history so a run where the fixer repeatedly needed correction is visible.
@@ -3987,7 +4004,7 @@ async function runReviewLoop(cfg) {
             "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
             'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
             "Follow " + repo + "/.claude/rules/doc-style.md.",
-          { label: "prune:r" + round, phase: "Round " + round + ": prune" },
+          { label: "prune:r" + round, phase: LOOP.name + " R" + round + ": prune" },
         );
         history[history.length - 1].pruned = verdict.sections;
         // Pruned text is text the lenses have not read in its new form.

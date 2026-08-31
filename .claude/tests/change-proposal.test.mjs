@@ -607,7 +607,7 @@ t.section("B17. one post-fix review per round, over the whole round's edits");
 // ---- Phase 5: the review log, its shards, and the round boundary ---------
 
 const BOUNDARY = (over = {}) =>
-  JSON.stringify({ merged: 2, ledgerLines: 40, ledgerGrowth: 10, compactionDue: false, changedFiles: [], hunks: 3, snapshot: "/repo/scratchpad/cp-snap/t/spec-r2", overrides: {}, ...over });
+  JSON.stringify({ merged: 2, ledgerLines: 40, standingLines: 12, ledgerGrowth: 10, compactionDue: false, changedFiles: [], hunks: 3, snapshot: "/repo/scratchpad/cp-snap/t/spec-r2", overrides: {}, ...over });
 
 const logStubs = (over = {}) => fixStubs(2, { "*:round-boundary": BOUNDARY(), ...over });
 
@@ -619,7 +619,7 @@ t.section("B18b. the round boundary is one exact command and nothing else");
   t.check("it runs on haiku", b.opts.model === "haiku");
   t.check("its prompt is the state write plus one invocation of the script", /Run exactly these two commands/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
   t.check("it records the loop state for a resume", /scratchpad\/cp-state\/.*state-non-spec\.json/.test(b.prompt));
-  t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 400/.test(b.prompt));
+  t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 2000/.test(b.prompt) && /--standing-at 80/.test(b.prompt));
   t.check("and no other instruction", /Do nothing else: do not\s+read, summarise, or edit any other file/.test(b.prompt));
   t.check("exactly one per round", matching(calls, "r1:round-boundary").length === 1);
 }
@@ -660,14 +660,19 @@ t.section("B20. compaction fires when the boundary says it is due, and not other
 {
   const no = await runWorkflow(WF, REVIEW_ARGS, logStubs());
   t.check("not due: no compaction agent", never(no.calls, "r1:compact"));
-  const yes = await runWorkflow(WF, REVIEW_ARGS, logStubs({ "*:round-boundary": BOUNDARY({ compactionDue: true, ledgerLines: 460 }) }));
+  const yes = await runWorkflow(WF, REVIEW_ARGS, logStubs({ "*:round-boundary": BOUNDARY({ compactionDue: true, standingLines: 96 }) }));
   const c = yes.calls.find((x) => /:compact$/.test(x.label));
   t.check("due: a compaction agent runs", !!c);
   t.check("it may edit only the review log", /only file you may edit is .*review-log\.md/.test(c.prompt));
-  t.check("it is age-graded", /AGE-GRADE/.test(c.prompt));
+  t.check("it reads once and writes once", /READ THE FILE ONCE, with Read/.test(c.prompt) && /WRITE IT ONCE, with Write/.test(c.prompt));
+  t.check("it does NOT verify against the repository", /DO NOT VERIFY ANYTHING AGAINST THE REPOSITORY/.test(c.prompt));
+  t.check("MISTAKE is named the most valuable tag and never dropped", /MISTAKE` IS THE MOST VALUABLE TAG IN THE LOG AND IS NEVER DROPPED/.test(c.prompt));
+  t.check("the target is the standing context, not the ledger", /THE TARGET IS `## Standing context`/.test(c.prompt) && /The ledger may be long/.test(c.prompt));
   t.check("a superseded watchout is deleted rather than kept", /DELETED rather than kept for the record/.test(c.prompt));
   t.check("a USEFUL entry is promoted", /HONOUR `USEFUL`/.test(c.prompt));
-  t.check("contradictions are resolved against the tree", /check the repository yourself/.test(c.prompt));
+  // Compaction deliberately does NOT check the tree any more: doing so turned a
+  // text pass into a mini-review that grepped pkg/ and read three spec files.
+  t.check("contradictions are resolved by recency, not by checking the tree", /keep\s+the NEWER one/.test(c.prompt));
   t.check("OPEN and UNVERIFIED are never dropped", /NEVER DROP AN `OPEN` OR AN `UNVERIFIED`/.test(c.prompt));
   t.check("it must not act on what the log says", /do not fix a\s+defect it names/.test(c.prompt));
 }

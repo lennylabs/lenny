@@ -35,7 +35,7 @@
   },
   {
     "label": "r1:review:citations",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -50,7 +50,7 @@
   },
   {
     "label": "r1:review:feasibility",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -65,7 +65,7 @@
   },
   {
     "label": "r1:review:edit-sites",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -80,7 +80,7 @@
   },
   {
     "label": "r1:review:mechanism",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -95,7 +95,7 @@
   },
   {
     "label": "r1:review:security",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -110,7 +110,7 @@
   },
   {
     "label": "r1:review:kubernetes",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -125,7 +125,7 @@
   },
   {
     "label": "r1:review:performance",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -140,7 +140,7 @@
   },
   {
     "label": "r1:review:reliability",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -155,7 +155,7 @@
   },
   {
     "label": "r1:review:client-surface",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -170,7 +170,7 @@
   },
   {
     "label": "r1:review:docs-alignment",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -185,7 +185,7 @@
   },
   {
     "label": "r1:review:applicability",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -200,7 +200,7 @@
   },
   {
     "label": "r1:review:operational",
-    "phase": "Round 1: review",
+    "phase": "spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -215,7 +215,7 @@
   },
   {
     "label": "r1:round-boundary",
-    "phase": "Round 1: fix",
+    "phase": "spec R1: fix",
     "model": "haiku",
     "schema": "",
     "blocks": [
@@ -233,7 +233,7 @@
   },
   {
     "label": "r2:review:fresh",
-    "phase": "Round 2: review",
+    "phase": "spec R2: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -248,7 +248,7 @@
   },
   {
     "label": "r2:round-boundary",
-    "phase": "Round 2: fix",
+    "phase": "spec R2: fix",
     "model": "haiku",
     "schema": "",
     "blocks": [
@@ -266,7 +266,7 @@
   },
   {
     "label": "r3:review:citations",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -281,7 +281,7 @@
   },
   {
     "label": "r3:review:feasibility",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -296,7 +296,7 @@
   },
   {
     "label": "r3:review:edit-sites",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -311,7 +311,7 @@
   },
   {
     "label": "r3:review:mechanism",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -326,7 +326,7 @@
   },
   {
     "label": "r3:review:security",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -341,7 +341,7 @@
   },
   {
     "label": "r3:review:kubernetes",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -356,7 +356,7 @@
   },
   {
     "label": "r3:review:performance",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -371,7 +371,7 @@
   },
   {
     "label": "r3:review:reliability",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -386,7 +386,7 @@
   },
   {
     "label": "r3:review:client-surface",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -401,7 +401,7 @@
   },
   {
     "label": "r3:review:docs-alignment",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -416,7 +416,7 @@
   },
   {
     "label": "r3:review:applicability",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -431,7 +431,7 @@
   },
   {
     "label": "r3:review:operational",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -446,7 +446,7 @@
   },
   {
     "label": "r3:review:fresh",
-    "phase": "Round 3: review",
+    "phase": "spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -461,7 +461,7 @@
   },
   {
     "label": "r3:round-boundary",
-    "phase": "Round 3: fix",
+    "phase": "spec R3: fix",
     "model": "haiku",
     "schema": "",
     "blocks": [
@@ -488,7 +488,7 @@
   },
   {
     "label": "r1:review:citations",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -503,7 +503,7 @@
   },
   {
     "label": "r1:review:feasibility",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -518,7 +518,7 @@
   },
   {
     "label": "r1:review:edit-sites",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -533,7 +533,7 @@
   },
   {
     "label": "r1:review:mechanism",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -548,7 +548,7 @@
   },
   {
     "label": "r1:review:security",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -563,7 +563,7 @@
   },
   {
     "label": "r1:review:kubernetes",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -578,7 +578,7 @@
   },
   {
     "label": "r1:review:performance",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -593,7 +593,7 @@
   },
   {
     "label": "r1:review:reliability",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -608,7 +608,7 @@
   },
   {
     "label": "r1:review:client-surface",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -623,7 +623,7 @@
   },
   {
     "label": "r1:review:docs-alignment",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -638,7 +638,7 @@
   },
   {
     "label": "r1:review:applicability",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -653,7 +653,7 @@
   },
   {
     "label": "r1:review:test-coverage",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -668,7 +668,7 @@
   },
   {
     "label": "r1:review:operational",
-    "phase": "Round 1: review",
+    "phase": "non-spec R1: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -683,7 +683,7 @@
   },
   {
     "label": "r1:round-boundary",
-    "phase": "Round 1: fix",
+    "phase": "non-spec R1: fix",
     "model": "haiku",
     "schema": "",
     "blocks": [
@@ -701,7 +701,7 @@
   },
   {
     "label": "r2:review:fresh",
-    "phase": "Round 2: review",
+    "phase": "non-spec R2: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -716,7 +716,7 @@
   },
   {
     "label": "r2:round-boundary",
-    "phase": "Round 2: fix",
+    "phase": "non-spec R2: fix",
     "model": "haiku",
     "schema": "",
     "blocks": [
@@ -734,7 +734,7 @@
   },
   {
     "label": "r3:review:citations",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -749,7 +749,7 @@
   },
   {
     "label": "r3:review:feasibility",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -764,7 +764,7 @@
   },
   {
     "label": "r3:review:edit-sites",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -779,7 +779,7 @@
   },
   {
     "label": "r3:review:mechanism",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -794,7 +794,7 @@
   },
   {
     "label": "r3:review:security",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -809,7 +809,7 @@
   },
   {
     "label": "r3:review:kubernetes",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -824,7 +824,7 @@
   },
   {
     "label": "r3:review:performance",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -839,7 +839,7 @@
   },
   {
     "label": "r3:review:reliability",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -854,7 +854,7 @@
   },
   {
     "label": "r3:review:client-surface",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -869,7 +869,7 @@
   },
   {
     "label": "r3:review:docs-alignment",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -884,7 +884,7 @@
   },
   {
     "label": "r3:review:applicability",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -899,7 +899,7 @@
   },
   {
     "label": "r3:review:test-coverage",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -914,7 +914,7 @@
   },
   {
     "label": "r3:review:operational",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -929,7 +929,7 @@
   },
   {
     "label": "r3:review:fresh",
-    "phase": "Round 3: review",
+    "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",
     "blocks": [
@@ -944,7 +944,7 @@
   },
   {
     "label": "r3:round-boundary",
-    "phase": "Round 3: fix",
+    "phase": "non-spec R3: fix",
     "model": "haiku",
     "schema": "",
     "blocks": [
