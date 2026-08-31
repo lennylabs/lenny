@@ -89,7 +89,7 @@ edit is X" constraint.
 
 | File | change-proposal | implement-proposal | Human |
 |:--|:--|:--|:--|
-| `.problem-statement.md` | writes at init; rewrites only on a `reframe` | read | edit |
+| `.problem-statement.md` | writes at init; a fixer corrects the record in it, and only a `reframe` changes the question | read | edit |
 | `.summary.md` | **sole writer** | read | edit |
 | `.status.md` | Draft → Reviewed | Approved → Implemented | Reviewed → Approved |
 | `.implementation-checklist.md` | seeds and maintains | **may edit**; ticks boxes | edit |

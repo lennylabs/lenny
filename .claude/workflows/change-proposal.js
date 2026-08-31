@@ -751,6 +751,49 @@ const FIX_DESIGN = {
   },
 };
 
+// The designs are produced in parallel and none sees the others, so two groups
+// can design edits that disagree -- most often by both rewriting the same
+// section from different premises, or by one deleting a mechanism another's
+// design still anchors on. The post-fix review catches that AFTER both have
+// landed, which is a round wasted and two edits to unpick. This catches it
+// before any of them runs, at the cost of one agent per round.
+const DESIGN_RECONCILE = {
+  type: "object",
+  required: ["conflicts", "revised"],
+  properties: {
+    conflicts: {
+      type: "array",
+      description: "one entry per genuine conflict between two or more groups' designs. Empty is the expected answer.",
+      items: {
+        type: "object",
+        required: ["groups", "what", "resolution"],
+        properties: {
+          groups: { type: "array", items: { type: "string" }, description: "the group ids that conflict" },
+          what: { type: "string", description: "the incompatibility, concretely: the text or mechanism both touch and how their intents differ" },
+          resolution: { type: "string", description: "which design survives and why, or how they merge" },
+        },
+      },
+    },
+    revised: {
+      type: "array",
+      description:
+        "one entry per group whose design you CHANGED. Omit a group you left alone; an empty array means every design stands as designed.",
+      items: {
+        type: "object",
+        required: ["groupId", "designs"],
+        properties: {
+          groupId: { type: "string" },
+          designs: FIX_DESIGN.properties.designs,
+        },
+      },
+    },
+    orderNote: {
+      type: "string",
+      description: "a change to the order the groups should be fixed in, when one design must land before another, and why",
+    },
+  },
+};
+
 const VERDICT = {
   type: "object",
   required: ["confirmed", "reason"],
@@ -1926,7 +1969,20 @@ function fixDesignPrompt(group, confirmed, round) {
   );
 }
 
-function fixPrompt(confirmed, round, strikes, group, design) {
+function fixPrompt(confirmed, round, strikes, group, design, earlier) {
+  // What the groups before this one in THIS round actually did. Costs no agent
+  // -- the run already has it -- and it is the one thing the design stage could
+  // not know, because it ran before any edit landed. A design written against
+  // text an earlier group has since rewritten is the failure this closes.
+  const earlierBlock =
+    earlier && earlier.length
+      ? "\n\nWHAT THE EARLIER GROUPS IN THIS ROUND ALREADY DID. They ran before you, against the same " +
+        "files, and their edits are in the text you are about to read. Your design was written before any " +
+        "of this landed. Check your anchors against the CURRENT text rather than against the design's " +
+        "quotation of it, and if an earlier group has already made the change your design calls for, say " +
+        "so and do not make it twice.\n" +
+        earlier.map((sx, i) => i + 1 + ". " + sx).join("\n")
+      : "";
   const designBlock = design
     ? "\n\nTHE DESIGN FOR THIS GROUP. A separate agent established ground truth in the repository and " +
       "decided how each finding should be closed, before anything was edited. APPLY IT. Your scope for " +
@@ -1974,6 +2030,7 @@ function fixPrompt(confirmed, round, strikes, group, design) {
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
     JSON.stringify(confirmed, null, 2) +
     designBlock +
+    earlierBlock +
     logBlock("fix-" + (group ? group.id : "all"), round) +
     "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
     promptFor("fix")
@@ -3679,6 +3736,67 @@ async function runReviewLoop(cfg) {
       history[history.length - 1].designless = designless;
     }
 
+    // Reconcile the parallel designs before any of them is applied. Skipped for
+    // a single group, where there is nothing to reconcile.
+    if (groups.length > 1 && designs.some(Boolean)) {
+      const rec = await robustAgent(
+        "Reconcile the designs for one round's fix groups against each other, before any of them is " +
+          "applied.\n\n" +
+          READ_ONLY +
+          "\n\nPROPOSAL: " + P.dir + ". Loop: " + LOOP.name + ". Round " + round + ".\n\n" +
+          "WHY YOU ARE HERE. Each group's design was produced in parallel by an agent that could not see " +
+          "the others. They were designed against the same unchanged text, so two of them can plan " +
+          "incompatible edits to it and neither knows. The fixers run one after another, so the second " +
+          "would apply a design written against text the first has already rewritten.\n\n" +
+          "FIND GENUINE CONFLICTS ONLY. Two designs that touch the same SECTION are not in conflict; two " +
+          "that touch the same STATEMENT with different intent are. So are these:\n" +
+          "  one design deletes or renames something another's design anchors on;\n" +
+          "  two designs state the same rule, predicate, or identifier differently;\n" +
+          "  one design's cascades name a section another design rewrites;\n" +
+          "  two designs each add a mechanism, and one mechanism would serve both.\n\n" +
+          "RESOLVE, do not just report. For each conflict, say which design survives and why, or how the " +
+          "two merge, and return the REVISED designs for the groups you changed. Leave every other design " +
+          "exactly as it is: returning a group unchanged in `revised` is noise the fixer has to reconcile " +
+          "against its original.\n\n" +
+          "PREFER THE SMALLER RESULT. Where two designs each add something and one addition would serve " +
+          "both, merge them and say so; that is the most valuable outcome here, because two mechanisms " +
+          "doing nearly the same thing is the hair this loop exists to prevent.\n\n" +
+          "If the groups must be fixed in a different order for a design to still apply, say so in " +
+          "orderNote.\n\n" +
+          "THE GROUPS AND THEIR DESIGNS:\n" +
+          JSON.stringify(
+            groups.map((g, i) => ({ id: g.id, title: g.title, sharedSubject: g.sharedSubject, design: designs[i] })),
+            null,
+            2,
+          ) +
+          promptFor("fix-design-reconcile"),
+        {
+          schema: DESIGN_RECONCILE,
+          label: "r" + round + ":fix-design-reconcile",
+          phase: "Round " + round + ": fix",
+        },
+      );
+      if (rec) {
+        for (const r of rec.revised || []) {
+          const gi = groups.findIndex((g) => g.id === r.groupId);
+          if (gi >= 0 && r.designs) designs[gi] = { ...(designs[gi] || {}), designs: r.designs };
+        }
+        if ((rec.conflicts || []).length) {
+          log(
+            "Round " + round + ": the design reconciliation found " + rec.conflicts.length +
+              " conflict(s) between groups and revised " + (rec.revised || []).length + " design(s)",
+          );
+          history[history.length - 1].designConflicts = rec.conflicts;
+        }
+        if (rec.orderNote) {
+          history[history.length - 1].designOrderNote = rec.orderNote;
+          log("Round " + round + ": reconciliation note on group order — " + String(rec.orderNote).slice(0, 160));
+        }
+      } else {
+        log("Round " + round + ": the design reconciliation did not return; applying the designs as written");
+      }
+    }
+
     const fixSummaries = [];
     const roundMechanisms = [];
     const escalatedAll = [];
@@ -3688,7 +3806,7 @@ async function runReviewLoop(cfg) {
       const picked = (g.findings || []).map((i) => confirmed[i]).filter(Boolean);
       if (picked.length === 0) continue;
       const out = await robustAgent(
-        fixPrompt(picked, round, strikeLines || null, g, designs[gi]),
+        fixPrompt(picked, round, strikeLines || null, g, designs[gi], fixSummaries),
         {
           label: "r" + round + ":fix:" + g.id,
           phase: "Round " + round + ": fix",
@@ -3931,9 +4049,32 @@ async function runReviewLoop(cfg) {
 // common and valid shape. A cheap probe decides that rather than the script,
 // because the script cannot read a file.
 
+// The problem statement is editable, and bounded. Two different acts wear the
+// same shape, and only one of them belongs to a fixer:
+//
+//   CORRECTING THE RECORD -- a false citation, a drifted line number, an
+//   evidence claim the tree refutes, a premise the review has since knocked
+//   down. This is required. A smoke run produced ten findings whose location
+//   was the problem statement, one of them ONLY there, and a fixer that could
+//   not touch it left the summary corrected and the problem statement still
+//   asserting the thing that was refuted. The fix created the drift.
+//
+//   CHANGING THE QUESTION -- restating what the problem IS, widening or
+//   narrowing its scope, abandoning the framing. That is a `reframe`, it goes
+//   through the introspection pass and its panel, and a fixer must not do it
+//   in the course of closing a finding.
+const PROBLEM_STATEMENT_RULE =
+  "  " + P.problem + " — CORRECT THE RECORD here, and only that. A false citation, a line number that has " +
+  "drifted, an evidence claim the tree refutes, or a premise this review has knocked down is a defect in " +
+  "the problem statement and you fix it there, in the same edit as the section that restates it: leaving " +
+  "the two disagreeing is worse than leaving both wrong. You may NOT change what the problem IS, widen or " +
+  "narrow its scope, or abandon its framing. That is a reframe, it is the introspection pass's decision " +
+  "and not yours, and if a finding seems to need one, say so in your summary and close what you can.\n";
+
 const SPEC_EDITABLE =
   "You may edit ONLY these files:\n" +
   "  " + P.spec + " — the staged spec edits, which is what this loop converges\n" +
+  PROBLEM_STATEMENT_RULE +
   "  " + P.summary + " — because its deliverable index resolves the SPEC ids this loop adds and removes, " +
   "and a loop that may not touch it leaves its own edits mis-indexed until the next one\n" +
   "  " + P.log + " — your log shard\n" +
@@ -3942,6 +4083,7 @@ const SPEC_EDITABLE =
 const NONSPEC_EDITABLE =
   "You may edit ONLY these files:\n" +
   "  " + P.nonSpec + " — the staged code, schema, chart, migration, docs and test changes\n" +
+  PROBLEM_STATEMENT_RULE +
   "  " + P.checklist + " — the implementation sequence\n" +
   "  " + P.summary + " — so it stays true as the staging changes\n" +
   "  " + P.log + " — your log shard\n" +
@@ -3978,10 +4120,17 @@ let specLoop = null;
 let nonSpecLoop = null;
 
 const specProbe = await robustAgent(
-  "Report whether a proposal stages any spec edits. Do not edit anything.\n\n" +
-    "Read " + roleRef(P, "spec", "Proposed spec changes") + " and answer one question: does it stage at " +
-    "least one concrete edit to a file under spec/? A file carrying only its headings, or one whose staged " +
-    "list is empty, stages none. Reply with the single word YES or NO and nothing else.",
+  "Report whether a proposal INTENDS any change to a file under spec/. Do not edit anything.\n\n" +
+    "Read " + roleRef(P, "spec", "Proposed spec changes") + ", and " +
+    roleRef(P, "summary", "## Summary") + " if the first is thin.\n\n" +
+    "The question is INTENT, not completeness. Answer YES when the proposal names a spec file, a spec " +
+    "section, or a SPEC-n deliverable as something it changes — even when the text is not written yet, is " +
+    "marked as an indicative target, or says the implementor fills it in. A proposal whose spec staging is " +
+    "still a placeholder needs the spec review MORE than one whose staging is finished, because writing " +
+    "that text is the work the review does.\n\n" +
+    "Answer NO only when the proposal changes nothing under spec/ at all: the staging carries only its " +
+    "headings AND nothing anywhere names a spec target.\n\n" +
+    "Reply with the single word YES or NO and nothing else.",
   { label: "probe:spec-changes", model: "haiku", phase: "Review" },
 );
 const hasSpecChanges = /YES/i.test(String(specProbe || "YES"));
