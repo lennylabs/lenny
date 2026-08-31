@@ -24,6 +24,12 @@ entries:
     reason: |-
       the shared harness the workflow behavioural tests run through, executed with node rather than selected by a test tier
   - member: |-
+      .claude/tests/hook.test.sh
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a shell test over the spec/ guard hook, run with bash rather than selected by a test tier
+  - member: |-
       .claude/tests/implement-proposal-focus.test.mjs
     class: change-graph-coverage
     disposition: excluded
@@ -53,6 +59,36 @@ entries:
     disposition: excluded
     reason: |-
       the runner for the workflow test suite, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/tools.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node test over the pipeline tools, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tools/check-proposal-split.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a deterministic partition check the proposal migrator runs, invoked with node rather than selected by a test tier
+  - member: |-
+      .claude/tools/proposal-status.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the only supported reader and writer of a proposal's status, invoked by the spec-lease hook and by the pipeline skills rather than selected by a test tier
+  - member: |-
+      .claude/tools/register-row.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a maintenance script over this register itself, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tools/spec-lease.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the spec/ write lease the PreToolUse guard hook consults, invoked with node rather than selected by a test tier
   - member: |-
       .claude/workflows/build-gaps-spec-unblock.js
     class: change-graph-coverage
@@ -498,24 +534,6 @@ entries:
     reason: |-
       a one-off migration helper over the citation form, which no test tier is selected from
   - member: |-
-      scripts/review-migration-diff/funnel.py
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a review driver over the migration diff, which no test tier is selected from
-  - member: |-
-      scripts/review-migration-diff/review.py
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a review driver over the migration diff, which no test tier is selected from
-  - member: |-
-      scripts/review-migration-diff/resolve.py
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a review driver over the migration diff, which no test tier is selected from
-  - member: |-
       scripts/review-migration-diff/author-proposal-refs.py
     class: change-graph-coverage
     disposition: excluded
@@ -528,24 +546,6 @@ entries:
     reason: |-
       a review driver over the migration diff, which no test tier is selected from
   - member: |-
-      scripts/review-migration-diff/truncate-undeclared.py
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a review driver over the migration diff, which no test tier is selected from
-  - member: |-
-      scripts/review-migration-diff/qualify-testing-refs.py
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      a review driver over the migration diff, which no test tier is selected from
-  - member: |-
-      scripts/seed-claim-register.py
-    class: change-graph-coverage
-    disposition: excluded
-    reason: |-
-      the one-time seeder for the claim register, run to author tests/claim-map.json rather than by a test tier
-  - member: |-
       scripts/review-migration-diff/classify-citations.py
     class: change-graph-coverage
     disposition: excluded
@@ -557,6 +557,42 @@ entries:
     disposition: excluded
     reason: |-
       a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/funnel.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/qualify-testing-refs.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/resolve.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/review.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/review-migration-diff/truncate-undeclared.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a review driver over the migration diff, which no test tier is selected from
+  - member: |-
+      scripts/seed-claim-register.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the one-time seeder for the claim register, run to author tests/claim-map.json rather than by a test tier
   - member: |-
       tests/results/.gitignore
     class: change-graph-coverage

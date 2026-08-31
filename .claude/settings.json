@@ -5,7 +5,7 @@
       {
         "hooks": [
           {
-            "command": "p=$(cat); f=$(printf '%s' \"$p\" | jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty' 2>/dev/null); [ -n \"$f\" ] || exit 0; r=\"$CLAUDE_PROJECT_DIR\"; [ -n \"$r\" ] || r=$(printf '%s' \"$p\" | jq -r '.cwd // empty' 2>/dev/null); [ -n \"$r\" ] || r=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$r\" ] || r=$PWD; case \"$f\" in \"$r\"/*) f=${f#\"$r\"/} ;; ./*) f=${f#./} ;; esac; case \"$f\" in spec/*) if grep -q '^- \\*\\*Status:\\*\\* Approved' \"$r\"/proposals/*.md 2>/dev/null; then exit 0; fi; echo \"blocked: spec/ is read-only unless an approved spec proposal under proposals/ is pending application. Stage edits via the change-proposal skill, record approval, then apply with the implement-proposal skill. Path: $f\" >&2; exit 2 ;; esac",
+            "command": "p=$(cat); f=$(printf '%s' \"$p\" | jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty' 2>/dev/null); [ -n \"$f\" ] || exit 0; r=\"$CLAUDE_PROJECT_DIR\"; [ -n \"$r\" ] || r=$(printf '%s' \"$p\" | jq -r '.cwd // empty' 2>/dev/null); [ -n \"$r\" ] || r=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$r\" ] || r=$PWD; case \"$f\" in \"$r\"/*) f=${f#\"$r\"/} ;; ./*) f=${f#./} ;; esac; case \"$f\" in spec/*) ;; *) exit 0 ;; esac; out=$(node \"$r/.claude/tools/spec-lease.mjs\" check \"$f\" 2>&1) && exit 0; echo \"$out Stage edits via the change-proposal skill, record approval, then apply with the implement-proposal skill, which opens a lease for the step that writes them. Path: $f\" >&2; exit 2",
             "type": "command"
           }
         ],
