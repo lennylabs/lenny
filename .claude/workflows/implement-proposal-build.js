@@ -48,6 +48,9 @@ if (!input || !input.proposalPath) {
 // stops. change-proposal.js requires it for the same reason.
 if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
 const repo = input.repoRoot;
+// The parent passes this; a workflow script cannot call Date, so anything that
+// stamps a date takes it from here.
+const date = input.date || "";
 const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
@@ -879,10 +882,55 @@ const STUCK_LENSES = [
   },
 ];
 
+// The durable record of where the landed code departs from what the proposal
+// states. Two things make it worth a file rather than a variable.
+//
+// It is READ BY THE REVIEWERS, which is what stops an accepted deviation being
+// re-litigated every round by an agent that cannot know it was already
+// adjudicated. The in-memory suppression this replaces died with the step, so a
+// later run rediscovered the same argument from scratch.
+//
+// And it is the run's final statement of what did not land as proposed, which
+// is the input a human needs to decide whether the proposal or the code was
+// wrong. Nothing here edits the proposal to close a deviation: that would
+// invert the pipeline, making the conformance review vacuous and silently
+// amending an approved design.
+const DEVIATIONS_BLOCK =
+  "\n\nDEVIATIONS ALREADY ACCEPTED. " + P.deviations + " records where the landed code departs from " +
+  "what the proposal states, and why. Read it before you start. An entry whose status is `accepted` has " +
+  "been adjudicated: do NOT report it, do not report a rephrasing or a near neighbour of it, and do not " +
+  "treat leaving it alone as leaving the step unfinished. Reporting an adjudicated deviation cannot " +
+  "advance the run, because nobody here may act on it; it only prevents the review from converging. An " +
+  "entry marked `proposed` is not adjudicated and is fair game.\n";
+
+// Writing one. Only the stuck judges reach this, and only on a unanimous
+// `unresolvable`: the code is right, the proposal is wrong, and the proposal is
+// read-only to this phase, so no legal change closes the finding.
+async function recordDeviation(step, rec) {
+  await agentTry(
+    "Record an accepted deviation in a proposal's deviations file.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.deviations + ". Create it if it is absent, " +
+      "with the heading `# Deviations — " + P.stem + "`. Never edit the proposal itself, spec/, or code.\n\n" +
+      "Append one entry in exactly this form, numbering it after the last one present:\n\n" +
+      "## D<n> · step " + step.id + " · " + date + " · accepted\n" +
+      "**Status:** accepted\n" +
+      "**Proposal says:** <what it states, and where>\n" +
+      "**Implemented instead:** <what the code does, with file:line>\n" +
+      "**Why:** <why no legal change could close this>\n" +
+      "**Consequence if the proposal is not corrected:** <what a later reader or implementor would get wrong>\n" +
+      "**Suggested next step:** correct the proposal | file a follow-up proposal | no action\n" +
+      "**Evidence:** <the commit, and the judges' verdicts>\n\n" +
+      "THE FINDING AND THE JUDGES' REASONING:\n" + JSON.stringify(rec, null, 2) +
+      "\n\nWrite what the judges established, not your own view of it. Follow " + repo +
+      "/.claude/rules/doc-style.md.",
+    { label: "deviation:" + step.id + ":" + (stuckFindings.length + 1), phase: "Build" },
+  );
+  log("Step " + step.id + ": recorded an accepted deviation in " + P.deviations);
+}
+
 // What the fixer and the reviewers are told about a finding already judged
-// unresolvable. Scoped to one step: it never silences anything elsewhere, and
-// it dies with the step rather than persisting into a later run, because the
-// tree a later run sees may differ.
+// unresolvable in THIS run. The file above is the durable record; this is the
+// in-memory reinforcement for the step currently running.
 function suppressedNote(step) {
   const mine = stuckFindings.filter((f) => f.step === step.id && f.kind !== "unproductive");
   if (mine.length === 0) return "";
@@ -994,6 +1042,38 @@ async function judgeStuck(step, findings, rounds, attempt) {
   )).filter(Boolean);
 }
 
+// Prompt-level suppression has been observed to leak, so the script drops a
+// finding whose title matches one already adjudicated. Belt and braces: the
+// prompt tells the reviewer not to raise it, and this catches the ones that do.
+// Matching is on a normalised title rather than exact text, because a reviewer
+// that raises the same defect twice rarely words it identically.
+function normTitle(t) {
+  return String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function dropAdjudicated(findings, step) {
+  const adjudicated = stuckFindings
+    .filter((f) => f.kind === "unresolvable")
+    .map((f) => normTitle(f.title))
+    .concat(acceptedDivergences.map(normTitle))
+    .filter(Boolean);
+  if (adjudicated.length === 0) return findings;
+  const kept = [];
+  const dropped = [];
+  for (const f of findings) {
+    const n = normTitle(f.title);
+    const hit = adjudicated.some((a) => n === a || n.includes(a) || a.includes(n));
+    if (hit) dropped.push(f.title);
+    else kept.push(f);
+  }
+  if (dropped.length) {
+    log(
+      "Step " + step.id + ": dropped " + dropped.length +
+        " finding(s) already adjudicated as deviations: " + dropped.join("; "),
+    );
+  }
+  return kept;
+}
+
 async function reviewStep(step, ref, tag) {
   return await parallel(
       STEP_REVIEW_LENSES.map((l) => () =>
@@ -1002,6 +1082,7 @@ async function reviewStep(step, ref, tag) {
             ? "Adversarially review ONE just-implemented build step against the proposal's design.\n\n"
             : "Adversarially review ONE ALREADY-IMPLEMENTED build step against the proposal's design.\n\n") +
             "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong. Nothing filters such a finding out: it is handed to the fixer as written, so a finding that says to change the proposal becomes an instruction to change it. State the divergence against the code instead, and if the code is right and the proposal wrong, say so in the divergence text and propose no code change; a human reads that at the end of the run and decides what the proposal should have said.\n\n" +
+            DEVIATIONS_BLOCK +
             "Read the proposal at " +
             proposal +
             " (its spec edits are applied), focusing on the sections this step implements (" +
@@ -1221,6 +1302,11 @@ for (let i = 0; i < plan.steps.length; i++) {
             "\" (" + summary + "). The code is right and the proposal is wrong. Recorded for a human and " +
             "set aside for the rest of this step.",
         );
+        // Durably, in the proposal's deviations file, rather than only in this
+        // run's memory. The judges CREATE the entry rather than promoting one:
+        // a finding usually reaches them with no fixer having proposed
+        // anything, so "promote a proposed entry" would find nothing to promote.
+        await recordDeviation(step, stuckFindings[stuckFindings.length - 1]);
         return false;
       } else if (all("unproductive") && runLength < minUnproductiveRounds) {
         // The judges agreed, but the loop has not been given enough rounds for
@@ -1437,7 +1523,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     // Fail closed: a reviewer that died (null) is not evidence of conformance.
     const liveReviews = reviewResults.filter(Boolean);
     const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
-    stepFindings = liveReviews.flatMap((r) => r.findings);
+    stepFindings = dropAdjudicated(liveReviews.flatMap((r) => r.findings), step);
     stepReviewClean = stepFindings.length === 0 && allReviewersRan;
 
     if (!stepReviewClean) {
@@ -2010,6 +2096,7 @@ const REVIEW_LENSES = [
 // verify-postreview gates on those tests existing. The same rule applies to the
 // per-step review (issues message in the Build loop) and is enforced there too.
 const REVIEW_RULES =
+  DEVIATIONS_BLOCK +
   "Read the proposal at " +
   proposal +
   " (its spec edits are applied) and the cumulative implementation diff (`git diff " +
@@ -2161,6 +2248,9 @@ return {
   // and the proposal is wrong. Suppressed for the step, recorded in its commit
   // trail, and surfaced here because each is a proposal defect for a human.
   stuckFindings,
+  // The durable record of what did not land as proposed, which is what a human
+  // reads to decide whether the proposal or the code was wrong.
+  deviationsFile: P.deviations,
   proposalDeviations: stepResults.flatMap((r) =>
     (r.deviations || []).map((d) => ({ step: r.step, title: r.title, ...d })),
   ),

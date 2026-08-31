@@ -88,20 +88,31 @@ function stripCode(t) {
       continue;
     }
     if (c === "/" && d === "*") {
+      // Newlines inside the comment are preserved so line numbers and the
+      // brace-depth scan stay aligned with the source. Dropping them shifted
+      // every later line and produced a false use-before-declaration report.
       i += 2;
-      while (i < t.length && !(t[i] === "*" && t[i + 1] === "/")) i++;
+      while (i < t.length && !(t[i] === "*" && t[i + 1] === "/")) {
+        if (t[i] === "\n") out += "\n";
+        i++;
+      }
       i += 2;
       continue;
     }
     if (c === '"' || c === "'" || c === "`") {
       const q = c;
+      let nl = "";
       i++;
       while (i < t.length && t[i] !== q) {
-        if (t[i] === "\\") i++;
+        if (t[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (t[i] === "\n") nl += "\n";
         i++;
       }
       i++;
-      out += '""';
+      out += '""' + nl;
       continue;
     }
     out += c;
@@ -125,6 +136,13 @@ const SANDBOX = [
   "setTimeout",
   "clearTimeout",
   "Date",
+];
+// Standard globals a script may reach that are neither sandbox-injected nor
+// declared in the file.
+const JS_GLOBALS = [
+  "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent",
+  "decodeURIComponent", "Symbol", "BigInt", "WeakMap", "WeakSet", "Proxy",
+  "Reflect", "TypeError", "RangeError", "SyntaxError", "Intl",
 ];
 const BUILTINS = [
   "JSON", "Math", "Object", "Array", "String", "Number", "Boolean", "Set", "Map",
@@ -154,15 +172,32 @@ for (const file of targets) {
   const declared = new Set(
     [...code.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g)].map((m) => m[1]),
   );
+  // Parameters and destructuring bindings are declarations too. Without them
+  // every function argument reads as undeclared, which is why the check below
+  // was restricted to UPPERCASE names -- and that restriction let a lowercase
+  // undeclared identifier through until it threw at runtime.
+  const bind = (t) => {
+    for (const name of t.split(/[^A-Za-z_$\w]+/)) if (name) declared.add(name);
+  };
+  for (const m of code.matchAll(/\bfunction\s*[A-Za-z_$\w]*\s*\(([^)]*)\)/g)) bind(m[1]);
+  for (const m of code.matchAll(/\(([^()]*)\)\s*=>/g)) bind(m[1]);
+  for (const m of code.matchAll(/(?:^|[^\w.])([A-Za-z_$][\w$]*)\s*=>/g)) bind(m[1]);
+  for (const m of code.matchAll(/\bcatch\s*\(([^)]*)\)/g)) bind(m[1]);
+  for (const m of code.matchAll(/\bfor\s*\(\s*(?:const|let|var)\s+\[?([^\]);]*)\]?\s+of\b/g)) bind(m[1]);
+  for (const m of code.matchAll(/(?:const|let|var)\s*[\[{]([^\]}]*)[\]}]\s*=/g)) bind(m[1]);
 
-  // 2. An UPPERCASE identifier referenced but never declared. new Function()
-  //    parses fine and throws only when that line executes, which in a workflow
-  //    can be after hours of agent work. This has shipped three times.
-  const known = new Set([...SANDBOX, ...BUILTINS, ...declared]);
-  for (const m of code.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
-    if (known.has(m[1])) continue;
-    fail(file, m[1] + " is referenced but never declared");
-    break;
+  // 2. An identifier referenced but never declared. new Function() parses fine
+  //    and throws only when that line executes, which in a workflow can be
+  //    after hours of agent work. This has shipped four times, most recently as
+  //    a lowercase name that the uppercase-only version of this check missed.
+  const known = new Set([...SANDBOX, ...BUILTINS, ...JS_GLOBALS, ...declared]);
+  const seenUndeclared = new Set();
+  for (const m of code.matchAll(/(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*(?=[(.[,;)\s=+])/g)) {
+    const id = m[1];
+    if (known.has(id) || seenUndeclared.has(id)) continue;
+    if (/^(?:true|false|null|this|new|return|await|async|typeof|instanceof|in|of|if|else|for|while|do|break|continue|throw|try|catch|finally|switch|case|default|function|class|const|let|var|delete|void|yield|extends|super|static|get|set)$/.test(id)) continue;
+    seenUndeclared.add(id);
+    fail(file, id + " is referenced but never declared");
   }
 
   // 2b. An UPPERCASE constant used BEFORE its declaration. `new Function`
@@ -173,7 +208,9 @@ for (const file of targets) {
     const declLine = new Map();
     const lines = code.split("\n");
     lines.forEach((l, i) => {
-      for (const m of l.matchAll(/\b(?:const|let|var|function|class)\s+([A-Z][A-Z0-9_]{2,})\b/g)) {
+      // Any Capitalised name, not just SCREAMING_CASE: the bug this last
+      // caught was a one-letter const `P` used above its declaration.
+      for (const m of l.matchAll(/\b(?:const|let|var|function|class)\s+([A-Z][A-Za-z0-9_]*)\b/g)) {
         if (!declLine.has(m[1])) declLine.set(m[1], i);
       }
     });
@@ -182,8 +219,14 @@ for (const file of targets) {
     let depth = 0;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (depth === 0) {
-        for (const m of line.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)) {
+      // A function signature's parameter list is a set of BINDINGS, not uses,
+      // and a parameter may deliberately shadow an outer name. Skipping the
+      // line is cruder than parsing it and is right for these files, where a
+      // signature carries no other reference.
+      const isSignature = /\b(?:function\s+[A-Za-z_$][\w$]*\s*)?\([^)]*\)\s*(?:=>\s*)?\{?\s*$/.test(line) &&
+        /\bfunction\b|=>/.test(line);
+      if (depth === 0 && !isSignature) {
+        for (const m of line.matchAll(/\b([A-Z][A-Za-z0-9_]*)\b/g)) {
           const at = declLine.get(m[1]);
           if (at !== undefined && at > i && !/\b(?:const|let|var|function|class)\s+$/.test(line.slice(0, m.index))) {
             fail(file, m[1] + " is used at line " + (i + 1) + " but declared at line " + (at + 1));

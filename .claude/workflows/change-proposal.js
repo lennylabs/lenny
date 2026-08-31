@@ -315,6 +315,21 @@ const READ_ONLY =
 // What every agent is told about the review log: read the curated part, write
 // your own shard. The tag vocabulary is fixed so a compaction pass can act on
 // it rather than paraphrase it.
+// A proposal being re-converged after a partial implementation has a
+// deviations file, and it is the best evidence in the repository about where
+// its design proved unbuildable: better than any lens's reasoning, because it
+// was established by trying.
+function DEVIATIONS_BLOCK() {
+  return (
+  "\n\nWHAT AN IMPLEMENTATION ALREADY LEARNED. " + P.deviations + " records where landed code departed " +
+  "from what this proposal states. Read it if it has entries. An `accepted` entry is a place the TREE won " +
+  "an argument with the document: the code was right and the proposal was wrong, and three judges agreed " +
+  "no legal change could reconcile them. Correct the proposal toward it rather than restating the " +
+  "proposal's version, unless you can show the judges were wrong. A `proposed` entry is a lead to verify " +
+  "rather than evidence.\n"
+  );
+}
+
 function logBlock(label, round) {
   // The round is in the shard name because two rounds of the same lens would
   // otherwise write the same path and the second would overwrite the first.
@@ -1724,6 +1739,7 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
     "\n\n" +
     lens.text +
     LOOP.scopeNote +
+    DEVIATIONS_BLOCK() +
     logBlock("review-" + lens.key, round) +
     history +
     (lensPrompt
@@ -1893,6 +1909,7 @@ function fixDesignPrompt(group, confirmed, round) {
     "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
     "THE FINDINGS IN THIS GROUP:\n" +
     JSON.stringify(picked, null, 2) +
+    DEVIATIONS_BLOCK() +
     logBlock("fix-design-" + group.id, round) +
     promptFor("fix-design")
   );

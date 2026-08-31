@@ -200,4 +200,65 @@ t.check("a Go test", classify(mk("tests/tier1/a_test.go", ["x := 1"])).classes.i
 t.check("a mixed code+doc diff claims no cheap class", classify(mk("pkg/a.go", ["// c"]) + "\n" + mk("docs/b.md", ["p"])).classes.length === 0);
 t.check("an empty diff is its own answer", classify("").classes.includes("empty"));
 
+
+
+// ---- Phase 9: deviations ---------------------------------------------------
+
+t.section("C10. an unresolvable verdict writes an accepted deviation");
+{
+  const { calls, result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 12, introspectEvery: 3 }), base({
+    "review:*": { findings: FINDING },
+    "stuck:*": { verdict: "unresolvable", confidence: "high", findingTitle: "F1", whyCodeIsRight: "the gate fires", whyProposalIsWrong: "it says otherwise", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  const dev = calls.find((c) => c.label.startsWith("deviation:"));
+  t.check("a deviation agent runs", !!dev);
+  t.check("it may edit only the deviations file", /only file you may edit is .*deviations\.md/.test(dev.prompt));
+  t.check("it writes an accepted entry", /\*\*Status:\*\* accepted/.test(dev.prompt));
+  t.check("it carries the judges' reasoning", /the gate fires/.test(dev.prompt));
+  t.check("it asks for a suggested next step", /Suggested next step/.test(dev.prompt));
+  t.check("and never edits the proposal", /Never edit the proposal itself/.test(dev.prompt));
+  t.check("the run reports where the file is", !!result.deviationsFile && /deviations\.md$/.test(result.deviationsFile));
+}
+
+t.section("C11. reviewers are told about accepted deviations, and leaks are dropped");
+{
+  const { calls } = await runWorkflow(WF, ARGS(), base());
+  const reviewers = matching(calls, "review:S1");
+  t.check("every reviewer is given the file", reviewers.every((c) => /DEVIATIONS ALREADY ACCEPTED/.test(c.prompt)));
+  t.check("and told not to re-raise one", reviewers.every((c) => /do not report a rephrasing or a near neighbour of it/.test(c.prompt)));
+  t.check("a proposed entry is explicitly still fair game", reviewers.every((c) => /`proposed` is not adjudicated and is fair game/.test(c.prompt)));
+}
+{
+  // A reviewer that re-raises an adjudicated finding anyway has it dropped by
+  // the script: prompt suppression alone has been observed to leak.
+  const { logs, result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 12, introspectEvery: 3 }), base({
+    "review:*": { findings: [{ title: "F1 the gate is missing", where: "w", divergence: "d", fix: "f" }] },
+    "stuck:*": { verdict: "unresolvable", confidence: "high", findingTitle: "F1 the gate is missing", whyCodeIsRight: "c", whyProposalIsWrong: "p", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  t.check("the leak is dropped by the script", logs.some((l) => /dropped \d+ finding\(s\) already adjudicated as deviations/.test(l)));
+  t.check("and the step then finishes", result.status !== "step-stuck", result.status);
+}
+{
+  // acceptedDivergences supplied by the caller feed the same filter, so the two
+  // mechanisms are one mechanism.
+  const { logs } = await runWorkflow(
+    WF,
+    ARGS({ acceptedDivergences: ["F1 the gate is missing"] }),
+    base({ "review:*": { findings: [{ title: "F1 the gate is missing", where: "w", divergence: "d", fix: "f" }] } }),
+  );
+  t.check("a caller-supplied divergence is filtered the same way", logs.some((l) => /already adjudicated as deviations/.test(l)));
+}
+
+t.section("C12. an unproductive verdict stops the step and writes NO deviation");
+{
+  const { result, calls } = await runWorkflow(WF, ARGS({ maxStepAttempts: 20, introspectEvery: 2, minUnproductiveRounds: 1 }), base({
+    "review:*": { findings: FINDING },
+    "stuck:*": { verdict: "unproductive", confidence: "high", findingTitle: "F1", outstandingWork: "write the tier-3 case", roundsMovedIt: "none", reasoning: "r" },
+  }));
+  t.check("the step stops", result.status === "step-stuck", result.status);
+  t.check("recorded as unproductive", (result.stuckFindings || []).some((f) => f.kind === "unproductive"));
+  t.check("NO deviation is written for it", never(calls, "deviation:"));
+  t.check("the outstanding work is carried out", JSON.stringify(result.stuckFindings).includes("tier-3 case"));
+}
+
 t.done();
