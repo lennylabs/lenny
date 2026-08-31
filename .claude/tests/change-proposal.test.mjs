@@ -51,7 +51,7 @@ const newStubs = (over = {}) => ({
   conventions: "conforms",
   snap: "DONE",
   diffcount: "0",
-  "r1:review:": { coverage: "read it all", findings: [] },
+  "*:review:*": { coverage: "read it all", findings: [] },
   default: {},
   ...over,
 });
@@ -241,6 +241,211 @@ t.section("B6b. snapshots and diffs span the directory, not one file");
   t.check("it is a dedicated one-command agent", snaps.every((c) => /Do nothing else\./.test(c.prompt)));
   const dc = calls.filter((c) => c.label === "diffcount");
   if (dc.length) t.check("the hunk count diffs recursively", dc.every((c) => /diff -ru /.test(c.prompt)));
+}
+
+
+
+// ---- Phase 3: the two review loops and sequential verification ------------
+
+const REVIEW_ARGS = {
+  mode: "review",
+  proposalPath: "proposals/0081_fix_x",
+  date: "2026-08-31",
+  exemplar: "e.md",
+  repoRoot: "/repo",
+  maxSpecReviewRounds: 4,
+  maxNonSpecReviewRounds: 4,
+};
+
+// A stub table that drives one finding through one round of whichever loop is
+// running, then goes clean.
+const loopStubs = (over = {}) => {
+  let rounds = 0;
+  return {
+    bootstrap: "SKIPPED",
+    conventions: "conforms",
+    "probe:spec-changes": "YES",
+    "snap*": "DONE",
+    diffcount: "0",
+    "spec-nonspec-handoff": "reconciled",
+    "*:review:*": { coverage: "c", findings: [] },
+    "*:dedup": { findings: [] },
+    "*:verify-material": { confirmed: true, reason: "material" },
+    "*:verify-evidence": { confirmed: true, reason: "evidence holds" },
+    "*:fix": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [] },
+    "*:post-fix-review": { findings: [] },
+    "verify-checklist": "ok",
+    "mark-verified": "ok",
+    "introspect*": null,
+    default: {},
+    ...over,
+  };
+};
+
+// Match a review lens call in either loop: labels are r<N>:review:<lens>.
+const isLens = (c) => /^r\d+:review:/.test(c.label);
+
+t.section("B7. the spec loop is skipped when nothing is staged for spec");
+{
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": "NO" }));
+  t.check("the probe runs", !never(calls, "probe:spec-changes"));
+  t.check("the probe is a cheap dedicated agent", calls.find((c) => c.label === "probe:spec-changes").opts.model === "haiku");
+  t.check("it is logged as skipped", logs.some((l) => /stages no spec edits; skipping the spec review loop/.test(l)));
+  t.check("the non-spec loop still runs", logs.some((l) => /Entering the non-spec review loop/.test(l)));
+  t.check("no spec loop is entered", !logs.some((l) => /Entering the spec review loop/.test(l)));
+}
+
+t.section("B8. spec converges before non-spec begins");
+{
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const specAt = logs.findIndex((l) => /Entering the spec review loop/.test(l));
+  const nonAt = logs.findIndex((l) => /Entering the non-spec review loop/.test(l));
+  const handoffAt = logs.findIndex((l) => /Reconciled the deliverable index/.test(l));
+  t.check("both loops run", specAt >= 0 && nonAt >= 0, "spec@" + specAt + " nonspec@" + nonAt);
+  t.check("spec first", specAt < nonAt);
+  t.check("the handoff runs between them", handoffAt > specAt && handoffAt < nonAt, "handoff@" + handoffAt);
+}
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const h = calls.find((c) => c.label === "spec-nonspec-handoff");
+  t.check("the handoff may edit only the summary and the checklist", /only files you may edit are .*summary\.md and .*implementation-checklist\.md/.test(h.prompt));
+  t.check("it rebuilds the deliverable index", /Rebuild `## Deliverable index`/.test(h.prompt));
+  t.check("it writes the spec-lane steps as a leading block", /leading block/.test(h.prompt));
+  t.check("and is told it is not a review round", /This is not a review round/.test(h.prompt));
+}
+
+t.section("B9. each loop tells its lenses and its fixer what it owns");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const lenses = calls.filter(isLens);
+  const specLenses = lenses.filter((c) => /SCOPE OF THIS LOOP. You are reviewing the STAGED SPEC EDITS/.test(c.prompt));
+  const nonLenses = lenses.filter((c) => /Read the staged spec edits .* AS ONE DOCUMENT/s.test(c.prompt));
+  t.check("spec-loop lenses are scoped to the spec staging", specLenses.length > 0);
+  t.check("non-spec-loop lenses read both files as one document", nonLenses.length > 0);
+  t.check("every lens belongs to exactly one loop", specLenses.length + nonLenses.length === lenses.length, lenses.length + " lenses, " + specLenses.length + "+" + nonLenses.length);
+  t.check(
+    "spec-loop lenses are told checklist drift is not a finding there",
+    specLenses.every((c) => /Drift in them is expected here and is NOT a finding/.test(c.prompt)),
+  );
+  t.check(
+    "test-coverage does not run in the spec loop",
+    !specLenses.some((c) => c.label.endsWith(":test-coverage")),
+  );
+  t.check(
+    "but does in the non-spec loop",
+    nonLenses.some((c) => c.label.endsWith(":test-coverage")),
+  );
+}
+
+t.section("B9b. lockSpecChanges governs what the non-spec fixer may edit");
+{
+  const withFinding = loopStubs({
+    "*:review:*": { coverage: "c", findings: [{ title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing" }] },
+    "*:dedup": { findings: [{ title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing", lenses: ["mechanism"] }] },
+  });
+  const unlocked = await runWorkflow(WF, REVIEW_ARGS, withFinding);
+  const locked = await runWorkflow(WF, { ...REVIEW_ARGS, lockSpecChanges: true }, withFinding);
+  const fixOf = (r, loop) =>
+    r.calls.filter((c) => /:fix$/.test(c.label) && c.prompt.includes(loop + " convergence loop"));
+  const uf = fixOf(unlocked, "non-spec");
+  const lf = fixOf(locked, "non-spec");
+  t.check("a non-spec fixer runs in both", uf.length > 0 && lf.length > 0, uf.length + "/" + lf.length);
+  t.check("unlocked: the fixer may touch the spec staging", uf.every((c) => /spec-changes\.md — permitted, but PREFER/.test(c.prompt)));
+  t.check("locked: it is told the spec staging is LOCKED", lf.every((c) => /spec-changes\.md is LOCKED for this run/.test(c.prompt)));
+  t.check("locked: and given the escalation route", lf.every((c) => /recording an open decision/.test(c.prompt)));
+  t.check("the run echoes which it was", locked.result.review.lockSpecChanges === true && unlocked.result.review.lockSpecChanges === false);
+}
+
+t.section("B10-B12. verification is sequential and short-circuits");
+{
+  const finding = { title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" };
+  const withOne = (over) => loopStubs({
+    "*:review:*": { coverage: "c", findings: [finding] },
+    "*:dedup": { findings: [{ ...finding, lenses: ["citations"] }] },
+    ...over,
+  });
+
+  // B10: materiality refuses -> evidence is never asked.
+  {
+    const { calls } = await runWorkflow(WF, REVIEW_ARGS, withOne({
+      "*:verify-material": { confirmed: false, reason: "style only" },
+    }));
+    t.check("materiality ran", !never(calls, "r1:verify-material"));
+    t.check("evidence was NEVER called", never(calls, "r1:verify-evidence"));
+    t.check("no fixer ran on a refused finding", never(calls, "r1:fix"));
+  }
+  // B11: materiality confirms -> evidence runs, and both must confirm.
+  {
+    const { calls } = await runWorkflow(WF, REVIEW_ARGS, withOne({}));
+    t.check("both skeptics ran", !never(calls, "r1:verify-material") && !never(calls, "r1:verify-evidence"));
+    t.check("materiality ran first", firstIndex(calls, "r1:verify-material") < firstIndex(calls, "r1:verify-evidence"));
+    t.check("the finding was fixed", !never(calls, "r1:fix"));
+  }
+  {
+    const { calls } = await runWorkflow(WF, REVIEW_ARGS, withOne({
+      "*:verify-evidence": { confirmed: false, reason: "the citation is right" },
+    }));
+    t.check("evidence refusing also blocks the fix", never(calls, "r1:fix"));
+  }
+  // B12: the order is configurable.
+  {
+    const { calls } = await runWorkflow(
+      WF,
+      { ...REVIEW_ARGS, verifyOrder: ["evidence", "material"] },
+      withOne({ "*:verify-evidence": { confirmed: false, reason: "bad citation" } }),
+    );
+    t.check("evidence ran first", !never(calls, "r1:verify-evidence"));
+    t.check("materiality was never asked", never(calls, "r1:verify-material"));
+  }
+  // A dead verifier is not a refusal.
+  {
+    const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, withOne({ "*:verify-material": null }));
+    t.check("a dead first verifier stops the finding", never(calls, "r1:fix"));
+    t.check("and the round is marked inconclusive", logs.some((l) => /INCONCLUSIVE/.test(l)));
+  }
+  // A refused finding records which skeptic refused it.
+  {
+    const { result } = await runWorkflow(WF, REVIEW_ARGS, withOne({
+      "*:verify-material": { confirmed: false, reason: "style only" },
+    }));
+    t.check("the run reports it as rejected", (result.review.rejectedTitles || []).includes("T"));
+  }
+}
+
+t.section("B27. convergence is certified only over a COMPLETE sweep");
+{
+  // A lens that failed in an early round and ran clean later is not a reason to
+  // refuse convergence: the sweep re-reads the final text with every lens. This
+  // is the case that must still converge.
+  const { result } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": "NO",
+    "r1:review:security": null,
+  }));
+  t.check("a lens that failed early and recovered still converges", result.review.converged === true, String(result.review.converged));
+}
+{
+  // A sweep in which a lens FAILED is incomplete and must not certify. A dropped
+  // lens contributes zero findings and is indistinguishable from a satisfied
+  // one, so counting it would let an outage certify a proposal. The loop's
+  // answer is to re-run rather than to accept: a single failed sweep is
+  // followed by another, and only a complete one converges.
+  const one = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": "NO",
+    "r3:review:security": null,
+  }));
+  t.check("the incomplete sweep is refused", one.logs.some((l) => /sweep found nothing but was incomplete; NOT converging/.test(l)));
+  t.check("and another sweep follows it", one.logs.filter((l) => /FULL SWEEP/.test(l)).length >= 2);
+  t.check("which then converges", one.result.review.converged === true);
+
+  // A lens that never returns at all can never certify its domain, so the run
+  // exhausts its budget rather than converging.
+  const never_ = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": "NO",
+    "*:review:security": null,
+  }));
+  t.check("a lens that never returns blocks convergence entirely", never_.result.review.converged === false, String(never_.result.review.converged));
+  t.check("every round is marked inconclusive", never_.logs.some((l) => /INCONCLUSIVE/.test(l)));
+  t.check("the lens is never retired on its failures", !never_.logs.some((l) => /retiring.*security/.test(l)));
 }
 
 t.done();

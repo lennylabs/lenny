@@ -43,9 +43,46 @@ const softFail = (file, msg) => {
 function stripCode(t) {
   let out = "";
   let i = 0;
+  // A regex literal is a token, not code, and its body must not be scanned for
+  // identifiers: /YES/i would otherwise read as an undeclared constant. Telling
+  // a regex from a division needs the preceding token, and the standard
+  // heuristic is that a `/` following an operator or an opening bracket starts
+  // one while a `/` following a value divides.
+  const regexCanStart = () => {
+    let j = out.length - 1;
+    while (j >= 0 && /\s/.test(out[j])) j--;
+    if (j < 0) return true;
+    return "(,=:[!&|?{};+-*%~^".includes(out[j]);
+  };
   while (i < t.length) {
     const c = t[i];
     const d = t[i + 1];
+    if (c === "/" && d !== "/" && d !== "*" && regexCanStart()) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < t.length) {
+        const ch = t[j];
+        if (ch === "\\") {
+          j += 2;
+          continue;
+        }
+        if (ch === "\n") break;
+        if (ch === "[") inClass = true;
+        else if (ch === "]") inClass = false;
+        else if (ch === "/" && !inClass) {
+          closed = true;
+          break;
+        }
+        j++;
+      }
+      if (closed) {
+        i = j + 1;
+        while (i < t.length && /[a-z]/.test(t[i])) i++; // flags
+        out += "0";
+        continue;
+      }
+    }
     if (c === "/" && d === "/") {
       while (i < t.length && t[i] !== "\n") i++;
       continue;

@@ -35,17 +35,39 @@ export function loadWorkflow(relPath) {
   );
 }
 
-// Resolve one agent call against the stub table. Keys are matched exactly
-// first, then by longest prefix, then `default`. A value may be a plain result
-// or a function of the call, so a stub can vary its answer by round.
+// Resolve one agent call against the stub table.
+//
+// Keys are matched exactly first, then by wildcard, then by longest prefix,
+// then `default`. The wildcard form exists because most labels in these
+// workflows carry a round or a step in the middle -- `r3:review:security`,
+// `build:S2:fix4` -- so a plain prefix cannot name "every review lens". A key
+// containing `*` is a glob over the whole label, and the longest literal part
+// of a matching glob wins, so `*:review:security` beats `*:review:`.
+//
+// A value may be a plain result or a function of the call, so a stub can vary
+// its answer by round. Returning `null` simulates an agent that died.
 function resolveStub(stubs, call) {
   if (typeof stubs === "function") return stubs(call);
   const { label } = call;
   if (Object.prototype.hasOwnProperty.call(stubs, label)) return stubs[label];
+
   let best = null;
+  let bestScore = -1;
   for (const key of Object.keys(stubs)) {
     if (key === "default") continue;
-    if (label.startsWith(key) && (best === null || key.length > best.length)) best = key;
+    let score = -1;
+    if (key.includes("*")) {
+      const re = new RegExp(
+        "^" + key.split("*").map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$",
+      );
+      if (re.test(label)) score = key.replace(/\*/g, "").length;
+    } else if (label.startsWith(key)) {
+      score = key.length;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = key;
+    }
   }
   const chosen = best === null ? stubs.default : stubs[best];
   return typeof chosen === "function" ? chosen(call) : chosen;
