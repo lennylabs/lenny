@@ -61,6 +61,122 @@ const proposal = input.proposalPath.startsWith("/")
 const relProposal = input.proposalPath.startsWith("/")
   ? input.proposalPath.replace(repo + "/", "")
   : input.proposalPath;
+// Where this proposal's parts live. Folder layout or legacy single file; every
+// prompt below names a role through this rather than concatenating a path.
+const P = proposalFiles(input.proposalPath, repo);
+
+// ---- The spec/ write lease -----------------------------------------------
+//
+// spec/ is read-only unless a lease is open (.claude/tools/spec-lease.mjs and
+// the PreToolUse hook in settings.json). The lease names THIS proposal and the
+// files it is allowed to write, and it expires. Nothing in this phase can edit
+// spec/ without it, which is the point: an agent that wanders into spec/ is
+// refused rather than trusted.
+//
+// A workflow script has no filesystem access, so opening and releasing are
+// agent calls. They are DEDICATED agents given one exact command, not an
+// instruction appended to an agent that has other work: the lease is the
+// security boundary here, its failure is not benign, and an agent with a large
+// task in front of it is not a reliable executor of a small instruction at the
+// end of its prompt.
+const leaseTtlHours = input.leaseTtlHours || 24;
+let leaseOpen = false;
+
+async function openLease(step, allowFiles) {
+  const allow = (allowFiles || []).join(",");
+  const out = await agent(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "node " + repo + "/.claude/tools/spec-lease.mjs open '" + P.root + "'" +
+      " --step '" + (step || "apply") + "'" +
+      " --ttl-hours " + leaseTtlHours +
+      (allow ? " --allow '" + allow + "'" : "") +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "lease-open:" + (step || "apply"), model: "haiku", phase: "Apply spec" },
+  );
+  leaseOpen = true;
+  return out;
+}
+
+// Called on EVERY return path and at the end of every spec step, whether it
+// succeeded or failed. A release that does not happen leaves spec/ writable,
+// so this is never folded into an agent that has other work to do.
+async function releaseLease(step) {
+  if (!leaseOpen) return;
+  leaseOpen = false;
+  await agent(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "node " + repo + "/.claude/tools/spec-lease.mjs release" +
+      (step ? " --step '" + step + "'" : "") +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "lease-release:" + (step || "apply"), model: "haiku", phase: "Apply spec" },
+  );
+}
+
+// ---- Where a proposal's parts live ---------------------------------------
+//
+// A proposal is a directory of role-scoped files:
+//   proposals/NNNN_kind_slug/NNNN_kind_slug.problem-statement.md
+//   ...summary, status, implementation-checklist, spec-changes,
+//      non-spec-changes, review-log, deviations
+//
+// A proposal written before that layout is a single NNNN_kind_slug.md, and 79
+// of those exist. Both resolve here so no prompt ever concatenates a path by
+// hand, and so a legacy proposal still runs end to end: every role points at
+// the single file, and the prompts that consume a role say "the <role> section
+// of" rather than "the file".
+//
+// The layout is decided from the path string rather than by looking: a
+// workflow script has no filesystem access (see the sandbox note above), and a
+// path ending in .md is a legacy proposal while one that does not is a
+// directory. The pipeline calls migrate-proposal.js at startup on a legacy
+// path, so by the time the review or build loops run the path is a directory.
+function proposalFiles(ref, repoRoot) {
+  const abs = ref.startsWith("/") ? ref : repoRoot + "/" + ref;
+  const legacy = /\.md$/.test(abs);
+  if (legacy) {
+    const stem = abs.replace(/^.*\//, "").replace(/\.md$/, "");
+    return {
+      layout: "legacy",
+      stem,
+      dir: abs.replace(/\/[^/]*$/, ""),
+      root: abs,
+      problem: abs,
+      summary: abs,
+      status: abs,
+      checklist: abs,
+      spec: abs,
+      nonSpec: abs,
+      log: abs,
+      deviations: abs,
+    };
+  }
+  const stem = abs.replace(/\/+$/, "").replace(/^.*\//, "");
+  const f = (role) => abs.replace(/\/+$/, "") + "/" + stem + "." + role + ".md";
+  return {
+    layout: "folder",
+    stem,
+    dir: abs.replace(/\/+$/, ""),
+    root: abs.replace(/\/+$/, ""),
+    problem: f("problem-statement"),
+    summary: f("summary"),
+    status: f("status"),
+    checklist: f("implementation-checklist"),
+    spec: f("spec-changes"),
+    nonSpec: f("non-spec-changes"),
+    log: f("review-log"),
+    deviations: f("deviations"),
+  };
+}
+
+// How a prompt names a role, so one sentence works for both layouts. On a
+// folder proposal it is a file; on a legacy one it is a section of the one
+// file, and saying so is the difference between an agent reading the right
+// thing and an agent reading nothing.
+function roleRef(P, role, sectionName) {
+  return P.layout === "folder"
+    ? P[role]
+    : "the `" + sectionName + "` section of " + P.root;
+}
 
 const SPEC_RULES =
   "Spec content rules (these take precedence over verbatim application; record every deviation they force):\n" +
@@ -77,8 +193,8 @@ const SPEC_RULES =
 // The script cannot read the proposal: the workflow sandbox has no `require` and
 // no filesystem access, so the agent reads its own Summary.
 const SUMMARY_BLOCK =
-  "\n\nTHE PROPOSAL'S SUMMARY. Read the `## Summary` section of " +
-  proposal +
+  "\n\nTHE PROPOSAL'S SUMMARY. Read " +
+  roleRef(P, "summary", "## Summary") +
   " before you start. It states the top-level changes, the decisions that are closed and must not be " +
   "reopened, and the traps this change has already fallen into. A proposal written before that section " +
   "existed may not have one; when it is absent, read the Problem and Decisions sections in its place.\n";
@@ -216,15 +332,20 @@ const CLOSE = {
 
 phase("Plan");
 const plan = await agent(
-  "Read the proposal at " +
-    proposal +
-    ' in full and extract its staged changes and the findings that reference it.\n\nYou are a read-only investigator; do not edit any file. Work in ' +
+  "Read a proposal and extract its staged changes and the findings that reference it.\n\n" +
+    "The staged SPEC changes are in " + roleRef(P, "spec", "Proposed spec changes") + ".\n" +
+    "The staged NON-SPEC changes are in " + roleRef(P, "nonSpec", "Proposed changes") + ".\n" +
+    "The implementation sequence is in " + roleRef(P, "checklist", "## Implementation checklist") + ".\n" +
+    "The status is read with `node " + repo + "/.claude/tools/proposal-status.mjs " + P.root + " --field status`," +
+    " which is the ONLY supported way to read it: do not parse a Status bullet yourself.\n\n" +
+    ' Read them in full and extract the staged changes and the findings that reference this proposal.\n\nYou are a read-only investigator; do not edit any file. Work in ' +
     repo +
-    '.\n\nReturn:\n- approved: true when the Status bullet begins "Approved" (approved for implementation).\n- alreadyApplied: true when the Status bullet begins "Applied to spec" (the spec edits were already landed by a prior run). A "Draft" or "Verified" status is neither.\n- statusLine: the Status bullet verbatim.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file. Classify each entry\'s method. Use "mechanical" when the proposal stages the edit as a run of a script, pass, or generator over a register or map rather than as literal text to write, which a proposal signals by enumerating no edit sites, by naming a command, or by stating that completeness is proven by a gate rather than by review; put the exact command in command, including its dry-run form when the proposal states one. Use "authored" when the proposal stages the literal text together with an anchor for it. When one subsection stages both, split it into one mechanical entry and one authored entry. Defaulting to "authored" for an edit the proposal means a script to make is a defect: it sets an agent guessing at sites the proposal deliberately does not list.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
+    '.\n\nReturn:\n- approved: true when the status tool prints exactly "Approved".\n- alreadyApplied: true when the staged spec edits are ALREADY PRESENT in spec/. Check a sample of them rather than inferring it from the status: spec application is recorded per deliverable in the implementation checklist now, not as a status value, so an Approved proposal may have some, none, or all of its spec edits landed.\n- statusLine: what the status tool printed.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file. Classify each entry\'s method. Use "mechanical" when the proposal stages the edit as a run of a script, pass, or generator over a register or map rather than as literal text to write, which a proposal signals by enumerating no edit sites, by naming a command, or by stating that completeness is proven by a gate rather than by review; put the exact command in command, including its dry-run form when the proposal states one. Use "authored" when the proposal stages the literal text together with an anchor for it. When one subsection stages both, split it into one mechanical entry and one authored entry. Defaulting to "authored" for an edit the proposal means a script to make is a defect: it sets an agent guessing at sites the proposal deliberately does not list.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
 if (!plan.approved && !plan.alreadyApplied) {
+  await releaseLease();
   return {
     status: "not-approved",
     statusLine: plan.statusLine,
@@ -285,6 +406,7 @@ if (plan.specEdits.length === 0) {
   // Idempotent re-run: the spec was already landed and committed, so a
   // diff-based check would be empty. Confirm by presence instead.
   phase("Apply spec");
+  await openLease("verify-aligned", files);
   log("Status is Applied to spec; verifying the staged edits are present");
   // The presence check, plus a focused reviewer when the caller named areas.
   // Both return the same shape, and their `missing` lists are concatenated
@@ -361,6 +483,7 @@ if (plan.specEdits.length === 0) {
     align = await checkAligned(":r" + alignRepairs);
   }
   if (!align || !align.aligned) {
+    await releaseLease();
     return {
       status: "not-aligned",
       statusLine: plan.statusLine,
@@ -378,6 +501,7 @@ if (plan.specEdits.length === 0) {
 } else {
   // Fresh apply: the proposal is Approved and spec/ is a clean baseline.
   phase("Apply spec");
+  await openLease("apply", files);
   log(
     plan.specEdits.length +
       " staged spec edits across " +
@@ -511,6 +635,7 @@ if (plan.specEdits.length === 0) {
         unappliable.length +
           " edit(s) unappliable; stopping before verification rather than verifying a partial tree",
       );
+      await releaseLease();
       return {
         status: "spec-unappliable",
         reason:
@@ -646,6 +771,7 @@ if (plan.specEdits.length === 0) {
     }
     if (!clean) {
       specStatus = "not-clean";
+      await releaseLease();
       return {
         status: "spec-not-clean",
         reason:
@@ -688,6 +814,7 @@ if (plan.specEdits.length === 0) {
   specStatus = clean ? (unappliable.length > 0 ? "applied-with-blockers" : "applied") : "not-clean";
 
   if (specStatus === "not-clean") {
+    await releaseLease();
     return {
       status: "spec-not-clean",
       reason: "the spec apply verification did not converge within " + maxApplyRounds + " rounds; the staged edits are partially applied in the working tree for inspection.",
@@ -696,6 +823,7 @@ if (plan.specEdits.length === 0) {
     };
   }
   if (specStatus === "applied-with-blockers") {
+    await releaseLease();
     return {
       status: "spec-applied-with-blockers",
       reason: "some staged spec edits could not be located (drifted anchors); resolve them before implementing code.",
@@ -737,9 +865,16 @@ if (plan.specEdits.length === 0) {
   log("Spec applied and committed per sub-step; status recorded");
 }
 
+// The spec phase is done, so spec/ locks again before any code is written.
+// Released here rather than at the end of the run: under today's structure the
+// build phase has no business in spec/, and a lease left open across it would
+// be exactly the standing grant the old hook gave.
+await releaseLease();
+
 // ---- Implement code (optional) via the build subworkflow ----
 
 if (!implementCode) {
+  await releaseLease();
   return {
     status: "spec-only",
     specStatus,
@@ -778,6 +913,7 @@ try {
     },
   );
 } catch (e) {
+  await releaseLease();
   return {
     status: "aborted",
     abortReason: "implement-proposal-build subworkflow failed: " + (e && e.message),
@@ -820,6 +956,7 @@ if (plan.findingIds.length > 0) {
   }
 }
 
+await releaseLease();
 return {
   status:
     build.status === "step-stuck"

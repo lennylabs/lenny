@@ -101,6 +101,72 @@ const excludeLensKeys = Array.isArray(input.excludeLenses)
   ? input.excludeLenses
   : [];
 
+// ---- Where a proposal's parts live ---------------------------------------
+//
+// A proposal is a directory of role-scoped files:
+//   proposals/NNNN_kind_slug/NNNN_kind_slug.problem-statement.md
+//   ...summary, status, implementation-checklist, spec-changes,
+//      non-spec-changes, review-log, deviations
+//
+// A proposal written before that layout is a single NNNN_kind_slug.md, and 79
+// of those exist. Both resolve here so no prompt ever concatenates a path by
+// hand, and so a legacy proposal still runs end to end: every role points at
+// the single file, and the prompts that consume a role say "the <role> section
+// of" rather than "the file".
+//
+// The layout is decided from the path string rather than by looking: a
+// workflow script has no filesystem access (see the sandbox note above), and a
+// path ending in .md is a legacy proposal while one that does not is a
+// directory. The pipeline calls migrate-proposal.js at startup on a legacy
+// path, so by the time the review or build loops run the path is a directory.
+function proposalFiles(ref, repoRoot) {
+  const abs = ref.startsWith("/") ? ref : repoRoot + "/" + ref;
+  const legacy = /\.md$/.test(abs);
+  if (legacy) {
+    const stem = abs.replace(/^.*\//, "").replace(/\.md$/, "");
+    return {
+      layout: "legacy",
+      stem,
+      dir: abs.replace(/\/[^/]*$/, ""),
+      root: abs,
+      problem: abs,
+      summary: abs,
+      status: abs,
+      checklist: abs,
+      spec: abs,
+      nonSpec: abs,
+      log: abs,
+      deviations: abs,
+    };
+  }
+  const stem = abs.replace(/\/+$/, "").replace(/^.*\//, "");
+  const f = (role) => abs.replace(/\/+$/, "") + "/" + stem + "." + role + ".md";
+  return {
+    layout: "folder",
+    stem,
+    dir: abs.replace(/\/+$/, ""),
+    root: abs.replace(/\/+$/, ""),
+    problem: f("problem-statement"),
+    summary: f("summary"),
+    status: f("status"),
+    checklist: f("implementation-checklist"),
+    spec: f("spec-changes"),
+    nonSpec: f("non-spec-changes"),
+    log: f("review-log"),
+    deviations: f("deviations"),
+  };
+}
+
+// How a prompt names a role, so one sentence works for both layouts. On a
+// folder proposal it is a file; on a legacy one it is a section of the one
+// file, and saying so is the difference between an agent reading the right
+// thing and an agent reading nothing.
+function roleRef(P, role, sectionName) {
+  return P.layout === "folder"
+    ? P[role]
+    : "the `" + sectionName + "` section of " + P.root;
+}
+
 const READ_ONLY =
   "You are a read-only investigator. Do not create, edit, or delete any file. Cite evidence as file:line.";
 const EVIDENCE =
