@@ -32,7 +32,7 @@ proposals/NNNN_kind_slug/
 
 A partition check asserts that every content line of the original survived the split, and the migrator stops rather than finishing if it cannot retarget an inbound reference. A failed migration ends the run rather than reviewing a half-split tree.
 
-**Who may write what.** `.summary.md` and `.spec-changes.md` are written by this skill alone. `.deviations.md` is written by `implement-proposal` alone and read here. `.implementation-checklist.md` is seeded here and maintained by the implementor. Every agent appends to `.review-log.md` through a per-agent shard the round boundary merges.
+**Who may write what.** `.summary.md` and `.spec-changes.md` are written by this skill alone. `.problem-statement.md` is editable by a fixer, and bounded: correcting the record there is required — a false citation, a drifted line number, an evidence claim the tree refutes — and is done in the same edit as the section that restates it, because leaving the two disagreeing is worse than leaving both wrong. Changing what the problem *is* is a `reframe`, which is the introspection pass's decision and not a fixer's. `.deviations.md` is written by `implement-proposal` alone and read here. `.implementation-checklist.md` is seeded here and maintained by the implementor. Every agent appends to `.review-log.md` through a per-agent shard the round boundary merges.
 
 **The status is typed.** Read and write it with `node .claude/tools/proposal-status.mjs <proposal> --field status`, never by parsing prose. It handles both layouts, and the spec-lease hook reads it through the same tool. A legacy proposal that reads `Retired` was superseded or withdrawn; that is a read-only outcome outside the four states, and every consumer refuses it.
 
@@ -59,7 +59,7 @@ A partition check asserts that every content line of the original survived the s
 
 ### Two review loops
 
-The spec staging converges first, alone. Then the non-spec staging converges, with the lenses reading **both change files as one document**, because a non-spec change that contradicts a staged spec edit is a finding only a reviewer holding both can see. The spec loop is skipped when a cheap probe reports the proposal stages no spec edits, which is a common and valid shape.
+The spec staging converges first, alone. Then the non-spec staging converges, with the lenses reading **both change files as one document**, because a non-spec change that contradicts a staged spec edit is a finding only a reviewer holding both can see. The spec loop is skipped only when a cheap probe reports the proposal INTENDS no change under `spec/`. Intent rather than completeness: a proposal that names a spec target it has not written yet needs the loop more than one whose staging is finished, because writing that text is the work the loop does.
 
 **Between them is a reconciliation, not a review round.** The spec staging is settled by then and the checklist has not been written against it, so one pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked.
 
@@ -81,7 +81,9 @@ Three stages replace one fixer.
 
 **fix-design** designs each group, read-only, in parallel. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
 
-**fix** runs once per group, sequentially, applying a design rather than inventing one. It receives the alternatives so it neither re-derives them nor quietly picks one already ruled out, and a fixer that judges a design wrong declares it rather than substituting its own silently.
+The designs are produced in parallel and none sees the others, so **one reconciliation pass** runs over all of them before any is applied. It resolves rather than reports, prefers merging two additions into one, and returns revised designs for the groups it changed. Catching a conflict there costs one agent; catching it in the post-fix review costs a round and two edits to unpick.
+
+**fix** runs once per group, sequentially, applying a design rather than inventing one. Each fixer after the first is told what the earlier groups in that round actually did, which the design stage could not know because it ran before any edit landed. It receives the alternatives so it neither re-derives them nor quietly picks one already ruled out, and a fixer that judges a design wrong declares it rather than substituting its own silently.
 
 One **post-fix review** runs per round over every group's edits, which catches the risk the split introduces: drift between two groups that each edited correctly.
 

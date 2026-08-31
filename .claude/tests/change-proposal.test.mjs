@@ -276,7 +276,7 @@ const loopStubs = (over = {}) => {
     "*:dedup": { findings: [] },
     "*:verify-material": { confirmed: true, reason: "material" },
     "*:verify-evidence": { confirmed: true, reason: "evidence holds" },
-    "*:fix": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [] },
+    "*:fix:*": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [], escalated: [], designRejected: [] },
     "*:post-fix-review": { findings: [] },
     "verify-checklist": "ok",
     "mark-verified": "ok",
@@ -897,6 +897,113 @@ t.section("B31. the lens states the lane rules and no longer forbids an interlea
   const w = calls.find((c) => c.label === "write");
   t.check("the writer is told one lane per step", /ONE lane only/.test(w.prompt));
   t.check("and that spec steps lead by default", /standard pattern is every\s+spec step first/.test(w.prompt));
+}
+
+
+// ---- Post-smoke fixes ----------------------------------------------------
+//
+// Three defects a real run on proposal 0076 exposed that no stub had.
+
+t.section("PS1. the problem statement is editable, and the bound is stated");
+{
+  const withFinding = loopStubs({
+    "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] }),
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+  });
+  for (const [name, args] of [["spec", REVIEW_ARGS], ["non-spec", { ...REVIEW_ARGS, lockSpecChanges: true }]]) {
+    const { calls } = await runWorkflow(WF, args, withFinding);
+    const fixers = calls.filter((c) => /:fix:/.test(c.label));
+    t.check(name + ": a fixer runs", fixers.length > 0);
+    t.check(
+      name + ": every fixer may edit the problem statement",
+      fixers.every((c) => /problem-statement\.md — CORRECT THE RECORD here/.test(c.prompt)),
+    );
+    t.check(
+      name + ": and is told to fix it in the SAME edit as the section restating it",
+      fixers.every((c) => /in the same edit as the section that restates it/.test(c.prompt)),
+    );
+    t.check(
+      name + ": changing the question is refused and routed to a reframe",
+      fixers.every((c) => /You may NOT change what the problem IS/.test(c.prompt) && /introspection pass's decision/.test(c.prompt)),
+    );
+  }
+}
+
+t.section("PS2. the parallel designs are reconciled before any of them is applied");
+{
+  const three = fixStubs(3, {
+    "*:fix-plan": plan([
+      { id: "G1", title: "a", rationale: "r", findings: [0], order: 1 },
+      { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
+      { id: "G3", title: "c", rationale: "r", findings: [2], order: 3 },
+    ]),
+    "*:fix-design-reconcile": { conflicts: [], revised: [] },
+  });
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, three);
+  const rec = calls.find((c) => /fix-design-reconcile/.test(c.label));
+  t.check("a reconciliation runs", !!rec);
+  t.check("after every design", firstIndex(calls, "r1:fix-design:") < firstIndex(calls, "r1:fix-design-reconcile"));
+  t.check("and before any fixer", firstIndex(calls, "r1:fix-design-reconcile") < firstIndex(calls, "r1:fix:"));
+  t.check("exactly one per round", matching(calls, "r1:fix-design-reconcile").length === 1);
+  t.check("it is read-only", /read-only investigator/.test(rec.prompt));
+  t.check("it is given every group's design", /"id": "G1"[\s\S]*"id": "G2"[\s\S]*"id": "G3"/.test(rec.prompt));
+  t.check("same section is not a conflict; same statement is", /touch the same SECTION are not in conflict/.test(rec.prompt));
+  t.check("it resolves rather than only reporting", /RESOLVE, do not just report/.test(rec.prompt));
+  t.check("and prefers merging two additions into one", /PREFER THE SMALLER RESULT/.test(rec.prompt));
+}
+{
+  // A revised design must reach the fixer that applies it.
+  const { calls, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:fix-plan": plan([
+      { id: "G1", title: "a", rationale: "r", findings: [0], order: 1 },
+      { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
+    ]),
+    "*:fix-design:*": { designs: [{ findingTitle: "T1", effort: "moderate", chosen: { approach: "the original", why: "w" } }], groupNote: "", newMechanisms: [] },
+    "*:fix-design-reconcile": {
+      conflicts: [{ groups: ["G1", "G2"], what: "both rewrite the same predicate", resolution: "G1's wording survives" }],
+      revised: [{ groupId: "G2", designs: [{ findingTitle: "T2", effort: "moderate", chosen: { approach: "the reconciled one", why: "G1 owns the predicate" } }] }],
+    },
+  }));
+  const g2 = calls.find((c) => c.label === "r1:fix:G2");
+  const g1 = calls.find((c) => c.label === "r1:fix:G1");
+  t.check("the revised design reaches its group", /the reconciled one/.test(g2.prompt));
+  t.check("an unrevised group keeps its original", /the original/.test(g1.prompt));
+  t.check("the conflict is recorded in the round history", JSON.stringify(result.review.history).includes("both rewrite the same predicate"));
+}
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:fix-plan": plan([{ id: "G1", title: "a", rationale: "r", findings: [0, 1], order: 1 }]),
+  }));
+  t.check("one group needs no reconciliation", never(calls, "fix-design-reconcile"));
+}
+{
+  // Each fixer after the first is told what the earlier ones actually did,
+  // which the design stage could not know because it ran before any edit.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:fix-plan": plan([
+      { id: "G1", title: "a", rationale: "r", findings: [0], order: 1 },
+      { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
+    ]),
+    "*:fix-design-reconcile": { conflicts: [], revised: [] },
+    "*:fix:*": { summary: "rewrote the predicate in section 4", newMechanisms: [], escalated: [], designRejected: [] },
+  }));
+  const g1 = calls.find((c) => c.label === "r1:fix:G1");
+  const g2 = calls.find((c) => c.label === "r1:fix:G2");
+  t.check("the first fixer is told of no earlier group", !/WHAT THE EARLIER GROUPS IN THIS ROUND/.test(g1.prompt));
+  t.check("the second is", /WHAT THE EARLIER GROUPS IN THIS ROUND/.test(g2.prompt));
+  t.check("and carries what the first actually did", /rewrote the predicate in section 4/.test(g2.prompt));
+  t.check("and is told to check anchors against the current text", /Check your anchors against the CURRENT text/.test(g2.prompt));
+}
+
+t.section("PS3. the spec loop runs on intent, not on whether the text is written yet");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const probe = calls.find((c) => c.label === "probe:spec-changes");
+  t.check("the probe asks about intent", /Report whether a proposal INTENDS any change/.test(probe.prompt));
+  t.check("an unwritten target still counts", /even when the text is not written yet, is\s+marked as an indicative target/.test(probe.prompt));
+  t.check("and says why that needs the loop more, not less", /needs the spec review MORE than one whose staging is finished/.test(probe.prompt));
+  t.check("NO requires nothing anywhere naming a spec target", /the staging carries only its\s+headings AND nothing anywhere names a spec target/.test(probe.prompt));
+  t.check("it also reads the summary when the staging is thin", /if the first is thin/.test(probe.prompt));
 }
 
 t.done();
