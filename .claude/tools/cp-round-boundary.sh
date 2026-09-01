@@ -202,8 +202,12 @@ if [ -f "$LOG" ]; then
   ledger_lines=$(awk '/^## Ledger/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
   standing_lines=$(awk '/^## Standing context/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
 fi
-prev_ledger=0
-[ -f "$STATE/ledger-lines" ] && prev_ledger=$(cat "$STATE/ledger-lines" 2>/dev/null || echo 0)
+# The one integer state read left unguarded. An empty file is benign here, since
+# empty expands to 0 in the arithmetic below -- which is why it was missed -- but
+# `$(( ))` resolves a bare word as a VARIABLE NAME, so junk either aborts the
+# round under `set -u` with no JSON at all and never heals, or silently injects
+# another variable's value into the growth figure.
+prev_ledger=$(read_int "$STATE/ledger-lines" 0)
 growth=$((ledger_lines - prev_ledger))
 
 # ---- 2b. Adaptive backoff -------------------------------------------------
@@ -243,7 +247,17 @@ fi
 # The raise count survives a base change: it counts passes that could not reach
 # whatever target stood at the time, which is a run-level signal either way.
 raises=$(read_int "$STATE/standing-raises" 0)
+# The CLI values were validated above; the pair read back from state was not, so
+# a state file holding trigger <= target reinstated the every-round latch.
+if [ "$trigger" -le "$target" ]; then trigger=$((target + TRIGGER_HEADROOM)); fi
 write_state "$STATE/standing-base" "$base"
+
+caller_gap=$((STANDING_TRIGGER - STANDING_TARGET))
+# Floored at 1, not at the default headroom: clamping a NARROW caller gap up to
+# the default is the same "silently ignore the knob" failure the wide case has.
+# The argument validation above already guarantees trigger > target, so the gap
+# is at least 1.
+[ "$caller_gap" -lt 1 ] && caller_gap=1
 
 raised_now=false
 if [ -f "$STATE/compaction-pending" ]; then
@@ -259,7 +273,7 @@ if [ -f "$STATE/compaction-pending" ]; then
   # compacting.
   if [ "$COMPACTED" = "1" ] && [ "$pending_kind" = "standing" ] && [ "$standing_lines" -gt "$target" ]; then
     target=$((standing_lines + TARGET_HEADROOM))
-    trigger=$((target + TRIGGER_HEADROOM))
+    trigger=$((target + caller_gap))
     raises=$((raises + 1))
     raised_now=true
   fi
@@ -272,12 +286,18 @@ fi
 # target up for the rest of the run even after the section shrank back, and one
 # bad round disabled compaction permanently. The target follows the section down
 # as well as up, and never below the number the caller asked for.
+# The caller's own gap between target and trigger is preserved through both the
+# raise and the decay. Recomputing the trigger from the default headroom threw
+# away a deliberately wide trigger: an operator asking for 200/600 got 200/320
+# back after one raise-and-decay cycle, so compaction fired three times as often
+# as they asked -- the every-round latch, reintroduced through the decay path.
+
 if [ "$raised_now" = "false" ] && [ "$target" -gt "$STANDING_TARGET" ]; then
   want=$((standing_lines + TARGET_HEADROOM))
   [ "$want" -lt "$STANDING_TARGET" ] && want=$STANDING_TARGET
   if [ "$want" -lt "$target" ]; then
     target=$want
-    trigger=$((target + TRIGGER_HEADROOM))
+    trigger=$((target + caller_gap))
   fi
 fi
 
@@ -322,7 +342,7 @@ if [ -f "$HASHES" ]; then
            END{printf "]"}')
   [ -n "$changed" ] || changed="[]"
 fi
-printf '%s\n' "$new_hashes" >"$HASHES"
+write_state "$HASHES" "$new_hashes"
 
 # ---- 4. Snapshot the tree the NEXT round reads ---------------------------
 PREV="$SNAPS/$LOOP-r$((ROUND))"

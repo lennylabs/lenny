@@ -54,11 +54,6 @@ const repo = input.repoRoot;
 const date = input.date;
 const exemplar = input.exemplar;
 const context = input.context || "none provided";
-// Default 16 rather than 12: lens retirement made each round much cheaper but not
-// fewer, and every sweep spends a round of the budget. A run that is draining
-// steadily can otherwise exhaust the budget mid-cycle, one revive short of a clean
-// sweep, and be reported as non-converged when it was in fact converging.
-const maxRounds = input.maxReviewRounds || 16;
 // Each review loop gets its own budget. The spec loop converges a smaller
 // surface and gets less; the non-spec loop inherits the old whole-document
 // default because it reviews the larger half.
@@ -286,7 +281,6 @@ function promptFor(key) {
 const ARG_CLASS = {
   mode: "launch",
   problem: "anchored",
-  problemStatementPath: "launch",
   proposalPath: "launch",
   nextNumber: "launch",
   kind: "launch",
@@ -2085,7 +2079,15 @@ async function expandSites(confirmedFindings, round) {
     const r = results[k];
     // A dead expansion leaves the finding exactly as the verifiers confirmed it
     // and the round proceeds, which is how a designless group already behaves.
-    if (!r) return;
+    if (!r) {
+      // Distinguish a DEAD pass from one that searched and found nothing. Left
+      // undefined, the two were indistinguishable downstream, which is the
+      // defect `capped` exists to close for the cap case.
+      confirmedFindings[idx].potentiallyRelatedSites = {
+        proposal: [], tree: [], searched: "", capped: true,
+      };
+      return;
+    }
     confirmedFindings[idx].potentiallyRelatedSites = {
       proposal: r.proposal || [],
       tree: r.tree || [],
@@ -2119,9 +2121,14 @@ function sitesBlock(findings) {
       "not evidence there is nothing: " +
       capped.map((f) => f.title).join("; ") + "\n"
     : "";
-  if (!withSites.length) return cappedNote;
-  return (
-    cappedNote +
+  // Returned as a PAIR, because three call sites gate their instructions on
+  // whether sites exist. Folding the cap note into the same string made those
+  // gates true when nothing had been searched, so the fixer was told "the sweep
+  // has been done for you" alongside "absence of sites is absence of a search".
+  if (!withSites.length) return { sites: "", capped: cappedNote };
+  return {
+    capped: cappedNote,
+    sites:
     "\n\nPOTENTIALLY RELATED SITES. A pass searched outward from each finding's own citations for other " +
     "text this fix would falsify. They are CANDIDATES: one agent found them and nothing verified them, " +
     "while the finding's `where` and `evidence` were confirmed by two independent verifiers. Weigh them " +
@@ -2130,8 +2137,8 @@ function sitesBlock(findings) {
       withSites.map((f) => ({ finding: f.title, sites: f.potentiallyRelatedSites })),
       null,
       2,
-    )
-  );
+    ),
+  };
 }
 
 // F6, at the point it can still change the outcome. The DESIGNER gets this, not
@@ -2171,6 +2178,7 @@ function siteHistoryBlock(findings, round) {
 }
 
 function fixPlanPrompt(confirmed, round) {
+  const SB_PLAN = sitesBlock(confirmed);
   return (
     "Split one round's confirmed review findings into groups that will be fixed together.\n\n" +
     READ_ONLY +
@@ -2196,8 +2204,9 @@ function fixPlanPrompt(confirmed, round) {
     "any split you could make.\n\n" +
     "THE CONFIRMED FINDINGS, indexed from 0:\n" +
     JSON.stringify(confirmed.map((f, i) => ({ i, title: f.title, where: f.where, area: f.area, kind: f.kind })), null, 2) +
-    sitesBlock(confirmed) +
-    (sitesBlock(confirmed)
+    SB_PLAN.capped +
+    SB_PLAN.sites +
+    (SB_PLAN.sites
       ? "\n\nUSE THE SITES FOR ONE THING: OVERLAP. Two findings whose potentially related sites intersect, or " +
     "where one finding's candidate site is another finding's confirmed location, are about the same " +
     "passage and belong in the SAME GROUP. Splitting them produces two designs for one piece of text, and " +
@@ -2210,6 +2219,7 @@ function fixPlanPrompt(confirmed, round) {
 
 function fixDesignPrompt(group, confirmed, round) {
   const picked = (group.findings || []).map((i) => confirmed[i]).filter(Boolean);
+  const SB_DESIGN = sitesBlock(picked);
   const forced =
     fixDesignDepth === "shallow"
       ? "\n\nTHE CALLER HAS FORCED SHALLOW MODE. Treat every finding as trivial: apply the reviewer's " +
@@ -2264,8 +2274,9 @@ function fixDesignPrompt(group, confirmed, round) {
     "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
     "THE FINDINGS IN THIS GROUP:\n" +
     JSON.stringify(picked, null, 2) +
-    sitesBlock(picked) +
-    (sitesBlock(picked)
+    SB_DESIGN.capped +
+    SB_DESIGN.sites +
+    (SB_DESIGN.sites
       ? "\n\nHOW TO THINK ABOUT THEM. ADJUDICATE each site into exactly one of three dispositions and " +
         "record it in siteDispositions. The fixer does only what you decide here, so a site you leave out " +
         "is a site it has no instruction about.\n" +
@@ -2293,6 +2304,7 @@ function fixDesignPrompt(group, confirmed, round) {
 }
 
 function fixPrompt(confirmed, round, strikes, group, design, earlier) {
+  const SB_FIX = sitesBlock(confirmed);
   // What the groups before this one in THIS round actually did. Costs no agent
   // -- the run already has it -- and it is the one thing the design stage could
   // not know, because it ran before any edit landed. A design written against
@@ -2306,6 +2318,17 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "so and do not make it twice.\n" +
         earlier.map((sx, i) => i + 1 + ". " + sx).join("\n")
       : "";
+  // The strike table. It reached this function as a parameter and was never
+  // referenced, so the one consumer that could actually change an edit read
+  // nothing -- while the array feeding it was, separately, never populated at
+  // all. Both halves are now live.
+  const strikeBlock = strikes
+    ? "\n\nMECHANISMS THIS LOOP INVENTED THAT KEEP FAILING. Each line is something a fixer added to close " +
+      "a finding, and the number of later findings it has since caused. A mechanism on its second or third " +
+      "strike is not repaired one facet at a time: specify it whole in this edit, or delete it and close " +
+      "the finding another way. Adding a qualifier to it is what produced the strike you are reading.\n" +
+      strikes
+    : "";
   const designBlock = design
     ? "\n\nTHE DESIGN FOR THIS GROUP. A separate agent established ground truth in the repository and " +
       "decided how each finding should be closed, before anything was edited. APPLY IT. Your scope for " +
@@ -2355,7 +2378,12 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "splits or resequences a staged deliverable, record it as a `DEFERRED [" + P.checklist + "]` line " +
         "in your log shard naming the step that is now wrong and what is true instead. That pass closes it.\n"
       : "- KEEP THE IMPLEMENTATION CHECKLIST CURRENT. It is maintained as the proposal changes rather than derived at the end. Any edit that adds, removes, merges, splits, or resequences a staged deliverable changes the checklist in the same edit: add or remove its step, correct the deliverable ids a step names, and correct any Depends-on that the change reorders. Every staged deliverable appears in exactly one step and no step names one that does not exist. Leave every box unchecked.\n") +
-    "- KEEP THE SUMMARY TRUE. If a fix changes a top-level change, closes or reopens a decision the Summary lists as fixed, or creates a trap an implementor would fall into, update the Summary in the same edit. It is the one section every implementor agent reads, so a stale line there misleads every one of them.\n" +
+    (LOOP && LOOP.name === "spec"
+      ? "- KEEP THE SUMMARY'S DELIVERABLE INDEX TRUE, and correct any statement there your own edit has " +
+        "falsified. Do NOT write a newly created trap into its watch-out section: your HARD CONSTRAINT " +
+        "bars it, and that section growing into an errata list of fixes no lane owned is the failure the " +
+        "constraint exists to prevent. A trap that belongs to the other lane is a `DEFERRED` line.\n"
+      : "- KEEP THE SUMMARY TRUE. If a fix changes a top-level change, closes or reopens a decision the Summary lists as fixed, or creates a trap an implementor would fall into, update the Summary in the same edit. It is the one section every implementor agent reads, so a stale line there misleads every one of them.\n") +
     "- You may leave a detail to the implementor rather than specifying it, and doing so is often better than adding text that two sections then have to keep agreeing about. " + FORMAT_BLANKS +
     '- Append a new subsection to the "Resolved in adversarial review" section of ' +
     (LOOP && LOOP.name === "spec" ? P.spec : P.nonSpec) +
@@ -2367,7 +2395,9 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
     JSON.stringify(confirmed, null, 2) +
     designBlock +
-    (sitesBlock(confirmed)
+    strikeBlock +
+    SB_FIX.capped +
+    (SB_FIX.sites
       ? "\n\nTHE SITES YOU EDIT ARE FIXED BY THE DESIGN. The finding's own location is your mandate and " +
         "you fix it. Beyond that, a pass searched for other text this fix would falsify and the design " +
         "adjudicated what it found in `siteDispositions`. A finding's named sites are a starting set " +
@@ -2385,7 +2415,7 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "out something your edit plainly breaks — say so in your summary and say what you did. Do not " +
         "deviate silently."
       : "") +
-    sitesBlock(confirmed) +
+    SB_FIX.sites +
     earlierBlock +
     logBlock("fix-" + (group ? group.id : "all"), round) +
     "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
@@ -2518,10 +2548,16 @@ function siteKey(where) {
     // `SPEC-7` both to the generic `spec`, so two unrelated deliverables read as
     // the same site.
     .replace(/[^a-z0-9.\u00a7-]+/g, " ")
-    .replace(/(^|\s)-+|-+(\s|$)/g, " ")
+    // Trim -, . and the section sign from token EDGES. Left on, they made the
+    // same location two sites: `SPEC-2.` never matched `SPEC-2`, and `§4.6.1`
+    // never matched `section 4.6.1`.
+    .replace(/(^|\s)[-.\u00a7]+|[-.\u00a7]+(\s|$)/g, " ")
     .replace(/\b(staged|the|a|an|in|at|of|section|sec|para|paragraph|bullet|and|for|its|it)\b/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 1);
+    // A bare digit is kept: dropping single characters made `step 2` and
+    // `step 8` the same site while `step 12` and `step 13` correctly differed,
+    // so the matcher changed behaviour at the 9/10 boundary.
+    .filter((t) => t.length > 1 || /[0-9]/.test(t));
   return { file, tokens: [...new Set(tokens)] };
 }
 
@@ -2532,6 +2568,9 @@ function siteKey(where) {
 function sameSite(a, b) {
   if (!a || !b) return false;
   if (a.file && b.file && a.file !== b.file) return false;
+  // One side naming a file and the other not is weaker evidence, so it needs
+  // the smaller token set fully contained rather than merely overlapping.
+  const fileKnown = !!a.file && !!b.file;
   if (!a.tokens.length || !b.tokens.length) return false;
   const shared = a.tokens.filter((t) => b.tokens.includes(t));
   if (!shared.length) return false;
@@ -2542,6 +2581,7 @@ function sameSite(a, b) {
   // shared token; the file check and the stopword filter are what keep that from
   // matching broadly.
   const smaller = Math.min(a.tokens.length, b.tokens.length);
+  if (!fileKnown) return shared.length === smaller;
   return shared.length >= Math.max(1, Math.ceil(smaller * 0.6));
 }
 
@@ -2692,8 +2732,8 @@ function churningAreas(rnd) {
   // A mechanism the fixer invented and has since had to repair repeatedly is
   // churning by definition, whatever its area's totals say.
   for (const m of introducedMechanisms) {
-    if (m.strikes < churnStrikes) continue;
-    if (out.some((o) => o.area === m.name.toLowerCase())) continue;
+    if (m.loop !== (LOOP ? LOOP.name : m.loop) || m.strikes < churnStrikes) continue;
+    if (out.some((o) => o.area === String(m.name).toLowerCase())) continue;
     out.push({
       area: m.name,
       findings: m.strikes,
@@ -2860,7 +2900,8 @@ async function runRedesign(areas, rnd, why) {
   for (const a of areas) {
     areaLog.delete(a.area);
     for (const m of introducedMechanisms) {
-      if (m.name.toLowerCase() === a.area.toLowerCase()) m.strikes = 0;
+      if (m.loop !== LOOP.name) continue;
+      if (String(m.name).toLowerCase() === String(a.area).toLowerCase()) m.strikes = 0;
     }
   }
   redesignHistory.push({
@@ -3163,7 +3204,7 @@ async function judgePanel(rnd, verdict, growth, churn) {
     "corrected text this loop itself wrote:\n" +
     JSON.stringify(Object.fromEntries([...areaLog].map(([a, es]) => [a, es])), null, 2).slice(0, 10000) +
     "\n\nMECHANISMS THIS LOOP'S FIXER INVENTED, and how many later findings each caused:\n" +
-    JSON.stringify(introducedMechanisms, null, 2) +
+    JSON.stringify(introducedMechanisms.filter((m) => m.loop === LOOP.name), null, 2) +
     "\n\nROUND HISTORY:\n" +
     JSON.stringify(
       history.map((h) => ({ loop: h.loop, round: h.round, sweep: h.sweep, confirmed: h.confirmed, newMechanisms: h.newMechanisms })),
@@ -3317,7 +3358,7 @@ async function introspect(rnd, reason, churn, byCadence) {
         2,
       ).slice(0, 12000) +
       "\n\nMECHANISMS THIS LOOP'S OWN FIXER INVENTED, and how many later findings each has caused:\n" +
-      JSON.stringify(introducedMechanisms, null, 2) +
+      JSON.stringify(introducedMechanisms.filter((m) => m.loop === LOOP.name), null, 2) +
       (standingRaises > 0
         ? "\n\nTHE REVIEW LOG'S STANDING CONTEXT HAS OUTGROWN ITS TARGET " + standingRaises + " TIME(S). " +
           "Each raise is a compaction pass that could not reach its target without dropping an OPEN, an " +
@@ -3576,7 +3617,7 @@ async function compactLog(round, standingLines, target) {
       "that is now false, and what is true instead: reduced to a headline it cannot be closed, and the " +
       "correction is lost for good. A `DEFERRED` that a later `CORRECTS` says was applied is retired like " +
       "any other closed entry.\n\n" +
-      "6. STRUCTURE `## Standing context` UNDER THESE THREE HEADINGS, in this order, and keep them:\n" +
+      "6. STRUCTURE `## Standing context` UNDER THESE FOUR HEADINGS, in this order, and keep all four:\n" +
       "   `### Settled` — every `FACT` and `DECISION`. ONE LINE EACH. This is a lookup table, not prose.\n" +
       "   `### Traps` — every `WATCHOUT` and `MISTAKE`. Up to four lines each, because a trap the reader " +
       "cannot recognise from the entry is a trap they walk into anyway. No cap on how many.\n" +
@@ -4008,7 +4049,6 @@ async function runReviewLoop(cfg) {
       // still finding". Leaving the previous round's titles standing reported
       // findings that had since been fixed as the reason the run stopped.
       LOOP.lastFindings = [];
-      LOOP.lastFindingsRound = round;
       // Nobody found anything, so nobody has a survivor: every lens that genuinely
       // ran retires.
       applyRetirement(lenses, lensResults, new Set(), round, "found nothing");
@@ -4129,7 +4169,7 @@ async function runReviewLoop(cfg) {
     // the next fixer sees reflects which of its own inventions keep failing.
     const creditStrikes = (fs) => {
       for (const m of introducedMechanisms) {
-        if (m.round >= round) continue;
+        if (m.loop !== LOOP.name || m.round >= round) continue;
         const needle = String(m.name).toLowerCase();
         if (needle.length < 4) continue;
         for (const f of fs) {
@@ -4151,7 +4191,6 @@ async function runReviewLoop(cfg) {
     // What the loop was still finding when it stopped. A budget-exhausted stop
     // that names nothing tells the operator only that it stopped.
     LOOP.lastFindings = confirmed.map((f) => f.title);
-    LOOP.lastFindingsRound = round;
     live
       .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
       .forEach((v) => {
@@ -4255,7 +4294,7 @@ async function runReviewLoop(cfg) {
     // information and has never used it, so a fixer repairing a mechanism for the
     // third time has been doing so blind.
     const strikeLines = introducedMechanisms
-      .filter((m) => m.strikes > 0)
+      .filter((m) => m.loop === LOOP.name && m.strikes > 0)
       .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
       .join("\n");
     const preFixSnap = await snapshot("r" + round + "-prefix");
@@ -4450,7 +4489,20 @@ async function runReviewLoop(cfg) {
         // consumer of it -- creditStrikes, the fixer's strike lines, the churn
         // detector's mechanism arm, and the mechanism block in every
         // introspection and judge prompt -- had always been inert.
-        if (m && m.name) introducedMechanisms.push({ name: m.name, round, why: m.why || "", strikes: 0 });
+        // Loop-scoped for the same reason siteHistory is: `round` restarts at 1
+        // in each loop and this array is module-level, so an unscoped entry
+        // from spec round 7 starts accruing strikes at non-spec round 8, from
+        // findings that have nothing to do with it, under a prompt header
+        // saying "MECHANISMS THIS LOOP'S OWN FIXER INVENTED".
+        if (m && m.name) {
+          introducedMechanisms.push({
+            name: String(m.name),
+            loop: LOOP.name,
+            round,
+            why: m.why || "",
+            strikes: 0,
+          });
+        }
       }
       for (const e of out.escalated || []) escalatedAll.push(e);
       for (const d of out.designRejected || []) designRejected.push(g.id + ": " + d);
@@ -4893,7 +4945,9 @@ if (specLoop && !stoppedByIntrospection) {
       "files it may not edit, and records each as a `DEFERRED [file]:` line in " + P.log + ". Grep that " +
       "log for `DEFERRED` and take every one that nothing has closed.\n" +
       "   CLOSE the ones that are repairs: a statement already written in " + P.nonSpec + " or in the " +
-      "checklist that the spec staging has made false. Make the edit in the file the entry names, then " +
+      "checklist that the spec staging has made false. Make the edit in the file the entry names, PROVIDED " +
+      "that file is one of the four you may edit; an entry naming any other file is carried forward like " +
+      "the ones below rather than acted on. Then " +
       "append a `CORRECTS [id]` line to " + P.log + " naming the entry you closed and what you did.\n" +
       "   CARRY FORWARD the ones that are not. A correction that would require AUTHORING a staged code, " +
       "schema, chart, docs or test change that does not exist yet is not yours to make, however plainly " +
