@@ -376,6 +376,11 @@ function logBlock(label, round) {
     "  MISTAKE: what an earlier round got wrong, and what it cost\n" +
     "  UNVERIFIED: a claim nobody has checked, and who should\n" +
     "  OPEN: a question for a later round or a human\n" +
+    "  DEFERRED [file]: a correction you DERIVED but may not land, because its remedy is in a file this " +
+    "loop may not edit — name the file, the claim that is now false, and what is true instead. This is " +
+    "not an OPEN: an OPEN is a question nobody has answered, and a DEFERRED is an answer nobody has " +
+    "applied. The pass between the loops closes these, so one written vaguely is one that cannot be " +
+    "closed.\n" +
     "  CORRECTS [id]: a named earlier entry is wrong or misleading, and what is true instead\n" +
     "  USEFUL [id]: a named earlier entry saved you real work\n" +
     "Write nothing you would not want read aloud to the next twelve agents. An empty shard is fine when " +
@@ -4640,7 +4645,12 @@ const SPEC_EDITABLE =
   "  " + P.spec + " — the staged spec edits, which is what this loop converges\n" +
   PROBLEM_STATEMENT_RULE +
   "  " + P.summary + " — because its deliverable index resolves the SPEC ids this loop adds and removes, " +
-  "and a loop that may not touch it leaves its own edits mis-indexed until the next one\n" +
+  "and a loop that may not touch it leaves its own edits mis-indexed until the next one. THE INDEX, AND " +
+  "STATEMENTS YOUR OWN EDITS FALSIFY, AND NOTHING ELSE. Do not accumulate corrections owed to other " +
+  "files as prose here: a measured run grew a nine-hundred-word errata list in this file's watch-out " +
+  "section, promising fixes no lane owned, because this was the only surface it could write. It no " +
+  "longer is. Repair what the rule below lets you repair, and record the rest as a `DEFERRED` line in " +
+  "your log shard, where the pass between the loops will close it.\n" +
   NON_SPEC_CONSEQUENCE_RULE +
   "  " + P.log + " — your log shard\n" +
   "Every other file in the proposal, including the implementation checklist, and every file outside it, " +
@@ -4735,8 +4745,9 @@ if (specLoop && !stoppedByIntrospection) {
   await robustAgent(
     "Reconcile a proposal's deliverable index and implementation checklist against the staged spec " +
       "edits.\n\n" +
-      "HARD CONSTRAINT: the only files you may edit are " + P.summary + " and " + P.checklist + ". Change " +
-      "nothing else, and change nothing in them beyond what this pass names.\n\n" +
+      "HARD CONSTRAINT: the only files you may edit are " + P.summary + ", " + P.checklist + " and " +
+      P.nonSpec + ", and " + P.log + " to record what you closed. Change nothing else, and change nothing " +
+      "in them beyond what this pass names.\n\n" +
       (specLoop.converged
         ? "The spec staging in " + P.spec + " has converged. It was reviewed for several rounds and " +
           "deliverables were added, removed, and renumbered along the way, so the index and the checklist " +
@@ -4753,8 +4764,23 @@ if (specLoop && !stoppedByIntrospection) {
       "2. Write the checklist's SPEC-lane steps against the current SPEC ids, as a leading block, one lane " +
       "per step, in the order the spec edits must be applied.\n" +
       "3. Reconcile the existing non-spec steps' `Depends on:` against those step ids.\n\n" +
-      "This is not a review round: do not reopen a decision, do not edit a staged change, and do not " +
-      "improve any wording. " + FORMAT_CHECKLIST +
+      "4. DISCHARGE THE DEFERRED CORRECTIONS. The spec loop derives corrections whose remedy lands in " +
+      "files it may not edit, and records each as a `DEFERRED [file]:` line in " + P.log + ". Grep that " +
+      "log for `DEFERRED` and take every one that nothing has closed.\n" +
+      "   CLOSE the ones that are repairs: a statement already written in " + P.nonSpec + " or in the " +
+      "checklist that the spec staging has made false. Make the edit in the file the entry names, then " +
+      "append a `CORRECTS [id]` line to " + P.log + " naming the entry you closed and what you did.\n" +
+      "   CARRY FORWARD the ones that are not. A correction that would require AUTHORING a staged code, " +
+      "schema, chart, docs or test change that does not exist yet is not yours to make, however plainly " +
+      "the spec staging implies it: writing it here would put content into the proposal that no non-spec " +
+      "lens has ever read. Record each as one `OPEN` line in " + P.log + " stating what remains and which " +
+      "file it lands in, so the next loop's first round reads it.\n" +
+      "   These are corrections the spec loop DERIVED and could not apply. On a measured run they " +
+      "accumulated for four and a half hours as an errata list promising fixes that no lane owned, so an " +
+      "entry left unclosed here is one left unclosed for good.\n\n" +
+      "Steps 1 through 3 are not a review round: do not reopen a decision, do not edit a staged change, " +
+      "and do not improve any wording. Step 4 is the one place this pass changes what the proposal says, " +
+      "and only to apply a correction the spec loop already derived. " + FORMAT_CHECKLIST +
       promptFor("handoff") +
       "\nFollow " + repo + "/.claude/rules/doc-style.md.",
     { label: "spec-nonspec-handoff", phase: "Review" },

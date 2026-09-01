@@ -313,10 +313,10 @@ t.section("B8. spec converges before non-spec begins");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
   const h = calls.find((c) => c.label === "spec-nonspec-handoff");
-  t.check("the handoff may edit only the summary and the checklist", /only files you may edit are .*summary\.md and .*implementation-checklist\.md/.test(h.prompt));
+  t.check("the handoff's write set is closed and named", /only files you may edit are .*summary\.md, .*implementation-checklist\.md and .*non-spec-changes\.md/.test(h.prompt));
   t.check("it rebuilds the deliverable index", /Rebuild `## Deliverable index`/.test(h.prompt));
   t.check("it writes the spec-lane steps as a leading block", /leading block/.test(h.prompt));
-  t.check("and is told it is not a review round", /This is not a review round/.test(h.prompt));
+  t.check("and its reconciliation steps are not a review round", /Steps 1 through 3 are not a review round/.test(h.prompt));
 }
 
 t.section("B9. each loop tells its lenses and its fixer what it owns");
@@ -1232,6 +1232,34 @@ t.section("X13. the spec fixer repairs consequential drift in the non-spec stagi
   t.check("the checklist stays out of bounds", /including the implementation checklist, and every file outside it,\s+is out of bounds/.test(specFix.prompt));
   const specLens = calls.find((c) => /^r1:review:/.test(c.label) && c.prompt.includes("STAGED SPEC EDITS"));
   t.check("but a lens is told not to file it as a finding", /Do not file the non-spec statement as a separate finding/.test(specLens.prompt));
+}
+
+// ---------------------------------------------------------------------------
+// F8: a correction the spec loop derives but may not apply has an owner.
+// ---------------------------------------------------------------------------
+
+t.section("X14. DEFERRED is a distinct tag, and the summary is not the errata surface");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, specNeverClean());
+  const specFix = calls.find((c) => /:fix:/.test(c.label) && c.prompt.includes("spec convergence loop"));
+  t.check("the tag exists", /DEFERRED \[file\]: a correction you DERIVED but may not land/.test(specFix.prompt));
+  t.check("and is distinguished from OPEN", /an OPEN is a question nobody has answered, and a DEFERRED is an answer nobody has\s+applied/.test(specFix.prompt));
+  t.check("the summary grant is narrowed", /THE INDEX, AND\s+STATEMENTS YOUR OWN EDITS FALSIFY, AND NOTHING ELSE/.test(specFix.prompt));
+  t.check("with the evidence for why", /nine-hundred-word errata list/.test(specFix.prompt));
+}
+
+t.section("X15. the handoff discharges them, and may not author to do it");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const h = calls.find((c) => c.label === "spec-nonspec-handoff");
+  t.check("it has a fourth step", /4\. DISCHARGE THE DEFERRED CORRECTIONS/.test(h.prompt));
+  t.check("it may now edit the non-spec staging", /non-spec-changes\.md, and .*review-log\.md to record what you closed/.test(h.prompt));
+  t.check("it closes repairs with a CORRECTS", /append a `CORRECTS \[id\]` line/.test(h.prompt));
+  t.check("it may NOT author what does not exist yet", /would require AUTHORING a staged code/.test(h.prompt));
+  t.check("because no non-spec lens has read it", /no non-spec\s+lens has ever read/.test(h.prompt));
+  t.check("what it cannot close becomes an OPEN the next loop reads", /so the next loop's first round reads it/.test(h.prompt));
+  t.check("steps 1-3 stay a reconciliation", /Steps 1 through 3 are not a review round/.test(h.prompt));
+  t.check("and step 4 is named as the exception", /Step 4 is the one place this pass changes what the proposal says/.test(h.prompt));
 }
 
 t.done();
