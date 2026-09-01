@@ -58,7 +58,7 @@ echo; echo "T11b. compaction fires on the STANDING CONTEXT, which is the only se
 OUT="$(run spec 6 --compact-at 100000 --standing-trigger 100000)"
 contains "not due below both thresholds" "$OUT" '"compactionDue":false'
 contains "standing lines are reported" "$OUT" '"standingLines":'
-OUT="$(run spec 7 --compact-at 100000 --standing-trigger 1)"
+OUT="$(run spec 7 --compact-at 100000 --standing-target 0 --standing-trigger 1)"
 contains "due on standing-context size" "$OUT" '"compactionDue":true'
 # A long ledger alone does NOT trigger: nothing but the compactor reads it, so
 # firing an expensive pass on its length protects against a cost that does not
@@ -86,8 +86,9 @@ contains "the target is reported" "$OUT" '"standingTarget":'
 contains "the trigger is reported separately" "$OUT" '"standingTrigger":'
 contains "no raise before a compaction has run" "$OUT" '"targetRaisedNow":false'
 contains "compaction is due over the trigger" "$OUT" '"compactionDue":true'
-# The next call stands for "a compaction ran and did not get under the target".
-OUT="$(run spec 21 --standing-target 5 --standing-trigger 10)"
+# --compacted 1 is the caller saying a pass actually RAN. The script can only see
+# that it ASKED for one, which is a different claim.
+OUT="$(run spec 21 --standing-target 5 --standing-trigger 10 --compacted 1)"
 contains "the target is raised" "$OUT" '"targetRaisedNow":true'
 contains "and the raise is counted" "$OUT" '"targetRaises":1'
 # Having backed off, the run is no longer immediately due again: that is the
@@ -95,6 +96,78 @@ contains "and the raise is counted" "$OUT" '"targetRaises":1'
 OUT="$(run spec 22 --standing-target 5 --standing-trigger 10)"
 contains "and it is no longer due every round" "$OUT" '"compactionDue":false'
 contains "the raise count does not climb without cause" "$OUT" '"targetRaises":1'
+
+
+echo; echo "T11f. the backoff does not act on claims it cannot support"
+STATEDIR="$REPO/scratchpad/cp-state/$TAG"
+# A pass REQUESTED but never RUN is not a failed pass. A run killed between the
+# two is routine, and treating them alike raised the target past the current
+# size and permanently excused the one section that needed compacting.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+OUT="$(run spec 30 --standing-target 5 --standing-trigger 10)"
+contains "a pass is requested" "$OUT" '"compactionDue":true'
+OUT="$(run spec 31 --standing-target 5 --standing-trigger 10)"
+contains "no raise when no pass ran" "$OUT" '"targetRaisedNow":false'
+contains "and the section is still due" "$OUT" '"compactionDue":true'
+
+# The marker must CLEAR once consumed, or the target raises every round forever.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+OUT="$(run spec 40 --standing-target 5 --standing-trigger 10)"
+OUT="$(run spec 41 --standing-target 5 --standing-trigger 10 --compacted 1)"
+contains "the first failed pass raises once" "$OUT" '"targetRaises":1'
+OUT="$(run spec 42 --standing-target 5 --standing-trigger 10 --compacted 1)"
+contains "a consumed marker does not raise again" "$OUT" '"targetRaisedNow":false'
+contains "and the count stays put" "$OUT" '"targetRaises":1'
+
+# A ledger-backstop pass says nothing about the standing context, so its outcome
+# must not ratchet the standing target nor report a raise into the introspection
+# prompt every reviewing agent reads.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+# A ledger with content and a standing context well UNDER its trigger, so only
+# the backstop can be what fires.
+{
+  printf '# Review log\n\n## Standing context\n- FACT: short\n\n## Ledger\n'
+  for i in $(seq 1 5); do printf -- "- entry %s\n" "$i"; done
+  printf '\n## Retired\nold\n'
+} > "$LOG"
+OUT="$(run spec 43 --standing-target 200 --standing-trigger 320 --compact-at 1)"
+contains "the ledger backstop fires" "$OUT" '"compactionDue":true'
+OUT="$(run spec 44 --standing-target 200 --standing-trigger 320 --compact-at 1 --compacted 1)"
+contains "but it does not raise the standing target" "$OUT" '"targetRaisedNow":false'
+contains "nor the raise count" "$OUT" '"targetRaises":0'
+contains "and the target is untouched" "$OUT" '"standingTarget":200'
+
+echo; echo "T11g. corrupt state fails safe instead of wedging the run"
+# cat of an EMPTY file SUCCEEDS, so a `|| echo <default>` fallback never fires.
+# An empty trigger made every comparison error to false: compaction never became
+# due again at any size, the file never healed, and the script still exited 0.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+: > "$STATEDIR/standing-trigger"
+: > "$STATEDIR/standing-target"
+printf 'not-a-number\n' > "$STATEDIR/standing-raises"
+if OUT="$(run spec 45 --standing-target 5 --standing-trigger 10)"; then rc=0; else rc=$?; fi
+check "an empty state file does not wedge the round" "0" "$rc"
+contains "the default is used instead" "$OUT" '"standingTrigger":10'
+contains "and junk does not corrupt the count" "$OUT" '"targetRaises":0'
+
+echo; echo "T11h. a trigger at or below the target is refused, not obeyed"
+# Independent knobs, so raising only the target is a plausible operator move --
+# and it used to reinstate the every-round latch this section exists to remove.
+OUT="$(run spec 46 --standing-target 400 --standing-trigger 320 2>/dev/null)"
+contains "the trigger is lifted above the target" "$OUT" '"standingTrigger":520'
+contains "rather than firing every round" "$OUT" '"compactionDue":false'
+
+echo; echo "T11i. a shard is never deleted without being merged"
+# The guard used to be looser than the splice, so a heading with trailing text
+# passed the guard, matched nothing, and the shard was deleted as "merged" --
+# destroying a reviewing agent's whole findings block and reporting success.
+printf '# Review log\n\n## Standing context\n\n## Ledger (open)\n\n## Retired\n' > "$LOG"
+printf -- '- FACT: precious\n' > "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md"
+if OUT="$(run spec 50 2>/dev/null)"; then rc=0; else rc=$?; fi
+check "a malformed Ledger heading fails the round" "1" "$rc"
+check "and the shard survives" "yes" "$([ -f "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md" ] && echo yes || echo no)"
+rm -f "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md"
+fresh_log
 
 echo; echo "T11c. the snapshot for the next round is taken, and hunks are counted"
 OUT="$(run spec 9)"

@@ -686,7 +686,8 @@ t.section("B20. compaction fires when the boundary says it is due, and not other
   // Compaction deliberately does NOT check the tree any more: doing so turned a
   // text pass into a mini-review that grepped pkg/ and read three spec files.
   t.check("contradictions are resolved by recency, not by checking the tree", /keep\s+the NEWER one/.test(c.prompt));
-  t.check("OPEN and UNVERIFIED are never dropped", /NEVER DROP AN `OPEN` OR AN `UNVERIFIED`/.test(c.prompt));
+  t.check("OPEN, UNVERIFIED and DEFERRED are never dropped", /NEVER DROP AN `OPEN`, AN `UNVERIFIED`, OR A `DEFERRED`/.test(c.prompt));
+  t.check("and DEFERRED is kept whole, because the handoff must apply it", /### Deferred/.test(c.prompt) && /cannot apply a headline/.test(c.prompt));
   t.check("it must not act on what the log says", /do not fix a\s+defect it names/.test(c.prompt));
 }
 
@@ -1054,11 +1055,31 @@ t.section("X1. expansion runs once per CONFIRMED finding, on sonnet, before grou
 
 t.section("X2. a refuted finding is never expanded");
 {
+  // Refuting EVERY finding empties the round, which short-circuits before
+  // expansion is reached -- so an all-refuted fixture proves nothing. Only a
+  // MIXED round distinguishes "expands the confirmed ones" from "expands
+  // everything the dedup produced".
+  const mixed = fixStubs(3, {
+    "*:expand:*": sites([SITE_P]),
+    "*:verify-material": ({ prompt }) =>
+      /"title": "T1"/.test(prompt)
+        ? { confirmed: false, reason: "not material" }
+        : { confirmed: true, reason: "material" },
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1 }]),
+  });
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, mixed);
+  t.check("the round still runs", !never(calls, "r1:fix:"));
+  t.check("only the confirmed findings are expanded", matching(calls, "r1:expand:").length === 2,
+    String(matching(calls, "r1:expand:").length));
+  const expanded = matching(calls, "r1:expand:").map((c) => c.prompt).join("\n");
+  t.check("and the refuted one is not among them", !/"title": "T1"/.test(expanded));
+}
+{
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
     "*:verify-material": { confirmed: false, reason: "not material" },
     "*:expand:*": sites([SITE_P]),
   }));
-  t.check("no expansion ran", never(calls, "r1:expand:"));
+  t.check("an all-refuted round expands nothing", never(calls, "r1:expand:"));
 }
 
 t.section("X3. a dead expansion leaves the finding intact and the round proceeds");
@@ -1086,6 +1107,10 @@ t.section("X4. sites reach the planner, the designer and the fixer, framed as ca
   t.check("and pressure in both directions", /PRESSURE RUNS BOTH WAYS/.test(design.prompt));
   t.check("everyone is told they are unverified", /They are CANDIDATES/.test(design.prompt));
   t.check("the fixer is told the design decides", /THE SITES YOU EDIT ARE FIXED BY THE DESIGN/.test(fixer.prompt));
+  // The instruction and the payload are separate expressions, so the fixer could
+  // be told to "follow the adjudication" with no sites in its prompt at all.
+  t.check("and is actually GIVEN the sites, not just told about them", /POTENTIALLY RELATED SITES/.test(fixer.prompt));
+  t.check("with the site data itself", /"p\.md"/.test(fixer.prompt) && /"spec\/10\.md"/.test(fixer.prompt));
   t.check("and to re-read before editing", /RE-READ BEFORE YOU EDIT/.test(fixer.prompt));
   t.check("tree sites stay out of bounds for the fixer", /is NOT yours to edit/.test(fixer.prompt));
   t.check("proposal and tree sites stay separate", /"proposal":/.test(design.prompt) && /"tree":/.test(design.prompt));
@@ -1104,8 +1129,12 @@ t.section("X5. only in-scope sites are checked by the post-fix review");
   }));
   const pf = calls.find((c) => c.label === "r1:post-fix-review");
   t.check("the in-scope site is checked", /HANDED TO THE FIXER AS IN SCOPE/.test(pf.prompt));
-  t.check("and named", /"p\.md"/.test(pf.prompt));
-  t.check("the separate-finding site is not", !/"q\.md"/.test(pf.prompt));
+  // `p.md` appears twice in this prompt -- once from the in-scope list and once
+  // inside the finding's own site JSON -- so its mere presence proves nothing.
+  // The in-scope block is what must carry it.
+  const inScopeBlock = pf.prompt.split("HANDED TO THE FIXER AS IN SCOPE")[1] || "";
+  t.check("and named in the in-scope block itself", /"p\.md"/.test(inScopeBlock));
+  t.check("the separate-finding site is not", !/"q\.md"/.test(inScopeBlock));
   t.check("the open sweep is still demanded", /Then do the open-ended sweep anyway/.test(pf.prompt));
   t.check("adoption is logged", logs.some((l) => /1 related site\(s\) adopted/.test(l)));
 }
@@ -1260,6 +1289,54 @@ t.section("X15. the handoff discharges them, and may not author to do it");
   t.check("what it cannot close becomes an OPEN the next loop reads", /so the next loop's first round reads it/.test(h.prompt));
   t.check("steps 1-3 stay a reconciliation", /Steps 1 through 3 are not a review round/.test(h.prompt));
   t.check("and step 4 is named as the exception", /Step 4 is the one place this pass changes what the proposal says/.test(h.prompt));
+}
+
+t.section("X16. two locations are the same site only when they really are");
+{
+  const F2 = (n, where) => ({ ...F(n), where });
+  const run = async (w1, w2) => {
+    const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+      "*:review:*": ({ label }) => /^r1:/.test(label)
+        ? { coverage: "c", findings: [F2(1, w1)] }
+        : /^r2:/.test(label) ? { coverage: "c", findings: [F2(2, w2)] } : { coverage: "c", findings: [] },
+      "*:dedup": ({ label }) => /^r1:/.test(label)
+        ? { findings: [{ ...F2(1, w1), lenses: ["citations"] }] }
+        : { findings: [{ ...F2(2, w2), lenses: ["citations"] }] },
+      "*:expand:*": sites(),
+    }));
+    const d = matching(calls, "r2:fix-design:")[0];
+    return d ? /REWRITTEN BEFORE/.test(d.prompt) : false;
+  };
+  // The file name of one change file is a SUBSTRING of the other's, which a
+  // containment match read as the same site.
+  t.check("the two change files are not one site",
+    !(await run("spec-changes.md:120", "non-spec-changes.md, Staged code changes")));
+  // A file name with no section is every finding in that file, not a location.
+  t.check("a bare file name is not a location",
+    !(await run("spec-changes.md:120", "spec-changes.md:412")));
+  t.check("two deliverables are not one site", !(await run("SPEC-3", "SPEC-7")));
+  t.check("but the same passage across rounds is", await run("staged 10.1.8 step 1", "10.1.8 step 1, line 213"));
+}
+
+t.section("X17. the status file is written on a run that did NOT converge");
+{
+  const { calls } = await runWorkflow(WF, { ...REVIEW_ARGS, maxSpecReviewRounds: 2 }, specNeverClean());
+  t.check("the run did not converge", !never(calls, "spec-nonspec-handoff"));
+  t.check("the status is still recorded", !never(calls, "status:record-run"));
+  t.check("but it is not marked Reviewed", never(calls, "status:set-reviewed"));
+  const rec = calls.find((c) => c.label === "status:record-run");
+  t.check("and it is told the run did not converge", /DID NOT CONVERGE/.test(rec.prompt));
+}
+
+t.section("X18. the compaction target comes from the boundary, not the default");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
+  }));
+  const c = calls.find((x) => /:compact$/.test(x.label));
+  t.check("a compaction ran", !!c);
+  t.check("it is asked to reach the BACKED-OFF target", /THE TARGET IS 400 LINES/.test(c.prompt));
+  t.check("not the starting default", !/THE TARGET IS 200 LINES/.test(c.prompt));
 }
 
 t.done();
