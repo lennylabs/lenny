@@ -2050,7 +2050,14 @@ const EXPAND_PRIORITY = [
 async function expandSites(confirmedFindings, round) {
   if (skipExpansion || confirmedFindings.length === 0) return;
   const order = confirmedFindings
-    .map((f, i) => ({ i, rank: Math.max(0, EXPAND_PRIORITY.indexOf(f.kind)) }))
+    // An unrecognised or missing `kind` sorts LAST. `indexOf` returns -1, and
+    // clamping that to 0 gave it the rank of "contradiction" -- the TOP of the
+    // list -- so a finding whose kind the dedup agent garbled displaced the
+    // findings most likely to have parallels.
+    .map((f, i) => {
+      const idx = EXPAND_PRIORITY.indexOf(f.kind);
+      return { i, rank: idx < 0 ? EXPAND_PRIORITY.length : idx };
+    })
     .sort((a, b) => a.rank - b.rank);
   const picked = order.slice(0, maxExpansions).map((o) => o.i);
   const skipped = order.slice(maxExpansions).map((o) => o.i);
@@ -2102,8 +2109,19 @@ function sitesBlock(findings) {
       f.potentiallyRelatedSites &&
       ((f.potentiallyRelatedSites.proposal || []).length || (f.potentiallyRelatedSites.tree || []).length),
   );
-  if (!withSites.length) return "";
+  // A finding the cap skipped was NOT searched, which is different from one that
+  // was searched and came back empty. Both used to arrive here indistinguishable,
+  // so a designer read "no related sites" off a finding nobody had looked at.
+  const capped = findings.filter((f) => f.potentiallyRelatedSites && f.potentiallyRelatedSites.capped);
+  const cappedNote = capped.length
+    ? "\n\nNOT SEARCHED. The round's expansion budget was spent before these findings were reached, so " +
+      "nothing looked for text their fixes would falsify. Absence of sites below is absence of a search, " +
+      "not evidence there is nothing: " +
+      capped.map((f) => f.title).join("; ") + "\n"
+    : "";
+  if (!withSites.length) return cappedNote;
   return (
+    cappedNote +
     "\n\nPOTENTIALLY RELATED SITES. A pass searched outward from each finding's own citations for other " +
     "text this fix would falsify. They are CANDIDATES: one agent found them and nothing verified them, " +
     "while the finding's `where` and `evidence` were confirmed by two independent verifiers. Weigh them " +
@@ -2119,10 +2137,10 @@ function sitesBlock(findings) {
 // F6, at the point it can still change the outcome. The DESIGNER gets this, not
 // only the fixer: by the time the fixer runs the approach is already chosen, and
 // what failed twice before is an argument about approach.
-function siteHistoryBlock(findings) {
+function siteHistoryBlock(findings, round) {
   const lines = [];
   for (const f of findings) {
-    const prior = siteHistoryFor(f);
+    const prior = siteHistoryFor(f, round);
     if (!prior.length) continue;
     lines.push(
       "- " + f.title + " — this location has been rewritten " + prior.length + " time(s) before:\n" +
@@ -2179,11 +2197,13 @@ function fixPlanPrompt(confirmed, round) {
     "THE CONFIRMED FINDINGS, indexed from 0:\n" +
     JSON.stringify(confirmed.map((f, i) => ({ i, title: f.title, where: f.where, area: f.area, kind: f.kind })), null, 2) +
     sitesBlock(confirmed) +
-    "\n\nUSE THE SITES FOR ONE THING: OVERLAP. Two findings whose potentially related sites intersect, or " +
+    (sitesBlock(confirmed)
+      ? "\n\nUSE THE SITES FOR ONE THING: OVERLAP. Two findings whose potentially related sites intersect, or " +
     "where one finding's candidate site is another finding's confirmed location, are about the same " +
     "passage and belong in the SAME GROUP. Splitting them produces two designs for one piece of text, and " +
     "the second fixer edits what the first already rewrote. Do not merge on subject similarity when the " +
-    "sites do not overlap, and do not let a `low` confidence site force a merge." +
+        "sites do not overlap, and do not let a `low` confidence site force a merge."
+      : "") +
     promptFor("fix-plan")
   );
 }
@@ -2265,7 +2285,7 @@ function fixDesignPrompt(group, confirmed, round) {
         "it enlarges the edit. An incomplete fix that leaves a parallel stale is exactly what the next " +
         "round files."
       : "") +
-    siteHistoryBlock(picked) +
+    siteHistoryBlock(picked, round) +
     DEVIATIONS_BLOCK() +
     logBlock("fix-design-" + group.id, round) +
     promptFor("fix-design")
@@ -2317,17 +2337,31 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     "), and record the rationale in the proposal.\n" +
     "- READ EVERY FINDING BEFORE YOU EDIT ANYTHING. Group the findings that touch the same text, the same section, or the same mechanism, and fix each group as one change. Findings that look independent often share a root, and closing them separately produces edits that contradict each other and become findings of their own in a later round.\n" +
     "- INVENTING A MECHANISM IS ALLOWED AND IS SOMETIMES THE ONLY CORRECT FIX, BUT IT IS THE MOST DANGEROUS EDIT YOU CAN MAKE. This loop has measured that a mechanism introduced to close one finding goes on to produce several more over later rounds, because it lands unspecified and nothing reviews it as a design. So when a finding cannot be closed by correcting existing text, and you must add a field, a flag, a report, a compensating action, an RPC, a frame, or an interface change, specify it WHOLE in the same edit, before you write it: the state it reads and EVERY site that sets and clears that state; every caller and every type that satisfies an interface you change; what happens when it does not fire and what observes that; and the test that pins it. Then declare it in newMechanisms with those same four properties filled in. An unspecified mechanism is a defect you are handing to a later round.\n" +
-    "- Where a finding genuinely needs a decision rather than an edit, record it in the proposal's open-decisions section with the constraint any solution must satisfy, and list it in escalated. That is a complete fix, not a deferral. Prefer a specified mechanism to an escalation, and an escalation to an unspecified mechanism.\n" +
+    "- Where a finding genuinely needs a decision rather than an edit, record it as an open decision with " +
+    "the constraint any solution must satisfy, and list it in escalated. That is a complete fix, not a " +
+    "deferral. Prefer a specified mechanism to an escalation, and an escalation to an unspecified " +
+    "mechanism. " +
+    (LOOP && LOOP.name === "spec"
+      ? "The proposal's open-decisions section is in the non-spec staging, which you may not author into, " +
+        "so record yours in the staged spec edits beside the text it concerns.\n"
+      : "Record it in the proposal's open-decisions section.\n") +
     "- NEVER WRITE A COUNT of staged edits, sites, statements, rewrites, or files. Name the set, or point at the enumeration that carries it. A count goes stale the moment another fix adds one, and in this loop a stale count becomes a finding, a round, and two verification agents. The documentation rules ban counts for the same reason.\n" +
     "- AFTER YOUR EDITS, reconcile every enumeration and cross-reference that names a section you touched. A fix that corrects one section and leaves another section's list of that section's contents stale is two findings rather than one.\n" +
     "- When a fix changes a trigger predicate or invariant, propagate the exact same predicate to every section that states it (design sections, summary tables, constant comments, proposed spec text, and tests) so no drift is introduced.\n" +
     "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
-    "- KEEP THE IMPLEMENTATION CHECKLIST CURRENT. It is maintained as the proposal changes rather than derived at the end. Any edit that adds, removes, merges, splits, or resequences a staged deliverable changes the checklist in the same edit: add or remove its step, correct the deliverable ids a step names, and correct any Depends-on that the change reorders. Every staged deliverable appears in exactly one step and no step names one that does not exist. Leave every box unchecked.\n" +
+    (LOOP && LOOP.name === "spec"
+      ? "- THE IMPLEMENTATION CHECKLIST IS NOT YOURS. Your HARD CONSTRAINT puts it out of bounds and the " +
+        "reconciliation pass between the loops owns it. When an edit of yours adds, removes, merges, " +
+        "splits or resequences a staged deliverable, record it as a `DEFERRED [" + P.checklist + "]` line " +
+        "in your log shard naming the step that is now wrong and what is true instead. That pass closes it.\n"
+      : "- KEEP THE IMPLEMENTATION CHECKLIST CURRENT. It is maintained as the proposal changes rather than derived at the end. Any edit that adds, removes, merges, splits, or resequences a staged deliverable changes the checklist in the same edit: add or remove its step, correct the deliverable ids a step names, and correct any Depends-on that the change reorders. Every staged deliverable appears in exactly one step and no step names one that does not exist. Leave every box unchecked.\n") +
     "- KEEP THE SUMMARY TRUE. If a fix changes a top-level change, closes or reopens a decision the Summary lists as fixed, or creates a trap an implementor would fall into, update the Summary in the same edit. It is the one section every implementor agent reads, so a stale line there misleads every one of them.\n" +
     "- You may leave a detail to the implementor rather than specifying it, and doing so is often better than adding text that two sections then have to keep agreeing about. " + FORMAT_BLANKS +
-    '- Append a new subsection to the proposal\'s "Resolved in adversarial review" section titled "### Pass <N> (' +
+    '- Append a new subsection to the "Resolved in adversarial review" section of ' +
+    (LOOP && LOOP.name === "spec" ? P.spec : P.nonSpec) +
+    ', titled "### Pass <N> (' +
     date +
-    ', automated)", where <N> continues the existing pass numbering (read the section to determine it; create the section before the open-decisions section if it does not exist), with one bullet per finding fixed, matching the format of any existing entries.\n' +
+    ', automated)", where <N> continues the existing pass numbering (read the section to determine it; create the section at the END of that file if it does not exist), with one bullet per finding fixed, matching the format of any existing entries. Create it only in the file named here, which your HARD CONSTRAINT lets you edit.\n' +
     "- Follow the documentation style rules in " +
     repo +
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
@@ -2455,29 +2489,77 @@ const siteHistory = [];
 // Line numbers drift with every edit, so a line-keyed table is worthless after
 // one round; they are stripped here and what survives is the section and its
 // identifiers, which is what actually recurs.
+// A site key is a FILE plus a set of SECTION TOKENS, kept apart, because the
+// two need different matching rules and merging them into one string was wrong
+// in both directions.
+//
+// Bare substring containment on a merged string matched `spec-changes.md`
+// against `non-spec-changes.md`, since one file name literally contains the
+// other. Every finding that named only its file -- which is the format the
+// FINDINGS schema invites -- then matched every other finding in EITHER change
+// file, and the designer was handed the history of an unrelated passage with an
+// instruction to differ from it.
 function siteKey(where) {
-  return String(where || "")
-    .toLowerCase()
+  const raw = String(where || "").toLowerCase();
+  // Line numbers drift every round, so they are stripped: what recurs is the
+  // section and its identifiers.
+  const stripped = raw
     .replace(/\bl(ine)?s?\.?\s*\d+(\s*[-\u2013]\s*\d+)?/g, " ")
-    .replace(/:\d+(-\d+)?/g, " ")
-    .replace(/[^a-z0-9.\u00a7]+/g, " ")
-    .replace(/\b(staged|the|a|an|in|at|of|section|sec|para|paragraph|bullet)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/:\d+(-\d+)?/g, " ");
+  // The longest `*.md` basename wins, so `non-spec-changes.md` is not read as
+  // `spec-changes.md`.
+  let file = "";
+  for (const m of stripped.matchAll(/[a-z0-9._-]+\.md/g)) {
+    if (m[0].length > file.length) file = m[0];
+  }
+  const tokens = stripped
+    .replace(/[a-z0-9._-]+\.md/g, " ")
+    // Hyphens are kept INSIDE a token: splitting on them reduced `SPEC-3` and
+    // `SPEC-7` both to the generic `spec`, so two unrelated deliverables read as
+    // the same site.
+    .replace(/[^a-z0-9.\u00a7-]+/g, " ")
+    .replace(/(^|\s)-+|-+(\s|$)/g, " ")
+    .replace(/\b(staged|the|a|an|in|at|of|section|sec|para|paragraph|bullet|and|for|its|it)\b/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
+  return { file, tokens: [...new Set(tokens)] };
 }
 
-// Containment either way, because one round names a site more narrowly than the
-// next ("10.1.8 step 1" inside "10.1.8 step 1 acceptance clause"). The length
-// floor keeps a two-character key from matching everything.
+// Two locations are the same site when they name the same file AND their
+// section tokens overlap enough to be about the same passage. A file name alone
+// is NOT a site: `spec-changes.md` with no section is every finding in the
+// file, and treating that as one location is what produced the false matches.
 function sameSite(a, b) {
   if (!a || !b) return false;
-  if (a === b) return true;
-  return a.length > 8 && b.length > 8 && (a.includes(b) || b.includes(a));
+  if (a.file && b.file && a.file !== b.file) return false;
+  if (!a.tokens.length || !b.tokens.length) return false;
+  const shared = a.tokens.filter((t) => b.tokens.includes(t));
+  if (!shared.length) return false;
+  // Containment in token terms: one round names a passage more narrowly than
+  // the next ("10.1.8 step 1" inside "10.1.8 step 1 acceptance clause"), so the
+  // smaller token set must be mostly contained in the larger.
+  // A one-token location is legitimate (`SPEC-3`, `10.1.8`), so the floor is one
+  // shared token; the file check and the stopword filter are what keep that from
+  // matching broadly.
+  const smaller = Math.min(a.tokens.length, b.tokens.length);
+  return shared.length >= Math.max(1, Math.ceil(smaller * 0.6));
 }
 
-function siteHistoryFor(finding) {
+// Only EARLIER rounds of the SAME loop. Both are load-bearing:
+//   - `round` restarts at 1 in each loop, so an unscoped table reads a spec
+//     round 2 entry as if it were a non-spec round 2 entry.
+//   - without the round filter, `recordSiteAttempts` pushes this round's own
+//     attempts and the repeat detector immediately counts them, so three
+//     findings in one passage announce "rewritten three times" the first time
+//     the passage was ever touched.
+function siteHistoryFor(finding, round, loopName) {
   const k = siteKey(finding && finding.where);
-  return siteHistory.filter((h) => sameSite(h.key, k));
+  return siteHistory.filter(
+    (h) =>
+      h.loop === (loopName || (LOOP ? LOOP.name : "")) &&
+      (round === undefined || h.round < round) &&
+      sameSite(h.key, k),
+  );
 }
 
 // A finding at a site an earlier round already rewrote means that attempt did
@@ -2485,10 +2567,11 @@ function siteHistoryFor(finding) {
 // usable: the third attempt needs to know that attempt 2 failed because the
 // enumeration could not be closed, not merely that it failed.
 function markSitesRejected(confirmedFindings, round) {
+  const loopName = LOOP ? LOOP.name : "";
   for (const f of confirmedFindings) {
     const k = siteKey(f.where);
     for (const h of siteHistory) {
-      if (h.rejectedBy || h.round >= round || !sameSite(h.key, k)) continue;
+      if (h.rejectedBy || h.loop !== loopName || h.round >= round || !sameSite(h.key, k)) continue;
       h.rejectedBy = "round " + round + " finding \"" + f.title + "\": " + f.why_wrong;
     }
   }
@@ -2506,6 +2589,8 @@ function recordSiteAttempts(confirmedFindings, round, designs) {
   for (const f of confirmedFindings) {
     siteHistory.push({
       key: siteKey(f.where),
+      // The loop is part of the identity: `round` restarts at 1 in each loop.
+      loop: LOOP ? LOOP.name : "",
       round,
       where: f.where,
       title: f.title,
@@ -2538,6 +2623,8 @@ const introducedMechanisms = [];
 // Surfaced to introspection because a run that keeps raising is accumulating
 // unresolved state faster than it resolves it.
 let standingRaises = 0;
+// Set when compactLog runs, read by the NEXT round's boundary call.
+let compactionRan = false;
 const churnWindow = input.churnWindow || 6;
 const churnMinFindings = input.churnMinFindings || 5;
 const churnStrikes = input.churnStrikes || 3;
@@ -3104,7 +3191,15 @@ async function judgePanel(rnd, verdict, growth, churn) {
     return { decision: verdict.verdict, votes, quorum: false, upheld: true };
   }
 
-  const conclusive = votes.filter((v) => v.falsified && v.howConclusive === falsificationBar);
+  // An ORDERING, not an equality. Strict equality meant `falsificationBar:
+  // "partial"` -- documented as making the panel easier to convince -- EXCLUDED
+  // every judge who falsified conclusively, so three conclusive refutations
+  // counted as none and the verdict stood unexamined.
+  const BAR_RANK = { partial: 1, conclusive: 2 };
+  const need = BAR_RANK[falsificationBar] || BAR_RANK.conclusive;
+  const conclusive = votes.filter(
+    (v) => v.falsified && (BAR_RANK[v.howConclusive] || 0) >= need,
+  );
   const falsified = conclusive.length > votes.length / 2;
   if (!falsified) {
     log(
@@ -3465,7 +3560,7 @@ async function compactLog(round, standingLines, target) {
       "1. Leave round " + round + "'s entries in the ledger exactly as they are.\n\n" +
       "2. For every entry older than three rounds, LIFT ITS DURABLE RESIDUE into `## Standing context` and " +
       "move the rest to `## Retired` as one line. The durable residue is every `FACT`, `WATCHOUT`, " +
-      "`DECISION` and `MISTAKE` line.\n" +
+      "`DECISION`, `MISTAKE` and unclosed `DEFERRED` line.\n" +
       "   `MISTAKE` IS THE MOST VALUABLE TAG IN THE LOG AND IS NEVER DROPPED. An entry saying \"I spent " +
       "this round hunting X; it is not there; do not re-derive this\" saves a later agent a whole round, " +
       "which is worth more than most findings. Keep its reasoning rather than its headline: a one-line " +
@@ -3475,13 +3570,20 @@ async function compactLog(round, standingLines, target) {
       "longer exists costs every future agent a detour.\n\n" +
       "4. HONOUR `USEFUL`. An entry another agent said saved it work goes into `## Standing context` and is " +
       "never dropped while its subject stands.\n\n" +
-      "5. NEVER DROP AN `OPEN` OR AN `UNVERIFIED` until something closes it.\n\n" +
+      "5. NEVER DROP AN `OPEN`, AN `UNVERIFIED`, OR A `DEFERRED` until something closes it. A `DEFERRED` " +
+      "is a correction an agent derived but could not apply because the file was not its to edit, and the " +
+      "pass between the loops greps for exactly these and closes them. Keep the file it names, the claim " +
+      "that is now false, and what is true instead: reduced to a headline it cannot be closed, and the " +
+      "correction is lost for good. A `DEFERRED` that a later `CORRECTS` says was applied is retired like " +
+      "any other closed entry.\n\n" +
       "6. STRUCTURE `## Standing context` UNDER THESE THREE HEADINGS, in this order, and keep them:\n" +
       "   `### Settled` — every `FACT` and `DECISION`. ONE LINE EACH. This is a lookup table, not prose.\n" +
       "   `### Traps` — every `WATCHOUT` and `MISTAKE`. Up to four lines each, because a trap the reader " +
       "cannot recognise from the entry is a trap they walk into anyway. No cap on how many.\n" +
       "   `### Open` — every `OPEN` and `UNVERIFIED`. ONE LINE EACH, naming the ledger entry id that " +
       "carries the detail.\n" +
+      "   `### Deferred` — every unclosed `DEFERRED`, kept WHOLE rather than summarised, because the pass " +
+      "between the loops applies these and cannot apply a headline.\n" +
       "   GIVE EACH ENTRY A SHORT BOLD SUBJECT so a reader can find the one they need without reading the " +
       "section. Measured on a real run, agents cite standing-context entries BY SUBJECT and a quarter of " +
       "all citations went to two of them. Navigability is worth more here than brevity.\n\n" +
@@ -3746,6 +3848,12 @@ async function runReviewLoop(cfg) {
         " --standing-target " + standingContextTarget +
         " --standing-trigger " + standingContextTrigger +
         " --compact-growth " + compactGrowthLines +
+        // Whether a compaction pass actually RAN since the previous boundary.
+        // Only the caller knows: the script can see that it ASKED for one, and a
+        // run killed between the request and the pass would otherwise be judged
+        // as a pass that failed, raising the target past the current size and
+        // permanently excusing the section that needed compacting.
+        " --compacted " + (compactionRan ? "1" : "0") +
         "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
         "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
         "read, summarise, or edit any other file.",
@@ -3787,7 +3895,11 @@ async function runReviewLoop(cfg) {
       );
     }
     if (boundary.targetRaises !== undefined) standingRaises = boundary.targetRaises;
-    if (boundary.compactionDue) await compactLog(rnd, boundary.standingLines, boundary.standingTarget);
+    compactionRan = false;
+    if (boundary.compactionDue) {
+      await compactLog(rnd, boundary.standingLines, boundary.standingTarget);
+      compactionRan = true;
+    }
     return complete;
   }
 
@@ -3892,6 +4004,11 @@ async function runReviewLoop(cfg) {
     log("Round " + round + ": " + raw.length + " raw findings");
 
     if (raw.length === 0) {
+      // A round that found nothing IS the current answer to "what is this loop
+      // still finding". Leaving the previous round's titles standing reported
+      // findings that had since been fixed as the reason the run stopped.
+      LOOP.lastFindings = [];
+      LOOP.lastFindingsRound = round;
       // Nobody found anything, so nobody has a survivor: every lens that genuinely
       // ran retires.
       applyRetirement(lenses, lensResults, new Set(), round, "found nothing");
@@ -4034,6 +4151,7 @@ async function runReviewLoop(cfg) {
     // What the loop was still finding when it stopped. A budget-exhausted stop
     // that names nothing tells the operator only that it stopped.
     LOOP.lastFindings = confirmed.map((f) => f.title);
+    LOOP.lastFindingsRound = round;
     live
       .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
       .forEach((v) => {
@@ -4326,7 +4444,14 @@ async function runReviewLoop(cfg) {
         continue;
       }
       fixSummaries.push(g.id + ": " + (out.summary || ""));
-      for (const m of out.newMechanisms || []) roundMechanisms.push(m);
+      for (const m of out.newMechanisms || []) {
+        roundMechanisms.push(m);
+        // The strike table was READ in six places and written in none, so every
+        // consumer of it -- creditStrikes, the fixer's strike lines, the churn
+        // detector's mechanism arm, and the mechanism block in every
+        // introspection and judge prompt -- had always been inert.
+        if (m && m.name) introducedMechanisms.push({ name: m.name, round, why: m.why || "", strikes: 0 });
+      }
       for (const e of out.escalated || []) escalatedAll.push(e);
       for (const d of out.designRejected || []) designRejected.push(g.id + ": " + d);
     }
@@ -4372,7 +4497,7 @@ async function runReviewLoop(cfg) {
     // This round's attempts, so a later round designing at the same location is
     // shown what was tried here and how it fared.
     recordSiteAttempts(confirmed, round, designs);
-    const repeated = confirmed.filter((f) => siteHistoryFor(f).length >= 3);
+    const repeated = confirmed.filter((f) => siteHistoryFor(f, round).length >= 2);
     if (repeated.length) {
       log(
         "Round " + round + ": " + repeated.length + " location(s) now rewritten three or more times (" +
@@ -4758,7 +4883,7 @@ if (specLoop && !stoppedByIntrospection) {
           "than they would be after a converged loop, and leaving them describing a staging that moved is " +
           "how a reader is misled about what the proposal now stages. Do not try to guess where the open " +
           "findings will land; reconcile to the current text and no further.\n\n") +
-      "Do three things.\n" +
+      "Do four things.\n" +
       "1. Rebuild `## Deliverable index` in " + P.summary + " from what " + P.spec + " and " + P.nonSpec +
       " now stage. Every staged deliverable appears exactly once with the file it lands in and one line.\n" +
       "2. Write the checklist's SPEC-lane steps against the current SPEC ids, as a leading block, one lane " +
