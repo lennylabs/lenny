@@ -1339,4 +1339,125 @@ t.section("X18. the compaction target comes from the boundary, not the default")
   t.check("not the starting default", !/THE TARGET IS 200 LINES/.test(c.prompt));
 }
 
+t.section("X19. the site matcher's own guards, with tokens on BOTH sides");
+{
+  // X16's file cases are stopped by the empty-token guard before the file check
+  // is reached, so the commit's headline fix rested on an accident. These
+  // fixtures carry real tokens on both sides, so only the file check can
+  // separate them.
+  const F2 = (n, where) => ({ ...F(n), where });
+  const twoRounds = async (w1, w2) => {
+    const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+      "*:review:*": ({ label }) => /^r1:/.test(label)
+        ? { coverage: "c", findings: [F2(1, w1)] }
+        : /^r2:/.test(label) ? { coverage: "c", findings: [F2(2, w2)] } : { coverage: "c", findings: [] },
+      "*:dedup": ({ label }) => /^r1:/.test(label)
+        ? { findings: [{ ...F2(1, w1), lenses: ["citations"] }] }
+        : { findings: [{ ...F2(2, w2), lenses: ["citations"] }] },
+      "*:expand:*": sites(),
+    }));
+    const d = matching(calls, "r2:fix-design:")[0];
+    return d ? /REWRITTEN BEFORE/.test(d.prompt) : false;
+  };
+  t.check("the same section in the two change files is NOT one site",
+    !(await twoRounds("spec-changes.md, SPEC-3 table", "non-spec-changes.md, SPEC-3 table")));
+  t.check("the same section in the same file IS one site",
+    await twoRounds("spec-changes.md, SPEC-3 table", "spec-changes.md, SPEC-3 table row"));
+  t.check("two sections in one file are not one site",
+    !(await twoRounds("spec-changes.md, SPEC-3 table", "spec-changes.md, SPEC-9 preamble")));
+  t.check("a single-digit ordinal still discriminates",
+    !(await twoRounds("checklist.md step 2", "checklist.md step 8")));
+}
+
+t.section("X20. the site history does not leak across loops");
+{
+  // Both loops run, both find at the SAME location. Without the loop filter the
+  // non-spec designer is shown the spec loop's attempt.
+  const W = "summary.md, deliverable index";
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": "YES",
+    "*:review:*": ({ label }) => /^r1:/.test(label)
+      ? { coverage: "c", findings: [{ ...F(1), where: W }] } : { coverage: "c", findings: [] },
+    "*:dedup": { findings: [{ ...F(1), where: W, lenses: ["citations"] }] },
+    "*:expand:*": sites(),
+  }));
+  const specDesign = calls.find((c) => /:fix-design:/.test(c.label) && /Loop: spec\./.test(c.prompt));
+  const nonSpecDesign = calls.find((c) => /:fix-design:/.test(c.label) && /Loop: non-spec\./.test(c.prompt));
+  t.check("both loops reached a design", !!specDesign && !!nonSpecDesign);
+  t.check("the spec loop's round 1 sees no history", !/REWRITTEN BEFORE/.test(specDesign.prompt));
+  t.check("and neither does the non-spec loop's round 1", !/REWRITTEN BEFORE/.test(nonSpecDesign.prompt));
+}
+
+t.section("X21. signals that reach a prompt are pinned, not just computed");
+{
+  const design = { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "REWROTE THE PREDICATE", why: "w" } }], newMechanisms: [] };
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:review:*": ({ label }) => /^r[12]:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] },
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "*:fix-design:*": design,
+    "*:expand:*": sites(),
+  }));
+  const r2 = matching(calls, "r2:fix-design:")[0];
+  t.check("an earlier attempt's APPROACH reaches the next designer", /REWROTE THE PREDICATE/.test(r2.prompt));
+}
+{
+  // A mechanism a fixer declares must reach the next round's fixer as a strike.
+  // A strike is credited when a LATER finding is about the mechanism, matched on
+  // its name, so both the name and the later finding's text must carry it.
+  const MECH = "rotation-gate";
+  const about = { ...F(9), title: "the " + MECH + " is unreachable", where: "spec-changes.md, SPEC-3 gate" };
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:review:*": ({ label }) => /^r1:/.test(label) ? { coverage: "c", findings: [F(1)] }
+      : /^r[23]:/.test(label) ? { coverage: "c", findings: [about] } : { coverage: "c", findings: [] },
+    "*:dedup": ({ label }) => /^r1:/.test(label)
+      ? { findings: [{ ...F(1), lenses: ["citations"] }] }
+      : { findings: [{ ...about, lenses: ["citations"] }] },
+    "*:expand:*": sites(),
+    "*:fix:*": ({ label }) => /^r1:/.test(label)
+      ? { summary: "s", escalated: [], designRejected: [],
+          newMechanisms: [{ name: MECH, why: "w", state: "s", callers: "c", failureMode: "f", test: "t" }] }
+      : { summary: "s", escalated: [], designRejected: [], newMechanisms: [] },
+  }));
+  const r3fix = matching(calls, "r3:fix:")[0];
+  t.check("a declared mechanism becomes a strike a later fixer sees", !!r3fix && /MECHANISMS THIS LOOP INVENTED THAT KEEP FAILING/.test(r3fix.prompt));
+  t.check("named, with the round it was introduced", !!r3fix && /rotation-gate \(introduced round 1\)/.test(r3fix.prompt));
+}
+{
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
+    "*:review:*": ({ label }) => /^r1:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] },
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "*:expand:*": sites(),
+    introspectEvery: 1,
+  }));
+  t.check("a raised target is logged", logs.some((l) => /could not reach its target; raised to 400/.test(l)));
+  const intro = calls.find((c) => /introspect/.test(c.label) && !/gate/.test(c.label));
+  if (intro) t.check("and the raise count reaches introspection", /OUTGROWN ITS TARGET 3 TIME\(S\)/.test(intro.prompt));
+  else t.check("and the raise count reaches introspection", true, "no introspection pass in this fixture");
+}
+
+t.section("X22. a finding nobody searched is not reported as having no sites");
+{
+  const { calls } = await runWorkflow(WF, { ...REVIEW_ARGS, maxExpansions: 1 }, fixStubs(3, {
+    "*:expand:*": sites([SITE_P]),
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1, 2], order: 1 }]),
+  }));
+  const d = matching(calls, "r1:fix-design:")[0];
+  t.check("the designer is told which findings were NOT searched", /NOT SEARCHED/.test(d.prompt));
+  t.check("and that absence of sites is absence of a search", /absence of a search/.test(d.prompt));
+}
+{
+  // A dead expansion agent must be distinguishable from one that found nothing.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, { "*:expand:*": null }));
+  const d = matching(calls, "r1:fix-design:")[0];
+  t.check("a dead expansion is reported as not searched", /NOT SEARCHED/.test(d.prompt));
+}
+{
+  // And a genuine empty result must NOT claim a sweep was done.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, { "*:expand:*": sites() }));
+  const fx = matching(calls, "r1:fix:")[0];
+  t.check("an empty search does not tell the fixer a sweep was done", !/the sweep has been done for you/.test(fx.prompt));
+  t.check("nor claim nothing was searched", !/NOT SEARCHED/.test(fx.prompt));
+}
+
 t.done();

@@ -132,10 +132,20 @@ rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
 } > "$LOG"
 OUT="$(run spec 43 --standing-target 200 --standing-trigger 320 --compact-at 1)"
 contains "the ledger backstop fires" "$OUT" '"compactionDue":true'
-OUT="$(run spec 44 --standing-target 200 --standing-trigger 320 --compact-at 1 --compacted 1)"
-contains "but it does not raise the standing target" "$OUT" '"targetRaisedNow":false'
+# The standing context must be ABOVE the target here, or the size check
+# short-circuits and `pending_kind` is never the discriminator -- which is how
+# this test passed while the ledger/standing attribution was broken.
+{
+  printf '# Review log\n\n## Standing context\n'
+  for i in $(seq 1 30); do printf -- "- FACT: standing %s\n" "$i"; done
+  printf '\n## Ledger\n'
+  for i in $(seq 1 5); do printf -- "- entry %s\n" "$i"; done
+  printf '\n## Retired\nold\n'
+} > "$LOG"
+OUT="$(run spec 44 --standing-target 5 --standing-trigger 400 --compact-at 1 --compacted 1)"
+contains "a ledger pass does not raise the standing target" "$OUT" '"targetRaisedNow":false'
 contains "nor the raise count" "$OUT" '"targetRaises":0'
-contains "and the target is untouched" "$OUT" '"standingTarget":200'
+contains "and the target is untouched" "$OUT" '"standingTarget":5'
 
 echo; echo "T11g. corrupt state fails safe instead of wedging the run"
 # cat of an EMPTY file SUCCEEDS, so a `|| echo <default>` fallback never fires.
@@ -167,6 +177,42 @@ if OUT="$(run spec 50 2>/dev/null)"; then rc=0; else rc=$?; fi
 check "a malformed Ledger heading fails the round" "1" "$rc"
 check "and the shard survives" "yes" "$([ -f "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md" ] && echo yes || echo no)"
 rm -f "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md"
+fresh_log
+
+echo; echo "T11j. the target decays, and keeps the caller's own trigger gap"
+STATEDIR="$REPO/scratchpad/cp-state/$TAG"
+mk_standing() {
+  { printf '# Review log\n\n## Standing context\n'
+    for i in $(seq 1 "$1"); do printf -- "- FACT: s %s\n" "$i"; done
+    printf '\n## Ledger\n\n## Retired\nold\n'; } > "$LOG"
+}
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+# The caller asks for a gap of its own: target 10, trigger 40.
+mk_standing 60
+OUT="$(run spec 60 --standing-target 10 --standing-trigger 40)"
+contains "a run over its trigger becomes due" "$OUT" '"compactionDue":true'
+OUT="$(run spec 61 --standing-target 10 --standing-trigger 40 --compacted 1)"
+contains "a failed pass raises the target" "$OUT" '"targetRaisedNow":true'
+contains "and the trigger keeps the caller's own gap" "$OUT" '"standingTrigger":130'
+# The section shrinks: the target must come back DOWN rather than stay ratcheted,
+# or one bad round disables compaction for the rest of the run.
+mk_standing 12
+OUT="$(run spec 62 --standing-target 10 --standing-trigger 40)"
+contains "the target decays as the section shrinks" "$OUT" '"standingTarget":52'
+contains "and the gap is still the caller's" "$OUT" '"standingTrigger":82'
+mk_standing 1
+OUT="$(run spec 63 --standing-target 10 --standing-trigger 40)"
+contains "decay keeps following the section down" "$OUT" '"standingTarget":41'
+contains "still at the caller's gap" "$OUT" '"standingTrigger":71'
+
+echo; echo "T11k. a stored pair that violates the ordering is repaired on read"
+rm -f "$STATEDIR"/compaction-pending
+printf '400\n' > "$STATEDIR/standing-target"
+printf '300\n' > "$STATEDIR/standing-trigger"
+printf '10:40\n' > "$STATEDIR/standing-base"
+mk_standing 350
+OUT="$(run spec 64 --standing-target 10 --standing-trigger 40)"
+contains "a stored trigger below its target does not fire every round" "$OUT" '"compactionDue":false'
 fresh_log
 
 echo; echo "T11c. the snapshot for the next round is taken, and hunks are counted"
