@@ -127,6 +127,8 @@ When the run returns `introspection.stoppedBy` with `verdict: "halt"`, **and** `
 
 **Relaunch the workflow immediately with those arguments, without asking first.** Report that you did, with the pass's reasoning and the arguments used.
 
+A stopped run returns status `stopped-halt` or `stopped-reframe`, and its findings remain open.
+
 At most **two** automatic restarts per invocation; track the count yourself. On the third, stop and put the question to the user. Stop and ask also when `confidence` is `needs-human`, when the arguments do not parse, or when the verdict is `reframe` and the pass proposed no problem-statement edit: a reframe rewrites the problem, and rewriting it on a guess is worse than pausing.
 
 ## Arguments
@@ -230,8 +232,9 @@ Agents inherit the session model and effort. Run this with the strongest availab
 
 1. Run `git status --porcelain` and confirm the only changes are inside the proposal directory, plus the reference retargeting if a migration ran. Restore anything else and report the violation.
 2. Report the path, the title, what validation refuted, what the challenge dropped, whether each loop converged, the rounds, and the findings fixed. Report `review.loops[].specTouched` when the non-spec loop edited the spec staging.
-3. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
-4. Do not apply any staged edit, and do not commit unless asked.
+3. A run the introspection pass stopped returns status `stopped-halt` or `stopped-reframe`; report it as stopped with its findings open rather than as reviewed.
+4. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
+5. Do not apply any staged edit, and do not commit unless asked.
 
 ## Maintenance
 

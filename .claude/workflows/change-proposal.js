@@ -880,8 +880,12 @@ const DESIGN_RECONCILE = {
         type: "object",
         required: ["groupId", "designs"],
         properties: {
-          groupId: { type: "string" },
-          designs: FIX_DESIGN.properties.designs,
+          groupId: { type: "string", description: "the id of a group in THIS round, copied exactly. An id naming no group in the round is dropped." },
+          designs: {
+            ...FIX_DESIGN.properties.designs,
+            description:
+              "the group's designs, one entry per finding in it. An entry replaces the design carrying the same findingTitle, and a finding you leave out keeps the design it already had.",
+          },
         },
       },
     },
@@ -2572,6 +2576,30 @@ function sameSite(a, b) {
   // the smaller token set fully contained rather than merely overlapping.
   const fileKnown = !!a.file && !!b.file;
   if (!a.tokens.length || !b.tokens.length) return false;
+  // A digit-bearing token is the part of a `where` that tells one passage from
+  // its neighbour. `SPEC-3`, `10.1.8`, and the bare ordinal in `step 2` are
+  // identifiers, while `step`, `table`, `row`, and `clause` recur in every
+  // passage of the file. Measured: `spec-changes.md, SPEC-3 step 2` and
+  // `spec-changes.md, SPEC-3 step 5` tokenise to three tokens each, two of them
+  // the generic `spec-3` and `step`, so ceil(0.6 * 3) = 2 was met by the generic
+  // pair alone and the one digit that differed was outvoted. A round-4 designer
+  // was handed three unrelated rejected attempts, and `markSitesRejected` wrote
+  // that false attribution into the durable table. Adding `step` to the stopword
+  // filter above fixes that one word and leaves `row 2` / `row 5` collapsing the
+  // same way, so the rule is stated over the identifiers instead.
+  //
+  // An identifier one side carries and the other does not is decisive only when
+  // the other side also carries one the first lacks. A round naming a passage
+  // more narrowly than the round before it (`SPEC-3`, then `SPEC-3 step 2`) adds
+  // an identifier without contradicting one, and that pair is the same site. A
+  // dotted prefix is the same identifier at another grain (`4.6` and `4.6.1`),
+  // so it is not a contradiction either.
+  const nums = (ts) => ts.filter((t) => /[0-9]/.test(t));
+  const unmatched = (x, y) =>
+    x.filter((t) => !y.some((u) => u === t || u.startsWith(t + ".") || t.startsWith(u + ".")));
+  if (unmatched(nums(a.tokens), nums(b.tokens)).length && unmatched(nums(b.tokens), nums(a.tokens)).length) {
+    return false;
+  }
   const shared = a.tokens.filter((t) => b.tokens.includes(t));
   if (!shared.length) return false;
   // Containment in token terms: one round names a passage more narrowly than
@@ -2662,13 +2690,28 @@ const introducedMechanisms = [];
 // How many times a compaction pass has failed to reach its target and moved it.
 // Surfaced to introspection because a run that keeps raising is accumulating
 // unresolved state faster than it resolves it.
+//
+// Run-wide: it mirrors the per-tag counter cp-round-boundary.sh keeps under
+// scratchpad/cp-state/<tag>, and both loops compact one review log, so a
+// per-loop reset would only make the mirror disagree with its source until the
+// next boundary overwrites it.
 let standingRaises = 0;
 // Set when compactLog runs, read by the NEXT round's boundary call.
+//
+// Run-wide: the next boundary call after the spec loop's last round is the
+// non-spec loop's first, and the compaction-pending marker it has to judge is
+// per-tag rather than per-loop. Resetting it at the loop switch would report a
+// pass that ran as one that did not, which is the misreading the --compacted
+// argument exists to prevent.
 let compactionRan = false;
 const churnWindow = input.churnWindow || 6;
 const churnMinFindings = input.churnMinFindings || 5;
 const churnStrikes = input.churnStrikes || 3;
 const redesignsAllowed = input.maxRedesigns === undefined ? 2 : input.maxRedesigns;
+// Run-wide: this is the redesign budget AND the tag in the subproposal's
+// filename (runRedesign builds <stem>-redesign-<tag>.md from it), so a per-loop
+// reset would make the second loop's first redesign overwrite the first loop's
+// subproposal record. A per-loop budget would need its own counter.
 let redesignsRun = 0;
 // Set when the introspection pass concludes the run should not continue without a
 // human decision. It ends the loop rather than the process, so everything already
@@ -2677,7 +2720,11 @@ let stoppedByIntrospection = null;
 // Stops the introspection pass proposed and the panel did not uphold. Fed back to
 // the pass so it does not re-reach the same verdict on the same evidence.
 const overruledStops = [];
-// area -> [{round, kind, introducedBy}]
+// area -> [{loop, round, kind, introducedBy}]. The loop is recorded because
+// `round` restarts at 1 in each loop, so a window measured on round numbers
+// alone reads the other loop's findings as this one's: six design defects filed
+// against one area in the spec loop tripped the churn counter in non-spec
+// round 1, in an area that loop had found nothing in.
 const areaLog = new Map();
 const redesignHistory = [];
 
@@ -2686,6 +2733,7 @@ function recordFindings(rnd, fs) {
     const area = (f.area || "unclassified").toLowerCase().trim();
     if (!areaLog.has(area)) areaLog.set(area, []);
     areaLog.get(area).push({
+      loop: LOOP.name,
       round: rnd,
       kind: f.kind || "other",
       introducedBy: f.introducedBy || "unknown",
@@ -2702,13 +2750,16 @@ function churningAreas(rnd) {
   const out = [];
   for (const [area, entries] of areaLog) {
     if (area === "unclassified") continue;
-    const recent = entries.filter((e) => e.round > rnd - churnWindow);
+    // This loop's findings only. Round numbers restart per loop, so every entry
+    // from the other loop falls inside any window measured from here.
+    const mine = entries.filter((e) => e.loop === LOOP.name);
+    const recent = mine.filter((e) => e.round > rnd - churnWindow);
     if (recent.length < churnMinFindings) continue;
     const deep = recent.filter(
       (e) => e.kind === "design-defect" || e.kind === "contradiction",
     ).length;
     if (deep * 2 < recent.length) continue;
-    const prior = entries.filter(
+    const prior = mine.filter(
       (e) => e.round > rnd - 2 * churnWindow && e.round <= rnd - churnWindow,
     );
     if (prior.length && recent.length < prior.length) continue;
@@ -3116,7 +3167,8 @@ const FALSIFICATION = {
     fallbackVerdict: {
       type: "string",
       enum: ["healthy", "redesign", "prune", "reframe", "halt"],
-      description: "when you falsified it: the verdict the evidence actually supports",
+      description:
+        "required when falsified is true: the verdict the evidence actually supports. It may not be the verdict you attacked. A falsification that names none is set aside, because it leaves the loop nothing to act on.",
     },
   },
 };
@@ -3196,6 +3248,11 @@ async function judgePanel(rnd, verdict, growth, churn) {
     "RATIFYING IS THE OTHER FAILURE. You have been handed a conclusion and asked to check it, which is the " +
     "situation in which reviewers agree most and examine least. Attack the argument the pass actually made, " +
     "which is why you must restate it in your own words before you attack it.\n\n" +
+    "IF YOU FALSIFY IT, NAME WHAT THE EVIDENCE DOES SUPPORT in `fallbackVerdict`, from `healthy`, `prune`, " +
+    "`redesign`, `reframe`, and `halt`. The panel acts on the least disruptive verdict its falsifiers name, " +
+    "so a refutation naming nothing leaves the loop with no move and is set aside. It may not be `" +
+    verdict.verdict + "`, the verdict you are attacking, since naming the verdict you just refuted says " +
+    "nothing. Leave it empty when you did not falsify.\n\n" +
     "THE PASS'S FULL OUTPUT, including the case it made against its own verdict:\n" +
     JSON.stringify(verdict, null, 2) +
     "\n\nHOW THE DOCUMENT GREW since the previous introspection:\n" +
@@ -3252,15 +3309,31 @@ async function judgePanel(rnd, verdict, growth, churn) {
   // Falsified. Take the least disruptive verdict any falsifier named, on the
   // same asymmetry the loop has always used: a wrong continue self-corrects at
   // the next introspection and a wrong stop does not.
-  const fallbacks = conclusive.map((v) => v.fallbackVerdict).filter(Boolean);
-  const decision = fallbacks.length
-    ? fallbacks.sort((a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b))[0]
-    : "healthy";
+  // A falsifier that names nothing is not read as naming `healthy`, and one
+  // that names the verdict it just refuted is not read at all. Under the silent
+  // `healthy` default the panel over `healthy` was inert: with the judges
+  // stubbed to falsify conclusively and name no fallback, 2/2 refutations of
+  // `healthy` decided `healthy` and the run continued unchanged, which is the
+  // one outcome that panel exists to prevent. A vote naming the verdict under
+  // attack made the run halt while recording that the panel had overturned the
+  // halt.
+  const fallbacks = conclusive
+    .map((v) => v.fallbackVerdict)
+    .filter((v) => DISRUPTION.includes(v) && v !== verdict.verdict);
+  if (!fallbacks.length) {
+    log(
+      "Round " + rnd + ": " + conclusive.length + "/" + votes.length + " judge(s) falsified " +
+        verdict.verdict + " conclusively and named no verdict the evidence supports; continuing under the " +
+        "continue-is-cheap asymmetry, and the next round re-introspects",
+    );
+    return { decision: "healthy", votes, quorum: true, upheld: false, undirected: true };
+  }
+  const decision = fallbacks.sort((a, b) => DISRUPTION.indexOf(a) - DISRUPTION.indexOf(b))[0];
   log(
     "Round " + rnd + ": " + conclusive.length + "/" + votes.length + " judge(s) falsified " +
       verdict.verdict + " conclusively; taking the least disruptive fallback, " + decision,
   );
-  return { decision, votes, quorum: true, upheld: false };
+  return { decision, votes, quorum: true, upheld: false, undirected: false };
 }
 
 let introspectEvery = input.introspectEvery || 5;
@@ -3273,7 +3346,18 @@ const judgesHealthy = input.judgesHealthy || 2;
 // verdict is overturned. "partial" makes the panel easier to convince.
 const falsificationBar = input.falsificationBar === "partial" ? "partial" : "conclusive";
 const introspections = [];
+// Run-wide, deliberately. This is a snapshot path rather than a round number,
+// and both loops edit one proposal directory, so "how much has the document
+// grown since anyone last looked" stays the measurement the introspection pass
+// wants across the loop handoff. Clearing it per loop would hand the second
+// loop's first pass NO_GROWTH and take its growth signal away.
 let lastGrowthSnap = null;
+// Per-loop, reset at the top of runReviewLoop. `round` restarts at 1 in each
+// loop, so a round number from one loop is not comparable with one from the
+// other. Measured before the reset existed: at introspectEvery 3 over two
+// 6-round loops the spec loop introspected at r3 and r6 and left this at 6, and
+// the non-spec loop -- which reviews the larger half -- then evaluated
+// 1 - 6 >= 3 every round and introspected zero times.
 let lastIntrospectRound = 0;
 
 // The agent decides; the counters only wake it. A counter cannot judge whether a
@@ -3527,6 +3611,7 @@ function newLoop(cfg) {
     name: cfg.name,
     round: 0,
     reviewersFailed: false,
+    fixersFailed: [],
     retired: new Set(),
     converged: false,
     sweeps: 0,
@@ -3536,6 +3621,7 @@ function newLoop(cfg) {
     editable: cfg.editable,
     scopeNote: cfg.scopeNote,
     specTouched: [],
+    stalledLenses: [],
     lastFindings: [],
   };
 }
@@ -3697,6 +3783,11 @@ function applyOverrides(overrides, round) {
 // differs is the pool, which files the fixer may edit, and the budget.
 async function runReviewLoop(cfg) {
   LOOP = newLoop(cfg);
+  // Per-loop, because it is compared against `round`, which restarts at 1
+  // below. The counters that are genuinely per-run -- redesignsRun,
+  // standingRaises, compactionRan and lastGrowthSnap -- are deliberately NOT
+  // reset here; each says why at its declaration.
+  lastIntrospectRound = 0;
   const POOL_FIXED = cfg.poolFixed;
   const POOL_EXTRA = cfg.poolExtra;
   const maxRounds = cfg.maxRounds;
@@ -3705,6 +3796,16 @@ async function runReviewLoop(cfg) {
   let converged = false;
   let sweeps = 0;
   let reviewersFailed = false;
+  // Consecutive rounds a lens has failed after robustAgent's retries, keyed by
+  // lens, cleared the moment it returns anything. It distinguishes a lens that
+  // dropped one round from one that is gone.
+  const lensFailStreak = new Map();
+  // Groups whose fixer died, as "r<round>:<group>". Loop-scoped and sticky for
+  // the same reason reviewersFailed is: the round that certifies convergence is
+  // a LATER one, so a per-round flag cannot stop it. A measured run confirmed
+  // two findings in round 1, lost every fixer, and certified a clean sweep in
+  // round 3 over text no fixer had touched.
+  const fixersFailed = [];
   // A fresh relaunch with resumeState continues where an interrupted run
   // stopped, rather than restarting the loop. This is the mechanism for
   // changing an ANCHORED argument, which resumeFromRunId cannot do: the journal
@@ -3837,6 +3938,32 @@ async function runReviewLoop(cfg) {
     }
   }
 
+  // A sweep that found nothing, was incomplete only because a lens failed, and
+  // follows a sweep the same lens also failed, is a livelock rather than a
+  // retry. No lens edits anything and no fixer runs on such a round, so the next
+  // sweep puts the whole pool over byte-identical text and gets the same answer.
+  // Measured on one run: review:security failed from round 3 on, and rounds 3
+  // through 8 each paid a full 14-lens sweep, 84 lens agents, to re-learn what
+  // round 4 had already established.
+  const STALLED_LENS_ROUNDS = 2;
+  function sweepStalled(rnd) {
+    const stalled = [...lensFailStreak.entries()]
+      .filter(([, n]) => n >= STALLED_LENS_ROUNDS)
+      .map(([k]) => k);
+    // One failed sweep is always retried: the second sweep is what tells a
+    // transient outage apart from a lens that is not coming back.
+    if (stalled.length === 0 || sweeps < 2) return false;
+    log(
+      "Round " + rnd + ": " + stalled.join(", ") + " failed " + STALLED_LENS_ROUNDS +
+        " rounds running and every other lens is clean; stopping rather than re-sweeping " +
+        "unchanged text. Restore the lens and resume, or set excludeLenses to review without " +
+        "it and accept that convergence then certifies nothing about its domain",
+    );
+    LOOP.stalledLenses = stalled;
+    reviewersFailed = true;
+    return true;
+  }
+
   // ---- Closing a round ---------------------------------------------------
   //
   // One agent, one command. It merges this round's log shards into the review
@@ -3918,7 +4045,11 @@ async function runReviewLoop(cfg) {
       return false;
     }
     const h = history[history.length - 1];
-    if (h && h.round === rnd) {
+    // Scoped to the loop as well as the round: `history` spans the spec and
+    // non-spec loops, and a round that closes before pushing its own entry
+    // would otherwise stamp the previous loop's last entry whenever the two
+    // round numbers happen to match.
+    if (h && h.round === rnd && h.loop === LOOP.name) {
       h.sectionsChanged = boundary.hunks || 0;
       if ((boundary.changedFiles || []).length) h.filesChanged = boundary.changedFiles;
     }
@@ -3999,6 +4130,10 @@ async function runReviewLoop(cfg) {
     );
     const failedLenses = lensResults.filter((r) => !r).length;
     const results = lensResults.filter(Boolean);
+    lenses.forEach((l, i) => {
+      if (lensResults[i]) lensFailStreak.delete(l.key);
+      else lensFailStreak.set(l.key, (lensFailStreak.get(l.key) || 0) + 1);
+    });
 
     // Retire every lens that genuinely ran and found nothing; reactivate every lens
     // that found something. On a normal round the reactivation arm is a no-op (an
@@ -4021,6 +4156,10 @@ async function runReviewLoop(cfg) {
     if (results.length === 0) {
       log("Round " + round + ": every reviewer failed; stopping");
       reviewersFailed = true;
+      // The round wrote its log shards before its reviewers died, and it still
+      // owes the next launch a state file and the next round a snapshot, so it
+      // closes here rather than at the loop tail it is about to jump over.
+      await closeRound(round, false);
       break;
     }
     // A round may certify "clean" (advance the convergence streak) ONLY when every
@@ -4075,8 +4214,10 @@ async function runReviewLoop(cfg) {
         log(
           "Round " +
             round +
-            ": sweep found nothing but was incomplete; NOT converging (the failed lenses stay active and re-run)",
+            ": sweep found nothing but was incomplete; NOT converging (the next sweep re-runs " +
+            "every lens, including the ones that failed)",
         );
+        if (sweepStalled(round)) break;
       }
       continue;
     }
@@ -4223,25 +4364,45 @@ async function runReviewLoop(cfg) {
     // Credit each surviving finding back to the lens or lenses that produced it.
     // A finding carries `lens` from the stamping above; a merged finding carries
     // `lenses`, the union the dedup step was asked to preserve.
+    //
+    // Every name is checked against the lenses that actually ran this round,
+    // because a name from outside that set is not attribution to some other
+    // reviewer: it is attribution to nobody, and the lens that did find the
+    // defect then reads as having produced nothing and retires. Measured on this
+    // loop with a dedup agent returning `citation-audit` for `citations`: a round
+    // that confirmed two findings retired 12 of the 14 lenses, including the one
+    // whose finding had just been confirmed and fixed, and the next round ran 2
+    // reviewers. The fallback below did not catch it, because one wrong name
+    // among correct ones leaves the survivor set non-empty.
+    const known = new Set(lenses.map((l) => l.key));
     const survivors = new Set();
+    let unattributed = 0;
     for (const f of confirmed) {
-      const tags =
+      const tags = (
         Array.isArray(f.lenses) && f.lenses.length > 0
           ? f.lenses
           : f.lens
             ? [f.lens]
-            : [];
+            : []
+      ).filter((t) => known.has(t));
+      if (tags.length === 0) unattributed++;
       tags.forEach((t) => survivors.add(t));
     }
-    // Attribution can only fail one way: the dedup model dropped the tags while
-    // merging. Retiring on an empty survivor set would then retire every lens on a
-    // round that actually confirmed defects, so fall back to the weaker but safe
-    // rule (retire only a lens that reported nothing) and say so.
-    if (confirmed.length > 0 && survivors.size === 0) {
+    // Attribution fails when the dedup model drops the tags while merging, and
+    // when it returns a name no lens in this round carries. Either way the
+    // findings it lost can retire nobody, so fall back to the weaker but safe
+    // rule (retire only a lens that reported nothing) and say so. The condition
+    // is on the unattributed findings rather than on an empty survivor set, so a
+    // near miss triggers it as well as a total loss.
+    if (unattributed > 0) {
       log(
         "Round " +
           round +
-          ": dedup dropped the lens attribution; falling back to retiring only lenses that reported nothing",
+          ": " +
+          unattributed +
+          "/" +
+          confirmed.length +
+          " confirmed finding(s) carry no lens this round produced; falling back to retiring only lenses that reported nothing",
       );
       lenses.forEach((l, i) => {
         const r = lensResults[i];
@@ -4285,6 +4446,7 @@ async function runReviewLoop(cfg) {
             round +
             ": sweep incomplete (reviewer, verifier, or bookkeeping failures); NOT converging",
         );
+        if (sweepStalled(round)) break;
       }
       continue;
     }
@@ -4333,12 +4495,20 @@ async function runReviewLoop(cfg) {
       // A planner that drops a finding loses it silently, so the partition is
       // checked rather than trusted. Any violation falls back to one group of
       // everything, which is the old behaviour and is safe.
+      //
+      // The index test is Number.isInteger rather than a typeof check because
+      // typeof 1.5 and typeof NaN are both "number". Findings [0, 1.5, 2] over
+      // three confirmed findings passed the old guard, logged "3 finding(s)
+      // split into 1 group(s): G1(3)", and reached the fixer as
+      // confirmed[1.5] === undefined, dropped by the filter(Boolean) below.
+      // Two findings were fixed and the third was neither fixed, nor logged,
+      // nor rejected, while the round's own record claimed all three.
       const seen = [];
       let ok = !!(planned && Array.isArray(planned.groups) && planned.groups.length > 0);
       if (ok) {
         for (const g of planned.groups) {
           for (const i of g.findings || []) {
-            if (typeof i !== "number" || i < 0 || i >= confirmed.length || seen.includes(i)) ok = false;
+            if (!Number.isInteger(i) || i < 0 || i >= confirmed.length || seen.includes(i)) ok = false;
             else seen.push(i);
           }
         }
@@ -4356,14 +4526,37 @@ async function runReviewLoop(cfg) {
           title: "merged tail",
           rationale: "the planner exceeded the group cap; these were combined",
           findings: tail.flatMap((g) => g.findings || []),
-          order: maxFixGroups,
+          order: Math.max(0, ...head.map((g) => (Number.isInteger(g.order) ? g.order : 0))) + 1,
         });
         planned.groups = head;
       }
+      // `order` is the planner's second statement of the fix sequence; its
+      // first is the array itself, and the prompt promises "Fixing happens in
+      // the order you give". When the field is well formed the two agree and
+      // the sort is a no-op. When it is not, the array order is the statement
+      // worth keeping, because the alternative is what was measured here:
+      // orders 1, 2, -5 ran the planner's last group FIRST, an absent order
+      // became 0 through `a.order || 0` and did the same, and three groups all
+      // at order 1 left the sequence to stable-sort array position while the
+      // log claimed the planner had ordered them. Destroying the anchors a
+      // later group needs is exactly what the field exists to prevent, so a
+      // broken one is reported rather than obeyed.
+      let orderOk = true;
+      const orders = [];
+      for (const g of (ok ? planned.groups : [])) {
+        if (!Number.isInteger(g.order) || g.order < 1 || orders.includes(g.order)) orderOk = false;
+        else orders.push(g.order);
+      }
       if (ok) {
-        groups = planned.groups
-          .slice()
-          .sort((a, b) => (a.order || 0) - (b.order || 0));
+        groups = orderOk
+          ? planned.groups.slice().sort((a, b) => a.order - b.order)
+          : planned.groups.slice();
+        if (!orderOk) {
+          log(
+            "Round " + round + ": the fix planner's group order is not a distinct 1-based " +
+              "sequence; fixing the groups in the order they were returned",
+          );
+        }
         log(
           "Round " + round + ": " + confirmed.length + " finding(s) split into " +
             groups.length + " group(s): " + groups.map((g) => g.id + "(" + (g.findings || []).length + ")").join(" "),
@@ -4392,6 +4585,18 @@ async function runReviewLoop(cfg) {
         }),
       ),
     );
+    // A design result carrying no designs is not a design. Both branches below
+    // and the fixer's own design block are gated on the object being truthy, so
+    // `{"designs": []}` -- which the schema permits, having no minimum -- took
+    // the design path: an observed run handed a fixer "THE DESIGN FOR THIS
+    // GROUP ... APPLY IT. Your scope for design decisions is narrow here" above
+    // an empty array, and logged nothing. Emptying it to null here puts it on
+    // the path the null case already took, so it is logged, the fixer is told
+    // to design the group itself, and a round whose designs all came back empty
+    // does not spend a reconciliation agent on nothing.
+    for (let i = 0; i < designs.length; i++) {
+      if (!(designs[i] && (designs[i].designs || []).length)) designs[i] = null;
+    }
     const designless = groups.filter((_, i) => !designs[i]).map((g) => g.id);
     if (designless.length) {
       log(
@@ -4420,9 +4625,14 @@ async function runReviewLoop(cfg) {
           "  one design's cascades name a section another design rewrites;\n" +
           "  two designs each add a mechanism, and one mechanism would serve both.\n\n" +
           "RESOLVE, do not just report. For each conflict, say which design survives and why, or how the " +
-          "two merge, and return the REVISED designs for the groups you changed. Leave every other design " +
-          "exactly as it is: returning a group unchanged in `revised` is noise the fixer has to reconcile " +
-          "against its original.\n\n" +
+          "two merge, and return the REVISED designs for the groups you changed. Omit a group you left " +
+          "alone: returning one unchanged in `revised` is noise the fixer has to reconcile against its " +
+          "original.\n" +
+          "  A group you do return carries an entry for EVERY finding in it, with `findingTitle` copied " +
+          "exactly from the design you were given, because an entry is matched to the design it replaces " +
+          "by that title. A finding you omit keeps the design it already had.\n" +
+          "  Use the group ids exactly as they appear below. A `groupId` naming no group in this round " +
+          "is dropped, and the resolution you wrote for it is lost.\n\n" +
           "PREFER THE SMALLER RESULT. Where two designs each add something and one addition would serve " +
           "both, merge them and say so; that is the most valuable outcome here, because two mechanisms " +
           "doing nearly the same thing is the hair this loop exists to prevent.\n\n" +
@@ -4442,14 +4652,51 @@ async function runReviewLoop(cfg) {
         },
       );
       if (rec) {
+        // A revision used to REPLACE the group's whole designs array, so a
+        // reconciler that returned only the design it had changed deleted the
+        // design of every other finding in that group. Reproduced on a
+        // two-finding group: the second finding's design vanished, its fixer
+        // was still told "APPLY IT ... you are applying a design rather than
+        // inventing one" over a design covering the other finding, and the
+        // in-scope sites that design had adjudicated dropped out of the
+        // post-fix review checklist. Merging by findingTitle makes a partial
+        // array revise what it names and leave the rest standing.
+        const unknownGroups = [];
+        let applied = 0;
         for (const r of rec.revised || []) {
           const gi = groups.findIndex((g) => g.id === r.groupId);
-          if (gi >= 0 && r.designs) designs[gi] = { ...(designs[gi] || {}), designs: r.designs };
+          if (gi < 0) {
+            unknownGroups.push(String(r.groupId));
+            continue;
+          }
+          // An empty `designs` here is the same empty mandate arriving by a second
+          // door: it would replace a design the fixer needs with nothing while
+          // still reading as one. A revision that revises nothing is ignored.
+          if (!(r.designs || []).length) continue;
+          const merged = ((designs[gi] || {}).designs || []).slice();
+          for (const one of r.designs) {
+            const at = merged.findIndex((d) => d && d.findingTitle === one.findingTitle);
+            if (at >= 0) merged[at] = one;
+            else merged.push(one);
+          }
+          designs[gi] = { ...(designs[gi] || {}), designs: merged };
+          applied++;
+        }
+        // An unknown group id was dropped in silence while the log counted it
+        // as revised, so a resolution the reconciler wrote reached no fixer
+        // and nothing recorded that the conflict it settled is still open.
+        if (unknownGroups.length) {
+          log(
+            "Round " + round + ": the design reconciliation revised " + unknownGroups.length +
+              " group(s) this round does not have (" + unknownGroups.join(", ") +
+              "); those revisions were dropped and their conflicts stand unresolved",
+          );
+          history[history.length - 1].designRevisionsDropped = unknownGroups;
         }
         if ((rec.conflicts || []).length) {
           log(
             "Round " + round + ": the design reconciliation found " + rec.conflicts.length +
-              " conflict(s) between groups and revised " + (rec.revised || []).length + " design(s)",
+              " conflict(s) between groups and applied " + applied + " revised design(s)",
           );
           history[history.length - 1].designConflicts = rec.conflicts;
         }
@@ -4479,10 +4726,32 @@ async function runReviewLoop(cfg) {
         },
       );
       if (!out) {
-        log("Round " + round + ": the fixer for " + g.id + " did not return");
+        // The group's confirmed findings are still in the text, and no later
+        // stage re-opens them: nothing carries them forward and the lens that
+        // raised them may retire on the next round it reports nothing. So the
+        // round is incomplete and the loop may not certify convergence.
+        log(
+          "Round " + round + ": the fixer for " + g.id + " did not return; its " +
+            picked.length + " confirmed finding(s) were never edited",
+        );
+        fixersFailed.push("r" + round + ":" + g.id);
+        roundComplete = false;
+        // Written here rather than after the group loop because the entry for
+        // this round was pushed before the fix stage ran and still carries the
+        // value roundComplete had then.
+        const h = history[history.length - 1];
+        h.complete = false;
+        h.fixersFailed = (h.fixersFailed || []).concat(g.id);
         continue;
       }
       fixSummaries.push(g.id + ": " + (out.summary || ""));
+      // The findings this group actually closed. Credited per group rather than
+      // per round because a group whose fixer died `continue`s above with its
+      // findings untouched. Before this the only push into fixedTitles was the
+      // post-fix reviewer's own complaints, so one measured run reported 0
+      // findings fixed after ten were, and every later lens was handed a
+      // "do not re-litigate" list naming nothing that had been fixed.
+      picked.forEach((f) => fixedTitles.push(f.title));
       for (const m of out.newMechanisms || []) {
         roundMechanisms.push(m);
         // The strike table was READ in six places and written in none, so every
@@ -4589,9 +4858,13 @@ async function runReviewLoop(cfg) {
         followUpFixPrompt(postFix.findings, round),
         { label: "r" + round + ":follow-up-fix", phase: LOOP.name + " R" + round + ": fix" },
       );
-      // Recorded in fixedTitles so later rounds do not re-litigate them, and in
-      // history so a run where the fixer repeatedly needed correction is visible.
-      postFix.findings.forEach((f) => fixedTitles.push(f.title));
+      // Only a follow-up that returned corrected anything, so only then does the
+      // defect count as fixed. Recording it unconditionally told the next
+      // round's lenses that the current text reflects a correction a dead fixer
+      // never made.
+      if (followUp) postFix.findings.forEach((f) => fixedTitles.push(f.title));
+      // Recorded in history either way, so a run where the fixer repeatedly
+      // needed correction is visible whether or not the correction landed.
       history[history.length - 1].postFixReview = postFix.findings.map(
         (f) => f.title,
       );
@@ -4630,6 +4903,7 @@ async function runReviewLoop(cfg) {
           proposed: pass.verdict,
           decision: panel.decision,
           upheld: panel.upheld,
+          undirected: !!panel.undirected,
           votes: panel.votes.map((v) => ({
             falsified: v.falsified,
             howConclusive: v.howConclusive,
@@ -4649,6 +4923,16 @@ async function runReviewLoop(cfg) {
               .map((v) => v.howConclusive + ": " + v.reasoning),
           });
           verdict = { ...pass, verdict: panel.decision };
+          if (panel.undirected) {
+            // The panel refuted the pass and named nothing to do instead, so the
+            // loop continues on a verdict no judge endorsed. The design's claim
+            // that a wrong continue self-corrects holds only if the next pass
+            // actually runs, and on the cadence alone it is introspectEvery
+            // rounds away (measured: with introspectEvery 2 the passes fell on
+            // rounds 2 and 4, so an undirected refutation at round 2 went
+            // unexamined for two more rounds of fixing).
+            lastIntrospectRound = round - introspectEvery;
+          }
         }
       }
 
@@ -4734,17 +5018,30 @@ async function runReviewLoop(cfg) {
                 String(verdict.nextSteps.summary || "").slice(0, 160)
               : " — the pass proposed no next steps"),
         );
-        break;
       }
     }
 
     roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
+    // The stop breaks HERE rather than at the verdict, so the halting round
+    // closes through the same statement every other round does and the two
+    // cannot drift apart again. Measured: a halt in round 2 ran no
+    // round-boundary call at all, leaving its shards unmerged and the next
+    // launch without a state file or a snapshot.
+    if (stoppedByIntrospection) break;
   }
 
   LOOP.round = round;
-  LOOP.converged = converged && !reviewersFailed && !stoppedByIntrospection;
+  if (fixersFailed.length) {
+    log(
+      "The " + cfg.name + " loop lost the fixer for " + fixersFailed.join(", ") +
+        "; those confirmed findings were never edited, so the loop does not certify convergence",
+    );
+  }
+  LOOP.converged =
+    converged && !reviewersFailed && fixersFailed.length === 0 && !stoppedByIntrospection;
   LOOP.sweeps = sweeps;
   LOOP.reviewersFailed = reviewersFailed;
+  LOOP.fixersFailed = fixersFailed;
   log(
     "The " + cfg.name + " loop " +
       (LOOP.converged ? "converged" : "did NOT converge") +
@@ -5095,8 +5392,16 @@ if (converged) {
 return {
   mode,
   // A run stopped by the spec gate says so, rather than reporting "reviewed"
-  // for a proposal whose non-spec staging nothing looked at.
-  status: mode === "new" ? "written" : specBlocked ? "spec-not-converged" : "reviewed",
+  // for a proposal whose non-spec staging nothing looked at. A run the
+  // introspection pass halted or reframed says so first: it stopped at round 2
+  // of 6 with its findings open, and "reviewed" is what a converged run says.
+  status: stoppedByIntrospection
+    ? "stopped-" + stoppedByIntrospection.verdict
+    : mode === "new"
+      ? "written"
+      : specBlocked
+        ? "spec-not-converged"
+        : "reviewed",
   specGate: specBlocked
     ? {
         rounds: specLoop.round,
@@ -5149,7 +5454,9 @@ return {
       sweeps: l.sweeps,
       converged: l.converged,
       reviewersFailed: l.reviewersFailed,
+      fixersFailed: l.fixersFailed,
       retiredLenses: [...l.retired],
+      stalledLenses: l.stalledLenses,
       specTouched: l.specTouched,
     })),
     // A skipped loop certifies nothing about its half of the proposal, so a
