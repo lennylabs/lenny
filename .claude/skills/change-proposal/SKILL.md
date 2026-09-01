@@ -61,7 +61,11 @@ A partition check asserts that every content line of the original survived the s
 
 The spec staging converges first, alone. Then the non-spec staging converges, with the lenses reading **both change files as one document**, because a non-spec change that contradicts a staged spec edit is a finding only a reviewer holding both can see. The spec loop is skipped only when a cheap probe reports the proposal INTENDS no change under `spec/`. Intent rather than completeness: a proposal that names a spec target it has not written yet needs the loop more than one whose staging is finished, because writing that text is the work the loop does.
 
-**Between them is a reconciliation, not a review round.** The spec staging is settled by then and the checklist has not been written against it, so one pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked.
+**Between them is a reconciliation, not a review round.** One pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked. It runs **whether or not the spec loop converged**, because a loop that exhausted its budget has more unreconciled consequences than one that converged, and it is told which case it is in so it reconciles to the current text rather than guessing where open findings will land.
+
+**The non-spec loop does not start on a spec staging that is still moving.** When the spec loop exhausts its budget without converging, the run reconciles, then stops with status `spec-not-converged`, naming the rounds, the budget, and what the loop was still finding. Raising `maxSpecReviewRounds` and resuming is the operator's call; spending the second budget reviewing against staging that is still open is not a decision the run makes silently. `allowNonSpecOnUnconvergedSpec` overrides this.
+
+**The spec fixer repairs what its own edits falsify in the non-spec staging.** It may correct a statement already written in `non-spec-changes.md` that one of its own spec edits just made false, in the same edit, and only where that file already has content. The trigger is always a spec finding: it never goes looking there, may not author a staged change because a spec edit implies one is needed, and may not touch a defect that is wrong on its own terms. The lenses are unchanged and are told not to file such a statement as a finding, because it is the consequence of an edit rather than a finding of its own. The checklist is deliberately excluded and its drift stays with the reconciliation pass.
 
 Each loop keeps its own rounds, retired set, sweeps, and convergence, because a lens satisfied by the spec staging has said nothing about the code staging. The refuted-findings memory and the round history stay run-wide, so a finding refuted in the first loop is not re-litigated in the second.
 
@@ -134,6 +138,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `maxNonSpecReviewRounds` | forward | 15 | budget for the non-spec loop; the legacy `maxReviewRounds` overrides it |
 | `skipSpecReview`, `skipNonSpecReview` | launch | false | a skipped loop certifies nothing about its half, echoed in the result |
 | `lockSpecChanges` | forward | false | the non-spec loop may never edit the spec staging; such a finding becomes an open decision |
+| `allowNonSpecOnUnconvergedSpec` | forward | false | runs the non-spec loop even when the spec loop exhausted its budget; otherwise the run stops at `spec-not-converged` |
 | `verifyOrder` | forward | `["material","evidence"]` | which skeptic short-circuits |
 | `verifySequential` | forward | true | false restores both skeptics in parallel |
 | `maxFixGroups` | forward | 7 | the only cap on the fix split; group size is uncapped by design |

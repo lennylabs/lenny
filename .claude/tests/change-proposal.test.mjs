@@ -345,6 +345,9 @@ t.section("B9. each loop tells its lenses and its fixer what it owns");
 t.section("B9b. lockSpecChanges governs what the non-spec fixer may edit");
 {
   const withFinding = loopStubs({
+    // No spec loop, so the spec gate is not what this test is measuring: it is
+    // about what the NON-SPEC fixer may edit under lockSpecChanges.
+    "probe:spec-changes": "NO",
     "*:review:*": { coverage: "c", findings: [{ title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing" }] },
     "*:dedup": { findings: [{ title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing", lenses: ["mechanism"] }] },
   });
@@ -1145,6 +1148,81 @@ t.section("X8. an unrelated location in a later round carries no history");
   }));
   const r2 = matching(calls, "r2:fix-design:")[0];
   t.check("a different location carries no history", !/REWRITTEN BEFORE/.test(r2.prompt));
+}
+
+// ---------------------------------------------------------------------------
+// F1: the non-spec loop does not run on a spec staging that is still moving,
+// and the spec fixer repairs what its own edits falsify.
+// ---------------------------------------------------------------------------
+
+// A stub table whose spec loop never goes clean, so the spec loop exhausts its
+// budget without converging.
+const specNeverClean = (over = {}) =>
+  loopStubs({
+    "probe:spec-changes": "YES",
+    "*:review:*": ({ label }) => ({ coverage: "c", findings: [F(1)] }),
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "*:expand:*": { proposal: [], tree: [], searched: "" },
+    ...over,
+  });
+
+t.section("X9. an unconverged spec loop blocks the non-spec loop");
+{
+  const { calls, logs, result } = await runWorkflow(WF, { ...REVIEW_ARGS, maxSpecReviewRounds: 2 }, specNeverClean());
+  t.check("the spec loop ran", logs.some((l) => /Entering the spec review loop/.test(l)));
+  t.check("the non-spec loop did not", !logs.some((l) => /Entering the non-spec review loop/.test(l)));
+  t.check("and the block is logged with the remedy", logs.some((l) => /did NOT converge after 2 of 2 round\(s\); the non-spec review is NOT run/.test(l)));
+  t.check("the status names it", result.status === "spec-not-converged", String(result.status));
+  t.check("the budget is reported", result.specGate && result.specGate.budget === 2);
+  t.check("and what it was still finding", result.specGate.stillFinding.includes("T1"));
+  t.check("with how to resume", /Raise maxSpecReviewRounds above 2/.test(result.specGate.resume));
+}
+
+t.section("X10. the handoff runs anyway, before the run returns");
+{
+  const { calls, logs } = await runWorkflow(WF, { ...REVIEW_ARGS, maxSpecReviewRounds: 2 }, specNeverClean());
+  const h = calls.find((c) => c.label === "spec-nonspec-handoff");
+  t.check("the handoff ran on a non-converged loop", !!h);
+  t.check("and knows the staging is unsettled", /did NOT converge/.test(h.prompt));
+  t.check("it is told why it is still worth doing", /worth doing\s+precisely because the staging is unsettled/.test(h.prompt));
+  t.check("and not to guess where open findings land", /Do not try to guess where the open\s+findings will land/.test(h.prompt));
+  t.check("it is logged as unsettled", logs.some((l) => /against the UNSETTLED spec staging/.test(l)));
+  t.check("the handoff precedes the block", firstIndex(calls, "spec-nonspec-handoff") >= 0);
+}
+
+t.section("X11. the override lets the non-spec loop run anyway");
+{
+  const { logs, result } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, maxSpecReviewRounds: 2, maxNonSpecReviewRounds: 1, allowNonSpecOnUnconvergedSpec: true },
+    specNeverClean(),
+  );
+  t.check("the non-spec loop runs", logs.some((l) => /Entering the non-spec review loop/.test(l)));
+  t.check("and the status is not the gate status", result.status !== "spec-not-converged", String(result.status));
+}
+
+t.section("X12. a converged spec loop is not blocked and the handoff says so");
+{
+  const { calls, logs, result } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const h = calls.find((c) => c.label === "spec-nonspec-handoff");
+  t.check("the handoff knows it converged", /has converged/.test(h.prompt));
+  t.check("the non-spec loop runs", logs.some((l) => /Entering the non-spec review loop/.test(l)));
+  t.check("the status is the normal one", result.status === "reviewed", String(result.status));
+}
+
+t.section("X13. the spec fixer repairs consequential drift in the non-spec staging, and nothing else");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, specNeverClean({}));
+  const specFix = calls.find((c) => /:fix:/.test(c.label) && c.prompt.includes("spec convergence loop"));
+  t.check("the spec fixer may open the non-spec staging", /non-spec-changes\.md — REPAIR ONLY WHAT YOUR OWN EDIT FALSIFIED/.test(specFix.prompt));
+  t.check("only where it already has content", /ALREADY HAS\s+CONTENT beyond its headings/.test(specFix.prompt));
+  t.check("the trigger is always a spec finding", /THE TRIGGER IS ALWAYS A SPEC FINDING/.test(specFix.prompt));
+  t.check("authoring is barred", /YOU MAY NOT AUTHOR/.test(specFix.prompt));
+  t.check("independent defects are the next loop's", /that is a finding\s+for the loop that follows/.test(specFix.prompt));
+  t.check("an empty file means nothing to do", /WHEN THE FILE IS EMPTY there is nothing to repair/.test(specFix.prompt));
+  t.check("the checklist stays out of bounds", /including the implementation checklist, and every file outside it,\s+is out of bounds/.test(specFix.prompt));
+  const specLens = calls.find((c) => /^r1:review:/.test(c.label) && c.prompt.includes("STAGED SPEC EDITS"));
+  t.check("but a lens is told not to file it as a finding", /Do not file the non-spec statement as a separate finding/.test(specLens.prompt));
 }
 
 t.done();

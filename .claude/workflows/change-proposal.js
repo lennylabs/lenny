@@ -308,6 +308,7 @@ const ARG_CLASS = {
   compactAtLines: "forward",
   compactGrowthLines: "forward",
   standingContextMaxLines: "forward",
+  allowNonSpecOnUnconvergedSpec: "forward",
   maxExpansions: "forward",
   skipExpansion: "forward",
   runTag: "anchored",
@@ -3376,6 +3377,7 @@ function newLoop(cfg) {
     editable: cfg.editable,
     scopeNote: cfg.scopeNote,
     specTouched: [],
+    lastFindings: [],
   };
 }
 
@@ -3977,6 +3979,9 @@ async function runReviewLoop(cfg) {
     // round never rejects itself.
     markSitesRejected(confirmed, round);
     recordFindings(round, confirmed);
+    // What the loop was still finding when it stopped. A budget-exhausted stop
+    // that names nothing tells the operator only that it stopped.
+    LOOP.lastFindings = confirmed.map((f) => f.title);
     live
       .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
       .forEach((v) => {
@@ -4551,14 +4556,48 @@ const PROBLEM_STATEMENT_RULE =
   "narrow its scope, or abandon its framing. That is a reframe, it is the introspection pass's decision " +
   "and not yours, and if a finding seems to need one, say so in your summary and close what you can.\n";
 
+// The spec loop repairs what its own edits falsify in the non-spec staging, and
+// nothing else there.
+//
+// A run measured before this existed left non-spec-changes.md untouched for four
+// and a half hours carrying claims that superseded spec decisions had already
+// made false, while the summary's watch-out section grew into a nine-hundred-word
+// errata list PROMISING those corrections. That list was not a fixer
+// misbehaving. It was a correct-but-unwritable correction finding the only
+// writable surface it had. The remedy is to let the correction land where it
+// belongs, bounded tightly enough that the spec loop does not begin authoring
+// the other lane's staging.
+//
+// This is the same rule the problem statement already carries, and the same one
+// that makes the summary editable here: repair the consequence of your own edit
+// in the same edit, and do not re-scope. The checklist is deliberately NOT
+// included; its drift stays with the handoff.
+const NON_SPEC_CONSEQUENCE_RULE =
+  "  " + P.nonSpec + " — REPAIR ONLY WHAT YOUR OWN EDIT FALSIFIED, and only where the file ALREADY HAS " +
+  "CONTENT beyond its headings. When a spec edit you just made leaves a statement there contradicting the " +
+  "spec staging — a deliverable id you removed that it still references, a predicate you changed that it " +
+  "still states the old way, an identifier you renamed — correct it in the SAME edit. Leaving the two " +
+  "disagreeing is worse than leaving both wrong.\n" +
+  "    THE TRIGGER IS ALWAYS A SPEC FINDING. Never go looking for problems in that file. The only thing " +
+  "that opens it is an edit of yours having falsified something already written there.\n" +
+  "    YOU MAY NOT AUTHOR. Do not add a staged code, schema, chart, docs or test change because your spec " +
+  "edit implies one is needed, however plainly it does. That is the next loop's work, and content written " +
+  "under a spec lens would reach sign-off having never been reviewed under a non-spec one. Do not correct " +
+  "something wrong there on its own terms that your edit neither caused nor repaired: that is a finding " +
+  "for the loop that follows. Do not improve wording, restructure, or fill a gap.\n" +
+  "    WHEN THE FILE IS EMPTY there is nothing to repair, whatever your edit implies about the work it " +
+  "will need. Name that consequence in your summary and leave the file alone.\n";
+
 const SPEC_EDITABLE =
   "You may edit ONLY these files:\n" +
   "  " + P.spec + " — the staged spec edits, which is what this loop converges\n" +
   PROBLEM_STATEMENT_RULE +
   "  " + P.summary + " — because its deliverable index resolves the SPEC ids this loop adds and removes, " +
   "and a loop that may not touch it leaves its own edits mis-indexed until the next one\n" +
+  NON_SPEC_CONSEQUENCE_RULE +
   "  " + P.log + " — your log shard\n" +
-  "Every other file in the proposal, and every file outside it, is out of bounds.";
+  "Every other file in the proposal, including the implementation checklist, and every file outside it, " +
+  "is out of bounds.";
 
 const NONSPEC_EDITABLE =
   "You may edit ONLY these files:\n" +
@@ -4582,7 +4621,12 @@ const SPEC_SCOPE_NOTE =
   "of scope here and the loop that follows this one owns it; raising it now costs two verifiers and " +
   "cannot be closed.\n" +
   "The implementation checklist and the summary's deliverable index are reconciled between the two loops, " +
-  "against a settled spec staging. Drift in them is expected here and is NOT a finding.";
+  "against a settled spec staging. Drift in them is expected here and is NOT a finding.\n" +
+  "One thing the FIXER may do that you may not file: where a spec edit it makes falsifies a statement " +
+  "already written in the non-spec staging, it corrects that statement as part of completing the spec " +
+  "fix. That is the consequence of an edit rather than a finding of its own, so report the spec defect " +
+  "and let the fixer propagate it. Do not file the non-spec statement as a separate finding: it costs " +
+  "two verifiers and closes nothing this loop is converging.";
 
 const NONSPEC_SCOPE_NOTE =
   "\n\nSCOPE OF THIS LOOP. Read the staged spec edits in " + P.spec + " and the staged non-spec changes " +
@@ -4631,21 +4675,35 @@ if (!hasSpecChanges) {
   });
 }
 
-// Between the loops: the spec staging is settled and the checklist has not been
-// written against it. This is a reconciliation, not a review round.
-if (specLoop && specLoop.converged && !stoppedByIntrospection) {
+// Between the loops: the checklist has not been written against the spec
+// staging. This is a reconciliation, not a review round.
+//
+// It runs WHETHER OR NOT the spec loop converged. A loop that exhausted its
+// budget has MORE unreconciled consequences than one that converged, not fewer,
+// so gating this on convergence meant the one run that most needed it was the
+// one that did not get it: the measured run finished with a deliverable index
+// and a checklist describing a spec staging that had moved out from under them,
+// and nothing had ever reconciled the two.
+if (specLoop && !stoppedByIntrospection) {
   await robustAgent(
-    "Reconcile a proposal's deliverable index and implementation checklist against a now-settled set of " +
-      "staged spec edits.\n\n" +
+    "Reconcile a proposal's deliverable index and implementation checklist against the staged spec " +
+      "edits.\n\n" +
       "HARD CONSTRAINT: the only files you may edit are " + P.summary + " and " + P.checklist + ". Change " +
       "nothing else, and change nothing in them beyond what this pass names.\n\n" +
-      "The spec staging in " + P.spec + " has converged. It was reviewed for several rounds and " +
-      "deliverables were added, removed, and renumbered along the way, so the index and the checklist are " +
-      "behind it.\n\n" +
+      (specLoop.converged
+        ? "The spec staging in " + P.spec + " has converged. It was reviewed for several rounds and " +
+          "deliverables were added, removed, and renumbered along the way, so the index and the checklist " +
+          "are behind it.\n\n"
+        : "The spec staging in " + P.spec + " did NOT converge: the review loop ran out of budget with " +
+          "findings still open. Reconcile against the staging AS IT NOW STANDS. This is worth doing " +
+          "precisely because the staging is unsettled — the index and the checklist are further behind it " +
+          "than they would be after a converged loop, and leaving them describing a staging that moved is " +
+          "how a reader is misled about what the proposal now stages. Do not try to guess where the open " +
+          "findings will land; reconcile to the current text and no further.\n\n") +
       "Do three things.\n" +
       "1. Rebuild `## Deliverable index` in " + P.summary + " from what " + P.spec + " and " + P.nonSpec +
       " now stage. Every staged deliverable appears exactly once with the file it lands in and one line.\n" +
-      "2. Write the checklist's SPEC-lane steps against the settled SPEC ids, as a leading block, one lane " +
+      "2. Write the checklist's SPEC-lane steps against the current SPEC ids, as a leading block, one lane " +
       "per step, in the order the spec edits must be applied.\n" +
       "3. Reconcile the existing non-spec steps' `Depends on:` against those step ids.\n\n" +
       "This is not a review round: do not reopen a decision, do not edit a staged change, and do not " +
@@ -4654,10 +4712,29 @@ if (specLoop && specLoop.converged && !stoppedByIntrospection) {
       "\nFollow " + repo + "/.claude/rules/doc-style.md.",
     { label: "spec-nonspec-handoff", phase: "Review" },
   );
-  log("Reconciled the deliverable index and the checklist against the settled spec staging");
+  log(
+    "Reconciled the deliverable index and the checklist against the " +
+      (specLoop.converged ? "settled" : "UNSETTLED") + " spec staging",
+  );
 }
 
-if (!stoppedByIntrospection && !input.skipNonSpecReview) {
+// The non-spec loop does not start on a spec staging that is still moving.
+//
+// It was ungated, and the cost was measured: the spec loop exhausted its budget
+// without converging, and the non-spec loop then spent six rounds and half the
+// run's tokens reviewing a checklist and a deliverable index against staged spec
+// edits that were still open. Raising the spec budget and resuming is the
+// operator's call; spending the second budget on unsettled staging is not a
+// decision the run should make silently.
+const specBlocked =
+  specLoop && !specLoop.converged && !input.allowNonSpecOnUnconvergedSpec && !stoppedByIntrospection;
+if (specBlocked) {
+  log(
+    "The spec loop did NOT converge after " + specLoop.round + " of " + specLoop.maxRounds +
+      " round(s); the non-spec review is NOT run. Raise maxSpecReviewRounds and resume, or set " +
+      "allowNonSpecOnUnconvergedSpec.",
+  );
+} else if (!stoppedByIntrospection && !input.skipNonSpecReview) {
   nonSpecLoop = await runReviewLoop({
     name: "non-spec",
     poolFixed: POOL_FIXED,
@@ -4765,7 +4842,20 @@ if (converged) {
 
 return {
   mode,
-  status: mode === "new" ? "written" : "reviewed",
+  // A run stopped by the spec gate says so, rather than reporting "reviewed"
+  // for a proposal whose non-spec staging nothing looked at.
+  status: mode === "new" ? "written" : specBlocked ? "spec-not-converged" : "reviewed",
+  specGate: specBlocked
+    ? {
+        rounds: specLoop.round,
+        budget: specLoop.maxRounds,
+        sweeps: specLoop.sweeps,
+        stillFinding: specLoop.lastFindings,
+        resume:
+          "Raise maxSpecReviewRounds above " + specLoop.maxRounds +
+          " and resume, or set allowNonSpecOnUnconvergedSpec to review the non-spec staging anyway.",
+      }
+    : undefined,
   path,
   title: draftTitle,
   premises: premiseStats,
