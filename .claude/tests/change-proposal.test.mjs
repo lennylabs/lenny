@@ -265,7 +265,7 @@ const loopStubs = (over = {}) => {
   return {
     bootstrap: "SKIPPED",
     conventions: "conforms",
-    "probe:spec-changes": "YES",
+    "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
     "snap*": "DONE",
     diffcount: "0",
     "spec-nonspec-handoff": "reconciled",
@@ -287,17 +287,79 @@ const loopStubs = (over = {}) => {
   };
 };
 
+
+t.section("B6c. snapshots are namespaced by run tag and by loop");
+{
+  // Both loops run, so the non-spec loop's round 1 must not land on the
+  // spec loop's round 1, and neither may land where a concurrent run does.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const dests = matching(calls, "snap:").map(
+    (c) => (c.prompt.match(/cp -r \S+ (\S+)/) || [])[1],
+  );
+  t.check("both loops snapshot", dests.length >= 4, String(dests.length));
+  t.check(
+    "every snapshot lands under the run's own tag",
+    dests.every((d) => d && d.startsWith("/repo/scratchpad/cp-snap/0081_fix_x/")),
+    String(dests[0]),
+  );
+  t.check(
+    "no two snapshots of the run share a destination",
+    new Set(dests).size === dests.length,
+    dests.join(" "),
+  );
+}
+
 // Match a review lens call in either loop: labels are r<N>:review:<lens>.
 const isLens = (c) => /^r\d+:review:/.test(c.label);
 
 t.section("B7. the spec loop is skipped when nothing is staged for spec");
 {
-  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": "NO" }));
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));
   t.check("the probe runs", !never(calls, "probe:spec-changes"));
   t.check("the probe is a cheap dedicated agent", calls.find((c) => c.label === "probe:spec-changes").opts.model === "haiku");
   t.check("it is logged as skipped", logs.some((l) => /stages no spec edits; skipping the spec review loop/.test(l)));
   t.check("the non-spec loop still runs", logs.some((l) => /Entering the non-spec review loop/.test(l)));
   t.check("no spec loop is entered", !logs.some((l) => /Entering the spec review loop/.test(l)));
+}
+
+t.section("B7b. the spec gate reads a field, and a skip is visible in the result");
+{
+  const run = (probe, args = REVIEW_ARGS) =>
+    runWorkflow(WF, args, loopStubs({ "probe:spec-changes": probe }));
+  const entered = (logs) => logs.some((l) => /Entering the spec review loop/.test(l));
+
+  // A structured YES ran the loop's OPPOSITE before the gate read a field:
+  // String({...}) is "[object Object]", which matches no /YES/i.
+  const yes = await run({ stagesSpecChanges: true, why: "SPEC-1 lands in spec/16" });
+  t.check("a structured yes runs the spec loop", entered(yes.logs));
+  t.check("and the result records no skip", yes.result.review.specReviewSkipped === null);
+
+  const no = await run({ stagesSpecChanges: false, why: "the staging carries only its headings" });
+  t.check("a structured no skips the loop", !entered(no.logs));
+  t.check("and the result names the reason",
+    no.result.review.specReviewSkipped?.reason === "no-spec-changes",
+    JSON.stringify(no.result.review.specReviewSkipped));
+  t.check("and carries the probe's why", /only its headings/.test(no.result.review.specReviewSkipped?.why || ""));
+
+  // The dangerous direction: an answer the gate cannot read must not skip the
+  // spec review silently. `{}` is also what the harness returns for an
+  // unstubbed agent, so this is the shape the suite itself produced.
+  const unreadable = await run({});
+  t.check("an unreadable answer runs the loop rather than skipping it", entered(unreadable.logs));
+  t.check("and the result records no skip on an unreadable answer", unreadable.result.review.specReviewSkipped === null);
+  t.check("and the run says the answer was unreadable",
+    unreadable.logs.some((l) => /no readable answer/.test(l)));
+
+  // Preserved from the old `|| "YES"` default: a probe that died is not a NO.
+  const dead = await run(null);
+  t.check("a dead probe still runs the loop", entered(dead.logs));
+
+  // Skipping by caller argument is a different reason from staging nothing,
+  // and it was unreachable while an object answer read as "no spec changes".
+  const skipped = await run({ stagesSpecChanges: true, why: "SPEC-1" }, { ...REVIEW_ARGS, skipSpecReview: true });
+  t.check("skipSpecReview is a distinct recorded reason",
+    !entered(skipped.logs) && skipped.result.review.specReviewSkipped?.reason === "skipSpecReview",
+    JSON.stringify(skipped.result.review.specReviewSkipped));
 }
 
 t.section("B8. spec converges before non-spec begins");
@@ -347,7 +409,7 @@ t.section("B9b. lockSpecChanges governs what the non-spec fixer may edit");
   const withFinding = loopStubs({
     // No spec loop, so the spec gate is not what this test is measuring: it is
     // about what the NON-SPEC fixer may edit under lockSpecChanges.
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "*:review:*": { coverage: "c", findings: [{ title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing" }] },
     "*:dedup": { findings: [{ title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing", lenses: ["mechanism"] }] },
   });
@@ -420,13 +482,105 @@ t.section("B10-B12. verification is sequential and short-circuits");
   }
 }
 
+t.section("B12a. the parallel verify path applies the same dead-verifier guard");
+{
+  const finding = { title: "T", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" };
+  const withOne = (over) => loopStubs({
+    "*:review:*": { coverage: "c", findings: [finding] },
+    "*:dedup": { findings: [{ ...finding, lenses: ["citations"] }] },
+    ...over,
+  });
+  const PAR = { ...REVIEW_ARGS, verifySequential: false };
+
+  // The failure the guard exists for: one outage must not refute a finding.
+  {
+    const { calls, logs, result } = await runWorkflow(WF, PAR, withOne({ "*:verify-material": null }));
+    t.check("both skeptics are dispatched", !never(calls, "r1:verify-material") && !never(calls, "r1:verify-evidence"));
+    t.check("a dead verifier stops the finding", never(calls, "r1:fix:"));
+    t.check("and the round is marked inconclusive", logs.some((l) => /INCONCLUSIVE/.test(l)));
+    t.check("and the finding is NOT recorded as refuted",
+      !(result.review.rejectedTitles || []).includes("T"), JSON.stringify(result.review.rejectedTitles));
+    const r2 = calls.find((c) => c.label.startsWith("r2:review:"));
+    t.check("so a later lens is never told it was refuted",
+      !r2 || !/Already examined and refuted/.test(r2.prompt));
+  }
+  // A live refusal must still refute, and must name the skeptic that refused.
+  {
+    const { calls, result } = await runWorkflow(WF, PAR, withOne({
+      "*:verify-evidence": { confirmed: false, reason: "the citation is right" },
+    }));
+    t.check("a live refusal is still recorded as refuted", (result.review.rejectedTitles || []).includes("T"));
+    const r2 = calls.find((c) => c.label.startsWith("r2:review:"));
+    t.check("and the refusing skeptic is named", !r2 || /T: refuted by the evidence skeptic/.test(r2.prompt));
+  }
+  // The happy path is unchanged.
+  {
+    const { calls } = await runWorkflow(WF, PAR, withOne({}));
+    t.check("two confirming skeptics still reach the fixer", !never(calls, "r1:fix:"));
+  }
+}
+
+
+t.section("B12b. an agent that omits its findings array does not kill the run");
+{
+  const f = (title) => ({ title, where: "w", claim: "c", why_wrong: "w", evidence: "e",
+    suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" });
+
+  // 1. A review lens returns a well-formed object with no findings key.
+  {
+    const { result, calls, error } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "*:review:*": { coverage: "c", findings: [f("T")] },
+      "*:review:security": { coverage: "c" },            // no findings key
+      "*:dedup": { findings: [{ ...f("T"), lenses: ["citations"] }] },
+    }));
+    t.check("the run does not throw", !error, error && error.message);
+    // The surviving lens's finding still reaches verification and the fixer.
+    t.check("the other lens's finding is still verified", !never(calls, "r1:verify-material"));
+    t.check("and is still fixed", !never(calls, "r1:fix:"));
+    t.check("the run still completes", result && result.status !== undefined);
+  }
+
+  // 2. The dedup agent returns an object with no findings key: the raw findings
+  //    are carried forward rather than lost.
+  {
+    const { result, calls, logs, error } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "*:review:*": { coverage: "c", findings: [f("T1"), f("T2")] },
+      "*:dedup": {},                                     // no findings key
+    }));
+    t.check("the run does not throw", !error, error && error.message);
+    t.check("every raw finding is still verified",
+      matching(calls, "r1:verify-material").length >= 2,
+      String(matching(calls, "r1:verify-material").length));
+    t.check("and the round is not reported as empty",
+      !logs.some((l) => /Round 1: 0 findings after dedup/.test(l)));
+    t.check("the run still completes", result && result.status !== undefined);
+  }
+
+  // 3. The post-fix reviewer returns an object with no findings key: treated as
+  //    clean, and no follow-up fixer is launched.
+  {
+    const { calls, logs, error } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "*:review:*": { coverage: "c", findings: [f("T")] },
+      "*:dedup": { findings: [{ ...f("T"), lenses: ["citations"] }] },
+      "*:post-fix-review": {},                           // no findings key
+    }));
+    t.check("the run does not throw", !error, error && error.message);
+    t.check("no follow-up fixer is launched", never(calls, "r1:follow-up-fix"));
+    t.check("the post-fix review is recorded as clean",
+      logs.some((l) => /post-fix review found no defect in the fixer's work/.test(l)));
+  }
+}
+
 t.section("B27. convergence is certified only over a COMPLETE sweep");
 {
   // A lens that failed in an early round and ran clean later is not a reason to
   // refuse convergence: the sweep re-reads the final text with every lens. This
   // is the case that must still converge.
   const { result } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "r1:review:security": null,
   }));
   t.check("a lens that failed early and recovered still converges", result.review.converged === true, String(result.review.converged));
@@ -438,7 +592,7 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
   // answer is to re-run rather than to accept: a single failed sweep is
   // followed by another, and only a complete one converges.
   const one = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "r3:review:security": null,
   }));
   t.check("the incomplete sweep is refused", one.logs.some((l) => /sweep found nothing but was incomplete; NOT converging/.test(l)));
@@ -448,7 +602,7 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
   // A lens that never returns at all can never certify its domain, so the run
   // exhausts its budget rather than converging.
   const never_ = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "*:review:security": null,
   }));
   t.check("a lens that never returns blocks convergence entirely", never_.result.review.converged === false, String(never_.result.review.converged));
@@ -463,7 +617,7 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
     WF,
     { ...REVIEW_ARGS, maxNonSpecReviewRounds: 8 },
     loopStubs({
-      "probe:spec-changes": "NO",
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
       "*:review:security": ({ label }) =>
         Number(label.match(/^r(\d+):/)[1]) >= 3 ? null : { coverage: "c", findings: [] },
     }),
@@ -491,7 +645,7 @@ t.section("B18d. a lens name no lens in the round carries credits nobody, and re
     suggested_fix: "f", area: "a", kind: "design-defect", introducedBy: "pre-existing",
   });
   const run = (name) => runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "*:review:*": ({ label }) =>
       /^r1:review:(citations|mechanism)$/.test(label)
         ? { coverage: "c", findings: [G(label)] }
@@ -527,7 +681,7 @@ t.section("B27b. a round whose fixer never returned cannot certify convergence")
   // One round confirms two findings; every later round is clean, so the loop
   // reaches a sweep that would certify.
   const twoFindings = (over) => loopStubs({
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "r1:review:*": { coverage: "c", findings: [f("T1"), f("T2")] },
     "r1:dedup": { findings: [{ ...f("T1"), lenses: ["mechanism"] }, { ...f("T2"), lenses: ["citations"] }] },
     ...over,
@@ -579,7 +733,7 @@ const fs = (n) => Array.from({ length: n }, (_, i) => F(i + 1));
 
 const fixStubs = (n, over = {}) =>
   loopStubs({
-    "probe:spec-changes": "NO",
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
     "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: fs(n) } : { coverage: "c", findings: [] }),
     "*:dedup": { findings: fs(n).map((f) => ({ ...f, lenses: ["citations"] })) },
     ...over,
@@ -1205,7 +1359,7 @@ t.section("B26b. a round that ends the loop still closes, and a stopped run does
   }
   // Every reviewer dying ends the loop the same way, and that round wrote log
   // shards and owes the next launch a snapshot exactly as any other does.
-  const dead = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": "NO", "*:review:*": null }));
+  const dead = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" }, "*:review:*": null }));
   t.check(
     "a round whose reviewers all died closes too",
     matching(dead.calls, "r1:round-boundary").length === 1,
@@ -1232,7 +1386,7 @@ t.section("B32. each review loop introspects and counts churn on its OWN rounds"
       maxNonSpecReviewRounds: 6, allowNonSpecOnUnconvergedSpec: true,
     },
     introStubs({
-      "probe:spec-changes": "YES",
+      "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
       "*:review:*": { coverage: "c", findings: fs(2) },
       "*:dedup": { findings: fs(2).map((f) => ({ ...f, lenses: ["citations"] })) },
     }),
@@ -1270,7 +1424,7 @@ t.section("B32. each review loop introspects and counts churn on its OWN rounds"
       maxNonSpecReviewRounds: 2, allowNonSpecOnUnconvergedSpec: true,
     },
     introStubs({
-      "probe:spec-changes": "YES",
+      "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
       "*:review:*": byLoop((f) => ({ findings: f })),
       "*:dedup": byLoop((f) => ({ findings: f.map((x) => ({ ...x, lenses: ["mechanism"] })) })),
     }),
@@ -1295,7 +1449,7 @@ t.section("B32. each review loop introspects and counts churn on its OWN rounds"
       maxNonSpecReviewRounds: 1, allowNonSpecOnUnconvergedSpec: true,
     },
     introStubs({
-      "probe:spec-changes": "YES",
+      "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
       "introspect:*": PASS({ verdict: "redesign", areas: ["a1"] }),
       "redesign*:review:*": { findings: [] },
       "redesign*": "done",
@@ -1309,6 +1463,97 @@ t.section("B32. each review loop introspects and counts churn on its OWN rounds"
     redesigns.filter((c) => /-redesign-\d+\.md/.test(c.prompt)).map((c) => c.prompt.match(/-redesign-(\d+)\.md/)[1]),
   );
   t.check("and distinct subproposal files", files.size === 2, [...files].join(","));
+}
+
+t.section("B24c. a caller-requested redesign runs once for the run and respects the budget");
+{
+  // The entry redesign block sits inside runReviewLoop, which is called once per
+  // loop, so without a run-scoped flag it fired twice: measured with
+  // focusAreas ['teardown'], redesign1:* ran in the spec loop and redesign2:* in
+  // the non-spec loop, twelve agents where six were asked for, and the second
+  // pass spent the last of maxRedesigns so introspection could never ask for one.
+  const ARGS = {
+    ...REVIEW_ARGS, mode: "redesign", focusAreas: ["teardown"],
+    maxSpecReviewRounds: 1, maxNonSpecReviewRounds: 1, allowNonSpecOnUnconvergedSpec: true,
+  };
+  const RD = { "redesign*:review:*": { findings: [] }, "redesign*": "done" };
+  const tagsOf = (calls) => [
+    ...new Set(matching(calls, "redesign").map((c) => c.label.match(/^redesign(\d+):/)[1])),
+  ].join(",");
+
+  const { calls, logs } = await runWorkflow(WF, ARGS, loopStubs(RD));
+  t.check(
+    "both loops run",
+    logs.some((l) => /Entering the spec review loop/.test(l)) &&
+      logs.some((l) => /Entering the non-spec review loop/.test(l)),
+  );
+  t.check("the caller's redesign runs once for the run, not once per loop", tagsOf(calls) === "1", tagsOf(calls));
+  t.check(
+    "and exactly one apply lands it",
+    matching(calls, "redesign").filter((c) => /:apply$/.test(c.label)).length === 1,
+    labels(calls).filter((l) => /redesign/.test(l)).join(","),
+  );
+
+  // The budget the introspection path already honours.
+  const zero = await runWorkflow(WF, { ...ARGS, maxRedesigns: 0 }, loopStubs(RD));
+  t.check(
+    "maxRedesigns 0 suppresses it",
+    matching(zero.calls, "redesign").length === 0,
+    labels(zero.calls).filter((l) => /redesign/.test(l)).join(","),
+  );
+  t.check("and says why", zero.logs.some((l) => /budget of 0 is spent/.test(l)));
+
+  // The budget is left for introspection: with maxRedesigns 1 the entry pass
+  // spends it and the introspection pass records the refusal instead.
+  const one = await runWorkflow(
+    WF,
+    { ...ARGS, maxRedesigns: 1, introspectEvery: 1 },
+    introStubs({ ...RD, "introspect:*": PASS({ verdict: "redesign", areas: ["a1"] }) }),
+  );
+  t.check("one redesign total across the run", tagsOf(one.calls) === "1", tagsOf(one.calls));
+}
+
+t.section("B24b. a prune is budgeted, remembers what it deleted, and lets the pool drain");
+{
+  // Measured against the pre-fix code: a pass naming the same section every
+  // round pruned it in rounds 1-4 and cleared the retirement set each time, so
+  // every round launched all 13 lenses and no sweep was ever reached.
+  const { calls, result } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, introspectEvery: 1, maxNonSpecReviewRounds: 4 },
+    introStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "*:review:*": { coverage: "c", findings: fs(2) },
+      "*:dedup": { findings: fs(2).map((f) => ({ ...f, lenses: ["citations"] })) },
+      "introspect:*": PASS({ verdict: "prune", sections: ["## 3. Design"] }),
+    }),
+  );
+  const prunes = matching(calls, "prune:r");
+  t.check("the same section is pruned once", prunes.length === 1, labels(calls).filter((l) => /^prune:/.test(l)).join(","));
+  // Round 1's prune clears the retirement set, which is deliberate, so round 2
+  // is a full round. What the budget buys is that no later round is cleared
+  // again: rounds 3 and 4 drain. Before the fix every round was 13.
+  const per = [1, 2, 3, 4].map((n) => calls.filter((c) => new RegExp("^r" + n + ":review:").test(c.label)).length);
+  t.check("and the pool drains behind it", per[2] < per[1], per.join(","));
+  t.check("the prune is recorded on the run", (result.introspection.prunes || []).length === 1,
+    JSON.stringify(result.introspection.prunes || []));
+}
+{
+  // A distinct section each round: the memory does not apply, so only the
+  // budget can stop it. Without one the pre-fix code pruned four times.
+  const { calls, logs } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, introspectEvery: 1, maxNonSpecReviewRounds: 4, maxPrunes: 2 },
+    introStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "*:review:*": { coverage: "c", findings: fs(2) },
+      "*:dedup": { findings: fs(2).map((f) => ({ ...f, lenses: ["citations"] })) },
+      "introspect:*": ({ label }) => PASS({ verdict: "prune", sections: ["## S" + label.match(/r(\d+)/)[1]] }),
+    }),
+  );
+  t.check("the budget caps the prunes", matching(calls, "prune:r").length === 2,
+    labels(calls).filter((l) => /^prune:/.test(l)).join(","));
+  t.check("and the spent budget is logged", logs.some((l) => /prune but the budget of 2 is spent/.test(l)));
 }
 
 // ---- Phase 8b: the applicability lens under one execution sequence -------
@@ -1419,11 +1664,11 @@ t.section("PS2. the parallel designs are reconciled before any of them is applie
       { id: "G1", title: "a", rationale: "r", findings: [0], order: 1 },
       { id: "G2", title: "b", rationale: "r", findings: [1, 2], order: 2 },
     ]),
-    "r1:fix-design:G1": { designs: [d("T1", "G1 design", "f1.md")], groupNote: "", newMechanisms: [] },
-    "r1:fix-design:G2": { designs: [d("T2", "G2 design for T2", "f2.md"), d("T3", "G2 design for T3", "f3.md")], groupNote: "", newMechanisms: [] },
+    "r1:fix-design:G1": { designs: [d("T1", "G1 design", "proposals/0081_fix_x/0081_fix_x.spec-changes.md")], groupNote: "", newMechanisms: [] },
+    "r1:fix-design:G2": { designs: [d("T2", "G2 design for T2", "proposals/0081_fix_x/0081_fix_x.summary.md"), d("T3", "G2 design for T3", "proposals/0081_fix_x/0081_fix_x.non-spec-changes.md")], groupNote: "", newMechanisms: [] },
     "*:fix-design-reconcile": {
       conflicts: [{ groups: ["G1", "G2"], what: "both state the predicate", resolution: "G1's wording survives" }],
-      revised: [{ groupId: "G2", designs: [d("T2", "the reconciled T2 design", "f2.md")] }],
+      revised: [{ groupId: "G2", designs: [d("T2", "the reconciled T2 design", "proposals/0081_fix_x/0081_fix_x.summary.md")] }],
     },
   }));
   const g2 = calls.find((c) => c.label === "r1:fix:G2");
@@ -1499,7 +1744,21 @@ t.section("PS3. the spec loop runs on intent, not on whether the text is written
 // ---------------------------------------------------------------------------
 
 const sites = (proposal = [], tree = []) => ({ proposal, tree, searched: "grepped X" });
-const SITE_P = { file: "p.md", line: 10, quote: "q", why: "breaks", confidence: "high" };
+
+// Pull the sites JSON back out of a prompt, so a test asserts the DATA an agent
+// receives rather than the sentence wrapped around it.
+function sitesPayload(prompt) {
+  const i = prompt.indexOf("accordingly.\n");
+  if (i < 0) return null;
+  const start = prompt.indexOf("[", i);
+  let depth = 0;
+  for (let k = start; k < prompt.length; k++) {
+    if (prompt[k] === "[") depth++;
+    else if (prompt[k] === "]" && --depth === 0) return JSON.parse(prompt.slice(start, k + 1));
+  }
+  return null;
+}
+const SITE_P = { file: "proposals/0081_fix_x/0081_fix_x.spec-changes.md", line: 10, quote: "q", why: "breaks", confidence: "high" };
 const SITE_T = { file: "spec/10.md", line: 20, quote: "tq", why: "breaks", confidence: "medium" };
 
 t.section("X1. expansion runs once per CONFIRMED finding, on sonnet, before grouping");
@@ -1579,7 +1838,7 @@ t.section("X4. sites reach the planner, the designer and the fixer, framed as ca
   // The instruction and the payload are separate expressions, so the fixer could
   // be told to "follow the adjudication" with no sites in its prompt at all.
   t.check("and is actually GIVEN the sites, not just told about them", /POTENTIALLY RELATED SITES/.test(fixer.prompt));
-  t.check("with the site data itself", /"p\.md"/.test(fixer.prompt) && /"spec\/10\.md"/.test(fixer.prompt));
+  t.check("with the site data itself", /0081_fix_x\.spec-changes\.md/.test(fixer.prompt) && /"spec\/10\.md"/.test(fixer.prompt));
   t.check("and to re-read before editing", /RE-READ BEFORE YOU EDIT/.test(fixer.prompt));
   t.check("tree sites stay out of bounds for the fixer", /is NOT yours to edit/.test(fixer.prompt));
   t.check("proposal and tree sites stay separate", /"proposal":/.test(design.prompt) && /"tree":/.test(design.prompt));
@@ -1589,8 +1848,8 @@ t.section("X5. only in-scope sites are checked by the post-fix review");
 {
   const design = { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" },
     siteDispositions: [
-      { file: "p.md", line: 10, disposition: "in-scope", why: "breaks" },
-      { file: "q.md", line: 20, disposition: "separate-finding", why: "already wrong" },
+      { file: "proposals/0081_fix_x/0081_fix_x.spec-changes.md", line: 10, disposition: "in-scope", why: "breaks" },
+      { file: "proposals/0081_fix_x/0081_fix_x.summary.md", line: 20, disposition: "separate-finding", why: "already wrong" },
     ] }], newMechanisms: [] };
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
     "*:expand:*": sites([SITE_P]),
@@ -1598,14 +1857,50 @@ t.section("X5. only in-scope sites are checked by the post-fix review");
   }));
   const pf = calls.find((c) => c.label === "r1:post-fix-review");
   t.check("the in-scope site is checked", /HANDED TO THE FIXER AS IN SCOPE/.test(pf.prompt));
-  // `p.md` appears twice in this prompt -- once from the in-scope list and once
-  // inside the finding's own site JSON -- so its mere presence proves nothing.
-  // The in-scope block is what must carry it.
+  // The spec-changes path appears twice in this prompt -- once from the in-scope
+  // list and once inside the finding's own site JSON -- so its mere presence
+  // proves nothing. The in-scope block is what must carry it.
   const inScopeBlock = pf.prompt.split("HANDED TO THE FIXER AS IN SCOPE")[1] || "";
-  t.check("and named in the in-scope block itself", /"p\.md"/.test(inScopeBlock));
-  t.check("the separate-finding site is not", !/"q\.md"/.test(inScopeBlock));
+  t.check("and named in the in-scope block itself", /0081_fix_x\.spec-changes\.md/.test(inScopeBlock));
+  t.check("the separate-finding site is not", !/0081_fix_x\.summary\.md/.test(inScopeBlock));
   t.check("the open sweep is still demanded", /Then do the open-ended sweep anyway/.test(pf.prompt));
   t.check("adoption is logged", logs.some((l) => /1 related site\(s\) adopted/.test(l)));
+}
+
+t.section("X5b. site classes are decided by path, not by the pass that returned them");
+{
+  const MISFILED_TREE = { file: "spec/10_x.md", line: 5, quote: "sq", why: "breaks", confidence: "high" };
+  const MISFILED_PROP = { file: "proposals/0081_fix_x/0081_fix_x.spec-changes.md", line: 7, quote: "pq", why: "breaks", confidence: "high" };
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    // Deliberately crossed: the spec file under `proposal`, the proposal file under `tree`.
+    "*:expand:*": { proposal: [MISFILED_TREE], tree: [MISFILED_PROP], searched: "grepped X" },
+  }));
+  const design = matching(calls, "r1:fix-design:")[0];
+  const payload = sitesPayload(design.prompt);
+  const cls = (f) => (payload[0].sites.proposal.some((s) => s.file === f) ? "proposal"
+                    : payload[0].sites.tree.some((s) => s.file === f) ? "tree" : "absent");
+  t.check("a spec/ path filed as `proposal` is moved to tree", cls("spec/10_x.md") === "tree", cls("spec/10_x.md"));
+  t.check("a proposal-dir path filed as `tree` is moved to proposal",
+    cls("proposals/0081_fix_x/0081_fix_x.spec-changes.md") === "proposal",
+    cls("proposals/0081_fix_x/0081_fix_x.spec-changes.md"));
+  t.check("neither site is lost", payload[0].sites.proposal.length + payload[0].sites.tree.length === 2);
+  t.check("the move is logged, not silent", logs.some((l) => /reclassified by path/.test(l)));
+}
+
+t.section("X5c. an in-scope site the fixer may not edit is not checked as drift");
+{
+  const SPEC_SITE = { file: "spec/10_x.md", line: 5, quote: "sq", why: "breaks", confidence: "high" };
+  const design = { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" },
+    siteDispositions: [{ file: "spec/10_x.md", line: 5, quote: "sq", disposition: "in-scope", why: "breaks" }] }], newMechanisms: [] };
+  const { calls, logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:expand:*": { proposal: [], tree: [SPEC_SITE], searched: "grepped X" },
+    "*:fix-design:*": design,
+  }));
+  const pf = calls.find((c) => c.label === "r1:post-fix-review");
+  t.check("no in-scope block is produced at all", !/HANDED TO THE FIXER AS IN SCOPE/.test(pf.prompt));
+  t.check("so nothing can be filed as CONFIRMED drift against it", result.review.history[0].sitesAdopted === 0,
+    String(result.review.history[0].sitesAdopted));
+  t.check("and the drop is on the record", logs.some((l) => /not the fixer's to edit/.test(l)));
 }
 
 t.section("X6. the cap bounds expansion and says what it skipped");
@@ -1666,7 +1961,7 @@ t.section("X8. an unrelated location in a later round carries no history");
 // budget without converging.
 const specNeverClean = (over = {}) =>
   loopStubs({
-    "probe:spec-changes": "YES",
+    "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
     "*:review:*": ({ label }) => ({ coverage: "c", findings: [F(1)] }),
     "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
     "*:expand:*": { proposal: [], tree: [], searched: "" },
@@ -1844,7 +2139,7 @@ t.section("X20. the site history does not leak across loops");
   // non-spec designer is shown the spec loop's attempt.
   const W = "summary.md, deliverable index";
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "probe:spec-changes": "YES",
+    "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
     "*:review:*": ({ label }) => /^r1:/.test(label)
       ? { coverage: "c", findings: [{ ...F(1), where: W }] } : { coverage: "c", findings: [] },
     "*:dedup": { findings: [{ ...F(1), where: W, lenses: ["citations"] }] },

@@ -93,6 +93,13 @@ t.section("M5. idempotence and resume");
   t.check("already-migrated returns at once", result.status === "already", result.status);
   t.check("no split agent runs", never(calls, "split"));
   t.check("only the assessment ran", labels(calls).filter((l) => l !== "assess").length === 0, labels(calls).join(","));
+  // The caller prefixes the returned dir with the repo root, so an absolute one
+  // here becomes /repo//repo/proposals/<stem> and every command built from it fails.
+  t.check(
+    "and reports the directory repo-relative, as a fresh migration does",
+    result.dir === "proposals/0076_fix_scope-the-generation",
+    String(result.dir),
+  );
 }
 {
   const { calls } = await runWorkflow(WF, ARGS, ok({
@@ -118,6 +125,7 @@ t.section("M6. an unresolvable inbound reference stops the migration");
   t.check("the legacy file is NOT dropped", never(calls, "drop-legacy"));
   t.check("nothing is committed", never(calls, "commit-migration"));
   t.check("the unresolved site is reported", (result.unresolved || []).join().includes("x_test.go"));
+  t.check("a stopped migration reports the directory repo-relative too", result.dir === "proposals/0076_fix_scope-the-generation", String(result.dir));
 }
 {
   const { calls } = await runWorkflow(WF, ARGS, ok());

@@ -712,7 +712,7 @@ const COMPILE = {
   properties: {
     compiles: { type: "boolean" },
     errors: { type: "array", items: { type: "string" } },
-    leaseHeld: { type: "boolean", description: "true when spec-lease.mjs status reports an open lease" },
+    leaseHeld: { type: "boolean", description: "the value of the `held` field printed by spec-lease.mjs status" },
   },
 };
 
@@ -1806,7 +1806,8 @@ for (let i = 0; i < plan.steps.length; i++) {
         "Go packages among them (`go build ./<pkg>/...`). Nothing else: no tests, no linters, no " +
         "whole-repo build. If the change touches no Go package, report compiles true.\n\n" +
         "Also check the lease: run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report " +
-        "whether one is held. A code step must not run while a spec lease is open." +
+        "its `held` field as leaseHeld. A present-but-expired lease reports held false and is not a " +
+        "leak. A code step must not run while a spec lease is held." +
         MEMORY_SAFE_NOTE,
       { schema: COMPILE, label: "compile:" + step.id + ":r" + attempt, phase: "Build" },
     );

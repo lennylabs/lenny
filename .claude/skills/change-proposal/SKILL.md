@@ -175,6 +175,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `focusAreas` | launch | none | required in `redesign`: a slug or `{area, reason}` each |
 | `churnWindow`, `churnMinFindings`, `churnStrikes` | forward | 6, 5, 3 | the churn detector's thresholds |
 | `maxRedesigns`, `redesignReviewRounds` | forward | 2, 2 | the redesign budget |
+| `maxPrunes` | forward | 2 | the prune budget; a section the run already pruned is not pruned again |
 | `runTag` | anchored | the stem | namespaces the log shards, snapshots, cache, and state |
 | `resumeState` | launch | false | continue a loop at its recorded round with its retired set |
 
