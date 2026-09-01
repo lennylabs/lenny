@@ -1332,10 +1332,16 @@ async function runSpecStep(step) {
         "forced a deviation; text the edit replaces or removes is gone; the diff contains nothing beyond " +
         "the staged edits; every cross-reference the applied text adds resolves; and no added line cites a " +
         "source path or a line number.\n\n" +
-        (applied.deviations || []).length
+        // PARENTHESISED. `+` binds tighter than `?:`, so without these the
+        // condition was the whole concatenated prompt -- always a truthy
+        // non-empty string -- and the ternary returned only the deviations
+        // block. The verifier received a 171-character prompt with none of its
+        // instructions, returned an empty discrepancy list because it had been
+        // asked nothing, and every spec deliverable landed unverified.
+        ((applied.deviations || []).length
           ? "RECORDED RULE-FORCED DEVIATIONS, which are expected and are NOT discrepancies:\n" +
             JSON.stringify(applied.deviations, null, 2)
-          : "",
+          : ""),
       { schema: DISCREPANCIES, label: "verify:" + step.id + ":spec", phase: "Build" },
       ),
     ];

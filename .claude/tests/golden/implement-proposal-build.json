@@ -44,7 +44,9 @@
     "phase": "Build",
     "model": "",
     "schema": "discrepancies",
-    "blocks": []
+    "blocks": [
+      "read-only"
+    ]
   },
   {
     "label": "commit-spec:S1",
