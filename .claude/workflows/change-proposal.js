@@ -2417,17 +2417,44 @@ const GROWTH = {
 
 const NO_GROWTH = { documentWas: 0, documentNow: 0, documentPct: null, grew: [] };
 
+// The documents this measurement is about. The review log is excluded because it
+// grows by design and would swamp the signal; the deviations file is the
+// implementor's and is empty during review.
+const growthTargets = () =>
+  P.layout === "legacy" ? [P.root] : [P.spec, P.nonSpec, P.problem, P.summary, P.checklist];
+
 async function growthSince(snapPath) {
   if (!snapPath) return NO_GROWTH;
+  // BOTH SIDES ARE DIRECTORIES. `snapshot()` copies P.dir, and P.root is the
+  // proposal directory in the folder layout, so a prompt that names them as two
+  // revisions of one document measures nothing: every pass from the move to the
+  // folder layout until this was fixed reported "from 0 to 0" and the
+  // introspection pass reasoned without its growth signal.
+  const files = growthTargets();
+  // The snapshot mirrors the proposal directory, so a file's BEFORE is its own
+  // basename inside the snapshot. This holds for both layouts.
+  const pairs = files
+    .map((f) => {
+      const base = f.replace(/^.*\//, "");
+      return "  " + base + ": BEFORE " + snapPath + "/" + base + " AFTER " + f;
+    })
+    .join("\n");
   const res = await robustAgent(
-    "Measure how a document grew between two revisions of itself, by section. This is a measurement: do not " +
-      "read either file for meaning, do not judge its content, and do not edit anything.\n\n" +
-      "BEFORE: " + snapPath + "\nAFTER:  " + path + "\n\n" +
-      "Use Bash. In each file, attribute every line to the nearest `##` or `###` heading above it and total " +
-      "the lines per heading; lines before the first heading belong to a section named `(preamble)`. An awk " +
-      "one-liner does this. Report each file's total line count, and the sections that gained the most lines, " +
-      "largest gain first, at most eight. Match sections by heading text; a heading present only in AFTER was " +
-      "zero lines before.",
+    "Measure how a proposal grew between two revisions of itself, per file and per section. This is a " +
+      "measurement: do not read either revision for meaning, do not judge its content, and do not edit " +
+      "anything.\n\n" +
+      "THE PAIRS. Each line is one file, its BEFORE path and its AFTER path. A BEFORE path that does not " +
+      "exist means the file is new and was zero lines before; count it as such rather than failing.\n" +
+      pairs +
+      "\n\nUse Bash. In each file, attribute every line to the nearest `##` or `###` heading above it and " +
+      "total the lines per heading; lines before the first heading belong to `(preamble)`. An awk one-liner " +
+      "does this. Name each section `<file>: <heading>` so two files' sections never collide.\n\n" +
+      "EXCLUDE the adversarial-review-history section wherever it appears, with all its subsections. It is " +
+      "an append-only record of the passes this loop has run, so it grows every round by construction and " +
+      "counting it reports the loop's own bookkeeping as the proposal's growth. On one measured run it was " +
+      "59% of the staged spec edits.\n\n" +
+      "Report `documentWas` and `documentNow` as the TOTAL line counts across every file above, after the " +
+      "exclusion, and `grew` as the sections that gained the most lines, largest gain first, at most eight.",
     { label: "growth", schema: GROWTH },
   );
   if (!res) return NO_GROWTH;
@@ -4253,24 +4280,57 @@ if (converged) {
   log("Checklist and Summary verified against the converged proposal");
 }
 
-if (converged) {
+// The status file is written on EVERY run, converged or not. Neither review loop
+// may edit it -- it is in no loop's editable set -- so before this ran
+// unconditionally a non-converged run left the status saying whatever it said
+// before the run started. One measured run finished thirteen passes with its
+// status still reading "This draft has not been through adversarial review".
+//
+// The frontmatter goes through proposal-status.mjs, which is the only supported
+// writer: the spec-lease hook reads the status through it, so a status set by
+// hand-editing prose is a status the hook may not see. The prose body is a
+// judgement about what the run established and stays with an agent.
+{
+  const loopLine = (name, l) =>
+    l
+      ? name + ": " + l.round + " rounds, " + (l.converged ? "converged" : "DID NOT CONVERGE") +
+        ", " + l.sweeps + " full-pool sweep(s)"
+      : name + ": not run";
+  const history =
+    loopLine("spec", specLoop) + "; " + loopLine("non-spec", nonSpecLoop) +
+    "; " + fixedTitles.length + " findings fixed";
+
+  if (converged) {
+    await robustAgent(
+      "Run exactly this command and reply with the single word DONE:\n\n" +
+        "node " + repo + "/.claude/tools/proposal-status.mjs " + P.root +
+        " --set status=Reviewed --by change-proposal --date " + date + "\n\n" +
+        "Do nothing else. Do not read, summarise, or edit anything.",
+      { label: "status:set-reviewed", model: "haiku", phase: "Review" },
+    );
+  }
+
   await robustAgent(
-    "Update one proposal's Status bullet to record verification.\n\n" +
-      "HARD CONSTRAINT: the only file you may edit is " +
-      path +
-      ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
-      'Read the proposal\'s header bullets. Replace the Status bullet\'s leading state (for example "Draft for review.") with: "Verified (' +
-      date +
-      "). Converged after " +
-      round +
-      " adversarial review rounds (" +
-      fixedTitles.length +
-      ' findings fixed); awaiting sign-off." Preserve any later clauses of the bullet that remain true (for example a pointer to the pass-history section), drop clauses the new state supersedes, and follow ' +
-      repo +
-      "/.claude/rules/doc-style.md.",
-    { label: "mark-verified", phase: "Review" },
+    "Record what an adversarial review run established, in one proposal's status file.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.status + ". Do NOT touch its YAML frontmatter, " +
+      "which another step owns and has already written. Change nothing else, anywhere.\n\n" +
+      "WHAT THE RUN DID: " + history + ".\n" +
+      "The run " + (converged ? "CONVERGED." : "DID NOT CONVERGE.") + "\n\n" +
+      "Do two things, below the frontmatter.\n\n" +
+      "1. Write or replace a `## Review history` section stating, in plain declarative sentences, what the " +
+      "run above did: the rounds each loop ran, whether each converged, and the findings fixed. When a loop " +
+      "did not converge, say so and say that findings it had not closed remain open. Date it " + date + ".\n\n" +
+      "2. CORRECT THE REST OF THE FILE against that. This file is not maintained by the review loops, so its " +
+      "prose is as old as the day it was written and it routinely contradicts what the run established. A " +
+      "sentence saying the draft has not been reviewed, that a decision is open which the review settled, or " +
+      "that a reader should run a loop that has now run, is false and you correct or delete it. Do not " +
+      "correct it into a claim the run does not support: a run that did not converge has not settled the " +
+      "questions it was reviewing.\n\n" +
+      "Do not restate the proposal, do not summarise its design, and do not add a finding of your own. " +
+      "Follow " + repo + "/.claude/rules/doc-style.md.",
+    { label: "status:record-run", phase: "Review" },
   );
-  log("Proposal marked Verified");
+  log("Status recorded: " + history);
 }
 
 return {
