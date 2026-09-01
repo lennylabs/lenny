@@ -128,8 +128,8 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `exemplar` | anchored | — | the highest-numbered other proposal |
 | `context` | anchored | none | citations gathered so far; the run re-verifies all of them |
 | `planPath` | anchored | none | a plan this proposal implements steps of; enables `plan-conformance` |
-| `maxSpecReviewRounds` | forward | 10 | budget for the spec loop |
-| `maxNonSpecReviewRounds` | forward | 16 | budget for the non-spec loop |
+| `maxSpecReviewRounds` | forward | 15 | budget for the spec loop |
+| `maxNonSpecReviewRounds` | forward | 15 | budget for the non-spec loop; the legacy `maxReviewRounds` overrides it |
 | `skipSpecReview`, `skipNonSpecReview` | launch | false | a skipped loop certifies nothing about its half, echoed in the result |
 | `lockSpecChanges` | forward | false | the non-spec loop may never edit the spec staging; such a finding becomes an open decision |
 | `verifyOrder` | forward | `["material","evidence"]` | which skeptic short-circuits |

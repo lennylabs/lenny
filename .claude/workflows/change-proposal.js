@@ -62,8 +62,14 @@ const maxRounds = input.maxReviewRounds || 16;
 // Each review loop gets its own budget. The spec loop converges a smaller
 // surface and gets less; the non-spec loop inherits the old whole-document
 // default because it reviews the larger half.
-const maxSpecReviewRounds = input.maxSpecReviewRounds || 10;
-const maxNonSpecReviewRounds = input.maxNonSpecReviewRounds || maxRounds;
+// Fifteen each. Sweeps spend rounds from the same budget, so a loop that is
+// draining steadily can otherwise exhaust it mid-cycle, one revive short of a
+// clean sweep, and be reported as non-converged when it was converging. The
+// legacy maxReviewRounds still overrides the non-spec budget for a caller that
+// sets only that.
+const maxSpecReviewRounds = input.maxSpecReviewRounds || 15;
+const maxNonSpecReviewRounds =
+  input.maxNonSpecReviewRounds || input.maxReviewRounds || 15;
 // When set, the non-spec loop may never edit the staged spec edits: a finding
 // whose only remedy is a spec edit is closed by recording an open decision.
 // Off by default, because a non-spec finding that genuinely needs a small spec
