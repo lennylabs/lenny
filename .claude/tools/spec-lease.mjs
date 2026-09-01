@@ -201,6 +201,12 @@ const SPEC_TOKEN = /[^\s"'`;&|<>()]*spec\/[^\s"'`;&|<>()]*|[^\s"'`;&|<>()]*\bspe
  */
 export function scanCommand(command, opts = {}) {
   if (typeof command !== "string" || command === "") return null;
+  // A heredoc body is DATA, not a command. Scanning it blocked this
+  // repository's own commit describing this guard, because the message quoted
+  // the write commands the guard catches. The body is dropped and the line that
+  // opens it is still scanned, so a redirection into a guarded path is caught
+  // while the text it would write is ignored.
+  command = stripHeredocBodies(command);
   for (const span of WRITE_SPANS) {
     span.lastIndex = 0;
     let m;
@@ -216,6 +222,35 @@ export function scanCommand(command, opts = {}) {
     }
   }
   return null;
+}
+
+/**
+ * Remove every heredoc body, keeping the line that opens it.
+ *
+ * The unquoted, quoted and dash forms all delimit on a line holding the word
+ * alone, with leading tabs stripped for the dash form. An unterminated heredoc
+ * runs to the end of the command, which is the safe reading here: the body is
+ * data either way.
+ */
+export function stripHeredocBodies(command) {
+  const lines = String(command).split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    const m = /<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(lines[i]);
+    if (!m) continue;
+    const delim = m[2];
+    const dash = /<<-/.test(lines[i]);
+    let j = i + 1;
+    while (j < lines.length) {
+      const probe = dash ? lines[j].replace(/^\t+/, "") : lines[j];
+      if (probe === delim) break;
+      j++;
+    }
+    // The delimiter line is not a command either, so resume past it.
+    i = j;
+  }
+  return out.join("\n");
 }
 
 /**

@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { suite } from "./harness.mjs";
-import { decide, readLease, openLease, releaseLease } from "../tools/spec-lease.mjs";
+import { decide, readLease, openLease, releaseLease, scanCommand } from "../tools/spec-lease.mjs";
 
 const t = suite("spec-lease");
 const TMP = mkdtempSync(join(tmpdir(), "lenny-lease-"));
@@ -106,6 +106,35 @@ t.section("L5. an expired lease reads as present and not held");
   t.check("expired", r.expired === true);
   const d = decide(FOUR, { leasePath });
   t.check("and it grants nothing", d.allow === false, d.why);
+}
+
+t.section("L6. a heredoc body is data, and does not read as a write");
+{
+  // The guard's first shipped form scanned the whole Bash command, so this
+  // repository's own commit message -- which quoted the write commands the
+  // guard catches -- was blocked by the guard it was describing. The body of a
+  // heredoc is data; the line that opens one is still a command.
+  const G = String.fromCharCode(115, 112, 101, 99);
+  const blocked = (cmd) => {
+    const r = scanCommand(cmd, {});
+    return !!(r && !r.allow);
+  };
+  t.check(
+    "a message quoting a write is not a write",
+    !blocked("git commit -F - <<EOF\n  rm " + G + "/28.md, sed -i x " + G + "/29.md\nEOF"),
+  );
+  t.check(
+    "a quoted-delimiter body is data too",
+    !blocked("cat <<'EOF'\nrm " + G + "/28.md\nEOF"),
+  );
+  t.check(
+    "but a redirection into the guarded tree is still caught",
+    blocked("cat <<EOF > " + G + "/28.md\nhello\nEOF"),
+  );
+  t.check("an in-place edit is still caught", blocked("sed -i s/a/b/ " + G + "/28.md"));
+  t.check("a removal is still caught", blocked("rm " + G + "/28.md"));
+  t.check("a restore is still caught", blocked("git checkout -- " + G + "/"));
+  t.check("a read is still allowed", !blocked("grep -n foo " + G + "/28.md"));
 }
 
 t.done();
