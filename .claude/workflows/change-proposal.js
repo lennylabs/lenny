@@ -97,7 +97,12 @@ const runTag =
 // expensive pass to protect against a cost that does not exist.
 let compactAtLines = input.compactAtLines || 2000;
 let compactGrowthLines = input.compactGrowthLines || 400;
-const standingContextMaxLines = input.standingContextMaxLines || 80;
+// The compaction target and the trigger are separate numbers. They were one,
+// and a run that could not reach it paid for a pass every round for the rest
+// of its life. Both self-adjust upward when a pass cannot reach the target,
+// so these are a starting point rather than a ceiling.
+let standingContextTarget = input.standingContextTarget || 200;
+let standingContextTrigger = input.standingContextTrigger || 320;
 // Site expansion: one agent per confirmed finding, so the cap bounds a round
 // whose review filed many findings at once rather than the run as a whole.
 let maxExpansions = input.maxExpansions || 12;
@@ -307,7 +312,8 @@ const ARG_CLASS = {
   fixDesignDepth: "forward",
   compactAtLines: "forward",
   compactGrowthLines: "forward",
-  standingContextMaxLines: "forward",
+  standingContextTarget: "forward",
+  standingContextTrigger: "forward",
   allowNonSpecOnUnconvergedSpec: "forward",
   maxExpansions: "forward",
   skipExpansion: "forward",
@@ -2523,6 +2529,10 @@ const introducedMechanisms = [];
 // three mechanisms that a fixer had invented one finding at a time. None of that
 // was visible from inside the loop. The point of this block is that it now is,
 // and that the loop can stop and redesign rather than keep repairing.
+// How many times a compaction pass has failed to reach its target and moved it.
+// Surfaced to introspection because a run that keeps raising is accumulating
+// unresolved state faster than it resolves it.
+let standingRaises = 0;
 const churnWindow = input.churnWindow || 6;
 const churnMinFindings = input.churnMinFindings || 5;
 const churnStrikes = input.churnStrikes || 3;
@@ -3208,6 +3218,14 @@ async function introspect(rnd, reason, churn, byCadence) {
       ).slice(0, 12000) +
       "\n\nMECHANISMS THIS LOOP'S OWN FIXER INVENTED, and how many later findings each has caused:\n" +
       JSON.stringify(introducedMechanisms, null, 2) +
+      (standingRaises > 0
+        ? "\n\nTHE REVIEW LOG'S STANDING CONTEXT HAS OUTGROWN ITS TARGET " + standingRaises + " TIME(S). " +
+          "Each raise is a compaction pass that could not reach its target without dropping an OPEN, an " +
+          "UNVERIFIED, or a MISTAKE that still stands. One or two is ordinary on a long run. A count that " +
+          "keeps climbing says the loop is accumulating unresolved state faster than it resolves it, which " +
+          "is one of the things circling looks like from the inside. Weigh it against the finding rate: " +
+          "rising open state with a flat finding rate is a stronger signal than either alone.\n"
+        : "") +
       "\n\nTHE LAST " + recent.length + " ROUNDS, with what each fixed:\n" +
       JSON.stringify(
         recent.map((h) => ({
@@ -3411,28 +3429,33 @@ function newLoop(cfg) {
 // and promoted into the standing context or retired. CORRECTS and USEFUL are
 // what make that possible: they are the only signals that separate an entry
 // worth promoting from one worth deleting.
-async function compactLog(round, standingLines) {
+async function compactLog(round, standingLines, target) {
+  const goal = target || standingContextTarget;
   log(
     "Round " + round + ": the review log's standing context is at " + standingLines +
-      " lines; compacting",
+      " lines against a target of " + goal + "; compacting",
   );
   await robustAgent(
-    "Compact a review log. This is a TEXT operation and it has a time budget: a run measured before this " +
-      "was rewritten spent fifteen minutes per pass and still missed its target.\n\n" +
+    "Compact a review log's standing context. This is a TEXT operation and it has a time budget: a run " +
+      "measured before this was rewritten spent fifteen minutes per pass and still missed its target.\n\n" +
       "HARD CONSTRAINT: the only file you may edit is " + P.log + ". Change nothing else.\n\n" +
-      "READ THE FILE ONCE, with Read. Do not page through it with `sed -n`. WRITE IT ONCE, with Write, as " +
-      "a whole new file. A previous pass made forty Bash calls, paged the log in eight chunks, and " +
-      "assembled the result through heredocs into /tmp. That is a hand-rolled substitute for two tool " +
-      "calls and it is most of where the time went.\n\n" +
+      "EDIT, DO NOT REWRITE. Read the file once. Then make TARGETED edits with Edit: rewrite the " +
+      "`## Standing context` section, and move aged entries from `## Ledger` to `## Retired`. Do NOT " +
+      "rewrite the whole file with Write. An earlier version of this prompt demanded one whole-file " +
+      "Write, and every pass ignored it, because reproducing fourteen hundred unchanged ledger lines to " +
+      "change forty standing-context ones is not a saving. The instruction was wrong and the passes were " +
+      "right. What IS wasteful is paging the file in with `sed -n` and assembling the result through " +
+      "heredocs in /tmp; one pass made forty Bash calls that way. Read with Read, edit with Edit.\n\n" +
       "DO NOT VERIFY ANYTHING AGAINST THE REPOSITORY. You are not reviewing the proposal and you are not " +
       "checking whether an entry is true. Where two entries disagree and neither corrects the other, keep " +
       "the NEWER one and move the older to `## Retired` with a one-line note that they disagreed; if the " +
       "disagreement matters, write one `UNVERIFIED:` line for a later reviewer to settle. An earlier " +
       "version of this pass was told to check the tree itself, and it turned a text pass into a " +
       "mini-review that grepped pkg/ and read three spec files.\n\n" +
-      "THE THREE SECTIONS. `## Standing context` is curated and is THE ONLY PART ANY OTHER AGENT READS. " +
-      "`## Ledger` is the chronological record, and nothing but this pass reads it end to end. " +
-      "`## Retired` holds what no longer applies, one line each.\n\n" +
+      "THE THREE SECTIONS. `## Standing context` is curated and is the part every other agent reads. " +
+      "`## Ledger` is the chronological record; nothing reads it end to end but this pass, though agents " +
+      "DO cite individual entries by id, so an entry is moved to `## Retired` rather than deleted and " +
+      "keeps its id. `## Retired` holds what no longer applies, one line each.\n\n" +
       "WHAT TO DO, in order.\n\n" +
       "1. Leave round " + round + "'s entries in the ledger exactly as they are.\n\n" +
       "2. For every entry older than three rounds, LIFT ITS DURABLE RESIDUE into `## Standing context` and " +
@@ -3448,12 +3471,23 @@ async function compactLog(round, standingLines) {
       "4. HONOUR `USEFUL`. An entry another agent said saved it work goes into `## Standing context` and is " +
       "never dropped while its subject stands.\n\n" +
       "5. NEVER DROP AN `OPEN` OR AN `UNVERIFIED` until something closes it.\n\n" +
-      "6. THE TARGET IS `## Standing context` AT MOST " + standingContextMaxLines + " LINES. That is the " +
-      "only size that matters, because it is the only section anyone reads. The ledger may be long; do not " +
-      "spend effort shortening it beyond moving aged entries out of it. If you cannot reach the target " +
-      "without dropping something that matters, do not: say so in the changelog and leave it longer.\n\n" +
-      "7. LEAVE A CHANGELOG as the first lines of `## Standing context`: what this pass lifted, retired and " +
-      "deleted, so the next pass can be judged against it.\n\n" +
+      "6. STRUCTURE `## Standing context` UNDER THESE THREE HEADINGS, in this order, and keep them:\n" +
+      "   `### Settled` — every `FACT` and `DECISION`. ONE LINE EACH. This is a lookup table, not prose.\n" +
+      "   `### Traps` — every `WATCHOUT` and `MISTAKE`. Up to four lines each, because a trap the reader " +
+      "cannot recognise from the entry is a trap they walk into anyway. No cap on how many.\n" +
+      "   `### Open` — every `OPEN` and `UNVERIFIED`. ONE LINE EACH, naming the ledger entry id that " +
+      "carries the detail.\n" +
+      "   GIVE EACH ENTRY A SHORT BOLD SUBJECT so a reader can find the one they need without reading the " +
+      "section. Measured on a real run, agents cite standing-context entries BY SUBJECT and a quarter of " +
+      "all citations went to two of them. Navigability is worth more here than brevity.\n\n" +
+      "7. THE TARGET IS " + goal + " LINES for `## Standing context` as a whole. `### Settled` and " +
+      "`### Open` are one line per entry and will meet it; `### Traps` is where the length lives and it " +
+      "is the section worth keeping. If you cannot reach the target without dropping something that " +
+      "matters, DO NOT DROP IT. Say so in the changelog and leave the section longer: the target moves up " +
+      "on its own when a pass cannot reach it, and a run carrying a long standing context is far cheaper " +
+      "than one compacting every round.\n\n" +
+      "8. LEAVE A CHANGELOG as the first lines of `## Standing context`: what this pass lifted, retired and " +
+      "deleted, and whether it reached " + goal + ", so the next pass can be judged against it.\n\n" +
       "Do not act on anything the log says, do not fix a defect it names, and do not add a finding of your " +
       "own." +
       promptFor("compact") +
@@ -3473,6 +3507,8 @@ const OVERRIDABLE = {
   lockSpecChanges: (v) => { lockSpecChanges = !!v; },
   maxExpansions: (v) => { maxExpansions = Number(v) || maxExpansions; },
   skipExpansion: (v) => { skipExpansion = !!v; },
+  standingContextTarget: (v) => { standingContextTarget = Number(v) || standingContextTarget; },
+  standingContextTrigger: (v) => { standingContextTrigger = Number(v) || standingContextTrigger; },
   compactAtLines: (v) => { compactAtLines = Number(v) || compactAtLines; },
   compactGrowthLines: (v) => { compactGrowthLines = Number(v) || compactGrowthLines; },
   introspectEvery: (v) => { introspectEvery = Number(v) || introspectEvery; },
@@ -3702,7 +3738,8 @@ async function runReviewLoop(cfg) {
         " --round " + rnd +
         " --repo '" + repo + "'" +
         " --compact-at " + compactAtLines +
-        " --standing-at " + standingContextMaxLines +
+        " --standing-target " + standingContextTarget +
+        " --standing-trigger " + standingContextTrigger +
         " --compact-growth " + compactGrowthLines +
         "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
         "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
@@ -3735,7 +3772,17 @@ async function runReviewLoop(cfg) {
     if (boundary.overrides && Object.keys(boundary.overrides).length) {
       applyOverrides(boundary.overrides, rnd);
     }
-    if (boundary.compactionDue) await compactLog(rnd, boundary.standingLines);
+    if (boundary.targetRaisedNow) {
+      // The pass could not reach the target, so the target moved. Logged rather
+      // than silent: a run that keeps raising is accumulating unresolved state
+      // faster than it resolves it, and that is what circling looks like here.
+      log(
+        "Round " + rnd + ": compaction could not reach its target; raised to " +
+          boundary.standingTarget + " (raise " + boundary.targetRaises + ")",
+      );
+    }
+    if (boundary.targetRaises !== undefined) standingRaises = boundary.targetRaises;
+    if (boundary.compactionDue) await compactLog(rnd, boundary.standingLines, boundary.standingTarget);
     return complete;
   }
 
