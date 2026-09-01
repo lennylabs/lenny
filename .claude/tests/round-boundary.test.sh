@@ -55,20 +55,46 @@ OUT="$(run spec 5)"
 contains "an unchanged tree reports nothing" "$OUT" '"changedFiles":[]'
 
 echo; echo "T11b. compaction fires on the STANDING CONTEXT, which is the only section agents read"
-OUT="$(run spec 6 --compact-at 100000 --standing-at 100000)"
+OUT="$(run spec 6 --compact-at 100000 --standing-trigger 100000)"
 contains "not due below both thresholds" "$OUT" '"compactionDue":false'
 contains "standing lines are reported" "$OUT" '"standingLines":'
-OUT="$(run spec 7 --compact-at 100000 --standing-at 1)"
+OUT="$(run spec 7 --compact-at 100000 --standing-trigger 1)"
 contains "due on standing-context size" "$OUT" '"compactionDue":true'
 # A long ledger alone does NOT trigger: nothing but the compactor reads it, so
 # firing an expensive pass on its length protects against a cost that does not
 # exist. It keeps a backstop bound, far higher.
 fresh_log
 for i in $(seq 1 60); do printf -- "- FACT: line %s\n" "$i" >> "$REPO/scratchpad/cp-log/$TAG/spec.8.g.md"; done
-OUT="$(run spec 8 --compact-at 100000 --standing-at 100000)"
+OUT="$(run spec 8 --compact-at 100000 --standing-trigger 100000)"
 contains "a long ledger alone does not trigger it" "$OUT" '"compactionDue":false'
-OUT="$(run spec 9 --compact-at 1 --standing-at 100000)"
+OUT="$(run spec 9 --compact-at 1 --standing-trigger 100000)"
 contains "but the ledger backstop still can" "$OUT" '"compactionDue":true'
+
+echo; echo "T11e. the target and the trigger are separate, and the target backs off"
+# Fresh adaptation state: earlier blocks left a pending-compaction marker and a
+# persisted pair behind, and this block is about how a run adapts from scratch.
+rm -f "$REPO/scratchpad/cp-state/$TAG"/standing-* "$REPO/scratchpad/cp-state/$TAG"/compaction-pending
+# A standing context well over the target, so a compaction that "runs" between
+# two boundary calls cannot have reached it.
+{
+  printf '# Review log\n\n## Standing context\n'
+  for i in $(seq 1 40); do printf -- "- FACT: standing %s\n" "$i"; done
+  printf '\n## Ledger\n\n## Retired\nold\n'
+} > "$LOG"
+OUT="$(run spec 20 --standing-target 5 --standing-trigger 10)"
+contains "the target is reported" "$OUT" '"standingTarget":'
+contains "the trigger is reported separately" "$OUT" '"standingTrigger":'
+contains "no raise before a compaction has run" "$OUT" '"targetRaisedNow":false'
+contains "compaction is due over the trigger" "$OUT" '"compactionDue":true'
+# The next call stands for "a compaction ran and did not get under the target".
+OUT="$(run spec 21 --standing-target 5 --standing-trigger 10)"
+contains "the target is raised" "$OUT" '"targetRaisedNow":true'
+contains "and the raise is counted" "$OUT" '"targetRaises":1'
+# Having backed off, the run is no longer immediately due again: that is the
+# latch this change removes.
+OUT="$(run spec 22 --standing-target 5 --standing-trigger 10)"
+contains "and it is no longer due every round" "$OUT" '"compactionDue":false'
+contains "the raise count does not climb without cause" "$OUT" '"targetRaises":1'
 
 echo; echo "T11c. the snapshot for the next round is taken, and hunks are counted"
 OUT="$(run spec 9)"

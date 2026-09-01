@@ -623,7 +623,8 @@ t.section("B18b. the round boundary is one exact command and nothing else");
   t.check("it runs on haiku", b.opts.model === "haiku");
   t.check("its prompt is the state write plus one invocation of the script", /Run exactly these two commands/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
   t.check("it records the loop state for a resume", /scratchpad\/cp-state\/.*state-non-spec\.json/.test(b.prompt));
-  t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 2000/.test(b.prompt) && /--standing-at 80/.test(b.prompt));
+  t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 2000/.test(b.prompt));
+  t.check("the target and the trigger are passed separately", /--standing-target 200/.test(b.prompt) && /--standing-trigger 320/.test(b.prompt));
   t.check("and no other instruction", /Do nothing else: do not\s+read, summarise, or edit any other file/.test(b.prompt));
   t.check("exactly one per round", matching(calls, "r1:round-boundary").length === 1);
 }
@@ -668,10 +669,18 @@ t.section("B20. compaction fires when the boundary says it is due, and not other
   const c = yes.calls.find((x) => /:compact$/.test(x.label));
   t.check("due: a compaction agent runs", !!c);
   t.check("it may edit only the review log", /only file you may edit is .*review-log\.md/.test(c.prompt));
-  t.check("it reads once and writes once", /READ THE FILE ONCE, with Read/.test(c.prompt) && /WRITE IT ONCE, with Write/.test(c.prompt));
+  t.check("it edits rather than rewriting the whole file", /EDIT, DO NOT REWRITE/.test(c.prompt) && /Do NOT\s+rewrite the whole file with Write/.test(c.prompt));
+  t.check("and says why the old whole-file instruction was ignored", /The instruction was wrong and the passes were\s+right/.test(c.prompt));
+  t.check("but paging the file in with sed is still barred", /forty Bash calls/.test(c.prompt));
   t.check("it does NOT verify against the repository", /DO NOT VERIFY ANYTHING AGAINST THE REPOSITORY/.test(c.prompt));
   t.check("MISTAKE is named the most valuable tag and never dropped", /MISTAKE` IS THE MOST VALUABLE TAG IN THE LOG AND IS NEVER DROPPED/.test(c.prompt));
-  t.check("the target is the standing context, not the ledger", /THE TARGET IS `## Standing context`/.test(c.prompt) && /The ledger may be long/.test(c.prompt));
+  t.check("the standing context is structured under three budgeted headings", /### Settled/.test(c.prompt) && /### Traps/.test(c.prompt) && /### Open/.test(c.prompt));
+  t.check("Settled and Open are one line each", /`### Settled` and\s+`### Open` are one line per entry/.test(c.prompt));
+  t.check("Traps is uncapped in count, because that is the section worth keeping", /No cap on how many/.test(c.prompt));
+  t.check("entries carry a bold subject so the section can be navigated", /GIVE EACH ENTRY A SHORT BOLD SUBJECT/.test(c.prompt));
+  t.check("the target is carried from the boundary script", /THE TARGET IS 200 LINES/.test(c.prompt));
+  t.check("and overshooting beats dropping something that matters", /DO NOT DROP IT/.test(c.prompt) && /the target moves up\s+on its own/.test(c.prompt));
+  t.check("a ledger entry is retired rather than deleted, because agents cite ids", /agents\s+DO cite individual entries by id/.test(c.prompt));
   t.check("a superseded watchout is deleted rather than kept", /DELETED rather than kept for the record/.test(c.prompt));
   t.check("a USEFUL entry is promoted", /HONOUR `USEFUL`/.test(c.prompt));
   // Compaction deliberately does NOT check the tree any more: doing so turned a
