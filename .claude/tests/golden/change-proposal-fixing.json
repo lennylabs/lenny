@@ -262,6 +262,16 @@
     ]
   },
   {
+    "label": "r1:expand:0",
+    "phase": "non-spec R1: fix",
+    "model": "sonnet",
+    "schema": "proposal+searched+tree",
+    "blocks": [
+      "read-only",
+      "evidence"
+    ]
+  },
+  {
     "label": "r1:fix-design:G1",
     "phase": "non-spec R1: fix",
     "model": "",
