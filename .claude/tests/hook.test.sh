@@ -75,6 +75,26 @@ EOF
 FUTURE="2099-01-01T00:00:00.000Z"
 PAST="2020-01-01T00:00:00.000Z"
 
+# H13-H16 execute the hook command out of .claude/settings.json for real, which
+# is the coverage the pipeline plan already claimed existed. The tool resolves
+# REPO from its own location, so the hook cannot be pointed at the fixture tree:
+# every hook case below asserts a refusal with no lease open, which is the
+# direction that failed before this gate moved into the tool. The allow side is
+# pinned by H1-H11 against the fixture.
+HOOK_CMD="$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$REPO/.claude/settings.json")"
+[ -e "$REPO/proposals/.spec-lease.json" ] && mv "$REPO/proposals/.spec-lease.json" "$TMP/.real-lease"
+restore_lease() { [ -e "$TMP/.real-lease" ] && mv "$TMP/.real-lease" "$REPO/proposals/.spec-lease.json"; }
+trap 'restore_lease; rm -rf "$TMP"' EXIT
+
+run_payload() { # raw_payload [extra env assignments]
+  printf '%s' "$1" | env CLAUDE_PROJECT_DIR="$REPO" ${2:-} bash -c "$HOOK_CMD" >/dev/null 2>&1
+  echo $?
+}
+run_hook() { # tool_name tool_input_json [extra env assignments]
+  run_payload "$(printf '{"tool_name":"%s","cwd":"%s","tool_input":%s}' "$1" "$REPO" "$2")" "${3:-}"
+}
+S="$REPO/spec/28_communication-channels.md"
+
 echo
 echo "### layer 4: the spec/ guard hook"
 echo
@@ -144,14 +164,7 @@ node "$TOOL" release --step S2 --lease-file "$LEASE" >/dev/null 2>&1
 check "its own step's release does" 1 "$(run_check spec/04_control-plane.md)"
 
 echo
-echo "H12. the settings.json hook invokes this tool"
-if grep -q 'spec-lease.mjs' "$REPO/.claude/settings.json"; then
-  echo "  PASS  settings.json calls spec-lease.mjs"
-else
-  echo "  FAIL  settings.json does not call spec-lease.mjs"
-  fails=$((fails + 1))
-fi
-checks=$((checks + 1))
+echo "H12. the settings.json hook no longer greps every proposal"
 if grep -q 'Status:\*\* Approved' "$REPO/.claude/settings.json"; then
   echo "  FAIL  settings.json still greps every proposal for an Approved bullet"
   fails=$((fails + 1))
@@ -159,6 +172,71 @@ else
   echo "  PASS  the grep-every-proposal hook is gone"
 fi
 checks=$((checks + 1))
+
+echo
+echo "H13. the real hook normalises the path instead of pattern-matching it"
+check "a relative spec path blocks"    2 "$(run_hook Edit  '{"file_path":"spec/28_communication-channels.md"}')"
+check "the plain absolute path blocks" 2 "$(run_hook Write "{\"file_path\":\"$S\"}")"
+check "./ in the middle blocks"        2 "$(run_hook Write "{\"file_path\":\"$REPO/./spec/28_communication-channels.md\"}")"
+check "a .. traversal blocks"          2 "$(run_hook Write "{\"file_path\":\"$REPO/docs/../spec/28_communication-channels.md\"}")"
+check "a doubled slash blocks"         2 "$(run_hook Write "{\"file_path\":\"$REPO//spec/28_communication-channels.md\"}")"
+check "pkg/ is still allowed"          0 "$(run_hook Write "{\"file_path\":\"$REPO/pkg/gateway/router.go\"}")"
+
+echo
+echo "H14. an unreadable payload or a broken helper refuses, rather than passing the write through"
+mkdir -p "$TMP/bin"
+printf '#!/bin/sh\nexit 127\n' >"$TMP/bin/jq" && chmod +x "$TMP/bin/jq"
+check "a broken jq does not open the gate" 2 "$(run_hook Write "{\"file_path\":\"$S\"}" "PATH=$TMP/bin:$PATH")"
+# The payload has to carry the word spec so the hook's cheap prefilter does not
+# short-circuit it: what this case pins is that a payload which reaches the tool
+# and names no path refuses.
+check "a payload with no path blocks"      2 "$(run_hook Write '{"content":"spec text"}')"
+check "a payload that is not JSON blocks"  2 "$(run_payload 'spec not json')"
+printf '#!/bin/sh\nexit 127\n' >"$TMP/bin/node" && chmod +x "$TMP/bin/node"
+check "a node that will not run blocks"    2 "$(run_hook Write "{\"file_path\":\"$S\"}" "PATH=$TMP/bin:$PATH")"
+rm -f "$TMP/bin/node" "$TMP/bin/jq"
+
+echo
+echo "H15. a spec/ write issued through Bash is gated, and a read is not"
+check "an in-place edit blocks"      2 "$(run_hook Bash '{"command":"sed -i s/a/b/ spec/28_communication-channels.md"}')"
+check "a redirect blocks"            2 "$(run_hook Bash '{"command":"cat > spec/28_communication-channels.md <<EOF"}')"
+check "an append blocks"             2 "$(run_hook Bash "{\"command\":\"printf x >> $S\"}")"
+check "a remove blocks"              2 "$(run_hook Bash '{"command":"rm spec/28_communication-channels.md"}')"
+check "git checkout -- blocks"       2 "$(run_hook Bash '{"command":"git checkout -- spec/"}')"
+check "grep over spec allowed"       0 "$(run_hook Bash '{"command":"grep -rn LNK- spec/"}')"
+check "cat of a spec file allowed"   0 "$(run_hook Bash '{"command":"cat spec/28_communication-channels.md"}')"
+check "sed -n over spec allowed"     0 "$(run_hook Bash '{"command":"sed -n 1,40p spec/28_communication-channels.md"}')"
+check "a write outside spec allowed" 0 "$(run_hook Bash '{"command":"sed -i s/a/b/ pkg/gateway/router.go"}')"
+
+echo
+echo "H16. the matcher routes Bash at all"
+# Behavioural cases cannot see the matcher, so this one assertion stays structural.
+checks=$((checks + 1))
+case "$(jq -r '.hooks.PreToolUse[0].matcher' "$REPO/.claude/settings.json")" in
+  *Bash*) echo "  PASS  the matcher routes Bash" ;;
+  *) echo "  FAIL  the matcher does not route Bash"; fails=$((fails + 1)) ;;
+esac
+
+echo
+echo "H17. open without --allow is refused, because such a lease grants nothing"
+rm -f "$LEASE"
+node "$TOOL" open "$TMP/proposals/0001_fix_approved" --step S3 --lease-file "$LEASE" >/dev/null 2>&1
+check "open exits 2" 2 "$?"
+check "no lease was written" 1 "$(run_check spec/04_control-plane.md)"
+
+echo
+echo "H18. status reports an expired lease as not held"
+rm -f "$LEASE"
+node "$TOOL" open "$TMP/proposals/0001_fix_approved" --step S3 \
+  --allow spec/04_control-plane.md --lease-file "$LEASE" >/dev/null 2>&1
+checks=$((checks + 1))
+if node "$TOOL" status --lease-file "$LEASE" --now "$FUTURE" | grep -q '"held": false'; then
+  echo "  PASS  a lease past its expiry reports held false"
+else
+  echo "  FAIL  status ignores the expiry"
+  fails=$((fails + 1))
+fi
+rm -f "$LEASE"
 
 echo
 if [ "$fails" -eq 0 ]; then

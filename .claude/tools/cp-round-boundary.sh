@@ -18,7 +18,7 @@
 #                        [--compact-growth <lines>] [--standing-target <lines>]
 #                        [--standing-trigger <lines>]
 #
-# Prints one JSON object on stdout and nothing else:
+# Prints one JSON object on stdout, on one line, and nothing else:
 #   {
 #     "merged": <shards folded into the review log>,
 #     "ledgerLines": <lines under ## Ledger>,
@@ -357,10 +357,26 @@ rm -rf "$NEXT" && cp -r "$DIR" "$NEXT" || { echo "cp-round-boundary: snapshot fa
 OVERRIDES="{}"
 OV_FILE="$REPO/scratchpad/cp-args/$TAG.json"
 if [ -f "$OV_FILE" ]; then
-  if node -e "JSON.parse(require('fs').readFileSync('$OV_FILE','utf8'))" >/dev/null 2>&1; then
-    OVERRIDES="$(cat "$OV_FILE")"
+  # Re-emitted through JSON.stringify rather than spliced in as the file's own
+  # bytes. An operator hand-writing this file pretty-prints it, which is the
+  # documented way to change a knob mid-run, and a measured run of that made
+  # stdout four lines with no closing brace on the first. The calling prompt
+  # asks the agent for "that line" verbatim, so the agent returned line 1, the
+  # workflow's /\{[\s\S]*\}/ matched nothing, and every round closed
+  # INCONCLUSIVE for as long as the file existed. The parse is also the validity
+  # check, and the path goes through argv so a quote in it cannot rewrite the
+  # program. The non-object guard is here because a spliced array or bare number
+  # reached applyOverrides, where Object.entries turned it into index keys the
+  # log then reported as refused overrides.
+  ov=$(node -e '
+    const v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
+    process.stdout.write(JSON.stringify(v));
+  ' "$OV_FILE" 2>/dev/null)
+  if [ -n "$ov" ]; then
+    OVERRIDES="$ov"
   else
-    echo "cp-round-boundary: $OV_FILE is not valid JSON; ignoring it" >&2
+    echo "cp-round-boundary: $OV_FILE is not a JSON object; ignoring it" >&2
   fi
 fi
 

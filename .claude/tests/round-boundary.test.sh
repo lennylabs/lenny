@@ -230,6 +230,18 @@ contains "the override is carried out" "$OUT" '"maxFixGroups":3'
 printf '{not json' > "$REPO/scratchpad/cp-args/$TAG.json"
 OUT="$(run spec 12 2>/dev/null)"
 contains "a malformed override file is ignored, not fatal" "$OUT" '"overrides":{}'
+# The consumer takes stdout and matches /\{[\s\S]*\}/ against the ONE line it
+# was told to reply with, so a pretty-printed override file -- what an operator
+# hand-writing one produces -- must not split the object across lines.
+printf '{\n  "maxFixGroups": 3,\n  "skipExpansion": true\n}\n' > "$REPO/scratchpad/cp-args/$TAG.json"
+OUT="$(run spec 13)"
+check "a pretty-printed override file still prints exactly one line" 1 \
+  "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+check "and that line alone carries the override to the caller" "3" \
+  "$(printf '%s' "$(printf '%s\n' "$OUT" | head -1)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=s.match(/\{[\s\S]*\}/);process.stdout.write(m?String(JSON.parse(m[0]).overrides.maxFixGroups):"none")})' 2>/dev/null)"
+printf '["not","an object"]' > "$REPO/scratchpad/cp-args/$TAG.json"
+OUT="$(run spec 14 2>/dev/null)"
+contains "a JSON array override file is ignored, not spliced" "$OUT" '"overrides":{}'
 rm -f "$REPO/scratchpad/cp-args/$TAG.json"
 
 echo; echo "T12. it fails rather than proceeding on unknown state"

@@ -27,10 +27,15 @@
 //
 // Usage:
 //   spec-lease.mjs check <path>          exit 0 to allow the write, 1 to block
+//   spec-lease.mjs hook                  read a PreToolUse payload on stdin;
+//                                        exit 0 to allow, 2 to block the call
 //   spec-lease.mjs open <proposal> --step S3 --allow spec/a.md,spec/b.md
+//                                        --allow is required: a lease with an
+//                                        empty allow list grants nothing
 //                                        [--ttl-hours 24] [--run-id X] [--now ISO]
 //   spec-lease.mjs release [--step S3]   release, or release only if it is S3's
-//   spec-lease.mjs status [--json]       report the current lease
+//   spec-lease.mjs status [--now ISO]    report the current lease and whether it
+//                                        is still held
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
 import { resolve, relative, isAbsolute } from "path";
@@ -51,7 +56,28 @@ export function relPath(p) {
   return relative(REPO, abs).split("\\").join("/");
 }
 
-export function readLease(leasePath = LEASE) {
+/**
+ * True when `proposal` sits inside the directory holding the lease file.
+ * The lease used to be trusted to name any path: a lease naming
+ * "../.claude/jobs/.../proposals/0001_fix_a" resolved, its hand-written status
+ * file was read, and spec/ opened. A proposal outside the directory the lease
+ * sits in is under no hook and is not a proposal of this tree. The anchor is
+ * the lease's own directory rather than REPO because that is `<repo>/proposals`
+ * in production and the fixture's own proposals directory under test.
+ */
+function underLeaseDir(proposalAbs, leasePath) {
+  const root = dirname(resolve(leasePath));
+  const rel = relative(root, proposalAbs);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * Read the lease and say whether it is still held. The expiry used to be
+ * evaluated only inside decide(), so `status` printed an expired lease as
+ * present with no expiry signal, and the compile gate that reads that output
+ * aborted a run with "lease-leaked" over a lease that granted nothing.
+ */
+export function readLease(leasePath = LEASE, now = new Date()) {
   if (!existsSync(leasePath)) return { present: false };
   let raw;
   try {
@@ -62,7 +88,8 @@ export function readLease(leasePath = LEASE) {
   if (!raw || typeof raw !== "object" || !raw.proposal || !raw.expires) {
     return { present: true, malformed: "missing proposal or expires" };
   }
-  return { present: true, lease: raw };
+  const expired = !(new Date(raw.expires) > now);
+  return { present: true, expired, held: !expired, lease: raw };
 }
 
 /**
@@ -75,9 +102,15 @@ export function decide(target, opts = {}) {
   const now = opts.now ? new Date(opts.now) : new Date();
   const rel = relPath(target);
 
-  if (!rel.startsWith("spec/")) return { allow: true, why: "not under spec/" };
+  // `git checkout -- spec/` names the directory, and relative() drops the
+  // trailing slash, so a bare "spec" has to be in scope too: measured, that one
+  // command was the only one of the four Bash write forms in the audit that
+  // still walked through a scanner delegating here.
+  if (rel !== "spec" && !rel.startsWith("spec/")) {
+    return { allow: true, why: "not under spec/" };
+  }
 
-  const r = readLease(leasePath);
+  const r = readLease(leasePath, now);
   if (!r.present) {
     return { allow: false, why: "spec/ is read-only: no spec lease is open" };
   }
@@ -86,17 +119,24 @@ export function decide(target, opts = {}) {
   }
   const lease = r.lease;
 
-  const expires = new Date(lease.expires);
-  if (!(expires > now)) {
+  if (r.expired) {
     return {
       allow: false,
       why: "spec lease expired at " + lease.expires + "; release it or re-run the step that opened it",
     };
   }
 
+  const proposalAbs = resolve(REPO, lease.proposal);
+  if (!underLeaseDir(proposalAbs, leasePath)) {
+    return {
+      allow: false,
+      why: "the leased proposal " + lease.proposal + " is outside " + dirname(resolve(leasePath)) + "; refusing",
+    };
+  }
+
   let status;
   try {
-    status = execFileSync("node", [STATUS_TOOL, resolve(REPO, lease.proposal), "--field", "status"], {
+    status = execFileSync("node", [STATUS_TOOL, proposalAbs, "--field", "status"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
@@ -110,8 +150,21 @@ export function decide(target, opts = {}) {
     };
   }
 
+  // An empty allow list grants nothing. It used to grant all of spec/: the
+  // guard read `allow.length > 0 && !allow.includes(rel)`, so `open <proposal>
+  // --step S1` with no --allow let spec/04, spec/28 and a spec/ file that did
+  // not exist yet all through, against a header that says the lease names the
+  // exact files the step's deliverables target.
   const allow = Array.isArray(lease.allow) ? lease.allow.map((p) => relPath(p)) : [];
-  if (allow.length > 0 && !allow.includes(rel)) {
+  if (allow.length === 0) {
+    return {
+      allow: false,
+      why:
+        "the spec lease for " + lease.proposal + " has an empty allow list, which grants nothing; " +
+        "re-open it with --allow naming the files the step writes",
+    };
+  }
+  if (!allow.includes(rel)) {
     return {
       allow: false,
       why: rel + " is not in the lease's allow list (" + allow.join(", ") + ")",
@@ -121,9 +174,119 @@ export function decide(target, opts = {}) {
   return { allow: true, why: "leased by " + lease.proposal + (lease.step ? " step " + lease.step : "") };
 }
 
+// The four forms the audit measured as ungated when the hook matched only the
+// file-editing tools: `sed -i spec/...`, `cat > spec/...`, `rm spec/...`, and
+// `git checkout -- spec/`. A read (`cat spec/x`, `grep -rn x spec/`) has to stay
+// allowed or the pipeline cannot read its own source, so a bare mention of a
+// spec path is not a block; only a span that carries write intent is scanned.
+const WRITE_SPANS = [
+  />>?\s*[^\s;&|<>]+/g, // redirection target, heredoc included
+  /\b(?:sed|perl|ruby)\b[^;&|\n]*?\s-[A-Za-z]*i\b[^;&|\n]*/g, // in-place edit
+  /\b(?:rm|mv|cp|tee|truncate|install|patch|shred|ln|dd)\b[^;&|\n]*/g,
+  /\bgit\s+(?:checkout|restore|apply|rm|mv|clean|stash|reset)\b[^;&|\n]*/g,
+];
+
+// A path-shaped token inside a write span: either one containing `spec/`, or a
+// bare `spec` naming the directory itself.
+const SPEC_TOKEN = /[^\s"'`;&|<>()]*spec\/[^\s"'`;&|<>()]*|[^\s"'`;&|<>()]*\bspec\b(?=\s|$)/g;
+
+/**
+ * The first blocking decision for any spec/ path a shell command writes to, or
+ * null when the command writes to none.
+ *
+ * One honest limit, in the same register as the lease's own: the scan is
+ * textual, so `perl -pi -e`, `python -c`, or a path assembled from a shell
+ * variable are not covered. That matches this file's threat model of accidental
+ * writes and is not claimed as a sandbox.
+ */
+export function scanCommand(command, opts = {}) {
+  if (typeof command !== "string" || command === "") return null;
+  for (const span of WRITE_SPANS) {
+    span.lastIndex = 0;
+    let m;
+    while ((m = span.exec(command)) !== null) {
+      SPEC_TOKEN.lastIndex = 0;
+      let t;
+      while ((t = SPEC_TOKEN.exec(m[0])) !== null) {
+        const cand = t[0].replace(/^["'`]+|["'`]+$/g, "").replace(/\/+$/, "");
+        if (!cand) continue;
+        const d = decideTarget(cand, opts);
+        if (!d.allow) return d;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Decide one target, resolving it against the repo root and, when the payload
+ * carries a different working directory, against that too. Checking both is the
+ * fail-closed reading: a relative `spec/x.md` is still a spec write when the
+ * agent's cwd is elsewhere in the tree.
+ */
+function decideTarget(target, opts = {}) {
+  const d = decide(target, opts);
+  if (!d.allow) return d;
+  if (opts.cwd && !isAbsolute(target)) {
+    const viaCwd = decide(resolve(opts.cwd, target), opts);
+    if (!viaCwd.allow) return viaCwd;
+  }
+  return d;
+}
+
+const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+/**
+ * Decide a PreToolUse payload. The shell wrapper this replaced classified paths
+ * itself with two `case` statements and never reached relPath(), so measured,
+ * `$REPO/./spec/x.md`, `$REPO/docs/../spec/x.md` and `$REPO//spec/x.md` were all
+ * allowed. Parsing here puts every path through the same resolve()-based
+ * normalisation the lease already uses.
+ */
+export function decideHook(rawPayload, opts = {}) {
+  let payload;
+  try {
+    payload = JSON.parse(rawPayload);
+  } catch (e) {
+    // The shell hook ran `jq ... 2>/dev/null` and then `[ -n "$f" ] || exit 0`:
+    // measured, a jq that exits 127 allowed a write to spec/28_x.md. An input
+    // this tool cannot read is a refusal, like every other one in this file.
+    return { allow: false, why: "the hook payload is not JSON; refusing" };
+  }
+  if (!payload || typeof payload !== "object") {
+    return { allow: false, why: "the hook payload is not an object; refusing" };
+  }
+  const input = payload.tool_input && typeof payload.tool_input === "object" ? payload.tool_input : {};
+  const o = { ...opts, cwd: typeof payload.cwd === "string" ? payload.cwd : "" };
+
+  if (EDIT_TOOLS.has(payload.tool_name)) {
+    const target = input.file_path ?? input.notebook_path;
+    if (typeof target !== "string" || target === "") {
+      return { allow: false, why: "the payload names no path; refusing" };
+    }
+    return decideTarget(target, o);
+  }
+
+  if (payload.tool_name === "Bash") {
+    if (typeof input.command !== "string") {
+      return { allow: false, why: "the Bash payload names no command; refusing" };
+    }
+    return scanCommand(input.command, o) || { allow: true, why: "no spec/ write in the command" };
+  }
+
+  // The matcher routes only the tools above, so anything else means the payload
+  // is not what this hook was configured for.
+  return { allow: false, why: "unrecognised tool " + String(payload.tool_name) + "; refusing" };
+}
+
+export const GUIDANCE =
+  "Stage edits via the change-proposal skill, record approval, then apply with " +
+  "the implement-proposal skill, which opens a lease for the step that writes them.";
+
 export function openLease(proposal, opts = {}) {
   const now = opts.now ? new Date(opts.now) : new Date();
   const ttl = Number(opts.ttlHours || DEFAULT_TTL_HOURS);
+  const leasePath = opts.leasePath || LEASE;
   const lease = {
     proposal: relPath(proposal),
     step: opts.step || "",
@@ -132,7 +295,12 @@ export function openLease(proposal, opts = {}) {
     expires: new Date(now.getTime() + ttl * 3600 * 1000).toISOString(),
     allow: (opts.allow || []).map((p) => relPath(p)),
   };
-  writeFileSync(opts.leasePath || LEASE, JSON.stringify(lease, null, 2) + "\n");
+  // Refused here as well as in decide(), so an out-of-tree proposal fails at
+  // the opener rather than silently producing a lease nothing will honour.
+  if (!underLeaseDir(resolve(REPO, lease.proposal), leasePath)) {
+    throw new Error("proposal " + proposal + " is outside " + dirname(resolve(leasePath)));
+  }
+  writeFileSync(leasePath, JSON.stringify(lease, null, 2) + "\n");
   return lease;
 }
 
@@ -140,7 +308,12 @@ export function releaseLease(opts = {}) {
   const leasePath = opts.leasePath || LEASE;
   const r = readLease(leasePath);
   if (!r.present) return { released: false, why: "no lease" };
-  if (opts.step && r.lease && r.lease.step && r.lease.step !== opts.step) {
+  // A lease opened without --step carries step "", and the guard used to read
+  // `r.lease.step && r.lease.step !== opts.step`, so `release --step S9` freed
+  // it. A step-scoped release frees only its own step; an unscoped release
+  // still frees anything, which is the operator's cleanup path. The `r.lease`
+  // conjunct stays: a malformed lease has no `lease` and must stay deletable.
+  if (opts.step && r.lease && r.lease.step !== opts.step) {
     return { released: false, why: "lease belongs to step " + r.lease.step + ", not " + opts.step };
   }
   unlinkSync(leasePath);
@@ -157,6 +330,19 @@ if (import.meta.url === "file://" + process.argv[1]) {
     return i >= 0 ? argv[i + 1] : undefined;
   };
   const leasePath = flag("lease-file") ? resolve(flag("lease-file")) : LEASE;
+
+  if (cmd === "hook") {
+    let raw;
+    try {
+      raw = readFileSync(0, "utf8");
+    } catch (e) {
+      raw = "";
+    }
+    const d = decideHook(raw, { leasePath, now: flag("now") });
+    if (d.allow) process.exit(0);
+    process.stderr.write("blocked: " + d.why + " " + GUIDANCE + "\n");
+    process.exit(2);
+  }
 
   if (cmd === "check") {
     const target = argv[1];
@@ -175,13 +361,18 @@ if (import.meta.url === "file://" + process.argv[1]) {
       process.stderr.write("usage: spec-lease.mjs open <proposal> --step S --allow a,b\n");
       process.exit(2);
     }
+    const allowList = (flag("allow") || "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (allowList.length === 0) {
+      process.stderr.write("open requires --allow: a lease with no allow list grants nothing\n");
+      process.exit(2);
+    }
     const l = openLease(proposal, {
       leasePath,
       step: flag("step"),
       runId: flag("run-id"),
       ttlHours: flag("ttl-hours"),
       now: flag("now"),
-      allow: (flag("allow") || "").split(",").map((s) => s.trim()).filter(Boolean),
+      allow: allowList,
     });
     process.stdout.write(JSON.stringify(l) + "\n");
     process.exit(0);
@@ -194,11 +385,11 @@ if (import.meta.url === "file://" + process.argv[1]) {
   }
 
   if (cmd === "status") {
-    const r = readLease(leasePath);
-    process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+    const r = readLease(leasePath, flag("now") ? new Date(flag("now")) : new Date());
+    process.stdout.write(JSON.stringify({ held: !!r.held, ...r }, null, 2) + "\n");
     process.exit(0);
   }
 
-  process.stderr.write("usage: spec-lease.mjs check|open|release|status\n");
+  process.stderr.write("usage: spec-lease.mjs check|hook|open|release|status\n");
   process.exit(2);
 }

@@ -20,7 +20,7 @@
 //     commit: true,                                 // optional, default true
 //   }})
 //
-// Returns { status, dir, ... }. status is one of:
+// Returns { status, dir, ... }, where dir is repo-relative on every exit. status is one of:
 //   migrated        the split landed and the legacy file is gone
 //   already         the directory exists and the legacy file does not
 //   refused-implemented   an Implemented or Retired proposal is not split
@@ -55,7 +55,12 @@ const rel = input.proposalPath.startsWith("/")
 // The stem is the file name without .md, and it is also the directory name and
 // the prefix of every file inside it.
 const stem = rel.replace(/^proposals\//, "").replace(/\.md$/, "");
-const dir = repo + "/proposals/" + stem;
+// `dir` is absolute because every use of it below goes into an agent prompt, and
+// `relDir` is what a result carries: change-proposal.js prefixes the returned dir
+// with the repo root, so an absolute one there produced /repo//repo/proposals/<stem>
+// and cp-round-boundary.sh exited 1 "no such proposal directory" on every round.
+const relDir = "proposals/" + stem;
+const dir = repo + "/" + relDir;
 const legacy = repo + "/" + rel;
 const F = (role) => dir + "/" + stem + "." + role + ".md";
 
@@ -163,15 +168,15 @@ const assess = await agent(
 );
 
 if (!assess) {
-  return { status: "assess-failed", reason: "the assessment agent did not return", dir };
+  return { status: "assess-failed", reason: "the assessment agent did not return", dir: relDir };
 }
 
 if (assess.state === "absent") {
-  return { status: "absent", reason: "neither " + legacy + " nor " + dir + " exists", dir };
+  return { status: "absent", reason: "neither " + legacy + " nor " + dir + " exists", dir: relDir };
 }
 if (assess.state === "already-migrated") {
   log("Already migrated: " + dir);
-  return { status: "already", dir, stem };
+  return { status: "already", dir: relDir, stem };
 }
 
 // A landed proposal is a historical record and splitting it is an edit
@@ -244,7 +249,7 @@ const splitPrompt =
   "Follow " + repo + "/.claude/rules/doc-style.md for any heading or connective sentence you author.";
 
 const split = await agent(splitPrompt, { schema: SPLIT, label: "split", phase: "Split" });
-if (!split) return { status: "split-failed", reason: "the split agent did not return", dir };
+if (!split) return { status: "split-failed", reason: "the split agent did not return", dir: relDir };
 log("Split wrote " + (split.written || []).length + " file(s)");
 
 // ---- Verify --------------------------------------------------------------
@@ -267,7 +272,7 @@ for (let attempt = 0; attempt <= maxRepairs; attempt++) {
       "reported line in lost.",
     { schema: LOST, label: "check-split:a" + attempt, phase: "Verify" },
   );
-  if (!res) return { status: "check-failed", reason: "the partition checker did not return", dir };
+  if (!res) return { status: "check-failed", reason: "the partition checker did not return", dir: relDir };
   lost = res;
   if (res.ok) {
     log("Partition check clean" + (attempt > 0 ? " after " + attempt + " repair(s)" : ""));
@@ -294,7 +299,7 @@ if (!lost || !lost.ok) {
       "the split lost content the repair passes could not restore. The legacy file is untouched and the " +
       "directory is in the working tree for inspection; nothing was committed.",
     lost: (lost && lost.lost) || [],
-    dir,
+    dir: relDir,
   };
 }
 
@@ -321,7 +326,7 @@ const refs = await agent(
   { schema: REFS, label: "retarget-refs", phase: "Verify" },
 );
 
-if (!refs) return { status: "refs-failed", reason: "the reference retargeting agent did not return", dir };
+if (!refs) return { status: "refs-failed", reason: "the reference retargeting agent did not return", dir: relDir };
 if ((refs.unresolved || []).length > 0) {
   return {
     status: "unresolved-references",
@@ -330,7 +335,7 @@ if ((refs.unresolved || []).length > 0) {
       "landing a half-retargeted tree. The legacy file is still in place.",
     unresolved: refs.unresolved,
     retargeted: refs.sites || [],
-    dir,
+    dir: relDir,
   };
 }
 log("Retargeted " + (refs.sites || []).length + " inbound reference(s)");
@@ -362,7 +367,7 @@ if (doCommit) {
 log("Migrated " + rel + " to " + dir);
 return {
   status: "migrated",
-  dir: "proposals/" + stem,
+  dir: relDir,
   stem,
   proposalStatus: assess.status,
   written: split.written || [],

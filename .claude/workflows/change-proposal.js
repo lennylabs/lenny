@@ -318,6 +318,7 @@ const ARG_CLASS = {
   churnMinFindings: "forward",
   churnStrikes: "forward",
   maxRedesigns: "forward",
+  maxPrunes: "forward",
   redesignReviewRounds: "forward",
   introspectGate: "forward",
   judgesPerVerdict: "forward",
@@ -743,6 +744,66 @@ const POTENTIALLY_RELATED_SITES = {
     },
   },
 };
+
+// Which class a site belongs to, decided from its path rather than from the
+// class the expansion pass assigned it. The class is the fixer's WRITE
+// PERMISSION -- SPEC_EDITABLE and NONSPEC_EDITABLE list only files inside the
+// proposal -- and a permission decided by an agent's judgement is not decided.
+// A measured run filed `spec/10_x.md` under `proposal`; the design adjudicated
+// it `in-scope`, the fixer's HARD CONSTRAINT correctly refused to touch
+// anything under spec/, the post-fix reviewer is told an unedited in-scope site
+// is a CONFIRMED drift finding so it filed one, and a follow-up fixer ran
+// against the same unwritable file and pushed its title into fixedTitles, where
+// every later round reads it as work that landed. One misfiled path cost three
+// agents and a permanent false entry.
+function siteRel(file) {
+  let p = String(file == null ? "" : file).trim();
+  if (p === repo) return "";
+  if (p.indexOf(repo + "/") === 0) p = p.slice(repo.length + 1);
+  return p.replace(/^\.\/+/, "").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+// Inside the proposal, which is the only thing any loop's editable set holds.
+// P.root rather than P.dir: on a legacy single-file proposal `dir` is the
+// parent `proposals/` directory, and classifying against it would make every
+// other proposal in the repository look editable.
+function isProposalSite(file) {
+  const rel = siteRel(file);
+  const root = siteRel(P.root);
+  return rel !== "" && (rel === root || rel.indexOf(root + "/") === 0);
+}
+
+// Re-split one expansion result by path and report what had to move. Silence
+// here would reproduce the defect in a quieter form: a run whose expansion pass
+// consistently misfiles is worth seeing in the log.
+function classifySites(r, where) {
+  const proposal = [];
+  const tree = [];
+  let moved = 0;
+  let dropped = 0;
+  const all = [];
+  for (const s of r.proposal || []) all.push({ stated: "proposal", site: s });
+  for (const s of r.tree || []) all.push({ stated: "tree", site: s });
+  for (const entry of all) {
+    const s = entry.site;
+    // A site with no usable path cannot be classified, opened, or edited, so
+    // there is nothing for any downstream agent to do with it.
+    if (!s || typeof s.file !== "string" || !s.file.trim()) {
+      dropped++;
+      continue;
+    }
+    const actual = isProposalSite(s.file) ? "proposal" : "tree";
+    if (actual !== entry.stated) moved++;
+    (actual === "proposal" ? proposal : tree).push(s);
+  }
+  if (moved) {
+    log(where + ": " + moved + " site(s) reclassified by path against the class the expansion pass assigned");
+  }
+  if (dropped) {
+    log(where + ": " + dropped + " site(s) dropped for carrying no path");
+  }
+  return { proposal: proposal, tree: tree };
+}
 
 const FIX_PLAN = {
   type: "object",
@@ -1822,10 +1883,21 @@ if (startSet) {
 // a few thousand lines of diff through an agent's return value would cost more
 // than the review it feeds, and an agent asked to return that much verbatim
 // summarises it instead.
-const SNAPDIR = repo + "/scratchpad/cp-snap";
+// Namespaced by run tag like the log shards, the run state and the cache,
+// and sharing the directory the boundary script writes its own
+// cp-snap/<tag>/<loop>-r<N> snapshots into.
+const SNAPDIR = repo + "/scratchpad/cp-snap/" + runTag;
 
 async function snapshot(name) {
-  const dest = SNAPDIR + "/" + name;
+  // The loop name is the second half of the namespace, because `round`
+  // restarts at 1 in the non-spec loop, so `r1-start` otherwise names two
+  // different documents inside one run. Both halves were missing and the
+  // residue is in the tree: scratchpad/cp-snap holds 0076-run2/ and
+  // 0076-run3/ from the boundary script beside a SINGLE flat r1-start …
+  // r6-start set, because run3's `rm -rf` took run2's out from under it.
+  // A reviewer handed such a path by diffInstruction() diffs this proposal
+  // against whatever the other run last copied there.
+  const dest = SNAPDIR + "/" + (LOOP ? LOOP.name : "pre") + "-" + name;
   const ok = await robustAgent(
     "Run exactly this command and reply with the single word DONE:\n\n" +
       "rm -rf " + dest + " && mkdir -p " + SNAPDIR + " && cp -r " + P.dir + " " + dest + "\n\n" +
@@ -2092,13 +2164,14 @@ async function expandSites(confirmedFindings, round) {
       };
       return;
     }
+    const c = classifySites(r, "Round " + round + " expansion " + idx);
     confirmedFindings[idx].potentiallyRelatedSites = {
-      proposal: r.proposal || [],
-      tree: r.tree || [],
+      proposal: c.proposal,
+      tree: c.tree,
       searched: r.searched || "",
       capped: false,
     };
-    found += (r.proposal || []).length + (r.tree || []).length;
+    found += c.proposal.length + c.tree.length;
   });
   for (const i of skipped) {
     confirmedFindings[i].potentiallyRelatedSites = { proposal: [], tree: [], searched: "", capped: true };
@@ -2410,7 +2483,7 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "the design predicted.\n" +
         "  - No site marked `separate-finding` or `not-a-site` is edited here, whatever you think of it. " +
         "Editing one is an unreviewed change: nothing verified it.\n" +
-        "  - A `tree` site under spec/, docs/, schemas/ or charts/ is NOT yours to edit. Its remedy is to " +
+        "  - A `tree` site, meaning any site outside " + P.dir + ", is NOT yours to edit. Its remedy is to " +
         "add the site to the proposal's edit list.\n" +
         "RE-READ BEFORE YOU EDIT. Each site carries a quote and a line number taken before this round's " +
         "edits landed, and line numbers drift. Open each one and confirm it still says what the quote " +
@@ -2713,6 +2786,26 @@ const redesignsAllowed = input.maxRedesigns === undefined ? 2 : input.maxRedesig
 // reset would make the second loop's first redesign overwrite the first loop's
 // subproposal record. A per-loop budget would need its own counter.
 let redesignsRun = 0;
+// Run-wide for the same reason, and because the caller names areas for the RUN.
+// Left per-loop, the entry redesign fired again at the top of the non-spec loop:
+// it re-specified what the first pass had already applied, was briefed from an
+// areaLog holding only the other loop's findings, and spent the last of
+// maxRedesigns so introspection could never ask for one later. Measured with
+// focusAreas ['teardown']: redesign1:* in the spec loop and redesign2:* in the
+// non-spec loop, twelve agents where six were asked for.
+let entryRedesignDone = false;
+const prunesAllowed = input.maxPrunes === undefined ? 2 : input.maxPrunes;
+// Run-wide for the same reason the redesign budget is: the sections a prune
+// names are headings of one document, and a section the spec loop deleted is
+// gone when the non-spec loop reads it, so a per-loop budget would license the
+// second loop to re-commission the first loop's deletion.
+let prunesRun = 0;
+// The sections this run has already pruned, lower-cased and trimmed so the
+// comparison does not turn on whitespace or case. Measured: with
+// introspectEvery 1 and a pass that named "## 3. Design" every round, the loop
+// commissioned that one deletion in rounds 1, 2, 3 and 4 and paid a full
+// 13-lens round behind each.
+const prunedSections = new Set();
 // Set when the introspection pass concludes the run should not continue without a
 // human decision. It ends the loop rather than the process, so everything already
 // fixed is kept and reported.
@@ -2727,6 +2820,7 @@ const overruledStops = [];
 // round 1, in an area that loop had found nothing in.
 const areaLog = new Map();
 const redesignHistory = [];
+const pruneHistory = [];
 
 function recordFindings(rnd, fs) {
   for (const f of fs) {
@@ -3451,6 +3545,16 @@ async function introspect(rnd, reason, churn, byCadence) {
           "is one of the things circling looks like from the inside. Weigh it against the finding rate: " +
           "rising open state with a flat finding rate is a stronger signal than either alone.\n"
         : "") +
+      (pruneHistory.length
+        ? "\n\nSECTIONS THIS RUN HAS ALREADY PRUNED, with the round each was pruned in:\n" +
+          JSON.stringify(pruneHistory, null, 2) +
+          "\nNaming one of these again asserts that the first deletion did not take. Say what is still " +
+          "over-specified in it and why the earlier prune left that standing, or reach a different verdict: " +
+          "a repeat is dropped rather than carried out. " +
+          (prunesRun >= prunesAllowed
+            ? "The prune budget of " + prunesAllowed + " is spent, so a prune verdict is recorded and not acted on.\n"
+            : prunesAllowed - prunesRun + " prune(s) remain in this run's budget.\n")
+        : "") +
       "\n\nTHE LAST " + recent.length + " ROUNDS, with what each fixed:\n" +
       JSON.stringify(
         recent.map((h) => ({
@@ -3587,6 +3691,17 @@ async function robustAgent(prompt, opts, attempts = 4) {
     }
   }
   return null;
+}
+
+// Every read of an agent's findings goes through this. The schemas ask for the
+// array and nothing enforces it, so an agent that answers with an object
+// carrying no `findings` key at all is a well-formed answer as far as this
+// script is concerned. Measured against the test harness, where an unstubbed
+// call resolves to `{}`: a dedup result, a single review lens, and the post-fix
+// review each threw a TypeError straight out of the loop body and killed the
+// run, in a run that had already paid for every round before it.
+function findingsOf(r) {
+  return r && Array.isArray(r.findings) ? r.findings : [];
 }
 
 const fixedTitles = [];
@@ -3911,7 +4026,8 @@ async function runReviewLoop(cfg) {
   // Redesign as an entry mode. The caller names the areas, so the loop does not
   // have to discover the churn first: a human who already knows which mechanism is
   // wrong should not have to pay six rounds for the detector to agree.
-  if (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.length)) {
+  if (!entryRedesignDone && (mode === "redesign" || (Array.isArray(input.focusAreas) && input.focusAreas.length))) {
+    entryRedesignDone = true;
     // focusAreas takes either a bare slug or {area, reason}. A caller who already
     // knows which mechanism is wrong usually knows why, and the per-area agents are
     // briefed from that reason. On a run that has not yet classified any findings
@@ -3931,10 +4047,17 @@ async function runReviewLoop(cfg) {
           "named by the caller as an area to redesign before review begins",
       };
     });
-    if (named.length) {
-      await runRedesign(named, 0, "requested by the caller");
-    } else {
+    if (!named.length) {
       log("Redesign mode with no focusAreas; nothing to redesign, entering review");
+    } else if (redesignsRun >= redesignsAllowed) {
+      // Same budget as the introspection path spends, for the same reason: a
+      // redesign is the most expensive move the run has.
+      log(
+        "The caller named " + named.map((a) => a.area).join(", ") + " to redesign but the budget of " +
+          redesignsAllowed + " is spent; entering review without one",
+      );
+    } else {
+      await runRedesign(named, 0, "requested by the caller");
     }
   }
 
@@ -4146,11 +4269,9 @@ async function runReviewLoop(cfg) {
     // lenses, so this association must be recorded here, by the script, before any
     // model has a chance to lose it.
     lenses.forEach((l, i) => {
-      const r = lensResults[i];
-      if (r)
-        r.findings.forEach((f) => {
-          f.lens = l.key;
-        });
+      findingsOf(lensResults[i]).forEach((f) => {
+        f.lens = l.key;
+      });
     });
 
     if (results.length === 0) {
@@ -4180,7 +4301,7 @@ async function runReviewLoop(cfg) {
           " lenses failed after retries; round INCONCLUSIVE (will not count toward convergence)",
       );
     }
-    const raw = results.flatMap((r) => r.findings);
+    const raw = results.flatMap((r) => findingsOf(r));
     log("Round " + round + ": " + raw.length + " raw findings");
 
     if (raw.length === 0) {
@@ -4229,7 +4350,8 @@ async function runReviewLoop(cfg) {
         phase: LOOP.name + " R" + round + ": review",
         schema: DEDUP_FINDINGS,
       });
-      if (d && d.findings.length > 0) deduped = d.findings;
+      const dd = findingsOf(d);
+      if (dd.length > 0) deduped = dd;
     }
     log(
       "Round " +
@@ -4270,7 +4392,30 @@ async function runReviewLoop(cfg) {
             () => verifySteps[verifyOrder[0]](f),
             () => verifySteps[verifyOrder[1]](f),
           ]);
-          return { f, vs: vs.filter(Boolean), refutedBy: null };
+          // Same guard as the sequential path below, for the same reason: a
+          // verifier that DIED is not a refusal. Without the flag the finding
+          // fell through to `rejected` as "refuted by the unknown skeptic
+          // because verifier unavailable", and every later lens of both loops
+          // was told not to re-report it, so one outage suppressed a real
+          // finding for the rest of the run. Measured on this workflow under
+          // the harness: with verifySequential false and one dead verifier, the
+          // finding was rejected in all four rounds.
+          if (!vs[0] || !vs[1]) {
+            return { f, vs: vs.filter(Boolean), refutedBy: null, dead: true };
+          }
+          // Name the skeptic that refused, as the sequential path does: "not
+          // material" and "the evidence is wrong" are different signals to a
+          // later round's lens. The first refuser wins, matching the order the
+          // short circuit would have applied.
+          return {
+            f,
+            vs,
+            refutedBy: !vs[0].confirmed
+              ? verifyOrder[0]
+              : !vs[1].confirmed
+                ? verifyOrder[1]
+                : null,
+          };
         }
         const first = await verifySteps[verifyOrder[0]](f);
         // A verifier that DIED is not a refusal. The finding reaches neither
@@ -4405,8 +4550,7 @@ async function runReviewLoop(cfg) {
           " confirmed finding(s) carry no lens this round produced; falling back to retiring only lenses that reported nothing",
       );
       lenses.forEach((l, i) => {
-        const r = lensResults[i];
-        if (r && r.findings.length > 0) survivors.add(l.key);
+        if (findingsOf(lensResults[i]).length > 0) survivors.add(l.key);
       });
     }
     applyRetirement(
@@ -4802,17 +4946,34 @@ async function runReviewLoop(cfg) {
     // checks the fixer against. A site the design ruled out is not checked: the
     // fixer was told not to touch it.
     const inScopeSites = [];
+    let inScopeOutOfBounds = 0;
     for (const d of designs || []) {
       for (const one of (d && d.designs) || []) {
         for (const sd of one.siteDispositions || []) {
-          if (sd.disposition === "in-scope") {
-            inScopeSites.push({ finding: one.findingTitle, file: sd.file, line: sd.line, quote: sd.quote, why: sd.why });
+          if (sd.disposition !== "in-scope") continue;
+          // A design may adjudicate a TREE site `in-scope`, and the fixer's HARD
+          // CONSTRAINT forbids editing it. Passing it on would tell the post-fix
+          // reviewer that an unedited site is a CONFIRMED drift finding against
+          // a file nothing in this loop may write, which is the same false
+          // finding a misclassified path produces. The remedy for such a site is
+          // an edit the PROPOSAL is missing, which the tree list already carries.
+          if (!isProposalSite(sd.file)) {
+            inScopeOutOfBounds++;
+            continue;
           }
+          inScopeSites.push({ finding: one.findingTitle, file: sd.file, line: sd.line, quote: sd.quote, why: sd.why });
         }
       }
     }
     if (inScopeSites.length) {
       log("Round " + round + ": " + inScopeSites.length + " related site(s) adopted into this round's fixes");
+    }
+    if (inScopeOutOfBounds) {
+      log(
+        "Round " + round + ": " + inScopeOutOfBounds +
+          " site(s) adjudicated in-scope lie outside " + P.root + " and are not the fixer's to edit; " +
+          "they are not checked as drift",
+      );
     }
     history[history.length - 1].sitesAdopted = inScopeSites.length;
     // This round's attempts, so a later round designing at the same location is
@@ -4840,10 +5001,11 @@ async function runReviewLoop(cfg) {
         schema: FINDINGS,
       },
     );
+    const postFixFindings = findingsOf(postFix);
     if (!postFix) {
       log("Round " + round + ": post-fix review unavailable after retries");
       history[history.length - 1].postFixReview = "unavailable";
-    } else if (postFix.findings.length === 0) {
+    } else if (postFixFindings.length === 0) {
       log("Round " + round + ": post-fix review found no defect in the fixer's work");
       history[history.length - 1].postFixReview = "clean";
     } else {
@@ -4851,21 +5013,21 @@ async function runReviewLoop(cfg) {
         "Round " +
           round +
           ": post-fix review found " +
-          postFix.findings.length +
+          postFixFindings.length +
           " defect(s) in the fixer's own edits; correcting",
       );
       const followUp = await robustAgent(
-        followUpFixPrompt(postFix.findings, round),
+        followUpFixPrompt(postFixFindings, round),
         { label: "r" + round + ":follow-up-fix", phase: LOOP.name + " R" + round + ": fix" },
       );
       // Only a follow-up that returned corrected anything, so only then does the
       // defect count as fixed. Recording it unconditionally told the next
       // round's lenses that the current text reflects a correction a dead fixer
       // never made.
-      if (followUp) postFix.findings.forEach((f) => fixedTitles.push(f.title));
+      if (followUp) postFixFindings.forEach((f) => fixedTitles.push(f.title));
       // Recorded in history either way, so a run where the fixer repeatedly
       // needed correction is visible whether or not the correction landed.
-      history[history.length - 1].postFixReview = postFix.findings.map(
+      history[history.length - 1].postFixReview = postFixFindings.map(
         (f) => f.title,
       );
       history[history.length - 1].followUpFixSummary =
@@ -4970,27 +5132,65 @@ async function runReviewLoop(cfg) {
         // drift apart, and detail an implementor does not need costs more to keep
         // true than it is worth. The cure is deletion with a stated constraint,
         // which is what the blanks convention exists for.
-        await robustAgent(
-          "Prune over-specified sections of a change proposal.\n\n" +
-            "HARD CONSTRAINT: the only file you may edit is " + path +
-            ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
-            "An introspection pass judged these sections to have grown past their value:\n" +
-            JSON.stringify(verdict.sections, null, 2) +
-            "\n\nIts reasoning: " + (verdict.reasoning || "") +
-            "\n\nDelete the detail it names and replace each deletion with the blanks convention: " +
-            FORMAT_BLANKS +
-            "\nDelete nothing the convention bars from delegation, and nothing another section depends on: " +
-            "check before each deletion whether any other part of the proposal cites the text you are removing, " +
-            "and if it does, either keep it or update the citing section in the same edit. Then reconcile the " +
-            "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
-            'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
-            "Follow " + repo + "/.claude/rules/doc-style.md.",
-          { label: "prune:r" + round, phase: LOOP.name + " R" + round + ": prune" },
-        );
-        history[history.length - 1].pruned = verdict.sections;
-        // Pruned text is text the lenses have not read in its new form.
-        retired.clear();
-        log("Round " + round + ": pruned " + verdict.sections.length + " section(s)");
+        //
+        // A section already pruned is dropped rather than re-commissioned, and the
+        // whole verdict is bounded by a budget, for the reason the redesign branch
+        // above is: measured with introspectEvery 1, a pass naming "## 3. Design"
+        // reached the same verdict in four consecutive rounds, and the loop paid
+        // for four deletions of one section and four full 13-lens rounds behind
+        // them, reaching no sweep and converging on nothing.
+        const key = (s) => String(s).toLowerCase().trim();
+        const fresh = (verdict.sections || []).filter((s) => !prunedSections.has(key(s)));
+        if (fresh.length === 0) {
+          log(
+            "Round " + round + ": the prune named only section(s) this run has already pruned (" +
+              (verdict.sections || []).join("; ").slice(0, 120) + "); not pruning again",
+          );
+          history[history.length - 1].pruneRepeated = verdict.sections;
+        } else if (prunesRun >= prunesAllowed) {
+          log(
+            "Round " + round + ": introspection asked for a prune but the budget of " +
+              prunesAllowed + " is spent; recording instead",
+          );
+          history[history.length - 1].pruneDeclined = fresh;
+        } else {
+          prunesRun++;
+          await robustAgent(
+            "Prune over-specified sections of a change proposal.\n\n" +
+              "HARD CONSTRAINT: the only file you may edit is " + path +
+              ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+              "An introspection pass judged these sections to have grown past their value:\n" +
+              JSON.stringify(fresh, null, 2) +
+              "\n\nIts reasoning: " + (verdict.reasoning || "") +
+              "\n\nDelete the detail it names and replace each deletion with the blanks convention: " +
+              FORMAT_BLANKS +
+              "\nDelete nothing the convention bars from delegation, and nothing another section depends on: " +
+              "check before each deletion whether any other part of the proposal cites the text you are removing, " +
+              "and if it does, either keep it or update the citing section in the same edit. Then reconcile the " +
+              "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
+              'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
+              "Follow " + repo + "/.claude/rules/doc-style.md.",
+            { label: "prune:r" + round, phase: LOOP.name + " R" + round + ": prune" },
+          );
+          for (const s of fresh) prunedSections.add(key(s));
+          pruneHistory.push({
+            tag: prunesRun,
+            loop: LOOP.name,
+            round,
+            sections: fresh,
+            why: verdict.reasoning || "",
+          });
+          history[history.length - 1].pruned = fresh;
+          // Pruned text is text the lenses have not read in its new form, and the
+          // prune agent is told to update every section that cited it, which reaches
+          // the checklist, the files-touched list, and the testing section. No lens
+          // may certify that on the strength of a pre-prune read. The budget above is
+          // what makes this bounded: before it existed, a pass that reached the same
+          // verdict every round cleared the retirement set every round, and the loop
+          // could never drain toward a sweep.
+          retired.clear();
+          log("Round " + round + ": pruned " + fresh.length + " section(s)");
+        }
       }
 
       if (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe")) {
@@ -5171,7 +5371,30 @@ const NONSPEC_SCOPE_NOTE =
     : "The staged spec edits converged in an earlier loop. Prefer a finding whose fix lands in the non-spec " +
       "staging; report one that needs a spec edit when it is genuinely the only remedy.");
 
+// The probe's answer is a field rather than a word in prose. Measured against
+// the substring gate this replaces: a reply of "NO - the proposal stages
+// nothing under spec/, so the answer is not YES." matched /YES/i and ran the
+// whole spec loop, and any non-string return stringified to "[object Object]",
+// matched nothing, and skipped the spec review entirely on one log line while
+// the run still returned status "reviewed".
+const SPEC_PROBE = {
+  type: "object",
+  required: ["stagesSpecChanges", "why"],
+  properties: {
+    stagesSpecChanges: {
+      type: "boolean",
+      description:
+        "true when the proposal names any spec file, spec section, or SPEC-n deliverable as something it changes, even when that text is not written yet",
+    },
+    why: {
+      type: "string",
+      description: "the spec target the answer rests on, or what the staging carries instead",
+    },
+  },
+};
+
 let specLoop = null;
+let specReviewSkipped = null;
 let nonSpecLoop = null;
 
 const specProbe = await robustAgent(
@@ -5185,14 +5408,26 @@ const specProbe = await robustAgent(
     "that text is the work the review does.\n\n" +
     "Answer NO only when the proposal changes nothing under spec/ at all: the staging carries only its " +
     "headings AND nothing anywhere names a spec target.\n\n" +
-    "Reply with the single word YES or NO and nothing else.",
-  { label: "probe:spec-changes", model: "haiku", phase: "Review" },
+    "Set stagesSpecChanges, and name in why the spec target the answer rests on or what the staging " +
+    "carries instead.",
+  { schema: SPEC_PROBE, label: "probe:spec-changes", model: "haiku", phase: "Review" },
 );
-const hasSpecChanges = /YES/i.test(String(specProbe || "YES"));
+// An unreadable answer runs the loop. The spec loop is the expensive half, but
+// skipping it certifies nothing about the staged spec edits while the run still
+// returns "reviewed", so doubt resolves toward reviewing. `specProbe` is null
+// when the probe died after all of robustAgent's retries, which is the case the
+// old `|| "YES"` default covered and this keeps.
+const specProbeRead = !!specProbe && typeof specProbe.stagesSpecChanges === "boolean";
+const hasSpecChanges = !specProbeRead || specProbe.stagesSpecChanges;
 
+if (!specProbeRead) {
+  log("probe:spec-changes returned no readable answer; the spec review loop runs anyway");
+}
 if (!hasSpecChanges) {
-  log("The proposal stages no spec edits; skipping the spec review loop");
+  specReviewSkipped = { reason: "no-spec-changes", why: String(specProbe.why || "") };
+  log("The proposal stages no spec edits; skipping the spec review loop: " + specReviewSkipped.why);
 } else if (input.skipSpecReview) {
+  specReviewSkipped = { reason: "skipSpecReview" };
   log("skipSpecReview is set; the spec staging is NOT reviewed by this run");
 } else {
   specLoop = await runReviewLoop({
@@ -5442,6 +5677,7 @@ return {
     ),
     mechanisms: introducedMechanisms,
     redesigns: redesignHistory,
+    prunes: pruneHistory,
   },
   review: {
     converged,
@@ -5462,6 +5698,9 @@ return {
     // A skipped loop certifies nothing about its half of the proposal, so a
     // reader of this result must be able to see which ran.
     specReviewed: !!specLoop,
+    // Which of the three reasons the spec loop did not run: the proposal stages
+    // nothing under spec/, the caller skipped it, or null when it ran.
+    specReviewSkipped,
     nonSpecReviewed: !!nonSpecLoop,
     lockSpecChanges,
     verifyOrder,

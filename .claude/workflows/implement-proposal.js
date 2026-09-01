@@ -89,7 +89,7 @@ async function openLease(step, allowFiles) {
       "node " + repo + "/.claude/tools/spec-lease.mjs open '" + P.root + "'" +
       " --step '" + (step || "apply") + "'" +
       " --ttl-hours " + leaseTtlHours +
-      (allow ? " --allow '" + allow + "'" : "") +
+      " --allow '" + allow + "'" +
       "\n\nDo nothing else. Do not read, summarise, or edit any file.",
     { label: "lease-open:" + (step || "apply"), model: "haiku", phase: "Apply spec" },
   );

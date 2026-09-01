@@ -21,7 +21,7 @@
     "label": "probe:spec-changes",
     "phase": "Review",
     "model": "haiku",
-    "schema": "",
+    "schema": "stagesSpecChanges+why",
     "blocks": []
   },
   {
