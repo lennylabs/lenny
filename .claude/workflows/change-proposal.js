@@ -98,6 +98,10 @@ const runTag =
 let compactAtLines = input.compactAtLines || 2000;
 let compactGrowthLines = input.compactGrowthLines || 400;
 const standingContextMaxLines = input.standingContextMaxLines || 80;
+// Site expansion: one agent per confirmed finding, so the cap bounds a round
+// whose review filed many findings at once rather than the run as a whole.
+let maxExpansions = input.maxExpansions || 12;
+let skipExpansion = !!input.skipExpansion;
 // "auto" lets the design stage triage each finding by effort. "shallow" forces
 // every finding to the trivial path, for a round of pure bookkeeping findings;
 // "deep" forces the architect path, for a run already known to be design-bound.
@@ -304,6 +308,8 @@ const ARG_CLASS = {
   compactAtLines: "forward",
   compactGrowthLines: "forward",
   standingContextMaxLines: "forward",
+  maxExpansions: "forward",
+  skipExpansion: "forward",
   runTag: "anchored",
   resumeState: "launch",
   introspectEvery: "forward",
@@ -678,6 +684,60 @@ const FIX_RESULT = {
 // The split of one round's confirmed findings into groups that are fixed
 // together. The planner's only cap is the group COUNT; see the fix stage for
 // why group size is deliberately unbounded.
+// Other text a confirmed finding's fix would falsify.
+//
+// Kept in its own field on the finding rather than merged into `where` and
+// `evidence`, because those two survived two independent verifiers and these
+// did not. Merging would launder one agent's candidates into confirmed status,
+// and neither the fixer nor the post-fix reviewer could then tell the sites it
+// was REQUIRED to fix from the ones it was free to decline.
+//
+// The two classes are separate because the fixer's permissions differ: it edits
+// the proposal and may not touch the tree, so a tree site is an edit site the
+// proposal is MISSING rather than something to go and fix.
+const SITE = {
+  type: "object",
+  required: ["file", "line", "quote", "why", "confidence"],
+  properties: {
+    file: { type: "string", description: "repo-relative path" },
+    line: { type: "integer" },
+    quote: {
+      type: "string",
+      description:
+        "the sentence VERBATIM. Line numbers drift as the round's edits land, so the quote is what a later pass finds the site by.",
+    },
+    why: { type: "string", description: "one line: why landing this finding's fix makes this text wrong" },
+    confidence: {
+      type: "string",
+      enum: ["high", "medium", "low"],
+      description:
+        "high: you read the text and the fix plainly contradicts it. medium: it likely breaks, but the fix's final form decides. low: worth the designer's glance; you would not act on it yourself.",
+    },
+  },
+};
+
+const POTENTIALLY_RELATED_SITES = {
+  type: "object",
+  required: ["proposal", "tree", "searched"],
+  properties: {
+    proposal: {
+      type: "array",
+      items: SITE,
+      description: "sites INSIDE the proposal directory. The fixer edits these directly.",
+    },
+    tree: {
+      type: "array",
+      items: SITE,
+      description:
+        "sites under spec/, docs/, schemas/ or charts/. The fixer may NOT edit these; each is an edit site the proposal is missing.",
+    },
+    searched: {
+      type: "string",
+      description: "what you grepped and which sections you read by judgement, so a later pass knows what was covered",
+    },
+  },
+};
+
 const FIX_PLAN = {
   type: "object",
   required: ["groups"],
@@ -754,6 +814,27 @@ const FIX_DESIGN = {
           cascades: { type: "array", items: { type: "string" }, description: "every other part of the proposal this fix forces a change to" },
           invariantsToPreserve: { type: "array", items: { type: "string" } },
           doNotDo: { type: "array", items: { type: "string" }, description: "the tempting wrong fix, and why it is wrong" },
+          siteDispositions: {
+            type: "array",
+            description:
+              "One entry per potentially related site handed to you for this finding. Empty when the finding carried none. Every site you were given appears exactly once: a site you leave out is one the fixer has no instruction about.",
+            items: {
+              type: "object",
+              required: ["file", "line", "disposition", "why"],
+              properties: {
+                file: { type: "string" },
+                line: { type: "integer" },
+                quote: { type: "string", description: "copied from the site, so the fixer can find it after line numbers drift" },
+                disposition: {
+                  type: "string",
+                  enum: ["in-scope", "separate-finding", "not-a-site"],
+                  description:
+                    "in-scope: landing this fix MAKES this site wrong, so it changes in the SAME edit. separate-finding: the site is already wrong for a reason of its own that this fix neither causes nor repairs; name what the finding would be and leave it for a later round. not-a-site: it stays true after the fix.",
+                },
+                why: { type: "string" },
+              },
+            },
+          },
         },
       },
     },
@@ -1888,6 +1969,177 @@ function materialityPrompt(f) {
   );
 }
 
+// ---- F5: what else this fix would falsify ----
+//
+// Anchored to ONE confirmed finding, and reached outward from the sites that
+// finding already names. An earlier design swept the whole proposal for
+// repeated statements; that version was refused by the review bar, which
+// excludes consistent restatement, and its evidence was falsified by the run's
+// own panel. The question here is narrower and decidable: not "what else talks
+// about this" but "what else does this fix BREAK".
+function expandSitesPrompt(finding, round) {
+  return (
+    "You are the site-expansion pass for ONE confirmed finding in round " + round + " of the " +
+    LOOP.name + " loop.\n\n" +
+    "Two independent verifiers already confirmed this finding at the sites it names. Do not re-examine it. " +
+    "Answer one question about the rest of the repository:\n\n" +
+    "  IF THIS FINDING'S FIX LANDS AS SUGGESTED, WHICH OTHER SITES BECOME WRONG?\n\n" +
+    CONTEXT +
+    "\n\nYou are a read-only investigator. Do not create, edit, or delete any file, including a log " +
+    "shard. Cite evidence as file:line.\n\n" +
+    "THE FINDING (JSON):\n" + JSON.stringify(finding, null, 2) + "\n\n" +
+    "THE STARTING SET is the finding's `where` and every citation in its `evidence`. Everything you return " +
+    "is reached outward from there. You are not surveying the proposal.\n\n" +
+    "THE TEST IS BINARY. For each candidate, ask whether landing this fix makes that text wrong, stale, or " +
+    "inconsistent. A site that discusses the same subject and STAYS TRUE is not a site. Consistent " +
+    "restatement is not a defect and the review bar excludes it: report a site only when the fix makes it " +
+    "wrong.\n\n" +
+    "TWO METHODS. Use both; neither alone is sufficient.\n" +
+    "1. MECHANICAL. Take the distinctive identifiers, field names, message names and phrases out of the " +
+    "text the finding cites. Grep each across " + P.dir + " first, then spec/, docs/, schemas/, charts/. " +
+    "Record what you actually grepped in `searched`.\n" +
+    "2. BY FUNCTION. Grep misses paraphrase, and paraphrase is the common case: the same fact stated in " +
+    "different words shares no distinctive string. Name the places that would restate this fact because of " +
+    "WHAT THEY ARE — a design rationale, a field or channel table, an open-questions list, a trace or " +
+    "scenario walkthrough, a migration note, a test disposition — and READ them even when no keyword " +
+    "matched.\n\n" +
+    "TWO CLASSES OF SITE, because the fixer's permissions differ.\n" +
+    "  proposal: inside " + P.dir + ". The fixer edits these directly.\n" +
+    "  tree:     under spec/, docs/, schemas/ or charts/. The fixer MAY NOT edit these and the spec-lease " +
+    "hook blocks it. A tree site the staged edits would falsify means THE PROPOSAL IS MISSING AN EDIT " +
+    "SITE, and the remedy is to add it to the proposal's edit list.\n\n" +
+    "EVIDENCE. Every site carries file:line, a VERBATIM quote of the sentence, and one line saying why the " +
+    "fix falsifies it. A site you cannot quote is not a site: do not return a section name, a heading, or " +
+    "a recollection.\n\n" +
+    "AN EMPTY RESULT IS A GOOD RESULT AND IS COMMON. Many findings are local: a citation correction, a " +
+    "bookkeeping fix, a missing test. Returning nothing is the expected answer for those and it costs the " +
+    "round nothing. Do not manufacture a site in order to have something to report.\n\n" +
+    "DO NOT re-litigate the finding, judge whether it was worth filing, propose a fix, design anything, or " +
+    "edit any file." +
+    promptFor("expand-sites")
+  );
+}
+
+// Which findings get expanded when there are more than the cap. A finding whose
+// defect is a contradiction or a misattribution is the one most likely to have
+// parallels; a bookkeeping or missing-test finding is usually local.
+const EXPAND_PRIORITY = [
+  "contradiction",
+  "attribution",
+  "citation",
+  "unstaged-site",
+  "design-defect",
+  "other",
+  "test-disposition",
+  "missing-test",
+  "bookkeeping",
+];
+
+async function expandSites(confirmedFindings, round) {
+  if (skipExpansion || confirmedFindings.length === 0) return;
+  const order = confirmedFindings
+    .map((f, i) => ({ i, rank: Math.max(0, EXPAND_PRIORITY.indexOf(f.kind)) }))
+    .sort((a, b) => a.rank - b.rank);
+  const picked = order.slice(0, maxExpansions).map((o) => o.i);
+  const skipped = order.slice(maxExpansions).map((o) => o.i);
+  if (skipped.length) {
+    // Never a silent cap: a round that expanded some findings and not others
+    // reads as "every finding was swept" unless the drop is on the record.
+    log(
+      "Round " + round + ": expanding " + picked.length + " of " + confirmedFindings.length +
+        " findings; " + skipped.length + " skipped by maxExpansions (" +
+        skipped.map((i) => confirmedFindings[i].title).join("; ") + ")",
+    );
+  }
+  const results = await parallel(
+    picked.map((i) => () =>
+      robustAgent(expandSitesPrompt(confirmedFindings[i], round), {
+        label: "r" + round + ":expand:" + i,
+        phase: LOOP.name + " R" + round + ": fix",
+        model: "sonnet",
+        schema: POTENTIALLY_RELATED_SITES,
+      }),
+    ),
+  );
+  let found = 0;
+  picked.forEach((idx, k) => {
+    const r = results[k];
+    // A dead expansion leaves the finding exactly as the verifiers confirmed it
+    // and the round proceeds, which is how a designless group already behaves.
+    if (!r) return;
+    confirmedFindings[idx].potentiallyRelatedSites = {
+      proposal: r.proposal || [],
+      tree: r.tree || [],
+      searched: r.searched || "",
+      capped: false,
+    };
+    found += (r.proposal || []).length + (r.tree || []).length;
+  });
+  for (const i of skipped) {
+    confirmedFindings[i].potentiallyRelatedSites = { proposal: [], tree: [], searched: "", capped: true };
+  }
+  log("Round " + round + ": site expansion found " + found + " potentially related site(s)");
+}
+
+// How a finding's potentially related sites are shown to a downstream agent.
+// The framing is the same everywhere: these are CANDIDATES from one agent, and
+// the finding's own `where` and `evidence` are what two verifiers confirmed.
+function sitesBlock(findings) {
+  const withSites = findings.filter(
+    (f) =>
+      f.potentiallyRelatedSites &&
+      ((f.potentiallyRelatedSites.proposal || []).length || (f.potentiallyRelatedSites.tree || []).length),
+  );
+  if (!withSites.length) return "";
+  return (
+    "\n\nPOTENTIALLY RELATED SITES. A pass searched outward from each finding's own citations for other " +
+    "text this fix would falsify. They are CANDIDATES: one agent found them and nothing verified them, " +
+    "while the finding's `where` and `evidence` were confirmed by two independent verifiers. Weigh them " +
+    "accordingly.\n" +
+    JSON.stringify(
+      withSites.map((f) => ({ finding: f.title, sites: f.potentiallyRelatedSites })),
+      null,
+      2,
+    )
+  );
+}
+
+// F6, at the point it can still change the outcome. The DESIGNER gets this, not
+// only the fixer: by the time the fixer runs the approach is already chosen, and
+// what failed twice before is an argument about approach.
+function siteHistoryBlock(findings) {
+  const lines = [];
+  for (const f of findings) {
+    const prior = siteHistoryFor(f);
+    if (!prior.length) continue;
+    lines.push(
+      "- " + f.title + " — this location has been rewritten " + prior.length + " time(s) before:\n" +
+        prior
+          .map(
+            (h) =>
+              "    round " + h.round + " (" + h.title + "): " + (h.approach || "approach not recorded") +
+              "\n      " + (h.rejectedBy ? "REJECTED: " + h.rejectedBy : "not subsequently rejected"),
+          )
+          .join("\n"),
+    );
+  }
+  if (!lines.length) return "";
+  return (
+    "\n\nTHIS TEXT HAS BEEN REWRITTEN BEFORE, AND THE REWRITES DID NOT HOLD.\n" +
+    lines.join("\n") +
+    "\n\nA measured run spent three of its six rounds on one sentence: a false universal, then a closed " +
+    "enumeration that the run's own log calls \"the same defect one step weaker\", then a deletion. Each " +
+    "attempt was the next round's finding, because each was the previous attempt made narrower rather " +
+    "than a different kind of answer.\n" +
+    "STATE, in your design's `why`, HOW THIS ATTEMPT DIFFERS IN KIND rather than in degree. Weakening, " +
+    "narrowing, qualifying, or enumerating the exceptions to a claim that already failed is the same " +
+    "answer one step smaller and it will fail the same way. Deleting the claim, moving it to the section " +
+    "that owns the predicate, or stating it by reference to another section are different KINDS of " +
+    "answer. If the honest conclusion is that the statement should not be there at all, say so: on the " +
+    "measured run that was the answer, and it took three rounds to reach it."
+  );
+}
+
 function fixPlanPrompt(confirmed, round) {
   return (
     "Split one round's confirmed review findings into groups that will be fixed together.\n\n" +
@@ -1914,6 +2166,12 @@ function fixPlanPrompt(confirmed, round) {
     "any split you could make.\n\n" +
     "THE CONFIRMED FINDINGS, indexed from 0:\n" +
     JSON.stringify(confirmed.map((f, i) => ({ i, title: f.title, where: f.where, area: f.area, kind: f.kind })), null, 2) +
+    sitesBlock(confirmed) +
+    "\n\nUSE THE SITES FOR ONE THING: OVERLAP. Two findings whose potentially related sites intersect, or " +
+    "where one finding's candidate site is another finding's confirmed location, are about the same " +
+    "passage and belong in the SAME GROUP. Splitting them produces two designs for one piece of text, and " +
+    "the second fixer edits what the first already rewrote. Do not merge on subject similarity when the " +
+    "sites do not overlap, and do not let a `low` confidence site force a merge." +
     promptFor("fix-plan")
   );
 }
@@ -1974,6 +2232,28 @@ function fixDesignPrompt(group, confirmed, round) {
     "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
     "THE FINDINGS IN THIS GROUP:\n" +
     JSON.stringify(picked, null, 2) +
+    sitesBlock(picked) +
+    (sitesBlock(picked)
+      ? "\n\nHOW TO THINK ABOUT THEM. ADJUDICATE each site into exactly one of three dispositions and " +
+        "record it in siteDispositions. The fixer does only what you decide here, so a site you leave out " +
+        "is a site it has no instruction about.\n" +
+        "  IN SCOPE — landing this fix MAKES this site wrong. It changes in the SAME edit. Leaving it is " +
+        "the drift this stage exists to prevent: one site corrected and its parallels left asserting what " +
+        "was just withdrawn.\n" +
+        "  SEPARATE FINDING — the site is ALREADY wrong, for a reason of its own that this fix neither " +
+        "causes nor repairs. NOT in scope. Say what the finding would be so a later round can file it. " +
+        "Fixing it here is an unreviewed edit: nothing verified it, and whatever you get wrong comes back " +
+        "as next round's finding.\n" +
+        "  NOT A SITE — it stays true after the fix. Drop it in one line.\n\n" +
+        "THE DISTINCTION THAT MATTERS is between text this fix BREAKS and text that is independently " +
+        "wrong. The first is part of this edit by necessity. The second is next round's work, and pulling " +
+        "it in enlarges an edit that is already the likeliest source of the next round's findings.\n\n" +
+        "PRESSURE RUNS BOTH WAYS. Do not treat the list as a work order: an empty or wholly rejected list " +
+        "is a normal outcome. Equally, do not reject a `high` confidence IN SCOPE site because honouring " +
+        "it enlarges the edit. An incomplete fix that leaves a parallel stale is exactly what the next " +
+        "round files."
+      : "") +
+    siteHistoryBlock(picked) +
     DEVIATIONS_BLOCK() +
     logBlock("fix-design-" + group.id, round) +
     promptFor("fix-design")
@@ -2041,6 +2321,25 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
     JSON.stringify(confirmed, null, 2) +
     designBlock +
+    (sitesBlock(confirmed)
+      ? "\n\nTHE SITES YOU EDIT ARE FIXED BY THE DESIGN. The finding's own location is your mandate and " +
+        "you fix it. Beyond that, a pass searched for other text this fix would falsify and the design " +
+        "adjudicated what it found in `siteDispositions`. A finding's named sites are a starting set " +
+        "rather than the sweep, and the sweep has been done for you. Follow the adjudication:\n" +
+        "  - Every site marked `in-scope` changes in this edit. Skipping one leaves precisely the drift " +
+        "the design predicted.\n" +
+        "  - No site marked `separate-finding` or `not-a-site` is edited here, whatever you think of it. " +
+        "Editing one is an unreviewed change: nothing verified it.\n" +
+        "  - A `tree` site under spec/, docs/, schemas/ or charts/ is NOT yours to edit. Its remedy is to " +
+        "add the site to the proposal's edit list.\n" +
+        "RE-READ BEFORE YOU EDIT. Each site carries a quote and a line number taken before this round's " +
+        "edits landed, and line numbers drift. Open each one and confirm it still says what the quote " +
+        "says.\n" +
+        "IF THE DESIGN IS WRONG about a site — it marked `in-scope` something already correct, or ruled " +
+        "out something your edit plainly breaks — say so in your summary and say what you did. Do not " +
+        "deviate silently."
+      : "") +
+    sitesBlock(confirmed) +
     earlierBlock +
     logBlock("fix-" + (group ? group.id : "all"), round) +
     "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
@@ -2061,7 +2360,7 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
 // The scope is deliberately the edit PLUS its blast radius rather than the edit
 // alone. Predicate drift is by definition an inconsistency between changed text
 // and text that did not change, so a reviewer confined to the edit cannot see it.
-function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap) {
+function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap, inScope) {
   return (
     (mechanisms && mechanisms.length
       ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
@@ -2082,6 +2381,15 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap) {
     "\n\nAnswer exactly three questions about the edits, and report only what fails:\n" +
     "1. LANDED. For each confirmed finding, does the current text actually correct it? A fix that restates the problem, corrects one of two occurrences, or edits a neighbouring sentence instead of the wrong one has not landed.\n" +
     "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
+    (inScope && inScope.length
+      ? "   THE SITES BELOW WERE HANDED TO THE FIXER AS IN SCOPE by the design. Check each one: did the " +
+        "fixer change it, and does it now agree with the corrected text? A site marked in scope and left " +
+        "unedited is a CONFIRMED drift finding rather than a suspicion.\n" +
+        JSON.stringify(inScope, null, 2) + "\n" +
+        "   Then do the open-ended sweep anyway. That list is what one pass predicted BEFORE the edit " +
+        "existed; the parallels nobody predicted are still where this question earns most of its " +
+        "findings.\n"
+      : "") +
     "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
     (preFixSnap
       ? "THE EDITS THIS ROUND ACTUALLY MADE. " +
@@ -2114,6 +2422,85 @@ function followUpFixPrompt(findings, round) {
     JSON.stringify(findings, null, 2) +
     "\n\nReturn a short summary of each edit you made."
   );
+}
+
+// ---- F6: the same passage rewritten round after round ----
+//
+// One measured run spent three of its six spec rounds on ONE sentence. Pass 11
+// wrote a false universal; pass 12 replaced it with a closed enumeration, which
+// that run's own log calls "the same defect one step weaker"; pass 13 deleted
+// it. Each fix was the next round's finding, and no fixer was ever told that
+// the text it was editing had already been rewritten once and rejected.
+//
+// The mechanism strike table above cannot see this. It has a row only when a
+// fixer DECLARES that it invented a mechanism, and rewriting a sentence about a
+// mechanism that already exists declares nothing, so the strikes never
+// accumulate and the churn threshold is never reached. This keys on the
+// LOCATION instead of on a declaration.
+const siteHistory = [];
+
+// A finding's `where` is free text ("staged section 10.1.8 step 1, line 213").
+// Line numbers drift with every edit, so a line-keyed table is worthless after
+// one round; they are stripped here and what survives is the section and its
+// identifiers, which is what actually recurs.
+function siteKey(where) {
+  return String(where || "")
+    .toLowerCase()
+    .replace(/\bl(ine)?s?\.?\s*\d+(\s*[-\u2013]\s*\d+)?/g, " ")
+    .replace(/:\d+(-\d+)?/g, " ")
+    .replace(/[^a-z0-9.\u00a7]+/g, " ")
+    .replace(/\b(staged|the|a|an|in|at|of|section|sec|para|paragraph|bullet)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Containment either way, because one round names a site more narrowly than the
+// next ("10.1.8 step 1" inside "10.1.8 step 1 acceptance clause"). The length
+// floor keeps a two-character key from matching everything.
+function sameSite(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.length > 8 && b.length > 8 && (a.includes(b) || b.includes(a));
+}
+
+function siteHistoryFor(finding) {
+  const k = siteKey(finding && finding.where);
+  return siteHistory.filter((h) => sameSite(h.key, k));
+}
+
+// A finding at a site an earlier round already rewrote means that attempt did
+// not hold. Recording WHICH finding rejected it is what makes the history
+// usable: the third attempt needs to know that attempt 2 failed because the
+// enumeration could not be closed, not merely that it failed.
+function markSitesRejected(confirmedFindings, round) {
+  for (const f of confirmedFindings) {
+    const k = siteKey(f.where);
+    for (const h of siteHistory) {
+      if (h.rejectedBy || h.round >= round || !sameSite(h.key, k)) continue;
+      h.rejectedBy = "round " + round + " finding \"" + f.title + "\": " + f.why_wrong;
+    }
+  }
+}
+
+function recordSiteAttempts(confirmedFindings, round, designs) {
+  const approachFor = (title) => {
+    for (const d of designs || []) {
+      for (const one of (d && d.designs) || []) {
+        if (one.findingTitle === title) return (one.chosen && one.chosen.approach) || "";
+      }
+    }
+    return "";
+  };
+  for (const f of confirmedFindings) {
+    siteHistory.push({
+      key: siteKey(f.where),
+      round,
+      where: f.where,
+      title: f.title,
+      approach: approachFor(f.title) || f.suggested_fix || "",
+      rejectedBy: null,
+    });
+  }
 }
 
 // Mechanisms the fixer has invented, and how many later findings each has caused.
@@ -3082,6 +3469,8 @@ const OVERRIDABLE = {
   maxFixGroups: (v) => { maxFixGroups = Number(v) || maxFixGroups; },
   fixDesignDepth: (v) => { fixDesignDepth = String(v); },
   lockSpecChanges: (v) => { lockSpecChanges = !!v; },
+  maxExpansions: (v) => { maxExpansions = Number(v) || maxExpansions; },
+  skipExpansion: (v) => { skipExpansion = !!v; },
   compactAtLines: (v) => { compactAtLines = Number(v) || compactAtLines; },
   compactGrowthLines: (v) => { compactGrowthLines = Number(v) || compactGrowthLines; },
   introspectEvery: (v) => { introspectEvery = Number(v) || introspectEvery; },
@@ -3583,6 +3972,10 @@ async function runReviewLoop(cfg) {
       .filter((v) => v.vs.length === 2 && v.vs.every((x) => x.confirmed))
       .map((v) => v.f);
     creditStrikes(confirmed);
+    // A finding at a site an earlier round already rewrote means that attempt
+    // did not hold. Marked BEFORE this round's own attempts are recorded, so a
+    // round never rejects itself.
+    markSitesRejected(confirmed, round);
     recordFindings(round, confirmed);
     live
       .filter((v) => !(v.vs.length === 2 && v.vs.every((x) => x.confirmed)))
@@ -3691,6 +4084,14 @@ async function runReviewLoop(cfg) {
       .map((m) => "- " + m.name + " (introduced round " + m.round + "): " + m.strikes + " later finding(s)")
       .join("\n");
     const preFixSnap = await snapshot("r" + round + "-prefix");
+
+    // ---- What else each fix would falsify ---------------------------------
+    //
+    // Runs BEFORE grouping so the planner can group by site overlap: two
+    // findings that touch the same passage belong in one group, and splitting
+    // them produces two designs for one piece of text. Only confirmed findings
+    // are expanded, so a refuted one costs nothing.
+    await expandSites(confirmed, round);
 
     // ---- Plan the split ---------------------------------------------------
     //
@@ -3894,13 +4295,42 @@ async function runReviewLoop(cfg) {
       risk: g.risk,
     }));
 
+    // The sites the designs actually adopted, which is what the post-fix review
+    // checks the fixer against. A site the design ruled out is not checked: the
+    // fixer was told not to touch it.
+    const inScopeSites = [];
+    for (const d of designs || []) {
+      for (const one of (d && d.designs) || []) {
+        for (const sd of one.siteDispositions || []) {
+          if (sd.disposition === "in-scope") {
+            inScopeSites.push({ finding: one.findingTitle, file: sd.file, line: sd.line, quote: sd.quote, why: sd.why });
+          }
+        }
+      }
+    }
+    if (inScopeSites.length) {
+      log("Round " + round + ": " + inScopeSites.length + " related site(s) adopted into this round's fixes");
+    }
+    history[history.length - 1].sitesAdopted = inScopeSites.length;
+    // This round's attempts, so a later round designing at the same location is
+    // shown what was tried here and how it fared.
+    recordSiteAttempts(confirmed, round, designs);
+    const repeated = confirmed.filter((f) => siteHistoryFor(f).length >= 3);
+    if (repeated.length) {
+      log(
+        "Round " + round + ": " + repeated.length + " location(s) now rewritten three or more times (" +
+          repeated.map((f) => f.where).join("; ") + ")",
+      );
+      history[history.length - 1].repeatSites = repeated.map((f) => f.where);
+    }
+
     // Narrow post-fix review of the fixer's own edits, then at most ONE follow-up
     // fix. The cap is deliberate: this is a correction pass on fresh text, not a
     // second convergence loop, and an unbounded review-fix cycle here would hide a
     // genuinely contested edit inside a round instead of surfacing it to the next
     // round's lenses and, ultimately, to the sweep.
     const postFix = await robustAgent(
-      postFixPrompt(confirmed, fixSummary, round, roundMechanisms, preFixSnap),
+      postFixPrompt(confirmed, fixSummary, round, roundMechanisms, preFixSnap, inScopeSites),
       {
         label: "r" + round + ":post-fix-review",
         phase: LOOP.name + " R" + round + ": fix",

@@ -279,7 +279,8 @@ const loopStubs = (over = {}) => {
     "*:fix:*": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [], escalated: [], designRejected: [] },
     "*:post-fix-review": { findings: [] },
     "verify-checklist": "ok",
-    "mark-verified": "ok",
+    "status:set-reviewed": "DONE",
+    "status:record-run": "ok",
     "introspect*": null,
     default: {},
     ...over,
@@ -1009,6 +1010,141 @@ t.section("PS3. the spec loop runs on intent, not on whether the text is written
   t.check("and says why that needs the loop more, not less", /needs the spec review MORE than one whose staging is finished/.test(probe.prompt));
   t.check("NO requires nothing anywhere naming a spec target", /the staging carries only its\s+headings AND nothing anywhere names a spec target/.test(probe.prompt));
   t.check("it also reads the summary when the staging is thin", /if the first is thin/.test(probe.prompt));
+}
+
+// ---------------------------------------------------------------------------
+// F5: per-finding site expansion.
+// ---------------------------------------------------------------------------
+
+const sites = (proposal = [], tree = []) => ({ proposal, tree, searched: "grepped X" });
+const SITE_P = { file: "p.md", line: 10, quote: "q", why: "breaks", confidence: "high" };
+const SITE_T = { file: "spec/10.md", line: 20, quote: "tq", why: "breaks", confidence: "medium" };
+
+t.section("X1. expansion runs once per CONFIRMED finding, on sonnet, before grouping");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, {
+    "*:expand:*": sites([SITE_P]),
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1, 2], order: 1 }]),
+  }));
+  const exp = matching(calls, "r1:expand:");
+  t.check("one expansion per confirmed finding", exp.length === 3, String(exp.length));
+  t.check("each runs on sonnet", exp.every((c) => c.opts.model === "sonnet"));
+  t.check("expansion precedes grouping", firstIndex(calls, "r1:expand:") < firstIndex(calls, "r1:fix-plan"));
+  t.check("and precedes design", firstIndex(calls, "r1:expand:") < firstIndex(calls, "r1:fix-design:"));
+  t.check("it is anchored to one finding", /site-expansion pass for ONE confirmed finding/.test(exp[0].prompt));
+  t.check("the test is falsification", /WHICH OTHER SITES BECOME WRONG/.test(exp[0].prompt));
+  t.check("consistent restatement is excluded", /Consistent\s+restatement is not a defect/.test(exp[0].prompt));
+  t.check("an empty result is blessed", /AN EMPTY RESULT IS A GOOD RESULT/.test(exp[0].prompt));
+  t.check("both search methods are required", /MECHANICAL/.test(exp[0].prompt) && /BY FUNCTION/.test(exp[0].prompt));
+  t.check("tree sites are named as missing edit sites", /THE PROPOSAL IS MISSING AN EDIT\s+SITE/.test(exp[0].prompt));
+  t.check("it may not write a log shard", /including a log\s+shard/.test(exp[0].prompt));
+}
+
+t.section("X2. a refuted finding is never expanded");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:verify-material": { confirmed: false, reason: "not material" },
+    "*:expand:*": sites([SITE_P]),
+  }));
+  t.check("no expansion ran", never(calls, "r1:expand:"));
+}
+
+t.section("X3. a dead expansion leaves the finding intact and the round proceeds");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, { "*:expand:*": null }));
+  t.check("the fixer still ran", !never(calls, "r1:fix:"));
+  const d = matching(calls, "r1:fix-design:")[0];
+  t.check("the design carries no sites block", !/POTENTIALLY RELATED SITES/.test(d.prompt));
+  t.check("and the confirmed finding is unchanged", /"where": "w1"/.test(d.prompt));
+}
+
+t.section("X4. sites reach the planner, the designer and the fixer, framed as candidates");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:expand:*": sites([SITE_P], [SITE_T]),
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1 }]),
+  }));
+  const planner = calls.find((c) => c.label === "r1:fix-plan");
+  const design = matching(calls, "r1:fix-design:")[0];
+  const fixer = matching(calls, "r1:fix:")[0];
+  t.check("the planner gets them", /POTENTIALLY RELATED SITES/.test(planner.prompt));
+  t.check("and is told to group on overlap", /USE THE SITES FOR ONE THING: OVERLAP/.test(planner.prompt));
+  t.check("the designer gets them", /POTENTIALLY RELATED SITES/.test(design.prompt));
+  t.check("with three dispositions", /IN SCOPE/.test(design.prompt) && /SEPARATE FINDING/.test(design.prompt) && /NOT A SITE/.test(design.prompt));
+  t.check("and pressure in both directions", /PRESSURE RUNS BOTH WAYS/.test(design.prompt));
+  t.check("everyone is told they are unverified", /They are CANDIDATES/.test(design.prompt));
+  t.check("the fixer is told the design decides", /THE SITES YOU EDIT ARE FIXED BY THE DESIGN/.test(fixer.prompt));
+  t.check("and to re-read before editing", /RE-READ BEFORE YOU EDIT/.test(fixer.prompt));
+  t.check("tree sites stay out of bounds for the fixer", /is NOT yours to edit/.test(fixer.prompt));
+  t.check("proposal and tree sites stay separate", /"proposal":/.test(design.prompt) && /"tree":/.test(design.prompt));
+}
+
+t.section("X5. only in-scope sites are checked by the post-fix review");
+{
+  const design = { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" },
+    siteDispositions: [
+      { file: "p.md", line: 10, disposition: "in-scope", why: "breaks" },
+      { file: "q.md", line: 20, disposition: "separate-finding", why: "already wrong" },
+    ] }], newMechanisms: [] };
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:expand:*": sites([SITE_P]),
+    "*:fix-design:*": design,
+  }));
+  const pf = calls.find((c) => c.label === "r1:post-fix-review");
+  t.check("the in-scope site is checked", /HANDED TO THE FIXER AS IN SCOPE/.test(pf.prompt));
+  t.check("and named", /"p\.md"/.test(pf.prompt));
+  t.check("the separate-finding site is not", !/"q\.md"/.test(pf.prompt));
+  t.check("the open sweep is still demanded", /Then do the open-ended sweep anyway/.test(pf.prompt));
+  t.check("adoption is logged", logs.some((l) => /1 related site\(s\) adopted/.test(l)));
+}
+
+t.section("X6. the cap bounds expansion and says what it skipped");
+{
+  const { calls, logs } = await runWorkflow(WF, { ...REVIEW_ARGS, maxExpansions: 2 }, fixStubs(5, {
+    "*:expand:*": sites([SITE_P]),
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1, 2, 3, 4], order: 1 }]),
+  }));
+  t.check("only the cap ran", matching(calls, "r1:expand:").length === 2);
+  t.check("the drop is logged, not silent", logs.some((l) => /skipped by maxExpansions/.test(l)));
+}
+{
+  const { calls } = await runWorkflow(WF, { ...REVIEW_ARGS, skipExpansion: true }, fixStubs(2, { "*:expand:*": sites([SITE_P]) }));
+  t.check("skipExpansion turns the stage off entirely", never(calls, "r1:expand:"));
+}
+
+// ---------------------------------------------------------------------------
+// F6: a location rewritten round after round.
+// ---------------------------------------------------------------------------
+
+t.section("X7. a location rewritten in an earlier round is shown to the DESIGNER");
+{
+  // The same finding location recurs in rounds 1 and 2.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:review:*": ({ label }) => (/^r[12]:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] }),
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "*:expand:*": sites(),
+  }));
+  const r1 = matching(calls, "r1:fix-design:")[0];
+  const r2 = matching(calls, "r2:fix-design:")[0];
+  t.check("round 1 sees no history", !/REWRITTEN BEFORE/.test(r1.prompt));
+  t.check("round 2 does", /THIS TEXT HAS BEEN REWRITTEN BEFORE/.test(r2.prompt));
+  t.check("and is told round 1's attempt was rejected", /REJECTED: round 2 finding/.test(r2.prompt));
+  t.check("and must differ in KIND", /HOW THIS ATTEMPT DIFFERS IN KIND/.test(r2.prompt));
+  t.check("narrowing is named as the trap", /Weakening, narrowing, qualifying, or enumerating/.test(r2.prompt));
+}
+
+t.section("X8. an unrelated location in a later round carries no history");
+{
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: [F(1)] }
+      : /^r2:/.test(label) ? { coverage: "c", findings: [F(2)] } : { coverage: "c", findings: [] }),
+    "*:dedup": ({ label }) => (/^r1:/.test(label)
+      ? { findings: [{ ...F(1), lenses: ["citations"] }] }
+      : { findings: [{ ...F(2), lenses: ["citations"] }] }),
+    "*:expand:*": sites(),
+  }));
+  const r2 = matching(calls, "r2:fix-design:")[0];
+  t.check("a different location carries no history", !/REWRITTEN BEFORE/.test(r2.prompt));
 }
 
 t.done();

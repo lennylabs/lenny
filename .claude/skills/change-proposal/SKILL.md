@@ -77,9 +77,11 @@ A verifier that **died** is not a refusal. The finding reaches neither verdict, 
 
 Three stages replace one fixer.
 
+**site expansion** runs first, one Sonnet agent per confirmed finding, in parallel. It starts from the sites the finding already names and answers one question about the rest of the repository: if this fix lands, which other text becomes wrong? The test is falsification rather than relatedness, so a site that discusses the same subject and stays true is not reported; consistent restatement is excluded by the review bar. Results land in `potentiallyRelatedSites` on the finding, never merged into `where` or `evidence`, because those two survived two verifiers and these did not. Proposal sites and tree sites are kept apart: the fixer edits the first and may not touch the second, where a falsified site means the proposal is missing an edit site.
+
 **fix-plan** splits the round's confirmed findings into cohesive groups. The only cap is on the number of groups; **group size is uncapped**, because size is the wrong axis. Forty trivial citation corrections that share a subject belong in one group where one fixer applies them consistently, while three deep design findings belong in three groups however few they are. A partition that drops, duplicates, or invents an index is rejected in favour of one group of everything.
 
-**fix-design** designs each group, read-only, in parallel. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
+**fix-design** designs each group, read-only, in parallel. It adjudicates every potentially related site into `in-scope` (this fix makes it wrong, so it changes in the same edit), `separate-finding` (already wrong for a reason of its own, and fixing it here would be an unreviewed edit), or `not-a-site`. The designer bounds the fixer, which is what keeps expansion from inflating an edit that is already the likeliest source of the next round's findings. A location an earlier round already rewrote arrives with each previous attempt and why it was rejected, and the design must say how this attempt differs in kind rather than in degree. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
 
 The designs are produced in parallel and none sees the others, so **one reconciliation pass** runs over all of them before any is applied. It resolves rather than reports, prefers merging two additions into one, and returns revised designs for the groups it changed. Catching a conflict there costs one agent; catching it in the post-fix review costs a round and two edits to unpick.
 
@@ -136,6 +138,8 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `verifySequential` | forward | true | false restores both skeptics in parallel |
 | `maxFixGroups` | forward | 7 | the only cap on the fix split; group size is uncapped by design |
 | `fixDesignDepth` | forward | `auto` | `shallow` forces the trivial path; `deep` forces the architect path |
+| `maxExpansions` | forward | 12 | confirmed findings per round given a site-expansion pass; the drop is logged, never silent |
+| `skipExpansion` | forward | false | turns site expansion off; the designer then sees only the sites the finding names |
 | `introspectEvery` | forward | 5 | rounds between mandatory passes |
 | `introspectGate` | forward | true | the warrant gate; a cadence wake ignores it either way |
 | `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts |
@@ -153,7 +157,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `runTag` | anchored | the stem | namespaces the log shards, snapshots, cache, and state |
 | `resumeState` | launch | false | continue a loop at its recorded round with its retired set |
 
-`prompts` keys: `init`, `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `review`, `review.<lensKey>`, `fix-plan`, `fix-design`, `fix`, `compact`, `introspect`, `introspect.gate`, `judge.<verdict>`. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
+`prompts` keys: `init`, `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `review`, `review.<lensKey>`, `expand-sites`, `fix-plan`, `fix-design`, `fix`, `compact`, `introspect`, `introspect.gate`, `judge.<verdict>`. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
 Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, the rotating extras `operational` and `fresh`, and `plan-conformance` when `planPath` is set. An unknown key in `startLenses` or `excludeLenses` is a hard error.
 
