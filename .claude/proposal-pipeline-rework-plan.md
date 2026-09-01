@@ -1240,8 +1240,8 @@ you would.
 | arg | class | default | effect |
 |:--|:--|:--|:--|
 | `lockSpecChanges` | forward | `false` | the non-spec loop may never edit `.spec-changes.md`; a spec-only finding becomes an open decision. Set it when the spec staging is already signed off in substance. |
-| `maxSpecReviewRounds` | forward | 10 | budget for the spec loop |
-| `maxNonSpecReviewRounds` | forward | 16 | budget for the non-spec loop |
+| `maxSpecReviewRounds` | forward | 15 | budget for the spec loop |
+| `maxNonSpecReviewRounds` | forward | 15 | budget for the non-spec loop |
 | `skipSpecReview` / `skipNonSpecReview` | launch | `false` | resume control; skipping a loop means convergence certifies nothing about it, echoed in the result |
 | `startAt` | launch | `null` | `validate\|draft\|write\|bootstrap\|conventions\|review-spec\|review-non-spec\|finalize`. Fresh-relaunch resume point. |
 | `maxFixGroups` | forward | 7 | the **only** cap on the split. More groups is more focus and more agents; fewer is cheaper and regresses more. Group size is uncapped by design (§5.3) |
