@@ -403,6 +403,48 @@ t.section("B6e. open-decisions is made to elaborate before it determines");
   t.check("and a commit-date fallback must be declared as such", /rather than when it was reviewed/.test(od.prompt));
 }
 
+t.section("B6f. the base tier is a workflow argument, independent of the session");
+{
+  // The session's model and effort are deliberately NOT inherited: a loop that
+  // silently changed tier because the operator switched their own model would
+  // produce results nobody could compare against an earlier run.
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const inherited = calls.filter((c) => !c.opts || !c.opts.model);
+  t.check("no agent is left on the session's model", inherited.length === 0, inherited.map((c) => c.label).join(","));
+  const noEffort = calls.filter((c) => !c.opts || !c.opts.effort);
+  t.check("and none on the session's effort", noEffort.length === 0, noEffort.map((c) => c.label).join(","));
+
+  const base = calls.filter((c) => c.label.startsWith("r1:review:"));
+  t.check("lenses default to opus", base.every((c) => c.opts.model === "opus"), base.map((c) => c.opts.model).join(","));
+  t.check("at medium effort", base.every((c) => c.opts.effort === "medium"));
+  t.check("the tier is logged so a run records what it was measured at", logs.some((l) => /Base tier: opus at medium effort \(default\)/.test(l)));
+
+  const hard = calls.filter((c) => /:round-boundary$|^snap:|^probe:spec-changes$|^status:set-reviewed$/.test(c.label));
+  t.check("agents that name their own model keep it", hard.length > 0 && hard.every((c) => c.opts.model === "haiku"), hard.map((c) => c.label + "=" + c.opts.model).join(","));
+  // A cheap model is not the same request as a shallow one: these agents are on
+  // haiku because their work is mechanical, and on high effort because getting
+  // it wrong silently corrupts a round's bookkeeping.
+  t.check("and their own effort, which the base does not override", hard.every((c) => c.opts.effort === "high"), hard.map((c) => c.label + "=" + c.opts.effort).join(","));
+}
+{
+  const { calls, logs } = await runWorkflow(WF, { ...REVIEW_ARGS, baseModel: "sonnet", baseEffort: "high" }, loopStubs());
+  const base = calls.filter((c) => c.label.startsWith("r1:review:"));
+  t.check("a caller-set model reaches every un-hardcoded agent", base.every((c) => c.opts.model === "sonnet"));
+  t.check("and a caller-set effort does too", base.every((c) => c.opts.effort === "high"));
+  t.check("the log says it was caller-set", logs.some((l) => /Base tier: sonnet at high effort \(caller-set\)/.test(l)));
+  const hard = calls.filter((c) => /^snap:/.test(c.label));
+  t.check("a hardcoded model is absolute, not relative to the base", hard.every((c) => c.opts.model === "haiku"));
+  t.check("and a hardcoded effort survives a caller-set base too", hard.every((c) => c.opts.effort === "high"));
+}
+{
+  const { error } = await runWorkflow(WF, { ...REVIEW_ARGS, baseModel: "gpt" }, loopStubs());
+  t.check("an unknown model fails the run rather than running on it", !!error && /baseModel must be one of/.test(error.message), error && error.message);
+}
+{
+  const { error } = await runWorkflow(WF, { ...REVIEW_ARGS, baseEffort: "turbo" }, loopStubs());
+  t.check("an unknown effort does too", !!error && /baseEffort must be one of/.test(error.message), error && error.message);
+}
+
 t.section("B7. the spec loop is skipped when nothing is staged for spec");
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));

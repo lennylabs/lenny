@@ -2,7 +2,7 @@
   {
     "label": "bootstrap",
     "phase": "Bootstrap",
-    "model": "",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -11,7 +11,7 @@
   {
     "label": "conventions",
     "phase": "",
-    "model": "",
+    "model": "sonnet",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -36,7 +36,7 @@
   {
     "label": "r1:review:citations",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -51,7 +51,7 @@
   {
     "label": "r1:review:feasibility",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -66,7 +66,7 @@
   {
     "label": "r1:review:edit-sites",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -81,7 +81,7 @@
   {
     "label": "r1:review:mechanism",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -96,7 +96,7 @@
   {
     "label": "r1:review:security",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -111,7 +111,7 @@
   {
     "label": "r1:review:kubernetes",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -126,7 +126,7 @@
   {
     "label": "r1:review:performance",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -141,7 +141,7 @@
   {
     "label": "r1:review:reliability",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -156,7 +156,7 @@
   {
     "label": "r1:review:client-surface",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -171,7 +171,7 @@
   {
     "label": "r1:review:docs-alignment",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -186,7 +186,7 @@
   {
     "label": "r1:review:applicability",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -201,7 +201,7 @@
   {
     "label": "r1:review:open-decisions",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
@@ -216,7 +216,7 @@
   {
     "label": "r1:review:operational",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -231,7 +231,7 @@
   {
     "label": "r1:review:fresh",
     "phase": "spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -264,7 +264,7 @@
   {
     "label": "r2:review:citations",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -279,7 +279,7 @@
   {
     "label": "r2:review:feasibility",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -294,7 +294,7 @@
   {
     "label": "r2:review:edit-sites",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -309,7 +309,7 @@
   {
     "label": "r2:review:mechanism",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -324,7 +324,7 @@
   {
     "label": "r2:review:security",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -339,7 +339,7 @@
   {
     "label": "r2:review:kubernetes",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -354,7 +354,7 @@
   {
     "label": "r2:review:performance",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -369,7 +369,7 @@
   {
     "label": "r2:review:reliability",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -384,7 +384,7 @@
   {
     "label": "r2:review:client-surface",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -399,7 +399,7 @@
   {
     "label": "r2:review:docs-alignment",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -414,7 +414,7 @@
   {
     "label": "r2:review:applicability",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -429,7 +429,7 @@
   {
     "label": "r2:review:open-decisions",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
@@ -444,7 +444,7 @@
   {
     "label": "r2:review:operational",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -459,7 +459,7 @@
   {
     "label": "r2:review:fresh",
     "phase": "spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -483,7 +483,7 @@
   {
     "label": "spec-nonspec-handoff",
     "phase": "Review",
-    "model": "",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -501,7 +501,7 @@
   {
     "label": "r1:review:citations",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -516,7 +516,7 @@
   {
     "label": "r1:review:feasibility",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -531,7 +531,7 @@
   {
     "label": "r1:review:edit-sites",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -546,7 +546,7 @@
   {
     "label": "r1:review:mechanism",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -561,7 +561,7 @@
   {
     "label": "r1:review:security",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -576,7 +576,7 @@
   {
     "label": "r1:review:kubernetes",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -591,7 +591,7 @@
   {
     "label": "r1:review:performance",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -606,7 +606,7 @@
   {
     "label": "r1:review:reliability",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -621,7 +621,7 @@
   {
     "label": "r1:review:client-surface",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -636,7 +636,7 @@
   {
     "label": "r1:review:docs-alignment",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -651,7 +651,7 @@
   {
     "label": "r1:review:applicability",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -666,7 +666,7 @@
   {
     "label": "r1:review:test-coverage",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -681,7 +681,7 @@
   {
     "label": "r1:review:open-decisions",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
@@ -696,7 +696,7 @@
   {
     "label": "r1:review:operational",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -711,7 +711,7 @@
   {
     "label": "r1:review:fresh",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -744,7 +744,7 @@
   {
     "label": "r2:review:citations",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -759,7 +759,7 @@
   {
     "label": "r2:review:feasibility",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -774,7 +774,7 @@
   {
     "label": "r2:review:edit-sites",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -789,7 +789,7 @@
   {
     "label": "r2:review:mechanism",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -804,7 +804,7 @@
   {
     "label": "r2:review:security",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -819,7 +819,7 @@
   {
     "label": "r2:review:kubernetes",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -834,7 +834,7 @@
   {
     "label": "r2:review:performance",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -849,7 +849,7 @@
   {
     "label": "r2:review:reliability",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -864,7 +864,7 @@
   {
     "label": "r2:review:client-surface",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -879,7 +879,7 @@
   {
     "label": "r2:review:docs-alignment",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -894,7 +894,7 @@
   {
     "label": "r2:review:applicability",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -909,7 +909,7 @@
   {
     "label": "r2:review:test-coverage",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -924,7 +924,7 @@
   {
     "label": "r2:review:open-decisions",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
@@ -939,7 +939,7 @@
   {
     "label": "r2:review:operational",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -954,7 +954,7 @@
   {
     "label": "r2:review:fresh",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -978,7 +978,7 @@
   {
     "label": "verify-checklist",
     "phase": "Review",
-    "model": "",
+    "model": "sonnet",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -996,7 +996,7 @@
   {
     "label": "status:record-run",
     "phase": "Review",
-    "model": "",
+    "model": "haiku",
     "schema": "",
     "blocks": [
       "file-ownership"

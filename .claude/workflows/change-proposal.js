@@ -106,6 +106,33 @@ let skipExpansion = !!input.skipExpansion;
 // every finding to the trivial path, for a round of pure bookkeeping findings;
 // "deep" forces the architect path, for a run already known to be design-bound.
 let fixDesignDepth = input.fixDesignDepth || "auto";
+// The model and reasoning effort every agent runs at, unless it hard-codes its
+// own model. These are DELIBERATELY INDEPENDENT of the session's model and
+// effort: a review loop that silently changed tier because the operator had
+// switched their own model would produce results nobody could compare against
+// an earlier run. The defaults are the tier this workflow was tuned on rather
+// than whatever the caller happens to be running.
+//
+// Hard-coded models stay ABSOLUTE. A handful of agents name haiku or sonnet
+// outright, and they keep those names rather than being expressed as a step
+// down from the base. That is a deliberate simplification for now: it means the
+// tiering is only coherent while the base is at or above sonnet, and lowering
+// the base below a hard-coded model would raise that agent above the base.
+const MODELS = ["opus", "sonnet", "haiku", "fable"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const baseModel = input.baseModel || "opus";
+const baseEffort = input.baseEffort || "medium";
+if (!MODELS.includes(baseModel)) {
+  throw new Error(
+    'args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"',
+  );
+}
+if (!EFFORTS.includes(baseEffort)) {
+  throw new Error(
+    'args.baseEffort must be one of ' + EFFORTS.join(", ") + '; got "' + baseEffort + '"',
+  );
+}
+
 // Which skeptic runs first, and whether the second is skipped when the first
 // refuses. Materiality first by default: see the verification block below.
 const verifyOrder =
@@ -281,6 +308,13 @@ function promptFor(key) {
 // the workflow lint holds every `input.<name>` the script reads to appearing in
 // it, so the classification cannot drift away from the code.
 const ARG_CLASS = {
+  // launch rather than forward: both are read at every agent call and appear in
+  // no prompt, which would make them forward-classifiable, but they are `const`
+  // and applyOverrides mutates only `let` bindings. Making them overridable
+  // mid-run (to drop a tier during a capacity outage without relaunching) means
+  // making them `let` and adding them to applyOverrides.
+  baseModel: "launch",
+  baseEffort: "launch",
   mode: "launch",
   problem: "anchored",
   proposalPath: "launch",
@@ -1364,7 +1398,7 @@ if (mode === "new") {
       "this file and it stays empty until an implementation records a departure from what the proposal " +
       "states.\n\n" +
       "Follow " + repo + "/.claude/rules/doc-style.md for any sentence you author.",
-    { label: "init", phase: "Init" },
+    { label: "init", model: "sonnet", effort: "high", phase: "Init" },
   );
   log("Created " + P.dir + " with its eight skeleton files");
 
@@ -1758,7 +1792,7 @@ await robustAgent(
     "/.claude/rules/doc-style.md (read it first). " +
     "Fix structural deviations and doc-style violations (fragments, missing list conjunctions, decorative em-dashes, marketing language). Do not change technical content, citations, or design decisions. If the files already conform, change nothing and say so." +
     promptFor("conventions"),
-  { label: "conventions" },
+  { label: "conventions", model: "sonnet", effort: "high" },
 );
 
 // ---- Review loop (shared): multi-lens review, two-skeptic verify, fix ----
@@ -2145,6 +2179,11 @@ if (POOL_FIXED.length === 0 && POOL_EXTRAS.length === 0) {
   throw new Error("args.excludeLenses excludes every lens; nothing would review");
 }
 const POOL = POOL_FIXED.concat(POOL_EXTRAS);
+log(
+  "Base tier: " + baseModel + " at " + baseEffort + " effort" +
+    (input.baseModel || input.baseEffort ? " (caller-set)" : " (default)") +
+    ". Agents that name their own model keep it.",
+);
 if (excludeSet.size > 0) {
   log(
     "Excluding " +
@@ -2211,7 +2250,7 @@ async function snapshot(name) {
     "Run exactly this command and reply with the single word DONE:\n\n" +
       "rm -rf " + dest + " && mkdir -p " + SNAPDIR + " && cp -r " + P.dir + " " + dest + "\n\n" +
       "Do nothing else. Do not read, summarise, or edit anything.",
-    { label: "snap:" + name, model: "haiku" },
+    { label: "snap:" + name, model: "haiku", effort: "high" },
   );
   return ok ? dest : null;
 }
@@ -2225,7 +2264,7 @@ async function diffHunks(snapPath) {
       "diff -ru '" + snapPath + "' '" + P.dir + "' | grep -c '^@@'\n\n" +
       "`diff` exits non-zero when the files differ and `grep -c` exits non-zero on a zero count; both are " +
       "expected here and neither is an error. If nothing is printed, reply 0.",
-    { label: "diffcount", model: "haiku" },
+    { label: "diffcount", model: "haiku", effort: "high" },
   );
   const m = String(out || "").trim().match(/\d+/);
   return m ? parseInt(m[0], 10) : 0;
@@ -2455,6 +2494,7 @@ async function expandSites(confirmedFindings, round) {
         label: "r" + round + ":expand:" + i,
         phase: LOOP.name + " R" + round + ": fix",
         model: "sonnet",
+        effort: "high",
         schema: POTENTIALLY_RELATED_SITES,
       }),
     ),
@@ -3447,7 +3487,7 @@ async function growthSince(snapPath) {
       "59% of the staged spec edits.\n\n" +
       "Report `documentWas` and `documentNow` as the TOTAL line counts across every file above, after the " +
       "exclusion, and `grew` as the sections that gained the most lines, largest gain first, at most eight.",
-    { label: "growth", schema: GROWTH },
+    { label: "growth", model: "haiku", effort: "high", schema: GROWTH },
   );
   if (!res) return NO_GROWTH;
   const was = res.documentWas || 0;
@@ -3978,12 +4018,20 @@ phase("Review");
 // budget is exhausted) propagates immediately and is not retried, since retrying
 // cannot help it.
 async function robustAgent(prompt, opts, attempts = 4) {
-  // Model fallback: the first two attempts use the primary model (Opus, inherited
-  // from the session); attempts 3+ fall back to Sonnet. A 529 "Overloaded" is
+  // Every agent runs at the configured base unless it names its own model. This
+  // is the single point where that is applied: there is exactly one agent() call
+  // in this workflow and it is below, so an agent cannot escape the base by
+  // being added somewhere new.
+  const based = { ...(opts || {}) };
+  if (!based.model) based.model = baseModel;
+  if (!based.effort) based.effort = baseEffort;
+  opts = based;
+  // Model fallback: the first two attempts use the configured base model;
+  // attempts 3+ fall back to Sonnet. A 529 "Overloaded" is
   // usually capacity-pool-specific, so when Opus is saturated Sonnet often still
   // has headroom, and a lens completing on Sonnet is far better than a lens
-  // dropped for the round (which corrupts the clean-streak). Opus is tried first
-  // so its quality is preserved whenever it is available; only a sustained Opus
+  // dropped for the round (which corrupts the clean-streak). The base is tried
+  // first so its quality is preserved whenever it is available; only a sustained
   // outage degrades an agent to Sonnet, and every fallback is logged so a round
   // certified clean partly on Sonnet is visible in the transcript. This does NOT
   // rescue a hard account-level "session limit" (the whole account is capped) —
@@ -4272,7 +4320,7 @@ async function runReviewLoop(cfg) {
       "Run exactly this command and reply with its stdout and nothing else:\n\n" +
         "cat " + repo + "/scratchpad/cp-state/" + runTag + "/state-" + cfg.name + ".json 2>/dev/null || echo '{}'" +
         "\n\nDo nothing else. Do not read, summarise, or edit any file.",
-      { label: "resume-state:" + cfg.name, model: "haiku", phase: "Review" },
+      { label: "resume-state:" + cfg.name, model: "haiku", effort: "high", phase: "Review" },
     );
     let st = null;
     try {
@@ -4489,7 +4537,7 @@ async function runReviewLoop(cfg) {
         "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
         "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
         "read, summarise, or edit any other file.",
-      { label: "r" + rnd + ":round-boundary", model: "haiku", phase: LOOP.name + " R" + rnd + ": fix" },
+      { label: "r" + rnd + ":round-boundary", model: "haiku", effort: "high", phase: LOOP.name + " R" + rnd + ": fix" },
     );
     let boundary = null;
     try {
@@ -5804,7 +5852,7 @@ const specProbe = await robustAgent(
     "headings AND nothing anywhere names a spec target.\n\n" +
     "Set stagesSpecChanges, and name in why the spec target the answer rests on or what the staging " +
     "carries instead.",
-  { schema: SPEC_PROBE, label: "probe:spec-changes", model: "haiku", phase: "Review" },
+  { schema: SPEC_PROBE, label: "probe:spec-changes", model: "haiku", effort: "high", phase: "Review" },
 );
 // An unreadable answer runs the loop. The spec loop is the expensive half, but
 // skipping it certifies nothing about the staged spec edits while the run still
@@ -5969,7 +6017,7 @@ if (converged) {
       "round, and the design is settled. Follow " +
       repo +
       "/.claude/rules/doc-style.md.",
-    { label: "verify-checklist", phase: "Review" },
+    { label: "verify-checklist", model: "sonnet", effort: "high", phase: "Review" },
   );
   log("Checklist and Summary verified against the converged proposal");
 }
@@ -6000,7 +6048,7 @@ if (converged) {
         "node " + repo + "/.claude/tools/proposal-status.mjs " + P.root +
         " --set status=Reviewed --by change-proposal --date " + date + "\n\n" +
         "Do nothing else. Do not read, summarise, or edit anything.",
-      { label: "status:set-reviewed", model: "haiku", phase: "Review" },
+      { label: "status:set-reviewed", model: "haiku", effort: "high", phase: "Review" },
     );
   }
 
@@ -6022,7 +6070,7 @@ if (converged) {
       "questions it was reviewing.\n\n" +
       "Do not restate the proposal, do not summarise its design, and do not add a finding of your own. " +
       "Follow " + repo + "/.claude/rules/doc-style.md.",
-    { label: "status:record-run", phase: "Review" },
+    { label: "status:record-run", model: "haiku", effort: "high", phase: "Review" },
   );
   log("Status recorded: " + history);
 }

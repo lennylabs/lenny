@@ -2,7 +2,7 @@
   {
     "label": "bootstrap",
     "phase": "Bootstrap",
-    "model": "",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -11,7 +11,7 @@
   {
     "label": "conventions",
     "phase": "",
-    "model": "",
+    "model": "sonnet",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -36,7 +36,7 @@
   {
     "label": "r1:review:citations",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -51,7 +51,7 @@
   {
     "label": "r1:review:feasibility",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -66,7 +66,7 @@
   {
     "label": "r1:review:edit-sites",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -81,7 +81,7 @@
   {
     "label": "r1:review:mechanism",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -96,7 +96,7 @@
   {
     "label": "r1:review:security",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -111,7 +111,7 @@
   {
     "label": "r1:review:kubernetes",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -126,7 +126,7 @@
   {
     "label": "r1:review:performance",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -141,7 +141,7 @@
   {
     "label": "r1:review:reliability",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -156,7 +156,7 @@
   {
     "label": "r1:review:client-surface",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -171,7 +171,7 @@
   {
     "label": "r1:review:docs-alignment",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -186,7 +186,7 @@
   {
     "label": "r1:review:applicability",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -201,7 +201,7 @@
   {
     "label": "r1:review:test-coverage",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -216,7 +216,7 @@
   {
     "label": "r1:review:open-decisions",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
@@ -231,7 +231,7 @@
   {
     "label": "r1:review:operational",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -246,7 +246,7 @@
   {
     "label": "r1:review:fresh",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -261,21 +261,21 @@
   {
     "label": "r1:dedup",
     "phase": "non-spec R1: review",
-    "model": "",
+    "model": "opus",
     "schema": "findings",
     "blocks": []
   },
   {
     "label": "r1:verify-material",
     "phase": "non-spec R1: verify",
-    "model": "",
+    "model": "opus",
     "schema": "confirmed+reason",
     "blocks": []
   },
   {
     "label": "r1:verify-evidence",
     "phase": "non-spec R1: verify",
-    "model": "",
+    "model": "opus",
     "schema": "confirmed+reason",
     "blocks": [
       "read-only",
@@ -304,7 +304,7 @@
   {
     "label": "r1:fix-design:G1",
     "phase": "non-spec R1: fix",
-    "model": "",
+    "model": "opus",
     "schema": "designs+groupNote+newMechanisms",
     "blocks": [
       "read-only",
@@ -317,7 +317,7 @@
   {
     "label": "r1:fix:G1",
     "phase": "non-spec R1: fix",
-    "model": "",
+    "model": "opus",
     "schema": "designRejected+escalated+newMechanisms+summary",
     "blocks": [
       "file-ownership",
@@ -328,7 +328,7 @@
   {
     "label": "r1:post-fix-review",
     "phase": "non-spec R1: fix",
-    "model": "",
+    "model": "opus",
     "schema": "findings",
     "blocks": [
       "read-only",
@@ -356,7 +356,7 @@
   {
     "label": "r2:review:citations",
     "phase": "non-spec R2: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -389,7 +389,7 @@
   {
     "label": "r3:review:citations",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -404,7 +404,7 @@
   {
     "label": "r3:review:feasibility",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -419,7 +419,7 @@
   {
     "label": "r3:review:edit-sites",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -434,7 +434,7 @@
   {
     "label": "r3:review:mechanism",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -449,7 +449,7 @@
   {
     "label": "r3:review:security",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -464,7 +464,7 @@
   {
     "label": "r3:review:kubernetes",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -479,7 +479,7 @@
   {
     "label": "r3:review:performance",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -494,7 +494,7 @@
   {
     "label": "r3:review:reliability",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -509,7 +509,7 @@
   {
     "label": "r3:review:client-surface",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -524,7 +524,7 @@
   {
     "label": "r3:review:docs-alignment",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -539,7 +539,7 @@
   {
     "label": "r3:review:applicability",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -554,7 +554,7 @@
   {
     "label": "r3:review:test-coverage",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -569,7 +569,7 @@
   {
     "label": "r3:review:open-decisions",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
@@ -584,7 +584,7 @@
   {
     "label": "r3:review:operational",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -599,7 +599,7 @@
   {
     "label": "r3:review:fresh",
     "phase": "non-spec R3: review",
-    "model": "",
+    "model": "opus",
     "schema": "coverage+findings",
     "blocks": [
       "read-only",
@@ -623,7 +623,7 @@
   {
     "label": "verify-checklist",
     "phase": "Review",
-    "model": "",
+    "model": "sonnet",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -641,7 +641,7 @@
   {
     "label": "status:record-run",
     "phase": "Review",
-    "model": "",
+    "model": "haiku",
     "schema": "",
     "blocks": [
       "file-ownership"

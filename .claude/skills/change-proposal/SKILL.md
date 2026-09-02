@@ -261,6 +261,8 @@ Every argument carries a class, and the class decides how you change it. `forwar
 
 | arg | class | default | effect |
 |:--|:--|:--|:--|
+| `baseModel` | launch | `opus` | the model every agent runs at unless it names its own |
+| `baseEffort` | launch | `medium` | the reasoning effort every agent runs at |
 | `mode` | launch | — | `new`, `review`, or `redesign` |
 | `problem` | anchored | — | required in `new`: the problem dossier |
 | `proposalPath` | launch | — | required in `review` and `redesign`: the directory, or a legacy `.md` |
@@ -306,6 +308,31 @@ Every argument carries a class, and the class decides how you change it. `forwar
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. `introspect` reaches only the gate by prefix fallback; the introspection pass itself takes no injected text. To add text to every review lens use `lensPrompt`, which is a standalone argument rather than a `prompts` key. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
 Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `open-decisions`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
+
+### The base tier
+
+`baseModel` and `baseEffort` set what every agent runs at, and they are **independent of the session's own
+model and effort**. A loop that silently changed tier because the operator had switched their own model
+would produce a run nobody could compare against an earlier one, so the defaults are the tier this workflow
+was tuned on rather than whatever the caller happens to be running. Every run logs its tier and says whether
+it was caller-set or defaulted, so a transcript records what the run was measured at. An unknown value fails
+the run at launch rather than being silently ignored.
+
+A number of agents name their own model and effort, and those names are **absolute rather than relative to
+the base**. On `haiku` at high effort: the snapshot, diff-count, resume-state, round-boundary, spec-changes
+probe, both status writers, and the growth measurement. On `sonnet` at high effort: `init`, the conventions
+pass, the checklist verifier, and site expansion. Everything else takes the base.
+
+The pairing is deliberate. A cheap model is not the same request as a shallow one: these agents sit on a
+small model because their work is mechanical and well specified, and on high effort because getting it
+wrong corrupts a round's bookkeeping quietly rather than loudly. The consequence of keeping the names
+absolute is that the tiering is only coherent while the base sits at or above `sonnet`: lowering the base
+under a hard-coded model would raise that agent above the base rather than below it.
+
+The retry path is the one place a model changes on its own. After two failures an agent is retried on
+`sonnet`, because a 529 is usually capacity-pool-specific and a lens completing on a lower tier beats a lens
+dropped for the round. Every fallback is logged, so a round certified clean partly on a fallback is visible
+in the transcript.
 
 ## Changing an argument on a run in flight
 
