@@ -201,7 +201,20 @@ export function ordered(calls, aPrefix, bPrefix) {
 export function suite(name) {
   let failures = 0;
   let checks = 0;
+  let finished = false;
   console.log("\n### " + name);
+  // A file that THROWS mid-way never reaches done(), so its summary line never
+  // prints and every check after the throw silently never ran. The runner still
+  // reports the file as failed, which is honest, but the count it shows is the
+  // count before the crash and reads as a small failure rather than a whole-file
+  // abort. A mutation audit hit exactly that and had to notice by hand.
+  process.on("exit", () => {
+    if (finished) return;
+    console.log(
+      "\n" + name + ": ABORTED after " + checks + " check(s) (" + failures +
+        " failed before the abort); the rest of the file never ran.",
+    );
+  });
   return {
     section(title) {
       console.log("\n" + title);
@@ -216,6 +229,7 @@ export function suite(name) {
       }
     },
     done() {
+      finished = true;
       console.log(
         "\n" +
           (failures === 0
