@@ -215,6 +215,39 @@ OUT="$(run spec 64 --standing-target 10 --standing-trigger 40)"
 contains "a stored trigger below its target does not fire every round" "$OUT" '"compactionDue":false'
 fresh_log
 
+echo; echo "T11a. stale pass history is evacuated from the change files, lazily and once"
+ARCH2="$DIR/0099_fix_t.review-log-archive.md"
+SPECF="$DIR/0099_fix_t.spec-changes.md"
+NONF="$DIR/0099_fix_t.non-spec-changes.md"
+rm -f "$ARCH2"
+{ printf '# Spec changes\n\n## 5. Proposed changes\n\nSPEC-1 lands a thing.\n\n'
+  printf '## Resolved in adversarial review\n\n### Pass 1 (2026-01-01, automated)\n\n- **A thing was wrong.** It is fixed.\n'; } > "$SPECF"
+{ printf '# Non-spec changes\n\n## 8. Testing\n\nA test.\n\n'
+  printf '## 11. Resolved in adversarial review\n\n- **Numbered heading, legacy style.** Also fixed.\n'; } > "$NONF"
+OUT="$(run spec 80)"
+contains "the evacuation is reported" "$OUT" '"evacuated":'
+check "the spec file keeps its staged changes" "yes" "$(grep -q 'SPEC-1 lands a thing' "$SPECF" && echo yes || echo no)"
+check "and loses the pass history" "0" "$(grep -c 'Resolved in adversarial review' "$SPECF" || true)"
+check "the non-spec file loses its NUMBERED heading too" "0" "$(grep -c 'Resolved in adversarial review' "$NONF" || true)"
+check "and keeps its own content" "yes" "$(grep -q '## 8. Testing' "$NONF" && echo yes || echo no)"
+check "the archive now holds both histories" "2" "$(grep -c '^## Retired from' "$ARCH2")"
+check "the pass bodies survive, not just the headings" "yes" "$(grep -q -- '- \*\*A thing was wrong\.\*\* It is fixed\.' "$ARCH2" && grep -q 'Numbered heading, legacy style' "$ARCH2" && echo yes || echo no)"
+check "the archive names which file each came from" "yes" "$(grep -q 'spec-changes.md' "$ARCH2" && grep -q 'non-spec-changes.md' "$ARCH2" && echo yes || echo no)"
+
+# Idempotent: a second boundary finds nothing left to move.
+OUT="$(run spec 81)"
+contains "a second call evacuates nothing" "$OUT" '"evacuated":0'
+check "and does not add another archive block" "2" "$(grep -c '^## Retired from' "$ARCH2")"
+
+# A proposal that never had the section is untouched.
+printf '# Spec changes\n\n## 5. Proposed changes\n\nOnly staged edits here.\n' > "$SPECF"
+before="$(md5sum < "$SPECF")"
+OUT="$(run spec 82)"
+contains "a clean proposal evacuates nothing" "$OUT" '"evacuated":0'
+check "and its file is byte-identical" "$before" "$(md5sum < "$SPECF")"
+rm -f "$ARCH2"
+fresh_log
+
 echo; echo "T11l. the ledger drains to a SEPARATE archive file after a pass, and only then"
 STATEDIR="$REPO/scratchpad/cp-state/$TAG"
 ARCH="$DIR/0099_fix_t.review-log-archive.md"

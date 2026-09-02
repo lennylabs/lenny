@@ -2771,11 +2771,17 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "constraint exists to prevent. A trap that belongs to the other lane is a `DEFERRED` line.\n"
       : "- KEEP THE SUMMARY TRUE. If a fix changes a top-level change, closes or reopens a decision the Summary lists as fixed, or creates a trap an implementor would fall into, update the Summary in the same edit. It is the one section every implementor agent reads, so a stale line there misleads every one of them.\n") +
     "- You may leave a detail to the implementor rather than specifying it, and doing so is often better than adding text that two sections then have to keep agreeing about. " + FORMAT_BLANKS +
-    '- Append a new subsection to the "Resolved in adversarial review" section of ' +
-    (LOOP && LOOP.name === "spec" ? P.spec : P.nonSpec) +
-    ', titled "### Pass <N> (' +
-    date +
-    ', automated)", where <N> continues the existing pass numbering (read the section to determine it; create the section at the END of that file if it does not exist), with one bullet per finding fixed, matching the format of any existing entries. Create it only in the file named here, which your HARD CONSTRAINT lets you edit.\n' +
+    "- RECORD WHAT YOU FIXED IN YOUR LOG SHARD, never in the change files. A pass history appended to " +
+    "the staged changes is not a staged change, it compacts nothing, and it is read in full by every lens " +
+    "every round: one measured proposal reached 22 such subsections and 1258 lines, which was 68% of the " +
+    "file. The review log is where a run's history lives, and it has the compaction, the promotion into " +
+    "standing context, and the archive that a section in a change file has none of.\n" +
+    "  A withdrawn alternative gets the tag that carries it. A staged change you REVERTED, or an option a " +
+    "round tried and rejected, is a `WATCHOUT` naming the option and why it lost, or a `MISTAKE` when a " +
+    "round staged it and then took it out. Do NOT record it only as a `DECISION`: a `DECISION` becomes one " +
+    "line in the standing context's lookup table, and the line that stops the next round re-deriving the " +
+    "option is the reason it lost, which does not fit there. A `WATCHOUT` gets four lines in the traps " +
+    "section, which is uncapped and is the part of the budget the compaction pass is told to protect.\n" +
     "- Follow the documentation style rules in " +
     repo +
     '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
@@ -3342,9 +3348,10 @@ async function runRedesign(areas, rnd, why) {
       "implementation checklist's steps and their dependencies, the files-touched section, and the testing " +
       "section. A redesign that deletes a mechanism leaves its steps, its tests, and its files behind unless " +
       "you remove them.\n\n" +
-      'Append a subsection to the proposal\'s "Resolved in adversarial review" section titled "### Redesign ' +
-      tag + " (" + date + ', automated)", recording which areas were redesigned, why, what the redesign ' +
-      "deleted, and any open decisions it recorded. Prose follows " + repo + "/.claude/rules/doc-style.md.",
+      "Record what this redesign did in your log shard rather than in the change files: which areas were " +
+      "redesigned, why, what it deleted, and any open decision it recorded. A mechanism you replaced is a " +
+      "`WATCHOUT` naming the old one and why it lost, so a later round does not re-derive it; the traps " +
+      "section carries four lines for it and is uncapped. Prose follows " + repo + "/.claude/rules/doc-style.md.",
     { label: "redesign" + tag + ":apply", phase: "Redesign " + tag },
   );
 
@@ -4138,7 +4145,10 @@ async function compactLog(round, standingLines, target) {
       "6. STRUCTURE `## Standing context` UNDER THESE FOUR HEADINGS, in this order, and keep all four:\n" +
       "   `### Settled` — every `FACT` and `DECISION`. ONE LINE EACH. This is a lookup table, not prose.\n" +
       "   `### Traps` — every `WATCHOUT` and `MISTAKE`. Up to four lines each, because a trap the reader " +
-      "cannot recognise from the entry is a trap they walk into anyway. No cap on how many.\n" +
+      "cannot recognise from the entry is a trap they walk into anyway. No cap on how many. A trap " +
+      "recording an option a round TRIED AND WITHDREW is never dropped while the design that replaced " +
+      "it still stands: it is the only thing stopping a later round re-deriving the option, and it is " +
+      "superseded only when its replacement is itself replaced.\n" +
       "   `### Open` — every `OPEN` and `UNVERIFIED`. ONE LINE EACH, naming the ledger entry id that " +
       "carries the detail.\n" +
       "   `### Deferred` — every unclosed `DEFERRED`, kept WHOLE rather than summarised, because the pass " +
@@ -5540,8 +5550,9 @@ async function runReviewLoop(cfg) {
               "check before each deletion whether any other part of the proposal cites the text you are removing, " +
               "and if it does, either keep it or update the citing section in the same edit. Then reconcile the " +
               "implementation checklist, the files-touched section, and the testing section with what is left.\n\n" +
-              'Append a bullet to the "Resolved in adversarial review" section recording what was pruned and why. ' +
-              "Follow " + repo + "/.claude/rules/doc-style.md.",
+              "Record what was pruned and why in your log shard rather than in the change files, as a " +
+              "`WATCHOUT`: text deleted for being over-specified is text a later round will helpfully add " +
+              "back unless it can see why it went. Follow " + repo + "/.claude/rules/doc-style.md.",
             { label: "prune:r" + round, phase: LOOP.name + " R" + round + ": prune" },
           );
           for (const s of fresh) prunedSections.add(key(s));

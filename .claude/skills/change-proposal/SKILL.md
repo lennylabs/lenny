@@ -200,6 +200,25 @@ The designs are produced in parallel and none sees the others, so **one reconcil
 
 One **post-fix review** runs per round over every group's edits, which catches the risk the split introduces: drift between two groups that each edited correctly.
 
+### A run's history lives in the review log
+
+A fixer, a redesign, and a prune each record what they did to their log shard rather than to the staged
+changes. They used to append a `### Pass <N>` subsection to `.spec-changes.md` or `.non-spec-changes.md`
+every round, which is not a staged change, compacts nothing, and is read in full by every lens every round:
+one measured proposal reached 22 subsections and 1258 lines, 68% of its spec-changes file. The pipeline also
+disagreed with itself, because `migrate-proposal` moved that history to the archive on migration while the
+fixer rebuilt it in the file the migration had just cleaned.
+
+A withdrawn alternative takes the tag that carries it. A staged change a round reverted, or an option it
+tried and rejected, is a `WATCHOUT`, or a `MISTAKE` where the round staged it and then took it out. It is
+not only a `DECISION`, because a `DECISION` becomes one line in the standing context's lookup table and the
+line that stops the next round re-deriving the option is the reason it lost. `### Traps` gives it four lines,
+is uncapped, and is the part of the budget the compaction pass is told to protect. A trap recording a
+withdrawn option is never dropped while the design that replaced it still stands.
+
+Pass history an earlier run already wrote is evacuated to the archive by the round boundary, lazily and once,
+on whatever it finds. There is no batch migration, for the same reason the folder split has none.
+
 ### The review log
 
 Most agents append what a future agent would need, with a fixed tag vocabulary: `DECISION` with its alternatives, `WATCHOUT` with evidence, `FACT`, `MISTAKE`, `UNVERIFIED`, `OPEN`, `DEFERRED` for a correction the agent derived but may not land because its remedy is in a file its loop cannot edit, and the two that make compaction possible, `CORRECTS` and `USEFUL`. An `OPEN` is a question nobody has answered and a `DEFERRED` is an answer nobody has applied, which is why they are separate tags and only one of them has an owner. Each writes its own shard, because a dozen lenses appending to one file in parallel lose writes.

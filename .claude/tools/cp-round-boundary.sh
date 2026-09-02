@@ -25,6 +25,7 @@
 #     "compactionDue": true|false,
 #     "hunksKnown": true|false,   whether "hunks" had a baseline to compare against
 #     "drained": <ledger lines moved to Retired after a compaction pass>,
+#     "evacuated": <lines of stale pass history moved out of the change files>,
 #     "standingTarget": <lines the compaction pass is asked to reach>,
 #     "standingTrigger": <lines at which compaction becomes due>,
 #     "targetRaises": <times the target has been raised because a pass could not reach it>,
@@ -134,6 +135,44 @@ fi
 
 STEM="$(basename "$DIR")"
 LOG="$DIR/$STEM.review-log.md"
+
+# ---- 0a. Evacuate any pass history the change files still carry -----------
+#
+# Fixers used to append a `### Pass <N>` subsection to the staged-changes file
+# every round, forever. That is not a staged change, it compacts nothing, and
+# lenses are told to read the change file IN FULL, so every lens paid for it
+# every round: one measured proposal reached 22 subsections and 1258 lines,
+# which was 68% of its spec-changes file. The pipeline also disagreed with
+# itself about where the history belonged -- migrate-proposal moved it to the
+# archive on migration, and the fixer immediately began rebuilding it in the
+# file the migration had just cleaned.
+#
+# The writers now record to their log shards instead, so this block exists to
+# retire what earlier runs already wrote. It is LAZY: it fires on whatever it
+# finds, once, and does nothing on a proposal that has none. There is no batch
+# migration, for the same reason the folder split has none.
+#
+# The section is always the LAST heading in the file -- the old instruction said
+# to create it at the end -- so the move is a split at its heading. The heading
+# is matched with an optional section number because a legacy proposal numbers
+# it and a folder-layout one does not.
+#
+# This runs before everything else so a round never reviews a file this call is
+# about to change.
+evacuated=0
+for CF in "$DIR/$STEM.spec-changes.md" "$DIR/$STEM.non-spec-changes.md"; do
+  [ -f "$CF" ] || continue
+  hl=$(grep -nE '^## ([0-9]+\. )?Resolved in adversarial review[[:space:]]*$' "$CF" | head -1 | cut -d: -f1)
+  [ -n "$hl" ] || continue
+  total=$(wc -l < "$CF")
+  moved=$((total - hl + 1))
+  {
+    printf '\n## Retired from %s (evacuated at round %s)\n\n' "$(basename "$CF")" "$ROUND"
+    tail -n +"$hl" "$CF"
+  } >> "$DIR/$STEM.review-log-archive.md"
+  head -n $((hl - 1)) "$CF" > "$CF.tmp" && mv "$CF.tmp" "$CF"
+  evacuated=$((evacuated + moved))
+done
 
 # ---- 0. Drain the ledger the compaction pass just read --------------------
 #
@@ -458,5 +497,5 @@ if [ -f "$OV_FILE" ]; then
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"drained":%d,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$drained" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
+printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"drained":%d,"evacuated":%d,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$drained" "$evacuated" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
