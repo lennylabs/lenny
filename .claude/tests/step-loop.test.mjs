@@ -3,7 +3,9 @@
 //
 // Run: node .claude/tests/step-loop.test.mjs
 
-import { runWorkflow, suite, matching, never, firstIndex, ordered, labels } from "./harness.mjs";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runWorkflow, suite, matching, never, firstIndex, ordered, labels, REPO } from "./harness.mjs";
 import { classify } from "../tools/classify-diff.mjs";
 
 const t = suite("step loop");
@@ -22,7 +24,8 @@ const base = (over = {}) => ({
   "checklist-ticks": { ticked: [] },
   "baseline": { sha: "base0" },
   "build:S1:base": { sha: "base0" },
-  "compile:*": { compiles: true, errors: [], leaseHeld: false },
+  "compile:*": { compiles: true, errors: [] },
+  "lease-check:*": { leaseHeld: false },
   "build:*": { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1", filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
   "review:*": { findings: [] },
   "verify:*": { green: true, tiersRun: ["unit"], failures: [] },
@@ -112,6 +115,25 @@ t.section("C6. the final gate runs over the finished tree, and its failures rout
   t.check("each miss names its step and attempt", (result.gateMisses || [])[0] && result.gateMisses[0].step === "S1" && typeof result.gateMisses[0].attempt === "number");
   t.check("and the step never ticks", result.status === "step-stuck", result.status);
 }
+{
+  // A recorded miss is evidence about the class table only if it names the
+  // class the scoped run assigned and the skip it made on that basis.
+  let n = 0;
+  const { calls, result } = await runWorkflow(WF, ARGS({ maxStepAttempts: 4 }), base({
+    "review:*": () => (++n <= 1 ? { findings: FINDING } : { findings: [] }),
+    "verify:*": ({ label }) =>
+      label.endsWith(":final")
+        ? { green: false, tiersRun: ["unit"], failures: ["component tier broke"] }
+        : { green: true, tiersRun: ["unit"], failures: [], classification: "logic",
+            skipped: [{ tier: "component", why: "no envtest subject in the diff" }] },
+  }));
+  const miss = (result.gateMisses || [])[0];
+  t.check("a miss names the class the scoped run assigned", miss && miss.classification === "logic", String(miss && miss.classification));
+  t.check("and the skip that justified it", miss && (miss.whatWasSkippedAndWhy || []).some((s) => s.tier === "component" && /envtest/.test(s.why)));
+  const scoped = calls.filter((c) => /^verify:S1:r/.test(c.label));
+  const props = scoped[0] && scoped[0].opts.schema.properties;
+  t.check("the scoped verify has somewhere to return the verdict", !!(props && props.classification && props.skipped), Object.keys(props || {}).sort().join("+"));
+}
 
 t.section("C7. the scoping block is grounded in a real diff and a cost ledger");
 {
@@ -132,7 +154,7 @@ t.section("C7. the scoping block is grounded in a real diff and a cost ledger");
   t.check("an expensive tier needs a named hunk", /No named hunk, no run/.test(p));
   t.check("the ledger is read before deciding", /scratchpad\/test-times/.test(p));
   t.check("and written after each tier, by this same agent", /Do not spawn a separate step for that/.test(p));
-  t.check("skips are recorded with reasons", /every tier you skipped, and the\s+reason for each/.test(p));
+  t.check("skips are recorded with reasons", /one\s+entry per tier you skipped in `skipped`, each naming the `tier` and the `why`/.test(p));
 }
 
 t.section("C5. the detectors wake the judges and do not stop the step");
@@ -157,19 +179,33 @@ t.section("C5. the detectors wake the judges and do not stop the step");
 t.section("C2b. a code step refuses to run while a spec lease is held");
 {
   const { result, calls } = await runWorkflow(WF, ARGS(), base({
-    "compile:*": { compiles: true, errors: [], leaseHeld: true },
+    "lease-check:*": { leaseHeld: true },
   }));
   t.check("the run stops", result.status === "lease-leaked", result.status);
   t.check("it names the step", (result.reason || "").includes("S1"));
   t.check("and says spec/ is writable", /spec\/ is writable/.test(result.reason || ""));
-  t.check("no review or test runs under the leak", never(calls, "review:S1") && never(calls, "verify:S1"));
+  t.check("no implementer ran under the leak", never(calls, "build:S1"), labels(calls).join(","));
+  t.check("nothing but the gate ran at all", never(calls, "compile:S1") && never(calls, "review:S1") && never(calls, "verify:S1"));
+  t.check("and nothing was committed", (result.commits || []).length === 0);
+}
+
+t.section("C2c. an unanswered lease check stops the run rather than assuming spec/ is locked");
+{
+  const dead = await runWorkflow(WF, ARGS(), base({ "lease-check:*": null }));
+  t.check("a dead gate stops the run", dead.result.status === "lease-leaked", dead.result.status);
+  t.check("and no implementer ran", never(dead.calls, "build:S1"));
+  const omitted = await runWorkflow(WF, ARGS(), base({ "lease-check:*": {} }));
+  t.check("an omitted leaseHeld stops the run too", omitted.result.status === "lease-leaked", omitted.result.status);
+  t.check("and no implementer ran", never(omitted.calls, "build:S1"));
+  const clear = await runWorkflow(WF, ARGS(), base());
+  t.check("an explicit false lets the step run", !never(clear.calls, "build:S1") && clear.result.status !== "lease-leaked");
 }
 
 t.section("C0. a step that does not compile is not reviewed");
 {
   let c = 0;
   const { calls } = await runWorkflow(WF, ARGS(), base({
-    "compile:*": () => (++c === 1 ? { compiles: false, errors: ["pkg/a.go:3: undefined x"], leaseHeld: false } : { compiles: true, errors: [], leaseHeld: false }),
+    "compile:*": () => (++c === 1 ? { compiles: false, errors: ["pkg/a.go:3: undefined x"] } : { compiles: true, errors: [] }),
   }));
   t.check("no reviewer sees the broken tree", firstIndex(calls, "review:S1") > firstIndex(calls, "compile:S1:r2"));
   t.check("the build error reaches the next fixer", calls.some((x) => /^build:S1/.test(x.label) && /undefined x/.test(x.prompt)));
@@ -199,6 +235,30 @@ t.check("an operator page is separated", classify(mk("docs/runbooks/a.md", ["p"]
 t.check("a Go test", classify(mk("tests/tier1/a_test.go", ["x := 1"])).classes.includes("test-only"));
 t.check("a mixed code+doc diff claims no cheap class", classify(mk("pkg/a.go", ["// c"]) + "\n" + mk("docs/b.md", ["p"])).classes.length === 0);
 t.check("an empty diff is its own answer", classify("").classes.includes("empty"));
+
+t.section("T7b. a line that looks like a file header inside a hunk is body, not header");
+// A removed SQL comment reaches the classifier as "--- drop the old index".
+const sqlDel =
+  "diff --git a/migrations/a.sql b/migrations/a.sql\n" +
+  "--- a/migrations/a.sql\n+++ b/migrations/a.sql\n@@ -1,2 +1,0 @@\n" +
+  "--- drop the old index\n--- it was never used\n";
+t.check("a removed \"--\" line is counted", classify(sqlDel).addedRemoved === 2);
+t.check("so a migration deleting only \"--\" lines is not comment-only",
+  !classify(sqlDel).classes.includes("comment-only"));
+
+const fakeHeader =
+  "diff --git a/x.md b/x.md\n--- a/x.md\n+++ b/x.md\n@@ -0,0 +1 @@\n+++ b/pkg/evil.go\n";
+t.check("an added line reading \"+++ b/...\" invents no second file",
+  classify(fakeHeader).files.length === 1 && classify(fakeHeader).files[0] === "x.md");
+t.check("and the prose diff is still doc-only",
+  classify(fakeHeader).classes.includes("doc-only"));
+
+const deleted =
+  "diff --git a/pkg/a.go b/pkg/a.go\ndeleted file mode 100644\n" +
+  "--- a/pkg/a.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-// c\n-x := 1\n";
+t.check("a deleted file is named from the diff --git line and its body still read",
+  classify(deleted).files.join() === "pkg/a.go" && classify(deleted).addedRemoved === 2 &&
+  !classify(deleted).classes.includes("comment-only"));
 
 
 
@@ -347,6 +407,125 @@ t.section("specReviewFocus survives as a per-spec-step reviewer");
   t.check("it carries the areas", /the slotId rename/.test(calls.find((c) => c.label === "verify:S1:spec:focus").prompt));
   t.check("the normal reviewer does not", !/the slotId rename/.test(calls.find((c) => c.label === "verify:S1:spec").prompt));
   t.check("and it is logged", logs.some((l) => /Spec review focus: 1 area/.test(l)));
+}
+
+t.section("C22. the plan critique runs maxPlanRounds rounds");
+{
+  const PLAN_ARGS = (over = {}) => ({
+    proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "2026-08-31",
+    maxStepAttempts: 1, ...over,
+  });
+  const planStubs = (over = {}) => base({
+    "plan": { blastRadius: [], steps: [STEP] },
+    "plan-critique:*": { complete: false, gaps: ["a removal step is missing"] },
+    "plan-revise:*": { blastRadius: [], steps: [STEP] },
+    ...over,
+  });
+  const two = await runWorkflow(WF, PLAN_ARGS(), planStubs());
+  t.check("the default buys two critique rounds", matching(two.calls, "plan-critique:").length === 2,
+    String(matching(two.calls, "plan-critique:").length));
+  const one = await runWorkflow(WF, PLAN_ARGS({ maxPlanRounds: 1 }), planStubs());
+  t.check("maxPlanRounds 1 still critiques once", matching(one.calls, "plan-critique:").length === 1,
+    String(matching(one.calls, "plan-critique:").length));
+  const three = await runWorkflow(WF, PLAN_ARGS({ maxPlanRounds: 3 }), planStubs());
+  t.check("and three buys three", matching(three.calls, "plan-critique:").length === 3);
+  const clean = await runWorkflow(WF, PLAN_ARGS(), planStubs({ "plan-critique:*": { complete: true, gaps: [] } }));
+  t.check("a complete plan stops after one", matching(clean.calls, "plan-critique:").length === 1);
+  t.check("and is not revised", never(clean.calls, "plan-revise:"));
+}
+
+t.section("C23. the loop carries no write-only phase state");
+{
+  const src = readFileSync(resolve(REPO, ".claude/workflows/implement-proposal-build.js"), "utf8");
+  for (const id of ["phaseOfAttempt", "icRounds"]) {
+    t.check(id + " is gone (stepRounds carries the phase)", !new RegExp("\\b" + id + "\\b").test(src));
+  }
+}
+
+t.section("SO1. a spec-only run reports the subworkflow's own failure, not a clean stop");
+{
+  // The spec-only fix collapsed every status that was not spec-only-incomplete
+  // into spec-only, so a step that would not apply, a leaked lease and a step
+  // on the wrong lane all reported success. The skill and the build loop are
+  // both told to STOP on those, so the loop went on to build code against spec
+  // text that had never landed.
+  const PARENT = ".claude/workflows/implement-proposal.js";
+  const planStub = {
+    approved: true,
+    alreadyApplied: false,
+    statusLine: "Approved",
+    steps: [{ id: "S1", lane: "spec" }],
+    findingIds: [],
+    specEdits: [],
+    filesTouched: [],
+    nonSpecStaged: false,
+  };
+  const run = async (childStatus) => {
+    const { result } = await runWorkflow(
+      PARENT,
+      { proposalPath: "proposals/0099_fix_demo", repoRoot: "/repo", date: "2026-09-02", implementCode: false },
+      { plan: planStub, default: {} },
+      { subworkflows: { "implement-proposal-build": { status: childStatus, steps: [], commits: [] } } },
+    );
+    return result && result.status;
+  };
+  t.check("a clean spec prefix still reports spec-only", (await run("spec-only")) === "spec-only");
+  t.check(
+    "an incomplete prefix still reports itself",
+    (await run("spec-only-incomplete")) === "spec-only-incomplete",
+  );
+  t.check("a leaked lease is NOT reported as success", (await run("lease-leaked")) === "lease-leaked");
+  t.check("a failed spec step is NOT reported as success", (await run("spec-step-failed")) === "spec-step-failed");
+  t.check("a bad lane is NOT reported as success", (await run("bad-lane")) === "bad-lane");
+}
+
+t.section("SO2. a spec-only stop still checks the lease it may be leaking");
+{
+  // The early return that ends the leading spec prefix sits BEFORE the
+  // lease-leak guard a non-spec step runs, so without its own check a spec step
+  // whose best-effort release failed left spec/ writable and the run still
+  // reported a clean spec-only stop.
+  const twoLane = {
+    blastRadius: [],
+    steps: [
+      { ...STEP, id: "S1", lane: "spec", checklistStep: "S1" },
+      { ...STEP, id: "S2", lane: "code", checklistStep: "S2" },
+    ],
+  };
+  const specArgs = ARGS({ specOnly: true, plan: twoLane });
+  const withLease = (over) =>
+    base({
+      plan: twoLane,
+      "spec-targets:*": { files: ["spec/01_intro.md"], why: "SPEC-1 lands there" },
+      "lease-open:*": "DONE",
+      "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
+      "verify:*": { discrepancies: [], green: true, tiersRun: ["unit"], failures: [] },
+      "commit-spec:*": "c-spec",
+      "lease-release:*": "DONE",
+      ...over,
+    });
+
+  const clean = await runWorkflow(WF, specArgs, withLease({ "lease-check:*": { leaseHeld: false } }));
+  t.check(
+    "a released lease lets the prefix stop cleanly",
+    clean.result && clean.result.status === "spec-only",
+    String(clean.result && clean.result.status) + " " + String(clean.error || ""),
+  );
+  t.check("and the exit check ran", !never(clean.calls, "lease-check:spec-only-exit"));
+
+  const leaked = await runWorkflow(WF, specArgs, withLease({ "lease-check:*": { leaseHeld: true } }));
+  t.check(
+    "a held lease is reported as a leak rather than a clean stop",
+    leaked.result && leaked.result.status === "lease-leaked",
+    String(leaked.result && leaked.result.status),
+  );
+
+  const dead = await runWorkflow(WF, specArgs, withLease({ "lease-check:*": null }));
+  t.check(
+    "and a dead lease check fails closed",
+    dead.result && dead.result.status === "lease-leaked",
+    String(dead.result && dead.result.status),
+  );
 }
 
 t.done();

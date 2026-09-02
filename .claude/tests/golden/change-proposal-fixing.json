@@ -21,7 +21,7 @@
     "label": "probe:spec-changes",
     "phase": "Review",
     "model": "haiku",
-    "schema": "",
+    "schema": "stagesSpecChanges+why",
     "blocks": []
   },
   {
@@ -259,6 +259,16 @@
     "schema": "",
     "blocks": [
       "one-command"
+    ]
+  },
+  {
+    "label": "r1:expand:0",
+    "phase": "non-spec R1: fix",
+    "model": "sonnet",
+    "schema": "proposal+searched+tree",
+    "blocks": [
+      "read-only",
+      "evidence"
     ]
   },
   {
@@ -590,7 +600,16 @@
     ]
   },
   {
-    "label": "mark-verified",
+    "label": "status:set-reviewed",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "status:record-run",
     "phase": "Review",
     "model": "",
     "schema": "",

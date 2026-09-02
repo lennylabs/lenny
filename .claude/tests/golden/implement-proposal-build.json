@@ -44,7 +44,9 @@
     "phase": "Build",
     "model": "",
     "schema": "discrepancies",
-    "blocks": []
+    "blocks": [
+      "read-only"
+    ]
   },
   {
     "label": "commit-spec:S1",
@@ -72,6 +74,13 @@
     "blocks": []
   },
   {
+    "label": "lease-check:S2",
+    "phase": "Build",
+    "model": "",
+    "schema": "leaseHeld",
+    "blocks": []
+  },
+  {
     "label": "build:S2:base",
     "phase": "Build",
     "model": "",
@@ -96,7 +105,7 @@
     "label": "compile:S2:r1",
     "phase": "Build",
     "model": "",
-    "schema": "compiles+errors+leaseHeld",
+    "schema": "compiles+errors",
     "blocks": [
       "memory-safe"
     ]
@@ -125,7 +134,7 @@
     "label": "verify:S2:r1",
     "phase": "Build",
     "model": "",
-    "schema": "changedLineCoverage+failures+green+notes+tiersRun",
+    "schema": "changedLineCoverage+classification+failures+green+notes+skipped+tiersRun",
     "blocks": [
       "preflight",
       "memory-safe",
@@ -143,7 +152,7 @@
     "label": "verify",
     "phase": "Verify",
     "model": "",
-    "schema": "changedLineCoverage+failures+green+notes+tiersRun",
+    "schema": "changedLineCoverage+classification+failures+green+notes+skipped+tiersRun",
     "blocks": [
       "memory-safe"
     ]

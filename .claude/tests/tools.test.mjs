@@ -6,7 +6,8 @@
 //
 // Run: node .claude/tests/tools.test.mjs
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, copyFileSync } from "fs";
+import { spawnSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { suite, REPO } from "./harness.mjs";
@@ -162,6 +163,132 @@ t.section("T5b. a duplicated line must appear as many times as it did");
   const dir = splitTree("0203_fix_dup", { "spec-changes": "repeated\n" });
   const r = checkSplit(legacy, dir);
   t.check("one copy does not satisfy two", !r.ok, JSON.stringify(r));
+}
+
+// ---- T6: register-row ----------------------------------------------------
+//
+// The tool is run for real as a subprocess against a fixture tree. It resolves
+// its repository root from import.meta.url, so a copy of it at
+// <case>/.claude/tools/register-row.mjs reads <case>/tests/registers/... and no
+// production flag or environment override is needed to redirect it.
+
+const REG_REL = "tests/registers/residual-change-graph-coverage.yaml";
+const REG_HEAD =
+  "# SPDX-License-Identifier: MIT\n" +
+  "kind: residual-register\nversion: 1\nclass: change-graph-coverage\n";
+
+function row(member, reason) {
+  return (
+    "  - member: |-\n" +
+    member.split("\n").map((l) => "      " + l + "\n").join("") +
+    "    class: change-graph-coverage\n    disposition: excluded\n    reason: |-\n" +
+    reason.split("\n").map((l) => "      " + l + "\n").join("")
+  );
+}
+
+let caseNo = 0;
+function tree(registerText) {
+  const dir = join(TMP, "reg-case-" + ++caseNo);
+  mkdirSync(join(dir, ".claude", "tools"), { recursive: true });
+  copyFileSync(join(REPO, ".claude/tools/register-row.mjs"), join(dir, ".claude/tools/register-row.mjs"));
+  if (registerText !== null) {
+    mkdirSync(join(dir, "tests", "registers"), { recursive: true });
+    writeFileSync(join(dir, REG_REL), registerText);
+  }
+  return dir;
+}
+
+const run = (dir, ...args) =>
+  spawnSync(process.execPath, [join(dir, ".claude/tools/register-row.mjs"), ...args], { encoding: "utf8" });
+
+t.section("T6a. a member written across two lines survives a round trip");
+{
+  const dir = tree(REG_HEAD + "entries:\n" + row("a/one.mjs\nb/two.mjs", "wrapped member") + row("z/last.mjs", "plain"));
+  const r = run(dir, "--add", ".claude/tools/register-row.mjs", "the tool itself");
+  t.check("added", r.status === 0, r.stdout + r.stderr);
+  const out = readFileSync(join(dir, REG_REL), "utf8");
+  t.check("the first body line survives", out.includes("      a/one.mjs\n"));
+  t.check("the continuation line survives", out.includes("      b/two.mjs\n"), out);
+  t.check("the whole row round-trips", out.includes(row("a/one.mjs\nb/two.mjs", "wrapped member")), out);
+}
+
+t.section("T6b. a reason body is not silently eaten");
+{
+  const dir = tree(REG_HEAD + "entries:\n" + row("a/one.mjs", "first line of reason\nsecond line of reason"));
+  const r = run(dir, "--add", ".claude/tools/register-row.mjs", "the tool itself");
+  t.check("added", r.status === 0, r.stdout + r.stderr);
+  const out = readFileSync(join(dir, REG_REL), "utf8");
+  t.check("the second reason line survives", out.includes("      second line of reason\n"), out);
+}
+
+t.section("T6c. a register the canonical writer emits for an empty class");
+{
+  const dir = tree(REG_HEAD + "entries: []\n");
+  const r = run(dir, "--add", ".claude/tools/register-row.mjs", "the tool itself");
+  t.check("added", r.status === 0, r.stdout + r.stderr);
+  const out = readFileSync(join(dir, REG_REL), "utf8");
+  const lines = out.split("\n");
+  t.check("the empty-list form is gone", !out.includes("entries: []"), out);
+  t.check("exactly one entries line at column 0", lines.filter((l) => l === "entries:").length === 1, out);
+  const at = lines.indexOf("entries:");
+  t.check("the first row follows immediately", lines[at + 1] === "  - member: |-", JSON.stringify(lines.slice(at, at + 3)));
+  t.check(
+    "nothing sits at document root after it",
+    lines.slice(at + 1).every((l) => l === "" || /^ /.test(l)),
+    out,
+  );
+}
+
+t.section("T6d. removing the last row leaves the empty list, not a bare key");
+{
+  const dir = tree(REG_HEAD + "entries:\n" + row("a/one.mjs", "only row"));
+  const r = run(dir, "--remove", "a/one.mjs");
+  t.check("removed", r.status === 0, r.stdout + r.stderr);
+  const out = readFileSync(join(dir, REG_REL), "utf8");
+  t.check("the entries line declares an empty list", /^entries: \[\]$/m.test(out), out);
+  t.check("no bare entries key survives", !/^entries:$/m.test(out), out);
+}
+
+t.section("T6e. a missing register prints usage or names the file, without a stack");
+{
+  const dir = tree(null);
+  const bare = run(dir);
+  t.check("no arguments exits 2", bare.status === 2, String(bare.status) + bare.stderr);
+  t.check("no arguments prints usage", bare.stderr.startsWith("usage:"), bare.stderr);
+  t.check("no arguments raises no stack", !/ENOENT|at readFileSync/.test(bare.stderr), bare.stderr);
+  const chk = run(dir, "--check");
+  t.check("--check exits 2", chk.status === 2, String(chk.status) + chk.stderr);
+  t.check("--check names the register", chk.stderr.includes(REG_REL), chk.stderr);
+  t.check("--check raises no stack", !/\n\s+at |node:fs/.test(chk.stderr), chk.stderr);
+}
+
+t.section("T6f. --add refuses what --check would call stale");
+{
+  const before = REG_HEAD + "entries:\n" + row("a/one.mjs", "only row");
+  const dir = tree(before);
+  const r = run(dir, "--add", ".claude/tools/ghost.mjs", "r");
+  t.check("exits 2", r.status === 2, String(r.status) + r.stdout + r.stderr);
+  t.check("names the missing file", r.stderr.includes("no such file"), r.stderr);
+  t.check("the register is untouched", readFileSync(join(dir, REG_REL), "utf8") === before);
+}
+
+t.section("T6g. --add of a path that exists is followed by a clean --check");
+{
+  const dir = tree(REG_HEAD + "entries: []\n");
+  const add = run(dir, "--add", ".claude/tools/register-row.mjs", "the tool itself");
+  t.check("added", add.status === 0, add.stdout + add.stderr);
+  const chk = run(dir, "--check");
+  t.check("--check is clean", chk.status === 0, chk.stdout + chk.stderr);
+  t.check("--check reports nothing", chk.stdout === "", chk.stdout);
+}
+
+t.section("T6h. a no-op --add over the live register is byte-stable");
+{
+  const live = readFileSync(join(REPO, REG_REL), "utf8");
+  const dir = tree(live);
+  const r = run(dir, "--add", ".claude/tools/register-row.mjs", "a reason that must not be written");
+  t.check("already present", r.stdout.startsWith("already present:"), r.stdout + r.stderr);
+  t.check("the live rows are unperturbed", readFileSync(join(dir, REG_REL), "utf8") === live);
 }
 
 t.done();

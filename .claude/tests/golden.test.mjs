@@ -61,9 +61,9 @@ const CASES = [
     wf: ".claude/workflows/change-proposal.js",
     args: { mode: "review", proposalPath: "proposals/0081_fix_x", date: "d", exemplar: "e.md", repoRoot: "/repo", maxSpecReviewRounds: 4, maxNonSpecReviewRounds: 4 },
     stubs: {
-      bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": "YES", "snap*": "DONE",
+      bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" }, "snap*": "DONE",
       "*:review:*": { coverage: "c", findings: [] },
-      "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunks":0,"snapshot":"/s","overrides":{}}',
+      "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/s","overrides":{}}',
       "spec-nonspec-handoff": "ok", "introspect*": null, growth: { documentWas: 1, documentNow: 1, grew: [] },
       default: {},
     },
@@ -78,7 +78,7 @@ const CASES = [
     stubs: (() => {
       const F = { title: "T1", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" };
       return {
-        bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": "NO", "snap*": "DONE",
+        bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" }, "snap*": "DONE",
         "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: [F] } : { coverage: "c", findings: [] }),
         "*:dedup": { findings: [{ ...F, lenses: ["citations"] }] },
         "*:verify-material": { confirmed: true, reason: "m" },
@@ -107,7 +107,8 @@ const CASES = [
       "spec-targets:*": { files: ["spec/16.md"] }, "lease-open:*": "{}", "lease-release:*": "{}",
       "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
       "verify:S1:spec": { discrepancies: [] }, "commit-spec:*": "ok",
-      "compile:*": { compiles: true, errors: [], leaseHeld: false },
+      "compile:*": { compiles: true, errors: [] },
+      "lease-check:*": { leaseHeld: false },
       "build:*": { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1", filesChanged: ["pkg/a.go"], testsAddedOrModified: [] },
       "review:*": { findings: [] }, "verify:*": { green: true, tiersRun: ["unit"], failures: [] },
       "tick:*": "DONE", "compile-guard:*": { clean: true, compiles: true },

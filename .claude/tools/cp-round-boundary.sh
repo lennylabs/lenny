@@ -15,13 +15,18 @@
 # Usage:
 #   cp-round-boundary.sh --dir <proposal-dir> --tag <runTag> --loop <name>
 #                        --round <N> [--repo <root>] [--compact-at <lines>]
-#                        [--compact-growth <lines>]
+#                        [--compact-growth <lines>] [--standing-target <lines>]
+#                        [--standing-trigger <lines>]
 #
-# Prints one JSON object on stdout and nothing else:
+# Prints one JSON object on stdout, on one line, and nothing else:
 #   {
 #     "merged": <shards folded into the review log>,
 #     "ledgerLines": <lines under ## Ledger>,
 #     "compactionDue": true|false,
+#     "standingTarget": <lines the compaction pass is asked to reach>,
+#     "standingTrigger": <lines at which compaction becomes due>,
+#     "targetRaises": <times the target has been raised because a pass could not reach it>,
+#     "targetRaisedNow": true|false,
 #     "changedFiles": [ files that changed since the previous call ],
 #     "hunks": <changed hunks against the previous round's snapshot>,
 #     "snapshot": "<path to the snapshot this round starts from>"
@@ -32,7 +37,26 @@
 
 set -uo pipefail
 
-DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=2000; STANDING_AT=80; COMPACT_GROWTH=400
+DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=2000; COMPACT_GROWTH=400
+# The trigger and the target are SEPARATE numbers, and that is the whole point.
+# They used to be one: compaction became due at 80 lines and the pass was told to
+# reach 80 lines, so the moment a run could not get under 80 it paid for a pass
+# every round for the rest of its life. One measured run spent twelve passes
+# averaging 700s that way, ending at 376 lines, which is about a fifth of its
+# wall clock. A pass that reaches the target now buys real headroom before the
+# next one is due.
+#
+# The numbers are higher than they look because the cost arithmetic runs the
+# other way. A 376-line standing context read by every agent every round cost
+# that run roughly 4% of its tokens; the twelve passes protecting it cost 21% of
+# its wall clock. Carrying the section is cheap and compacting it is not.
+STANDING_TARGET=200; STANDING_TRIGGER=320
+# How far the target moves when a pass could not reach it, and how much headroom
+# the trigger keeps above the target.
+TARGET_HEADROOM=40; TRIGGER_HEADROOM=120
+# Whether a compaction pass actually RAN since the previous call. Only the caller
+# knows: this script can see that it ASKED for one, which is a different claim.
+COMPACTED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
@@ -41,8 +65,10 @@ while [ $# -gt 0 ]; do
     --round) ROUND="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --compact-at) COMPACT_AT="$2"; shift 2 ;;
-    --standing-at) STANDING_AT="$2"; shift 2 ;;
+    --standing-target) STANDING_TARGET="$2"; shift 2 ;;
+    --standing-trigger) STANDING_TRIGGER="$2"; shift 2 ;;
     --compact-growth) COMPACT_GROWTH="$2"; shift 2 ;;
+    --compacted) COMPACTED="$2"; shift 2 ;;
     *) echo "cp-round-boundary: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -55,6 +81,54 @@ STATE="$REPO/scratchpad/cp-state/$TAG"
 SHARDS="$REPO/scratchpad/cp-log/$TAG"
 SNAPS="$REPO/scratchpad/cp-snap/$TAG"
 mkdir -p "$STATE" "$SHARDS" "$SNAPS" || { echo "cp-round-boundary: cannot create state dirs" >&2; exit 1; }
+
+# Read an integer from a state file, falling back to a default unless the file
+# holds a plain non-negative integer.
+#
+# `cat` of an EMPTY file SUCCEEDS, so a `|| echo <default>` fallback never fires
+# and the guard has to be on the value. That matters because a kill during the
+# truncate-then-write of a state file leaves exactly that empty file: before this
+# guard, an empty standing-trigger made every `-ge` comparison error to false, so
+# compaction never became due again at any size, the file never healed, and the
+# script still exited 0 so the caller saw a healthy round. Non-numeric junk was
+# worse: it either aborted under `set -u` with no JSON, or emitted correct-looking
+# JSON with exit 1 forever.
+read_int() {
+  local f="$1" dflt="$2" v=""
+  [ -f "$f" ] || { printf '%s' "$dflt"; return 0; }
+  v=$(cat "$f" 2>/dev/null || printf '')
+  v="${v//[[:space:]]/}"
+  case "$v" in
+    ''|*[!0-9]*) printf '%s' "$dflt" ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+
+# Write a state file, or fail the round. `set -e` is deliberately not in force
+# here, so every state write was unchecked: a state directory that had become
+# unwritable produced a full success JSON and exit 0 while the write audit went
+# permanently blind and the ledger baseline froze. The header contract says the
+# script exits non-zero on any failure, and this is what makes that true of the
+# state writes.
+write_state() {
+  printf '%s\n' "$2" >"$1" || { echo "cp-round-boundary: cannot write $1" >&2; exit 1; }
+}
+
+# Escape a string for embedding in a JSON string literal. A proposal file whose
+# name contains a quote or a backslash produced invalid JSON on stdout, and the
+# caller then could not close the round at all.
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# The two thresholds are independent operator knobs, so setting only one is a
+# plausible mistake, and a trigger at or below the target reinstates the exact
+# latch this script exists to remove: compaction becomes due at a size the pass
+# is not even asked to get under, so it fires every round forever.
+case "$STANDING_TARGET" in ''|*[!0-9]*) echo "cp-round-boundary: --standing-target must be a non-negative integer" >&2; exit 2 ;; esac
+case "$STANDING_TRIGGER" in ''|*[!0-9]*) echo "cp-round-boundary: --standing-trigger must be a non-negative integer" >&2; exit 2 ;; esac
+if [ "$STANDING_TRIGGER" -le "$STANDING_TARGET" ]; then
+  echo "cp-round-boundary: --standing-trigger ($STANDING_TRIGGER) must exceed --standing-target ($STANDING_TARGET); using $((STANDING_TARGET + TRIGGER_HEADROOM))" >&2
+  STANDING_TRIGGER=$((STANDING_TARGET + TRIGGER_HEADROOM))
+fi
 
 STEM="$(basename "$DIR")"
 LOG="$DIR/$STEM.review-log.md"
@@ -77,7 +151,13 @@ if [ -d "$SHARDS" ] && [ -f "$LOG" ]; then
     # every entry after ## Retired and leave the ledger permanently empty. The
     # insertion point is the end of the Ledger section: just before the next
     # top-level heading, or at EOF when Ledger is last.
-    grep -q '^## Ledger' "$LOG" || { echo "cp-round-boundary: $LOG has no '## Ledger' heading" >&2; exit 1; }
+    # The guard must use the SAME pattern as the splice below. It used to be
+    # looser (`^## Ledger`), so a heading like `## Ledger (open)` passed the
+    # guard, matched nothing in the awk, produced an unchanged file, and then
+    # the shard was DELETED and counted as merged. That silently destroyed a
+    # reviewing agent's entire findings block and reported success.
+    grep -qE '^## Ledger[[:space:]]*$' "$LOG" || {
+      echo "cp-round-boundary: $LOG has no '## Ledger' heading on a line of its own" >&2; exit 1; }
     tmp="$LOG.merging"
     awk -v shard="$shard" '
       BEGIN { inledger = 0; done = 0 }
@@ -122,14 +202,119 @@ if [ -f "$LOG" ]; then
   ledger_lines=$(awk '/^## Ledger/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
   standing_lines=$(awk '/^## Standing context/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
 fi
-prev_ledger=0
-[ -f "$STATE/ledger-lines" ] && prev_ledger=$(cat "$STATE/ledger-lines" 2>/dev/null || echo 0)
+# The one integer state read left unguarded. An empty file is benign here, since
+# empty expands to 0 in the arithmetic below -- which is why it was missed -- but
+# `$(( ))` resolves a bare word as a VARIABLE NAME, so junk either aborts the
+# round under `set -u` with no JSON at all and never heals, or silently injects
+# another variable's value into the growth figure.
+prev_ledger=$(read_int "$STATE/ledger-lines" 0)
 growth=$((ledger_lines - prev_ledger))
-compaction_due=false
-if [ "$standing_lines" -ge "$STANDING_AT" ] || [ "$ledger_lines" -ge "$COMPACT_AT" ]; then
-  compaction_due=true
+
+# ---- 2b. Adaptive backoff -------------------------------------------------
+#
+# A target the pass structurally cannot reach is worse than no target: it fires
+# a pass every round, each one obeying its instructions and failing an
+# arithmetic impossibility. The standing context is an accumulator with one
+# drain -- every FACT, WATCHOUT, DECISION and MISTAKE from an aged entry is
+# lifted in, MISTAKE keeps its reasoning by instruction, OPEN and UNVERIFIED may
+# never be dropped, and only an explicit CORRECTS removes anything -- so what
+# it settles at is a property of the run rather than a number chosen in advance.
+#
+# So the run finds its own level. When a pass could not reach the target, the
+# target moves up to what it actually achieved plus headroom, and the trigger
+# follows. The count of raises is the signal worth reading: a run that keeps
+# raising is accumulating unresolved state faster than it resolves it, which is
+# what circling looks like from here.
+target=$STANDING_TARGET
+trigger=$STANDING_TRIGGER
+# The persisted pair is the ADAPTED value, so it is carried forward only while
+# the caller's own numbers are unchanged. Letting state win unconditionally
+# would mean a caller raising the target mid-run was silently ignored, which is
+# the one thing a knob must never do.
+base="$STANDING_TARGET:$STANDING_TRIGGER"
+prev_base=""
+[ -f "$STATE/standing-base" ] && prev_base=$(cat "$STATE/standing-base" 2>/dev/null || printf '')
+if [ "$base" = "$prev_base" ]; then
+  target=$(read_int "$STATE/standing-target" "$STANDING_TARGET")
+  trigger=$(read_int "$STATE/standing-trigger" "$STANDING_TRIGGER")
+else
+  # The caller changed its own numbers. Any pass in flight was given the OLD
+  # target, so judging it against the new one both misattributes it and can
+  # raise the target ABOVE the value the caller just asked for -- a request to
+  # tighten the budget producing a looser one than before.
+  rm -f "$STATE/compaction-pending" || true
 fi
-echo "$ledger_lines" >"$STATE/ledger-lines"
+# The raise count survives a base change: it counts passes that could not reach
+# whatever target stood at the time, which is a run-level signal either way.
+raises=$(read_int "$STATE/standing-raises" 0)
+# The CLI values were validated above; the pair read back from state was not, so
+# a state file holding trigger <= target reinstated the every-round latch.
+if [ "$trigger" -le "$target" ]; then trigger=$((target + TRIGGER_HEADROOM)); fi
+write_state "$STATE/standing-base" "$base"
+
+caller_gap=$((STANDING_TRIGGER - STANDING_TARGET))
+# Floored at 1, not at the default headroom: clamping a NARROW caller gap up to
+# the default is the same "silently ignore the knob" failure the wide case has.
+# The argument validation above already guarantees trigger > target, so the gap
+# is at least 1.
+[ "$caller_gap" -lt 1 ] && caller_gap=1
+
+raised_now=false
+if [ -f "$STATE/compaction-pending" ]; then
+  # WHICH threshold asked for the pass. The ledger backstop also requests one,
+  # and attributing its outcome to the standing context ratcheted the standing
+  # target up and reported a raise that never happened -- a false signal that
+  # reaches every reviewing agent's prompt through the introspection block.
+  pending_kind=$(head -1 "$STATE/compaction-pending" 2>/dev/null | awk '{print $1}' || printf '')
+  # A pass is judged only when one actually RAN. The marker records that a pass
+  # was ASKED for, which is a different claim: a run killed between the request
+  # and the pass would otherwise be read as a failed pass, raising the target
+  # past the current size and permanently excusing the very section that needed
+  # compacting.
+  if [ "$COMPACTED" = "1" ] && [ "$pending_kind" = "standing" ] && [ "$standing_lines" -gt "$target" ]; then
+    target=$((standing_lines + TARGET_HEADROOM))
+    trigger=$((target + caller_gap))
+    raises=$((raises + 1))
+    raised_now=true
+  fi
+  # Consumed either way: a new marker is written below if compaction is still
+  # due, so a crashed round re-requests rather than carrying a stale judgement.
+  rm -f "$STATE/compaction-pending" || true
+fi
+
+# Decay, so the ratchet is not one-way. Without it a single failed pass held the
+# target up for the rest of the run even after the section shrank back, and one
+# bad round disabled compaction permanently. The target follows the section down
+# as well as up, and never below the number the caller asked for.
+# The caller's own gap between target and trigger is preserved through both the
+# raise and the decay. Recomputing the trigger from the default headroom threw
+# away a deliberately wide trigger: an operator asking for 200/600 got 200/320
+# back after one raise-and-decay cycle, so compaction fired three times as often
+# as they asked -- the every-round latch, reintroduced through the decay path.
+
+if [ "$raised_now" = "false" ] && [ "$target" -gt "$STANDING_TARGET" ]; then
+  want=$((standing_lines + TARGET_HEADROOM))
+  [ "$want" -lt "$STANDING_TARGET" ] && want=$STANDING_TARGET
+  if [ "$want" -lt "$target" ]; then
+    target=$want
+    trigger=$((target + caller_gap))
+  fi
+fi
+
+compaction_due=false
+pending_write=""
+if [ "$standing_lines" -ge "$trigger" ]; then
+  compaction_due=true
+  pending_write="standing $standing_lines"
+elif [ "$ledger_lines" -ge "$COMPACT_AT" ]; then
+  compaction_due=true
+  pending_write="ledger $ledger_lines"
+fi
+[ -n "$pending_write" ] && write_state "$STATE/compaction-pending" "$pending_write"
+write_state "$STATE/standing-target" "$target"
+write_state "$STATE/standing-trigger" "$trigger"
+write_state "$STATE/standing-raises" "$raises"
+write_state "$STATE/ledger-lines" "$ledger_lines"
 
 # ---- 3. The write audit --------------------------------------------------
 #
@@ -141,12 +326,23 @@ changed="[]"
 HASHES="$STATE/hashes-$LOOP"
 new_hashes="$(cd "$DIR" && find . -maxdepth 1 -name '*.md' -exec md5sum {} + 2>/dev/null | sort -k2)"
 if [ -f "$HASHES" ]; then
+  # `awk '{print $3}'` yields an EMPTY field when a diff line has no third
+  # column, which happens when either side of the comparison is empty, so the
+  # audit reported a changed file named "" that does not exist. NF>=3 drops
+  # those. The gsub pair escapes a backslash and then a quote in the name: an
+  # unescaped one produced invalid JSON on stdout and the caller could not close
+  # the round at all.
   changed=$(diff <(cat "$HASHES") <(printf '%s\n' "$new_hashes") 2>/dev/null \
-    | grep '^[<>]' | awk '{print $3}' | sed 's|^\./||' | sort -u \
-    | awk 'BEGIN{printf "["} {printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}')
+    | grep '^[<>]' | awk 'NF>=3 {print $3}' | sed 's|^\./||' | sort -u \
+    | awk 'BEGIN{printf "["; n=0}
+           length($0) > 0 {
+             s=$0; gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s)
+             printf "%s\"%s\"", (n++ ? "," : ""), s
+           }
+           END{printf "]"}')
   [ -n "$changed" ] || changed="[]"
 fi
-printf '%s\n' "$new_hashes" >"$HASHES"
+write_state "$HASHES" "$new_hashes"
 
 # ---- 4. Snapshot the tree the NEXT round reads ---------------------------
 PREV="$SNAPS/$LOOP-r$((ROUND))"
@@ -161,12 +357,28 @@ rm -rf "$NEXT" && cp -r "$DIR" "$NEXT" || { echo "cp-round-boundary: snapshot fa
 OVERRIDES="{}"
 OV_FILE="$REPO/scratchpad/cp-args/$TAG.json"
 if [ -f "$OV_FILE" ]; then
-  if node -e "JSON.parse(require('fs').readFileSync('$OV_FILE','utf8'))" >/dev/null 2>&1; then
-    OVERRIDES="$(cat "$OV_FILE")"
+  # Re-emitted through JSON.stringify rather than spliced in as the file's own
+  # bytes. An operator hand-writing this file pretty-prints it, which is the
+  # documented way to change a knob mid-run, and a measured run of that made
+  # stdout four lines with no closing brace on the first. The calling prompt
+  # asks the agent for "that line" verbatim, so the agent returned line 1, the
+  # workflow's /\{[\s\S]*\}/ matched nothing, and every round closed
+  # INCONCLUSIVE for as long as the file existed. The parse is also the validity
+  # check, and the path goes through argv so a quote in it cannot rewrite the
+  # program. The non-object guard is here because a spliced array or bare number
+  # reached applyOverrides, where Object.entries turned it into index keys the
+  # log then reported as refused overrides.
+  ov=$(node -e '
+    const v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error("not an object");
+    process.stdout.write(JSON.stringify(v));
+  ' "$OV_FILE" 2>/dev/null)
+  if [ -n "$ov" ]; then
+    OVERRIDES="$ov"
   else
-    echo "cp-round-boundary: $OV_FILE is not valid JSON; ignoring it" >&2
+    echo "cp-round-boundary: $OV_FILE is not a JSON object; ignoring it" >&2
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$changed" "$hunks" "$NEXT" "$OVERRIDES"
+printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"

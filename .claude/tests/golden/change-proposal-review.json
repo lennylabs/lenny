@@ -21,7 +21,7 @@
     "label": "probe:spec-changes",
     "phase": "Review",
     "model": "haiku",
-    "schema": "",
+    "schema": "stagesSpecChanges+why",
     "blocks": []
   },
   {
@@ -961,7 +961,16 @@
     ]
   },
   {
-    "label": "mark-verified",
+    "label": "status:set-reviewed",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "status:record-run",
     "phase": "Review",
     "model": "",
     "schema": "",

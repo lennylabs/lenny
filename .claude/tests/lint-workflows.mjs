@@ -323,6 +323,54 @@ for (const file of targets) {
     }
   }
 
+  // 8. A ternary whose condition is a string concatenation. `+` binds tighter
+  //    than `?:`, so `"..." + cond ? A : B` tests the whole concatenated string
+  //    -- always truthy -- and yields A, silently discarding everything before
+  //    it. One instance of this shipped: a spec verifier received a prompt with
+  //    every one of its instructions removed and returned "no discrepancies"
+  //    because it had been asked nothing. It is invisible to `node --check`,
+  //    reads correctly at a glance, and the test suite pinned it via a negative
+  //    assertion that passed against the truncated prompt.
+  {
+    const lines = code.split("\n");
+    const bad8 = [];
+    const nextCode = (from) => {
+      let j = from;
+      while (j < lines.length && (/^\s*$/.test(lines[j]) || /^\s*\/\//.test(lines[j]))) j++;
+      return j;
+    };
+    lines.forEach((l, i) => {
+      if (!/\+\s*$/.test(l)) return;
+      const j = nextCode(i + 1);
+      const cond = lines[j];
+      if (cond === undefined || cond.trim() === "") return;
+      const k = nextCode(j + 1);
+      const then = lines[k];
+      if (then === undefined || !/^\s*\?/.test(then)) return;
+      // The discriminator is paren BALANCE, not the first character: the
+      // buggy `(applied.deviations || []).length` also starts with `(` while
+      // being exactly the defect. A correctly wrapped ternary leaves an open
+      // paren -- `((cond).length ? A : B)` -- so depth is positive by the time
+      // the `?` line is reached. Depth of zero means the ternary is bare and
+      // its condition swallows everything concatenated before it.
+      const depth = (t) => {
+        const bare = t.replace(/"(\\.|[^"\\])*"/g, "").replace(/'(\\.|[^'\\])*'/g, "");
+        return (bare.match(/\(/g) || []).length - (bare.match(/\)/g) || []).length;
+      };
+      // Only the CONDITION's own lines. Including the preceding `+` line
+      // counted its closing paren from an earlier group, so the correct
+      // `... : "") +\n(cond\n  ? A : B)` shape netted to zero and was flagged.
+      let d = 0;
+      for (let m = j; m < k; m++) d += depth(lines[m]);
+      if (d > 0) return;
+      bad8.push(j + 1);
+    });
+    if (bad8.length) {
+      fail(file, "ternary condition is a string concatenation (line " + bad8.join(", ") +
+        "): `+` binds tighter than `?:`, so everything before the condition is discarded");
+    }
+  }
+
   if (!STRICT) console.log("  ok    " + basename(file));
   else console.log("  ok    " + basename(file) + " (strict)");
 }

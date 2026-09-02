@@ -16,10 +16,23 @@ const ARGS = {
   date: "2026-08-31",
 };
 
+const ALL = [
+  "problem-statement",
+  "summary",
+  "status",
+  "implementation-checklist",
+  "spec-changes",
+  "non-spec-changes",
+  "review-log",
+  "deviations",
+];
+
 // A stub table for the happy path; individual cases override one entry.
 const ok = (over = {}) => ({
   assess: { state: "legacy", status: "Draft", title: "Scope the generation", kind: "fix" },
   split: { written: ["problem-statement", "summary", "status", "spec-changes"], notes: "" },
+  "confirm-split": { present: ALL, missing: [] },
+  "status:write": { ok: true, printed: "Draft" },
   "check-split": { ok: true, lost: [] },
   "retarget-refs": { sites: [{ file: "BUILD-GAPS.md", was: "a.md", now: "a/", why: "a finding points at it" }], unresolved: [] },
   "drop-legacy": "DONE",
@@ -32,7 +45,7 @@ t.section("M1. it migrates a legacy proposal and lands it");
   const { result, calls } = await runWorkflow(WF, ARGS, ok());
   t.check("status migrated", result.status === "migrated", JSON.stringify(result).slice(0, 160));
   t.check("names the directory", result.dir === "proposals/0076_fix_scope-the-generation");
-  t.check("reports all eight role files", (result.files || []).length === 8, String((result.files || []).length));
+  t.check("reports the confirmed role files", (result.files || []).length === ALL.length, String((result.files || []).length));
   t.check("the legacy file is dropped only after the check", firstIndex(calls, "drop-legacy") > firstIndex(calls, "check-split"));
   t.check("and only after references are retargeted", firstIndex(calls, "drop-legacy") > firstIndex(calls, "retarget-refs"));
   t.check("it commits", !never(calls, "commit-migration"));
@@ -93,6 +106,13 @@ t.section("M5. idempotence and resume");
   t.check("already-migrated returns at once", result.status === "already", result.status);
   t.check("no split agent runs", never(calls, "split"));
   t.check("only the assessment ran", labels(calls).filter((l) => l !== "assess").length === 0, labels(calls).join(","));
+  // The caller prefixes the returned dir with the repo root, so an absolute one
+  // here becomes /repo//repo/proposals/<stem> and every command built from it fails.
+  t.check(
+    "and reports the directory repo-relative, as a fresh migration does",
+    result.dir === "proposals/0076_fix_scope-the-generation",
+    String(result.dir),
+  );
 }
 {
   const { calls } = await runWorkflow(WF, ARGS, ok({
@@ -118,6 +138,7 @@ t.section("M6. an unresolvable inbound reference stops the migration");
   t.check("the legacy file is NOT dropped", never(calls, "drop-legacy"));
   t.check("nothing is committed", never(calls, "commit-migration"));
   t.check("the unresolved site is reported", (result.unresolved || []).join().includes("x_test.go"));
+  t.check("a stopped migration reports the directory repo-relative too", result.dir === "proposals/0076_fix_scope-the-generation", String(result.dir));
 }
 {
   const { calls } = await runWorkflow(WF, ARGS, ok());
@@ -133,6 +154,63 @@ for (const dead of ["assess", "split", "check-split", "retarget-refs"]) {
   const { result, calls } = await runWorkflow(WF, ARGS, ok({ [dead]: null }));
   t.check(dead + " dying stops the run", result.status !== "migrated", result.status);
   t.check(dead + " dying leaves the legacy file", never(calls, "drop-legacy"));
+}
+
+t.section("M8. a status the tool could not read never reaches the frontmatter");
+for (const bad of [
+  "proposal-status: legacy proposal has no Status bullet: /repo/proposals/0076_fix_scope-the-generation.md",
+  "proposal-status: unrecognised legacy status: Parked pending discussion (2026-01-01).",
+  "proposal-status: no such proposal: /repo/proposals/0076_fix_scope-the-generation",
+  "",
+]) {
+  const { result, calls } = await runWorkflow(WF, ARGS, ok({
+    assess: { state: "legacy", status: bad, title: "T", kind: "fix" },
+  }));
+  t.check("stops on " + JSON.stringify(bad.slice(0, 34)), result.status === "unreadable-status", result.status);
+  t.check("no split runs", never(calls, "split"));
+  t.check("the legacy file survives", never(calls, "drop-legacy"));
+  t.check("nothing is committed", never(calls, "commit-migration"));
+  t.check("and the unreadable text reaches no prompt", calls.every((c) => !bad || !c.prompt.includes(bad)));
+}
+
+t.section("M9. what the split claims is verified against the filesystem");
+{
+  const { result, calls } = await runWorkflow(WF, ARGS, ok({
+    split: { written: ALL, notes: "" },   // the agent claims all eight
+    "confirm-split": { present: ALL.filter((r) => r !== "review-log" && r !== "deviations"),
+                       missing: ["review-log", "deviations"] },
+  }));
+  t.check("a missing role file stops the run", result.status === "incomplete-split", result.status);
+  t.check("it names what is missing", (result.missing || []).join().includes("deviations"));
+  t.check("it stops before the repair passes", never(calls, "repair-split"));
+  t.check("the legacy file is NOT dropped", never(calls, "drop-legacy"));
+  t.check("nothing is committed", never(calls, "commit-migration"));
+}
+{
+  // ok()'s split stub still reports four roles; the confirmation reports eight.
+  const { result } = await runWorkflow(WF, ARGS, ok());
+  t.check("every file it reports was confirmed on disk", (result.files || []).length === ALL.length);
+  t.check("and written is the confirmed set, not the claim", (result.written || []).length === ALL.length);
+}
+
+t.section("M10. the status is written through the tool, after the split and before landing");
+{
+  const { calls } = await runWorkflow(WF, ARGS, ok());
+  const w = calls.find((c) => c.label === "status:write");
+  t.check("a status write runs", !!w);
+  t.check("through the tool, with the state the tool read", !!w && /proposal-status\.mjs.*--set status=Draft/.test(w.prompt));
+  t.check("it stamps no date, which would be the migration's own", !!w && !/--date/.test(w.prompt));
+  t.check("after the split", firstIndex(calls, "status:write") > firstIndex(calls, "split"));
+  t.check("before the legacy file is dropped", firstIndex(calls, "status:write") < firstIndex(calls, "drop-legacy"));
+}
+{
+  const { result, calls } = await runWorkflow(WF, ARGS, ok({
+    "status:write": { ok: false, printed: "proposal-status: no frontmatter in .../0076.status.md" },
+  }));
+  t.check("a refused status write stops the run", result.status === "status-not-written", result.status);
+  t.check("the legacy file survives", never(calls, "drop-legacy"));
+  t.check("nothing is committed", never(calls, "commit-migration"));
+  t.check("the tool's own words are reported", String(result.reason).includes("no frontmatter"));
 }
 
 t.done();

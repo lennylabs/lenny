@@ -61,7 +61,15 @@ A partition check asserts that every content line of the original survived the s
 
 The spec staging converges first, alone. Then the non-spec staging converges, with the lenses reading **both change files as one document**, because a non-spec change that contradicts a staged spec edit is a finding only a reviewer holding both can see. The spec loop is skipped only when a cheap probe reports the proposal INTENDS no change under `spec/`. Intent rather than completeness: a proposal that names a spec target it has not written yet needs the loop more than one whose staging is finished, because writing that text is the work the loop does.
 
-**Between them is a reconciliation, not a review round.** The spec staging is settled by then and the checklist has not been written against it, so one pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked.
+**Between them is a reconciliation.** One pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block, and it discharges the `DEFERRED` entries the spec loop recorded: it applies the ones that are repairs to text already written, filing a `CORRECTS` for each, and carries forward as an `OPEN` any that would require authoring a staged change no non-spec lens has read. That is the one place the pass changes what the proposal says, and only to apply a correction the spec loop already derived. Before it existed, those corrections accumulated for four and a half hours on a measured run as an errata list in the summary promising fixes that no lane owned. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked. It runs **whether or not the spec loop converged**, because a loop that exhausted its budget has more unreconciled consequences than one that converged, and it is told which case it is in so it reconciles to the current text rather than guessing where open findings will land.
+
+**The spec loop runs a smaller pool.** It drops the `test-coverage` lens, since the tests a change needs are staged in the non-spec half, so spec convergence certifies nothing about test coverage.
+
+**The reconciliation does not run after an introspection stop.** A `halt` or `reframe` ends the run where it stands and nothing is reconciled.
+
+**The non-spec loop does not start on a spec staging that is still moving.** When the spec loop exhausts its budget without converging, the run reconciles, then stops with status `spec-not-converged`, naming the rounds, the budget, and what the loop was still finding. Raising `maxSpecReviewRounds` and resuming is the operator's call; spending the second budget reviewing against staging that is still open is not a decision the run makes silently. `allowNonSpecOnUnconvergedSpec` overrides this.
+
+**The spec fixer repairs what its own edits falsify in the non-spec staging.** It may correct a statement already written in `non-spec-changes.md` that one of its own spec edits just made false, in the same edit, and only where that file already has content. The trigger is always a spec finding: it never goes looking there, may not author a staged change because a spec edit implies one is needed, and may not touch a defect that is wrong on its own terms. The lenses are unchanged and are told not to file such a statement as a finding, because it is the consequence of an edit rather than a finding of its own. The checklist is deliberately excluded and its drift stays with the reconciliation pass.
 
 Each loop keeps its own rounds, retired set, sweeps, and convergence, because a lens satisfied by the spec staging has said nothing about the code staging. The refuted-findings memory and the round history stay run-wide, so a finding refuted in the first loop is not re-litigated in the second.
 
@@ -77,9 +85,11 @@ A verifier that **died** is not a refusal. The finding reaches neither verdict, 
 
 Three stages replace one fixer.
 
+**site expansion** runs first, one Sonnet agent per confirmed finding, in parallel. It starts from the sites the finding already names and answers one question about the rest of the repository: if this fix lands, which other text becomes wrong? The test is falsification rather than relatedness, so a site that discusses the same subject and stays true is not reported; consistent restatement is excluded by the review bar. Results land in `potentiallyRelatedSites` on the finding, never merged into `where` or `evidence`, because those two survived two verifiers and these did not. Proposal sites and tree sites are kept apart: the fixer edits the first and may not touch the second, where a falsified site means the proposal is missing an edit site.
+
 **fix-plan** splits the round's confirmed findings into cohesive groups. The only cap is on the number of groups; **group size is uncapped**, because size is the wrong axis. Forty trivial citation corrections that share a subject belong in one group where one fixer applies them consistently, while three deep design findings belong in three groups however few they are. A partition that drops, duplicates, or invents an index is rejected in favour of one group of everything.
 
-**fix-design** designs each group, read-only, in parallel. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
+**fix-design** designs each group, read-only, in parallel. It adjudicates every potentially related site into `in-scope` (this fix makes it wrong, so it changes in the same edit), `separate-finding` (already wrong for a reason of its own, and fixing it here would be an unreviewed edit), or `not-a-site`. The designer bounds the fixer, which is what keeps expansion from inflating an edit that is already the likeliest source of the next round's findings. A location an earlier round already rewrote arrives with each previous attempt and why it was rejected, and the design must say how this attempt differs in kind rather than in degree. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
 
 The designs are produced in parallel and none sees the others, so **one reconciliation pass** runs over all of them before any is applied. It resolves rather than reports, prefers merging two additions into one, and returns revised designs for the groups it changed. Catching a conflict there costs one agent; catching it in the post-fix review costs a round and two edits to unpick.
 
@@ -89,11 +99,17 @@ One **post-fix review** runs per round over every group's edits, which catches t
 
 ### The review log
 
-Every agent appends what a future agent would need, with a fixed tag vocabulary: `DECISION` with its alternatives, `WATCHOUT` with evidence, `FACT`, `MISTAKE`, `UNVERIFIED`, `OPEN`, and the two that make compaction possible, `CORRECTS` and `USEFUL`. Each writes its own shard, because a dozen lenses appending to one file in parallel lose writes.
+Most agents append what a future agent would need, with a fixed tag vocabulary: `DECISION` with its alternatives, `WATCHOUT` with evidence, `FACT`, `MISTAKE`, `UNVERIFIED`, `OPEN`, `DEFERRED` for a correction the agent derived but may not land because its remedy is in a file its loop cannot edit, and the two that make compaction possible, `CORRECTS` and `USEFUL`. An `OPEN` is a question nobody has answered and a `DEFERRED` is an answer nobody has applied, which is why they are separate tags and only one of them has an owner. Each writes its own shard, because a dozen lenses appending to one file in parallel lose writes.
 
 One agent per round runs `cp-round-boundary.sh`, which merges the shards, measures the log, compares file hashes for the write audit, snapshots the tree the next round reads, and returns the caller's mid-run overrides.
 
-**Compaction triggers on the standing context, not the ledger.** Every agent is told to read `## Standing context` and nothing else, so that is the only section anyone carries; the ledger is read end to end by the compactor alone. Triggering on ledger length fired an expensive pass to protect against a cost that does not exist — on one measured run, three passes averaging fifteen minutes each while the section they were protecting sat at 92 lines against its 80-line target. The pass reads once and writes once, and does **not** check the repository: doing so turned a text operation into a mini-review. `MISTAKE` is named the most valuable tag and is never dropped, because an entry saying *"I spent this round hunting X; it is not there"* saves a later agent a whole round. Otherwise it acts on the log's own signals: a `CORRECTS` entry rewrites or retires its target, a superseded watchout is deleted rather than kept, a `USEFUL` entry is promoted and never dropped, and contradictions are resolved against the repository rather than by recency.
+**Compaction triggers on the standing context, with the ledger as a backstop.** That is the section every agent carries; the ledger is read end to end by the compactor alone, though agents cite individual entries by id, so an aged entry is retired rather than deleted and keeps its id. Triggering on ledger length fired an expensive pass to protect against a cost that does not exist.
+
+**The trigger and the target are separate numbers, and the target moves.** They were one number, so a run that could not reach it paid for a pass every round for the rest of its life: one measured run spent twelve passes averaging 700s and ended at 376 lines against a target of 80. When a pass cannot reach the target, the target rises to what it achieved plus headroom and the trigger follows, so the run finds its own level. It decays the same way: as the section shrinks the target follows it back down, never below the number the caller asked for, so one failed pass does not hold the target up for the rest of the run. Both directions preserve the caller's own gap between target and trigger rather than reverting to the default. The numbers are deliberately high, because the cost runs the other way than it looks: on that run the oversized section cost about 4% of the tokens and the passes protecting it cost about 21% of the wall clock. The count of raises goes to the introspection pass, where a count that keeps climbing says the loop is accumulating unresolved state faster than it resolves it.
+
+**`## Standing context` is structured rather than merely bounded.** `### Settled` and `### Open` are one line per entry and always meet their budget; `### Traps` carries the `WATCHOUT` and `MISTAKE` entries at up to four lines each with no cap on how many, because a trap the reader cannot recognise is one they walk into anyway. `### Deferred` holds every unclosed `DEFERRED` whole rather than summarised, because the reconciliation pass applies these and cannot apply a headline. Each entry gets a short bold subject: measured on a real run, agents cite standing-context entries by subject and a quarter of all citations went to two of them, so navigability is worth more than brevity.
+
+The pass edits rather than rewriting the whole file. It was told to write the file once, and every pass ignored it, because reproducing fourteen hundred unchanged ledger lines to change forty standing-context ones is not a saving; the instruction was wrong. Paging the file in with `sed -n` and assembling the result through heredocs is still barred. It does **not** check the repository, since doing so turned a text operation into a mini-review. `MISTAKE` is named the most valuable tag and is never dropped, because an entry saying *"I spent this round hunting X; it is not there"* saves a later agent a whole round. Otherwise it acts on the log's own signals: a `CORRECTS` entry rewrites or retires its target, a superseded watchout is deleted rather than kept, a `USEFUL` entry is promoted and never dropped, and two entries that disagree with no correction between them resolve to the newer, with the older retired.
 
 ### Introspection
 
@@ -110,6 +126,8 @@ A stopping verdict carries **proposed next steps**, because a halt that says onl
 When the run returns `introspection.stoppedBy` with `verdict: "halt"`, **and** `introspection.nextSteps.confidence` is `clear`, **and** the proposed `rerunArgs` parse and name only known arguments:
 
 **Relaunch the workflow immediately with those arguments, without asking first.** Report that you did, with the pass's reasoning and the arguments used.
+
+A stopped run returns status `stopped-halt` or `stopped-reframe`, and its findings remain open.
 
 At most **two** automatic restarts per invocation; track the count yourself. On the third, stop and put the question to the user. Stop and ask also when `confidence` is `needs-human`, when the arguments do not parse, or when the verdict is `reframe` and the pass proposed no problem-statement edit: a reframe rewrites the problem, and rewriting it on a guess is worse than pausing.
 
@@ -128,32 +146,40 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `exemplar` | anchored | — | the highest-numbered other proposal |
 | `context` | anchored | none | citations gathered so far; the run re-verifies all of them |
 | `planPath` | anchored | none | a plan this proposal implements steps of; enables `plan-conformance` |
-| `maxSpecReviewRounds` | forward | 10 | budget for the spec loop |
-| `maxNonSpecReviewRounds` | forward | 16 | budget for the non-spec loop |
+| `maxSpecReviewRounds` | forward | 15 | budget for the spec loop |
+| `maxNonSpecReviewRounds` | forward | 15 | budget for the non-spec loop; it wins over `maxReviewRounds`, which applies only when this is unset |
+| `maxReviewRounds` | forward | none | a fallback budget for the non-spec loop, used only when `maxNonSpecReviewRounds` is absent |
 | `skipSpecReview`, `skipNonSpecReview` | launch | false | a skipped loop certifies nothing about its half, echoed in the result |
 | `lockSpecChanges` | forward | false | the non-spec loop may never edit the spec staging; such a finding becomes an open decision |
+| `allowNonSpecOnUnconvergedSpec` | forward | false | runs the non-spec loop even when the spec loop exhausted its budget; otherwise the run stops at `spec-not-converged` |
 | `verifyOrder` | forward | `["material","evidence"]` | which skeptic short-circuits |
 | `verifySequential` | forward | true | false restores both skeptics in parallel |
 | `maxFixGroups` | forward | 7 | the only cap on the fix split; group size is uncapped by design |
 | `fixDesignDepth` | forward | `auto` | `shallow` forces the trivial path; `deep` forces the architect path |
+| `maxExpansions` | forward | 12 | confirmed findings per round given a site-expansion pass. A finding the cap skipped, or whose pass died, is marked as NOT SEARCHED in the designer's and fixer's prompts, so absence of sites is never read as evidence there are none |
+| `skipExpansion` | forward | false | turns site expansion off; the designer then sees only the sites the finding names |
 | `introspectEvery` | forward | 5 | rounds between mandatory passes |
 | `introspectGate` | forward | true | the warrant gate; a cadence wake ignores it either way |
 | `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts |
 | `judgesHealthy` | forward | 2 | panel size for `healthy` |
 | `falsificationBar` | forward | `conclusive` | `partial` makes the panel easier to convince |
-| `standingContextMaxLines` | forward | 80 | the compaction **trigger** and its target: the standing context is the only section any agent reads |
+| `standingContextTarget` | forward | 200 | what a compaction pass is asked to reach; raises itself when a pass cannot |
+| `standingContextTrigger` | forward | 320 | when compaction becomes due, kept above the target so a pass buys real headroom |
 | `compactAtLines` | forward | 2000 | a backstop on ledger length, not the trigger |
-| `lensPrompt` | anchored | none | appended to every review lens; an alias for `prompts.review` |
+| `compactGrowthLines` | forward | 400 | plumbed to the boundary script and read by nothing; the knob has no effect |
+| `kind` | launch | `fix` | selects the `NNNN_[new/fix]_<slug>` directory segment in `new` mode |
+| `lensPrompt` | anchored | none | appended to every review lens. This is the only route to them; there is no `prompts.review` key |
 | `prompts` | anchored | `{}` | per-agent text, keyed by agent |
 | `startLenses` | anchored | none | lens keys to lead with; every other begins retired and first reads in the sweep |
 | `excludeLenses` | forward | none | lens keys removed entirely; convergence certifies nothing about those domains |
 | `focusAreas` | launch | none | required in `redesign`: a slug or `{area, reason}` each |
 | `churnWindow`, `churnMinFindings`, `churnStrikes` | forward | 6, 5, 3 | the churn detector's thresholds |
 | `maxRedesigns`, `redesignReviewRounds` | forward | 2, 2 | the redesign budget |
+| `maxPrunes` | forward | 2 | the prune budget; a section the run already pruned is not pruned again |
 | `runTag` | anchored | the stem | namespaces the log shards, snapshots, cache, and state |
 | `resumeState` | launch | false | continue a loop at its recorded round with its retired set |
 
-`prompts` keys: `init`, `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `review`, `review.<lensKey>`, `fix-plan`, `fix-design`, `fix`, `compact`, `introspect`, `introspect.gate`, `judge.<verdict>`. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
+`prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. `introspect` reaches only the gate by prefix fallback; the introspection pass itself takes no injected text. To add text to every review lens use `lensPrompt`, which is a standalone argument rather than a `prompts` key. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
 Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, the rotating extras `operational` and `fresh`, and `plan-conformance` when `planPath` is set. An unknown key in `startLenses` or `excludeLenses` is a hard error.
 
@@ -161,7 +187,7 @@ Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `k
 
 | Situation | What to do |
 |:--|:--|
-| Run is live, changing a `forward` argument | Write `scratchpad/cp-args/<runTag>.json`. Do not stop the run; it takes effect at the next round boundary |
+| Run is live, changing one of the ten mergeable arguments | Write `scratchpad/cp-args/<runTag>.json`. Do not stop the run; it takes effect at the next round boundary. Only `maxFixGroups`, `fixDesignDepth`, `lockSpecChanges`, `maxExpansions`, `skipExpansion`, `standingContextTarget`, `standingContextTrigger`, `compactAtLines`, `compactGrowthLines` and `introspectEvery` merge in flight. Every other argument needs a relaunch, the review-round budgets included, so recovering from `spec-not-converged` means relaunching with a higher `maxSpecReviewRounds` |
 | Run is live, changing an `anchored` argument | `TaskStop`, then relaunch with `resumeState: true` and the new arguments |
 | Run died, nothing changed | Relaunch with `{scriptPath, resumeFromRunId}` |
 | Run died, only `forward` arguments changed | Relaunch with `{scriptPath, resumeFromRunId}` and the new arguments |
@@ -207,8 +233,9 @@ Agents inherit the session model and effort. Run this with the strongest availab
 
 1. Run `git status --porcelain` and confirm the only changes are inside the proposal directory, plus the reference retargeting if a migration ran. Restore anything else and report the violation.
 2. Report the path, the title, what validation refuted, what the challenge dropped, whether each loop converged, the rounds, and the findings fixed. Report `review.loops[].specTouched` when the non-spec loop edited the spec staging.
-3. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
-4. Do not apply any staged edit, and do not commit unless asked.
+3. A run the introspection pass stopped returns status `stopped-halt` or `stopped-reframe`; report it as stopped with its findings open rather than as reviewed.
+4. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
+5. Do not apply any staged edit, and do not commit unless asked.
 
 ## Maintenance
 

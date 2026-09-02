@@ -49,18 +49,19 @@ An imperfect checklist does not stop the run. A step whose surface is already pr
 For a non-spec step:
 
 ```
-0.  compile gate         go build over the changed packages, and assert no lease is held
+0.  lease gate            assert no spec write lease is held, before anything else
 1.  implement, or fix what the last round left
-2.  conformance and invariants review of the step's diff       <- no tests run
-3.  findings? fix and return to 2
-4.  tests, scoped to what the fix warrants
-5.  failures? fix and return to 2, which re-checks conformance before re-testing
-6.  FINAL GATE: the full tier set the checklist names, over the finished tree
+2.  compile gate          go build over the packages this step changed
+3.  conformance and invariants review of the step's diff       <- no tests run
+4.  findings? fix and return to 2
+5.  tests, scoped to what the fix warrants
+6.  failures? fix and return to 2, which re-checks conformance before re-testing
+7.  FINAL GATE: the full tier set the checklist names, over the finished tree
       not green -> record the miss, then back to the fix loop; the gate re-runs
-7.  tick the checklist box
+8.  tick the checklist box
 ```
 
-The review runs **before** the tests because most fixes in a step answer that review, and running the tier set after each of them ran the same suites over and over while they stayed green. The compile gate exists because a reviewer handed code that does not build produces confident nonsense.
+The review runs **before** the tests because most fixes in a step answer that review, and running the tier set after each of them ran the same suites over and over while they stayed green. The compile gate exists because a reviewer handed code that does not build produces confident nonsense. The lease gate is first because a code step that runs under a leaked spec lease has already written and committed with `spec/` writable by the time any later check could fire. The compile gate cannot be first: it needs the round's diff to build.
 
 **A step is never ticked on a gate that did not pass.** The full set runs against the exact tree being ticked, which is the guarantee every scoped run in between borrows against.
 
@@ -128,7 +129,7 @@ Invoke by `{scriptPath}`, never by name: a name resolves to a cached copy, so a 
 
 Arguments, all with defaults: `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
 
-`spec-only` runs the leading spec-lane prefix. Under the standard pattern that prefix is every spec step and the mode is total, which is what `close-build-gaps.sh --mode proposals` relies on. On a proposal that genuinely interleaves it is not, and the run returns `spec-only-incomplete` naming the step behind the interleave rather than silently skipping it.
+`spec-only` runs the leading spec-lane prefix. Under the standard pattern that prefix is every spec step and the mode is total, which is what `close-build-gaps.sh --mode proposals` relies on. On a proposal that genuinely interleaves it is not, and the run returns `spec-only-incomplete` rather than silently skipping the interleaved spec step. That result carries `stoppedAt`, the non-spec step the run stopped at, and `specStepsBehind`, the spec steps that sit behind it and did not land.
 
 Run with a strong model at high effort. Before a run whose steps reach tier 5 or above, work through the Environment preflight in `.claude/rules/test-coverage.md` yourself: stale images, terminal pods from an earlier run, a warm pool that cannot reach Ready, and orphaned envtest processes all produce failures that look exactly like a defect in the step under test.
 
@@ -141,10 +142,10 @@ Stop the stale task with `TaskStop`, then relaunch with `{scriptPath, resumeFrom
 1. Run `git status --porcelain` and `git log --oneline` for the run's commits. Confirm spec commits are per spec step, code is under `pkg/`, `cmd/`, `charts/`, `schemas/`, and `tests/`, and `BUILD-GAPS.md` carries the closed findings.
 2. Report `deviationsFile` and its contents whenever entries exist. This is the run's statement of what did not land as proposed, and it is the input a human needs to decide whether the proposal or the code was wrong.
 3. Report `gateMisses` whenever non-empty: each is a tier the scoped runs said could not be affected and the full pass proved otherwise.
-4. Report `proposalEdits` whenever `edited` is true. An agent modified the proposal despite the instruction; the edit was kept rather than reverted, so a human decides.
+4. Report `proposalEdits` whenever `edited` is true. An agent modified the proposal despite the instruction; the edit was kept rather than reverted, so a human decides. Under the folder layout the audit excludes the implementation-checklist and deviations files, which the run itself is entitled to write, so what it reports is an edit to the proposal's authored text. On a legacy single-file proposal every role lives in one file and no exclusion is possible, so a reported edit may be the run's own ticked box or appended deviation; the report's `whatChanged` says which.
 5. Report `reverifyRepaired`, `checklistDeviations`, and `skippedSteps` whenever non-empty. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
 6. On `implemented`: the spec commits, the steps with their commits, the coverage, that the review is clean, and the findings closed. Suggest pushing; do not push unless asked.
-7. On `spec-step-failed`: the step, why, and that earlier steps are committed. On `lease-leaked`: a spec step did not release its lease and `spec/` is writable; release it and re-run. On `bad-lane`: the checklist has a step whose lane selects no handler. On `build-step-stuck`: the step, the reason, and the `resumeNote`; when a `stuckFindings` entry is `unproductive`, report its `outstandingWork` as work still to do rather than as a failure of the run.
+7. On `spec-step-failed`: the step, why, and that earlier steps are committed. On `lease-leaked`: either a spec step did not release its lease and `spec/` is writable, or the lease check did not answer and the run stopped rather than assume it was clear; the `reason` says which. Check with `spec-lease.mjs status`, release, and re-run. On `bad-lane`: the checklist has a step whose lane selects no handler. On `spec-only-incomplete`: the step the run stopped at (`stoppedAt`), the spec steps behind it (`specStepsBehind`) that did not land, and that the prefix which did land is applied and committed. On `build-step-stuck`: the step, the reason, and the `resumeNote`; when a `stuckFindings` entry is `unproductive`, report its `outstandingWork` as work still to do rather than as a failure of the run.
 8. Do not push or open a PR unless asked.
 
 ## Relationship to the build loop

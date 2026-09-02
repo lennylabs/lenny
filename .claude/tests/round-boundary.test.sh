@@ -55,20 +55,165 @@ OUT="$(run spec 5)"
 contains "an unchanged tree reports nothing" "$OUT" '"changedFiles":[]'
 
 echo; echo "T11b. compaction fires on the STANDING CONTEXT, which is the only section agents read"
-OUT="$(run spec 6 --compact-at 100000 --standing-at 100000)"
+OUT="$(run spec 6 --compact-at 100000 --standing-trigger 100000)"
 contains "not due below both thresholds" "$OUT" '"compactionDue":false'
 contains "standing lines are reported" "$OUT" '"standingLines":'
-OUT="$(run spec 7 --compact-at 100000 --standing-at 1)"
+OUT="$(run spec 7 --compact-at 100000 --standing-target 0 --standing-trigger 1)"
 contains "due on standing-context size" "$OUT" '"compactionDue":true'
 # A long ledger alone does NOT trigger: nothing but the compactor reads it, so
 # firing an expensive pass on its length protects against a cost that does not
 # exist. It keeps a backstop bound, far higher.
 fresh_log
 for i in $(seq 1 60); do printf -- "- FACT: line %s\n" "$i" >> "$REPO/scratchpad/cp-log/$TAG/spec.8.g.md"; done
-OUT="$(run spec 8 --compact-at 100000 --standing-at 100000)"
+OUT="$(run spec 8 --compact-at 100000 --standing-trigger 100000)"
 contains "a long ledger alone does not trigger it" "$OUT" '"compactionDue":false'
-OUT="$(run spec 9 --compact-at 1 --standing-at 100000)"
+OUT="$(run spec 9 --compact-at 1 --standing-trigger 100000)"
 contains "but the ledger backstop still can" "$OUT" '"compactionDue":true'
+
+echo; echo "T11e. the target and the trigger are separate, and the target backs off"
+# Fresh adaptation state: earlier blocks left a pending-compaction marker and a
+# persisted pair behind, and this block is about how a run adapts from scratch.
+rm -f "$REPO/scratchpad/cp-state/$TAG"/standing-* "$REPO/scratchpad/cp-state/$TAG"/compaction-pending
+# A standing context well over the target, so a compaction that "runs" between
+# two boundary calls cannot have reached it.
+{
+  printf '# Review log\n\n## Standing context\n'
+  for i in $(seq 1 40); do printf -- "- FACT: standing %s\n" "$i"; done
+  printf '\n## Ledger\n\n## Retired\nold\n'
+} > "$LOG"
+OUT="$(run spec 20 --standing-target 5 --standing-trigger 10)"
+contains "the target is reported" "$OUT" '"standingTarget":'
+contains "the trigger is reported separately" "$OUT" '"standingTrigger":'
+contains "no raise before a compaction has run" "$OUT" '"targetRaisedNow":false'
+contains "compaction is due over the trigger" "$OUT" '"compactionDue":true'
+# --compacted 1 is the caller saying a pass actually RAN. The script can only see
+# that it ASKED for one, which is a different claim.
+OUT="$(run spec 21 --standing-target 5 --standing-trigger 10 --compacted 1)"
+contains "the target is raised" "$OUT" '"targetRaisedNow":true'
+contains "and the raise is counted" "$OUT" '"targetRaises":1'
+# Having backed off, the run is no longer immediately due again: that is the
+# latch this change removes.
+OUT="$(run spec 22 --standing-target 5 --standing-trigger 10)"
+contains "and it is no longer due every round" "$OUT" '"compactionDue":false'
+contains "the raise count does not climb without cause" "$OUT" '"targetRaises":1'
+
+
+echo; echo "T11f. the backoff does not act on claims it cannot support"
+STATEDIR="$REPO/scratchpad/cp-state/$TAG"
+# A pass REQUESTED but never RUN is not a failed pass. A run killed between the
+# two is routine, and treating them alike raised the target past the current
+# size and permanently excused the one section that needed compacting.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+OUT="$(run spec 30 --standing-target 5 --standing-trigger 10)"
+contains "a pass is requested" "$OUT" '"compactionDue":true'
+OUT="$(run spec 31 --standing-target 5 --standing-trigger 10)"
+contains "no raise when no pass ran" "$OUT" '"targetRaisedNow":false'
+contains "and the section is still due" "$OUT" '"compactionDue":true'
+
+# The marker must CLEAR once consumed, or the target raises every round forever.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+OUT="$(run spec 40 --standing-target 5 --standing-trigger 10)"
+OUT="$(run spec 41 --standing-target 5 --standing-trigger 10 --compacted 1)"
+contains "the first failed pass raises once" "$OUT" '"targetRaises":1'
+OUT="$(run spec 42 --standing-target 5 --standing-trigger 10 --compacted 1)"
+contains "a consumed marker does not raise again" "$OUT" '"targetRaisedNow":false'
+contains "and the count stays put" "$OUT" '"targetRaises":1'
+
+# A ledger-backstop pass says nothing about the standing context, so its outcome
+# must not ratchet the standing target nor report a raise into the introspection
+# prompt every reviewing agent reads.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+# A ledger with content and a standing context well UNDER its trigger, so only
+# the backstop can be what fires.
+{
+  printf '# Review log\n\n## Standing context\n- FACT: short\n\n## Ledger\n'
+  for i in $(seq 1 5); do printf -- "- entry %s\n" "$i"; done
+  printf '\n## Retired\nold\n'
+} > "$LOG"
+OUT="$(run spec 43 --standing-target 200 --standing-trigger 320 --compact-at 1)"
+contains "the ledger backstop fires" "$OUT" '"compactionDue":true'
+# The standing context must be ABOVE the target here, or the size check
+# short-circuits and `pending_kind` is never the discriminator -- which is how
+# this test passed while the ledger/standing attribution was broken.
+{
+  printf '# Review log\n\n## Standing context\n'
+  for i in $(seq 1 30); do printf -- "- FACT: standing %s\n" "$i"; done
+  printf '\n## Ledger\n'
+  for i in $(seq 1 5); do printf -- "- entry %s\n" "$i"; done
+  printf '\n## Retired\nold\n'
+} > "$LOG"
+OUT="$(run spec 44 --standing-target 5 --standing-trigger 400 --compact-at 1 --compacted 1)"
+contains "a ledger pass does not raise the standing target" "$OUT" '"targetRaisedNow":false'
+contains "nor the raise count" "$OUT" '"targetRaises":0'
+contains "and the target is untouched" "$OUT" '"standingTarget":5'
+
+echo; echo "T11g. corrupt state fails safe instead of wedging the run"
+# cat of an EMPTY file SUCCEEDS, so a `|| echo <default>` fallback never fires.
+# An empty trigger made every comparison error to false: compaction never became
+# due again at any size, the file never healed, and the script still exited 0.
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+: > "$STATEDIR/standing-trigger"
+: > "$STATEDIR/standing-target"
+printf 'not-a-number\n' > "$STATEDIR/standing-raises"
+if OUT="$(run spec 45 --standing-target 5 --standing-trigger 10)"; then rc=0; else rc=$?; fi
+check "an empty state file does not wedge the round" "0" "$rc"
+contains "the default is used instead" "$OUT" '"standingTrigger":10'
+contains "and junk does not corrupt the count" "$OUT" '"targetRaises":0'
+
+echo; echo "T11h. a trigger at or below the target is refused, not obeyed"
+# Independent knobs, so raising only the target is a plausible operator move --
+# and it used to reinstate the every-round latch this section exists to remove.
+OUT="$(run spec 46 --standing-target 400 --standing-trigger 320 2>/dev/null)"
+contains "the trigger is lifted above the target" "$OUT" '"standingTrigger":520'
+contains "rather than firing every round" "$OUT" '"compactionDue":false'
+
+echo; echo "T11i. a shard is never deleted without being merged"
+# The guard used to be looser than the splice, so a heading with trailing text
+# passed the guard, matched nothing, and the shard was deleted as "merged" --
+# destroying a reviewing agent's whole findings block and reporting success.
+printf '# Review log\n\n## Standing context\n\n## Ledger (open)\n\n## Retired\n' > "$LOG"
+printf -- '- FACT: precious\n' > "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md"
+if OUT="$(run spec 50 2>/dev/null)"; then rc=0; else rc=$?; fi
+check "a malformed Ledger heading fails the round" "1" "$rc"
+check "and the shard survives" "yes" "$([ -f "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md" ] && echo yes || echo no)"
+rm -f "$REPO/scratchpad/cp-log/$TAG/spec.50.g.md"
+fresh_log
+
+echo; echo "T11j. the target decays, and keeps the caller's own trigger gap"
+STATEDIR="$REPO/scratchpad/cp-state/$TAG"
+mk_standing() {
+  { printf '# Review log\n\n## Standing context\n'
+    for i in $(seq 1 "$1"); do printf -- "- FACT: s %s\n" "$i"; done
+    printf '\n## Ledger\n\n## Retired\nold\n'; } > "$LOG"
+}
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+# The caller asks for a gap of its own: target 10, trigger 40.
+mk_standing 60
+OUT="$(run spec 60 --standing-target 10 --standing-trigger 40)"
+contains "a run over its trigger becomes due" "$OUT" '"compactionDue":true'
+OUT="$(run spec 61 --standing-target 10 --standing-trigger 40 --compacted 1)"
+contains "a failed pass raises the target" "$OUT" '"targetRaisedNow":true'
+contains "and the trigger keeps the caller's own gap" "$OUT" '"standingTrigger":130'
+# The section shrinks: the target must come back DOWN rather than stay ratcheted,
+# or one bad round disables compaction for the rest of the run.
+mk_standing 12
+OUT="$(run spec 62 --standing-target 10 --standing-trigger 40)"
+contains "the target decays as the section shrinks" "$OUT" '"standingTarget":52'
+contains "and the gap is still the caller's" "$OUT" '"standingTrigger":82'
+mk_standing 1
+OUT="$(run spec 63 --standing-target 10 --standing-trigger 40)"
+contains "decay keeps following the section down" "$OUT" '"standingTarget":41'
+contains "still at the caller's gap" "$OUT" '"standingTrigger":71'
+
+echo; echo "T11k. a stored pair that violates the ordering is repaired on read"
+rm -f "$STATEDIR"/compaction-pending
+printf '400\n' > "$STATEDIR/standing-target"
+printf '300\n' > "$STATEDIR/standing-trigger"
+printf '10:40\n' > "$STATEDIR/standing-base"
+mk_standing 350
+OUT="$(run spec 64 --standing-target 10 --standing-trigger 40)"
+contains "a stored trigger below its target does not fire every round" "$OUT" '"compactionDue":false'
+fresh_log
 
 echo; echo "T11c. the snapshot for the next round is taken, and hunks are counted"
 OUT="$(run spec 9)"
@@ -85,6 +230,18 @@ contains "the override is carried out" "$OUT" '"maxFixGroups":3'
 printf '{not json' > "$REPO/scratchpad/cp-args/$TAG.json"
 OUT="$(run spec 12 2>/dev/null)"
 contains "a malformed override file is ignored, not fatal" "$OUT" '"overrides":{}'
+# The consumer takes stdout and matches /\{[\s\S]*\}/ against the ONE line it
+# was told to reply with, so a pretty-printed override file -- what an operator
+# hand-writing one produces -- must not split the object across lines.
+printf '{\n  "maxFixGroups": 3,\n  "skipExpansion": true\n}\n' > "$REPO/scratchpad/cp-args/$TAG.json"
+OUT="$(run spec 13)"
+check "a pretty-printed override file still prints exactly one line" 1 \
+  "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
+check "and that line alone carries the override to the caller" "3" \
+  "$(printf '%s' "$(printf '%s\n' "$OUT" | head -1)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=s.match(/\{[\s\S]*\}/);process.stdout.write(m?String(JSON.parse(m[0]).overrides.maxFixGroups):"none")})' 2>/dev/null)"
+printf '["not","an object"]' > "$REPO/scratchpad/cp-args/$TAG.json"
+OUT="$(run spec 14 2>/dev/null)"
+contains "a JSON array override file is ignored, not spliced" "$OUT" '"overrides":{}'
 rm -f "$REPO/scratchpad/cp-args/$TAG.json"
 
 echo; echo "T12. it fails rather than proceeding on unknown state"
