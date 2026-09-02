@@ -3813,24 +3813,32 @@ async function compactLog(round, standingLines, target) {
       "disagreement matters, write one `UNVERIFIED:` line for a later reviewer to settle. An earlier " +
       "version of this pass was told to check the tree itself, and it turned a text pass into a " +
       "mini-review that grepped pkg/ and read three spec files.\n\n" +
-      "THE THREE SECTIONS. `## Standing context` is curated and is the part every other agent reads. " +
-      "`## Ledger` is the chronological record; nothing reads it end to end but this pass, though agents " +
-      "DO cite individual entries by id, so an entry is moved to `## Retired` rather than deleted and " +
-      "keeps its id. `## Retired` holds what no longer applies, one line each.\n\n" +
+      "THE THREE SECTIONS, AND WHICH ONE IS YOURS. `## Standing context` is curated and is the part every " +
+      "other agent reads. IT IS THE ONLY SECTION YOU EDIT.\n" +
+      "`## Ledger` is the chronological record of this window. READ ALL OF IT. Do not edit it: the round " +
+      "boundary moves it to `## Retired` for you, whole and with its ids, as soon as this pass returns. " +
+      "That is why you can read it as a complete record and still leave it alone.\n" +
+      "`## Retired` is the archive. DO NOT READ IT. Everything in it was curated by an earlier pass, and " +
+      "whatever mattered is already in the standing context. Reading it is how a text pass becomes a " +
+      "re-derivation of work already done.\n\n" +
       "WHAT TO DO, in order.\n\n" +
-      "1. Leave round " + round + "'s entries in the ledger exactly as they are.\n\n" +
-      "2. For every entry older than three rounds, LIFT ITS DURABLE RESIDUE into `## Standing context` and " +
-      "move the rest to `## Retired` as one line. The durable residue is every `FACT`, `WATCHOUT`, " +
-      "`DECISION`, `MISTAKE` and unclosed `DEFERRED` line.\n" +
+      "1. Read the WHOLE ledger. Every entry in it is about to be archived, so anything you do not lift " +
+      "now survives only as an archived entry nobody will read.\n\n" +
+      "2. LIFT THE DURABLE RESIDUE of every entry into `## Standing context`. The durable residue is every " +
+      "`FACT`, `WATCHOUT`, `DECISION`, `MISTAKE` and unclosed `DEFERRED` line.\n" +
       "   `MISTAKE` IS THE MOST VALUABLE TAG IN THE LOG AND IS NEVER DROPPED. An entry saying \"I spent " +
       "this round hunting X; it is not there; do not re-derive this\" saves a later agent a whole round, " +
       "which is worth more than most findings. Keep its reasoning rather than its headline: a one-line " +
       "summary of a dead end is not enough for the next agent to recognise the same dead end.\n\n" +
-      "3. HONOUR `CORRECTS`. An entry another agent marked wrong is rewritten to what is true, or retired. " +
-      "A superseded `WATCHOUT` is DELETED rather than kept for the record: a warning about a trap that no " +
-      "longer exists costs every future agent a detour.\n\n" +
-      "4. HONOUR `USEFUL`. An entry another agent said saved it work goes into `## Standing context` and is " +
-      "never dropped while its subject stands.\n\n" +
+      "3. HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT. The entry a `CORRECTS` names may already have " +
+      "been archived by an earlier pass, and you may not read the archive. Its durable claim is in the " +
+      "standing context, which is where the correction belongs: find the claim, rewrite it to what is " +
+      "true, or delete it. A superseded `WATCHOUT` is DELETED rather than kept for the record, because a " +
+      "warning about a trap that no longer exists costs every future agent a detour. A `CORRECTS` naming " +
+      "something you cannot find anywhere is carried into the standing context verbatim, so a later pass " +
+      "can settle it.\n\n" +
+      "4. HONOUR `USEFUL`, the same way. An entry another agent said saved it work has its claim kept in " +
+      "`## Standing context` and never dropped while its subject stands.\n\n" +
       "5. NEVER DROP AN `OPEN`, AN `UNVERIFIED`, OR A `DEFERRED` until something closes it. A `DEFERRED` " +
       "is a correction an agent derived but could not apply because the file was not its to edit, and the " +
       "pass between the loops greps for exactly these and closes them. Keep the file it names, the claim " +
@@ -3845,6 +3853,9 @@ async function compactLog(round, standingLines, target) {
       "carries the detail.\n" +
       "   `### Deferred` — every unclosed `DEFERRED`, kept WHOLE rather than summarised, because the pass " +
       "between the loops applies these and cannot apply a headline.\n" +
+      "   THE STANDING CONTEXT IS THE WHOLE LIVE RECORD after this pass. An archived entry keeps its id " +
+      "and its text for a human, but no agent will read it again, so a claim that is not here is a claim " +
+      "the run has lost.\n" +
       "   GIVE EACH ENTRY A SHORT BOLD SUBJECT so a reader can find the one they need without reading the " +
       "section. Measured on a real run, agents cite standing-context entries BY SUBJECT and a quarter of " +
       "all citations went to two of them. Navigability is worth more here than brevity.\n\n" +

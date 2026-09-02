@@ -1077,7 +1077,13 @@ t.section("B20. compaction fires when the boundary says it is due, and not other
   t.check("entries carry a bold subject so the section can be navigated", /GIVE EACH ENTRY A SHORT BOLD SUBJECT/.test(c.prompt));
   t.check("the target is carried from the boundary script", /THE TARGET IS 200 LINES/.test(c.prompt));
   t.check("and overshooting beats dropping something that matters", /DO NOT DROP IT/.test(c.prompt) && /the target moves up\s+on its own/.test(c.prompt));
-  t.check("a ledger entry is retired rather than deleted, because agents cite ids", /agents\s+DO cite individual entries by id/.test(c.prompt));
+  // The pass no longer moves anything: it curates the standing context from the
+  // whole ledger, and the round boundary drains the ledger to Retired after it.
+  t.check("the standing context is the only section it edits", /IT IS THE ONLY SECTION YOU EDIT/.test(c.prompt));
+  t.check("it reads the whole ledger and leaves it alone", /READ ALL OF IT\. Do not edit it/.test(c.prompt));
+  t.check("it is told the boundary drains the ledger for it", /the round\s+boundary moves it to `## Retired` for you/.test(c.prompt));
+  t.check("and it may not read the archive", /`## Retired` is the archive\. DO NOT READ IT/.test(c.prompt));
+  t.check("CORRECTS is honoured against the standing context", /HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT/.test(c.prompt));
   t.check("a superseded watchout is deleted rather than kept", /DELETED rather than kept for the record/.test(c.prompt));
   t.check("a USEFUL entry is promoted", /HONOUR `USEFUL`/.test(c.prompt));
   // Compaction deliberately does NOT check the tree any more: doing so turned a

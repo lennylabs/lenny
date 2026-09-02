@@ -215,6 +215,43 @@ OUT="$(run spec 64 --standing-target 10 --standing-trigger 40)"
 contains "a stored trigger below its target does not fire every round" "$OUT" '"compactionDue":false'
 fresh_log
 
+echo; echo "T11l. the ledger drains to Retired after a compaction pass, and only then"
+STATEDIR="$REPO/scratchpad/cp-state/$TAG"
+rm -f "$STATEDIR"/standing-* "$STATEDIR"/compaction-pending
+mk_log() {
+  { printf '# Review log\n\n## Standing context\n- FACT: standing\n\n## Ledger\n'
+    printf -- '### [spec.1.review-citations.1]\n- FACT: alpha\n- OPEN: beta\n'
+    printf -- '### [spec.2.fix-G1.1]\n- DECISION: gamma\n'
+    printf '\n## Retired\nold entry\n'; } > "$LOG"
+}
+
+# Without --compacted the ledger is untouched: the pass was asked for, not run.
+mk_log
+OUT="$(run spec 70)"
+contains "no drain without a pass" "$OUT" '"drained":0'
+check "the ledger still holds its entries" "2" "$(grep -c '^### \[' "$LOG")"
+
+# With --compacted the whole ledger moves, whole, ids intact.
+mk_log
+OUT="$(run spec 71 --compacted 1)"
+contains "the drain reports what it moved" "$OUT" '"drained":5'
+check "the ledger is empty" "0" "$(awk '/^## Ledger/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)"
+check "both entries are in Retired" "2" "$(awk '/^## Retired/{f=1} f' "$LOG" | grep -c '^### \[')"
+check "the ids survive" "yes" "$(grep -q 'spec.1.review-citations.1' "$LOG" && grep -q 'spec.2.fix-G1.1' "$LOG" && echo yes || echo no)"
+check "the entry BODIES survive, not just headings" "yes" "$(grep -q -- '- OPEN: beta' "$LOG" && grep -q -- '- DECISION: gamma' "$LOG" && echo yes || echo no)"
+check "standing context is untouched" "yes" "$(grep -q -- '- FACT: standing' "$LOG" && echo yes || echo no)"
+check "what was already retired is kept" "yes" "$(grep -q 'old entry' "$LOG" && echo yes || echo no)"
+
+# The drain runs BEFORE this round's shards merge, so a fresh shard is not swept
+# up by a pass that never read it.
+mk_log
+printf -- '### [spec.9.review-fresh.1]\n- FACT: brand new\n' > "$REPO/scratchpad/cp-log/$TAG/spec.9.fresh.md"
+OUT="$(run spec 72 --compacted 1)"
+contains "the new shard still merged" "$OUT" '"merged":1'
+check "and it is in the LEDGER, not swept into Retired" "1" "$(awk '/^## Ledger/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c '^### \[')"
+check "the older entries did drain" "yes" "$(awk '/^## Retired/{f=1} f' "$LOG" | grep -q 'spec.1.review-citations.1' && echo yes || echo no)"
+fresh_log
+
 echo; echo "T11c. the snapshot for the next round is taken, and hunks are counted"
 OUT="$(run spec 9)"
 contains "the next round's snapshot path is reported" "$OUT" "cp-snap/$TAG/spec-r10"

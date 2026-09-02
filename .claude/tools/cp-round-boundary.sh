@@ -24,6 +24,7 @@
 #     "ledgerLines": <lines under ## Ledger>,
 #     "compactionDue": true|false,
 #     "hunksKnown": true|false,   whether "hunks" had a baseline to compare against
+#     "drained": <ledger lines moved to Retired after a compaction pass>,
 #     "standingTarget": <lines the compaction pass is asked to reach>,
 #     "standingTrigger": <lines at which compaction becomes due>,
 #     "targetRaises": <times the target has been raised because a pass could not reach it>,
@@ -133,6 +134,70 @@ fi
 
 STEM="$(basename "$DIR")"
 LOG="$DIR/$STEM.review-log.md"
+
+# ---- 0. Drain the ledger the compaction pass just read --------------------
+#
+# Compaction is two halves. The AGENT curates: it rewrites `## Standing context`
+# from the whole ledger, and never reads `## Retired`. This script then does the
+# mechanical half: it moves the ledger it read into `## Retired`, whole.
+#
+# ORDER MATTERS AND IS WHY THIS BLOCK IS FIRST. The pass runs after the previous
+# boundary call, so the move cannot happen in the same call. It happens here, at
+# the FOLLOWING boundary, and it must happen BEFORE this round's shards are
+# merged below -- otherwise it would sweep up entries the pass never saw. Drain,
+# then merge.
+#
+# Gated on --compacted, which says a pass actually RAN rather than that one was
+# asked for. Without that a run killed between the request and the pass would
+# have its ledger drained with nothing curated from it.
+#
+# Entries move WHOLE, keeping their ids. A one-line summary would mean a dead
+# agent loses the text, and agents cite ledger entries by id, so a moved entry
+# must still resolve. `## Retired` grows without bound, which is free: nothing
+# reads it, the compactor included.
+drained=0
+if [ "$COMPACTED" = "1" ] && [ -f "$LOG" ]; then
+  grep -qE '^## Ledger[[:space:]]*$' "$LOG" || {
+    echo "cp-round-boundary: $LOG has no '## Ledger' heading on a line of its own" >&2; exit 1; }
+  grep -qE '^## Retired[[:space:]]*$' "$LOG" || {
+    echo "cp-round-boundary: $LOG has no '## Retired' heading on a line of its own" >&2; exit 1; }
+  before_ledger=$(awk '/^## Ledger[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
+  if [ "$before_ledger" -gt 0 ]; then
+    tmp="$LOG.draining"
+    awk '
+      # Pass 1 collects the ledger body; pass 2 prints the file with the ledger
+      # emptied and the body appended to the end of Retired.
+      BEGIN { n = 0 }
+      FNR == NR {
+        if ($0 ~ /^## Ledger[[:space:]]*$/) { inl = 1; next }
+        if (inl && $0 ~ /^## /) { inl = 0 }
+        if (inl) body[n++] = $0
+        next
+      }
+      { }
+      $0 ~ /^## Ledger[[:space:]]*$/ { print; skip = 1; next }
+      skip && $0 ~ /^## / { skip = 0 }
+      skip { next }
+      $0 ~ /^## Retired[[:space:]]*$/ { print; inret = 1; next }
+      inret && $0 ~ /^## / {
+        for (i = 0; i < n; i++) print body[i]
+        inret = 0
+        print; next
+      }
+      { print }
+      END { if (inret) for (i = 0; i < n; i++) print body[i] }
+    ' "$LOG" "$LOG" >"$tmp" || { rm -f "$tmp"; exit 1; }
+    # Nothing may be lost. Every non-blank line of the file must survive the
+    # move; the only change is which section holds the ledger body.
+    if [ "$(grep -c . "$tmp" || true)" -ne "$(grep -c . "$LOG" || true)" ]; then
+      rm -f "$tmp"
+      echo "cp-round-boundary: draining the ledger would change the file's line count; refusing" >&2
+      exit 1
+    fi
+    mv "$tmp" "$LOG" || exit 1
+    drained=$before_ledger
+  fi
+fi
 
 # ---- 1. Merge this round's log shards into the review log -----------------
 #
@@ -388,5 +453,5 @@ if [ -f "$OV_FILE" ]; then
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
+printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"drained":%d,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$drained" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
