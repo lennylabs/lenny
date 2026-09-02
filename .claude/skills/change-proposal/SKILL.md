@@ -364,6 +364,8 @@ Invoke by **path**, never by name: a name resolves to a cached copy, so a run la
 ```json
 {
   "mode": "review",
+  "baseModel": "opus",
+  "baseEffort": "high",
   "proposalPath": "proposals/0081_fix_slug",
   "date": "2026-08-31",
   "exemplar": "proposals/0080_fix_other",
@@ -372,7 +374,7 @@ Invoke by **path**, never by name: a name resolves to a cached copy, so a run la
 }
 ```
 
-Agents inherit the session model and effort. Run this with the strongest available model at high effort: reviewer quality decides whether the loop converges on truth or on exhaustion.
+Agents do NOT inherit the session's model or effort: the tier is `baseModel` and `baseEffort`, defaulting to `opus` at `medium`, and it is pinned so two runs of the same proposal stay comparable. Raise `baseEffort` to `high` when reviewer quality is what decides whether the loop converges on truth or on exhaustion, which is most runs that matter.
 
 ### Step 3: interruptions and non-convergence
 
