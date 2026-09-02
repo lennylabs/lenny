@@ -198,6 +198,7 @@ function proposalFiles(ref, repoRoot) {
       spec: abs,
       nonSpec: abs,
       log: abs,
+      logArchive: abs,
       deviations: abs,
     };
   }
@@ -215,6 +216,7 @@ function proposalFiles(ref, repoRoot) {
     spec: f("spec-changes"),
     nonSpec: f("non-spec-changes"),
     log: f("review-log"),
+    logArchive: f("review-log-archive"),
     deviations: f("deviations"),
   };
 }
@@ -1212,7 +1214,8 @@ if (mode === "new") {
       "`## Testing`, `## Edge cases and accepted failure modes`, `## Open decisions for review`, " +
       "`## Files touched on application (non-spec)`. All empty.\n\n" +
       "7. " + P.log + " — `# Review log — " + P.stem + "` then `## Standing context`, `## Ledger`, " +
-      "`## Retired`. All empty.\n\n" +
+      "and nothing else. All empty. There is no Retired section: aged entries move " +
+      "to a separate archive file the round boundary creates when it first needs it.\n\n" +
       "8. " + P.deviations + " — `# Deviations — " + P.stem + "` and one line saying the implementor owns " +
       "this file and it stays empty until an implementation records a departure from what the proposal " +
       "states.\n\n" +
@@ -1832,10 +1835,29 @@ if (planPath) {
       : "Plan-conformance enabled against " + planPath,
   );
 }
-const POOL_EXTRA = EXTRAS.filter((l) => !excludeSet.has(l.key));
-if (POOL_FIXED.length === 0 && POOL_EXTRA.length === 0) {
+// EXTRAS used to be a SECOND pool with its own scheduling: while any ordinary
+// lens was still active, exactly one extra rotated in per round, chosen by
+// `(round - 1) % activeExtras.length`. That is a second mechanism for the job
+// retirement already does -- withhold a lens that is not earning its keep -- and
+// the worse of the two, because it withholds on a round number rather than on
+// evidence.
+//
+// It also manufactured a lens that had NEVER RUN, and a lens that has never run
+// cannot retire, and a lens that has not retired blocks the sweep. So a clean
+// proposal was forced to spend an entire round discharging one lens: a measured
+// run's non-spec loop went thirteen lenses, then `fresh` alone, then a
+// fourteen-lens sweep. That singleton round still pays a snapshot, a dedup, the
+// verifiers and a round boundary, and can trigger a compaction pass that has
+// measured sixteen minutes. The tokens were never the cost; the serialised
+// round was.
+//
+// Every lens is now scheduled the same way, so every lens can retire from round
+// one and the case cannot arise.
+const POOL_EXTRAS = EXTRAS.filter((l) => !excludeSet.has(l.key));
+if (POOL_FIXED.length === 0 && POOL_EXTRAS.length === 0) {
   throw new Error("args.excludeLenses excludes every lens; nothing would review");
 }
+const POOL = POOL_FIXED.concat(POOL_EXTRAS);
 if (excludeSet.size > 0) {
   log(
     "Excluding " +
@@ -3732,8 +3754,7 @@ function newLoop(cfg) {
     converged: false,
     sweeps: 0,
     maxRounds: cfg.maxRounds,
-    poolFixed: cfg.poolFixed,
-    poolExtra: cfg.poolExtra,
+    pool: cfg.pool,
     editable: cfg.editable,
     scopeNote: cfg.scopeNote,
     specTouched: [],
@@ -3795,24 +3816,32 @@ async function compactLog(round, standingLines, target) {
       "disagreement matters, write one `UNVERIFIED:` line for a later reviewer to settle. An earlier " +
       "version of this pass was told to check the tree itself, and it turned a text pass into a " +
       "mini-review that grepped pkg/ and read three spec files.\n\n" +
-      "THE THREE SECTIONS. `## Standing context` is curated and is the part every other agent reads. " +
-      "`## Ledger` is the chronological record; nothing reads it end to end but this pass, though agents " +
-      "DO cite individual entries by id, so an entry is moved to `## Retired` rather than deleted and " +
-      "keeps its id. `## Retired` holds what no longer applies, one line each.\n\n" +
+      "THE TWO SECTIONS, AND WHICH ONE IS YOURS. `## Standing context` is curated and is the part every " +
+      "other agent reads. IT IS THE ONLY SECTION YOU EDIT.\n" +
+      "`## Ledger` is the chronological record of this window. READ ALL OF IT. Do not edit it: the round " +
+      "boundary archives it for you, whole and with its ids, as soon as this pass returns. That is why " +
+      "you can read it as a complete record and still leave it alone.\n" +
+      "There is no third section and no archive in this file. Everything an earlier pass curated is " +
+      "already in the standing context, so this file IS the live record and you need nothing else to do " +
+      "the job.\n\n" +
       "WHAT TO DO, in order.\n\n" +
-      "1. Leave round " + round + "'s entries in the ledger exactly as they are.\n\n" +
-      "2. For every entry older than three rounds, LIFT ITS DURABLE RESIDUE into `## Standing context` and " +
-      "move the rest to `## Retired` as one line. The durable residue is every `FACT`, `WATCHOUT`, " +
-      "`DECISION`, `MISTAKE` and unclosed `DEFERRED` line.\n" +
+      "1. Read the WHOLE ledger. Every entry in it is about to be archived, so anything you do not lift " +
+      "now survives only as an archived entry nobody will read.\n\n" +
+      "2. LIFT THE DURABLE RESIDUE of every entry into `## Standing context`. The durable residue is every " +
+      "`FACT`, `WATCHOUT`, `DECISION`, `MISTAKE` and unclosed `DEFERRED` line.\n" +
       "   `MISTAKE` IS THE MOST VALUABLE TAG IN THE LOG AND IS NEVER DROPPED. An entry saying \"I spent " +
       "this round hunting X; it is not there; do not re-derive this\" saves a later agent a whole round, " +
       "which is worth more than most findings. Keep its reasoning rather than its headline: a one-line " +
       "summary of a dead end is not enough for the next agent to recognise the same dead end.\n\n" +
-      "3. HONOUR `CORRECTS`. An entry another agent marked wrong is rewritten to what is true, or retired. " +
-      "A superseded `WATCHOUT` is DELETED rather than kept for the record: a warning about a trap that no " +
-      "longer exists costs every future agent a detour.\n\n" +
-      "4. HONOUR `USEFUL`. An entry another agent said saved it work goes into `## Standing context` and is " +
-      "never dropped while its subject stands.\n\n" +
+      "3. HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT. The entry a `CORRECTS` names may have been " +
+      "archived by an earlier pass and is no longer in this file. Its durable claim is in the " +
+      "standing context, which is where the correction belongs: find the claim, rewrite it to what is " +
+      "true, or delete it. A superseded `WATCHOUT` is DELETED rather than kept for the record, because a " +
+      "warning about a trap that no longer exists costs every future agent a detour. A `CORRECTS` naming " +
+      "something you cannot find anywhere is carried into the standing context verbatim, so a later pass " +
+      "can settle it.\n\n" +
+      "4. HONOUR `USEFUL`, the same way. An entry another agent said saved it work has its claim kept in " +
+      "`## Standing context` and never dropped while its subject stands.\n\n" +
       "5. NEVER DROP AN `OPEN`, AN `UNVERIFIED`, OR A `DEFERRED` until something closes it. A `DEFERRED` " +
       "is a correction an agent derived but could not apply because the file was not its to edit, and the " +
       "pass between the loops greps for exactly these and closes them. Keep the file it names, the claim " +
@@ -3827,6 +3856,9 @@ async function compactLog(round, standingLines, target) {
       "carries the detail.\n" +
       "   `### Deferred` — every unclosed `DEFERRED`, kept WHOLE rather than summarised, because the pass " +
       "between the loops applies these and cannot apply a headline.\n" +
+      "   THE STANDING CONTEXT IS THE WHOLE LIVE RECORD after this pass. An archived entry keeps its id " +
+      "and its text in a separate file for a human chasing a citation, but no agent reads that file, so " +
+      "a claim that is not here is a claim the run has lost.\n" +
       "   GIVE EACH ENTRY A SHORT BOLD SUBJECT so a reader can find the one they need without reading the " +
       "section. Measured on a real run, agents cite standing-context entries BY SUBJECT and a quarter of " +
       "all citations went to two of them. Navigability is worth more here than brevity.\n\n" +
@@ -3904,8 +3936,7 @@ async function runReviewLoop(cfg) {
   // standingRaises, compactionRan and lastGrowthSnap -- are deliberately NOT
   // reset here; each says why at its declaration.
   lastIntrospectRound = 0;
-  const POOL_FIXED = cfg.poolFixed;
-  const POOL_EXTRA = cfg.poolExtra;
+  const POOL = cfg.pool;
   const maxRounds = cfg.maxRounds;
   const retired = LOOP.retired;
   let round = 0;
@@ -3980,7 +4011,7 @@ async function runReviewLoop(cfg) {
     }
   }
   log(
-    "Entering the " + cfg.name + " review loop over " + (POOL_FIXED.length + POOL_EXTRA.length) +
+    "Entering the " + cfg.name + " review loop over " + POOL.length +
       " lens(es), budget " + maxRounds + " round(s)",
   );
 
@@ -3996,7 +4027,7 @@ async function runReviewLoop(cfg) {
   // every pool lens. The seeded state is provisional in exactly the way an earned
   // retirement is: no lens certifies text it never read.
   if (startSet) {
-    for (const l of POOL_FIXED.concat(POOL_EXTRA)) {
+    for (const l of POOL) {
       if (!startSet.has(l.key)) retired.add(l.key);
     }
   }
@@ -4194,7 +4225,12 @@ async function runReviewLoop(cfg) {
     // BOTH loops is given. One fixer answering "no edit was needed" used to
     // suppress its findings permanently, and the diff proving it had changed
     // nothing was sitting one field away.
-    if (roundFixedTitles.length && (boundary.hunks || 0) === 0) {
+    // `hunksKnown` false means there was no previous snapshot to diff against --
+    // the first round of a loop -- so zero hunks is the absence of a BASELINE,
+    // not the absence of change. Reading the two alike withdrew every genuine
+    // fix from round 1 of both loops on a measured run and reported nothing
+    // fixed, which is the same under-reporting this guard was added to end.
+    if (roundFixedTitles.length && boundary.hunksKnown && (boundary.hunks || 0) === 0) {
       for (const t of roundFixedTitles) {
         const at = fixedTitles.lastIndexOf(t);
         if (at >= 0) fixedTitles.splice(at, 1);
@@ -4238,26 +4274,18 @@ async function runReviewLoop(cfg) {
   while (round < maxRounds && !converged) {
     round++;
     const roundStartSnap = await snapshot("r" + round + "-start");
-    const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
-    const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
-    const isSweep = activeFixed.length === 0 && activeExtras.length === 0;
-
-    let lenses;
-    if (isSweep) {
-      lenses = POOL_FIXED.concat(POOL_EXTRA);
-      sweeps++;
-    } else if (activeFixed.length === 0) {
-      // The fixed lenses are satisfied and only extras remain. Run every remaining
-      // extra in one round rather than rotating one per round, so the sweep is
-      // reached immediately instead of after one round per surviving extra.
-      lenses = activeExtras;
-    } else if (activeExtras.length === 0) {
-      lenses = activeFixed;
-    } else {
-      lenses = activeFixed.concat([
-        activeExtras[(round - 1) % activeExtras.length],
-      ]);
-    }
+    // One pool, one rule. A lens runs unless it has retired, and when every
+    // lens has retired the whole pool runs again as a sweep.
+    //
+    // A round may still hold a single lens, when the rest have retired and one
+    // was reactivated by a fix. That is retirement working: the lens has a
+    // specific thing to re-read. It is not the case the rotation used to
+    // create, where a lens ran alone only because it had never been given a
+    // chance to run at all.
+    const active = POOL.filter((l) => !retired.has(l.key));
+    const isSweep = active.length === 0;
+    const lenses = isSweep ? POOL : active;
+    if (isSweep) sweeps++;
 
     log(
       "Round " +
@@ -4273,7 +4301,7 @@ async function runReviewLoop(cfg) {
             " reviewers (" +
             retired.size +
             "/" +
-            (POOL_FIXED.length + POOL_EXTRA.length) +
+            POOL.length +
             " lenses retired)"),
     );
 
@@ -5500,8 +5528,9 @@ if (!hasSpecChanges) {
 } else {
   specLoop = await runReviewLoop({
     name: "spec",
-    poolFixed: POOL_FIXED.filter((l) => l.key !== "test-coverage"),
-    poolExtra: POOL_EXTRA,
+    // The spec loop drops test-coverage: the tests a change needs are staged in
+    // the non-spec half, so spec convergence certifies nothing about them.
+    pool: POOL.filter((l) => l.key !== "test-coverage"),
     maxRounds: maxSpecReviewRounds,
     editable: SPEC_EDITABLE,
     scopeNote: SPEC_SCOPE_NOTE,
@@ -5589,8 +5618,7 @@ if (specBlocked) {
 } else if (!stoppedByIntrospection && !input.skipNonSpecReview) {
   nonSpecLoop = await runReviewLoop({
     name: "non-spec",
-    poolFixed: POOL_FIXED,
-    poolExtra: POOL_EXTRA,
+    pool: POOL,
     maxRounds: maxNonSpecReviewRounds,
     editable: NONSPEC_EDITABLE,
     scopeNote: NONSPEC_SCOPE_NOTE,

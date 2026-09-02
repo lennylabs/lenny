@@ -23,6 +23,8 @@
 #     "merged": <shards folded into the review log>,
 #     "ledgerLines": <lines under ## Ledger>,
 #     "compactionDue": true|false,
+#     "hunksKnown": true|false,   whether "hunks" had a baseline to compare against
+#     "drained": <ledger lines moved to Retired after a compaction pass>,
 #     "standingTarget": <lines the compaction pass is asked to reach>,
 #     "standingTrigger": <lines at which compaction becomes due>,
 #     "targetRaises": <times the target has been raised because a pass could not reach it>,
@@ -132,6 +134,75 @@ fi
 
 STEM="$(basename "$DIR")"
 LOG="$DIR/$STEM.review-log.md"
+
+# ---- 0. Drain the ledger the compaction pass just read --------------------
+#
+# Compaction is two halves. The AGENT curates: it rewrites `## Standing context`
+# from the whole ledger. This script then does the mechanical half: it appends
+# the ledger it read to a SEPARATE ARCHIVE FILE and empties the ledger.
+#
+# THE ARCHIVE IS A DIFFERENT FILE ON PURPOSE. It used to be a `## Retired`
+# section of the review log, guarded by an instruction telling the pass not to
+# read it. Measured against this same prompt, instructions of that kind do not
+# hold: "read the file once, write it once" was ignored by every pass, "do not
+# page through it with sed" was answered with forty Bash calls, and the pass
+# invented a whole destination the prompt never described. An archive the agent
+# is never given the path to needs no instruction. It also keeps the review log
+# small for the twelve agents a round that read its standing context.
+#
+# ORDER MATTERS AND IS WHY THIS BLOCK IS FIRST. The pass runs after the previous
+# boundary call, so the move cannot happen in the same call. It happens here, at
+# the FOLLOWING boundary, and BEFORE this round's shards are merged below --
+# otherwise it would archive entries the pass never saw. Drain, then merge.
+#
+# Gated on --compacted, which says a pass actually RAN rather than that one was
+# asked for. Without that a run killed between the request and the pass would
+# have its ledger archived with nothing curated from it.
+#
+# Entries move WHOLE, keeping their ids, so a dead agent loses no text and a
+# human chasing a citation still finds it. The archive grows without bound,
+# which is free: nothing reads it.
+ARCHIVE="$DIR/$STEM.review-log-archive.md"
+drained=0
+if [ "$COMPACTED" = "1" ] && [ -f "$LOG" ]; then
+  grep -qE '^## Ledger[[:space:]]*$' "$LOG" || {
+    echo "cp-round-boundary: $LOG has no '## Ledger' heading on a line of its own" >&2; exit 1; }
+  [ -f "$ARCHIVE" ] || {
+    printf '# Review log archive — %s\n\nEntries the compaction pass has already curated. Its residue is\nin the review log'"'"'s standing context; this file is the record, for a\nhuman chasing a citation. No agent reads it.\n' "$STEM" > "$ARCHIVE" || {
+      echo "cp-round-boundary: cannot create $ARCHIVE" >&2; exit 1; }
+  }
+  ledger_body=$(awk '/^## Ledger[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$LOG")
+  # A pre-existing `## Retired` section belongs in the archive too. This runs
+  # once, on the first drain of a log written before the archive existed.
+  retired_body=""
+  if grep -qE '^## Retired[[:space:]]*$' "$LOG"; then
+    retired_body=$(awk '/^## Retired[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$LOG")
+  fi
+  if [ -n "$(printf '%s' "$ledger_body" | tr -d '[:space:]')" ] || [ -n "$(printf '%s' "$retired_body" | tr -d '[:space:]')" ]; then
+    before_archive=$(grep -c . "$ARCHIVE" 2>/dev/null || echo 0)
+    before_moving=$( { printf '%s\n' "$ledger_body"; printf '%s\n' "$retired_body"; } | grep -c . || true)
+    {
+      [ -n "$retired_body" ] && printf '%s\n' "$retired_body"
+      printf '%s\n' "$ledger_body"
+    } >> "$ARCHIVE" || { echo "cp-round-boundary: cannot append to $ARCHIVE" >&2; exit 1; }
+    # Nothing may be lost: every non-blank line moved must now be in the archive.
+    after_archive=$(grep -c . "$ARCHIVE" 2>/dev/null || echo 0)
+    if [ "$((after_archive - before_archive))" -ne "$before_moving" ]; then
+      echo "cp-round-boundary: archiving lost lines ($before_moving moved, $((after_archive - before_archive)) landed); refusing" >&2
+      exit 1
+    fi
+    tmp="$LOG.draining"
+    awk '
+      $0 ~ /^## Ledger[[:space:]]*$/ { print; skip = 1; next }
+      $0 ~ /^## Retired[[:space:]]*$/ { skip = 2; next }
+      skip && $0 ~ /^## / { skip = 0 }
+      skip { next }
+      { print }
+    ' "$LOG" >"$tmp" || { rm -f "$tmp"; exit 1; }
+    mv "$tmp" "$LOG" || exit 1
+    drained=$before_moving
+  fi
+fi
 
 # ---- 1. Merge this round's log shards into the review log -----------------
 #
@@ -348,7 +419,14 @@ write_state "$HASHES" "$new_hashes"
 PREV="$SNAPS/$LOOP-r$((ROUND))"
 NEXT="$SNAPS/$LOOP-r$((ROUND + 1))"
 hunks=0
+# Whether `hunks` MEANS anything. On the first round of a loop there is no
+# previous snapshot to diff against, so zero is the absence of a baseline rather
+# than the absence of change. A caller that reads the two alike concludes the
+# round's fixer edited nothing, which is what happened: a measured run withdrew
+# every genuine fix from round 1 of both loops and reported nothing fixed.
+hunks_known=false
 if [ -d "$PREV" ]; then
+  hunks_known=true
   hunks=$(diff -ru "$PREV" "$DIR" 2>/dev/null | grep -c '^@@' || true)
 fi
 rm -rf "$NEXT" && cp -r "$DIR" "$NEXT" || { echo "cp-round-boundary: snapshot failed" >&2; exit 1; }
@@ -380,5 +458,5 @@ if [ -f "$OV_FILE" ]; then
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
+printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"drained":%d,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$drained" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"

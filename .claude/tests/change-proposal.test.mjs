@@ -51,7 +51,7 @@ const newStubs = (over = {}) => ({
   conventions: "conforms",
   snap: "DONE",
   diffcount: "0",
-  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
   "*:review:*": { coverage: "read it all", findings: [] },
   default: {},
   ...over,
@@ -271,7 +271,7 @@ const loopStubs = (over = {}) => {
     "spec-nonspec-handoff": "reconciled",
     // Every round now closes through the boundary script, so a stub table that
     // omits it leaves every round unable to certify.
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": { coverage: "c", findings: [] },
     "*:dedup": { findings: [] },
     "*:verify-material": { confirmed: true, reason: "material" },
@@ -593,7 +593,8 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
   // followed by another, and only a complete one converges.
   const one = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
     "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
-    "r3:review:security": null,
+    // Round 2 is the first sweep now that no lens is withheld from round 1.
+    "r2:review:security": null,
   }));
   t.check("the incomplete sweep is refused", one.logs.some((l) => /sweep found nothing but was incomplete; NOT converging/.test(l)));
   t.check("and another sweep follows it", one.logs.filter((l) => /FULL SWEEP/.test(l)).length >= 2);
@@ -619,13 +620,13 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
     loopStubs({
       "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
       "*:review:security": ({ label }) =>
-        Number(label.match(/^r(\d+):/)[1]) >= 3 ? null : { coverage: "c", findings: [] },
+        Number(label.match(/^r(\d+):/)[1]) >= 2 ? null : { coverage: "c", findings: [] },
     }),
   );
   const L = stalled.result.review.loops[0];
   const sweeps = stalled.logs.filter((l) => /FULL SWEEP/.test(l)).length;
   t.check("it stops at the second identical sweep", sweeps === 2, "sweeps: " + sweeps);
-  t.check("the rest of the budget is not spent", L.rounds === 4, "rounds: " + L.rounds);
+  t.check("the rest of the budget is not spent", L.rounds === 3, "rounds: " + L.rounds);
   t.check("the stalled lens is named in the result", (L.stalledLenses || []).includes("security"), JSON.stringify(L.stalledLenses));
   t.check("it still does not converge", stalled.result.review.converged === false);
   t.check("no log claims the failed lens stays active", !stalled.logs.some((l) => /stay active/.test(l)));
@@ -1076,7 +1077,18 @@ t.section("B20. compaction fires when the boundary says it is due, and not other
   t.check("entries carry a bold subject so the section can be navigated", /GIVE EACH ENTRY A SHORT BOLD SUBJECT/.test(c.prompt));
   t.check("the target is carried from the boundary script", /THE TARGET IS 200 LINES/.test(c.prompt));
   t.check("and overshooting beats dropping something that matters", /DO NOT DROP IT/.test(c.prompt) && /the target moves up\s+on its own/.test(c.prompt));
-  t.check("a ledger entry is retired rather than deleted, because agents cite ids", /agents\s+DO cite individual entries by id/.test(c.prompt));
+  // The pass no longer moves anything: it curates the standing context from the
+  // whole ledger, and the round boundary drains the ledger to Retired after it.
+  t.check("the standing context is the only section it edits", /IT IS THE ONLY SECTION YOU EDIT/.test(c.prompt));
+  t.check("it reads the whole ledger and leaves it alone", /READ ALL OF IT\. Do not edit it/.test(c.prompt));
+  t.check("it is told the boundary archives the ledger for it", /the round\s+boundary archives it for you/.test(c.prompt));
+  // The archive is a separate file the agent is never given the path to, so the
+  // prompt states there is nothing else to read rather than forbidding a read.
+  // A prohibition would not hold: measured against this same prompt, "read the
+  // file once, write it once" was ignored by every pass.
+  t.check("and is told this file is the whole live record", /There is no third section and no archive in this file/.test(c.prompt));
+  t.check("the archive path is never given to it", !/review-log-archive/.test(c.prompt));
+  t.check("CORRECTS is honoured against the standing context", /HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT/.test(c.prompt));
   t.check("a superseded watchout is deleted rather than kept", /DELETED rather than kept for the record/.test(c.prompt));
   t.check("a USEFUL entry is promoted", /HONOUR `USEFUL`/.test(c.prompt));
   // Compaction deliberately does NOT check the tree any more: doing so turned a
@@ -2095,7 +2107,7 @@ t.section("X17. the status file is written on a run that did NOT converge");
 t.section("X18. the compaction target comes from the boundary, not the default");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
   }));
   const c = calls.find((x) => /:compact$/.test(x.label));
   t.check("a compaction ran", !!c);
@@ -2188,7 +2200,7 @@ t.section("X21. signals that reach a prompt are pinned, not just computed");
 }
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": ({ label }) => /^r1:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] },
     "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
     "*:expand:*": sites(),
@@ -2313,7 +2325,7 @@ t.section("R42. a fix claim the tree does not support is withdrawn");
   // loops, permanently suppressing them. The diff proving nothing changed was
   // already being collected one field away.
   const noChange = '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,' +
-    '"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
+    '"changedFiles":[],"hunksKnown":true,"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
   const { logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
     "*:round-boundary": noChange,
     "*:fix:*": { summary: "No edit was needed; the text already says this.",
@@ -2409,6 +2421,46 @@ t.section("R43. the guards a mutation audit found deletable");
     junk.logs.some((l) => /drop|no usable path|without a path/i.test(l)),
     JSON.stringify(junk.logs.filter((l) => /site/i.test(l)).slice(0, 3)),
   );
+}
+
+t.section("R44. zero hunks with no baseline is not an empty fix claim");
+{
+  // The first round of a loop has no previous snapshot, so the boundary reports
+  // zero hunks because there is nothing to diff against. Reading that as "the
+  // fixer edited nothing" withdrew every genuine fix from round 1 of both loops
+  // on a measured run and reported nothing fixed.
+  const noBaseline = '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,' +
+    '"changedFiles":[],"hunksKnown":false,"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
+  const { logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:round-boundary": noBaseline,
+  }));
+  t.check("the claim is NOT withdrawn", !logs.some((l) => /the claim is withdrawn/.test(l)));
+  t.check("and the fixes are credited",
+    result && result.review && result.review.totalFixed === 2,
+    String(result && result.review && result.review.totalFixed));
+}
+
+t.section("R45. every lens runs in round one; none is withheld by rotation");
+{
+  // `operational` and `fresh` used to be a second pool with their own schedule:
+  // while any ordinary lens was active, exactly one rotated in per round. That
+  // manufactured a lens which had NEVER RUN, and a lens that has never run
+  // cannot retire, and a lens that has not retired blocks the sweep -- so a
+  // clean proposal spent a whole round discharging one lens. A measured run's
+  // non-spec loop went 13 lenses, then `fresh` alone, then a 14-lens sweep.
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+  }));
+  const rounds = logs.filter((l) => /launching \d+ reviewers|FULL SWEEP/.test(l));
+  t.check("round one runs the whole pool", /launching 14 reviewers/.test(rounds[0] || ""), String(rounds[0]));
+  const firstRetire = logs.find((l) => /retiring/.test(l)) || "";
+  t.check(
+    "both extras retire in round one, so neither can block the sweep",
+    /operational/.test(firstRetire) && /fresh/.test(firstRetire),
+    firstRetire,
+  );
+  t.check("so the very next round is the sweep", /FULL SWEEP 1/.test(rounds[1] || ""), String(rounds[1]));
+  t.check("and no round runs a lens alone", !logs.some((l) => /launching 1 reviewers/.test(l)));
 }
 
 t.done();
