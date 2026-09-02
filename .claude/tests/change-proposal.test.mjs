@@ -51,7 +51,7 @@ const newStubs = (over = {}) => ({
   conventions: "conforms",
   snap: "DONE",
   diffcount: "0",
-  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
+  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
   "*:review:*": { coverage: "read it all", findings: [] },
   default: {},
   ...over,
@@ -271,7 +271,7 @@ const loopStubs = (over = {}) => {
     "spec-nonspec-handoff": "reconciled",
     // Every round now closes through the boundary script, so a stub table that
     // omits it leaves every round unable to certify.
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": { coverage: "c", findings: [] },
     "*:dedup": { findings: [] },
     "*:verify-material": { confirmed: true, reason: "material" },
@@ -2095,7 +2095,7 @@ t.section("X17. the status file is written on a run that did NOT converge");
 t.section("X18. the compaction target comes from the boundary, not the default");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
   }));
   const c = calls.find((x) => /:compact$/.test(x.label));
   t.check("a compaction ran", !!c);
@@ -2188,7 +2188,7 @@ t.section("X21. signals that reach a prompt are pinned, not just computed");
 }
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": ({ label }) => /^r1:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] },
     "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
     "*:expand:*": sites(),
@@ -2279,6 +2279,70 @@ t.section("X23. an ordinal is decisive, so two steps of one deliverable are two 
   );
   t.check("a dotted section prefix is still one site",
     /REWRITTEN BEFORE/.test(matching(nested.calls, "r2:fix-design:")[0].prompt));
+}
+
+t.section("R41. a verify outage retires nothing and never certifies convergence");
+{
+  // The lens side already guaranteed that a lens which failed its own retries is
+  // never retired. The verify side had no counterpart, so an outage made "no
+  // finding of its own survived verification" vacuously true and retired the
+  // very lenses that had just found the defects -- then the sweep round was
+  // complete on its own terms and the run returned status reviewed, converged.
+  const { calls, logs, result } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": "NO",
+    "*:review:*": ({ label }) => (/^r1:/.test(label)
+      ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] }),
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "*:verify-material": null,
+  }));
+  t.check("the round is inconclusive", logs.some((l) => /verifiers failed after retries/.test(l)));
+  t.check("no lens is retired on a verdict nobody reached",
+    logs.some((l) => /verification did not complete, so no lens is retired/.test(l)));
+  t.check("the run does NOT converge", result && result.review && result.review.converged === false,
+    String(result && result.review && result.review.converged));
+  t.check("the status is not reviewed", result && result.status !== "reviewed", String(result && result.status));
+  t.check("and the loop says which rounds could not verify",
+    logs.some((l) => /could not verify in round\(s\)/.test(l)));
+  t.check("so the proposal is not stamped Reviewed", never(calls, "status:set-reviewed"));
+}
+
+t.section("R42. a fix claim the tree does not support is withdrawn");
+{
+  // A fixer answering "no edit was needed" pushed its findings into the run-wide
+  // "already fixed, do not re-litigate" list handed to every later lens of BOTH
+  // loops, permanently suppressing them. The diff proving nothing changed was
+  // already being collected one field away.
+  const noChange = '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,' +
+    '"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
+  const { logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:round-boundary": noChange,
+    "*:fix:*": { summary: "No edit was needed; the text already says this.",
+      newMechanisms: [], escalated: [], designRejected: [] },
+  }));
+  t.check("the empty claim is withdrawn",
+    logs.some((l) => /the tree did not change; the claim is withdrawn/.test(l)));
+  t.check("and nothing is counted as fixed",
+    result && result.review && result.review.totalFixed === 0,
+    String(result && result.review && result.review.totalFixed));
+  // The point is not that the run can never converge afterwards -- a later round
+  // whose lenses genuinely find nothing may. The point is that the withdrawn
+  // findings are no longer SUPPRESSED, so a later lens is free to re-find them.
+  const { calls: c2 } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:round-boundary": noChange,
+    "*:fix:*": { summary: "No edit was needed.", newMechanisms: [], escalated: [], designRejected: [] },
+    "*:review:*": ({ label }) => (/^r[12]:/.test(label)
+      ? { coverage: "c", findings: fs(2) } : { coverage: "c", findings: [] }),
+  }));
+  const r2lens = matching(c2, "r2:review:")[0];
+  t.check("and a later lens is NOT told they were fixed",
+    !r2lens || !/Already found and fixed in earlier rounds/.test(r2lens.prompt));
+}
+{
+  // The control: a round whose tree DID change still credits its fixes.
+  const { result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {}));
+  t.check("a real fix is still credited",
+    result && result.review && result.review.totalFixed === 2,
+    String(result && result.review && result.review.totalFixed));
 }
 
 t.done();
