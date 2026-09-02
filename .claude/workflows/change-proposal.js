@@ -198,6 +198,7 @@ function proposalFiles(ref, repoRoot) {
       spec: abs,
       nonSpec: abs,
       log: abs,
+      logArchive: abs,
       deviations: abs,
     };
   }
@@ -215,6 +216,7 @@ function proposalFiles(ref, repoRoot) {
     spec: f("spec-changes"),
     nonSpec: f("non-spec-changes"),
     log: f("review-log"),
+    logArchive: f("review-log-archive"),
     deviations: f("deviations"),
   };
 }
@@ -1212,7 +1214,8 @@ if (mode === "new") {
       "`## Testing`, `## Edge cases and accepted failure modes`, `## Open decisions for review`, " +
       "`## Files touched on application (non-spec)`. All empty.\n\n" +
       "7. " + P.log + " — `# Review log — " + P.stem + "` then `## Standing context`, `## Ledger`, " +
-      "`## Retired`. All empty.\n\n" +
+      "and nothing else. All empty. There is no Retired section: aged entries move " +
+      "to a separate archive file the round boundary creates when it first needs it.\n\n" +
       "8. " + P.deviations + " — `# Deviations — " + P.stem + "` and one line saying the implementor owns " +
       "this file and it stays empty until an implementation records a departure from what the proposal " +
       "states.\n\n" +
@@ -3813,14 +3816,14 @@ async function compactLog(round, standingLines, target) {
       "disagreement matters, write one `UNVERIFIED:` line for a later reviewer to settle. An earlier " +
       "version of this pass was told to check the tree itself, and it turned a text pass into a " +
       "mini-review that grepped pkg/ and read three spec files.\n\n" +
-      "THE THREE SECTIONS, AND WHICH ONE IS YOURS. `## Standing context` is curated and is the part every " +
+      "THE TWO SECTIONS, AND WHICH ONE IS YOURS. `## Standing context` is curated and is the part every " +
       "other agent reads. IT IS THE ONLY SECTION YOU EDIT.\n" +
       "`## Ledger` is the chronological record of this window. READ ALL OF IT. Do not edit it: the round " +
-      "boundary moves it to `## Retired` for you, whole and with its ids, as soon as this pass returns. " +
-      "That is why you can read it as a complete record and still leave it alone.\n" +
-      "`## Retired` is the archive. DO NOT READ IT. Everything in it was curated by an earlier pass, and " +
-      "whatever mattered is already in the standing context. Reading it is how a text pass becomes a " +
-      "re-derivation of work already done.\n\n" +
+      "boundary archives it for you, whole and with its ids, as soon as this pass returns. That is why " +
+      "you can read it as a complete record and still leave it alone.\n" +
+      "There is no third section and no archive in this file. Everything an earlier pass curated is " +
+      "already in the standing context, so this file IS the live record and you need nothing else to do " +
+      "the job.\n\n" +
       "WHAT TO DO, in order.\n\n" +
       "1. Read the WHOLE ledger. Every entry in it is about to be archived, so anything you do not lift " +
       "now survives only as an archived entry nobody will read.\n\n" +
@@ -3830,8 +3833,8 @@ async function compactLog(round, standingLines, target) {
       "this round hunting X; it is not there; do not re-derive this\" saves a later agent a whole round, " +
       "which is worth more than most findings. Keep its reasoning rather than its headline: a one-line " +
       "summary of a dead end is not enough for the next agent to recognise the same dead end.\n\n" +
-      "3. HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT. The entry a `CORRECTS` names may already have " +
-      "been archived by an earlier pass, and you may not read the archive. Its durable claim is in the " +
+      "3. HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT. The entry a `CORRECTS` names may have been " +
+      "archived by an earlier pass and is no longer in this file. Its durable claim is in the " +
       "standing context, which is where the correction belongs: find the claim, rewrite it to what is " +
       "true, or delete it. A superseded `WATCHOUT` is DELETED rather than kept for the record, because a " +
       "warning about a trap that no longer exists costs every future agent a detour. A `CORRECTS` naming " +
@@ -3854,8 +3857,8 @@ async function compactLog(round, standingLines, target) {
       "   `### Deferred` — every unclosed `DEFERRED`, kept WHOLE rather than summarised, because the pass " +
       "between the loops applies these and cannot apply a headline.\n" +
       "   THE STANDING CONTEXT IS THE WHOLE LIVE RECORD after this pass. An archived entry keeps its id " +
-      "and its text for a human, but no agent will read it again, so a claim that is not here is a claim " +
-      "the run has lost.\n" +
+      "and its text in a separate file for a human chasing a citation, but no agent reads that file, so " +
+      "a claim that is not here is a claim the run has lost.\n" +
       "   GIVE EACH ENTRY A SHORT BOLD SUBJECT so a reader can find the one they need without reading the " +
       "section. Measured on a real run, agents cite standing-context entries BY SUBJECT and a quarter of " +
       "all citations went to two of them. Navigability is worth more here than brevity.\n\n" +

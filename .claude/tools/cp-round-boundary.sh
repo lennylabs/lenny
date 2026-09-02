@@ -138,64 +138,69 @@ LOG="$DIR/$STEM.review-log.md"
 # ---- 0. Drain the ledger the compaction pass just read --------------------
 #
 # Compaction is two halves. The AGENT curates: it rewrites `## Standing context`
-# from the whole ledger, and never reads `## Retired`. This script then does the
-# mechanical half: it moves the ledger it read into `## Retired`, whole.
+# from the whole ledger. This script then does the mechanical half: it appends
+# the ledger it read to a SEPARATE ARCHIVE FILE and empties the ledger.
+#
+# THE ARCHIVE IS A DIFFERENT FILE ON PURPOSE. It used to be a `## Retired`
+# section of the review log, guarded by an instruction telling the pass not to
+# read it. Measured against this same prompt, instructions of that kind do not
+# hold: "read the file once, write it once" was ignored by every pass, "do not
+# page through it with sed" was answered with forty Bash calls, and the pass
+# invented a whole destination the prompt never described. An archive the agent
+# is never given the path to needs no instruction. It also keeps the review log
+# small for the twelve agents a round that read its standing context.
 #
 # ORDER MATTERS AND IS WHY THIS BLOCK IS FIRST. The pass runs after the previous
 # boundary call, so the move cannot happen in the same call. It happens here, at
-# the FOLLOWING boundary, and it must happen BEFORE this round's shards are
-# merged below -- otherwise it would sweep up entries the pass never saw. Drain,
-# then merge.
+# the FOLLOWING boundary, and BEFORE this round's shards are merged below --
+# otherwise it would archive entries the pass never saw. Drain, then merge.
 #
 # Gated on --compacted, which says a pass actually RAN rather than that one was
 # asked for. Without that a run killed between the request and the pass would
-# have its ledger drained with nothing curated from it.
+# have its ledger archived with nothing curated from it.
 #
-# Entries move WHOLE, keeping their ids. A one-line summary would mean a dead
-# agent loses the text, and agents cite ledger entries by id, so a moved entry
-# must still resolve. `## Retired` grows without bound, which is free: nothing
-# reads it, the compactor included.
+# Entries move WHOLE, keeping their ids, so a dead agent loses no text and a
+# human chasing a citation still finds it. The archive grows without bound,
+# which is free: nothing reads it.
+ARCHIVE="$DIR/$STEM.review-log-archive.md"
 drained=0
 if [ "$COMPACTED" = "1" ] && [ -f "$LOG" ]; then
   grep -qE '^## Ledger[[:space:]]*$' "$LOG" || {
     echo "cp-round-boundary: $LOG has no '## Ledger' heading on a line of its own" >&2; exit 1; }
-  grep -qE '^## Retired[[:space:]]*$' "$LOG" || {
-    echo "cp-round-boundary: $LOG has no '## Retired' heading on a line of its own" >&2; exit 1; }
-  before_ledger=$(awk '/^## Ledger[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$LOG" | grep -c . || true)
-  if [ "$before_ledger" -gt 0 ]; then
-    tmp="$LOG.draining"
-    awk '
-      # Pass 1 collects the ledger body; pass 2 prints the file with the ledger
-      # emptied and the body appended to the end of Retired.
-      BEGIN { n = 0 }
-      FNR == NR {
-        if ($0 ~ /^## Ledger[[:space:]]*$/) { inl = 1; next }
-        if (inl && $0 ~ /^## /) { inl = 0 }
-        if (inl) body[n++] = $0
-        next
-      }
-      { }
-      $0 ~ /^## Ledger[[:space:]]*$/ { print; skip = 1; next }
-      skip && $0 ~ /^## / { skip = 0 }
-      skip { next }
-      $0 ~ /^## Retired[[:space:]]*$/ { print; inret = 1; next }
-      inret && $0 ~ /^## / {
-        for (i = 0; i < n; i++) print body[i]
-        inret = 0
-        print; next
-      }
-      { print }
-      END { if (inret) for (i = 0; i < n; i++) print body[i] }
-    ' "$LOG" "$LOG" >"$tmp" || { rm -f "$tmp"; exit 1; }
-    # Nothing may be lost. Every non-blank line of the file must survive the
-    # move; the only change is which section holds the ledger body.
-    if [ "$(grep -c . "$tmp" || true)" -ne "$(grep -c . "$LOG" || true)" ]; then
-      rm -f "$tmp"
-      echo "cp-round-boundary: draining the ledger would change the file's line count; refusing" >&2
+  [ -f "$ARCHIVE" ] || {
+    printf '# Review log archive — %s\n\nEntries the compaction pass has already curated. Its residue is\nin the review log'"'"'s standing context; this file is the record, for a\nhuman chasing a citation. No agent reads it.\n' "$STEM" > "$ARCHIVE" || {
+      echo "cp-round-boundary: cannot create $ARCHIVE" >&2; exit 1; }
+  }
+  ledger_body=$(awk '/^## Ledger[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$LOG")
+  # A pre-existing `## Retired` section belongs in the archive too. This runs
+  # once, on the first drain of a log written before the archive existed.
+  retired_body=""
+  if grep -qE '^## Retired[[:space:]]*$' "$LOG"; then
+    retired_body=$(awk '/^## Retired[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$LOG")
+  fi
+  if [ -n "$(printf '%s' "$ledger_body" | tr -d '[:space:]')" ] || [ -n "$(printf '%s' "$retired_body" | tr -d '[:space:]')" ]; then
+    before_archive=$(grep -c . "$ARCHIVE" 2>/dev/null || echo 0)
+    before_moving=$( { printf '%s\n' "$ledger_body"; printf '%s\n' "$retired_body"; } | grep -c . || true)
+    {
+      [ -n "$retired_body" ] && printf '%s\n' "$retired_body"
+      printf '%s\n' "$ledger_body"
+    } >> "$ARCHIVE" || { echo "cp-round-boundary: cannot append to $ARCHIVE" >&2; exit 1; }
+    # Nothing may be lost: every non-blank line moved must now be in the archive.
+    after_archive=$(grep -c . "$ARCHIVE" 2>/dev/null || echo 0)
+    if [ "$((after_archive - before_archive))" -ne "$before_moving" ]; then
+      echo "cp-round-boundary: archiving lost lines ($before_moving moved, $((after_archive - before_archive)) landed); refusing" >&2
       exit 1
     fi
+    tmp="$LOG.draining"
+    awk '
+      $0 ~ /^## Ledger[[:space:]]*$/ { print; skip = 1; next }
+      $0 ~ /^## Retired[[:space:]]*$/ { skip = 2; next }
+      skip && $0 ~ /^## / { skip = 0 }
+      skip { next }
+      { print }
+    ' "$LOG" >"$tmp" || { rm -f "$tmp"; exit 1; }
     mv "$tmp" "$LOG" || exit 1
-    drained=$before_ledger
+    drained=$before_moving
   fi
 fi
 

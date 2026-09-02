@@ -295,7 +295,7 @@ const splitPrompt =
   "  .non-spec-changes.md — everything else that is staged: code, schemas, charts, migrations, docs, and " +
   "the Testing section. Plus the design prose that is about the implementation.\n" +
   "  .review-log.md — head it `# Review log — " + stem + "`, then `## Standing context` (empty for now), " +
-  "`## Ledger` (empty), and `## Retired`, and put the entire `Resolved in adversarial review` history " +
+  "and `## Ledger` (empty), and put the entire `Resolved in adversarial review` history " +
   "under Retired. That history is what the log's Retired section is for.\n" +
   "  .deviations.md — head it `# Deviations — " + stem + "` and a one-line note that the implementor owns " +
   "this file and it is empty until an implementation records one. It has no source lines to carry.\n\n" +

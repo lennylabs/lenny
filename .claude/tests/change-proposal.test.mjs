@@ -1081,8 +1081,13 @@ t.section("B20. compaction fires when the boundary says it is due, and not other
   // whole ledger, and the round boundary drains the ledger to Retired after it.
   t.check("the standing context is the only section it edits", /IT IS THE ONLY SECTION YOU EDIT/.test(c.prompt));
   t.check("it reads the whole ledger and leaves it alone", /READ ALL OF IT\. Do not edit it/.test(c.prompt));
-  t.check("it is told the boundary drains the ledger for it", /the round\s+boundary moves it to `## Retired` for you/.test(c.prompt));
-  t.check("and it may not read the archive", /`## Retired` is the archive\. DO NOT READ IT/.test(c.prompt));
+  t.check("it is told the boundary archives the ledger for it", /the round\s+boundary archives it for you/.test(c.prompt));
+  // The archive is a separate file the agent is never given the path to, so the
+  // prompt states there is nothing else to read rather than forbidding a read.
+  // A prohibition would not hold: measured against this same prompt, "read the
+  // file once, write it once" was ignored by every pass.
+  t.check("and is told this file is the whole live record", /There is no third section and no archive in this file/.test(c.prompt));
+  t.check("the archive path is never given to it", !/review-log-archive/.test(c.prompt));
   t.check("CORRECTS is honoured against the standing context", /HONOUR `CORRECTS`, AGAINST THE STANDING CONTEXT/.test(c.prompt));
   t.check("a superseded watchout is deleted rather than kept", /DELETED rather than kept for the record/.test(c.prompt));
   t.check("a USEFUL entry is promoted", /HONOUR `USEFUL`/.test(c.prompt));
