@@ -45,6 +45,7 @@ function run({ verdicts, cleanAfterCall = 0, minUnproductiveRounds, maxStepAttem
                commit: "c" + calls.length, filesChanged: ["PROPOSAL-QUEUE.md"], testsAddedOrModified: [] };
     }
     if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["static"] };
+    if (label.startsWith("lease-check:")) return { leaseHeld: false };
     if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
     if (label === "proposal-edit-audit") return { edited: false, commits: [] };
     return {};

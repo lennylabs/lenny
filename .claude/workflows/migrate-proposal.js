@@ -24,6 +24,9 @@
 //   migrated        the split landed and the legacy file is gone
 //   already         the directory exists and the legacy file does not
 //   refused-implemented   an Implemented or Retired proposal is not split
+//   unreadable-status     the status tool reported no known state, so nothing is split
+//   incomplete-split      a role file the split claimed is not on disk
+//   status-not-written    the status tool refused to write the split's frontmatter
 //   lost-content    the partition check found content in neither output
 //   unresolved-references   an inbound reference could not be retargeted
 //
@@ -75,6 +78,10 @@ const ROLES = [
   "deviations",
 ];
 
+// The states proposal-status.mjs writes. Kept in step with STATES in
+// .claude/tools/proposal-status.mjs, which refuses anything else.
+const STATES = ["Draft", "Reviewed", "Approved", "Implemented"];
+
 // ---- Argument classification ---------------------------------------------
 //
 // forward: read where it is used. launch: controls how a run starts.
@@ -96,9 +103,31 @@ const ASSESS = {
       description:
         "legacy: the single file exists and the directory does not. already-migrated: the directory exists and the single file does not. partial: BOTH exist, which means a previous run died mid-split and this one resumes it. absent: neither.",
     },
-    status: { type: "string", description: "the four-state status this proposal reads as, via the status tool" },
+    status: {
+      type: "string",
+      description:
+        "what the status tool printed for this proposal. One of the four states when the tool succeeded, and the tool's error line as printed when it did not; the error is never mapped onto a state.",
+    },
     title: { type: "string" },
     kind: { type: "string", description: "new or fix, from the file stem" },
+  },
+};
+
+const PRESENT = {
+  type: "object",
+  required: ["present", "missing"],
+  properties: {
+    present: { type: "array", items: { type: "string" }, description: "the roles the command printed PRESENT for" },
+    missing: { type: "array", items: { type: "string" }, description: "the roles the command printed MISSING for" },
+  },
+};
+
+const WROTE = {
+  type: "object",
+  required: ["ok", "printed"],
+  properties: {
+    ok: { type: "boolean", description: "true only when the command exited 0" },
+    printed: { type: "string", description: "what the command printed, verbatim" },
   },
 };
 
@@ -162,7 +191,9 @@ const assess = await agent(
     "/.claude/tools/proposal-status.mjs '" + dir + "' --field status 2>&1\n\n" +
     "Map the two existence answers onto state: file yes and directory no is legacy; " +
     "file no and directory yes is already-migrated; both yes is partial; both no is absent. " +
-    "Report the status the tool printed verbatim. Read the first heading of whichever of the two " +
+    "Report the status the tool printed verbatim. If the tool printed an error rather than a state, " +
+    "report that error line as the status; do not map it onto a state and do not invent one. " +
+    "Read the first heading of whichever of the two " +
     "exists for the title, and take kind from the stem (" + stem + "): the segment after the number.",
   { schema: ASSESS, label: "assess", phase: "Assess" },
 );
@@ -193,6 +224,32 @@ if (assess.status === "Implemented" || assess.status === "Retired") {
       "a proposal that is " + assess.status + " is not edited, and splitting it into eight files is an edit. " +
       "It stays in the legacy layout and every consumer reads it through the resolver.",
     legacy: rel,
+  };
+}
+
+// The assessment reports what the status tool PRINTED, and the command above
+// folds the tool's stderr into that: measured on this tree, a legacy proposal
+// with no Status bullet prints "proposal-status: legacy proposal has no Status
+// bullet: <file>", an unrecognised spelling prints "proposal-status:
+// unrecognised legacy status: Parked pending discussion (2026-01-01).", and the
+// `||` fallback prints "proposal-status: no such proposal: <dir>" because the
+// directory does not exist yet. None of the three is Implemented or Retired, so
+// the guard above passes them, and the split prompt below writes the string into
+// `status:` in the frontmatter. readStatus then rejects the file and spec-lease
+// answers "cannot read the status of <proposal>; refusing" to every spec/ write
+// naming it, so the migration would produce a proposal no step can implement.
+if (!STATES.includes(assess.status)) {
+  log("Refusing to migrate: the status tool reported no known state");
+  return {
+    status: "unreadable-status",
+    proposalStatus: assess.status,
+    reason:
+      "the status tool reported " + JSON.stringify(assess.status) + ", which is none of " +
+      STATES.join(", ") + ". The split writes that value into the frontmatter and every later reader " +
+      "rejects what it cannot parse, so the proposal is not split. Correct the Status bullet in " + rel +
+      " first.",
+    legacy: rel,
+    dir: relDir,
   };
 }
 
@@ -250,7 +307,61 @@ const splitPrompt =
 
 const split = await agent(splitPrompt, { schema: SPLIT, label: "split", phase: "Split" });
 if (!split) return { status: "split-failed", reason: "the split agent did not return", dir: relDir };
-log("Split wrote " + (split.written || []).length + " file(s)");
+log("Split reported " + (split.written || []).length + " file(s)");
+
+// `written` is the split agent's own account of what it did, and nothing
+// compared it against ROLES: a split that wrote four files still returned eight
+// paths from the return below, four of them absent. The partition checker does
+// not cover it either, because it globs whatever .md files are in the directory
+// and only asks whether every SOURCE line landed somewhere, and .deviations.md
+// and .review-log.md carry no source lines by construction. Ask the filesystem.
+const present = await agent(
+  "Report which files of a proposal split exist. Do not edit or create anything.\n\n" +
+    "Run exactly this and read its output:\n" +
+    "  for r in " + ROLES.join(" ") + "; do test -f '" + dir + "/" + stem +
+    ".'$r'.md' && echo \"PRESENT $r\" || echo \"MISSING $r\"; done\n\n" +
+    "Report each role under the answer the command gave for it, and report nothing it did not print.",
+  { schema: PRESENT, label: "confirm-split", phase: "Split" },
+);
+if (!present) return { status: "confirm-failed", reason: "the split confirmation agent did not return", dir: relDir };
+const missingRoles = ROLES.filter((r) => !(present.present || []).includes(r));
+if (missingRoles.length > 0) {
+  return {
+    status: "incomplete-split",
+    reason:
+      "the split did not produce every role file, so the migration stopped rather than reporting files " +
+      "that are not on disk. The legacy file is untouched and the directory is in the working tree for " +
+      "inspection; nothing was committed.",
+    missing: missingRoles,
+    written: present.present || [],
+    dir: relDir,
+  };
+}
+
+// The status goes through the tool, which is the only supported writer
+// (spec-driven-development.md, and this tool's own header): the spec-lease hook
+// reads the status through it, so a status set by writing prose is a status the
+// hook may not agree with. The split wrote that frontmatter by hand from a
+// prompt, so this normalises it and proves it parses, since --set exits non-zero
+// on absent or malformed frontmatter and on any value outside the four states.
+// No --by and no --date: writeStatus stamps the date of the state it sets, and
+// the date this migration ran is not the date the proposal was drafted.
+const wrote = await agent(
+  "Run exactly this command and report its exit status and its output. Change nothing else.\n\n" +
+    "node " + repo + "/.claude/tools/proposal-status.mjs '" + dir + "' --set status=" + assess.status + "\n\n" +
+    "Set ok from the exit status: 0 is ok and anything else is not. Put what it printed in printed, verbatim.",
+  { schema: WROTE, label: "status:write", model: "haiku", phase: "Split" },
+);
+if (!wrote || !wrote.ok) {
+  return {
+    status: "status-not-written",
+    reason:
+      "the status tool refused to write " + assess.status + " into the split status file, so its " +
+      "frontmatter is absent or malformed. The legacy file is untouched and nothing was committed. The " +
+      "tool printed: " + ((wrote && wrote.printed) || "nothing"),
+    dir: relDir,
+  };
+}
 
 // ---- Verify --------------------------------------------------------------
 
@@ -370,7 +481,8 @@ return {
   dir: relDir,
   stem,
   proposalStatus: assess.status,
-  written: split.written || [],
+  written: present.present,
   retargeted: refs.sites || [],
+  // Every role was confirmed on disk above, so this list is a report rather than a claim.
   files: ROLES.map((r) => "proposals/" + stem + "/" + stem + "." + r + ".md"),
 };

@@ -20,7 +20,7 @@ export const meta = {
 // neither writes nor approves proposals, and never opens, re-opens, or creates
 // a finding — it only CLOSES findings that already reference an approved
 // proposal. The per-finding work lives in close-build-gaps.sh, the single
-// engine: it applies the proposal's spec edits with the implement-proposal skill (apply-only),
+// engine: it applies the proposal's spec edits with the implement-proposal skill (spec-only),
 // implements the entire spec change's blast radius across the codebase, writes
 // and runs tests to green, and marks the finding CLOSED. close-build-gaps.sh
 // loops internally across batches until no qualifying finding remains and then
@@ -84,7 +84,7 @@ function runPrompt(iter) {
     repo +
     "/close-build-gaps.sh" +
     flag +
-    " to completion. It implements every OPEN BUILD-GAPS.md finding that references an approved spec proposal — applying the proposal's spec edits via the implement-proposal skill (apply-only), implementing the full spec-change blast radius in code, writing and running tests to green, and marking the finding CLOSED — looping internally across batches until no qualifying finding remains. It can run for hours, and harness process-tree timeouts kill ordinary background children, so launch it DETACHED:\n" +
+    " to completion. It implements every OPEN BUILD-GAPS.md finding that references an approved spec proposal — applying the proposal's spec edits via the implement-proposal skill (spec-only), implementing the full spec-change blast radius in code, writing and running tests to green, and marking the finding CLOSED — looping internally across batches until no qualifying finding remains. It can run for hours, and harness process-tree timeouts kill ordinary background children, so launch it DETACHED:\n" +
     "     cd " +
     repo +
     " && nohup setsid ./close-build-gaps.sh" +
