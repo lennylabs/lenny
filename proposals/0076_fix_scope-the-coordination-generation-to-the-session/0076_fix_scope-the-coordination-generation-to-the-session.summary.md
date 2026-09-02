@@ -6,7 +6,10 @@
 slot registry entry, so a fence for one session cannot fence another. The `CheckpointBarrier` gate and gap
 detection read the same per-session value, and the barrier gate that holds quiescence open and carries the
 gateway-minted checkpoint id back into the ack moves onto the same entry, so two co-tenant sessions drained
-together each hold their own gate. The coordinator-loss hold stays pod-scoped and reports
+together each hold their own gate. A session's fenced generation is unset until that session's first
+accepted fence on the pod, so the exemption that makes a first fence neither stale nor a gap moves from the
+pod's lifetime to the session's binding on it, which is D6, and SCHEMA-1 carries that unit onto the wire
+comment that states the exemption. The coordinator-loss hold stays pod-scoped and reports
 per-session generations: the pod-level arming event carries none, and each terminated session's
 `coordinator_lost` record carries its own, or zero when no coordinator ever fenced it on that pod. The
 proto doc comment that already claims per-session monotonicity becomes true. A `CheckpointBarrier` naming a
@@ -81,8 +84,8 @@ are alive. Proposal 0073 is converged and is not reopened; this proposal sequenc
 
 | Deliverable | Lands in | What it does |
 |:--|:--|:--|
-| SPEC-1 | `spec/10_gateway-internals.md` | §10.1.2 states the pod-side fenced generation per bound session with its initial condition and its per-session gap reset, §10.1.8 step 1 takes D7's acceptance qualifier, §10.1 states the counter's baseline of 1, and §10.1.4 states what the pod-level arming event and each terminated session's records carry. |
-| SPEC-2 | `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md` | The `CH-FENCE`, `CH-BARRIER`, §28.6, §28.8, and §29 mirrors of the record-and-reject rule, the gap reset, and the barrier's outcome take the wording SPEC-1 states, so the applied specification carries one pod-side rule. |
+| SPEC-1 | `spec/10_gateway-internals.md` | §10.1.2 states the pod-side fenced generation per bound session with its initial condition, its per-session gap reset, and step 3's acceptance rule for a session the pod holds no value for, §10.1.8 step 1 applies that rule to the barrier, §10.1 states the counter's baseline of 1, and §10.1.4 states what the pod-level arming event and each terminated session's records carry. |
+| SPEC-2 | `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md` | The `CH-FENCE`, `CH-CHECKPOINT`, `CH-BARRIER`, §28.6, §28.8, and §29 mirrors of the record-and-reject rule, the gap reset, and the barrier's outcome take the wording SPEC-1 states, and §29.10's co-tenancy classification records the per-session generation and the pod-scoped hold as answered, so the applied specification carries one pod-side rule. |
 | SPEC-3 | `spec/04_system-components.md` | §4.2's session-record paragraph states that a newly created session row carries `coordination_generation = 1` and that the first handoff mints 2. |
 | SCHEMA-1 | `schemas/lenny-adapter.proto`, with the stubs `make generate-proto` regenerates | The fence and barrier RPC, message, and field doc comments and the operational-RPC `coordination_generation` field comments take the wording SPEC-2 states for each. |
 | CODE-1 | `pkg/adapter/coordination.go`, `server.go`, `slot.go`, `checkpoint.go`, `resume.go`, and `tests/testinfra/coordfixture/coordfixture.go` | `coordinationState` and `barrierGate` move from `Server` onto the slot registry entry, each RPC resolves that entry once for the session it names, and the pod-wide accessors become per-session reads. |

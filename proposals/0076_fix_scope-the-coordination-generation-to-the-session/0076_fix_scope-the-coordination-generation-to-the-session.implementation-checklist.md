@@ -14,8 +14,10 @@
       Tiers 0, 1, 2, 4, 7a, 8. Depends on: S1
 - [ ] **S4 · code** — CODE-4. The session row's coordination generation is baselined at 1.
       Tiers 0, 1, 2, 3, 4, 7a, 8. Depends on: S1
-- [ ] **S5 · code** — CODE-2. `CheckpointBarrier`'s gate reads the per-session generation.
-      Tiers 0, 1, 3, 7a. Depends on: S1, S3, S4
+- [ ] **S5 · code** — CODE-2. `CheckpointBarrier`'s gate reads the per-session generation and accepts a
+      barrier for a bound session the pod holds no fenced generation for, which the counter baseline S4
+      lands makes reachable.
+      Tiers 0, 1, 3, 4, 7a. Depends on: S1, S3, S4
 - [ ] **S6 · test** — TEST-1. Two co-tenant sessions handing off independently, on proposal 0060's
       two-replica harness.
       Tiers 1, 4, 7a. Depends on: S3, S4, S5
