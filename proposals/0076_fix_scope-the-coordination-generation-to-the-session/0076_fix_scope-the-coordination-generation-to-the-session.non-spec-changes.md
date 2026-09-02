@@ -8,8 +8,17 @@ against the post-0073 state of each file.
 
 ### SCHEMA-1. Make the comments true
 
-`schemas/lenny-adapter.proto`: the `CoordinatorFenceRequest.coordination_generation` and
-`CheckpointBarrierRequest.coordination_generation` doc comments state the settled scope.
+`schemas/lenny-adapter.proto`: every doc comment SPEC-2 names as a wire carrier takes the wording SPEC-2
+states for it, so the wire text and the applied specification state one rule apiece. The carriers are the
+`CoordinatorFence` RPC comment, the message-level `CoordinatorFenceRequest` and `CoordinatorFenceResponse`
+comments, the `CheckpointBarrier` RPC comment, the message-level `CheckpointBarrierRequest` comment, the
+`CheckpointBarrierRequest.coordination_generation` field comment, and the `coordination_generation` field
+comments on `SendMessageRequest`, `AttachRequest`, `RotateCredentialsRequest`,
+`ExtendCredentialLeaseRequest`, `RevokeCredentialsRequest`, `InterruptRequest`, `CheckpointRequest`,
+`SignalDeadlineRequest`, `ResumeRequest`, `ExportPathsRequest`, `ReportUsageRequest`, and
+`ShutdownRequest`. The `CoordinatorFenceRequest.coordination_generation` field comment is the one carrier
+that takes no edit: it already states per-session monotonicity, and SPEC-2 records that it keeps its
+wording.
 `make generate-proto` (`Makefile:91-94`) regenerates the committed stubs from the edited proto, and they
 land in the same commit as it, because `TestProtoStubsMatchGeneratedOutput`
 (`tests/tier0_static/proto_no_drift_test.go:70`) reproduces that target and diffs its output against the
@@ -109,31 +118,39 @@ CODE-4's baseline rather than through the hold.
 
 `migrations/0181_sessions_coordination_generation_baseline.up.sql` sets
 `sessions.coordination_generation` to `DEFAULT 1`, backfills with
-`UPDATE sessions SET coordination_generation = 1 WHERE coordination_generation = 0`, drops the inline
-`CHECK (coordination_generation >= 0)` that `migrations/0050_session_record_fields.up.sql:38-39` created
-under its auto-assigned name `sessions_coordination_generation_check`, adds a named
-`CHECK (coordination_generation >= 1)` in its place, and sets `coordination_lease.coordination_generation`
-to `DEFAULT 1` (`migrations/0164_coordination_lease.up.sql:44`) so the mirror column states the same
-baseline as the row it mirrors. 0181 is the next free migration number, since
-`migrations/0180_drop_checkpoint_slot_id.up.sql` is the last one taken. The `.down.sql` restores the
-`DEFAULT 0` and the `>= 0` check and rolls no row back, because §4.2 states the counter is never reset.
+`UPDATE sessions SET coordination_generation = 1 WHERE coordination_generation = 0`, and sets
+`coordination_lease.coordination_generation` to `DEFAULT 1`
+(`migrations/0164_coordination_lease.up.sql:44`) so the mirror column states the same baseline as the row
+it mirrors. It leaves the inline `CHECK (coordination_generation >= 0)` that
+`migrations/0050_session_record_fields.up.sql:38-39` created on the session row in place. 0181 is the next
+free migration number, since `migrations/0180_drop_checkpoint_slot_id.up.sql` is the last one taken. The
+`.down.sql` restores the `DEFAULT 0` and rolls no row back, because §4.2 states the counter is never
+reset.
 
 `pkg/gateway/session/sessionstore/pgstore/pgstore.go` `Create` (`:140`) floors a zero
 `CoordinationGeneration` to 1 before the insert, beside the `schemaVersion == 0` normalisation already
 there (`:244-248`), and `pkg/gateway/session/sessionstore/memstore/memstore.go` `Create` (`:46`) takes the
 same floor beside its own `SchemaVersion` normalisation (`:58-61`). `Create` names
 `coordination_generation` in its insert column list (`pgstore.go:177`), so the column default baselines
-nothing and the `Create` floors are what the `>= 1` check depends on. The migration and both floors land in
-one commit, because a commit that tightens the check while either `Create` path still writes an explicit
-zero rejects every session insert.
+nothing and the two `Create` floors are the whole enforcement. The migration and both floors land in one
+commit as one deliverable. 0181 does not tighten the session row's check to
+`CHECK (coordination_generation >= 1)`. The migrate Job is a Helm `pre-install,pre-upgrade` hook at weight
+-5 that completes before the gateway Deployment rolls
+(`charts/lenny/templates/migrate-job.yaml:10-16`, `:37-39`), so the schema is ahead of the binaries for the
+whole rolling window and every insert the still-running old fleet issues through `pgstore.Create` writes an
+explicit zero. §10.5 states the rule for that case: mixed-version replicas must coexist during rollout, and
+a constraint that old-version writes violate belongs to a Phase 3 migration in a subsequent deployment. The
+retained `>= 0` check accepts those inserts, and the two `Create` floors baseline every row the new
+binaries write.
 
 `pkg/gateway/coordination/coordfence/coordfence.go:147-153` loses its floor of a non-positive row value
 and the comment on it. The value read at `:143` is sent as it stands.
 
 When the baseline does not fire and a row still carries 0, the fence carries 0 and the adapter refuses it
 with `InvalidArgument` (`pkg/adapter/coordination.go:93-94`), and a barrier carrying 0 is refused the same
-way (`:224-226`). Both refusals are loud and fail closed, and the `CHECK (coordination_generation >= 1)`
-on the session row is the store-side backstop.
+way (`:224-226`). Both refusals are loud and fail closed. The two `Create` floors are what keep a new row
+off zero, and the session row's `CHECK (coordination_generation >= 0)` is unchanged. A row an old binary
+wrote at 0 during the rolling window takes that same refusal until its first takeover bumps it.
 
 CODE-4 reaches tiers 0, 1, 2, 3, 4, 7a, and 8.
 
@@ -166,8 +183,8 @@ at tier 4. Production runs that path through `coordfence.Fencer`'s retry-and-rel
 verdict, which the substitution does not change. Tier 1 runs under `-race`
 (`cmd/lenny-test/cmd_run.go:880`), so a case that arranges concurrent calls only as the way to reach
 process-local state, such as the entry-lifetime case below, stays at tier 1. The cases whose subject is
-contention itself, where the assertion is that two co-tenant sessions' RPCs do not interfere, are pinned
-at tier 7a under `-race`.
+contention itself, where the assertion is that each of two co-tenant sessions' concurrent RPCs records and
+returns its own state, are pinned at tier 7a under `-race`.
 
 `tests/testinfra/coordfixture` carries no build tag, so tier 0's `go vet ./...` compiles the fixture
 itself and catches the accessor change inside it. Its callers do not compile at tier 0:
@@ -221,20 +238,33 @@ states otherwise.
   is an amendment of a landed one rather than a new case, and it is the disposition CODE-3 needs so that
   the step landing CODE-3 does not turn tier 1 red.
 - Tier 4, `tests/tier4_integration`: on proposal 0060's two-replica harness, one pod holds two sessions
-  (`coordfixture.StartPod` starts the first, and the second is started over the pod's already-dialed
+  (`coordfixture.StartPod` starts `sess-a`, and `sess-b` is started over the pod's already-dialed
   `Pod.Client`, `tests/testinfra/coordfixture/coordfixture.go:76`, `:98-102`) and replica 1 coordinates
-  both. `sess-b`'s lease lapses, the survivor's `Sweeper` adopts `sess-b` alone, bumps only its row, and
-  drives a genuine `CoordinatorFence` for `sess-b` through `coordfixture.FenceReadopter`. The fence is
-  accepted, the binding is published, and `sess-a`'s value on the pod is unchanged. Against the pre-fix
-  code the pod refuses the fence with `coordinator_handoff_stale`, `FenceReadopter` releases the lease
-  and returns an error (`tests/testinfra/coordfixture/coordfixture.go:220-241`), the `Sweeper` records an
-  adoption backoff (`pkg/gateway/coordination/coordination/coordination.go:408`, `:512-517`), no binding
-  is published, and `sess-b` stays unadoptable until that backoff elapses.
+  both. The two rows are seeded apart, `sess-a` at 7 and `sess-b` at 2, and the case drives replica 1's
+  at-bind fence for `sess-a` to 7 explicitly, as the landed single-session case does
+  (`tests/tier4_integration/coordination_fence_split_brain_test.go:83`), because nothing fences a
+  normally-started session. `sess-b` is never fenced on that pod. Replica 1's lease on `sess-a` stays
+  live, so when `sess-b`'s lease lapses the survivor's `Sweeper` adopts `sess-b` alone, skipping `sess-a`
+  on `ErrHeld` (`pkg/gateway/coordination/coordination/coordination.go:341`), bumps only `sess-b`'s row to
+  3, and drives a genuine `CoordinatorFence` for `sess-b` at 3 through `coordfixture.FenceReadopter`. The
+  fence is accepted on `sess-b`'s own unset entry with `gap_detected` false, the binding is published, and
+  `sess-a`'s value on the pod still reads 7. Against the pre-fix code the pod-wide `lastFenced` is 7, so 3
+  is refused with `coordinator_handoff_stale` (`pkg/adapter/coordination.go:99`), `FenceReadopter`
+  releases the lease and returns an error (`tests/testinfra/coordfixture/coordfixture.go:220-241`), the
+  `Sweeper` records an adoption backoff (`pkg/gateway/coordination/coordination/coordination.go:408`,
+  `:512-517`), no binding is published, and `sess-b` stays unadoptable until that backoff elapses.
 - Tier 7a, `tests/tier7a_load_local`: two concurrent `CoordinatorFence` calls for different co-tenant
   sessions on one pod each record their own value, under `-race`.
 - Tier 7a, `tests/tier7a_load_local`: two `CheckpointBarrier` RPCs accepted concurrently on one pod each
-  receive their own stream's checkpoint id in the ack and neither waits on the other, under `-race`.
-  Against a pod-wide gate the loser blocks to the shared ack deadline.
+  receive their own stream's checkpoint id in the ack, neither ack carrying an empty `checkpoint_ref` nor
+  the co-tenant's id, and both return well inside the barrier ack deadline, under `-race`. The two
+  `Checkpoint` streams do not run concurrently: the pod-level op lock admits one checkpoint at a time and
+  queues the distinct co-tenant session id behind the running one (`pkg/adapter/checkpoint.go:111`,
+  `pkg/adapter/oplock.go:117-128`), so the second barrier's ack returns only after the first stream's
+  archive finishes and the case asserts nothing about the two acks' relative timing. That op lock is
+  shipped behavior no deliverable here changes. Against a pod-wide gate the second `open()` replaces the
+  first barrier's channel, checkpoint id, and signal (`pkg/adapter/coordination.go:158-165`), so the first
+  barrier is never signalled and blocks to its ack deadline.
 - Tier 8, `tests/tier8_chaos/coordination_crash_takeover_test.go`: the landed crash-takeover coverage is
   amended rather than extended. Its `pod.LastFenced()` reads at `:150`, `:195`, and `:223` take the session
   key CODE-1 gives `coordfixture.Pod.LastFenced` (`tests/testinfra/coordfixture/coordfixture.go:115`), and
@@ -265,13 +295,19 @@ it rather than leaving tier 1 red. The `pgstore` half of the same floor is a tie
 `tests/tier2_component/stores/sessionstore_test.go`, which builds the store over a Postgres container with
 the production migrations applied (`:79`), because `pgstore.New` takes a `*pgxpool.Pool` and `Create` runs
 its insert through `pgtenant.InTx` (`pgstore.go:60`, `:249`), so that path does not run at tier 1. The case
-asserts that `Create` of a session with a zero `CoordinationGeneration` reads back 1 and that the tightened
-`>= 1` check does not reject the insert. A tier-1 case in `pkg/gateway/coordination/coordfence` asserts
-that the fencer sends the row's value with no floor. A tier-2 case over migration 0181 lands in a new file
-under `tests/tier2_component/migrations/` and asserts that the migration backfills a row carrying 0 to 1,
-that the tightened `>= 1` check rejects an insert at 0, that `sessions.coordination_generation` and
-`coordination_lease.coordination_generation` both default to 1, and that the `.down.sql` restores the
-`>= 0` check. That directory is fixed rather than incidental: pass 3 of `scripts/lint-migrations.sh`
+asserts that `Create` of a session with a zero `CoordinationGeneration` reads back 1. The landed tier-1
+case `TestFenceZeroGenerationFencesAtBaseline`
+(`pkg/gateway/coordination/coordfence/coordfence_test.go:173-183`) asserts the floor CODE-4 deletes, so the
+step landing CODE-4 amends it in the same commit rather than leaving tier 1 red: it keeps its
+zero-returning generation reader (`:177`) and asserts the fencer sends 0 rather than 1, its doc comment is
+restated so it no longer claims a baseline floor, and the adapter's `InvalidArgument` on a non-positive
+generation (`pkg/adapter/coordination.go:93-94`) is named there as the backstop. A tier-2 case over
+migration 0181 lands in a new file under `tests/tier2_component/migrations/` and asserts that the migration
+backfills a row carrying 0 to 1, that `sessions.coordination_generation` and
+`coordination_lease.coordination_generation` both default to 1, that the session row's
+`CHECK (coordination_generation >= 0)` is left in place so an insert at 0 from an old binary is still
+accepted during the rolling window, and that the `.down.sql` restores the `DEFAULT 0`. That directory is
+fixed rather than incidental: pass 3 of `scripts/lint-migrations.sh`
 (`:45`, `:74-88`) runs inside tier 0 (`cmd/lenny-test/cmd_run.go:635-641`) and fails when a migration's
 sequence number is referenced by no file under it, so a case landing in `tests/tier2_component/stores/`
 alone leaves tier 0 red. Migration 0181 also takes the entry `{migration: "0181", table: "sessions"}` in
@@ -292,7 +328,8 @@ Its landed counterpart `TestCheckpointBarrierRejectsWithoutFence`
 amends it in the same commit rather than leaving tier 1 red. Tier 4 covers the same flow across the
 gateway, the session store, and the pod.
 
-The baseline shifts landed tests in two classes, and the step that lands CODE-4 corrects both. The first
+The baseline shifts landed tests in two classes, and one further landed case sits outside both, the
+coordfence baseline-floor case named above. The step that lands CODE-4 corrects all three. The first
 class is every assertion that reads a session row's `CoordinationGeneration` after a create that left the
 field unset. Each shifts by one, because each such assertion reads either the baseline itself or a number
 of handoff bumps counted from it: the assertions in `tests/tier2_component/coordination/sweep_test.go`
@@ -334,8 +371,8 @@ generation a fixture seeds explicitly above the baseline is unaffected, which co
 `pkg/gateway/coordination/coordlease/coordlease_test.go:37`, `:58`. Those three files take no edit and are
 absent from §9 for that reason. A constant seeded at 1 falls outside that exemption, because the baseline
 makes it equal to the session row's value rather than above it, which is what puts the supersede case in
-the second class. The raw-SQL session fixtures omit the column and take its default, so the tightened check
-breaks no seed path.
+the second class. The raw-SQL session fixtures omit the column and take its default, which the migration
+moves to 1. No check is tightened, so no seed path breaks.
 
 ## 9. Files touched on application
 
@@ -379,3 +416,58 @@ breaks no seed path.
 - `tests/tier4_integration/coordination_fence_split_brain_test.go`
 - `tests/tier7a_load_local/coordination_colocation_race_test.go`
 - `tests/tier8_chaos/coordination_crash_takeover_test.go`
+
+## Resolved in adversarial review
+
+### Pass 23 (2026-09-02, automated)
+
+- **Migration 0181 no longer tightens the session row's check.** The staged migration dropped
+  `0050`'s inline `CHECK (coordination_generation >= 0)` and added a named `CHECK (coordination_generation
+  >= 1)`, and CODE-4 reasoned only about in-commit ordering. The migrate Job is a Helm
+  `pre-install,pre-upgrade` hook at weight -5 that completes before the gateway Deployment rolls
+  (`charts/lenny/templates/migrate-job.yaml:10-16`, `:37-39`), so the tightened check would be live in
+  Postgres while the whole old gateway fleet still served, and `pgstore.Create` binds
+  `sess.CoordinationGeneration` with no floor (`pkg/gateway/session/sessionstore/pgstore/pgstore.go:177`,
+  `:260`), so every old-binary session insert would be rejected for the rolling window. §10.5 places a
+  constraint that old-version writes violate in a Phase 3 migration and a separate deployment. 0181 now
+  carries the `DEFAULT 1` on both columns and the backfill alone, and the two `Create` floors are the whole
+  enforcement. The `.down.sql` restores the `DEFAULT 0` only. CODE-4's migration paragraph, its commit
+  paragraph, and its backstop paragraph, §8's tier-2 stores case, §8's tier-2 migration case, §8's closing
+  seed-path sentence, and the summary's "Watch out for" paragraph all state that. A phase split was
+  rejected: §10.5 forbids applying the Phase 3 file in this release, so staging it would leave a migration
+  file with no step, and nothing in the proposal or the tree reads the `>= 1` check.
+- **The landed coordfence baseline-floor case takes its disposition.**
+  `TestFenceZeroGenerationFencesAtBaseline`
+  (`pkg/gateway/coordination/coordfence/coordfence_test.go:173-183`) drives `fence` over a zero-returning
+  generation reader and asserts the fencer put 1 on the wire, which is the floor CODE-4 deletes
+  (`pkg/gateway/coordination/coordfence/coordfence.go:147-153`). §8 staged a new tier-1 coordfence case and
+  gave the landed one no disposition, so step S4's declared tier 1 would have gone red. §8 now states the
+  amendment in place of the new case: the reader stays, the assertion becomes 0, the doc comment is
+  restated, and the adapter's `InvalidArgument` on a non-positive generation
+  (`pkg/adapter/coordination.go:93-94`) is the backstop. The two-class sentence now names it as the one
+  landed case outside both classes, and the summary's list of the tests the CODE-4 step amends carries it.
+  Class 2's "this class has one site" claim is scoped to that class and stands.
+- **The tier-4 co-tenant case states the precondition that makes it discriminate.** As staged, nothing
+  fenced `sess-a`, so `sess-b`'s fence was the first fence on the pod, and the pre-fix stale arm is guarded
+  on `s.coord.initialized` (`pkg/adapter/coordination.go:99`, `:108`), which is false on an unfenced pod
+  (`tests/testinfra/coordfixture/coordfixture.go:73-75`). The pre-fix code accepted the fence, so the case
+  passed before and after the fix, against §8's own preamble. The bullet now seeds `sess-a` at 7 and
+  `sess-b` at 2, drives replica 1's at-bind fence for `sess-a` to 7 explicitly as the landed single-session
+  case does (`tests/tier4_integration/coordination_fence_split_brain_test.go:83`), keeps replica 1's lease
+  on `sess-a` live so the sweeper adopts `sess-b` alone on `ErrHeld`, and has the takeover mint 3, so the
+  pre-fix pod-wide value of 7 refuses 3 while the per-session pod accepts it and leaves `sess-a` at 7.
+  Moving the case to tier 1 was rejected because its subject crosses the sweeper, the lease store, and the
+  pod, and leaving the generations to the implementor was rejected because they are what makes the case
+  discriminate.
+- **The tier-7a barrier case no longer asserts that the two acks are independent in time.** An accepted
+  `CheckpointBarrier` returns only when its gate is signalled by the `Checkpoint` stream's deferred
+  `complete()`, and each stream first passes the pod-level op lock, which admits one checkpoint at a time
+  and queues a distinct co-tenant session id behind the running one (`pkg/adapter/checkpoint.go:111`,
+  `:122-125`, `pkg/adapter/oplock.go:117-128`, `:133-140`). The second barrier's ack therefore cannot
+  return before the first stream's archive finishes, so "neither waits on the other" was false against the
+  fixed implementation. The bullet now asserts that each ack carries its own stream's checkpoint id, that
+  neither ack is empty or cross-linked, and that both return well inside the barrier ack deadline, and it
+  states the op lock as shipped behavior this proposal does not change. §8's tier-split sentence, which
+  generalised the tier-7a assertion as non-interference, now states that each concurrent RPC records and
+  returns its own state, which covers both tier-7a bullets. Changing the op lock so co-tenant checkpoints
+  run concurrently was rejected as a deliverable outside this proposal's subject.

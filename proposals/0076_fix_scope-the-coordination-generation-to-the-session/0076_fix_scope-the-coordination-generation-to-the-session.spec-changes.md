@@ -193,14 +193,15 @@ changes. Step 3's closing sentence holds under that baseline on a session's firs
 as well as on later ones: the predecessor stamps the 1 its row holds on the RPCs it sends, the
 successor's compare-and-swap mints 2 and fences the pod at 2, so the equality gate refuses the
 predecessor's stamped RPCs from the moment that fence is acknowledged. The
-fence path's admission of an uninitialized session (`:99`) answers a different question, which is D6's exemption for a session's own first
-fence rather than the gate on the operational RPCs that follow it. The clause also agrees with the
-two neighbouring statements of the same rule: §10.1's summary bullet has the pod reject when the
-generation is stale (`spec/10_gateway-internals.md:30`, whose rejection sentence stands and which
-SPEC-1 opens below only to add the baseline sentence), and the §28.5.1 Messages wording SPEC-2 stages
-has the pod reject a generation older than the one it holds for that session. The comparison stays
-equality, because §7's first open decision reserves the operator for the reviewer and this edit
-changes only the unit of the value compared and the domain over which the comparison applies.
+fence path's admission of an uninitialized session (`:99`) answers a different question, which is
+D6's exemption for a session's own first fence rather than the gate on the operational RPCs that
+follow it. The clause also agrees with the two neighbouring statements of the same rule: §10.1's
+summary bullet has the pod reject when the generation is stale (`spec/10_gateway-internals.md:30`,
+whose rejection sentence stands and which SPEC-1 opens below only to add the baseline sentence), and
+the §28.5.1 Messages wording SPEC-2 stages has the pod reject a generation older than the one it
+holds for that session. The comparison stays equality, because §7's first open decision reserves the
+operator for the reviewer and this edit changes only the unit of the value compared and the domain
+over which the comparison applies.
 
 §10.1.8 step 1 states the barrier's own refusal as the only outcome, and it takes the qualifier D7
 requires. Its closing sentence, which reads "Pods receiving a barrier for a session no longer
@@ -503,11 +504,33 @@ unit. Each takes the §10.1.2 step 3 wording SPEC-1 stages, so the barrier's gen
 the value the pod holds for the session the request names, and the message-level and the field-level text do
 not disagree about the comparison.
 
-The remaining `coordination_generation` field comments in the file state the gateway's view of the active
-coordination generation for the session and describe the validation neutrally, so this change does not make
-them wrong and they are not edit sites. SCHEMA-1's own target list is in the non-spec changes and names the
-request-field comments alone; the review log's ledger records the correction and carries the same carrier
-list in the same order.
+The remaining `coordination_generation` field comments in the file are carriers too. Each states the
+gateway's view of the active coordination generation for the session and then closes with an unconditional
+consequence. Most read that a pod validates the generation on every gateway-to-pod RPC and rejects a stale
+coordinator's request, "so a replica that has lost coordination cannot drive the pod (§10.1)", and
+`ShutdownRequest`'s variant closes "cannot tear the session down (§10.1)". SPEC-1's staged §10.1.2 step 3
+states that a session for which the pod holds no fenced generation has no recorded value to match, and D6
+together with §7's first open decision make that the ordinary state of a session that has neither resumed
+nor been taken over, so for that session class the pod rejects nothing on generation grounds and the
+consequence clause is false against the section it cites.
+
+Each of those comments takes one replacement for the span running from "A pod validates" to the end of the
+consequence clause: "A pod validates the generation on every gateway-to-pod RPC against the value it holds
+for the session the RPC names, and rejects a request whose generation does not match it (§10.1)." The
+opening sentence stating the field's meaning is unchanged, and the unset case is not restated on these
+comments, because §10.1.2 step 3 owns it and the fence and barrier carriers above already state the
+record-and-reject rule and the barrier gate once each. `AttachRequest`'s and `CheckpointRequest`'s trailing
+sentences, which state that the generation is carried on every frame of the stream rather than on the
+opening frame alone, are unrelated to the gate and are unchanged.
+
+The comments are the `coordination_generation` field comments on `SendMessageRequest` (`:969-973`),
+`AttachRequest` (`:995-1001`), `RotateCredentialsRequest` (`:1046-1050`), `ExtendCredentialLeaseRequest`
+(`:1070-1074`), `RevokeCredentialsRequest` (`:1091-1095`), `InterruptRequest` (`:1114-1118`),
+`CheckpointRequest` (`:1172-1178`), `SignalDeadlineRequest` (`:1305-1309`), `ResumeRequest` (`:1393-1397`),
+`ExportPathsRequest` (`:1531-1535`), `ReportUsageRequest` (`:1576-1580`), and `ShutdownRequest`
+(`:1618-1622`). They are named by message because a list built from the shared "cannot drive the pod" phrase
+alone misses `ShutdownRequest`, whose clause closes "cannot tear the session down". SCHEMA-1's own target
+list is in the non-spec changes and names the whole carrier set in the order SPEC-2 states it.
 
 ### SPEC-3. The session record states the counter's baseline
 
@@ -1501,20 +1524,21 @@ the generation on. It is independent of proposal 0075.
   sequence would have left `spec/28` and `spec/29` restating the pod-wide fence rule while citing a
   `spec/10` that says the opposite, which is the two-incompatible-rules state SPEC-2 exists to
   prevent. §9 is rewritten once for this round, carrying `spec/28`, `spec/29`, `spec/04`, the
-  sections SPEC-1 edits under `spec/10`, CODE-4's migration pair, both session stores, `coordfence`, the adapter
-  sites CODE-1 and CODE-2 reach, the fixture, and the test files pass 15 named, and correcting
-  `tests/tier7a_load/`, which names no directory in the tree, to `tests/tier7a_load_local/`. The
-  checklist is rewritten as one sequence, taking pass 9's target sequence with the tier corrections
-  pass 15 derived: S1 bundles SPEC-1, SPEC-2, and SPEC-3, because each step is one commit and
-  separating them leaves the applied specification self-contradictory at two commit boundaries that
-  no tier-0 or tier-11 gate catches; S3 carries CODE-1's own tier list rather than the narrower one,
-  because the fixture it changes is consumed from build-tagged trees tier 0 does not vet; S5 gains
-  tier 7a for the concurrent-barrier case and names S1 in its Depends-on, since every code step's
-  Depends-on names the spec step staging the statements its work implements; and S7 carries TEST-1's
-  tiers as §8 states them. TEST-1 gains a deliverable heading naming where its cases land and
-  pointing at §8 for the assertions, so no step names a deliverable that does not exist. Renaming S7
-  to an existing deliverable was rejected, because no other deliverable covers the co-tenant handoff
-  test and pass 9, the summary, and the ledger all name it TEST-1.
+  sections SPEC-1 edits under `spec/10`, CODE-4's migration pair, both session stores, `coordfence`,
+  the adapter sites CODE-1 and CODE-2 reach, the fixture, and the test files pass 15 named, and
+  correcting `tests/tier7a_load/`, which names no directory in the tree, to
+  `tests/tier7a_load_local/`. The checklist is rewritten as one sequence, taking pass 9's target
+  sequence with the tier corrections pass 15 derived: S1 bundles SPEC-1, SPEC-2, and SPEC-3, because
+  each step is one commit and separating them leaves the applied specification self-contradictory at
+  two commit boundaries that no tier-0 or tier-11 gate catches; S3 carries CODE-1's own tier list
+  rather than the narrower one, because the fixture it changes is consumed from build-tagged trees
+  tier 0 does not vet; S5 gains tier 7a for the concurrent-barrier case and names S1 in its
+  Depends-on, since every code step's Depends-on names the spec step staging the statements its work
+  implements; and S7 carries TEST-1's tiers as §8 states them. TEST-1 gains a deliverable heading
+  naming where its cases land and pointing at §8 for the assertions, so no step names a deliverable
+  that does not exist. Renaming S7 to an existing deliverable was rejected, because no other
+  deliverable covers the co-tenant handoff test and pass 9, the summary, and the ledger all name it
+  TEST-1.
 - **CODE-3's body still deferred to a §7 hold-state decision D5 replaced, which the new S6 line
   contradicted.** The step's one-line description states the D5 position, so the body states it too
   rather than leaving the two disagreeing: the hold stays pod-scoped with its arming signal,
@@ -1787,3 +1811,34 @@ the generation on. It is independent of proposal 0075.
   process-local state stays at tier 1, and the cases whose subject is contention itself, where the
   assertion is that two co-tenant sessions' RPCs do not interfere, are pinned at tier 7a. Both tier-7a
   bullets are of that second kind, so no case moves tier.
+
+### Pass 22 (2026-09-02, automated)
+
+- **SPEC-2's closing wire-mirror paragraph excluded the remaining `coordination_generation` field comments
+  on a false description of what they say.** It called them neutral descriptions of the validation. None of
+  them stops at the validation: each closes with an unconditional consequence, most with "so a replica that
+  has lost coordination cannot drive the pod (§10.1)" (`schemas/lenny-adapter.proto:969-973` and the
+  matching sites on `AttachRequest`, `RotateCredentialsRequest`, `ExtendCredentialLeaseRequest`,
+  `RevokeCredentialsRequest`, `InterruptRequest`, `CheckpointRequest`, `SignalDeadlineRequest`,
+  `ResumeRequest`, `ExportPathsRequest`, and `ReportUsageRequest`) and `ShutdownRequest`'s with "cannot tear
+  the session down (§10.1)" (`:1618-1622`). SPEC-1's staged §10.1.2 step 3 states that a session for which
+  the pod holds no fenced generation has no recorded value to match, and D6 with §7's first open decision
+  make that the ordinary state of a session that has neither resumed nor been taken over, so for that
+  session class the consequence clause is false against the section it cites. The paragraph now names those
+  comments as carriers, by message rather than by the shared phrase, because a list built from "cannot drive
+  the pod" alone misses `ShutdownRequest`. Each takes one replacement for the consequence clause: the pod
+  validates the generation against the value it holds for the session the RPC names and rejects a request
+  whose generation does not match it. The consequence is deleted rather than re-conditioned, so the rule
+  stays stated once, in §10.1.2 step 3 and on the fence and barrier carriers, and the unset case is not
+  restated on any of them. `AttachRequest`'s and `CheckpointRequest`'s trailing sentences about per-frame
+  carriage are unrelated to the gate and are unchanged.
+- **SCHEMA-1's target list named the two request-field comments alone.** It now names the whole carrier set
+  SPEC-2 states, by pointing at SPEC-2 for each carrier's wording rather than restating it: the
+  `CoordinatorFence` RPC comment, the `CoordinatorFenceRequest` and `CoordinatorFenceResponse` message
+  comments, the `CheckpointBarrier` RPC comment, the `CheckpointBarrierRequest` message comment, both
+  `coordination_generation` field comments on those two request messages, and the operational-RPC field
+  comments named above. Its stub-regeneration statement is unchanged.
+- **The summary's outstanding-corrections paragraph described SCHEMA-1 as omitting the fence and barrier
+  comments.** That sentence is now false, so it is replaced by a statement that SCHEMA-1 names the whole
+  carrier set. The status file's own outstanding corrections, which this loop may not edit, still stand
+  in the same paragraph.
