@@ -88,10 +88,42 @@ first, and both are self-identification steps that can fail. The cost of that im
 lens existed, was that a decision parked in the open-decisions section could go stale, be answered
 elsewhere, or ask the wrong question, and nothing in the loop was allowed to notice.
 
+**An open decision is the whole of its subject.** A decision the proposal records as settled is not the
+lens's, and it may not re-open one, re-argue it, or file a finding that it was decided wrongly. That covers
+the settled-decisions section, a non-goal recorded with its reason, and a historical pass record. Those are
+the record of work already done, and the argument for reopening one always reads well, because once a
+decision closed nobody kept writing down the counter-argument. The one exception is cascade: when an answer
+available to an open decision would falsify a settled one, that goes in the open decision's own `cascades`
+field, naming which answer falsifies what. It never becomes a decision of its own, since nobody is asking
+whether the settled decision was right; the cascade is part of what an answer costs.
+
 Decisions live in four places and the lens inventories all four before judging any: the open-decisions
-section, a detailed-design item stated as a choice rather than a constraint, an `IMPLEMENTOR'S CHOICE:`
+section, a detailed-design item still stated as a choice rather than a constraint, an `IMPLEMENTOR'S CHOICE:`
 marker, and an unclosed `OPEN` in the review log. The last is the one that leaks, because the human never
-reads the review log.
+reads the review log. A decision that appears in one of these and is settled elsewhere counts as open, since
+the proposal disagrees with itself about whether it is decided; resolving it means deleting the open
+statement and citing the settled one.
+
+**It elaborates before it determines.** The lens works in four steps and may not form a determination before
+the last: inventory every decision without judging any, elaborate one at a time by opening the primary
+sources and quoting the load-bearing sentence, interrogate by writing the questions a skeptical reviewer
+would ask about the ground rather than the choice and answering each from a file opened in the pass, and
+only then determine. At least one question per decision must be one whose answer would kill the answer the
+agent is drifting toward, and a question that cannot be answered is a result rather than a gap: it is
+either the fact that would reverse the decision or the reason the decision is the human's.
+
+The third step is the one that earns the lens its cost. On a measured run the output was produced without
+it, from five agents' summaries of the evidence rather than the evidence, and a single follow-up question
+from a human reversed the recommendation on the spot. The human supplied no decision and nothing new beyond
+one document finally read in full.
+
+Because prompt text alone did not hold on this workflow before, the lens also has its own output schema,
+which is the only enforcement here that is checked at the tool-call layer and retried on mismatch. Each
+decision carries required fields for the quoted ground, the questions asked and answered, the case for and
+against written at their best, the one fact that would flip it, and whether choosing differently changes
+anything downstream. A schema field can still be back-filled to justify a conclusion already reached, which
+is why the procedure states an order of work and the fields are its receipts. Neither half is sufficient
+alone.
 
 **The test, in order.** Resolve it when the answer is derivable from the tree, the spec, a landed proposal,
 or the proposal's own staged text, citing where; this is the outcome to reach for, because a decision
@@ -109,8 +141,13 @@ what any lens may file: a marker with no constraint, a blank over something the 
 delegation, and an unmarked gap. Moving a decision off the human's list into a properly bounded blank is a
 good outcome the lens is told to recommend, and over-specification stays a defect.
 
-**They land in the summary.** `## Open decisions` is a required part of the summary, because the summary is
-the file a reviewer reads. Each entry states the question so it can be answered without reading the
+**The lens owns `## Open decisions` and reconciles it every round.** That section is a required part of the
+summary and is the proposal's live answer to what is still undecided, rather than a list written once. The
+lens looks for five drifts and files each as a finding: a decision living only in the review log or a
+staged-changes bullet, where the human never sees it; an entry a later round answered; an entry whose
+citation or quoted text has drifted; an entry asking a question the proposal does not face or asking it in
+a form nobody could answer in one sitting; and an entry about a deliverable the proposal no longer stages.
+Each decision carries what the lens did to its entry, so maintenance is recorded rather than assumed. Each entry states the question so it can be answered without reading the
 proposal, the recommendation, the ground with citations, the alternatives and why each lost, what deciding
 otherwise costs, a confidence, and where the decision came from. A decision resolved after being carried
 there is withdrawn in place with its reason rather than deleted, because a list that quietly loses an entry
@@ -118,9 +155,28 @@ teaches its next reader the entry was answered. The reconciliation pass between 
 loop's routed decisions into that section, since the spec loop can route a decision to a human but the
 human does not read the log it routes to.
 
-**It reads sideways.** No other lens reads `proposals/`. A staged change that removes the ground another
-proposal's premise rests on is a finding here, and recording it as a rebase for whichever lands second does
-not discharge it.
+**It reads sideways, and asks whether the cross-proposal effect is a decision at all.** No other lens reads
+`proposals/`. When a staged change bears on another proposal, the first question is whether choosing
+differently would change that effect. If every available answer affects it identically, the effect is
+already settled by a deliverable nobody is questioning, so the output is a row in the impact section rather
+than a question. That distinction is not academic: the first decision this lens was designed against was
+routed to a human on the ground that it decided another proposal's fate, and it did not. The proposal's
+central deliverable decided that, under every answer to the question being asked.
+
+When the choice does change the outcome, the status decides who answers. An `Implemented` proposal is in
+the tree and is unaffected. A `Draft` may be invalidated freely and is recorded rather than asked about. A
+`Reviewed` or `Approved` proposal last reviewed within fourteen days goes to the human, because convergence
+and human attention were recently spent on it; an older one is recorded with the note that it may have
+drifted anyway. The status comes from `.claude/tools/proposal-status.mjs --json`, which carries the review
+and approval dates for a folder-layout proposal. A legacy single-file proposal has none, so the fallback is
+the file's last commit date, declared as such, because that is when someone last touched the file rather
+than when it was reviewed.
+
+`## Impact on other proposals` is a required part of the summary and is the only place the proposal asserts
+anything about another proposal's continued validity. Non-goals states what this proposal will not do and
+Dependencies states what it applies after, and neither may restate an impact. One proposal carrying two
+claims about another is how they come to contradict each other: 0076 said both that whichever landed second
+would rebase and that it was independent of 0075, and neither was true.
 
 ### Verification
 

@@ -449,7 +449,8 @@ const FORMAT_SUMMARY =
   '  **What changes.** Three to six bullets, one per top-level change, each naming the surface it lands on.\n' +
   '  **Fixed decisions.** The decisions an implementor must not revisit, one line each. This is distinct from the Decisions section, which says why a decision was taken; this says which are closed.\n' +
   '  **Watch out for.** The traps: a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, a prior attempt that failed and why.\n' +
-  '  **Open decisions.** Every decision still open for the human reviewer, each stating the question so it can be answered without reading the proposal, the recommendation, the ground, the alternatives and why each lost, what deciding otherwise costs, and a confidence. A decision resolved after being carried here is withdrawn in place with its reason rather than deleted. This part is written by the review loops rather than at drafting time, so it starts empty and says so.\n';
+  '  **Open decisions.** Every decision still open for the human reviewer, each stating the question so it can be answered without reading the proposal, the recommendation, the ground, the alternatives and why each lost, what deciding otherwise costs, and a confidence. A decision resolved after being carried here is withdrawn in place with its reason rather than deleted. This part is written by the review loops rather than at drafting time, so it starts empty and says so.\n' +
+  '  **Impact on other proposals.** One row per proposal this change bears on: its id, its status, what this change does to it, and what it must do about it. This is the ONLY place the proposal asserts anything about another proposal\'s continued validity. Non-goals states what this proposal will not do and Dependencies states what it applies after; neither may restate an impact, because one proposal carrying two claims about another is how they come to contradict each other.\n';
 
 const FORMAT_CHECKLIST =
   'An "## Implementation checklist" section, unnumbered, immediately after the Summary. It is the implementation sequence, ' +
@@ -614,6 +615,148 @@ const REVIEW_FINDINGS = {
       type: "string",
       description:
         "Before listing findings: name the proposal sections you examined under this lens, and anything your lens covers that you could NOT verify and why. If you are returning an empty findings list, this is the evidence that the list is empty because the proposal is clean rather than because you stopped early.",
+    },
+    findings: FINDINGS.properties.findings,
+  },
+};
+
+// The open-decisions lens returns its findings like every other lens, and a
+// structured elaboration beside them. The elaboration is not decoration: a
+// schema field is validated at the tool-call layer and the model retries on a
+// mismatch, which is the only enforcement in this workflow that actually bites.
+//
+// It exists because prompt text alone did not hold. On a measured run this
+// lens's output was produced from five agents' summaries of the evidence rather
+// than the evidence, and one follow-up question from a human -- "elaborate on
+// this one" -- reversed the recommendation on the spot, with no decision from
+// the human and nothing new beyond one document finally read in full.
+//
+// A schema field can still be back-filled to justify a conclusion already
+// reached, which is why the prompt states the procedure as an ORDER OF WORK and
+// these fields are its receipts. Neither half is sufficient alone.
+const DECISION_ENTRY = {
+  type: "object",
+  required: [
+    "decision",
+    "home",
+    "groundQuotes",
+    "questionsAsked",
+    "caseFor",
+    "caseAgainst",
+    "whatWouldFlipIt",
+    "counterfactual",
+    "cascades",
+    "disposition",
+    "recommendation",
+    "summaryAction",
+  ],
+  properties: {
+    decision: {
+      type: "string",
+      description: "What is being decided, stated so a person could answer it in one sitting without reading the proposal.",
+    },
+    home: {
+      type: "string",
+      enum: ["open-decisions-section", "design-item", "implementor-blank", "review-log-open"],
+      description: "Where the decision lives today.",
+    },
+    groundQuotes: {
+      type: "array",
+      minItems: 1,
+      description: "The load-bearing sentences, quoted verbatim from sources you opened in this pass. Quote them; do not cite them. A summary of a source is not the source.",
+      items: {
+        type: "object",
+        required: ["source", "quote"],
+        properties: {
+          source: { type: "string", description: "file and location" },
+          quote: { type: "string", description: "the sentence, verbatim" },
+        },
+      },
+    },
+    questionsAsked: {
+      type: "array",
+      minItems: 1,
+      description: "The questions a skeptical reviewer would ask about the GROUND rather than about the choice, and what you found. At least one must be a question whose answer would kill the answer you were drifting toward.",
+      items: {
+        type: "object",
+        required: ["question", "answer"],
+        properties: {
+          question: { type: "string" },
+          answer: {
+            type: "string",
+            description: "What you found, with the quote. If you could not answer it from the tree, say so plainly: that is a result rather than a gap, and it belongs in whatWouldFlipIt or is the reason this decision is the human's.",
+          },
+          source: { type: "string", description: "the file you opened to answer it" },
+        },
+      },
+    },
+    caseFor: { type: "string", description: "The case for the answer you recommend, at its best." },
+    caseAgainst: { type: "string", description: "The case against it, at its best. Written before you chose, not after." },
+    whatWouldFlipIt: {
+      type: "string",
+      description: "The one fact whose discovery reverses your recommendation. A decision nothing could flip is one you have not examined.",
+    },
+    counterfactual: {
+      type: "string",
+      description: "Would choosing differently change anything downstream? If every available answer has the same effect, this is a recorded consequence rather than a decision.",
+    },
+    cascades: {
+      type: "array",
+      description: "Settled decisions or landed text that an answer available HERE would falsify. Empty when none, which is the common case. This is the only circumstance in which a settled decision is yours to mention, and it is never a decision of its own: nobody is asking whether the settled decision was right, so it belongs here as part of what an answer costs.",
+      items: {
+        type: "object",
+        required: ["settled", "falsifiedBy"],
+        properties: {
+          settled: { type: "string", description: "the settled decision or landed statement, and where it is recorded" },
+          falsifiedBy: { type: "string", description: "which available answer to THIS decision falsifies it" },
+        },
+      },
+    },
+    disposition: {
+      type: "string",
+      enum: ["resolve", "implementor", "human"],
+    },
+    recommendation: { type: "string" },
+    summaryAction: {
+      type: "string",
+      enum: ["added", "updated", "withdrawn", "unchanged", "not-applicable"],
+      description: "What you did to this decision's entry in the summary's `## Open decisions` section this round. `not-applicable` only when the disposition is resolve or implementor AND the summary never carried it; a decision the summary DID carry is withdrawn in place rather than deleted, so it is never `not-applicable`.",
+    },
+    affectsProposals: {
+      type: "array",
+      description: "Other proposals this decision bears on. Empty when none.",
+      items: {
+        type: "object",
+        required: ["proposal", "status", "effect", "changesWithChoice"],
+        properties: {
+          proposal: { type: "string" },
+          status: { type: "string", description: "Draft, Reviewed, Approved, or Implemented" },
+          statusDate: { type: "string", description: "the review or approval date" },
+          dateSource: {
+            type: "string",
+            enum: ["status-file", "last-commit", "none"],
+            description: "where the date came from; a last-commit date is when someone touched the file, not when it was reviewed",
+          },
+          effect: { type: "string" },
+          changesWithChoice: {
+            type: "boolean",
+            description: "true only when a different answer here changes the effect on that proposal. When false this is a row for the impact section rather than a question for the human.",
+          },
+        },
+      },
+    },
+  },
+};
+
+const OPEN_DECISIONS_FINDINGS = {
+  type: "object",
+  required: ["coverage", "decisions", "findings"],
+  properties: {
+    coverage: REVIEW_FINDINGS.properties.coverage,
+    decisions: {
+      type: "array",
+      description: "Every decision the proposal has not closed, one entry each, built by the procedure in the lens prompt. An empty array asserts the proposal has none.",
+      items: DECISION_ENTRY,
     },
     findings: FINDINGS.properties.findings,
   },
@@ -1752,16 +1895,56 @@ const LENSES = [
   {
     key: "open-decisions",
     text:
-      "Lens: open decisions. Always run. This lens owns every decision the proposal has not closed, " +
+      "Lens: open decisions. Always run. This lens owns every decision the proposal has not CLOSED, " +
       "wherever it lives, and it is the ONLY lens permitted to file on a section recording decisions for " +
-      "the human reviewer. Its job is to resolve what can be resolved, bound what cannot, and leave the " +
-      "human a short list they can actually answer.\n\n" +
-      "WHERE DECISIONS LIVE. Build the inventory before judging any of it, because the defect this lens " +
-      "exists to catch is a decision recorded in one place and already answered in another. Four homes: " +
-      "the proposal's open-decisions section; any detailed-design item stated as a choice rather than as a " +
-      "constraint; every `IMPLEMENTOR'S CHOICE:` marker; and every unclosed `OPEN` in the review log's " +
-      "standing context, which is the home the human never reads.\n\n" +
-      "THE TEST, applied to each decision in this order.\n" +
+      "the human reviewer. It has two goals. Resolve what can be resolved, bound what cannot, and leave " +
+      "the human a short list they can actually answer. And keep the summary's `## Open decisions` " +
+      "section current every round, because that section is the proposal's live answer to what is still " +
+      "undecided and a reviewer signs off from it.\n\n" +
+      "AN OPEN DECISION IS THE WHOLE OF YOUR SUBJECT. A decision the proposal records as SETTLED is not " +
+      "yours. Do not re-open it, do not re-argue it, and do not file a finding that it was decided " +
+      "wrongly, however tempting the argument. That applies to the proposal's settled-decisions section, " +
+      "to a non-goal recorded with its reason, and to a historical pass record of what an earlier round " +
+      "resolved. Those are the record of work already done, and re-litigating them is the failure this " +
+      "scope exists to prevent: a settled decision reopened costs a round, and the argument for reopening " +
+      "it always reads well because nobody wrote down the counter-argument once it was closed.\n" +
+      "  THE ONE EXCEPTION IS CASCADE. When an answer available to an OPEN decision would FALSIFY a " +
+      "settled one, that is not a re-litigation and you must say so. It belongs inside the open " +
+      "decision's own entry, in its `cascades` field, naming the settled decision and which answer " +
+      "falsifies it. It never becomes a decision of its own, because nobody is asking whether the " +
+      "settled decision was right; what is in question is the open one, and the cascade is part of what " +
+      "the answer costs.\n\n" +
+      "WHERE OPEN DECISIONS LIVE. Build the inventory before judging any of it, because the defect this " +
+      "lens exists to catch is a decision recorded in one place and already answered in another. Four " +
+      "homes: the proposal's open-decisions section; a detailed-design item still stated as a choice " +
+      "rather than as a constraint; every `IMPLEMENTOR'S CHOICE:` marker; and every unclosed `OPEN` in " +
+      "the review log's standing context, which is the home the human never reads. A decision that " +
+      "appears in one of these AND is settled elsewhere is open in the sense that matters, because the " +
+      "proposal disagrees with itself about whether it is decided; resolving it means deleting the open " +
+      "statement and citing the settled one.\n\n" +
+      "PROCEDURE. Work in this order, and do not let a determination form before step 4.\n" +
+      "  1. INVENTORY. Sweep all four homes and list every decision the proposal has not closed. Judge " +
+      "none of them yet. A decision you skip here is one no other lens may raise, because every other " +
+      "lens is barred from these sections.\n" +
+      "  2. ELABORATE, one decision at a time. State what is actually being decided, what the proposal " +
+      "says about it, and what the primary sources say. Open them and quote the load-bearing sentence. " +
+      "A summary of a source is not the source, and a citation travels between agents without its " +
+      "context.\n" +
+      "  3. INTERROGATE. Write the questions a skeptical reviewer would ask about the GROUND rather " +
+      "than about the choice: 'what does that document actually argue', never 'which option is " +
+      "better'. At least one must be a question whose answer would KILL the answer you are drifting " +
+      "toward. Then answer each from a file you open in this pass, quoting what you find. A question " +
+      "you cannot answer is a result rather than a gap: it is either the fact that would reverse the " +
+      "decision, or the reason the decision is genuinely the human's, and it is recorded as an " +
+      "`UNVERIFIED` line.\n" +
+      "  4. DETERMINE. Only now apply the test below.\n" +
+      "Step 3 is where this lens earns its cost. On a measured run its output was produced without it, " +
+      "and one follow-up question from a human -- nothing more than 'elaborate on this one' -- " +
+      "reversed the recommendation on the spot. The human supplied no decision and no new information. " +
+      "The only thing that changed was that one document was read in full instead of quoted from five " +
+      "agents' summaries of it. Your `decisions` array is the receipt for each step, and a receipt " +
+      "written after the fact is the failure this procedure exists to prevent.\n\n" +
+      "THE TEST (step 4), applied to each decision in this order.\n" +
       "  RESOLVE IT when the answer is derivable: the tree, the spec, a landed proposal, or the " +
       "proposal's own staged text fixes it and you can cite where. This is the outcome to reach for. A " +
       "decision parked for a human that the repository already answers costs a review cycle and teaches " +
@@ -1786,23 +1969,49 @@ const LENSES = [
       "about a blank is. Never file a blank as an open decision merely because it is open; being open is " +
       "what it is for. Over-specification is itself a defect, so a finding that would convert a bounded " +
       "blank into specified text needs to clear the same bar as any other finding.\n\n" +
-      "THE SUMMARY IS WHERE THEY LAND. Every decision that survives the test as the human's belongs in " +
-      "the summary's `## Open decisions` section, because the summary is the file a reviewer reads. A " +
-      "decision that exists ONLY in the review log, only in a detailed-design bullet, or only in a list " +
-      "at the end of the staged spec changes is a finding, because the human never sees it. Each entry " +
-      "carries the question stated so it can be answered without reading the proposal, the " +
-      "recommendation, the ground with citations, the alternatives considered and why each lost, what " +
-      "the reviewer gives up by deciding the other way, a confidence with what would raise it, and where " +
-      "the decision came from.\n\n" +
-      "RECORD A WITHDRAWAL, NEVER A SILENT DELETION. When you resolve a decision the summary previously " +
-      "carried for the human, the fix says it was withdrawn and why. A decision list that quietly loses " +
-      "an entry teaches its next reader that the entry was answered, and a later round re-derives it. " +
-      "This is the rule the validation consolidator already follows for refuted premises.\n\n" +
-      "READ SIDEWAYS. A decision here may decide, or be decided by, another proposal under `proposals/`. " +
-      "No other lens reads that directory. A staged change that removes the ground another proposal's " +
-      "premise rests on is a finding, and recording it as a rebase for whichever lands second is not " +
-      "enough: name what the other proposal loses.\n\n" +
-      "NOT FINDINGS. A decision correctly recorded for the human with its constraint and its " +
+      "YOU OWN `## Open decisions` IN THE SUMMARY, AND YOU RECONCILE IT EVERY ROUND. It is the file a " +
+      "reviewer signs off from, so it is the proposal's live answer to what is still undecided rather " +
+      "than a list somebody wrote once. Every round, bring it back into agreement with what the proposal " +
+      "now says, and set `summaryAction` on each decision to record what you did. Five drifts to look " +
+      "for, and each is a finding when you find it.\n" +
+      "  MISSING. A decision that lives only in the review log, only in a detailed-design bullet, or " +
+      "only in a list at the end of the staged changes. The human never sees those, so the decision is " +
+      "not being made. Add it.\n" +
+      "  RESOLVED SINCE. An entry a later round answered, here or anywhere else in the proposal. " +
+      "Withdraw it IN PLACE with the reason and the citation, never by deleting the entry: a list that " +
+      "quietly loses a line teaches its next reader that the line was answered, and a later round " +
+      "re-derives it. This is the rule the validation consolidator already follows for refuted " +
+      "premises.\n" +
+      "  STALE GROUND. An entry whose citation has drifted, whose quoted text the staging has since " +
+      "changed, or whose recommendation rests on something a later round falsified. Rewrite it against " +
+      "the current text.\n" +
+      "  MIS-STATED. An entry asking a question the proposal does not actually face, or asking it in a " +
+      "form a person could not answer in one sitting. Restate it, or resolve it and withdraw it.\n" +
+      "  ORPHANED. An entry about a deliverable the proposal no longer stages. Withdraw it with that " +
+      "reason.\n" +
+      "  A summary entry that disagrees with the staged text is the SUMMARY's defect, not the staging's, " +
+      "unless the staging is what a round just changed. Each entry carries the question stated so it can " +
+      "be answered without reading the proposal, the recommendation, the ground with citations, the " +
+      "alternatives considered and why each lost, what the reviewer gives up by deciding the other way, " +
+      "a confidence with what would raise it, and where the decision came from.\n\n" +
+      "READ SIDEWAYS, THEN ASK WHETHER IT IS EVEN A DECISION. No other lens reads `proposals/`. When a " +
+      "staged change bears on another proposal, first ask whether choosing differently would change " +
+      "that effect. If every available answer affects it identically, the effect is already settled by " +
+      "a deliverable nobody is questioning, and your output is a row in `## Impact on other proposals`, " +
+      "never a question for a human. Set `changesWithChoice` to record which case you are in.\n" +
+      "  When the choice DOES change the other proposal's outcome, the status decides who answers. An " +
+      "`Implemented` proposal is already in the tree and is not affected. A `Draft` may be invalidated " +
+      "freely: record it and move on. A `Reviewed` or `Approved` proposal last reviewed within fourteen " +
+      "days goes to the human, because convergence and human attention were recently spent on it and " +
+      "this change spends them again; an older one is recorded with the note that it may have drifted " +
+      "regardless. Read the status with `.claude/tools/proposal-status.mjs <proposal> --json`, which " +
+      "carries `reviewed-date` and `approved-date` for a folder-layout proposal. A legacy single-file " +
+      "proposal has no dates, so fall back to the file's last commit date and say so: that is when " +
+      "someone last touched the file rather than when it was reviewed, and the two differ.\n" +
+      "  Naming the effect is not optional. Recording it as a rebase for whichever lands second is not " +
+      "enough: say which of the other proposal's deliverables lose their subject and which survive.\n\n" +
+      "NOT FINDINGS. A settled decision you would have decided differently, which is the one this scope " +
+      "most wants you to leave alone. A decision correctly recorded for the human with its constraint and its " +
       "recommendation. A properly bounded blank. A decision the proposal resolved and recorded as " +
       "resolved, including inside a historical pass record. Your own preference between two answers the " +
       "proposal weighed and chose between with a stated reason.",
@@ -4390,7 +4599,7 @@ async function runReviewLoop(cfg) {
           robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundSnap), {
             label: "r" + round + ":review:" + l.key,
             phase: LOOP.name + " R" + round + ": review",
-            schema: REVIEW_FINDINGS,
+            schema: l.key === "open-decisions" ? OPEN_DECISIONS_FINDINGS : REVIEW_FINDINGS,
           }),
       ),
     );

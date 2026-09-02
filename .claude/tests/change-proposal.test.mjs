@@ -351,6 +351,58 @@ t.section("B6d. the review bar is built per lens, so no lens reads another lens'
   );
 }
 
+t.section("B6e. open-decisions is made to elaborate before it determines");
+{
+  // Prompt text alone did not hold: this lens's first output was produced from
+  // summaries of the evidence, and one follow-up question reversed it. The
+  // procedure states the order of work and the schema collects the receipts;
+  // neither half is sufficient alone, so both are pinned here.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const od = calls.find((c) => /^r\d+:review:open-decisions$/.test(c.label));
+  const other = calls.find((c) => /^r\d+:review:citations$/.test(c.label));
+
+  t.check("it alone is given the decisions schema", od.opts.schema && !!od.opts.schema.properties.decisions);
+  t.check("and no ordinary lens is", !other.opts.schema?.properties?.decisions);
+
+  const need = ["groundQuotes", "questionsAsked", "caseFor", "caseAgainst", "whatWouldFlipIt", "counterfactual", "disposition"];
+  // Guarded: without the schema every assertion below throws, which aborts the
+  // rest of the file and hides regressions that have nothing to do with it.
+  const item = od.opts.schema?.properties?.decisions?.items;
+  const req = item?.required || [];
+  t.check("every receipt field is required, not optional", need.every((f) => req.includes(f)), need.filter((f) => !req.includes(f)).join(",") || "all present");
+  t.check("a decision must quote at least one source", item?.properties?.groundQuotes?.minItems === 1);
+  t.check("and must carry at least one asked question", item?.properties?.questionsAsked?.minItems === 1);
+
+  const steps = ["1. INVENTORY", "2. ELABORATE", "3. INTERROGATE", "4. DETERMINE"];
+  const at = steps.map((x) => od.prompt.indexOf(x));
+  t.check("the four steps are all stated", at.every((i) => i >= 0), at.join(","));
+  t.check("and they are in order", at[0] < at[1] && at[1] < at[2] && at[2] < at[3]);
+  t.check("the test is step 4, after them", od.prompt.indexOf("THE TEST (step 4)") > at[3] - 1 && od.prompt.indexOf("THE TEST (step 4)") > at[1]);
+  t.check("step 3 demands a question that kills the leading answer", /KILL the answer you are drifting\s+toward/.test(od.prompt));
+  t.check("an unanswerable question is a result, not a gap", /a result rather than a gap/.test(od.prompt));
+
+  t.check("settled decisions are explicitly out of scope", /A decision the proposal records as SETTLED is not\s+yours/.test(od.prompt));
+  t.check("and re-litigating one is named the failure the scope prevents", /re-litigating them is the failure this\s+scope exists to prevent/.test(od.prompt));
+  t.check("cascade is the one exception, inside the open decision", /THE ONE EXCEPTION IS CASCADE/.test(od.prompt) && /never becomes a decision of its own/.test(od.prompt));
+  t.check("a settled decision decided differently is not a finding", /A settled decision you would have decided differently/.test(od.prompt));
+  t.check("cascade is a required field, so it must be considered", req.includes("cascades"));
+
+  t.check("it owns the summary section and reconciles it every round", /YOU OWN `## Open decisions` IN THE SUMMARY, AND YOU RECONCILE IT EVERY ROUND/.test(od.prompt));
+  const drifts = ["MISSING", "RESOLVED SINCE", "STALE GROUND", "MIS-STATED", "ORPHANED"];
+  t.check("all five drifts are enumerated", drifts.every((d) => od.prompt.includes(d)), drifts.filter((d) => !od.prompt.includes(d)).join(",") || "all");
+  t.check("a resolved entry is withdrawn in place, never deleted", /Withdraw it IN PLACE with the reason and the citation, never by deleting the entry/.test(od.prompt));
+  t.check("what it did to the summary is a required field", req.includes("summaryAction"));
+  t.check("and a carried decision can never be not-applicable", /is never `not-applicable`/.test(JSON.stringify(item?.properties?.summaryAction || {})));
+
+  t.check("a cross-proposal effect is tested for counterfactual force first", /whether choosing differently would change\s+that effect/.test(od.prompt));
+  t.check("an identical-under-every-answer effect is a row, never a question", /never a question for a human/.test(od.prompt));
+  t.check("a Draft may be invalidated freely", /`Draft` may be invalidated\s+freely/.test(od.prompt));
+  t.check("a recently reviewed proposal goes to the human", /last reviewed within fourteen\s+days goes to the human/.test(od.prompt));
+  t.check("an Implemented proposal is not a concern", /`Implemented` proposal is already in the tree and is not affected/.test(od.prompt));
+  t.check("the status is read with the tool, not guessed", /proposal-status\.mjs <proposal> --json/.test(od.prompt));
+  t.check("and a commit-date fallback must be declared as such", /rather than when it was reviewed/.test(od.prompt));
+}
+
 t.section("B7. the spec loop is skipped when nothing is staged for spec");
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));

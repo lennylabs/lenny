@@ -217,7 +217,7 @@
     "label": "r1:review:open-decisions",
     "phase": "non-spec R1: review",
     "model": "",
-    "schema": "coverage+findings",
+    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
@@ -570,7 +570,7 @@
     "label": "r3:review:open-decisions",
     "phase": "non-spec R3: review",
     "model": "",
-    "schema": "coverage+findings",
+    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",

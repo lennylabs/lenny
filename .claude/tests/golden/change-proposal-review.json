@@ -202,7 +202,7 @@
     "label": "r1:review:open-decisions",
     "phase": "spec R1: review",
     "model": "",
-    "schema": "coverage+findings",
+    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
@@ -430,7 +430,7 @@
     "label": "r2:review:open-decisions",
     "phase": "spec R2: review",
     "model": "",
-    "schema": "coverage+findings",
+    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
@@ -682,7 +682,7 @@
     "label": "r1:review:open-decisions",
     "phase": "non-spec R1: review",
     "model": "",
-    "schema": "coverage+findings",
+    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
@@ -925,7 +925,7 @@
     "label": "r2:review:open-decisions",
     "phase": "non-spec R2: review",
     "model": "",
-    "schema": "coverage+findings",
+    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
