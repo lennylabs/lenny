@@ -14,12 +14,12 @@
 #   general    Close every OPEN finding in BUILD-GAPS.md (the long-
 #              standing build loop, rules A-P). A finding that requires a
 #              spec change and references an approved proposal is applied
-#              with the implement-proposal skill (apply-only) first, then built; everything
+#              with the implement-proposal skill (spec-only) first, then built; everything
 #              else is built directly. Stops when all findings are CLOSED.
 #
 #   proposals  Close ONLY OPEN findings that reference an approved spec
 #              proposal, by fully implementing the proposal — apply its
-#              spec edits with the implement-proposal skill (apply-only), implement the entire
+#              spec edits with the implement-proposal skill (spec-only), implement the entire
 #              spec change's blast radius in code, write and run tests to
 #              green, mark CLOSED. Never opens, re-opens, or generates a
 #              proposal. Stops when no OPEN finding references an approved
@@ -29,6 +29,12 @@
 # Proposals are generated, reviewed, and approved OUTSIDE this script
 # (the spec-proposal skill plus human sign-off).
 # This script never writes or approves proposals.
+#
+# It also never flips a proposal's status. The only automated status write
+# anywhere in the tree is change-proposal's `--set status=Reviewed`; nothing
+# writes `Implemented`, so the terminal state is set by hand on purpose. A
+# batch closes findings rather than a whole implementation checklist, so it
+# cannot see that the last deliverable landed.
 #
 # Stop conditions:
 #   - Mode's natural completion (all CLOSED in general; the sentinel in
@@ -113,7 +119,7 @@ RULES (apply to every action this invocation)
 
 A. **Re-read the spec and re-verify before fixing.** Before addressing any gap, re-read the cited spec section and check that the gap is not a false alarm and has not already been addressed by a prior batch. If a finding is already resolved, mark CLOSED with a one-line resolution note pointing at the commit that resolved it and move on.
 
-B. **All code MUST comply with the spec.** Cite the relevant spec section (e.g. `// spec: §X.Y`) in code comments and test names. Files under `spec/` may be modified ONLY when both conditions hold: (1) the finding's description references a proposal under `proposals/` whose status is `Approved`, read with `node .claude/tools/proposal-status.mjs <proposal> --field status` and never by parsing prose, and (2) the spec edits are applied with the `implement-proposal` skill in apply-only mode (invoke the Skill tool with skill `implement-proposal` and the argument `<proposal-path> apply-only`) — never by hand-editing `spec/`. The skill opens a write lease naming that one proposal and the exact spec files its staged deliverables target, applies the staged edits verbatim, verifies exact alignment until clean, and releases the lease. The guard hook refuses every direct `spec/` write when no lease is open, so hand-editing `spec/` is not a shortcut that works. Ordering is mandatory: when a finding requires spec changes, land them FIRST (run `implement-proposal` in apply-only mode, which applies, verifies, and commits the spec edits), and only then implement the code against the updated spec. If a fix would require changing the spec and the finding references no such proposal, stop and report — defer per rule P.
+B. **All code MUST comply with the spec.** Cite the relevant spec section (e.g. `// spec: §X.Y`) in code comments and test names. Files under `spec/` may be modified ONLY when both conditions hold: (1) the finding's description references a proposal under `proposals/` whose status is `Approved`, read with `node .claude/tools/proposal-status.mjs <proposal> --field status` and never by parsing prose, and (2) the spec edits are applied with the `implement-proposal` skill in spec-only mode (invoke the Skill tool with skill `implement-proposal` and the argument `<proposal-path> spec-only`) — never by hand-editing `spec/`. The skill opens a write lease naming that one proposal and the exact spec files its staged deliverables target, applies the staged edits verbatim, verifies exact alignment until clean, and releases the lease. The guard hook refuses every direct `spec/` write when no lease is open, so hand-editing `spec/` is not a shortcut that works. Ordering is mandatory: when a finding requires spec changes, land them FIRST (run `implement-proposal` in spec-only mode, which applies, verifies, and commits the spec edits), and only then implement the code against the updated spec. If a fix would require changing the spec and the finding references no such proposal, stop and report — defer per rule P.
 
 C. **Always write tests for code you modify or create.** See `TESTING.md` for the tier model. Achieve good unit-test coverage first (tier-1), then add higher-level tests where appropriate — component (tier 2), contract (tier 3), integration (tier 4), e2e (tier 5), chaos (tier 8), security (tier 9), all the way up to load tests (tier 7/12) when warranted.
 
@@ -141,7 +147,7 @@ N. **Re-attempt unblocked deferrals.** Before exiting, scan BUILD-GAPS.md for DE
 
 O. **Do not blindly implement proposed fixes.** Before addressing any gap, re-assess the finding's proposed fix against the spec and the current codebase, as the code may have changed significantlysince the finding was reported.
 
-P. **A required spec change with no approved proposal is the ONLY valid reason to defer — close everything else.** The single legitimate defer is a finding whose fix cannot be made without editing a file under `spec/` AND whose description references no `Approved` proposal under `proposals/`: a missing, contradictory, or genuinely undefined spec surface with no staged resolution (rule B). Mark only those `— DEFERRED`, and state the exact spec change required. A finding that references an approved proposal is NOT deferrable on spec grounds: apply its staged spec edits with the `implement-proposal` skill in apply-only mode first, then build the finding (rule B). Build and close everything else. Do NOT defer because the work is a "large workstream", a "separate workstream not begun", an "external dependency", or "infrastructure unavailable in this environment" — build the missing prerequisite (controllers, stores, clients, migrations, gateway/adapter wiring, reference runtimes, and the integration/e2e/chaos tests that exercise it) and run it against the infrastructure listed in AVAILABLE INFRASTRUCTURE below. "Needs a Kubernetes cluster / Redis / Postgres / MinIO / envtest" is NOT a blocker here: `kind`, `docker compose`, and envtest are installed and usable — stand them up and use them. There is no "Rule P escape" or "criterion" — those phrases are not part of this rule; do not invent them. The lone exception is a finding that truly requires a resource not present on this host and not substitutable locally (a paid cloud-provider account such as GKE/AKS + managed CloudSQL/Memorystore/GCS/Azure DB, a live external SaaS API such as OpenAI Threads/Runs or the external CrewAI framework, or a gVisor-enabled host RuntimeClass). Do NOT silently defer those: STOP and report each in your summary on a `NEEDS-OPERATOR:` line naming the exact missing resource, and mark the finding `— DEFERRED` with that same `NEEDS-OPERATOR:` reason. Any `— DEFERRED` whose stated reason is neither a spec change nor a `NEEDS-OPERATOR:` escalation is a defect in your batch — fix it by building the finding.
+P. **A required spec change with no approved proposal is the ONLY valid reason to defer — close everything else.** The single legitimate defer is a finding whose fix cannot be made without editing a file under `spec/` AND whose description references no `Approved` proposal under `proposals/`: a missing, contradictory, or genuinely undefined spec surface with no staged resolution (rule B). Mark only those `— DEFERRED`, and state the exact spec change required. A finding that references an approved proposal is NOT deferrable on spec grounds: apply its staged spec edits with the `implement-proposal` skill in spec-only mode first, then build the finding (rule B). Build and close everything else. Do NOT defer because the work is a "large workstream", a "separate workstream not begun", an "external dependency", or "infrastructure unavailable in this environment" — build the missing prerequisite (controllers, stores, clients, migrations, gateway/adapter wiring, reference runtimes, and the integration/e2e/chaos tests that exercise it) and run it against the infrastructure listed in AVAILABLE INFRASTRUCTURE below. "Needs a Kubernetes cluster / Redis / Postgres / MinIO / envtest" is NOT a blocker here: `kind`, `docker compose`, and envtest are installed and usable — stand them up and use them. There is no "Rule P escape" or "criterion" — those phrases are not part of this rule; do not invent them. The lone exception is a finding that truly requires a resource not present on this host and not substitutable locally (a paid cloud-provider account such as GKE/AKS + managed CloudSQL/Memorystore/GCS/Azure DB, a live external SaaS API such as OpenAI Threads/Runs or the external CrewAI framework, or a gVisor-enabled host RuntimeClass). Do NOT silently defer those: STOP and report each in your summary on a `NEEDS-OPERATOR:` line naming the exact missing resource, and mark the finding `— DEFERRED` with that same `NEEDS-OPERATOR:` reason. Any `— DEFERRED` whose stated reason is neither a spec change nor a `NEEDS-OPERATOR:` escalation is a defect in your batch — fix it by building the finding.
 
 AVAILABLE INFRASTRUCTURE (use it — "no infra" is not a valid defer)
 
@@ -199,7 +205,7 @@ PER-FINDING RECIPE — apply to every finding in the batch, in this order. Clust
 
 R1. **Read the referenced proposal in full** — every section (Problem, Decisions, Detailed design, Proposed spec changes, CRD/RBAC changes, Observability, Testing, Files touched). The proposal, not the finding, defines the complete change. The finding is one entry point into a larger change.
 
-R2. **Apply the spec changes first, with the implement-proposal skill in apply-only mode.** Invoke the Skill tool with skill `implement-proposal` and the argument `<proposal-path> apply-only`. It applies the proposal's staged spec edits to `spec/`, verifies exact alignment, commits them, and flips the proposal Status to "Applied to spec". Never hand-edit `spec/` (the guard hook blocks direct writes unless an approved proposal is pending). If the proposal's Status already reads "Applied to spec" (a sibling finding in this or a prior batch already landed it), skip the apply step and proceed to R3. If the apply-only run reports blockers (unappliable edits, drifted anchors), STOP and report on a `NEEDS-OPERATOR:` line — do not hand-patch.
+R2. **Apply the spec changes first, with the implement-proposal skill in spec-only mode.** Invoke the Skill tool with skill `implement-proposal` and the argument `<proposal-path> spec-only`. It runs the proposal's implementation checklist up to its first non-spec step, applying each spec step's staged edits to `spec/`, verifying exact alignment, committing, and ticking that step's checklist box. Never hand-edit `spec/` (the guard hook blocks direct writes unless an approved proposal is pending). A spec step whose box already reads `[x]` (a sibling finding in this or a prior batch already landed it) is skipped by the run itself, so re-running is safe. If the run returns `spec-step-failed` (an edit could not be applied or did not verify) or `spec-only-incomplete` (a spec step sits behind a non-spec step and did not land), STOP and report on a `NEEDS-OPERATOR:` line — do not hand-patch.
 
 R3. **Implement the ENTIRE spec change across the codebase — the full blast radius.** Do NOT limit yourself to the literal finding. Implement everything the proposal specifies: every new field, RPC, condition, metric, controller behavior, gate, schema, and wiring change in its Detailed design / CRD-RBAC / Observability sections. Search the codebase broadly for every existing call site, builder, store, controller, reconciler, schema, and chart template the spec change touches, and update all of them. The change is complete only when the proposal is fully reflected in the code, not merely when the one symptom the finding names is gone.
 
@@ -208,6 +214,8 @@ R4. **Create or modify all relevant tests.** Cover the proposal's Testing sectio
 R5. **Run the relevant tests and make them pass.** Always tier-0 (`go build ./...`, `go vet`) and tier-1 (`go test` on the packages you touched and their dependents). Run the higher tiers the change touches against the AVAILABLE INFRASTRUCTURE below. A finding is NOT closed until its tests pass; when a test fails, fix the code until it is green.
 
 R6. **Mark the finding CLOSED in BUILD-GAPS.md** only after R2-R5 are complete and green: replace `— OPEN` with `— CLOSED` on the heading and add a one or two sentence Resolution note citing the commit SHA(s). When a finding flags a "Potential duplicate" you confirm, close the duplicate in the same batch with a "Closed by F-X.Y.Z" note.
+
+   This loop never changes a proposal's status. A proposal stays `Approved` until every box in its implementation checklist is ticked and the run is green; flipping it to `Implemented` is a human action (`node .claude/tools/proposal-status.mjs <proposal> --set status=Implemented --by <who> --date <date>`), because a batch closes findings rather than the whole checklist and cannot see that the last deliverable landed.
 
 GENERAL RULES
 
@@ -220,7 +228,7 @@ M. **Tread carefully — large codebase.** The file/line pointers in findings ma
 
 DEFER — narrow
 
-The only valid defer is (a) a finding that truly requires a host resource not present here and not substitutable locally (a paid cloud account such as GKE/AKS + managed CloudSQL/Memorystore/GCS/Azure DB, a live external SaaS API, or a gVisor-enabled host RuntimeClass), or (b) an implement-proposal apply-only run that reports unappliable blockers (R2). Report each on a `NEEDS-OPERATOR:` line and mark the finding `— DEFERRED` with that reason. Never defer a finding for spec reasons — its proposal is approved, so apply it. Everything else is buildable here; build it.
+The only valid defer is (a) a finding that truly requires a host resource not present here and not substitutable locally (a paid cloud account such as GKE/AKS + managed CloudSQL/Memorystore/GCS/Azure DB, a live external SaaS API, or a gVisor-enabled host RuntimeClass), or (b) an implement-proposal spec-only run that reports unappliable blockers (R2). Report each on a `NEEDS-OPERATOR:` line and mark the finding `— DEFERRED` with that reason. Never defer a finding for spec reasons — its proposal is approved, so apply it. Everything else is buildable here; build it.
 
 AVAILABLE INFRASTRUCTURE (use it — "no infra" is not a valid defer)
 
@@ -251,7 +259,7 @@ PROMPT_EOF
 # Select the prompt and the resume prompt for the chosen mode.
 if [[ "$MODE" == "proposals" ]]; then
   PROMPT="$PROMPT_PROPOSALS"
-  RESUME_PROMPT='Resume the prior batch. Re-read BUILD-GAPS.md and the proposal(s) you were implementing, finish any in-flight work cleanly (apply remaining spec via the implement-proposal skill (apply-only), finish the code blast radius, get tests green, commit, mark CLOSED, brief summary), and exit. Keep the summary ≤200 words.'
+  RESUME_PROMPT='Resume the prior batch. Re-read BUILD-GAPS.md and the proposal(s) you were implementing, finish any in-flight work cleanly (apply remaining spec via the implement-proposal skill (spec-only), finish the code blast radius, get tests green, commit, mark CLOSED, brief summary), and exit. Keep the summary ≤200 words.'
 else
   PROMPT="$PROMPT_GENERAL"
   RESUME_PROMPT='Resume the prior batch. Re-read BUILD-GAPS.md to see the current state, finish any in-flight work cleanly (commit + mark CLOSED + brief summary), and exit. Keep the summary ≤200 words.'

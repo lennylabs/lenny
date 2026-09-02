@@ -94,18 +94,43 @@ export function classify(diffText) {
   const perFile = new Map();
   let current = null;
   let added = 0;
+  const note = (name) => {
+    current = name;
+    if (current !== "/dev/null" && !files.includes(current)) {
+      files.push(current);
+      perFile.set(current, { add: [], del: [] });
+    }
+  };
+  // A "---" or "+++" line is a file header only where a header can stand. Past
+  // the header block every line carries a +/-/space marker, so removing the SQL
+  // comment "-- drop the old index" arrives here as "--- drop the old index".
+  // Deciding by prefix rather than by position dropped that line from the
+  // removed set: a migrations/*.sql diff deleting only "--" lines classified as
+  // comment-only with addedRemoved 0, and comment-only skips every tier above
+  // 0. The body is entered at the "+++" header as well as at "@@", because a
+  // diff assembled without hunk headers would otherwise present an empty
+  // add/del set, which onlyComments answers true for and which lands on the
+  // same wrong verdict.
+  let inBody = false;
   for (const line of diffText.split("\n")) {
-    const m = /^\+\+\+ b\/(.+)$/.exec(line) || /^diff --git a\/\S+ b\/(.+)$/.exec(line);
-    if (m) {
-      current = m[1].trim();
-      if (current !== "/dev/null" && !files.includes(current)) {
-        files.push(current);
-        perFile.set(current, { add: [], del: [] });
+    if (line.startsWith("diff --git ")) {
+      inBody = false;
+      const m = /^diff --git a\/\S+ b\/(.+)$/.exec(line);
+      if (m) note(m[1].trim());
+      continue;
+    }
+    if (!inBody) {
+      if (line.startsWith("+++ ")) {
+        const m = /^\+\+\+ b\/(.+)$/.exec(line);
+        if (m) note(m[1].trim());
+        inBody = true;
+      } else if (line.startsWith("@@")) {
+        inBody = true;
       }
       continue;
     }
+    if (line.startsWith("@@")) continue;
     if (!current || !perFile.has(current)) continue;
-    if (/^\+\+\+|^---/.test(line)) continue;
     if (line.startsWith("+")) {
       perFile.get(current).add.push(line.slice(1));
       added++;

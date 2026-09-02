@@ -1,32 +1,33 @@
-// Implement an approved spec proposal end to end: apply its staged spec
-// edits to spec/ and verify them, then (optionally) implement the spec
-// change in code and close the findings that reference it. This unifies
-// the former spec-apply (land + verify spec) and spec-implement (plan +
-// build code + close findings) into one entry point.
+// Implement an approved spec proposal end to end: gate on its approval, then
+// run its implementation checklist as one sequence through the
+// implement-proposal-build subworkflow and close the findings that reference
+// it. This unifies the former spec-apply (land + verify spec) and
+// spec-implement (plan + build code + close findings) into one entry point.
 //
 //   Workflow({ name: "implement-proposal", args: {
 //     proposalPath: "proposals/NNNN_*.md",  // required
 //     date: "YYYY-MM-DD",                    // required (scripts cannot call Date)
 //     repoRoot: "/abs/path",                 // required: the repository root
-//     implementCode: true,                   // optional, default true; false = land + verify spec only
-//     maxApplyRounds: 5,                      // optional; spec apply-verify-fix rounds
+//     implementCode: true,                   // optional, default true; false = spec-only
+//     leaseTtlHours: 24,                     // optional; forwarded to each spec step's lease
+//     ...                                    // every other documented argument is forwarded
+//                                            // verbatim to the build subworkflow; the
+//                                            // implement-proposal skill carries the list and
+//                                            // the defaults, which live in that subworkflow
 //   }})
 //
-// Spec always comes first: the staged spec edits are applied and verified
-// before any code, one sub-step at a time. Each sub-step is applied, verified
-// to clean, and committed before the next begins, so a defect is attributable
-// to the sub-step that introduced it and a bad sub-step is revertable without
-// discarding the ones that already verified clean. An edit whose anchor cannot
-// be located stops the run rather than being skipped, because a partially
-// applied file makes every other discrepancy ambiguous. With implementCode false the run stops after the spec
-// is landed and committed (the former spec-apply behavior). The code phase
-// is the implement-proposal-build subworkflow (blast radius + ordered
-// build sequence + step-by-step implementation with tests).
+// There is one ordering and it is the proposal's implementation checklist, so
+// this file raises no spec phase of its own: a spec-lane step lands its staged
+// edits under a per-step lease inside the subworkflow. With implementCode false
+// the run is spec-only: the subworkflow walks the checklist's LEADING spec-lane
+// prefix and stops at the first non-spec step, returning "spec-only", or
+// "spec-only-incomplete" when a spec step sits behind that stopping step. The
+// modifier exists for close-build-gaps.sh, which needs the spec landed before it
+// builds the code itself.
 //
 // Preconditions (the skill checks them before invoking): the proposal
-// Status is "Approved" (or already "Applied to spec" for a re-run), and
-// spec/ is clean in git so the apply verification can diff against a clean
-// baseline.
+// Status is "Approved", and spec/ is clean in git so the apply verification
+// can diff against a clean baseline.
 //
 // MAINTENANCE: the implement-proposal skill documents this workflow and its
 // subworkflow; keep them in sync.
@@ -37,7 +38,7 @@ export const meta = {
     "Apply an approved proposal's spec edits and verify them, then optionally implement the spec change in code and close the findings that reference it",
   phases: [
     { title: "Plan", detail: "read the proposal, gate on approval, extract staged spec edits and findings" },
-    { title: "Apply spec", detail: "land the staged spec edits and verify exact alignment until clean" },
+    { title: "implement-proposal-build", detail: "run the checklist as one sequence: spec steps land staged edits, code steps build with tests" },
     { title: "Close findings", detail: "mark associated BUILD-GAPS.md findings CLOSED" },
   ],
 };
@@ -54,7 +55,6 @@ if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
 const repo = input.repoRoot;
 const date = input.date;
 const implementCode = input.implementCode !== false; // default true
-const maxApplyRounds = input.maxApplyRounds || 5;
 const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
@@ -65,52 +65,11 @@ const relProposal = input.proposalPath.startsWith("/")
 // prompt below names a role through this rather than concatenating a path.
 const P = proposalFiles(input.proposalPath, repo);
 
-// ---- The spec/ write lease -----------------------------------------------
-//
-// spec/ is read-only unless a lease is open (.claude/tools/spec-lease.mjs and
-// the PreToolUse hook in settings.json). The lease names THIS proposal and the
-// files it is allowed to write, and it expires. Nothing in this phase can edit
-// spec/ without it, which is the point: an agent that wanders into spec/ is
-// refused rather than trusted.
-//
-// A workflow script has no filesystem access, so opening and releasing are
-// agent calls. They are DEDICATED agents given one exact command, not an
-// instruction appended to an agent that has other work: the lease is the
-// security boundary here, its failure is not benign, and an agent with a large
-// task in front of it is not a reliable executor of a small instruction at the
-// end of its prompt.
-const leaseTtlHours = input.leaseTtlHours || 24;
-let leaseOpen = false;
-
-async function openLease(step, allowFiles) {
-  const allow = (allowFiles || []).join(",");
-  const out = await agent(
-    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
-      "node " + repo + "/.claude/tools/spec-lease.mjs open '" + P.root + "'" +
-      " --step '" + (step || "apply") + "'" +
-      " --ttl-hours " + leaseTtlHours +
-      " --allow '" + allow + "'" +
-      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
-    { label: "lease-open:" + (step || "apply"), model: "haiku", phase: "Apply spec" },
-  );
-  leaseOpen = true;
-  return out;
-}
-
-// Called on EVERY return path and at the end of every spec step, whether it
-// succeeded or failed. A release that does not happen leaves spec/ writable,
-// so this is never folded into an agent that has other work to do.
-async function releaseLease(step) {
-  if (!leaseOpen) return;
-  leaseOpen = false;
-  await agent(
-    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
-      "node " + repo + "/.claude/tools/spec-lease.mjs release" +
-      (step ? " --step '" + step + "'" : "") +
-      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
-    { label: "lease-release:" + (step || "apply"), model: "haiku", phase: "Apply spec" },
-  );
-}
+// No lease is opened here. The lease is per spec step inside
+// implement-proposal-build.js, scoped to exactly that step's files and released
+// in a finally, which is what keeps spec/ locked for most of a run. The copy
+// that used to live here was dead: openLease() had no caller, so leaseOpen was
+// never true and every releaseLease() returned at its first line.
 
 // ---- Where a proposal's parts live ---------------------------------------
 //
@@ -195,42 +154,36 @@ const ARG_CLASS = {
   acceptedDivergences: "anchored",
   plan: "anchored",
   reverifyDoneSteps: "launch",
-  maxApplyRounds: "forward",
-  maxAlignRepairs: "forward",
+  // Forwarded to implement-proposal-build.js and read only there. The classes
+  // mirror that file's own registry so one argument does not carry two.
+  skipBuild: "launch",
+  maxPlanRounds: "forward",
+  maxStepAttempts: "forward",
+  maxDeadAttempts: "forward",
+  maxVerifyRounds: "forward",
+  maxReviewRounds: "forward",
+  maxReplans: "forward",
+  replanEvery: "forward",
+  replanStruggleAttempts: "forward",
+  coverageFloor: "forward",
+  introspectEvery: "forward",
+  minUnproductiveRounds: "forward",
+  maxPhaseOscillations: "forward",
+  maxFinalGateFailures: "forward",
+  expensiveTierSeconds: "forward",
 };
-
-const SPEC_RULES =
-  "Spec content rules (these take precedence over verbatim application; record every deviation they force):\n" +
-  "- The spec never references source code files or implementation paths (pkg/, cmd/, charts/, sdks/, tests/, migrations/, .go or other source files). Rephrase staged text carrying such a reference into behavioral spec language, or drop the reference.\n" +
-  "- The spec cross-references other spec content by section number only: §X.Y or a relative markdown link to a section anchor. Replace a line-number cross-reference in staged text with the containing section's number.\n" +
-  "- Line numbers in the proposal's ANCHOR INSTRUCTIONS are location hints for you and never become spec content. Locate anchors by the quoted text and section headings; line numbers drift.\n" +
-  "- A staged edit that introduces a brand-new section or subsection is appended at the end of its level, after the last existing sibling at that level, and numbered as the next ordinal. Never insert a new section or subsection between existing ones: inserting in the middle forces every following section to be renumbered and breaks existing cross-references. When a staged anchor instruction would place a new section or subsection between existing ones, append it at the end of that level instead, renumber it to the next ordinal, and record the deviation. Editing the body of an existing section in place is unaffected by this rule; it applies only to introducing a new numbered section or subsection.\n" +
-  "- Apply staged prose as written otherwise; do not restyle it.\n" +
-  "- These rules govern text you author from a staged block. For a mechanical edit you do not author the text: if the script's output violates one of them, that is a defect in the script or its register, so record it as a deviation and stop, rather than hand-correcting the output, which would put the tree and the register out of step.";
-
-// The proposal's Summary orients the spec-apply agents the same way it orients the
-// build agents: what changes, which decisions are closed, and the traps. An
-// applier that knows a decision is closed does not relitigate it in a sub-step.
-// The script cannot read the proposal: the workflow sandbox has no `require` and
-// no filesystem access, so the agent reads its own Summary.
-const SUMMARY_BLOCK =
-  "\n\nTHE PROPOSAL'S SUMMARY. Read " +
-  roleRef(P, "summary", "## Summary") +
-  " before you start. It states the top-level changes, the decisions that are closed and must not be " +
-  "reopened, and the traps this change has already fallen into. A proposal written before that section " +
-  "existed may not have one; when it is absent, read the Problem and Decisions sections in its place.\n";
-const BLANKS_BLOCK =
-  "\n\nA proposal may delegate a detail with an explicit **IMPLEMENTOR'S CHOICE:** marker naming what is open " +
-  "and the constraint any answer must satisfy. That is a delegation rather than an unappliable edit: make the " +
-  "choice, satisfy the constraint, and record it in your result. An UNMARKED gap in a staged edit is still " +
-  "unappliable and still stops the sub-step.\n";
 
 const PLAN = {
   type: "object",
   required: ["approved", "alreadyApplied", "statusLine", "specEdits", "nonSpecStaged", "findingIds"],
   properties: {
-    approved: { type: "boolean", description: 'Status bullet begins "Approved"' },
-    alreadyApplied: { type: "boolean", description: 'Status bullet begins "Applied to spec"' },
+    approved: { type: "boolean", description: 'The status tool printed exactly "Approved"' },
+    alreadyApplied: {
+      type: "boolean",
+      description:
+        "The staged spec edits are already present in spec/, read from the tree rather than from the status. " +
+        'Reported only; it does not affect the approval gate, and there is no "Applied to spec" status.',
+    },
     statusLine: { type: "string" },
     specEdits: {
       type: "array",
@@ -279,66 +232,6 @@ const PLAN = {
   },
 };
 
-const APPLY_RESULT = {
-  type: "object",
-  required: ["applied", "unappliable", "deviations"],
-  properties: {
-    applied: { type: "array", items: { type: "string" } },
-    unappliable: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["id", "reason"],
-        properties: { id: { type: "string" }, reason: { type: "string" } },
-      },
-    },
-    deviations: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["id", "rule", "original", "replacement"],
-        properties: {
-          id: { type: "string" },
-          rule: { type: "string" },
-          original: { type: "string" },
-          replacement: { type: "string" },
-        },
-      },
-    },
-  },
-};
-
-const DISCREPANCIES = {
-  type: "object",
-  required: ["discrepancies"],
-  properties: {
-    discrepancies: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["title", "file", "where", "expected", "observed", "fix"],
-        properties: {
-          title: { type: "string" },
-          file: { type: "string" },
-          where: { type: "string" },
-          expected: { type: "string", description: "What the proposal stages, quoted exactly" },
-          observed: { type: "string", description: "What the spec now says, quoted exactly" },
-          fix: { type: "string" },
-        },
-      },
-    },
-  },
-};
-
-const ALIGNMENT = {
-  type: "object",
-  required: ["aligned", "missing"],
-  properties: {
-    aligned: { type: "boolean", description: "every staged spec edit is present at its anchor in spec/" },
-    missing: { type: "array", items: { type: "string" } },
-  },
-};
-
 const CLOSE = {
   type: "object",
   required: ["closed", "committed"],
@@ -361,12 +254,34 @@ const plan = await agent(
     " which is the ONLY supported way to read it: do not parse a Status bullet yourself.\n\n" +
     ' Read them in full and extract the staged changes and the findings that reference this proposal.\n\nYou are a read-only investigator; do not edit any file. Work in ' +
     repo +
-    '.\n\nReturn:\n- approved: true when the status tool prints exactly "Approved".\n- alreadyApplied: true when the staged spec edits are ALREADY PRESENT in spec/. Check a sample of them rather than inferring it from the status: spec application is recorded per deliverable in the implementation checklist now, not as a status value, so an Approved proposal may have some, none, or all of its spec edits landed.\n- statusLine: what the status tool printed.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file. Classify each entry\'s method. Use "mechanical" when the proposal stages the edit as a run of a script, pass, or generator over a register or map rather than as literal text to write, which a proposal signals by enumerating no edit sites, by naming a command, or by stating that completeness is proven by a gate rather than by review; put the exact command in command, including its dry-run form when the proposal states one. Use "authored" when the proposal stages the literal text together with an anchor for it. When one subsection stages both, split it into one mechanical entry and one authored entry. Defaulting to "authored" for an edit the proposal means a script to make is a defect: it sets an agent guessing at sites the proposal deliberately does not list.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
+    '.\n\nReturn:\n- approved: true when the status tool prints exactly "Approved".\n- alreadyApplied: true when the staged spec edits are ALREADY PRESENT in spec/. Check a sample of them rather than inferring it from the status: spec application is recorded per deliverable in the implementation checklist now, not as a status value, so an Approved proposal may have some, none, or all of its spec edits landed. This is reported, not a gate: only the status decides whether the run proceeds.\n- statusLine: what the status tool printed.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file. Classify each entry\'s method. Use "mechanical" when the proposal stages the edit as a run of a script, pass, or generator over a register or map rather than as literal text to write, which a proposal signals by enumerating no edit sites, by naming a command, or by stating that completeness is proven by a gate rather than by review; put the exact command in command, including its dry-run form when the proposal states one. Use "authored" when the proposal stages the literal text together with an anchor for it. When one subsection stages both, split it into one mechanical entry and one authored entry. Defaulting to "authored" for an edit the proposal means a script to make is a defect: it sets an agent guessing at sites the proposal deliberately does not list.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-if (!plan.approved && !plan.alreadyApplied) {
-  await releaseLease();
+// agent() returns null when the subagent never ran: the account hit a usage
+// limit, or the call died on a terminal API error after its own retries. The
+// dereference below then crashed the run with a bare TypeError ("Cannot read
+// properties of null (reading 'approved')") and no result, which reads as a
+// workflow defect rather than as the account condition it is. Reproduced with
+// the plan agent stubbed to null. Every other agent result in this pipeline is
+// guarded the same way.
+if (!plan) {
+  return {
+    status: "aborted",
+    abortReason:
+      "the plan agent returned no result (it was skipped or errored); the proposal was never read, so nothing was implemented",
+    findingsReferencing: [],
+  };
+}
+
+// Approval gates on approval alone. `alreadyApplied` is a fact about the tree,
+// so ORing it in let a Draft proposal whose spec edits an interrupted earlier
+// run had already landed pass as approved: a stubbed run with
+// {approved:false, alreadyApplied:true, statusLine:"Draft - do not implement"}
+// entered implement-proposal-build and returned "implemented-not-green". The
+// spec-lease hook refuses a non-Approved proposal (spec-lease.mjs), so this is
+// the only gate the code lane has.
+if (!plan.approved) {
   return {
     status: "not-approved",
     statusLine: plan.statusLine,
@@ -414,33 +329,16 @@ if (specStaged === 0) {
 }
 
 let specStatus = specStaged === 0 ? "no-spec-edits" : "sequenced";
-const unappliable = [];
-const deviations = [];
-const appliedIds = new Set();
-const applyHistory = [];
 
 // ---- Implement code (optional) via the build subworkflow ----
-
-if (!implementCode) {
-  await releaseLease();
-  return {
-    status: "spec-only",
-    specStatus,
-    statusLine: plan.statusLine,
-    files,
-    appliedEdits: [...appliedIds],
-    deviations,
-    nonSpecStaged: plan.nonSpecStaged,
-    findingsReferencing: plan.findingIds,
-    applyHistory,
-  };
-}
 
 // The implement-proposal-build subworkflow IS the implement stage: it runs
 // inline and brings its own phase group (Plan, Build, Verify, Review) under a
 // "▸ implement-proposal-build" heading, so no redundant parent "Implement"
 // phase wraps it.
-log("Implementing the spec change via the implement-proposal-build subworkflow");
+log(implementCode
+  ? "Implementing the spec change via the implement-proposal-build subworkflow"
+  : "Spec-only: running the checklist's leading spec-lane prefix via the implement-proposal-build subworkflow");
 let build;
 try {
   // Invoked by path rather than by name. A named workflow resolves to a copy
@@ -458,10 +356,35 @@ try {
       reverifyDoneSteps: !!input.reverifyDoneSteps,
       acceptedDivergences: input.acceptedDivergences,
       plan: input.plan,
+      specOnly: !implementCode,
+      leaseTtlHours: input.leaseTtlHours,
+      // Every remaining tuning argument the skill documents is read only in
+      // the child, so the parent has to hand each one across or the documented
+      // entry point cannot reach it. A run that passed maxStepAttempts: 7 and
+      // a spec review focus here reached the child with neither, so the
+      // bound had no effect and the focused per-spec-step reviewer could not be
+      // switched on at all. Each value is passed verbatim rather than defaulted:
+      // the child already defaults every one, and a second default table here is
+      // a second thing to drift.
+      skipBuild: input.skipBuild,
+      specReviewFocus: input.specReviewFocus,
+      maxPlanRounds: input.maxPlanRounds,
+      maxStepAttempts: input.maxStepAttempts,
+      maxDeadAttempts: input.maxDeadAttempts,
+      maxReplans: input.maxReplans,
+      replanEvery: input.replanEvery,
+      replanStruggleAttempts: input.replanStruggleAttempts,
+      maxVerifyRounds: input.maxVerifyRounds,
+      maxReviewRounds: input.maxReviewRounds,
+      coverageFloor: input.coverageFloor,
+      introspectEvery: input.introspectEvery,
+      minUnproductiveRounds: input.minUnproductiveRounds,
+      maxPhaseOscillations: input.maxPhaseOscillations,
+      maxFinalGateFailures: input.maxFinalGateFailures,
+      expensiveTierSeconds: input.expensiveTierSeconds,
     },
   );
 } catch (e) {
-  await releaseLease();
   return {
     status: "aborted",
     abortReason: "implement-proposal-build subworkflow failed: " + (e && e.message),
@@ -469,6 +392,63 @@ try {
     findingsReferencing: plan.findingIds,
   };
 }
+
+// A subworkflow that RETURNS null did not throw, so the catch above never sees
+// it, and every dereference below sat outside the try that exists for exactly
+// this case. Reproduced with the subworkflow stubbed to null: "Cannot read
+// properties of null (reading 'steps')". A null result is the same condition as
+// a throw, so it takes the same exit.
+if (!build) {
+  return {
+    status: "aborted",
+    abortReason: "implement-proposal-build subworkflow returned no result",
+    specStatus,
+    findingsReferencing: plan.findingIds,
+  };
+}
+
+// The subworkflow stopped at the end of the leading spec prefix, so the
+// green/reviewClean fields the "Implementation done" log reports are
+// meaningless here: no code was built and no tier was run.
+if (!implementCode) {
+  log("Spec-only run finished: " + build.status + ", " + ((build.steps || []).length) + " step(s) applied");
+  return {
+    // PASS THE SUBWORKFLOW'S STATUS THROUGH. Collapsing everything that is not
+    // "spec-only-incomplete" into "spec-only" turned every failure the child
+    // reports -- a step that would not apply, a leaked lease, a step on the
+    // wrong lane -- into the success status. Both the skill and the build loop
+    // are told to STOP on those, so a spec step that never landed reported a
+    // clean run and the loop went on to build code against spec text that was
+    // never applied. The two statuses this mode may legitimately return are
+    // named; anything else is the child's own verdict and is not ours to
+    // rewrite.
+    status:
+      build.status === "spec-only" || build.status === "spec-only-incomplete"
+        ? build.status
+        : build.status || "aborted",
+    proposal: relProposal,
+    specStatus,
+    statusLine: plan.statusLine,
+    files,
+    steps: build.steps || [],
+    commits: build.commits || [],
+    stoppedAt: build.stoppedAt,
+    specStepsBehind: build.specStepsBehind || [],
+    reason: build.reason,
+    nonSpecStaged: plan.nonSpecStaged,
+    findingsReferencing: plan.findingIds,
+    // Carried through rather than dropped: the skill requires these reported
+    // whenever they are non-empty, and a spec-only return leaves the build
+    // workflow before the block that would otherwise assemble them.
+    checklistDeviations: build.checklistDeviations || [],
+    skippedSteps: build.skippedSteps || [],
+    reverifyRepaired: build.reverifyRepaired || [],
+    proposalEdits: build.proposalEdits || null,
+    deviations: build.deviations || [],
+    gateMisses: build.gateMisses || [],
+  };
+}
+
 log(
   "Implementation done: " +
     (build.steps ? build.steps.length : 0) +
@@ -487,7 +467,7 @@ if (plan.findingIds.length > 0) {
   if (!build.green || !build.reviewClean) {
     log("Implementation is not green or the design-conformance review is not clean; leaving findings OPEN for review");
   } else {
-    close = await agent(
+    const closeResult = await agent(
       "Close the BUILD-GAPS.md findings whose implementation just landed, then commit.\n\n" +
         "HARD CONSTRAINT: the only file you may edit is " +
         repo +
@@ -501,17 +481,26 @@ if (plan.findingIds.length > 0) {
         ".\n\nFor each finding: re-read it, confirm the landed implementation resolves it (the proposal's spec edits are applied and its code blast radius is implemented and green), flip the heading checkbox to [x] and the trailing marker to CLOSED, and add a one or two sentence Resolution note citing the proposal path and the implementing commit SHA(s). Do not open or re-open any finding. Then commit BUILD-GAPS.md on the current branch following the repository's commit conventions; the commit message and the Resolution note reference durable sources only (the proposal file path, the finding id, the spec section, the commit SHA), never the proposal's internal change/section/decision/pass/step labels. Return the IDs you closed.",
       { schema: CLOSE, label: "close-findings", phase: "Close findings" },
     );
+    // A dead closing agent closed nothing. Overwriting the empty record
+    // declared above with null broke `close.closed` in the return below, after
+    // the whole build had landed and committed, which is the most expensive
+    // place in this workflow to lose a result. Keeping the empty record
+    // preserves the return's contract, and the log says the findings are still
+    // OPEN, which is what the operator has to act on.
+    if (closeResult) close = closeResult;
+    else log("The finding-closing agent returned no result; the findings are left OPEN");
   }
 }
 
-await releaseLease();
 return {
   status:
-    build.status === "step-stuck"
-      ? "build-step-stuck"
-      : build.green && build.reviewClean
-        ? "implemented"
-        : "implemented-not-green",
+    build.status === "aborted"
+      ? "build-aborted"
+      : build.status === "step-stuck"
+        ? "build-step-stuck"
+        : build.green && build.reviewClean
+          ? "implemented"
+          : "implemented-not-green",
   proposal: relProposal,
   specStatus,
   blastRadius: build.blastRadius,

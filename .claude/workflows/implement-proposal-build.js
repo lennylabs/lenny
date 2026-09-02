@@ -187,6 +187,14 @@ const replanStruggleAttempts = input.replanStruggleAttempts || 4;
 // without re-walking (or re-planning) the build steps. baseRef is still computed
 // at the top of the Build phase and the build loop simply iterates zero steps.
 const skipBuild = !!input.skipBuild;
+// specOnly: run the leading spec-lane prefix of the checklist and stop. It is a
+// stop rule inside THIS sequence rather than a phase in the parent, because the
+// checklist is the only ordering (see the spec-step note below) and only this
+// planner knows each step's lane. The parent's own copy of the spec phase was
+// dead code: openLease() there was never called, so `implementCode:false`
+// returned after exactly one agent call with appliedEdits:[] and applied nothing.
+const specOnly = !!input.specOnly;
+const leaseTtlHours = input.leaseTtlHours || 24;
 
 // ---- Where a proposal's parts live ---------------------------------------
 //
@@ -344,6 +352,8 @@ const ARG_CLASS = {
   date: "anchored",
   plan: "anchored",
   skipBuild: "launch",
+  specOnly: "launch",
+  leaseTtlHours: "forward",
   reverifyDoneSteps: "launch",
   acceptedDivergences: "anchored",
   specReviewFocus: "anchored",
@@ -592,6 +602,19 @@ const VERIFY = {
     tiersRun: { type: "array", items: { type: "string" } },
     changedLineCoverage: { type: "string" },
     failures: { type: "array", items: { type: "string" } },
+    // A scoped run's skips are only auditable if it states them as data. The
+    // final gate records the class and the skip that let a failure through,
+    // and it cannot parse either back out of `notes`, so both are fields. A
+    // full pass skips nothing and leaves both absent.
+    classification: { type: "string", description: "the change class this run assigned to the diff, from the class table" },
+    skipped: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["tier", "why"],
+        properties: { tier: { type: "string" }, why: { type: "string" } },
+      },
+    },
     notes: { type: "string" },
   },
 };
@@ -633,10 +656,10 @@ const PROPOSAL_EDITS = {
   type: "object",
   required: ["edited", "commits"],
   properties: {
-    edited: { type: "boolean", description: "Whether any commit in the range touched the proposal file" },
+    edited: { type: "boolean", description: "Whether any commit in the range touched the audited proposal paths" },
     commits: {
       type: "array",
-      description: "One entry per commit that touched the proposal, oldest first. Empty when none did.",
+      description: "One entry per commit that touched the audited proposal paths, oldest first. Empty when none did.",
       items: {
         type: "object",
         required: ["sha", "subject", "whatChanged"],
@@ -702,16 +725,25 @@ const STUCK_VERDICT = {
   },
 };
 
-// The cheap gate that runs before the conformance review, plus the lease check
-// a code step owes: a reviewer handed code that does not compile produces
-// confident nonsense, and a code step running under an open spec lease means
-// spec/ is writable when it should not be.
+// The cheap gate that runs before the conformance review: a reviewer handed
+// code that does not compile produces confident nonsense.
 const COMPILE = {
   type: "object",
   required: ["compiles"],
   properties: {
     compiles: { type: "boolean" },
     errors: { type: "array", items: { type: "string" } },
+  },
+};
+
+// The lease a code step owes before it runs at all. leaseHeld is REQUIRED: an
+// omitted field reads as undefined, which is indistinguishable from false at
+// the call site and would let a leak through the one gate whose subject is a
+// write boundary.
+const LEASE = {
+  type: "object",
+  required: ["leaseHeld"],
+  properties: {
     leaseHeld: { type: "boolean", description: "the value of the `held` field printed by spec-lease.mjs status" },
   },
 };
@@ -783,7 +815,27 @@ let plan = skipBuild
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-for (let round = 1; !skipBuild && !suppliedPlan && round < maxPlanRounds; round++) {
+// agent() returns null when the subagent never ran (see the dead-agent note in
+// the step loop below). Everything downstream reads plan.steps, so a dead
+// planner surfaced as "Cannot read properties of null (reading 'steps')" at the
+// checklist reconciliation below, hours into a run, rather than as a status,
+// and the caller got no result to report. skipBuild and a caller-supplied plan
+// both produce a non-null object, so this can only be the planner.
+if (!plan) {
+  log("The planner returned no result (it was skipped or errored); there is no build sequence, so nothing was built");
+  return {
+    status: "aborted",
+    abortReason: "the build planner returned no result (the agent was skipped or errored)",
+    steps: [],
+    commits: [],
+    green: false,
+    reviewClean: false,
+    failures: ["the build planner returned no result"],
+    resumeNote: "No build sequence was produced. Re-run implement-proposal to continue.",
+  };
+}
+
+for (let round = 1; !skipBuild && !suppliedPlan && round <= maxPlanRounds; round++) {
   const critique = await agentTry(
     "Adversarially check whether a build plan covers the entire blast radius of an applied spec proposal.\n\n" +
       "You are a read-only critic; do not edit any file. Work in " +
@@ -802,7 +854,7 @@ for (let round = 1; !skipBuild && !suppliedPlan && round < maxPlanRounds; round+
     break;
   }
   log("Plan revision " + round + ": closing " + critique.gaps.length + " gap(s)");
-  plan = await agentTry(
+  const revised = await agentTry(
     "Revise a build plan to close the gaps a completeness critic found.\n\n" +
       "You are a read-only planner; do not edit any file. Work in " +
       repo +
@@ -815,14 +867,36 @@ for (let round = 1; !skipBuild && !suppliedPlan && round < maxPlanRounds; round+
       "\n\nReturn the full revised plan (blast radius + ordered steps), incorporating the gaps and preserving the parts that were correct. Re-sequence if a gap is a prerequisite-ordering problem.",
     { schema: PLAN, label: "plan-revise:r" + round, phase: "Plan" },
   );
+  // A dead reviser is not a reason to discard the plan it was revising: the
+  // unrevised plan is a worse plan rather than no plan, and overwriting it with
+  // null crashed the checklist reconciliation below with "Cannot read
+  // properties of null (reading 'steps')". Stop revising and build what we
+  // have.
+  if (!revised) {
+    log("Plan revision " + round + ": the reviser returned no result; keeping the previous plan");
+    break;
+  }
+  plan = revised;
 }
 
 // Startup reconciliation: a step whose checklist box is already ticked is
 // skipped, whatever the plan says about it.
+//
+// Read P.checklist, the file the two tick writers at the end of each lane write
+// to, rather than the proposal path. Under the folder layout that path is the
+// directory, and running that grep against a directory prints `Is a directory`
+// and exits 2, so the agent reports no ids, no step is marked alreadyDone, and
+// the resumed run rebuilds every completed step, which is the outcome the note
+// above says this read exists to prevent. A recursive grep hides the error and
+// reads every role file in the directory instead, so the ticked lines quoted in
+// the review log and the spec-changes file come back as ticks, which is a second
+// way to get the answer wrong. On a legacy proposal
+// P.checklist is the single .md, where the same pattern still selects only
+// checklist lines, so one expression is correct for both layouts.
 if (!skipBuild && plan.steps.length > 0) {
   const ticks = await agentTry(
-    "Read the implementation checklist in " + proposal + " and report which steps are already marked " +
-      "complete. Run `grep -nE '^- \\[[ x]\\] \\*\\*S' " + proposal + "` and return the step id of every " +
+    "Read the implementation checklist in " + P.checklist + " and report which steps are already marked " +
+      "complete. Run `grep -nE '^- \\[[ x]\\] \\*\\*S' " + P.checklist + "` and return the step id of every " +
       "line whose checkbox is `[x]` rather than `[ ]`. The id is the token right after the `**`, such as " +
       "`S1` or `S12`. Return ids only, and do not edit anything.",
     { schema: TICKED, label: "checklist-ticks", phase: "Plan", model: "haiku" },
@@ -932,11 +1006,12 @@ function SCOPING_BLOCK(step) {
     "median exceeds " + expensiveTierSeconds + " seconds, name in ONE sentence the hunk that requires it. " +
     "No named hunk, no run. A tier with no ledger entry runs once and creates one: an unknown cost is " +
     "treated as expensive but is never a reason to skip a first run.\n\n" +
-    "4. RECORD WHAT YOU RAN AND WHAT YOU SKIPPED. Put the classification, every tier you skipped, and the " +
-    "reason for each, in your notes. After each tier, append its wall-clock to the ledger file above " +
-    "(create it and its directory if absent; it is a JSON object keyed `tier|package` holding " +
-    "`{medianSeconds, runs, lastRun}`). Do not spawn a separate step for that: you just ran the tier and " +
-    "you know the number.\n\n" +
+    "4. RECORD WHAT YOU RAN AND WHAT YOU SKIPPED. Return the class you assigned in `classification`, and one " +
+    "entry per tier you skipped in `skipped`, each naming the `tier` and the `why`. Those two fields are what " +
+    "the run records; your notes are read by people, not by the gate. After each tier, append its wall-clock " +
+    "to the ledger file above (create it and its directory if absent; it is a JSON object keyed `tier|package` " +
+    "holding `{medianSeconds, runs, lastRun}`). Do not spawn a separate step for that: you just ran the tier " +
+    "and you know the number.\n\n" +
     "This is NOT the final gate. The whole set runs again once the design review is clean, before the step " +
     "is marked done, so a tier skipped here is re-run before anything is certified — and if that gate then " +
     "fails, your skip is recorded as the miss that caused it."
@@ -1294,7 +1369,8 @@ async function runSpecStep(step) {
   await agentTry(
     "Run exactly this command and reply with its stdout and nothing else:\n\n" +
       "node " + repo + "/.claude/tools/spec-lease.mjs open '" + P.root + "' --step '" + step.id +
-      "' --allow '" + files.join(",") + "'" +
+      "' --ttl-hours " + leaseTtlHours +
+      " --allow '" + files.join(",") + "'" +
       "\n\nDo nothing else. Do not read, summarise, or edit any file.",
     { label: "lease-open:" + step.id, model: "haiku", phase: "Build" },
   );
@@ -1394,6 +1470,61 @@ async function runSpecStep(step) {
 
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
+  // The mode is the leading spec prefix, so the first non-spec step ends the run.
+  // A spec step BEHIND that step is reported rather than skipped: skipping it
+  // would leave the loop that called us building code against spec text that
+  // never landed.
+  if (specOnly && step.lane !== "spec") {
+    const behind = plan.steps.slice(i).filter((s) => s.lane === "spec").map((s) => s.id);
+    if (behind.length) {
+      log("spec-only: step " + step.id + " is not a spec step and spec step(s) " + behind.join(", ") + " sit behind it");
+    }
+    // The lease check below runs for a non-spec step that is about to BUILD.
+    // This mode returns before that, so without the same check here a spec
+    // step whose best-effort release failed would leave spec/ writable and the
+    // run would still report a clean spec-only stop. The release is the
+    // primary mechanism; this is what makes the invariant hold on the one exit
+    // path that skips it.
+    const leaseOnExit = await agentTry(
+      "Report whether a spec write lease is held. Work in " + repo + ". Do not edit anything.\n\n" +
+        "Run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report its `held` field as " +
+        "leaseHeld. A present-but-expired lease reports held false and is not a leak.",
+      { schema: LEASE, label: "lease-check:spec-only-exit", phase: "Build" },
+    );
+    if (!leaseOnExit || leaseOnExit.leaseHeld !== false) {
+      return {
+        status: "lease-leaked",
+        stuckStep: step.id,
+        reason:
+          (leaseOnExit && leaseOnExit.leaseHeld === true
+            ? "the leading spec prefix ended at step " + step.id + " with a spec write lease still held, " +
+              "so an earlier spec step did not release it and spec/ is writable."
+            : "the lease check did not answer as the leading spec prefix ended at step " + step.id + ", so " +
+              "whether spec/ is writable is unknown. The run reports the leak rather than a clean stop.") +
+          " Check it with `.claude/tools/spec-lease.mjs status`, release it with " +
+          "`.claude/tools/spec-lease.mjs release`, and re-run.",
+        stoppedAt: step.id,
+        specStepsBehind: behind,
+        steps: stepResults,
+        commits: stepResults.map((x) => x.commit).filter(Boolean),
+        green: false,
+        reviewClean: false,
+      };
+    }
+    return {
+      status: behind.length ? "spec-only-incomplete" : "spec-only",
+      stoppedAt: step.id,
+      specStepsBehind: behind,
+      steps: stepResults,
+      commits: stepResults.map((x) => x.commit).filter(Boolean),
+      green: false,
+      reviewClean: false,
+      reason: behind.length
+        ? "spec step(s) " + behind.join(", ") + " sit behind non-spec step " + step.id +
+          ", so the leading spec prefix is not the whole spec lane"
+        : "",
+    };
+  }
   // A step the planner found already present builds nothing. It stays in the
   // sequence so later steps' dependencies still resolve, and it is reported so
   // the proposal's checklist can be corrected.
@@ -1473,6 +1604,49 @@ for (let i = 0; i < plan.steps.length; i++) {
     continue;
   }
 
+  // ---- Step 0: the lease gate ----------------------------------------------
+  //
+  // The lease is the security boundary of the spec phase and a code step must
+  // never run under one, so this is the first thing a non-spec step does.
+  // Releasing on spec-step exit is the primary mechanism; this is the check
+  // that makes the invariant hold rather than merely be intended, and it closes
+  // the one hazard interleaving introduces: a spec step that died mid-flight
+  // leaving spec/ writable for whatever runs next. It used to ride along with
+  // the compile gate, which cannot run until the attempt's implementer has
+  // produced a diff to compile, so the leak was detected only after that
+  // implementer had already run and COMMITTED with spec/ writable, which is
+  // precisely the state the check exists to prevent. Once per step rather than
+  // once per attempt, because nothing inside a code step can open a lease:
+  // runSpecStep is the only opener and a spec step is its own iteration.
+  const lease = await agentTry(
+    "Report whether a spec write lease is held. Work in " + repo + ". Do not edit anything.\n\n" +
+      "Run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report its `held` field as " +
+      "leaseHeld. A present-but-expired lease reports held false and is not a leak.",
+    { schema: LEASE, label: "lease-check:" + step.id, phase: "Build" },
+  );
+  // Fail closed. An agent that died, or one that answered without the field,
+  // is not evidence that spec/ is locked, and a gate that reads undefined as
+  // "no leak" is the same defect as no gate at all.
+  if (!lease || lease.leaseHeld !== false) {
+    return {
+      status: "lease-leaked",
+      stuckStep: step.id,
+      reason:
+        (lease && lease.leaseHeld === true
+          ? "a spec write lease was still held when step " + step.id + " (a non-spec step) was about to " +
+            "run, which means an earlier spec step did not release it and spec/ is writable."
+          : "the lease check did not answer before step " + step.id + " (a non-spec step) ran, so whether " +
+            "spec/ is writable is unknown. The run stops rather than building code under a lease that may " +
+            "be held.") +
+        " Check it with `.claude/tools/spec-lease.mjs status`, release it with " +
+        "`.claude/tools/spec-lease.mjs release`, and re-run.",
+      steps: stepResults,
+      commits: stepResults.map((s) => s.commit).filter(Boolean),
+      green: false,
+      reviewClean: false,
+    };
+  }
+
   const stepHeader =
     "Step " +
     step.id +
@@ -1514,17 +1688,14 @@ for (let i = 0; i < plan.steps.length; i++) {
   let unproductiveStep = null;
   let issues = ""; // carried failures or divergences for the next attempt
   let attempt = 0;
-  // Which phase the current attempt is in, and how many rounds each phase has
-  // taken. The stuck judges read these: a loop that keeps clearing conformance,
-  // breaking tests, and returning to conformance is a pattern the attempt
-  // cadence cannot see, because it counts attempts across phases.
-  let phaseOfAttempt = "implement";
   // What the classifier said about the last fix, and what the scoping agent
   // skipped on the strength of it. A final-gate failure records both, so a miss
   // traces back to the class and the hunk that justified the skip.
   let lastClassification = null;
   let lastSkipped = null;
-  let icRounds = 0;
+  // Round counters the detectors and the end-of-step log read. The per-round
+  // PHASE is not tracked here: each stepRounds entry already carries its own
+  // `phase`, and that array is what the stuck judges are handed.
   let testRounds = 0;
   let oscillations = 0;
   let finalGateFailures = 0;
@@ -1804,37 +1975,13 @@ for (let i = 0; i < plan.steps.length; i++) {
       "Report whether the changed packages compile. Work in " + repo + ". Do not edit anything.\n\n" +
         "Run `git diff --name-only " + stepRef + "..HEAD` to see what changed, then `go build` over the " +
         "Go packages among them (`go build ./<pkg>/...`). Nothing else: no tests, no linters, no " +
-        "whole-repo build. If the change touches no Go package, report compiles true.\n\n" +
-        "Also check the lease: run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report " +
-        "its `held` field as leaseHeld. A present-but-expired lease reports held false and is not a " +
-        "leak. A code step must not run while a spec lease is held." +
+        "whole-repo build. If the change touches no Go package, report compiles true." +
         MEMORY_SAFE_NOTE,
       { schema: COMPILE, label: "compile:" + step.id + ":r" + attempt, phase: "Build" },
     );
-    if (compiles && compiles.leaseHeld) {
-      // The lease is the security boundary of the spec phase and a code step
-      // must never run under one. Releasing on step exit is the primary
-      // mechanism; this is the check that makes the invariant hold rather than
-      // merely be intended, and it closes the one hazard interleaving
-      // introduces: a spec step that died mid-flight leaving spec/ writable for
-      // whatever runs next.
-      return {
-        status: "lease-leaked",
-        stuckStep: step.id,
-        reason:
-          "a spec write lease was still held when step " + step.id + " (a non-spec step) was about to " +
-          "run, which means an earlier spec step did not release it and spec/ is writable. Release it " +
-          "with `.claude/tools/spec-lease.mjs release` and re-run.",
-        steps: stepResults,
-        commits: stepResults.map((s) => s.commit).filter(Boolean),
-        green: false,
-        reviewClean: false,
-      };
-    }
     if (compiles && compiles.compiles === false) {
       stepGreen = false;
       stepReviewClean = false;
-      phaseOfAttempt = "compile";
       issues =
         "The changed packages do not compile, so nothing can review or test them yet. Fix the build " +
         "first:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n");
@@ -1857,9 +2004,7 @@ for (let i = 0; i < plan.steps.length; i++) {
       // oscillation: a fix answered the reviewer, the tests broke, the fix for
       // that broke the reviewer again.
       if (lastPhase === "tests") oscillations++;
-      phaseOfAttempt = "IC";
       lastPhase = "IC";
-      icRounds++;
       stepRounds.push({
         attempt,
         phase: "IC",
@@ -1905,7 +2050,6 @@ for (let i = 0; i < plan.steps.length; i++) {
     // blast radius is usually far narrower than the step's. The final gate
     // below restores the full set, so nothing is marked done on a scoped pass.
     const fullPass = attempt === 1 && !firstAttemptWasFix;
-    phaseOfAttempt = "tests";
     lastPhase = "tests";
     testRounds++;
     // Independent verify: a different agent re-runs the step's tiers and
@@ -1931,6 +2075,16 @@ for (let i = 0; i < plan.steps.length; i++) {
         ". " + PREFLIGHT_NOTE + " MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
       { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
     );
+    // Captured here rather than at the gate: a gate failure is evidence about
+    // the class table only if it names the class and the skip that let it
+    // through, and this is the only call that knows either. Assigned from
+    // whichever run just returned, so a full pass, which skips nothing and
+    // reports neither, clears a scoped verdict rather than leaving it to be
+    // misattributed to a pass that skipped nothing.
+    if (sv) {
+      lastClassification = sv.classification || null;
+      lastSkipped = sv.skipped || null;
+    }
     stepGreen = !!(sv && sv.green);
     // This attempt committed, so whatever full pass preceded it is stale. A
     // green full pass on THIS tree is the only thing that sets it true again.
@@ -1963,7 +2117,10 @@ for (let i = 0; i < plan.steps.length; i++) {
     // set now, against the exact tree about to be marked done. This is the
     // guarantee the scoped fix rounds borrow against: green here, or the
     // failures become the next attempt's work.
-    if (stepReviewClean && !fullVerifyCurrent) {
+    // Conformance is clean by construction here: a review that found anything
+    // continued at the top of the loop, so the only way past it is clean. The
+    // remaining question is whether a FULL tier pass has covered this tree.
+    if (!fullVerifyCurrent) {
       log("Step " + step.id + ": review clean after scoped runs; full tier pass as the final gate");
       const fg = await agentTry(
         "Run the FULL test set for one build step of an applied spec proposal and report whether it is green. " +
@@ -2016,15 +2173,6 @@ for (let i = 0; i < plan.steps.length; i++) {
         await maybeJudge();
         continue;
       }
-    }
-
-
-    if (!stepReviewClean) {
-      issues =
-        stepFindings.length > 0
-          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/). THE PROPOSAL FILE IS OUT OF SCOPE FOR EVERY FINDING BELOW. The findings are reproduced verbatim, and one may name the proposal as the thing to change, or ask for an edit to it to be reverted or restored. Disregard that part of any such finding: it is outside what this step does, the current content of the proposal stands as written whatever its history, and a human has already decided to keep it and review it separately. Do not edit, revert, or restore that file, and do not treat leaving it alone as leaving the finding unaddressed. Take from each finding only what it says about the CODE; where a finding says nothing about the code, note that you left it alone and move on. Each divergence is a defect the step's tests passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO add or strengthen an automated test that asserts the corrected behavior and would FAIL against the pre-fix code, at the tier that owns it, so this class of issue cannot recur. Keep all tests green:\n" +
-            JSON.stringify(stepFindings, null, 2) + suppressedNote(step)
-          : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
     }
   }
 
@@ -2265,6 +2413,20 @@ for (let i = 0; i < plan.steps.length; i++) {
       }
     }
   }
+}
+
+// A wholly-spec checklist reaches here having applied every spec step. It must
+// not fall into Verify and Review, which build and test code.
+if (specOnly) {
+  return {
+    status: "spec-only",
+    stoppedAt: "",
+    specStepsBehind: [],
+    steps: stepResults,
+    commits: stepResults.map((x) => x.commit).filter(Boolean),
+    green: false,
+    reviewClean: false,
+  };
 }
 
 // ---- Verify: run the reached tiers across the whole change ----
@@ -2533,19 +2695,45 @@ if (green && reviewFixApplied) {
   }
 }
 
-// Did the proposal change during the build, and if so what did the change say?
-// Read from git rather than from any agent's self-report, because an agent that
-// edited the file against instruction is not the source to ask about it.
+// Did the proposal's text change during the build, and if so what did the change
+// say? Read from git rather than from any agent's self-report, because an agent
+// that edited the file against instruction is not the source to ask about it.
+//
+// Under the folder layout the proposal is a DIRECTORY, so a bare `-- <proposal>`
+// pathspec matches every file in it, including the two this run is entitled to
+// write: the tick agent writes the implementation checklist after each green
+// step, and recordDeviation writes the deviations file. Neither writer commits,
+// so the next step's commit sweeps the write in, and the audit then reports the
+// run's own bookkeeping as the forbidden edit SKILL.md tells the operator to
+// escalate. The history carries commits of exactly that form ("Mark the spec-map
+// step S22 done in proposal 0073", "Record S20 and S21 as done, with S21's two
+// deviations"). Excluding those two paths leaves the audit on the proposal's
+// authored text, which is the thing the step rules make read-only. A legacy
+// proposal is one file carrying every role, so there is nothing to exclude there
+// without blinding the audit; it keeps the bare pathspec and is told that a
+// ticked box or an appended deviation is this run's own writing.
+const auditPaths =
+  P.layout === "folder"
+    ? proposal + " ':(exclude)" + P.checklist + "' ':(exclude)" + P.deviations + "'"
+    : proposal;
+const auditLegacyNote =
+  P.layout === "folder"
+    ? ""
+    : " This proposal is a single file carrying every role, so a checklist box changed to `[x]` or an " +
+      "appended deviations entry is this run's own bookkeeping rather than an edit to the proposal's text. " +
+      "Report such a commit, and say so in whatChanged when that is all the diff contains.";
 const proposalEditReport = await agentTry(
-  "Report whether one file changed during a range of commits, and if so what the changes said. This is a " +
-    "read-only audit: do not edit, revert, or restore anything, and run no command that writes.\n\n" +
-    "Repository: " + repo + "\nFile: " + proposal + "\nRange: " + baseRef + "..HEAD\n\n" +
-    "Run `git log --oneline " + baseRef + "..HEAD -- " + proposal + "` to list the commits that touched it. " +
-    "For each, read its diff for that file with `git show <sha> -- " + proposal + "` and its full message with " +
+  "Report whether a proposal's text changed during a range of commits, and if so what the changes said. " +
+    "This is a read-only audit: do not edit, revert, or restore anything, and run no command that writes.\n\n" +
+    "Repository: " + repo + "\nPaths audited: " + auditPaths + "\nRange: " + baseRef + "..HEAD\n\n" +
+    "Run `git log --oneline " + baseRef + "..HEAD -- " + auditPaths + "` to list the commits that touched " +
+    "them. Run it with the pathspecs exactly as given, quoting included. For each commit, read its diff for " +
+    "those paths with `git show <sha> -- " + auditPaths + "` and its full message with " +
     "`git show -s --format=%B <sha>`. Report what each edit did to the document's meaning, naming the section " +
     "and quoting the sentences it replaced and the sentences it wrote, and give the reason the commit message " +
     "states, verbatim. Do not judge whether the edit was right; a human decides that from your report. When no " +
-    "commit touched the file, report edited=false with an empty list, which is the expected result.",
+    "commit touched those paths, report edited=false with an empty list, which is the expected result." +
+    auditLegacyNote,
   { schema: PROPOSAL_EDITS, label: "proposal-edit-audit", phase: "Review" },
 );
 if (proposalEditReport && proposalEditReport.edited) {

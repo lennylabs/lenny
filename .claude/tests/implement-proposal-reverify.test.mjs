@@ -46,6 +46,7 @@ function run({ reverifyDoneSteps, reverifyFindings }) {
     if (label.startsWith("build:")) return { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1" };
     if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["unit"] };
     if (label.startsWith("tick:")) return "DONE";
+    if (label.startsWith("lease-check:")) return { leaseHeld: false };
     if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
     if (label === "proposal-edit-audit") return { edited: false, commits: [] };
     if (label.startsWith("drift")) return { drifted: false, reasons: [] };
@@ -200,6 +201,7 @@ console.log("\n6. accepted divergences reach the FINAL review lenses and nothing
       if (label.startsWith("baseline") || label.endsWith(":base")) return { sha: "deadbeef" };
       if (label.startsWith("review:")) return { findings: [] };
       if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["unit"] };
+      if (label.startsWith("lease-check:")) return { leaseHeld: false };
       if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
       if (label === "proposal-edit-audit") return { edited: false, commits: [] };
       return {};
@@ -250,6 +252,7 @@ console.log("\n7. a caller-supplied plan replaces the planning phase");
       if (label.startsWith("review:")) return { findings: [] };
       if (label.startsWith("build:")) return { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1" };
       if (label.startsWith("verify") || label.startsWith("selfverify")) return { green: true, tiersRun: ["unit"] };
+      if (label.startsWith("lease-check:")) return { leaseHeld: false };
       if (label.startsWith("guard") || label.includes("compile")) return { clean: true, compiles: true };
       if (label === "proposal-edit-audit") return { edited: false, commits: [] };
       return {};
