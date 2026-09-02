@@ -63,7 +63,7 @@ const CASES = [
     stubs: {
       bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" }, "snap*": "DONE",
       "*:review:*": { coverage: "c", findings: [] },
-      "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunks":0,"snapshot":"/s","overrides":{}}',
+      "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/s","overrides":{}}',
       "spec-nonspec-handoff": "ok", "introspect*": null, growth: { documentWas: 1, documentNow: 1, grew: [] },
       default: {},
     },

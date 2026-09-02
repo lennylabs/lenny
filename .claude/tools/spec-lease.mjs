@@ -37,7 +37,7 @@
 //   spec-lease.mjs status [--now ISO]    report the current lease and whether it
 //                                        is still held
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, realpathSync } from "fs";
 import { resolve, relative, isAbsolute } from "path";
 import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
@@ -53,7 +53,30 @@ const DEFAULT_TTL_HOURS = 24;
 /** Repo-relative, forward-slashed, for comparing against the allow list. */
 export function relPath(p) {
   const abs = isAbsolute(p) ? p : resolve(REPO, p);
-  return relative(REPO, abs).split("\\").join("/");
+  return relative(REPO, realExisting(abs)).split("\\").join("/");
+}
+
+/**
+ * Resolve symlinks as far as the path exists, keeping the unresolved tail.
+ *
+ * `resolve()` alone is pure string arithmetic, so a symlinked directory pointed
+ * into the guarded tree read as outside it: an adversarial review created
+ * `docs/lnk -> ../spec` and wrote `docs/lnk/28_x.md` straight through. The file
+ * being written usually does not exist yet, which is why this walks up to the
+ * nearest existing ancestor rather than calling realpathSync on the whole path.
+ */
+function realExisting(abs) {
+  const parts = abs.split("/");
+  for (let i = parts.length; i > 1; i--) {
+    const head = parts.slice(0, i).join("/") || "/";
+    try {
+      const real = realpathSync(head);
+      return i === parts.length ? real : real + "/" + parts.slice(i).join("/");
+    } catch {
+      // Not present yet; try its parent.
+    }
+  }
+  return abs;
 }
 
 /**
@@ -179,11 +202,31 @@ export function decide(target, opts = {}) {
 // `git checkout -- spec/`. A read (`cat spec/x`, `grep -rn x spec/`) has to stay
 // allowed or the pipeline cannot read its own source, so a bare mention of a
 // spec path is not a block; only a span that carries write intent is scanned.
+// What has to precede a verb for it to be RUN rather than merely mentioned: the
+// start of the command, or a separator, optionally behind `sudo` or an
+// environment prefix. Written as a string because the spans below are built
+// with RegExp so they can share it.
+const CMD_POS = "(?:^|[;&|\\n(){}]|\\|\\||&&)\\s*(?:sudo\\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*";
+
 const WRITE_SPANS = [
-  />>?\s*[^\s;&|<>]+/g, // redirection target, heredoc included
-  /\b(?:sed|perl|ruby)\b[^;&|\n]*?\s-[A-Za-z]*i\b[^;&|\n]*/g, // in-place edit
-  /\b(?:rm|mv|cp|tee|truncate|install|patch|shred|ln|dd)\b[^;&|\n]*/g,
-  /\bgit\s+(?:checkout|restore|apply|rm|mv|clean|stash|reset)\b[^;&|\n]*/g,
+  // Redirection target. The optional `|` is the noclobber override (`>|`),
+  // which the previous pattern excluded along with the pipe it shares a
+  // character with, so a bare shell redirect -- the very form this exists to
+  // catch -- was missed.
+  />>?\|?\s*[^\s;&|<>]+/g,
+  // In-place edit, short (`-i`, `-pi`) and long (`--in-place`) forms. The long
+  // form was unreachable: the pattern required a single dash.
+  new RegExp(
+    CMD_POS + "(?:sed|perl|ruby)\\b[^;&|\\n]*?(?:\\s-[A-Za-z]*i\\b|\\s--in-place\\b)[^;&|\\n]*",
+    "g",
+  ),
+  // COMMAND POSITION, not anywhere in the string. Matching the verb as a bare
+  // word blocked `grep -rn tee <path>` -- a pure read whose search TERM is a
+  // write verb -- and any commit message mentioning a patch or an install.
+  // A write verb is a write only when something is about to run it: at the
+  // start, or after a separator, optionally behind sudo or an env prefix.
+  new RegExp(CMD_POS + "(?:rm|mv|cp|tee|truncate|install|patch|shred|ln|dd|ed|ex)\\b[^;&|\\n]*", "g"),
+  new RegExp(CMD_POS + "git\\s+(?:checkout|restore|apply|rm|mv|clean|stash|reset)\\b[^;&|\\n]*", "g"),
 ];
 
 // A path-shaped token inside a write span: either one containing `spec/`, or a
@@ -194,10 +237,19 @@ const SPEC_TOKEN = /[^\s"'`;&|<>()]*spec\/[^\s"'`;&|<>()]*|[^\s"'`;&|<>()]*\bspe
  * The first blocking decision for any spec/ path a shell command writes to, or
  * null when the command writes to none.
  *
- * One honest limit, in the same register as the lease's own: the scan is
- * textual, so `perl -pi -e`, `python -c`, or a path assembled from a shell
- * variable are not covered. That matches this file's threat model of accidental
- * writes and is not claimed as a sandbox.
+ * THE LIMIT, stated plainly because it is easy to over-read this guard. The
+ * scan is TEXTUAL and allow-by-default: it recognises a fixed verb list and a
+ * redirection pattern. An interpreter invocation (`python -c`, `node -e`,
+ * `perl -e`), a target assembled from a shell variable, a write inside a script
+ * this only sees the name of, or a write through a symlink into the tree, are
+ * all outside what a scanner of this kind can see. An adversarial review
+ * demonstrated every one of them.
+ *
+ * This is a bar against an agent writing to the guarded tree by ACCIDENT while
+ * doing ordinary work, and it is not a sandbox. An agent with a shell can
+ * always reach the filesystem. Do not add a check here and conclude the tree is
+ * protected; the protection is that the ordinary ways of writing a file are
+ * caught and reported.
  */
 export function scanCommand(command, opts = {}) {
   if (typeof command !== "string" || command === "") return null;
@@ -237,20 +289,53 @@ export function stripHeredocBodies(command) {
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     out.push(lines[i]);
-    const m = /<<-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(lines[i]);
-    if (!m) continue;
-    const delim = m[2];
-    const dash = /<<-/.test(lines[i]);
+    const opener = heredocDelimiter(lines[i]);
+    if (!opener) continue;
     let j = i + 1;
+    let closed = false;
     while (j < lines.length) {
-      const probe = dash ? lines[j].replace(/^\t+/, "") : lines[j];
-      if (probe === delim) break;
+      const probe = opener.dash ? lines[j].replace(/^\t+/, "") : lines[j];
+      if (probe === opener.delim) { closed = true; break; }
       j++;
     }
-    // The delimiter line is not a command either, so resume past it.
+    // UNTERMINATED means this was probably not a heredoc at all. Dropping to the
+    // end of the command was the fail-OPEN reading, and it was exploitable:
+    // `echo "note << MARK here"` followed by a real write on the next line hid
+    // the write entirely. When no delimiter line closes it, keep every line.
+    if (!closed) continue;
     i = j;
   }
   return out.join("\n");
+}
+
+/**
+ * The heredoc delimiter a line opens, or null.
+ *
+ * Quote-aware, because `<<` inside a quoted string is text rather than a
+ * redirection. Scanning for the operator anywhere on the line let a quoted
+ * mention of it stand in for a real one.
+ */
+function heredocDelimiter(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === "\\" && quote !== "'") i++;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`") { quote = c; continue; }
+    if (c === "\\") { i++; continue; }
+    if (c === "<" && line[i + 1] === "<") {
+      const rest = line.slice(i + 2);
+      // `<<<` is a here-STRING: one line, no body to drop.
+      if (rest.startsWith("<")) return null;
+      const m = /^-?\s*(["']?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(rest);
+      if (!m) return null;
+      return { delim: m[2], dash: rest.startsWith("-") };
+    }
+  }
+  return null;
 }
 
 /**

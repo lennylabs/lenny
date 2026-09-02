@@ -3726,6 +3726,7 @@ function newLoop(cfg) {
     name: cfg.name,
     round: 0,
     reviewersFailed: false,
+    verifiersFailed: [],
     fixersFailed: [],
     retired: new Set(),
     converged: false,
@@ -3911,6 +3912,18 @@ async function runReviewLoop(cfg) {
   let converged = false;
   let sweeps = 0;
   let reviewersFailed = false;
+  // Sticky, for the same reason reviewersFailed and fixersFailed are: a round
+  // whose verifiers died is not evidence of anything, and convergence is
+  // certified by the SWEEP round, which can be complete on its own terms while
+  // an earlier round's verification never ran. A run whose verify stage was
+  // broken end to end used to return status "reviewed", converged true, over
+  // findings that were never confirmed or refuted.
+  const verifiersFailed = [];
+  // What THIS round claimed to fix. The round boundary reports how many hunks
+  // actually changed, and a claim of N findings fixed against zero hunks is a
+  // fixer that edited nothing. The evidence was already being collected and
+  // stored as history[].sectionsChanged, and nothing compared the two.
+  let roundFixedTitles = [];
   // Consecutive rounds a lens has failed after robustAgent's retries, keyed by
   // lens, cleared the moment it returns anything. It distinguishes a lens that
   // dropped one round from one that is gone.
@@ -4176,6 +4189,30 @@ async function runReviewLoop(cfg) {
       h.sectionsChanged = boundary.hunks || 0;
       if ((boundary.changedFiles || []).length) h.filesChanged = boundary.changedFiles;
     }
+    // A fixer that edited nothing must not have its findings entered in the
+    // run-wide "already fixed, do not re-litigate" list every later lens of
+    // BOTH loops is given. One fixer answering "no edit was needed" used to
+    // suppress its findings permanently, and the diff proving it had changed
+    // nothing was sitting one field away.
+    if (roundFixedTitles.length && (boundary.hunks || 0) === 0) {
+      for (const t of roundFixedTitles) {
+        const at = fixedTitles.lastIndexOf(t);
+        if (at >= 0) fixedTitles.splice(at, 1);
+      }
+      if (h && h.round === rnd && h.loop === LOOP.name) {
+        h.fixClaimUnsupported = roundFixedTitles.slice();
+        h.complete = false;
+      }
+      log(
+        "Round " + rnd + ": the round claimed " + roundFixedTitles.length +
+          " finding(s) fixed but the tree did not change; the claim is withdrawn and they " +
+          "stay open for a later round",
+      );
+      // closeRound reports completeness through its return value; `complete` is
+      // its parameter and the caller ANDs the result into its own flag.
+      complete = false;
+    }
+    roundFixedTitles = [];
     lastRoundSnap = boundary.snapshot || lastRoundSnap;
     if (boundary.overrides && Object.keys(boundary.overrides).length) {
       applyOverrides(boundary.overrides, rnd);
@@ -4445,12 +4482,19 @@ async function runReviewLoop(cfg) {
       live.every((v) => !v.dead && (v.vs.length === 2 || v.refutedBy !== null));
     if (!verifyComplete) {
       roundComplete = false;
+      verifiersFailed.push("r" + round);
       log(
         "Round " +
           round +
           ": some verifiers failed after retries; round INCONCLUSIVE",
       );
     }
+    // A lens is retired when no finding of ITS OWN survived verification. That
+    // reads as satisfied when verification never ran, so an outage retired the
+    // very lenses that had just found the defects. The lens side already has
+    // this guarantee -- a lens that failed its own retries is never retired --
+    // and this is its counterpart for the stage that judges the lens's output.
+    const verifyRan = verifyComplete;
     // Credit a later finding back to the mechanism it is about, so the strike table
     // the next fixer sees reflects which of its own inventions keep failing.
     const creditStrikes = (fs) => {
@@ -4553,12 +4597,22 @@ async function runReviewLoop(cfg) {
         if (findingsOf(lensResults[i]).length > 0) survivors.add(l.key);
       });
     }
+    if (!verifyRan) {
+      log(
+        "Round " + round + ": verification did not complete, so no lens is retired on its result",
+      );
+    }
     applyRetirement(
       lenses,
       lensResults,
-      survivors,
+      // An incomplete verification is not evidence that a lens found nothing
+      // worth keeping. Treating every lens as a survivor leaves the pool intact
+      // for a round that can actually judge it.
+      verifyRan ? survivors : new Set(lenses.map((l) => l.key)),
       round,
-      "no finding of its own survived verification",
+      verifyRan
+        ? "no finding of its own survived verification"
+        : "verification did not complete this round",
     );
 
     history.push({
@@ -4895,7 +4949,10 @@ async function runReviewLoop(cfg) {
       // post-fix reviewer's own complaints, so one measured run reported 0
       // findings fixed after ten were, and every later lens was handed a
       // "do not re-litigate" list naming nothing that had been fixed.
-      picked.forEach((f) => fixedTitles.push(f.title));
+      picked.forEach((f) => {
+        fixedTitles.push(f.title);
+        roundFixedTitles.push(f.title);
+      });
       for (const m of out.newMechanisms || []) {
         roundMechanisms.push(m);
         // The strike table was READ in six places and written in none, so every
@@ -5238,9 +5295,20 @@ async function runReviewLoop(cfg) {
     );
   }
   LOOP.converged =
-    converged && !reviewersFailed && fixersFailed.length === 0 && !stoppedByIntrospection;
+    converged &&
+    !reviewersFailed &&
+    fixersFailed.length === 0 &&
+    verifiersFailed.length === 0 &&
+    !stoppedByIntrospection;
   LOOP.sweeps = sweeps;
   LOOP.reviewersFailed = reviewersFailed;
+  LOOP.verifiersFailed = verifiersFailed;
+  if (verifiersFailed.length) {
+    log(
+      "The " + cfg.name + " loop could not verify in round(s) " + verifiersFailed.join(", ") +
+        ", so it does not certify convergence over findings nothing judged",
+    );
+  }
   LOOP.fixersFailed = fixersFailed;
   log(
     "The " + cfg.name + " loop " +

@@ -137,4 +137,54 @@ t.section("L6. a heredoc body is data, and does not read as a write");
   t.check("a read is still allowed", !blocked("grep -n foo " + G + "/28.md"));
 }
 
+t.section("L7. the bypasses an adversarial review demonstrated");
+{
+  // Every case here was executed against the guard and got through. The
+  // guarded name is built from character codes so this file's own text cannot
+  // trip the guard when an agent edits it through a shell.
+  const G = String.fromCharCode(115, 112, 101, 99);
+  const F = G + "/28_x.md";
+  const blocked = (cmd) => {
+    const r = scanCommand(cmd, {});
+    return !!(r && !r.allow);
+  };
+
+  // The regression the heredoc fix introduced: `<<WORD` was matched anywhere,
+  // including inside a quoted string, so a quoted mention stood in for a real
+  // opener and every line after it was dropped unscanned.
+  t.check(
+    "a quoted mention of the operator does not hide the next line",
+    blocked('echo "note << MARK here"\nsed -i \'1s/^/x/\' ' + F),
+  );
+  t.check(
+    "an unterminated opener does not swallow the rest of the command",
+    blocked("cat <<EOF\nbody\nrm " + F),
+  );
+  t.check("a here-string is not a heredoc", blocked("cat <<<x\nrm " + F));
+  t.check("a real body is still data", !blocked("git commit -F - <<EOF\n  rm " + F + "\nEOF"));
+  t.check("and the line opening one is still scanned", blocked("cat <<EOF > " + F + "\nx\nEOF"));
+
+  // Gaps in the patterns the guard already meant to cover.
+  t.check("the noclobber-override redirect is a redirect", blocked("echo x >|" + F));
+  t.check("the long in-place form is an in-place edit", blocked("sed --in-place=.bak s/a/b/ " + F));
+  t.check("ed writes", blocked("printf '1c\\nX\\n.\\nw\\nq\\n' | ed " + F));
+
+  // Controls: the guard must stay narrow.
+  t.check("a read is allowed", !blocked("grep -n foo " + F));
+  t.check("a path merely containing the word is allowed", !blocked("rm docs/my" + G + "/old.md"));
+  t.check(
+    "a commit message mentioning a write is allowed",
+    !blocked('git commit -m "redirecting into ' + F + ' is blocked"'),
+  );
+  // A write verb is a write only when something is about to RUN it. Matching it
+  // as a bare word anywhere blocked a pure read whose SEARCH TERM was a verb,
+  // and any commit message mentioning a patch or an install.
+  t.check("a read whose search term is a write verb", !blocked("grep -rn tee " + F));
+  t.check("a message naming a patch", !blocked("git commit -m 'apply the patch to " + F + "'"));
+  t.check("a message naming an install", !blocked("git commit -m 'install the anchor in " + F + "'"));
+  t.check("but a verb after a pipe still runs", blocked("echo x | tee " + F));
+  t.check("and a verb behind sudo still runs", blocked("sudo rm " + F));
+  t.check("and a verb behind an env prefix still runs", blocked("FOO=1 rm " + F));
+}
+
 t.done();
