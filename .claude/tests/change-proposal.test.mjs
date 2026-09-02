@@ -51,7 +51,7 @@ const newStubs = (over = {}) => ({
   conventions: "conforms",
   snap: "DONE",
   diffcount: "0",
-  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+  "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
   "*:review:*": { coverage: "read it all", findings: [] },
   default: {},
   ...over,
@@ -271,7 +271,7 @@ const loopStubs = (over = {}) => {
     "spec-nonspec-handoff": "reconciled",
     // Every round now closes through the boundary script, so a stub table that
     // omits it leaves every round unable to certify.
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": { coverage: "c", findings: [] },
     "*:dedup": { findings: [] },
     "*:verify-material": { confirmed: true, reason: "material" },
@@ -2095,7 +2095,7 @@ t.section("X17. the status file is written on a run that did NOT converge");
 t.section("X18. the compaction target comes from the boundary, not the default");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":true,"standingTarget":400,"standingTrigger":520,"targetRaises":2,"targetRaisedNow":true,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
   }));
   const c = calls.find((x) => /:compact$/.test(x.label));
   t.check("a compaction ran", !!c);
@@ -2188,7 +2188,7 @@ t.section("X21. signals that reach a prompt are pinned, not just computed");
 }
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
-    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "*:round-boundary": '{"merged":0,"ledgerLines":10,"standingLines":500,"ledgerGrowth":0,"compactionDue":false,"standingTarget":400,"standingTrigger":520,"targetRaises":3,"targetRaisedNow":true,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
     "*:review:*": ({ label }) => /^r1:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] },
     "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
     "*:expand:*": sites(),
@@ -2313,7 +2313,7 @@ t.section("R42. a fix claim the tree does not support is withdrawn");
   // loops, permanently suppressing them. The diff proving nothing changed was
   // already being collected one field away.
   const noChange = '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,' +
-    '"changedFiles":[],"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
+    '"changedFiles":[],"hunksKnown":true,"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
   const { logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
     "*:round-boundary": noChange,
     "*:fix:*": { summary: "No edit was needed; the text already says this.",
@@ -2409,6 +2409,23 @@ t.section("R43. the guards a mutation audit found deletable");
     junk.logs.some((l) => /drop|no usable path|without a path/i.test(l)),
     JSON.stringify(junk.logs.filter((l) => /site/i.test(l)).slice(0, 3)),
   );
+}
+
+t.section("R44. zero hunks with no baseline is not an empty fix claim");
+{
+  // The first round of a loop has no previous snapshot, so the boundary reports
+  // zero hunks because there is nothing to diff against. Reading that as "the
+  // fixer edited nothing" withdrew every genuine fix from round 1 of both loops
+  // on a measured run and reported nothing fixed.
+  const noBaseline = '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,' +
+    '"changedFiles":[],"hunksKnown":false,"hunks":0,"snapshot":"/repo/snap","overrides":{}}';
+  const { logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:round-boundary": noBaseline,
+  }));
+  t.check("the claim is NOT withdrawn", !logs.some((l) => /the claim is withdrawn/.test(l)));
+  t.check("and the fixes are credited",
+    result && result.review && result.review.totalFixed === 2,
+    String(result && result.review && result.review.totalFixed));
 }
 
 t.done();

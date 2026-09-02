@@ -23,6 +23,7 @@
 #     "merged": <shards folded into the review log>,
 #     "ledgerLines": <lines under ## Ledger>,
 #     "compactionDue": true|false,
+#     "hunksKnown": true|false,   whether "hunks" had a baseline to compare against
 #     "standingTarget": <lines the compaction pass is asked to reach>,
 #     "standingTrigger": <lines at which compaction becomes due>,
 #     "targetRaises": <times the target has been raised because a pass could not reach it>,
@@ -348,7 +349,14 @@ write_state "$HASHES" "$new_hashes"
 PREV="$SNAPS/$LOOP-r$((ROUND))"
 NEXT="$SNAPS/$LOOP-r$((ROUND + 1))"
 hunks=0
+# Whether `hunks` MEANS anything. On the first round of a loop there is no
+# previous snapshot to diff against, so zero is the absence of a baseline rather
+# than the absence of change. A caller that reads the two alike concludes the
+# round's fixer edited nothing, which is what happened: a measured run withdrew
+# every genuine fix from round 1 of both loops and reported nothing fixed.
+hunks_known=false
 if [ -d "$PREV" ]; then
+  hunks_known=true
   hunks=$(diff -ru "$PREV" "$DIR" 2>/dev/null | grep -c '^@@' || true)
 fi
 rm -rf "$NEXT" && cp -r "$DIR" "$NEXT" || { echo "cp-round-boundary: snapshot failed" >&2; exit 1; }
@@ -380,5 +388,5 @@ if [ -f "$OV_FILE" ]; then
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
+printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"

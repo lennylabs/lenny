@@ -4194,7 +4194,12 @@ async function runReviewLoop(cfg) {
     // BOTH loops is given. One fixer answering "no edit was needed" used to
     // suppress its findings permanently, and the diff proving it had changed
     // nothing was sitting one field away.
-    if (roundFixedTitles.length && (boundary.hunks || 0) === 0) {
+    // `hunksKnown` false means there was no previous snapshot to diff against --
+    // the first round of a loop -- so zero hunks is the absence of a BASELINE,
+    // not the absence of change. Reading the two alike withdrew every genuine
+    // fix from round 1 of both loops on a measured run and reported nothing
+    // fixed, which is the same under-reporting this guard was added to end.
+    if (roundFixedTitles.length && boundary.hunksKnown && (boundary.hunks || 0) === 0) {
       for (const t of roundFixedTitles) {
         const at = fixedTitles.lastIndexOf(t);
         if (at >= 0) fixedTitles.splice(at, 1);
