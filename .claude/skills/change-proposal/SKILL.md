@@ -64,7 +64,7 @@ The spec staging converges first, alone. Then the non-spec staging converges, wi
 
 **Between them is a reconciliation.** One pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block, and it discharges the `DEFERRED` entries the spec loop recorded: it applies the ones that are repairs to text already written, filing a `CORRECTS` for each, and carries forward as an `OPEN` any that would require authoring a staged change no non-spec lens has read. That is the one place the pass changes what the proposal says, and only to apply a correction the spec loop already derived. Before it existed, those corrections accumulated for four and a half hours on a measured run as an errata list in the summary promising fixes that no lane owned. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked. It runs **whether or not the spec loop converged**, because a loop that exhausted its budget has more unreconciled consequences than one that converged, and it is told which case it is in so it reconciles to the current text rather than guessing where open findings will land.
 
-**The spec loop runs a smaller pool.** It drops the `test-coverage` lens, since the tests a change needs are staged in the non-spec half, so spec convergence certifies nothing about test coverage.
+**The spec loop runs a smaller pool.** It drops the `test-coverage` lens (`open-decisions` runs in both, because a decision staged in the spec half is still a decision), since the tests a change needs are staged in the non-spec half, so spec convergence certifies nothing about test coverage.
 
 **The reconciliation does not run after an introspection stop.** A `halt` or `reframe` ends the run where it stands and nothing is reconciled.
 
@@ -75,6 +75,52 @@ The spec staging converges first, alone. Then the non-spec staging converges, wi
 Each loop keeps its own rounds, retired set, sweeps, and convergence, because a lens satisfied by the spec staging has said nothing about the code staging. The refuted-findings memory and the round history stay run-wide, so a finding refuted in the first loop is not re-litigated in the second.
 
 Convergence is unchanged: a lens that finds nothing retires, a full sweep of the pool runs when every lens has retired, and a clean complete sweep converges. `operational` and `fresh` were once a second pool with their own schedule, one rotating in per round. That is a second mechanism for the job retirement already does, and the worse of the two, because it withheld a lens on a round number rather than on evidence. It also produced a lens that had never run, which cannot retire, which blocks the sweep, so a clean proposal spent a whole round discharging one lens: a measured run went thirteen lenses, then `fresh` alone, then a fourteen-lens sweep. The singleton round costs a snapshot, a dedup, the verifiers and a boundary whatever it contains. A round now **closes before it may certify**, because a round whose bookkeeping did not complete left its log unmerged and the next round without a snapshot.
+
+### Open decisions
+
+One lens owns every decision the proposal has not closed, and it is the only lens permitted to file on a
+section recording decisions for the human reviewer. Every other lens leaves those sections alone, which is
+what stops a dozen reviewers re-litigating one decision every round. The review bar is built per lens for
+this one clause, so each lens reads a single rule stated positively about a section that either is or is
+not its own. A shared string carrying an "unless your lens is X" carve-out would make every other lens
+read an exception that does not apply to it and make the one lens that needs it read the prohibition
+first, and both are self-identification steps that can fail. The cost of that immunity, before this
+lens existed, was that a decision parked in the open-decisions section could go stale, be answered
+elsewhere, or ask the wrong question, and nothing in the loop was allowed to notice.
+
+Decisions live in four places and the lens inventories all four before judging any: the open-decisions
+section, a detailed-design item stated as a choice rather than a constraint, an `IMPLEMENTOR'S CHOICE:`
+marker, and an unclosed `OPEN` in the review log. The last is the one that leaks, because the human never
+reads the review log.
+
+**The test, in order.** Resolve it when the answer is derivable from the tree, the spec, a landed proposal,
+or the proposal's own staged text, citing where; this is the outcome to reach for, because a decision
+parked for a human that the repository already answers costs a review cycle and teaches the reviewer the
+list is noise. Leave it to the implementor when the choice is local, reversible, and has no consequence in
+another section. Give it to the human only when it trades two goods the proposal cannot rank, changes what
+the proposal is, commits the platform to a contract no evidence settles, decides another proposal's fate or
+is decided by one, or accepts a named residual cost. A decision passes to the human only if a person could
+answer it in one sitting without reading the whole proposal; one that fails that is restated until it
+passes, or resolved.
+
+**The blank is protected.** A properly marked `IMPLEMENTOR'S CHOICE:` exists so a proposal does not grow
+hair, and this lens gets no new licence over it. The bar's existing rule is unchanged and is the whole of
+what any lens may file: a marker with no constraint, a blank over something the format bars from
+delegation, and an unmarked gap. Moving a decision off the human's list into a properly bounded blank is a
+good outcome the lens is told to recommend, and over-specification stays a defect.
+
+**They land in the summary.** `## Open decisions` is a required part of the summary, because the summary is
+the file a reviewer reads. Each entry states the question so it can be answered without reading the
+proposal, the recommendation, the ground with citations, the alternatives and why each lost, what deciding
+otherwise costs, a confidence, and where the decision came from. A decision resolved after being carried
+there is withdrawn in place with its reason rather than deleted, because a list that quietly loses an entry
+teaches its next reader the entry was answered. The reconciliation pass between the loops carries the spec
+loop's routed decisions into that section, since the spec loop can route a decision to a human but the
+human does not read the log it routes to.
+
+**It reads sideways.** No other lens reads `proposals/`. A staged change that removes the ground another
+proposal's premise rests on is a finding here, and recording it as a rebase for whichever lands second does
+not discharge it.
 
 ### Verification
 
@@ -184,7 +230,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. `introspect` reaches only the gate by prefix fallback; the introspection pass itself takes no injected text. To add text to every review lens use `lensPrompt`, which is a standalone argument rather than a `prompts` key. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
-Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
+Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `open-decisions`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
 
 ## Changing an argument on a run in flight
 

@@ -214,6 +214,21 @@
     ]
   },
   {
+    "label": "r1:review:open-decisions",
+    "phase": "non-spec R1: review",
+    "model": "",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "cache",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
     "label": "r1:review:operational",
     "phase": "non-spec R1: review",
     "model": "",
@@ -538,6 +553,21 @@
   },
   {
     "label": "r3:review:test-coverage",
+    "phase": "non-spec R3: review",
+    "model": "",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "cache",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
+    "label": "r3:review:open-decisions",
     "phase": "non-spec R3: review",
     "model": "",
     "schema": "coverage+findings",

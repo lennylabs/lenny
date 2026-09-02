@@ -312,6 +312,45 @@ t.section("B6c. snapshots are namespaced by run tag and by loop");
 // Match a review lens call in either loop: labels are r<N>:review:<lens>.
 const isLens = (c) => /^r\d+:review:/.test(c.label);
 
+t.section("B6d. the review bar is built per lens, so no lens reads another lens's rule");
+{
+  // The open-decisions clause used to be one shared sentence carrying an
+  // "UNLESS your lens is X" carve-out. That made every other lens read an
+  // exception that did not apply to it, and made the one lens that needed the
+  // exception read the prohibition first and then notice it was exempt. Both
+  // are self-identification steps, and those fail.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const od = calls.find((c) => /^r\d+:review:open-decisions$/.test(c.label));
+  const other = calls.find((c) => /^r\d+:review:citations$/.test(c.label));
+  t.check("the open-decisions lens runs", !!od);
+  t.check("an ordinary lens runs alongside it", !!other);
+  t.check(
+    "the ordinary lens is told the decision sections are not its findings",
+    /open decisions for the human reviewer are not findings\. Another lens owns them\./.test(other.prompt),
+  );
+  t.check(
+    "and it is never told they ARE its findings",
+    !/ARE YOURS/.test(other.prompt),
+  );
+  t.check(
+    "the open-decisions lens is told they are its own, positively",
+    /open decisions for the human reviewer ARE YOURS/.test(od.prompt),
+  );
+  t.check(
+    "and it never reads the prohibition it would have to except itself from",
+    !/are not findings\. Another lens owns them\./.test(od.prompt),
+  );
+  t.check(
+    "neither prompt carries a self-identifying carve-out",
+    !/UNLESS your lens/.test(od.prompt) && !/UNLESS your lens/.test(other.prompt),
+  );
+  t.check(
+    "the blank rule is identical for both, since that mechanism is not relaxed",
+    /A PROPERLY MARKED BLANK IS NOT A FINDING/.test(od.prompt) &&
+      /A PROPERLY MARKED BLANK IS NOT A FINDING/.test(other.prompt),
+  );
+}
+
 t.section("B7. the spec loop is skipped when nothing is staged for spec");
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));
@@ -2064,7 +2103,10 @@ t.section("X15. the handoff discharges them, and may not author to do it");
   t.check("because no non-spec lens has read it", /no non-spec\s+lens has ever read/.test(h.prompt));
   t.check("what it cannot close becomes an OPEN the next loop reads", /so the next loop's first round reads it/.test(h.prompt));
   t.check("steps 1-3 stay a reconciliation", /Steps 1 through 3 are not a review round/.test(h.prompt));
-  t.check("and step 4 is named as the exception", /Step 4 is the one place this pass changes what the proposal says/.test(h.prompt));
+  t.check("and steps 4-5 are named as the exception", /Steps 4 and 5 are the one place this pass changes what the/.test(h.prompt));
+  t.check("it has a fifth step carrying decisions to the summary", /5\. CARRY THE OPEN DECISIONS INTO THE SUMMARY/.test(h.prompt));
+  t.check("because the human never reads the review log", /The human never reads that log/.test(h.prompt));
+  t.check("and it may not invent a recommendation the loop did not derive", /Do not invent a recommendation\s+the loop did not derive/.test(h.prompt));
 }
 
 t.section("X16. two locations are the same site only when they really are");
@@ -2447,12 +2489,12 @@ t.section("R45. every lens runs in round one; none is withheld by rotation");
   // manufactured a lens which had NEVER RUN, and a lens that has never run
   // cannot retire, and a lens that has not retired blocks the sweep -- so a
   // clean proposal spent a whole round discharging one lens. A measured run's
-  // non-spec loop went 13 lenses, then `fresh` alone, then a 14-lens sweep.
+  // non-spec loop went 13 lenses, then `fresh` alone, then a full sweep.
   const { logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
     "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
   }));
   const rounds = logs.filter((l) => /launching \d+ reviewers|FULL SWEEP/.test(l));
-  t.check("round one runs the whole pool", /launching 14 reviewers/.test(rounds[0] || ""), String(rounds[0]));
+  t.check("round one runs the whole pool", /launching 15 reviewers/.test(rounds[0] || ""), String(rounds[0]));
   const firstRetire = logs.find((l) => /retiring/.test(l)) || "";
   t.check(
     "both extras retire in round one, so neither can block the sweep",

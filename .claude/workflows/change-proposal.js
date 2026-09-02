@@ -445,10 +445,11 @@ const PREMISE_VERDICT = {
 // format reaches every agent that reads or writes it.
 const FORMAT_SUMMARY =
   'A "## Summary" section, unnumbered, immediately after the staging boilerplate and before "## 0." or "## 1.". ' +
-  "It is the section every implementor agent reads first and the only one all of them read, so it orients rather than argues. Three labelled parts:\n" +
+  "It is the section every implementor agent reads first and the only one all of them read, so it orients rather than argues. It is also the file the HUMAN reviewer reads, which is why the open decisions live here rather than at the end of the staged changes. Four labelled parts:\n" +
   '  **What changes.** Three to six bullets, one per top-level change, each naming the surface it lands on.\n' +
   '  **Fixed decisions.** The decisions an implementor must not revisit, one line each. This is distinct from the Decisions section, which says why a decision was taken; this says which are closed.\n' +
-  '  **Watch out for.** The traps: a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, a prior attempt that failed and why.\n';
+  '  **Watch out for.** The traps: a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, a prior attempt that failed and why.\n' +
+  '  **Open decisions.** Every decision still open for the human reviewer, each stating the question so it can be answered without reading the proposal, the recommendation, the ground, the alternatives and why each lost, what deciding otherwise costs, and a confidence. A decision resolved after being carried here is withdrawn in place with its reason rather than deleted. This part is written by the review loops rather than at drafting time, so it starts empty and says so.\n';
 
 const FORMAT_CHECKLIST =
   'An "## Implementation checklist" section, unnumbered, immediately after the Summary. It is the implementation sequence, ' +
@@ -1636,7 +1637,21 @@ const CONTEXT =
   "\n" +
   EVIDENCE;
 
-const BAR =
+// The open-decisions clause is the one part of the bar that differs by lens, so
+// the bar is built per lens rather than shared verbatim.
+//
+// The first version of this shaped the difference as an exception inside one
+// shared string: "...are not findings, UNLESS your lens is `open-decisions`."
+// That makes every one of the other lenses read a carve-out that does not apply
+// to them, and makes the single lens that needs it read the prohibition first
+// and then notice it is exempt. Both are self-identification steps, and a
+// self-identification step is a thing that can simply fail. Each lens now reads
+// one rule, stated positively, about a section that either is or is not its own.
+const DECISIONS_NOT_YOURS =
+  "Sections recording deliberately open decisions for the human reviewer are not findings. Another lens owns them.";
+const DECISIONS_YOURS =
+  "Sections recording deliberately open decisions for the human reviewer ARE YOURS. You are the only lens that may file on them, so a decision that has gone stale, that the repository already answers, or that asks the wrong question is yours to catch or nobody's.";
+const barFor = (lensKey) =>
   "REPORT ONLY REAL ERRORS. A finding qualifies only if at least one of these holds:\n" +
   "(a) A citation in the proposal is false: the cited file, line, or section does not say what the proposal claims, or the proposal attributes behavior to the wrong component.\n" +
   "(b) The proposal assigns an actor an action it cannot perform: it violates the section 4.6.3 ownership table or RBAC, the section 13.2 egress posture, the section 10.3 zero-RBAC agent-pod posture, admission-webhook in-process purity, process boundaries between deployment models, or spec/18 build-phase ordering.\n" +
@@ -1646,10 +1661,15 @@ const BAR =
   "(f) The proposal changes behavior but does not list the tests that behavior requires: the Testing section is absent, omits a tier the change plainly reaches, names no concrete test for a behavior the proposal changes, or lists only a happy-path test where the change introduces an error, concurrent, boundary, security or fail-closed, or spec-named-failure path (see .claude/rules/test-coverage.md). A proposal must list the specific, insightful, relevant new tests to add during implementation.\n\n" +
   "A PROPERLY MARKED BLANK IS NOT A FINDING. A proposal may delegate a detail to the implementor with an explicit \"IMPLEMENTOR'S CHOICE:\" marker that names what is open AND the constraint any answer must satisfy. Do not report such a marker as an underspecified target, a missing edit site, or an unresolvable anchor: it is the format working as intended. Three things about a blank ARE findings, and you should report them. A marker with no constraint, because that delegates without bounding. A blank over something the format bars from delegation, which is a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering another step depends on, a name appearing in more than one place, or anything a test must assert. And a gap that is left unmarked, which is the ordinary underspecified-target finding and is unaffected by this rule.\n\n" +
   "DO NOT report: style or wording, documentation polish, optional improvements, additional nice-to-have tests beyond the coverage the change requires, hypothetical hardening, redundancy, preferences between workable designs, or anything whose absence does not make the applied spec or implementation wrong. If you are unsure whether something meets the bar, do not report it. An empty findings list is a fully acceptable answer and is the expected answer for a converged proposal.\n\n" +
-  'The proposal\'s "Resolved in adversarial review" section is a historical record of earlier passes; its descriptions of earlier drafts are not findings. Sections recording deliberately open decisions for the human reviewer are not findings.\n\n' +
+  'The proposal\'s "Resolved in adversarial review" section is a historical record of earlier passes; its descriptions of earlier drafts are not findings. ' +
+  (lensKey === "open-decisions" ? DECISIONS_YOURS : DECISIONS_NOT_YOURS) +
+  "\n\n" +
   "Every finding MUST carry evidence: exact file paths with line numbers and short quotes for both the proposal's claim and the contradicting source. Read the files to verify line numbers; never cite from memory.\n\n" +
   "BE EXHAUSTIVE IN THIS ONE PASS. Report every finding that meets the bar now, in this single response. This loop retires a lens once it returns nothing, so your lens may not run again before the proposal is certified: a finding you hold back is not caught by a later pass of your own lens, and it costs an entire extra round for every other reviewer. Before returning, walk the proposal section by section and ask, for each section, whether your lens has anything on it; do not stop at the first finding or at the most severe one, and do not withhold a substantiated finding because the proposal reads as polished elsewhere or because you have already reported several. There is no cap on how many findings you may return.\n\n" +
   "Exhaustiveness does NOT relax the bar. Each finding still costs two verification agents, and one that fails verification wastes them and pollutes the refuted list, so a speculative finding is worse than no finding. The target is: everything that meets the bar, nothing that does not.";
+
+// The redesign reviewers run three fixed judges, none of them `open-decisions`.
+const BAR = barFor(null);
 
 const LENSES = [
   {
@@ -1728,6 +1748,64 @@ const LENSES = [
   {
     key: "test-coverage",
     text: "Lens: test coverage. Always run. A proposal must list the specific, insightful, relevant new tests to add during implementation for the behavior it changes, not a vague 'add tests' note. Read the proposal's Testing section against .claude/rules/test-coverage.md and .claude/rules/spec-driven-development.md. For every behavior the staged changes add or change (a new field, default, error code, endpoint, flag, condition, metric, alert, lifecycle step, sequence or ordering rule, security or isolation control, or recovery/failover path), verify the Testing section names a concrete test that pins that behavior, mapped to the tier(s) the change actually reaches: tier 1 pure logic; tier 2 a controller or anything reading or writing the kube-apiserver; tier 3 a wire contract (proto, JSONL, HTTP, CRD schema); tier 4 a multi-service flow; tier 5 a cluster behavior (pod lifecycle, NetworkPolicy, admission, mTLS, drain); tier 7 concurrency, ordering, atomicity, or rate; tier 8 a failure or recovery path; tier 9 auth, isolation, egress, or credential handling; tier 10 a runtime-adapter contract; tier 11 docs, alerts, or runbooks. The listed tests must cover the non-happy-path the spec names (empty, error, concurrent, boundary, and spec-named-failure), not the happy path alone, and each should carry a // spec: tie to the section it exercises. A finding is: no Testing section; a Testing section that omits a tier the change plainly reaches; a behavior the proposal changes with no listed test; a listed test that exercises only the happy path where the change introduces an obvious error, concurrent, boundary, or spec-named-failure path (for a security, isolation, or fail-closed change, no test asserting the deny/fail-closed path; for a recovery, idempotency, or dedup change, no test asserting the replay/crash/failover path); or a Testing section so vague it names no concrete test. Do NOT report additional nice-to-have tests beyond the coverage the changed behavior requires, a preference between equivalent test framings, or an absent coverage percentage. This lens owns test-listing adequacy; do not re-file docs, edit-site, or mechanism findings here.",
+  },
+  {
+    key: "open-decisions",
+    text:
+      "Lens: open decisions. Always run. This lens owns every decision the proposal has not closed, " +
+      "wherever it lives, and it is the ONLY lens permitted to file on a section recording decisions for " +
+      "the human reviewer. Its job is to resolve what can be resolved, bound what cannot, and leave the " +
+      "human a short list they can actually answer.\n\n" +
+      "WHERE DECISIONS LIVE. Build the inventory before judging any of it, because the defect this lens " +
+      "exists to catch is a decision recorded in one place and already answered in another. Four homes: " +
+      "the proposal's open-decisions section; any detailed-design item stated as a choice rather than as a " +
+      "constraint; every `IMPLEMENTOR'S CHOICE:` marker; and every unclosed `OPEN` in the review log's " +
+      "standing context, which is the home the human never reads.\n\n" +
+      "THE TEST, applied to each decision in this order.\n" +
+      "  RESOLVE IT when the answer is derivable: the tree, the spec, a landed proposal, or the " +
+      "proposal's own staged text fixes it and you can cite where. This is the outcome to reach for. A " +
+      "decision parked for a human that the repository already answers costs a review cycle and teaches " +
+      "the reviewer that the list is noise. File a finding whose fix deletes the decision and states the " +
+      "answer with its citation.\n" +
+      "  LEAVE IT TO THE IMPLEMENTOR when the choice is local, reversible, and has no consequence in " +
+      "another section. Moving a decision off the human's list into a properly bounded " +
+      "`IMPLEMENTOR'S CHOICE:` marker is a GOOD outcome and you should recommend it wherever it fits.\n" +
+      "  GIVE IT TO THE HUMAN only when one of these holds: it trades two goods the proposal cannot rank, " +
+      "such as scope, review burden, or release timing; it changes what the proposal IS, by widening or " +
+      "narrowing the deliverable; it commits the platform to a contract no evidence in the tree settles; " +
+      "it decides another proposal's fate or is decided by one; or it accepts a named residual cost.\n\n" +
+      "THE NEGATIVE TEST. A decision belongs to the human only if a person could answer it in one sitting " +
+      "without reading the whole proposal. One that fails this is not ready to delegate: file a finding " +
+      "whose fix restates it until it passes, or resolves it outright. A question that comes back " +
+      "unanswered has cost a human's attention and bought nothing.\n\n" +
+      "DO NOT DEVALUE THE BLANK. A properly marked `IMPLEMENTOR'S CHOICE:` is the format working as " +
+      "intended. It exists so a proposal does not grow hair, and it is not yours to expand, second-guess, " +
+      "or promote to a human decision because you would have specified it. The bar's existing rule is the " +
+      "whole of your licence here and it is UNCHANGED for you: a marker with no constraint, a blank over " +
+      "something the format bars from delegation, and an unmarked gap are findings, and nothing else " +
+      "about a blank is. Never file a blank as an open decision merely because it is open; being open is " +
+      "what it is for. Over-specification is itself a defect, so a finding that would convert a bounded " +
+      "blank into specified text needs to clear the same bar as any other finding.\n\n" +
+      "THE SUMMARY IS WHERE THEY LAND. Every decision that survives the test as the human's belongs in " +
+      "the summary's `## Open decisions` section, because the summary is the file a reviewer reads. A " +
+      "decision that exists ONLY in the review log, only in a detailed-design bullet, or only in a list " +
+      "at the end of the staged spec changes is a finding, because the human never sees it. Each entry " +
+      "carries the question stated so it can be answered without reading the proposal, the " +
+      "recommendation, the ground with citations, the alternatives considered and why each lost, what " +
+      "the reviewer gives up by deciding the other way, a confidence with what would raise it, and where " +
+      "the decision came from.\n\n" +
+      "RECORD A WITHDRAWAL, NEVER A SILENT DELETION. When you resolve a decision the summary previously " +
+      "carried for the human, the fix says it was withdrawn and why. A decision list that quietly loses " +
+      "an entry teaches its next reader that the entry was answered, and a later round re-derives it. " +
+      "This is the rule the validation consolidator already follows for refuted premises.\n\n" +
+      "READ SIDEWAYS. A decision here may decide, or be decided by, another proposal under `proposals/`. " +
+      "No other lens reads that directory. A staged change that removes the ground another proposal's " +
+      "premise rests on is a finding, and recording it as a rebase for whichever lands second is not " +
+      "enough: name what the other proposal loses.\n\n" +
+      "NOT FINDINGS. A decision correctly recorded for the human with its constraint and its " +
+      "recommendation. A properly bounded blank. A decision the proposal resolved and recorded as " +
+      "resolved, including inside a historical pass record. Your own preference between two answers the " +
+      "proposal weighed and chose between with a stated reason.",
   },
 ];
 
@@ -1985,7 +2063,7 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
     "\n\n" +
     READ_ONLY +
     "\n\n" +
-    BAR +
+    barFor(lens.key) +
     "\n\n" +
     lens.text +
     LOOP.scopeNote +
@@ -5564,7 +5642,7 @@ if (specLoop && !stoppedByIntrospection) {
           "than they would be after a converged loop, and leaving them describing a staging that moved is " +
           "how a reader is misled about what the proposal now stages. Do not try to guess where the open " +
           "findings will land; reconcile to the current text and no further.\n\n") +
-      "Do four things.\n" +
+      "Do five things.\n" +
       "1. Rebuild `## Deliverable index` in " + P.summary + " from what " + P.spec + " and " + P.nonSpec +
       " now stage. Every staged deliverable appears exactly once with the file it lands in and one line.\n" +
       "2. Write the checklist's SPEC-lane steps against the current SPEC ids, as a leading block, one lane " +
@@ -5586,9 +5664,18 @@ if (specLoop && !stoppedByIntrospection) {
       "   These are corrections the spec loop DERIVED and could not apply. On a measured run they " +
       "accumulated for four and a half hours as an errata list promising fixes that no lane owned, so an " +
       "entry left unclosed here is one left unclosed for good.\n\n" +
+      "5. CARRY THE OPEN DECISIONS INTO THE SUMMARY. The spec loop routes decisions it cannot close to " +
+      "the human, as `OPEN` lines in " + P.log + ". The human never reads that log. For every unclosed " +
+      "`OPEN` that is a DECISION rather than an unanswered verification question, ensure the summary's " +
+      "`## Open decisions` section carries it, with the question stated so it can be answered without " +
+      "reading the proposal and with whatever ground the log entry gives. Do not invent a recommendation " +
+      "the loop did not derive; an entry the spec loop left without one says so, and the non-spec loop's " +
+      "open-decisions lens supplies it. A decision that reaches sign-off visible only in the review log " +
+      "is a decision the reviewer never made.\n\n" +
       "Steps 1 through 3 are not a review round: do not reopen a decision, do not edit a staged change, " +
-      "and do not improve any wording. Step 4 is the one place this pass changes what the proposal says, " +
-      "and only to apply a correction the spec loop already derived. " + FORMAT_CHECKLIST +
+      "and do not improve any wording. Steps 4 and 5 are the one place this pass changes what the " +
+      "proposal says, and only to apply a correction the spec loop already derived or to move a decision " +
+      "it already routed into the file the reviewer reads. " + FORMAT_CHECKLIST +
       promptFor("handoff") +
       "\nFollow " + repo + "/.claude/rules/doc-style.md.",
     { label: "spec-nonspec-handoff", phase: "Review" },
