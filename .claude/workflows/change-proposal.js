@@ -1832,10 +1832,29 @@ if (planPath) {
       : "Plan-conformance enabled against " + planPath,
   );
 }
-const POOL_EXTRA = EXTRAS.filter((l) => !excludeSet.has(l.key));
-if (POOL_FIXED.length === 0 && POOL_EXTRA.length === 0) {
+// EXTRAS used to be a SECOND pool with its own scheduling: while any ordinary
+// lens was still active, exactly one extra rotated in per round, chosen by
+// `(round - 1) % activeExtras.length`. That is a second mechanism for the job
+// retirement already does -- withhold a lens that is not earning its keep -- and
+// the worse of the two, because it withholds on a round number rather than on
+// evidence.
+//
+// It also manufactured a lens that had NEVER RUN, and a lens that has never run
+// cannot retire, and a lens that has not retired blocks the sweep. So a clean
+// proposal was forced to spend an entire round discharging one lens: a measured
+// run's non-spec loop went thirteen lenses, then `fresh` alone, then a
+// fourteen-lens sweep. That singleton round still pays a snapshot, a dedup, the
+// verifiers and a round boundary, and can trigger a compaction pass that has
+// measured sixteen minutes. The tokens were never the cost; the serialised
+// round was.
+//
+// Every lens is now scheduled the same way, so every lens can retire from round
+// one and the case cannot arise.
+const POOL_EXTRAS = EXTRAS.filter((l) => !excludeSet.has(l.key));
+if (POOL_FIXED.length === 0 && POOL_EXTRAS.length === 0) {
   throw new Error("args.excludeLenses excludes every lens; nothing would review");
 }
+const POOL = POOL_FIXED.concat(POOL_EXTRAS);
 if (excludeSet.size > 0) {
   log(
     "Excluding " +
@@ -3732,8 +3751,7 @@ function newLoop(cfg) {
     converged: false,
     sweeps: 0,
     maxRounds: cfg.maxRounds,
-    poolFixed: cfg.poolFixed,
-    poolExtra: cfg.poolExtra,
+    pool: cfg.pool,
     editable: cfg.editable,
     scopeNote: cfg.scopeNote,
     specTouched: [],
@@ -3904,8 +3922,7 @@ async function runReviewLoop(cfg) {
   // standingRaises, compactionRan and lastGrowthSnap -- are deliberately NOT
   // reset here; each says why at its declaration.
   lastIntrospectRound = 0;
-  const POOL_FIXED = cfg.poolFixed;
-  const POOL_EXTRA = cfg.poolExtra;
+  const POOL = cfg.pool;
   const maxRounds = cfg.maxRounds;
   const retired = LOOP.retired;
   let round = 0;
@@ -3980,7 +3997,7 @@ async function runReviewLoop(cfg) {
     }
   }
   log(
-    "Entering the " + cfg.name + " review loop over " + (POOL_FIXED.length + POOL_EXTRA.length) +
+    "Entering the " + cfg.name + " review loop over " + POOL.length +
       " lens(es), budget " + maxRounds + " round(s)",
   );
 
@@ -3996,7 +4013,7 @@ async function runReviewLoop(cfg) {
   // every pool lens. The seeded state is provisional in exactly the way an earned
   // retirement is: no lens certifies text it never read.
   if (startSet) {
-    for (const l of POOL_FIXED.concat(POOL_EXTRA)) {
+    for (const l of POOL) {
       if (!startSet.has(l.key)) retired.add(l.key);
     }
   }
@@ -4243,26 +4260,18 @@ async function runReviewLoop(cfg) {
   while (round < maxRounds && !converged) {
     round++;
     const roundStartSnap = await snapshot("r" + round + "-start");
-    const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
-    const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
-    const isSweep = activeFixed.length === 0 && activeExtras.length === 0;
-
-    let lenses;
-    if (isSweep) {
-      lenses = POOL_FIXED.concat(POOL_EXTRA);
-      sweeps++;
-    } else if (activeFixed.length === 0) {
-      // The fixed lenses are satisfied and only extras remain. Run every remaining
-      // extra in one round rather than rotating one per round, so the sweep is
-      // reached immediately instead of after one round per surviving extra.
-      lenses = activeExtras;
-    } else if (activeExtras.length === 0) {
-      lenses = activeFixed;
-    } else {
-      lenses = activeFixed.concat([
-        activeExtras[(round - 1) % activeExtras.length],
-      ]);
-    }
+    // One pool, one rule. A lens runs unless it has retired, and when every
+    // lens has retired the whole pool runs again as a sweep.
+    //
+    // A round may still hold a single lens, when the rest have retired and one
+    // was reactivated by a fix. That is retirement working: the lens has a
+    // specific thing to re-read. It is not the case the rotation used to
+    // create, where a lens ran alone only because it had never been given a
+    // chance to run at all.
+    const active = POOL.filter((l) => !retired.has(l.key));
+    const isSweep = active.length === 0;
+    const lenses = isSweep ? POOL : active;
+    if (isSweep) sweeps++;
 
     log(
       "Round " +
@@ -4278,7 +4287,7 @@ async function runReviewLoop(cfg) {
             " reviewers (" +
             retired.size +
             "/" +
-            (POOL_FIXED.length + POOL_EXTRA.length) +
+            POOL.length +
             " lenses retired)"),
     );
 
@@ -5505,8 +5514,9 @@ if (!hasSpecChanges) {
 } else {
   specLoop = await runReviewLoop({
     name: "spec",
-    poolFixed: POOL_FIXED.filter((l) => l.key !== "test-coverage"),
-    poolExtra: POOL_EXTRA,
+    // The spec loop drops test-coverage: the tests a change needs are staged in
+    // the non-spec half, so spec convergence certifies nothing about them.
+    pool: POOL.filter((l) => l.key !== "test-coverage"),
     maxRounds: maxSpecReviewRounds,
     editable: SPEC_EDITABLE,
     scopeNote: SPEC_SCOPE_NOTE,
@@ -5594,8 +5604,7 @@ if (specBlocked) {
 } else if (!stoppedByIntrospection && !input.skipNonSpecReview) {
   nonSpecLoop = await runReviewLoop({
     name: "non-spec",
-    poolFixed: POOL_FIXED,
-    poolExtra: POOL_EXTRA,
+    pool: POOL,
     maxRounds: maxNonSpecReviewRounds,
     editable: NONSPEC_EDITABLE,
     scopeNote: NONSPEC_SCOPE_NOTE,

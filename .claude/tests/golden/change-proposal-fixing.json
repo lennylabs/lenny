@@ -229,6 +229,21 @@
     ]
   },
   {
+    "label": "r1:review:fresh",
+    "phase": "non-spec R1: review",
+    "model": "",
+    "schema": "coverage+findings",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "cache",
+      "evidence",
+      "finding-bar",
+      "loop-scope",
+      "deviations"
+    ]
+  },
+  {
     "label": "r1:dedup",
     "phase": "non-spec R1: review",
     "model": "",
@@ -325,21 +340,6 @@
   },
   {
     "label": "r2:review:citations",
-    "phase": "non-spec R2: review",
-    "model": "",
-    "schema": "coverage+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
-    "label": "r2:review:fresh",
     "phase": "non-spec R2: review",
     "model": "",
     "schema": "coverage+findings",

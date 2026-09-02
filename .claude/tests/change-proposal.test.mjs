@@ -593,7 +593,8 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
   // followed by another, and only a complete one converges.
   const one = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
     "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
-    "r3:review:security": null,
+    // Round 2 is the first sweep now that no lens is withheld from round 1.
+    "r2:review:security": null,
   }));
   t.check("the incomplete sweep is refused", one.logs.some((l) => /sweep found nothing but was incomplete; NOT converging/.test(l)));
   t.check("and another sweep follows it", one.logs.filter((l) => /FULL SWEEP/.test(l)).length >= 2);
@@ -619,13 +620,13 @@ t.section("B27. convergence is certified only over a COMPLETE sweep");
     loopStubs({
       "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
       "*:review:security": ({ label }) =>
-        Number(label.match(/^r(\d+):/)[1]) >= 3 ? null : { coverage: "c", findings: [] },
+        Number(label.match(/^r(\d+):/)[1]) >= 2 ? null : { coverage: "c", findings: [] },
     }),
   );
   const L = stalled.result.review.loops[0];
   const sweeps = stalled.logs.filter((l) => /FULL SWEEP/.test(l)).length;
   t.check("it stops at the second identical sweep", sweeps === 2, "sweeps: " + sweeps);
-  t.check("the rest of the budget is not spent", L.rounds === 4, "rounds: " + L.rounds);
+  t.check("the rest of the budget is not spent", L.rounds === 3, "rounds: " + L.rounds);
   t.check("the stalled lens is named in the result", (L.stalledLenses || []).includes("security"), JSON.stringify(L.stalledLenses));
   t.check("it still does not converge", stalled.result.review.converged === false);
   t.check("no log claims the failed lens stays active", !stalled.logs.some((l) => /stay active/.test(l)));
@@ -2426,6 +2427,29 @@ t.section("R44. zero hunks with no baseline is not an empty fix claim");
   t.check("and the fixes are credited",
     result && result.review && result.review.totalFixed === 2,
     String(result && result.review && result.review.totalFixed));
+}
+
+t.section("R45. every lens runs in round one; none is withheld by rotation");
+{
+  // `operational` and `fresh` used to be a second pool with their own schedule:
+  // while any ordinary lens was active, exactly one rotated in per round. That
+  // manufactured a lens which had NEVER RUN, and a lens that has never run
+  // cannot retire, and a lens that has not retired blocks the sweep -- so a
+  // clean proposal spent a whole round discharging one lens. A measured run's
+  // non-spec loop went 13 lenses, then `fresh` alone, then a 14-lens sweep.
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+  }));
+  const rounds = logs.filter((l) => /launching \d+ reviewers|FULL SWEEP/.test(l));
+  t.check("round one runs the whole pool", /launching 14 reviewers/.test(rounds[0] || ""), String(rounds[0]));
+  const firstRetire = logs.find((l) => /retiring/.test(l)) || "";
+  t.check(
+    "both extras retire in round one, so neither can block the sweep",
+    /operational/.test(firstRetire) && /fresh/.test(firstRetire),
+    firstRetire,
+  );
+  t.check("so the very next round is the sweep", /FULL SWEEP 1/.test(rounds[1] || ""), String(rounds[1]));
+  t.check("and no round runs a lens alone", !logs.some((l) => /launching 1 reviewers/.test(l)));
 }
 
 t.done();
