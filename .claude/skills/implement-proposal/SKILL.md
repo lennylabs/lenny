@@ -122,16 +122,30 @@ Invoke by `{scriptPath}`, never by name: a name resolves to a cached copy, so a 
   "repoRoot": "/abs/path",
   "date": "2026-08-31",
   "implementCode": true,
+  "baseModel": "opus",
+  "baseEffort": "medium",
   "specReviewFocus": [],
   "acceptedDivergences": []
 }
 ```
 
-Arguments, all with defaults: `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
+Arguments, all with defaults: `baseModel` (`opus`), `baseEffort` (`medium`), `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
 
 `spec-only` runs the leading spec-lane prefix. Under the standard pattern that prefix is every spec step and the mode is total, which is what `close-build-gaps.sh --mode proposals` relies on. On a proposal that genuinely interleaves it is not, and the run returns `spec-only-incomplete` rather than silently skipping the interleaved spec step. That result carries `stoppedAt`, the non-spec step the run stopped at, and `specStepsBehind`, the spec steps that sit behind it and did not land.
 
-Run with a strong model at high effort. Before a run whose steps reach tier 5 or above, work through the Environment preflight in `.claude/rules/test-coverage.md` yourself: stale images, terminal pods from an earlier run, a warm pool that cannot reach Ready, and orphaned envtest processes all produce failures that look exactly like a defect in the step under test.
+`baseModel` and `baseEffort` set what every agent runs at and are **independent of your session's own
+model and effort**, so a run does not silently change tier because you switched your own model, and two
+runs of the same proposal stay comparable. The parent hands both to the build subworkflow, which is where
+almost every agent lives. An unknown value fails the run at launch rather than being ignored.
+
+A few agents name their own model and keep it, absolutely rather than relative to the base: the checklist
+tick readers, the lease open and release calls, and the checklist-ticks reader run on `haiku` at high
+effort. A cheap model is not the same request as a shallow one, and those agents are on a small model
+because their work is mechanical while sitting at high effort because getting it wrong corrupts the
+run's bookkeeping quietly. Keeping them absolute means the tiering is only coherent while the base sits at
+or above `sonnet`.
+
+Before a run whose steps reach tier 5 or above, work through the Environment preflight in `.claude/rules/test-coverage.md` yourself: stale images, terminal pods from an earlier run, a warm pool that cannot reach Ready, and orphaned envtest processes all produce failures that look exactly like a defect in the step under test.
 
 ### Step 3: interruptions
 

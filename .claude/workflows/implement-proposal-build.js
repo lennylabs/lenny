@@ -270,7 +270,7 @@ function roleRef(P, role, sectionName) {
 async function agentTry(p, o) {
   for (let i = 0; i < 4; i++) {
     try {
-      return await agent(p, o);
+      return await agent(p, based(o));
     } catch (e) {
       const msg = String((e && e.message) || e);
       if (i < 3 && msg.indexOf("StructuredOutput") !== -1) {
@@ -341,12 +341,43 @@ const BLANKS_BLOCK =
 // Everything the per-step agents need beyond their own instructions.
 const RULES_FULL = RULES + SUMMARY_BLOCK + BLANKS_BLOCK;
 
+
+// The model and reasoning effort every agent runs at, unless it hard-codes its
+// own. Deliberately INDEPENDENT of the session's model and effort: a run that
+// silently changed tier because the operator had switched their own model would
+// produce results nobody could compare against an earlier run. Hard-coded
+// models stay ABSOLUTE rather than relative to the base, so the tiering is only
+// coherent while the base sits at or above sonnet.
+const MODELS = ["opus", "sonnet", "haiku", "fable"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const baseModel = input.baseModel || "opus";
+const baseEffort = input.baseEffort || "medium";
+if (!MODELS.includes(baseModel)) {
+  throw new Error('args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"');
+}
+if (!EFFORTS.includes(baseEffort)) {
+  throw new Error('args.baseEffort must be one of ' + EFFORTS.join(", ") + '; got "' + baseEffort + '"');
+}
+// Applied at the single point every agent call in this script passes through,
+// so an agent added later cannot escape the base by being written somewhere new.
+function based(o) {
+  const b = { ...(o || {}) };
+  if (!b.model) b.model = baseModel;
+  if (!b.effort) b.effort = baseEffort;
+  return b;
+}
+log("Base tier: " + baseModel + " at " + baseEffort + " effort" +
+  (input.baseModel || input.baseEffort ? " (caller-set)" : " (default)") +
+  ". Agents that name their own model keep it.");
+
 // ---- Argument classification ---------------------------------------------
 //
 // forward: read where it is used, present in no prompt already issued.
 // anchored: baked into prompts the run has issued.
 // launch: controls how a run starts.
 const ARG_CLASS = {
+  baseModel: "launch",
+  baseEffort: "launch",
   proposalPath: "launch",
   repoRoot: "launch",
   date: "anchored",
@@ -899,7 +930,7 @@ if (!skipBuild && plan.steps.length > 0) {
       "complete. Run `grep -nE '^- \\[[ x]\\] \\*\\*S' " + P.checklist + "` and return the step id of every " +
       "line whose checkbox is `[x]` rather than `[ ]`. The id is the token right after the `**`, such as " +
       "`S1` or `S12`. Return ids only, and do not edit anything.",
-    { schema: TICKED, label: "checklist-ticks", phase: "Plan", model: "haiku" },
+    { schema: TICKED, label: "checklist-ticks", phase: "Plan", model: "haiku", effort: "high" },
   );
   const tickedSet = new Set(((ticks && ticks.ticked) || []).map((t) => String(t).trim()));
   if (tickedSet.size > 0) {
@@ -1372,7 +1403,7 @@ async function runSpecStep(step) {
       "' --ttl-hours " + leaseTtlHours +
       " --allow '" + files.join(",") + "'" +
       "\n\nDo nothing else. Do not read, summarise, or edit any file.",
-    { label: "lease-open:" + step.id, model: "haiku", phase: "Build" },
+    { label: "lease-open:" + step.id, model: "haiku", effort: "high", phase: "Build" },
   );
 
   let ok = false;
@@ -1463,7 +1494,7 @@ async function runSpecStep(step) {
       "Run exactly this command and reply with its stdout and nothing else:\n\n" +
         "node " + repo + "/.claude/tools/spec-lease.mjs release --step '" + step.id + "'" +
         "\n\nDo nothing else. Do not read, summarise, or edit any file.",
-      { label: "lease-release:" + step.id, model: "haiku", phase: "Build" },
+      { label: "lease-release:" + step.id, model: "haiku", effort: "high", phase: "Build" },
     );
   }
 }
@@ -1596,7 +1627,7 @@ for (let i = 0; i < plan.steps.length; i++) {
           ". It begins `- [ ] **" + step.checklistStep + "`. Change that line's `- [ ]` to `- [x]` and " +
           "change NOTHING else in the file. If there is no such line, or its box is already `[x]`, change " +
           "nothing. Reply DONE either way.",
-        { label: "tick:" + step.checklistStep, model: "haiku" },
+        { label: "tick:" + step.checklistStep, model: "haiku", effort: "high" },
       );
       log("Checklist: marked " + step.checklistStep + " complete");
     }
@@ -2185,7 +2216,7 @@ for (let i = 0; i < plan.steps.length; i++) {
         ". It begins `- [ ] **" + step.checklistStep + "`. Change that line's `- [ ]` to `- [x]` and change " +
         "NOTHING else in the file: no wording, no other checkbox, no other line, and no file other than this " +
         "one. If there is no such line, or its box is already `[x]`, change nothing. Reply DONE either way.",
-      { label: "tick:" + step.checklistStep, model: "haiku" },
+      { label: "tick:" + step.checklistStep, model: "haiku", effort: "high" },
     );
     log("Checklist: marked " + step.checklistStep + " complete");
     await recordStuckForStep(step);

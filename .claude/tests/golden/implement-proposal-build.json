@@ -9,14 +9,14 @@
   {
     "label": "baseline",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "sha",
     "blocks": []
   },
   {
     "label": "spec-targets:S1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "files",
     "blocks": []
   },
@@ -32,7 +32,7 @@
   {
     "label": "apply:S1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "applied+deviations+unappliable",
     "blocks": [
       "file-ownership",
@@ -42,7 +42,7 @@
   {
     "label": "verify:S1:spec",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "discrepancies",
     "blocks": [
       "read-only"
@@ -51,7 +51,7 @@
   {
     "label": "commit-spec:S1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -76,21 +76,21 @@
   {
     "label": "lease-check:S2",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "leaseHeld",
     "blocks": []
   },
   {
     "label": "build:S2:base",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "sha",
     "blocks": []
   },
   {
     "label": "build:S2",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "commit+deviations+filesChanged+implemented+notes+testsAddedOrModified+testsPassed+tiersRun",
     "blocks": [
       "file-ownership",
@@ -104,7 +104,7 @@
   {
     "label": "compile:S2:r1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "compiles+errors",
     "blocks": [
       "memory-safe"
@@ -113,7 +113,7 @@
   {
     "label": "review:S2:conformance:r1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "findings",
     "blocks": [
       "read-only",
@@ -123,7 +123,7 @@
   {
     "label": "review:S2:invariants:r1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "findings",
     "blocks": [
       "read-only",
@@ -133,7 +133,7 @@
   {
     "label": "verify:S2:r1",
     "phase": "Build",
-    "model": "",
+    "model": "opus",
     "schema": "changedLineCoverage+classification+failures+green+notes+skipped+tiersRun",
     "blocks": [
       "preflight",
@@ -151,7 +151,7 @@
   {
     "label": "verify",
     "phase": "Verify",
-    "model": "",
+    "model": "opus",
     "schema": "changedLineCoverage+classification+failures+green+notes+skipped+tiersRun",
     "blocks": [
       "memory-safe"
@@ -160,7 +160,7 @@
   {
     "label": "proposal-edit-audit",
     "phase": "Review",
-    "model": "",
+    "model": "opus",
     "schema": "commits+edited",
     "blocks": []
   }

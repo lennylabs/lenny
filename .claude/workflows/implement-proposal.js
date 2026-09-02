@@ -137,6 +137,35 @@ function roleRef(P, role, sectionName) {
     : "the `" + sectionName + "` section of " + P.root;
 }
 
+
+// The model and reasoning effort every agent runs at, unless it hard-codes its
+// own. Deliberately INDEPENDENT of the session's model and effort: a run that
+// silently changed tier because the operator had switched their own model would
+// produce results nobody could compare against an earlier run. Hard-coded
+// models stay ABSOLUTE rather than relative to the base, so the tiering is only
+// coherent while the base sits at or above sonnet.
+const MODELS = ["opus", "sonnet", "haiku", "fable"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const baseModel = input.baseModel || "opus";
+const baseEffort = input.baseEffort || "medium";
+if (!MODELS.includes(baseModel)) {
+  throw new Error('args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"');
+}
+if (!EFFORTS.includes(baseEffort)) {
+  throw new Error('args.baseEffort must be one of ' + EFFORTS.join(", ") + '; got "' + baseEffort + '"');
+}
+// Applied at the single point every agent call in this script passes through,
+// so an agent added later cannot escape the base by being written somewhere new.
+function based(o) {
+  const b = { ...(o || {}) };
+  if (!b.model) b.model = baseModel;
+  if (!b.effort) b.effort = baseEffort;
+  return b;
+}
+log("Base tier: " + baseModel + " at " + baseEffort + " effort" +
+  (input.baseModel || input.baseEffort ? " (caller-set)" : " (default)") +
+  ". Agents that name their own model keep it.");
+
 // ---- Argument classification ---------------------------------------------
 //
 // forward: read where it is used, present in no prompt already issued.
@@ -145,6 +174,8 @@ function roleRef(P, role, sectionName) {
 // The workflow lint holds every `input.<name>` this script reads to appearing
 // here, so the classification cannot drift away from the code.
 const ARG_CLASS = {
+  baseModel: "launch",
+  baseEffort: "launch",
   proposalPath: "launch",
   repoRoot: "launch",
   date: "anchored",
@@ -255,7 +286,7 @@ const plan = await agent(
     ' Read them in full and extract the staged changes and the findings that reference this proposal.\n\nYou are a read-only investigator; do not edit any file. Work in ' +
     repo +
     '.\n\nReturn:\n- approved: true when the status tool prints exactly "Approved".\n- alreadyApplied: true when the staged spec edits are ALREADY PRESENT in spec/. Check a sample of them rather than inferring it from the status: spec application is recorded per deliverable in the implementation checklist now, not as a status value, so an Approved proposal may have some, none, or all of its spec edits landed. This is reported, not a gate: only the status decides whether the run proceeds.\n- statusLine: what the status tool printed.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file. Classify each entry\'s method. Use "mechanical" when the proposal stages the edit as a run of a script, pass, or generator over a register or map rather than as literal text to write, which a proposal signals by enumerating no edit sites, by naming a command, or by stating that completeness is proven by a gate rather than by review; put the exact command in command, including its dry-run form when the proposal states one. Use "authored" when the proposal stages the literal text together with an anchor for it. When one subsection stages both, split it into one mechanical entry and one authored entry. Defaulting to "authored" for an edit the proposal means a script to make is a defect: it sets an agent guessing at sites the proposal deliberately does not list.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
-  { schema: PLAN, label: "plan", phase: "Plan" },
+  based({ schema: PLAN, label: "plan", phase: "Plan" }),
 );
 
 // agent() returns null when the subagent never ran: the account hit a usage
@@ -366,6 +397,8 @@ try {
       // switched on at all. Each value is passed verbatim rather than defaulted:
       // the child already defaults every one, and a second default table here is
       // a second thing to drift.
+      baseModel: input.baseModel,
+      baseEffort: input.baseEffort,
       skipBuild: input.skipBuild,
       specReviewFocus: input.specReviewFocus,
       maxPlanRounds: input.maxPlanRounds,
@@ -479,7 +512,7 @@ if (plan.findingIds.length > 0) {
         ".\nFindings to close: " +
         plan.findingIds.join(", ") +
         ".\n\nFor each finding: re-read it, confirm the landed implementation resolves it (the proposal's spec edits are applied and its code blast radius is implemented and green), flip the heading checkbox to [x] and the trailing marker to CLOSED, and add a one or two sentence Resolution note citing the proposal path and the implementing commit SHA(s). Do not open or re-open any finding. Then commit BUILD-GAPS.md on the current branch following the repository's commit conventions; the commit message and the Resolution note reference durable sources only (the proposal file path, the finding id, the spec section, the commit SHA), never the proposal's internal change/section/decision/pass/step labels. Return the IDs you closed.",
-      { schema: CLOSE, label: "close-findings", phase: "Close findings" },
+      based({ schema: CLOSE, label: "close-findings", phase: "Close findings" }),
     );
     // A dead closing agent closed nothing. Overwriting the empty record
     // declared above with null broke `close.closed` in the return below, after

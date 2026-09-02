@@ -17,6 +17,11 @@ const WORKFLOW = ".claude/workflows/implement-proposal.js";
 // One distinct value per argument, so a forwarding line that names the wrong
 // key is caught rather than passing on a coincidentally equal value.
 const TUNING = {
+  // The tier is a tuning argument like any other, and it has the same failure
+  // mode: a parent that reviews at a pinned tier and then hands the child
+  // nothing leaves the build running on whatever the operator's session is at.
+  baseModel: "sonnet",
+  baseEffort: "high",
   maxPlanRounds: 3,
   maxStepAttempts: 7,
   maxDeadAttempts: 9,
@@ -104,6 +109,33 @@ t.check(
   const orphans = keys.filter((k) => !new RegExp("\\binput\\." + k + "\\b").test(src));
   t.check("every ARG_CLASS key names an argument the script reads", orphans.length === 0,
     "unread: " + orphans.join(", "));
+}
+
+// The tier reaches every agent in both scripts, and a hard-coded model survives.
+{
+  const { calls } = await runWorkflow(WORKFLOW, { ...REQUIRED }, {});
+  const escaped = calls.filter((c) => c.opts && c.opts.label && (!c.opts.model || !c.opts.effort));
+  t.check(
+    "no agent in the parent is left on the session's model or effort",
+    escaped.length === 0,
+    escaped.map((c) => c.opts.label).join(", "),
+  );
+  const planCall = calls.find((c) => c.opts && c.opts.label === "plan");
+  t.check("the parent's plan agent defaults to opus", planCall && planCall.opts.model === "opus",
+    planCall && planCall.opts.model);
+  t.check("at medium effort", planCall && planCall.opts.effort === "medium",
+    planCall && planCall.opts.effort);
+}
+{
+  const { calls } = await runWorkflow(WORKFLOW, { ...REQUIRED, baseModel: "haiku", baseEffort: "low" }, {});
+  const planCall = calls.find((c) => c.opts && c.opts.label === "plan");
+  t.check("a caller-set tier reaches the parent's agents", planCall && planCall.opts.model === "haiku"
+    && planCall.opts.effort === "low");
+}
+{
+  const { error } = await runWorkflow(WORKFLOW, { ...REQUIRED, baseModel: "gpt" }, {});
+  t.check("an unknown model fails the run", !!error && /baseModel must be one of/.test(error.message),
+    error && error.message);
 }
 
 t.done();

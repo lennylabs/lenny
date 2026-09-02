@@ -119,4 +119,24 @@ t.section("a legacy single-file proposal still resumes");
   t.check("and is recorded as skipped", (result.skippedSteps || []).some((s) => s.id === "S1"), JSON.stringify(result.skippedSteps));
 }
 
+// The base tier reaches every agent in the BUILD script too. This is the seam
+// the golden also covers, but a named assertion says which property broke
+// rather than only that a digest moved.
+{
+  const root = fixture();
+  const { calls } = await runWorkflow(WF, {
+    proposalPath: root + "/proposals/0081_fix_x", repoRoot: root, date: "2026-01-01",
+    plan: { steps: [STEP] }, skipBuild: true,
+  }, {});
+  const agents = calls.filter((c) => c.opts && c.opts.label);
+  const escaped = agents.filter((c) => !c.opts.model || !c.opts.effort);
+  t.check("no build agent is left on the session's model or effort", escaped.length === 0,
+    escaped.map((c) => c.opts.label).join(", "));
+  const hard = agents.filter((c) => /^checklist-ticks$|^lease-|^tick:/.test(c.opts.label));
+  t.check("a hard-coded model survives the base", hard.length === 0 || hard.every((c) => c.opts.model === "haiku"),
+    hard.map((c) => c.opts.label + "=" + c.opts.model).join(", "));
+  t.check("and carries its own high effort", hard.length === 0 || hard.every((c) => c.opts.effort === "high"),
+    hard.map((c) => c.opts.label + "=" + c.opts.effort).join(", "));
+}
+
 t.done();
