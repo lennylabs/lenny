@@ -2345,4 +2345,70 @@ t.section("R42. a fix claim the tree does not support is withdrawn");
     String(result && result.review && result.review.totalFixed));
 }
 
+t.section("R43. the guards a mutation audit found deletable");
+{
+  // A mutation audit reintroduced each of these and the suite stayed green, so
+  // the guard's stated reasoning was unenforced. Each check below is verified to
+  // go red when its guard is removed.
+
+  // NOT TESTED, deliberately: the `sweeps < 2` floor in sweepStalled.
+  //
+  // A mutation audit found it deletable with a green suite. I tried to build a
+  // case where removing it changes the outcome and could not. The floor only
+  // matters when a lens reaches the fail streak while fewer than two sweeps have
+  // run, and retirement makes that unreachable: a lens that returns no findings
+  // retires, so a repeatedly-failing lens ends up the only active one and the
+  // loop exits through "every reviewer failed" first. Reaching the streak in
+  // ordinary rounds needs the lens to keep producing confirmed findings, and
+  // then the round is not barren, which is the only branch that consults
+  // sweepStalled at all.
+  //
+  // So the floor appears redundant rather than load-bearing. It is left in place
+  // because it costs nothing and states an intent, but a test asserting it would
+  // pass either way, and a test that passes either way is worse than none.
+
+  // A prune rewrites sections and tells its agent to reconcile the checklist,
+  // files-touched and testing sections with what is left. A retired lens never
+  // re-reads any of it, so the pool must reopen or the loop can certify text no
+  // lens has seen in its pruned form.
+  const pruned = await runWorkflow(WF, { ...REVIEW_ARGS, introspectEvery: 1, maxSpecReviewRounds: 4 }, loopStubs({
+    "probe:spec-changes": "NO",
+    "*:review:*": ({ label }) => (/^r1:/.test(label)
+      ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] }),
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "introspect*": { verdict: "prune", reasoning: "r", sections: ["## 3. Design"] },
+    "judge:*": { falsified: false, howConclusive: "none", reasoning: "stands" },
+    "prune:*": "pruned",
+  }));
+  const at = pruned.logs.findIndex((l) => /pruned 1 section/.test(l));
+  const nextLaunch = pruned.logs.slice(at + 1).find((l) => /launching \d+ reviewers/.test(l));
+  t.check("a prune happened", at >= 0);
+  t.check(
+    "and the round after it reopens every retired lens",
+    !!nextLaunch && /\(0\/\d+ lenses retired\)/.test(nextLaunch),
+    String(nextLaunch),
+  );
+
+  // A site whose file is empty, blank or not a string cannot be opened by
+  // anyone. Left in, it reaches the planner, the designer, the fixer and the
+  // post-fix reviewer as a real edit site.
+  const junk = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:expand:*": {
+      proposal: [
+        { file: "", line: 1, quote: "q", why: "w", confidence: "high" },
+        { file: "   ", line: 2, quote: "q", why: "w", confidence: "high" },
+      ],
+      tree: [],
+      searched: "x",
+    },
+  }));
+  const design = matching(junk.calls, "r1:fix-design:")[0];
+  t.check("a site with no usable path is dropped", !design || !/"file": ""/.test(design.prompt));
+  t.check(
+    "and the drop is logged rather than silent",
+    junk.logs.some((l) => /drop|no usable path|without a path/i.test(l)),
+    JSON.stringify(junk.logs.filter((l) => /site/i.test(l)).slice(0, 3)),
+  );
+}
+
 t.done();

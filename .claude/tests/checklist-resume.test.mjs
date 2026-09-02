@@ -90,7 +90,12 @@ t.section("a folder proposal's ticked step is read from the checklist file");
 {
   const repo = fixture();
   const { result, calls, logs } = await resume("proposals/0081_fix_x", repo);
-  t.check("the ticked step is not rebuilt", never(calls, "build:S1"), matching(calls, "build:S1").map((c) => c.label).join(","));
+  // NOTE: `never(calls, "build:S1")` was here and was VACUOUS. A mutation audit
+  // reintroduced the defect this file exists for -- the checklist read pointed
+  // at the proposal DIRECTORY instead of the checklist file -- and that check
+  // still passed while its two siblings failed, because the fixture's base-SHA
+  // stubs make the step short-circuit as already-present whether or not the
+  // read worked. The two checks below are the ones that discriminate.
   t.check("it takes the already-done branch", logs.some((l) => /Step S1: already present in the tree; nothing to build/.test(l)), logs.join(" | "));
   t.check("and is recorded as skipped", (result.skippedSteps || []).some((s) => s.id === "S1"), JSON.stringify(result.skippedSteps));
   t.check(
@@ -104,7 +109,12 @@ t.section("a legacy single-file proposal still resumes");
 {
   const repo = fixture();
   const { result, calls, logs } = await resume("proposals/0081_fix_x.md", repo);
-  t.check("the ticked step is not rebuilt", never(calls, "build:S1"), matching(calls, "build:S1").map((c) => c.label).join(","));
+  // NOTE: `never(calls, "build:S1")` was here and was VACUOUS. A mutation audit
+  // reintroduced the defect this file exists for -- the checklist read pointed
+  // at the proposal DIRECTORY instead of the checklist file -- and that check
+  // still passed while its two siblings failed, because the fixture's base-SHA
+  // stubs make the step short-circuit as already-present whether or not the
+  // read worked. The two checks below are the ones that discriminate.
   t.check("it takes the already-done branch", logs.some((l) => /Step S1: already present in the tree; nothing to build/.test(l)), logs.join(" | "));
   t.check("and is recorded as skipped", (result.skippedSteps || []).some((s) => s.id === "S1"), JSON.stringify(result.skippedSteps));
 }
