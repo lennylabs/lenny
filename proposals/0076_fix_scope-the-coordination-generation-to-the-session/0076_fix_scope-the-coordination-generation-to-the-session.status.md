@@ -5,7 +5,7 @@ kind: fix
 status: Reviewed
 drafted-date: 2026-08-19
 drafted-by: 
-reviewed-date: 2026-09-02
+reviewed-date: 2026-09-03
 reviewed-by: change-proposal
 approved-date: 
 approved-by: 
@@ -30,4 +30,4 @@ code, or doc file. Apply the changes in the "Proposed changes" section after sig
 
 ## Review history
 
-On 2026-09-02, the adversarial review ran the spec convergence loop on this proposal. The loop ran three rounds and did not converge. It fixed one finding and ran no full-pool sweeps. Findings the loop had not closed remain open. The non-spec convergence loop was not run.
+On 2026-09-03, the adversarial review ran the non-spec convergence loop on this proposal. The loop ran six rounds and converged. It fixed two findings and ran three full-pool sweeps. The spec loop was not run.

@@ -18,9 +18,10 @@ which changes the shipped gate. `spec/10` §10.1 and `spec/04` §4.2 state the c
 session row carries `coordination_generation = 1` from creation, so the value a replica carries for a session
 no replica has taken over is positive, and the first takeover's compare-and-swap mints 2 strictly above it.
 CODE-4 lands that baseline in the schema and on both session-store create paths, and leaves the gateway
-fence path's floor of a zero row in place for the rows the rolling window creates at 0. Every sentence
-stating that a gateway-to-pod message carries the session's current `coordination_generation` stays true and
-is left unedited.
+fence path's floor of a zero row in place for the rows the rolling window creates at 0. No sentence stating
+that a gateway-to-pod message carries the session's current `coordination_generation` is restated. Each is
+already false on the handoff path in the shipped tree, through the barrier-target mirror lag recorded below
+under the defects this proposal does not stage, so this change creates no edit site there.
 
 **What is fixed.** On a concurrent pod: a legitimate coordinator handoff rejected as
 `coordinator_handoff_stale`, a drain barrier rejected so the drain checkpoint runs unquiesced, a
@@ -243,9 +244,16 @@ entry the generation is recorded on, so it is an address, 0075's counterexample 
 retyping deliverable loses its justification. §6 currently files this as a rename whichever lands second
 rebases onto, which understates it. 0075 is an unreviewed draft, so the cost of obsoleting it is low, and
 the reviewer should be told they are deciding it. Reclassifying also obliges a rewrite of the tier-3
-comment, and neither that file nor the tier-0 scope test is named in §9. The review log routed one
-further knock-on that OD3 does not name: `CoordinatorFenceRequest` is the only Adapter-service example
-`spec/04:151` carries, so reclassifying the row obliges a restatement of that line as well.
+comment, and neither that file nor the tier-0 scope test is named in §9. A "yes" also obliges a
+further `spec/04` edit that OD3 did not name. Beyond the row at `:175` and the declaring sentence at
+`:188`, the paragraph at `:151` grounds declaring the classification rather than deriving it on
+`session_id` appearing on messages of both classes, and the reclassification falsifies that ground:
+no remaining pod-scoped row carries a session field, the other pod-scoped `Adapter` messages carrying
+none by `:188` and `ReportPodScrubRequest` declaring `pod_id` alone
+(`schemas/lenny-adapter.proto:492-496`). A "yes" therefore has to supply a new ground for that
+paragraph or retire the rule, which is the question 0075 owns. No `spec/04` §4.1 edit is staged in this
+proposal: SPEC-3 edits §4.2's session-record paragraph alone, so a "yes" is a successor's deliverable
+unless the reviewer directs that it be staged here.
 
 **OD4 is withdrawn.** It asked whether to state the barrier quiescence unit or to delete a design claim,
 and the validation pass found unanimously that it was mis-stated. The design claims that §10.1.8 step 3
@@ -335,14 +343,23 @@ conditions that floor's retirement on this tightening release, so answering OD9 
 permanent and owned by nothing. The coupling runs one way and is recorded in neither entry. No
 recommendation was derived.
 
-**OD10. Whether the sentences calling a barrier's generation the current one are edit sites.** SPEC-2 leaves
-§10.1.8 step 1 and §29.7's trace step 4 unedited, on the ground that each names the session row value the
-dispatcher copies onto the wire, which the baseline makes positive for every session. On the sweep that
-performs a handoff, `pkg/gateway/coordination/coordination/coordination.go:430` passes the pre-bump snapshot
-value to `upsertMirror` while the pod is fenced at the post-handoff generation minted in the same iteration, so
-a barrier assembled from the mirror in that interval carries a value that is not the session's current one and
-both sentences are false on that path. The mirror lag is recorded below as a shipped-tree defect this proposal
-does not stage. No recommendation was derived.
+**OD10 is withdrawn.** It asked whether the sentences calling a barrier's generation the current one are edit
+sites, and it named the wrong deliverable. SPEC-1 owns `spec/10_gateway-internals.md`, and SPEC-1 is what
+states that §10.1.8 step 1's clause reading that the `CheckpointBarrier` message carries the current
+`coordination_generation`, and §29.7's trace step 4, are not restated (`spec-changes.md:259-264`). SPEC-2's
+`spec/29` scope names §29.7's framing paragraph and leaves trace step 4 alone (`spec-changes.md:428-430`).
+SPEC-1 also does not leave §10.1.8 step 1 unedited: it rewrites step 1's closing sentence
+(`spec-changes.md:206-222`), and that closing sentence sits on the same physical line of
+`spec/10_gateway-internals.md` as the clause this entry is about, so a reviewer told that step 1 is untouched
+does not open the rewrite. Neither sentence is an edit site, on a ground SPEC-1 does not state. On the sweep
+that performs a handoff, `pkg/gateway/coordination/coordination/coordination.go:430` passes the pre-bump
+snapshot value to `upsertMirror` while the pod is fenced at the post-handoff generation minted in the same
+iteration, so a barrier assembled from the mirror in that interval carries a value that is not the session's
+current one, and both sentences are already false on that path in the shipped tree. That lag is recorded below
+as a shipped-tree defect this proposal does not stage, and this change neither creates nor repairs it. SPEC-1's
+staged ground, that each stays true because the baseline makes the row value positive, reaches the right
+conclusion by a route that does not hold. This disposition does not rest on the baseline, so a decision to
+split D7, the baseline, and migration 0181 out under OD5 leaves it standing.
 
 **OD11. Whether this proposal stages a claim-register deliverable for the interval between S2 and S7.**
 §28.4 requires every normative statement a section makes about a mechanism to carry a row in
