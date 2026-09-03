@@ -392,7 +392,23 @@ t.section("B6e. open-decisions is made to elaborate before it determines");
   t.check("all five drifts are enumerated", drifts.every((d) => od.prompt.includes(d)), drifts.filter((d) => !od.prompt.includes(d)).join(",") || "all");
   t.check("a resolved entry is withdrawn in place, never deleted", /Withdraw it IN PLACE with the reason and the citation, never by deleting the entry/.test(od.prompt));
   t.check("what it did to the summary is a required field", req.includes("summaryAction"));
-  t.check("and a carried decision can never be not-applicable", /is never `not-applicable`/.test(JSON.stringify(item?.properties?.summaryAction || {})));
+  t.check("and a carried decision can never be not-applicable", /never `not-applicable` for one the summary already carried/.test(od.prompt));
+
+  // The schema must stay SENDABLE. The first version carried 2.5k characters of
+  // descriptions over nested objects and the API refused every call it was
+  // attached to -- "output schema too large to classify safely" -- so the lens
+  // failed 12 times across 3 rounds, never ran, never retired, and blocked the
+  // sweep for a whole run. A schema that cannot be sent enforces nothing, so its
+  // size is a correctness property and gets a budget.
+  // The exact API threshold is unknown: the version that failed serialised to
+  // roughly 7.7k and this one to 3.9k, so the budget is set on the DELTA this
+  // lens adds over a plain one -- the part actually under our control -- with
+  // headroom over today's ~1.0k and far below the known-bad size.
+  const odBytes = JSON.stringify(od.opts.schema).length;
+  const plainBytes = JSON.stringify(other.opts.schema).length;
+  t.check("the decisions schema stays sendable", odBytes - plainBytes < 1500,
+    "adds " + (odBytes - plainBytes) + " bytes over a plain lens (budget 1500)");
+  t.check("and the field guidance lives in the prompt instead", /WHAT EACH FIELD OF `decisions` HOLDS/.test(od.prompt));
 
   t.check("a cross-proposal effect is tested for counterfactual force first", /whether choosing differently would change\s+that effect/.test(od.prompt));
   t.check("an identical-under-every-answer effect is a row, never a question", /never a question for a human/.test(od.prompt));

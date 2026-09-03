@@ -668,117 +668,43 @@ const REVIEW_FINDINGS = {
 // A schema field can still be back-filled to justify a conclusion already
 // reached, which is why the prompt states the procedure as an ORDER OF WORK and
 // these fields are its receipts. Neither half is sufficient alone.
+// The open-decisions lens returns its findings like every other lens, and a
+// structured elaboration beside them. The elaboration is the receipt for the
+// procedure in the lens prompt: a schema field is validated at the tool-call
+// layer and the model retries on a mismatch, which is the only enforcement in
+// this workflow that actually bites.
+//
+// IT IS DELIBERATELY SMALL, and the field descriptions live in the prompt
+// instead. The first version carried 22 descriptions totalling 2.5k characters
+// over nested objects, and the API refused every call it was attached to:
+// "output schema too large to classify safely". The lens failed 12 times across
+// 3 rounds, never ran, never retired, and so blocked the sweep for a whole run.
+// A schema that cannot be sent enforces nothing, so structure that earns its
+// size stays and prose moves to the prompt. groundQuotes and questionsAsked are
+// arrays of strings rather than of objects for the same reason; the prompt fixes
+// their format, and what the schema still enforces is that they are PRESENT and
+// non-empty, which is the forcing function that matters.
 const DECISION_ENTRY = {
   type: "object",
   required: [
-    "decision",
-    "home",
-    "groundQuotes",
-    "questionsAsked",
-    "caseFor",
-    "caseAgainst",
-    "whatWouldFlipIt",
-    "counterfactual",
-    "cascades",
-    "disposition",
-    "recommendation",
+    "decision", "home", "groundQuotes", "questionsAsked", "caseFor", "caseAgainst",
+    "whatWouldFlipIt", "counterfactual", "cascades", "disposition", "recommendation",
     "summaryAction",
   ],
   properties: {
-    decision: {
-      type: "string",
-      description: "What is being decided, stated so a person could answer it in one sitting without reading the proposal.",
-    },
-    home: {
-      type: "string",
-      enum: ["open-decisions-section", "design-item", "implementor-blank", "review-log-open"],
-      description: "Where the decision lives today.",
-    },
-    groundQuotes: {
-      type: "array",
-      minItems: 1,
-      description: "The load-bearing sentences, quoted verbatim from sources you opened in this pass. Quote them; do not cite them. A summary of a source is not the source.",
-      items: {
-        type: "object",
-        required: ["source", "quote"],
-        properties: {
-          source: { type: "string", description: "file and location" },
-          quote: { type: "string", description: "the sentence, verbatim" },
-        },
-      },
-    },
-    questionsAsked: {
-      type: "array",
-      minItems: 1,
-      description: "The questions a skeptical reviewer would ask about the GROUND rather than about the choice, and what you found. At least one must be a question whose answer would kill the answer you were drifting toward.",
-      items: {
-        type: "object",
-        required: ["question", "answer"],
-        properties: {
-          question: { type: "string" },
-          answer: {
-            type: "string",
-            description: "What you found, with the quote. If you could not answer it from the tree, say so plainly: that is a result rather than a gap, and it belongs in whatWouldFlipIt or is the reason this decision is the human's.",
-          },
-          source: { type: "string", description: "the file you opened to answer it" },
-        },
-      },
-    },
-    caseFor: { type: "string", description: "The case for the answer you recommend, at its best." },
-    caseAgainst: { type: "string", description: "The case against it, at its best. Written before you chose, not after." },
-    whatWouldFlipIt: {
-      type: "string",
-      description: "The one fact whose discovery reverses your recommendation. A decision nothing could flip is one you have not examined.",
-    },
-    counterfactual: {
-      type: "string",
-      description: "Would choosing differently change anything downstream? If every available answer has the same effect, this is a recorded consequence rather than a decision.",
-    },
-    cascades: {
-      type: "array",
-      description: "Settled decisions or landed text that an answer available HERE would falsify. Empty when none, which is the common case. This is the only circumstance in which a settled decision is yours to mention, and it is never a decision of its own: nobody is asking whether the settled decision was right, so it belongs here as part of what an answer costs.",
-      items: {
-        type: "object",
-        required: ["settled", "falsifiedBy"],
-        properties: {
-          settled: { type: "string", description: "the settled decision or landed statement, and where it is recorded" },
-          falsifiedBy: { type: "string", description: "which available answer to THIS decision falsifies it" },
-        },
-      },
-    },
-    disposition: {
-      type: "string",
-      enum: ["resolve", "implementor", "human"],
-    },
+    decision: { type: "string" },
+    home: { type: "string", enum: ["open-decisions-section", "design-item", "implementor-blank", "review-log-open"] },
+    groundQuotes: { type: "array", minItems: 1, items: { type: "string" } },
+    questionsAsked: { type: "array", minItems: 1, items: { type: "string" } },
+    caseFor: { type: "string" },
+    caseAgainst: { type: "string" },
+    whatWouldFlipIt: { type: "string" },
+    counterfactual: { type: "string" },
+    cascades: { type: "array", items: { type: "string" } },
+    disposition: { type: "string", enum: ["resolve", "implementor", "human"] },
     recommendation: { type: "string" },
-    summaryAction: {
-      type: "string",
-      enum: ["added", "updated", "withdrawn", "unchanged", "not-applicable"],
-      description: "What you did to this decision's entry in the summary's `## Open decisions` section this round. `not-applicable` only when the disposition is resolve or implementor AND the summary never carried it; a decision the summary DID carry is withdrawn in place rather than deleted, so it is never `not-applicable`.",
-    },
-    affectsProposals: {
-      type: "array",
-      description: "Other proposals this decision bears on. Empty when none.",
-      items: {
-        type: "object",
-        required: ["proposal", "status", "effect", "changesWithChoice"],
-        properties: {
-          proposal: { type: "string" },
-          status: { type: "string", description: "Draft, Reviewed, Approved, or Implemented" },
-          statusDate: { type: "string", description: "the review or approval date" },
-          dateSource: {
-            type: "string",
-            enum: ["status-file", "last-commit", "none"],
-            description: "where the date came from; a last-commit date is when someone touched the file, not when it was reviewed",
-          },
-          effect: { type: "string" },
-          changesWithChoice: {
-            type: "boolean",
-            description: "true only when a different answer here changes the effect on that proposal. When false this is a row for the impact section rather than a question for the human.",
-          },
-        },
-      },
-    },
+    summaryAction: { type: "string", enum: ["added", "updated", "withdrawn", "unchanged", "not-applicable"] },
+    affectsProposals: { type: "array", items: { type: "string" } },
   },
 };
 
@@ -787,11 +713,7 @@ const OPEN_DECISIONS_FINDINGS = {
   required: ["coverage", "decisions", "findings"],
   properties: {
     coverage: REVIEW_FINDINGS.properties.coverage,
-    decisions: {
-      type: "array",
-      description: "Every decision the proposal has not closed, one entry each, built by the procedure in the lens prompt. An empty array asserts the proposal has none.",
-      items: DECISION_ENTRY,
-    },
+    decisions: { type: "array", items: DECISION_ENTRY },
     findings: FINDINGS.properties.findings,
   },
 };
@@ -1972,6 +1894,20 @@ const LENSES = [
       "decision, or the reason the decision is genuinely the human's, and it is recorded as an " +
       "`UNVERIFIED` line.\n" +
       "  4. DETERMINE. Only now apply the test below.\n" +
+      "WHAT EACH FIELD OF `decisions` HOLDS, since the schema states only the shape. `decision`: the " +
+      "question, stated so a person could answer it in one sitting without reading the proposal. " +
+      "`groundQuotes`: one entry per load-bearing sentence, written as `file:line — \"the sentence, " +
+      "verbatim\"`, from sources you opened in this pass. `questionsAsked`: one entry per question, " +
+      "written as `Q: ... / A: ... (file you opened)`, and an answer you could not find says so " +
+      "plainly. `caseFor` and `caseAgainst`: each at its best, written before you chose. " +
+      "`whatWouldFlipIt`: the one fact whose discovery reverses you. `counterfactual`: whether " +
+      "choosing differently changes anything downstream. `cascades`: one entry per settled decision " +
+      "an answer here would falsify, as `the settled decision (where recorded) — falsified by which " +
+      "answer`, empty when none. `summaryAction`: what you did to this decision's entry in the " +
+      "summary, and never `not-applicable` for one the summary already carried, because a carried " +
+      "decision is withdrawn in place rather than deleted. `affectsProposals`: one entry per other " +
+      "proposal, as `id (status, date, where the date came from) — effect — changes with the choice: " +
+      "yes|no`.\n" +
       "Step 3 is where this lens earns its cost. On a measured run its output was produced without it, " +
       "and one follow-up question from a human -- nothing more than 'elaborate on this one' -- " +
       "reversed the recommendation on the spot. The human supplied no decision and no new information. " +
