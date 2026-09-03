@@ -461,6 +461,51 @@ t.section("B6f. the base tier is a workflow argument, independent of the session
   t.check("an unknown effort does too", !!error && /baseEffort must be one of/.test(error.message), error && error.message);
 }
 
+t.section("B6g. startPhase skips the phases before it");
+{
+  const { calls, logs } = await runWorkflow(WF, { ...REVIEW_ARGS, startPhase: "non-spec-review" }, loopStubs());
+  t.check("the conventions pass does not run", never(calls, "conventions"));
+  t.check("nor the spec loop", !calls.some((c) => /^spec R\d+/.test((c.opts && c.opts.phase) || "")),
+    [...new Set(calls.map((c) => (c.opts && c.opts.phase) || "").filter(Boolean))].join(" | "));
+  t.check("the non-spec loop does run", calls.some((c) => /^r\d+:review:/.test(c.label)));
+  t.check("and the skip is logged with what it assumed", logs.some((l) => /Starting at the non-spec-review phase; skipping/.test(l)));
+  t.check("naming that nothing checks those phases were done", logs.some((l) => /nothing checks that they were/.test(l)));
+}
+{
+  const { calls, logs } = await runWorkflow(WF, { ...REVIEW_ARGS, startPhase: "spec-review" }, loopStubs());
+  t.check("starting at spec-review still skips conventions", never(calls, "conventions"));
+  t.check("but runs the spec loop", logs.some((l) => /spec/i.test(l)));
+}
+{
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  t.check("the default runs conventions", !never(calls, "conventions"));
+  t.check("and logs no skip", !logs.some((l) => /Starting at the/.test(l)));
+}
+{
+  const { error } = await runWorkflow(WF, { ...REVIEW_ARGS, startPhase: "middle" }, loopStubs());
+  t.check("an unknown phase fails the run", !!error && /startPhase must be one of/.test(error.message), error && error.message);
+}
+{
+  // The skipped phases in new mode are the ones that CREATE the proposal, so a
+  // new-mode run starting later has no files to review.
+  const { error } = await runWorkflow(WF, { ...NEW_ARGS, startPhase: "spec-review" }, newStubs());
+  t.check("new mode refuses a later start", !!error && /would skip the phases that write the/.test(error.message), error && error.message);
+}
+
+t.section("B6h. the failure breaker stops paying for retries that cannot help");
+{
+  // The weekly cap hit mid-run and every remaining agent burned all four
+  // attempts against a limit no retry or tier fallback could satisfy.
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, { default: null });
+  const perLabel = {};
+  for (const c of calls) perLabel[c.label] = (perLabel[c.label] || 0) + 1;
+  const counts = Object.values(perLabel);
+  t.check("early agents still get their full retry budget", counts.some((n) => n >= 4), JSON.stringify(perLabel).slice(0, 120));
+  t.check("but later ones are cut to a single attempt", counts.some((n) => n === 1), JSON.stringify(perLabel).slice(0, 120));
+  const total = calls.length;
+  t.check("so a fully failing run does not pay 4x for every agent", total < counts.length * 4, total + " calls for " + counts.length + " agents");
+}
+
 t.section("B7. the spec loop is skipped when nothing is staged for spec");
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));

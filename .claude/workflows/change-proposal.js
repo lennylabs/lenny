@@ -122,6 +122,30 @@ const MODELS = ["opus", "sonnet", "haiku", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
+
+// A run-wide circuit breaker over consecutive agent failures.
+//
+// robustAgent retries four times and falls back a tier on attempts 3+, which is
+// right for a 529 that is capacity-pool-specific and wrong for anything
+// account-level. A measured run proved the difference: the weekly cap hit
+// mid-flight and every remaining agent burned all four attempts against a limit
+// no model and no retry could satisfy. 40 errors, every one `rate_limit`, and
+// the tier distribution made it look like the small models were failing -- 20 of
+// 26 sonnet calls failed against 20 of 104 opus -- when in fact sonnet is only
+// ever reached AS a fallback retry, so it inherits an already-failing context
+// and can never look healthy. Haiku, which names its own model and is never a
+// fallback target, failed zero times.
+//
+// The script cannot read a failure reason: agent() returns null and the sandbox
+// exposes nothing else. What it CAN see is the shape -- an account-level
+// condition fails every agent regardless of label, model or prompt, while a
+// per-agent fault does not. So the breaker counts failures with no intervening
+// success and, once tripped, stops spending retries: one attempt per agent
+// instead of four. It re-arms on the first success, so a transient burst costs
+// nothing permanent.
+let consecutiveAgentFailures = 0;
+let breakerAnnounced = false;
+const FAILURE_BREAKER = 6;
 if (!MODELS.includes(baseModel)) {
   throw new Error(
     'args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"',
@@ -130,6 +154,40 @@ if (!MODELS.includes(baseModel)) {
 if (!EFFORTS.includes(baseEffort)) {
   throw new Error(
     'args.baseEffort must be one of ' + EFFORTS.join(", ") + '; got "' + baseEffort + '"',
+  );
+}
+
+// The first phase to run. Everything before it is skipped, which is what lets a
+// caller resume a long run at the point it actually stopped instead of paying
+// again for the phases that already finished. The names are the phases a caller
+// would think in, and the order is the order they run.
+//
+// It is refused in `new` mode for anything but the default, because the phases
+// it would skip are the ones that CREATE the proposal: a new-mode run starting
+// at spec-review has no files to review.
+const PHASES = [
+  "validate", "draft", "write", "conventions",
+  "spec-review", "non-spec-review", "finalize",
+];
+const startPhase = input.startPhase || PHASES[0];
+if (!PHASES.includes(startPhase)) {
+  throw new Error(
+    "args.startPhase must be one of " + PHASES.join(", ") + '; got "' + startPhase + '"',
+  );
+}
+if (mode === "new" && startPhase !== PHASES[0]) {
+  throw new Error(
+    'args.startPhase is "' + startPhase + '" in new mode, which would skip the phases that write the ' +
+      "proposal. Use review mode against the proposal those phases produced.",
+  );
+}
+const startAt = PHASES.indexOf(startPhase);
+// True when `p` is at or after the caller's starting phase.
+const runsPhase = (p) => PHASES.indexOf(p) >= startAt;
+if (startAt > 0) {
+  log(
+    "Starting at the " + startPhase + " phase; skipping " + PHASES.slice(0, startAt).join(", ") +
+      ". Those phases are assumed already done, and nothing checks that they were.",
   );
 }
 
@@ -315,6 +373,7 @@ const ARG_CLASS = {
   // making them `let` and adding them to applyOverrides.
   baseModel: "launch",
   baseEffort: "launch",
+  startPhase: "launch",
   mode: "launch",
   problem: "anchored",
   proposalPath: "launch",
@@ -1701,6 +1760,7 @@ if (mode !== "new") {
 
 // ---- Conventions pass (shared, one-shot, outside the error loop) ----
 
+if (runsPhase("conventions")) {
 phase("Conventions");
 await robustAgent(
   "Check a proposal's files against the written conventions and fix only violations.\n\n" +
@@ -1716,6 +1776,7 @@ await robustAgent(
     promptFor("conventions"),
   { label: "conventions", model: "sonnet", effort: "high" },
 );
+}
 
 // ---- Review loop (shared): multi-lens review, two-skeptic verify, fix ----
 
@@ -2115,6 +2176,7 @@ if (POOL_FIXED.length === 0 && POOL_EXTRAS.length === 0) {
   throw new Error("args.excludeLenses excludes every lens; nothing would review");
 }
 const POOL = POOL_FIXED.concat(POOL_EXTRAS);
+
 log(
   "Base tier: " + baseModel + " at " + baseEffort + " effort" +
     (input.baseModel || input.baseEffort ? " (caller-set)" : " (default)") +
@@ -3973,11 +4035,32 @@ async function robustAgent(prompt, opts, attempts = 4) {
   // rescue a hard account-level "session limit" (the whole account is capped) —
   // that still requires the account switch or waiting for the reset.
   const fallbackAt = 3;
+  // Tripped: the failures are not about this agent, so retrying it is waste.
+  if (consecutiveAgentFailures >= FAILURE_BREAKER) {
+    if (!breakerAnnounced) {
+      breakerAnnounced = true;
+      log(
+        "FAILURE BREAKER: " + consecutiveAgentFailures + " agents have failed with no success " +
+          "between them. That shape is account-level rather than per-agent, and no retry or tier " +
+          "fallback satisfies it, so each remaining agent now gets ONE attempt instead of " + attempts +
+          ". The breaker re-arms on the first success.",
+      );
+    }
+    attempts = 1;
+  }
   for (let i = 1; i <= attempts; i++) {
     const callOpts =
       i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
     const r = await agent(prompt, callOpts);
-    if (r !== null && r !== undefined) return r;
+    if (r !== null && r !== undefined) {
+      if (breakerAnnounced) {
+        log("FAILURE BREAKER re-armed: an agent succeeded, so retries are restored.");
+        breakerAnnounced = false;
+      }
+      consecutiveAgentFailures = 0;
+      return r;
+    }
+    consecutiveAgentFailures++;
     if (i < attempts) {
       log(
         "  " +
@@ -5804,9 +5887,13 @@ if (!specProbeRead) {
 if (!hasSpecChanges) {
   specReviewSkipped = { reason: "no-spec-changes", why: String(specProbe.why || "") };
   log("The proposal stages no spec edits; skipping the spec review loop: " + specReviewSkipped.why);
-} else if (input.skipSpecReview) {
-  specReviewSkipped = { reason: "skipSpecReview" };
-  log("skipSpecReview is set; the spec staging is NOT reviewed by this run");
+} else if (input.skipSpecReview || !runsPhase("spec-review")) {
+  specReviewSkipped = { reason: input.skipSpecReview ? "skipSpecReview" : "startPhase" };
+  log(
+    input.skipSpecReview
+      ? "skipSpecReview is set; the spec staging is NOT reviewed by this run"
+      : "startPhase is " + startPhase + "; the spec staging is NOT reviewed by this run",
+  );
 } else {
   specLoop = await runReviewLoop({
     name: "spec",
@@ -5906,7 +5993,7 @@ if (specBlocked) {
       " round(s); the non-spec review is NOT run. Raise maxSpecReviewRounds and resume, or set " +
       "allowNonSpecOnUnconvergedSpec.",
   );
-} else if (!stoppedByIntrospection && !input.skipNonSpecReview) {
+} else if (!stoppedByIntrospection && !input.skipNonSpecReview && runsPhase("non-spec-review")) {
   nonSpecLoop = await runReviewLoop({
     name: "non-spec",
     pool: POOL,

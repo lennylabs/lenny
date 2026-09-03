@@ -261,6 +261,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 
 | arg | class | default | effect |
 |:--|:--|:--|:--|
+| `startPhase` | launch | `validate` | the first phase to run: `validate`, `draft`, `write`, `conventions`, `spec-review`, `non-spec-review`, `finalize` |
 | `baseModel` | launch | `opus` | the model every agent runs at unless it names its own |
 | `baseEffort` | launch | `medium` | the reasoning effort every agent runs at |
 | `mode` | launch | — | `new`, `review`, or `redesign` |
@@ -309,6 +310,19 @@ Every argument carries a class, and the class decides how you change it. `forwar
 
 Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `open-decisions`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
 
+### Starting partway through
+
+`startPhase` names the first phase to run and skips everything before it, which is how a caller resumes a
+long run at the point it stopped rather than paying again for phases that already finished. Nothing checks
+that the skipped phases were in fact done, and the run logs that it assumed so. It is refused in `new` mode
+for anything but the default, because the phases it would skip are the ones that create the proposal.
+
+This is coarser than the harness-level resume. `resumeFromRunId` replays a run's cached agent calls and
+continues at the exact interruption point, so prefer it when the interrupted run is still addressable. Note
+what it does not cover: only successful calls are cached, so every agent that FAILED re-runs live. After an
+account-level outage that is most of the run, and the replay looks like a phase re-running rather than a
+hand-off. `startPhase` is the blunter instrument for when that is not what you want.
+
 ### The base tier
 
 `baseModel` and `baseEffort` set what every agent runs at, and they are **independent of the session's own
@@ -333,6 +347,19 @@ The retry path is the one place a model changes on its own. After two failures a
 `sonnet`, because a 529 is usually capacity-pool-specific and a lens completing on a lower tier beats a lens
 dropped for the round. Every fallback is logged, so a round certified clean partly on a fallback is visible
 in the transcript.
+
+**Reading a failed run's tier distribution needs care, because the fallback distorts it.** A measured run
+that hit the weekly cap mid-flight recorded 20 of 26 `sonnet` calls failing against 20 of 104 on `opus`,
+which reads as the smaller model being unreliable. It is an artifact: `sonnet` is reached almost only AS a
+fallback retry, so it is sampled exclusively from already-failing contexts and can never look healthy.
+`haiku`, which names its own model and is never a fallback target, failed zero times in the same run. Every
+one of those failures was `rate_limit`.
+
+A run-wide breaker exists because of that run. The script cannot read a failure reason, since `agent()`
+returns null and the sandbox exposes nothing else, but it can see the shape: an account-level condition
+fails every agent regardless of label, model, or prompt. After six failures with no success between them,
+each remaining agent gets one attempt instead of four, and the breaker re-arms on the first success. Without
+it, a capped run pays four attempts and a pointless tier fallback for every agent it has left.
 
 ## Changing an argument on a run in flight
 
