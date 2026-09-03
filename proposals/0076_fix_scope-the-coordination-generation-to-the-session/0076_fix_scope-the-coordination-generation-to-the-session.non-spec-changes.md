@@ -143,14 +143,24 @@ a constraint that old-version writes violate belongs to a Phase 3 migration in a
 retained `>= 0` check accepts those inserts, and the two `Create` floors baseline every row the new
 binaries write.
 
-`pkg/gateway/coordination/coordfence/coordfence.go:147-153` loses its floor of a non-positive row value
-and the comment on it. The value read at `:143` is sent as it stands.
+`pkg/gateway/coordination/coordfence/coordfence.go:147-153` keeps its floor of a non-positive row value.
+The rolling window leaves rows at 0 that the two `Create` floors never see, and `fenceResumedPod`
+(`pkg/gateway/sessionserver/start.go:4233-4245`) fences on the value it reads without incrementing it, so a
+fence issued with the floor deleted would carry that 0, the adapter would refuse it with `InvalidArgument`
+(`pkg/adapter/coordination.go:93-94`), the refusal would fall into `coordfence.fence`'s transient arm
+(`coordfence.go:180-183`) rather than its stale arm, and the driver would burn its attempt budget and
+relinquish the lease (`:186-188`). The sweeper path self-heals, because `Sweeper.RecordHandoff`
+(`pkg/gateway/coordination/coordination/coordination.go:463-482`) bumps 0 to 1 before it fences, and the
+resume path does not. The floor is retired by the release that tightens the check to
+`CHECK (coordination_generation >= 1)` under the same §10.5 phase argument that defers that tightening.
 
-When the baseline does not fire and a row still carries 0, the fence carries 0 and the adapter refuses it
-with `InvalidArgument` (`pkg/adapter/coordination.go:93-94`), and a barrier carrying 0 is refused the same
-way (`:224-226`). Both refusals are loud and fail closed. The two `Create` floors are what keep a new row
-off zero, and the session row's `CHECK (coordination_generation >= 0)` is unchanged. A row an old binary
-wrote at 0 during the rolling window takes that same refusal until its first takeover bumps it.
+When the baseline does not fire and a row still carries 0, the fence path floors that value at 1 before it
+reaches the adapter, and a barrier carrying 0 is refused with `InvalidArgument`
+(`pkg/adapter/coordination.go:224-226`), as is any fence that reaches the adapter carrying 0 (`:93-94`).
+Both refusals are loud and fail closed. The two `Create` floors are what keep a new row off zero, and the
+session row's `CHECK (coordination_generation >= 0)` is unchanged. A row an old binary wrote at 0 during
+the rolling window is fenced at the floor's 1, and a barrier assembled for it before its first takeover
+bumps the row takes the refusal.
 
 CODE-4 reaches tiers 0, 1, 2, 3, 4, 7a, and 8.
 
@@ -295,13 +305,7 @@ it rather than leaving tier 1 red. The `pgstore` half of the same floor is a tie
 `tests/tier2_component/stores/sessionstore_test.go`, which builds the store over a Postgres container with
 the production migrations applied (`:79`), because `pgstore.New` takes a `*pgxpool.Pool` and `Create` runs
 its insert through `pgtenant.InTx` (`pgstore.go:60`, `:249`), so that path does not run at tier 1. The case
-asserts that `Create` of a session with a zero `CoordinationGeneration` reads back 1. The landed tier-1
-case `TestFenceZeroGenerationFencesAtBaseline`
-(`pkg/gateway/coordination/coordfence/coordfence_test.go:173-183`) asserts the floor CODE-4 deletes, so the
-step landing CODE-4 amends it in the same commit rather than leaving tier 1 red: it keeps its
-zero-returning generation reader (`:177`) and asserts the fencer sends 0 rather than 1, its doc comment is
-restated so it no longer claims a baseline floor, and the adapter's `InvalidArgument` on a non-positive
-generation (`pkg/adapter/coordination.go:93-94`) is named there as the backstop. A tier-2 case over
+asserts that `Create` of a session with a zero `CoordinationGeneration` reads back 1. A tier-2 case over
 migration 0181 lands in a new file under `tests/tier2_component/migrations/` and asserts that the migration
 backfills a row carrying 0 to 1, that `sessions.coordination_generation` and
 `coordination_lease.coordination_generation` both default to 1, that the session row's
@@ -328,8 +332,7 @@ Its landed counterpart `TestCheckpointBarrierRejectsWithoutFence`
 amends it in the same commit rather than leaving tier 1 red. Tier 4 covers the same flow across the
 gateway, the session store, and the pod.
 
-The baseline shifts landed tests in two classes, and one further landed case sits outside both, the
-coordfence baseline-floor case named above. The step that lands CODE-4 corrects all three. The first
+The baseline shifts landed tests in two classes, and the step that lands CODE-4 corrects both. The first
 class is every assertion that reads a session row's `CoordinationGeneration` after a create that left the
 field unset. Each shifts by one, because each such assertion reads either the baseline itself or a number
 of handoff bumps counted from it: the assertions in `tests/tier2_component/coordination/sweep_test.go`
@@ -397,7 +400,6 @@ moves to 1. No check is tightened, so no seed path breaks.
   own value)
 - `pkg/gateway/session/sessionstore/pgstore/pgstore.go`
 - `pkg/gateway/session/sessionstore/memstore/memstore.go` and `memstore_test.go`
-- `pkg/gateway/coordination/coordfence/coordfence.go` and `coordfence_test.go`
 - `pkg/gateway/coordination/coordination/coordination_takeover_test.go`
 - `pkg/gateway/runtime/adapterclient/checkpointbarrier_test.go`
 - `pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go` (the fenced-newer-writer constant in

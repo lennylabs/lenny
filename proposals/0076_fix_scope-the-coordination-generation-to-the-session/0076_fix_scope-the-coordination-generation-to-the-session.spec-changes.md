@@ -248,11 +248,13 @@ out.
 
 CODE-4 lands the baseline in the column default and on the session-store create path, and SPEC-3 states it in
 §4.2, which owns the session record's counters. The gateway's fence path floors a non-positive row value at 1
-before it fences today (`pkg/gateway/coordination/coordfence/coordfence.go:147-153`), and CODE-4 deletes that
-floor, because a session row can no longer carry a non-positive value. The adapter's refusal of a non-positive
-generation on the fence path (`pkg/adapter/coordination.go:93-94`) and on the barrier path (`:224-226`) is
-unchanged. It becomes unreachable by construction rather than by a floor, and it stays as the fail-closed
-backstop for a value the gateway should never send.
+before it fences today (`pkg/gateway/coordination/coordfence/coordfence.go:147-153`), and CODE-4 leaves that
+floor in place, on the same §10.5 ground that keeps the session row's `CHECK (coordination_generation >= 0)`:
+the migrate Job completes before the gateway Deployment rolls
+(`charts/lenny/templates/migrate-job.yaml:10-16`), so the still-running old fleet inserts rows at 0 that the
+create-path floors never see. The adapter's refusal of a non-positive generation on the fence path
+(`pkg/adapter/coordination.go:93-94`) and on the barrier path (`:224-226`) is unchanged, and it stays as the
+fail-closed backstop for a value the gateway should never send.
 
 The sentences elsewhere that state which value a barrier carries are not edit sites under the baseline.
 §10.1.8 step 1 reads that the `CheckpointBarrier` message carries the current `coordination_generation`
@@ -277,13 +279,15 @@ same bullet states what each session the hold timeout terminates carries. The pe
 log line, and the local-disk post-mortem §10.1.4 has the adapter write when no coordinator ever returns
 (`spec/10_gateway-internals.md:58`), each carry that session's own last fenced generation. A session no
 coordinator fenced on that pod carries `0` on both, which reports the unset value D6 states rather than a
-generation the pod holds. Zero names no fence, because §10.1.2 step 1 increments `coordination_generation`
-before step 2 announces it (`spec/10_gateway-internals.md:37`), so no `CoordinatorFence` ever carries zero.
-That is held by the session row's baseline of 1, which CODE-4 lands as the column default and as the create
-path's floor, and by the adapter's refusal of a fence carrying a non-positive generation
-(`pkg/adapter/coordination.go:93-94`). The gateway's floor of a zero row at 1 before it fences
-(`pkg/gateway/coordination/coordfence/coordfence.go:147-153`) is deleted by CODE-4, because the row value it
-guards against can no longer exist. The bullet also states that the hold itself and the
+generation the pod holds. Zero names no fence: §10.1.2 step 1 increments `coordination_generation`
+before step 2 announces it (`spec/10_gateway-internals.md:37`), and the value every other fence path sends
+is floored at 1, so no `CoordinatorFence` ever carries zero. That is held by the session row's baseline of
+1, which CODE-4 lands as the column default and as the create path's floor; by the gateway fence path's
+floor of a non-positive row value at 1 (`pkg/gateway/coordination/coordfence/coordfence.go:147-153`), which
+CODE-4 keeps for a row an old binary wrote at 0 during the rolling window, because `fenceResumedPod`
+(`pkg/gateway/sessionserver/start.go:4233-4245`) fences on the value it reads without incrementing it; and
+by the adapter's refusal of a fence carrying a non-positive generation (`pkg/adapter/coordination.go:93-94`)
+as the fail-closed backstop. The bullet also states that the hold itself and the
 `lenny_adapter_coordinator_hold` gauge remain pod-scoped under D5, so the per-session generation stated in
 §10.1.2 is not read as scoping the hold.
 
@@ -494,21 +498,40 @@ row, and in §29.8 step 7. Each mirror keeps the level of detail it carries toda
 qualifier on the clauses SPEC-1 re-scopes, so no mirror states more or less than the section it mirrors.
 
 Further mirrors sit outside `spec/`, so SPEC-2 does not reach them. The wire mirrors the record-and-reject
-rule and the acceptance rule, and SCHEMA-1 carries onto each carrier the wording the section that owns that
-rule states, so the wire text and the applied specification state one rule apiece.
+rule and the acceptance rule, and SCHEMA-1 carries onto each carrier of those two rules the wording the
+section that owns the rule states, so the wire text and the applied specification state one rule apiece. One
+wire sentence states a rule no section of `spec/` states, the fence's own acceptance predicate on
+`CoordinatorFenceResponse`, and it takes the session unit alone.
 
 The record-and-reject rule is carried by the `CoordinatorFence` RPC doc comment
 (`schemas/lenny-adapter.proto:153-162`), which states the rule, the gap reset, and the first-fence
-exemption, each with the pod as the unit; by the message-level `CoordinatorFenceRequest` comment
+exemption, each with the pod as the unit, and by the message-level `CoordinatorFenceRequest` comment
 (`:1442-1446`), which states that the pod records the new generation and from that point rejects every RPC
-carrying a strictly older generation; and by the `CoordinatorFenceResponse` comment (`:1455-1462`), which
-repeats the stale-fence sentence and the gap sentence. Each takes the §28.5.1 Messages wording above: the
+carrying a strictly older generation. Both take the §28.5.1 Messages wording above: the
 pod records the generation against the session the fence names, and from that point rejects every RPC
 carrying a generation older than the one it holds for that session. The `CoordinatorFence` RPC comment also
 takes D6's unit for the exemption, so it reads as the first fence for that session on this pod, and its gap
 sentence takes the session qualifier the Degradation bullet takes. The
 `CoordinatorFenceRequest.coordination_generation` field comment (`:1449-1451`) already states per-session
 monotonicity, which D1 and D3 make true, and it keeps its wording.
+
+The `CoordinatorFenceResponse` comment (`:1455-1462`) is a carrier of the session unit rather than of the
+record-and-reject rule, and each of its two sentences takes the session qualifier and nothing else. Its
+first sentence defines `accepted`, whose false condition, that the supplied generation is not greater than
+the last fenced generation, states the fence's own acceptance predicate. That predicate is the one
+`pkg/adapter/coordination.go:99` implements, and no section of `spec/` states it. It becomes "false when the
+supplied generation is not greater than the generation the pod holds for the session the fence names", so
+the sentence changes the unit of the compared value and leaves the comparison as the adapter performs it.
+Its second sentence defines `gap_detected`, and it takes the session qualifier the `CH-FENCE` Degradation
+bullet takes: the skip is measured against the generation the pod holds for that session, and the state the
+sentence names is the transient tool-call state that session accumulated. The §28.5.1 Messages wording does
+not land on this comment. Applied to it, that wording would replace the two field definitions with a
+statement about the pod's treatment of later RPCs, which this message does not carry, and it would restate
+the acceptance predicate as "older than", which accepts a fence carrying the generation the pod already
+holds and contradicts `pkg/adapter/coordination.go:99`. Whether that equal case should be accepted is the
+summary's open decision OD2, on a fence carrying the generation the pod already recorded. It is a code
+change no deliverable here stages, so the wire text keeps the comparison the shipped handler performs until
+that decision is answered.
 
 The acceptance rule is carried by the `CheckpointBarrier` RPC doc comment (`:165-179`), by the message-level
 `CheckpointBarrierRequest` comment (`:1469-1474`), and by that message's `coordination_generation` field

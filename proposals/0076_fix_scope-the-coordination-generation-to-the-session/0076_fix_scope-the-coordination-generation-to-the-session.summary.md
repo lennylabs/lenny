@@ -17,9 +17,10 @@ bound session for which the pod holds no fenced generation is accepted and recor
 which changes the shipped gate. `spec/10` §10.1 and `spec/04` §4.2 state the counter's baseline: a
 session row carries `coordination_generation = 1` from creation, so the value a replica carries for a session
 no replica has taken over is positive, and the first takeover's compare-and-swap mints 2 strictly above it.
-CODE-4 lands that baseline in the schema and on the session-store create path and deletes the gateway fence
-path's floor of a zero row. Every sentence stating that a gateway-to-pod message carries the session's
-current `coordination_generation` stays true and is left unedited.
+CODE-4 lands that baseline in the schema and on both session-store create paths, and leaves the gateway
+fence path's floor of a zero row in place for the rows the rolling window creates at 0. Every sentence
+stating that a gateway-to-pod message carries the session's current `coordination_generation` stays true and
+is left unedited.
 
 **What is fixed.** On a concurrent pod: a legitimate coordinator handoff rejected as
 `coordinator_handoff_stale`, a drain barrier rejected so the drain checkpoint runs unquiesced, a
@@ -38,10 +39,41 @@ while its row still reads 0 has its first crash-takeover fence rejected as
 `coordinator_handoff_stale`, so the takeover costs a sweep cycle of delay and a pair of split-brain
 metric increments that report a handoff that was healthy.
 
+**Fixed decisions.** These are closed. An implementor applies them and does not re-derive them.
+
+- **D1.** The pod side holds one fenced coordination generation per bound session in place of one value for
+  the whole process.
+- **D2.** That value lives on the slot registry entry. No second map keyed by session identifier is
+  introduced, because a parallel map would be a second lifetime to get wrong.
+- **D3.** The proto doc comment claiming per-session monotonicity is corrected to describe the adapter and
+  is not deleted.
+- **D4.** The merged session guard and the slot registry this proposal keys the generation on stay closed.
+  This proposal sequences after them and reads `checkSessionBound`.
+- **D5.** The coordinator-loss hold stays pod-scoped, arms on the close of the pod's single
+  CH-ADAPTEREVENTS stream, and terminates the same set of sessions it terminates today. Only the generation
+  it reports moves onto the entry.
+- **D6.** A session's fenced generation is unset until that session's first accepted fence on the pod. The
+  stale rejection and the gap predicate are both defined against a recorded value, so both apply from that
+  session's second accepted fence onward, and the exemption's unit is the session's binding on the pod
+  rather than the pod's lifetime.
+- **D7.** A `CheckpointBarrier` naming a bound session for which the pod holds no fenced generation is
+  accepted and records no value. A barrier carrying a value that does not match one the pod does hold for
+  the named session is still refused with `FailedPrecondition` and the `coordinator_handoff_stale` detail.
+- CODE-1's lock order is the registry lock, then the entry lock, then the hold lock. The one
+  opposite-order acquisition in the tree is the read CODE-3 removes.
+- Relocating the `quiesced` flag onto the entry carries no specification claim about the quiescence unit,
+  so a later implementor cannot read the field's placement as settling it.
+
+Three questions adjacent to these are open rather than fixed, and `## Open decisions` carries each: the
+comparison operator the barrier gate uses against a value the pod does hold (OD1), whether D7, the counter
+baseline, and migration 0181 land in this proposal at all (OD5), and how the `spec/04` §4.1 message-scope
+row is classified (OD3).
+
 **Watch out for.** The spec-lane work covers `spec/10` under SPEC-1, `spec/28` and `spec/29` under
-SPEC-2, and `spec/04` §4.2 under SPEC-3, and step S1 lands all three together. Landing SPEC-1 alone leaves
-`spec/28` and `spec/29` restating the pod-wide rule while citing the `spec/10` that now contradicts them,
-which is the state SPEC-2 exists to prevent, and no tier-0 or tier-11 gate string-matches those sentences.
+SPEC-2, and `spec/04` §4.2 under SPEC-3, and steps S1, S2, and S3 land them in that order. Landing SPEC-1
+alone leaves `spec/28` and `spec/29` restating the pod-wide rule while citing the `spec/10` that now
+contradicts them, which is the state SPEC-2 exists to prevent, and no tier-0 or tier-11 gate string-matches
+those sentences.
 CODE-4's migration and both session-store `Create` floors land in one commit, and 0181 deliberately leaves
 the session row's `CHECK (coordination_generation >= 0)` alone. Migrations run as a
 `pre-install,pre-upgrade` hook that completes before the gateway Deployment rolls, so the schema is ahead
@@ -54,9 +86,8 @@ CODE-4 amends `TestCreateDefaultsSessionRecordFields`
 (`pkg/gateway/session/sessionstore/memstore/memstore_test.go:309-325`), which asserts the counter baseline
 CODE-4 replaces, and `TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1`
 (`pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go:992`), whose fenced-newer-writer constant of 1
-the baseline makes equal to the session row's own value, and `TestFenceZeroGenerationFencesAtBaseline`
-(`pkg/gateway/coordination/coordfence/coordfence_test.go:173-183`), whose baseline floor CODE-4 deletes;
-§8 states those amendments alongside the assertions the baseline shifts elsewhere. CODE-4's tier-2 case
+the baseline makes equal to the session row's own value; §8 states those amendments alongside the
+assertions the baseline shifts elsewhere. CODE-4's tier-2 case
 over migration 0181 lands under
 `tests/tier2_component/migrations/`, because the migration lint that runs inside tier 0 looks for the
 migration's number in that directory alone. SCHEMA-1's proto edit lands together with the stubs
@@ -72,7 +103,7 @@ names the whole carrier set SPEC-2 states, the fence and barrier RPC and message
 operational-RPC `coordination_generation` field comments included. The status file's scope bullet
 still states that one session's handoff releases another session's coordinator-loss hold, which D5
 refutes, and its closing paragraph still frames the hold's scope as the open question this change
-answers. The pass records under "Resolved in adversarial review" in the spec changes carry the
+answers. The archived pass records in the review log's archive carry the
 rationale behind each correction already landed, and the review log's ledger carries the rest.
 
 The hold's scope is settled rather than open. D5 keeps it pod-scoped, because the only arming signal the
@@ -80,24 +111,75 @@ adapter has is the close of the pod's single CH-ADAPTEREVENTS stream, which name
 recorded as a non-goal: a pod whose stream holder crashes freezes co-tenant sessions whose own coordinators
 are alive. Proposal 0073 is converged and is not reopened; this proposal sequences after it.
 
+**Impact on other proposals.** This is the only place this proposal states anything about another
+proposal's continued validity. `## Non-goals` states what this proposal will not do and `## 10.
+Dependencies` in the spec changes states what it applies after; neither restates a row below.
+
+| Proposal | Status | What this change does to it | What it must do about it |
+|:--|:--|:--|:--|
+| 0060 | Implemented | Nothing. The lease protocol, forced acquisition, and the lease co-location 0060 built are untouched, and TEST-1 runs on the two-replica harness it landed. | Nothing. |
+| 0073 | Implemented | Nothing. This change reads the `checkSessionBound` guard and the slot registry 0073 landed, and D4 keeps both closed. | Nothing. A landed proposal is not edited. |
+| 0075 | Draft | Removes its sole counterexample. 0075 derives message scope from the address type, and its one exception is `CoordinatorFenceRequest`, on the ground that the handler mutates one pod-wide `coordinationState` so the session identifier selects nothing. CODE-1 deletes that field and the identifier then resolves the entry the generation is recorded on. OD3 puts the reclassification to the reviewer. | If OD3 reclassifies the `spec/04` §4.1 row to session scope, 0075 drops its retyping deliverable or restates its ground on a field CODE-1 does not delete. |
+| 0080 | Draft | Invalidates two of its entries. It records a hold entered for one session and released by another session's fence as work this proposal takes, which D5 refutes, and it records the §29.10 hold-partitioning bullet as an outstanding gap while SPEC-2 stages that bullet's removal. | Correct both entries. 0080 is an early draft, so both are editable. |
+
+## Goals
+
+- The pod records and compares the coordination generation per bound session, so a fence for one session
+  neither rejects, gap-flags, nor mis-attributes anything belonging to a co-tenant session.
+- A co-tenant session's drain barrier is accepted and quiesces the pod, so the drain checkpoint captures a
+  stopped workspace and the acknowledged-barrier record is written.
+- `lenny_coordinator_handoff_stale_total` counts a genuine stale fence, and the
+  `coordinator_generation_gap` event reports a genuine skip in one session's lineage.
+- Each session a coordinator-loss hold terminates carries its own last fenced generation in its
+  `coordinator_lost` log line and post-mortem record, or zero when no coordinator fenced it on that pod,
+  and the pod-level arming event carries none.
+- A session that never resumed and was never taken over is quiesced by its own preStop drain instead of
+  being captured a second time against a live workspace.
+- `spec/10`, `spec/04`, `spec/28`, `spec/29`, the adapter proto comments, and the adapter state one
+  pod-side rule.
+
+## Non-goals
+
+- Renaming `CoordinatorFenceRequest`'s session field.
+- Changing the scoping of the gateway or the Postgres side. Both are per session already. What changes on
+  the Postgres side is the value `sessions.coordination_generation` starts at, under SPEC-3 and CODE-4.
+  The lease protocol and §10.1.2 step 1's compare-and-swap stay as they are.
+- Reopening the merged session guard or the slot registry this proposal keys the generation on.
+- Forced acquisition, or any other change to the lease protocol. This proposal changes what the pod does
+  with the generation it is handed.
+- Changing which sessions a pod-level hold covers. D5 keeps the hold pod-scoped, and the residual is that a
+  pod whose CH-ADAPTEREVENTS stream holder crashes freezes co-tenant sessions whose own coordinators are
+  alive. Closing it would first require settling which replica's connection carries the pod's events when
+  more than one replica holds one, which `spec/28`'s CH-ADAPTEREVENTS degradation row records the
+  specification as not stating.
+- Tightening `migrations/0050_session_record_fields.up.sql`'s `CHECK (coordination_generation >= 0)` to
+  `>= 1`. Migration 0181 carries the two `DEFAULT 1` clauses and the backfill, and the two session-store
+  `Create` floors are the whole enforcement of the baseline. §10.5's expand-contract rule places the
+  tightening in a later phase, and OD9 records the question.
+- Deciding whether two replicas may coordinate co-tenant sessions on one pod. The per-session
+  `REG-COORDLEASE` already permits it, and this change removes a cross-session generation interlock that
+  delayed and mis-metered co-tenant handoffs whatever the number of replicas involved (OD6).
+- Repairing the defects listed under `### Defects in the shipped tree that this proposal does not stage`.
+  None of them blocks sign-off.
+
 ## Open decisions
 
 Every decision below is open and needs a reviewer's answer before this proposal moves to `Approved`.
 Each was derived independently three times and then validated independently five more times against the
 working tree, with the validators instructed to falsify each recommendation rather than confirm it. Where
-a recommendation changed under that pass, the entry says so. Two earlier entries were withdrawn and are
-recorded at the end, because a decision list that quietly drops an item teaches the next reader that it
-was answered.
+a recommendation changed under that pass, the entry says so. An entry that leaves the list is restated in
+place as withdrawn or replaced rather than deleted, because a decision list that quietly drops an item
+teaches the next reader that it was answered.
 
 **OD1. The barrier gate's comparison.** §10.1.8's gate compares the barrier's `coordination_generation`
 with the session's last fenced value, and the question is whether that comparison stays equality.
 **Recommendation: keep equality.** §10.1.2 step 2 makes an acknowledged fence a hard precondition for
-every operational RPC, and widening admits a barrier carrying a value above what the pod holds. There are
-two distinct producers of such a value, and the second is permanent: a successor between its
-compare-and-swap and its fence acknowledgement, and `bumpCoordinationGenerationOnSnapshotClose`
-(`pkg/gateway/sessionserver/start.go:4452-4457`), which increments the row on the resuming-to-terminal
-edges with no fence ever following, so the row sits above the pod's fenced value for the rest of the
-session's life. Widening would accept a barrier carrying a generation no coordinator ever installed.
+every operational RPC, and widening admits a barrier carrying a value above what the pod holds. One
+producer of such a value reaches a barrier: a successor between its compare-and-swap and its fence
+acknowledgement. The barrier's cache-fallback path reads the live session row per binding
+(`cmd/lenny-gateway/httpsurface.go:588-602`), so it can carry the successor's post-compare-and-swap value
+while the pod is still fenced one below it. Widening would accept a barrier carrying a generation the
+pod's coordinator has not yet installed there.
 Widening also fixes nothing: the refusal that actually occurs on the healthy path comes from the mirror
 carrying a value *below* the pod's, which a wider comparison rejects just as equality does. The staged
 text already writes equality in every carrier, so this decision costs no edit. §4's stated ground for it
@@ -122,16 +204,25 @@ bumps 0 to 1 and fences at 1. Accepting equality in that state would admit a gen
 CODE-4 baselines the row at 1 and the first takeover mints 2, the collision is unreachable and the
 remedy is safe. If the reviewer splits CODE-4 out under OD5, this fix follows it.
 
+One row class escapes that argument, and the reviewer should weigh it before accepting the equal case. For
+a session row an old binary minted at 0 during the rolling window, the resume path fences at the retained
+`coordfence` floor's 1 while a takeover's `RecordHandoff` bumps 0 to 1 and fences at 1 as well, so two
+replicas carry the same generation for that row after CODE-4 lands. The class is permanent, because 0181's
+backfill runs once and `pgstore.Create` binds the struct value straight through, so accepting the equal
+case admits for those rows the split-brain the ordering argument above says the baseline prevents.
+
 The rationale carried in the earlier draft of this section was wrong and is withdrawn: `RecordHandoff`
 (`pkg/gateway/coordination/coordination/coordination.go:463-480`) is an unconditional increment rather
 than §10.1.2 step 1's compare-and-swap, a misattribution proposal 0052 already recorded. Uniqueness comes
 from `pgstore.Update`'s `SELECT ... FOR UPDATE` inside a transaction, together with the baseline.
 
 Whatever the reviewer decides about the code, SPEC-2's staged §28.5.1, §28.6, §28.8, and §29.8 arms
-enumerate the older and the higher case and are silent on the equal one, which reads as accepting it.
-`schemas/lenny-adapter.proto:1456-1458` is the one carrier that answers the question today, and SCHEMA-1
-rewrites it. Deferring the code fix without naming the equal case in those arms freezes a fresh
-contradiction into text this change is writing.
+enumerate the older and the higher case and are silent on the equal one.
+`schemas/lenny-adapter.proto:1456-1458` is the one carrier that states the fence's own acceptance
+predicate, and SCHEMA-1 re-scopes it to the session while keeping the "not greater than" comparison the
+shipped handler performs, so nothing this change applies contradicts the code on the equal case. Answering
+this decision the other way moves that comment, `pkg/adapter/coordination.go:99`, and the staged §28.6
+`CH-FENCE` arm together.
 
 **OD3. `spec/04` §4.1's message-scope row, and proposal 0075.** The row classifies
 `CoordinatorFenceRequest` as pod-scoped, and the paragraph below it grounds that on the message staying
@@ -210,35 +301,39 @@ rather than the session itself.** The blast radius is bounded: only the fence an
 value, no operational RPC is gated on it, and the resume path fences immediately after binding. A
 tombstone surviving the entry would reintroduce the second per-session lifetime D2 exists to remove. This
 is a behavioural consequence the per-session move creates, so it needs stating rather than leaving to be
-discovered.
+discovered. The specification half of the question is answered: `spec/07` fixes the `resuming → running`
+transition as a re-attach on a replacement pod, so in specification terms a session does not return to the
+pod it unbound from. What remains open is code-side reachability, because the adapter bars nothing and
+nobody has checked the gateway placement path.
 
 The decisions below reached this section from the review log's open list rather than from the derivation and
 validation pass the entries above went through. Each states the ground the log entry gives, and an entry the
 loop left without a recommendation says so.
 
-**OD8. Whether CODE-4 deletes the gateway fence path's floor of a non-positive row value.** CODE-4 stages the
-deletion of the floor at `pkg/gateway/coordination/coordfence/coordfence.go:147-153`, and the ground SPEC-1
-gives for it is that a session row can no longer carry a non-positive value. That ground is false for the
-rolling window. The migrate Job is a `pre-install,pre-upgrade` hook that completes before the gateway
-Deployment rolls (`charts/lenny/templates/migrate-job.yaml:10-16`), and `pgstore.Create` in the still-running
-old fleet binds `sess.CoordinationGeneration` straight through (`pgstore.go:177`, `:260`), so every session
-that fleet inserts during the window carries an explicit 0 that 0181's one-shot backfill has already run past.
-With the floor deleted, `fenceResumedPod` reads that 0 and sends it, the adapter refuses it with
-`InvalidArgument`, and that outcome falls into `coordfence.fence`'s transient arm rather than its stale arm, so
-the driver burns all three attempts, relinquishes the lease, and aborts the resume, where the shipped floor
-fenced at 1 and the resume succeeded. The sweeper path self-heals, because `RecordHandoff` bumps 0 to 1 before
-it fences, and the client-driven resume path does not, because it fences without bumping.
-**Recommendation, as the review derived it: keep the floor until the release that tightens the check to
-`CHECK (coordination_generation >= 1)` under §10.5's Phase 3.** Answering this also settles the two SPEC-1
-sentences that carry the false ground, and it settles the amended form of
-`TestFenceZeroGenerationFencesAtBaseline`, which the review asked a human to read at sign-off because the
-amendment leaves the tree's only coordfence baseline case asserting a wire value production always rejects.
+**OD8 is withdrawn.** It asked whether CODE-4 deletes the gateway fence path's floor of a non-positive row
+value at `pkg/gateway/coordination/coordfence/coordfence.go:147-153`, and the ground SPEC-1 gave for the
+deletion was that a session row can no longer carry a non-positive value. That ground is false for the
+rolling window: the migrate Job is a `pre-install,pre-upgrade` hook that completes before the gateway
+Deployment rolls (`charts/lenny/templates/migrate-job.yaml:10-16`), and the still-running old fleet's
+`pgstore.Create` binds `sess.CoordinationGeneration` straight through (`pgstore.go:177`, `:260`), so it
+inserts rows at 0 that 0181's one-shot backfill has already run past. The design keeps the floor, and CODE-4
+now states the reason: `fenceResumedPod` fences on the value it reads without bumping it, so with the floor
+deleted that fence would carry 0, the adapter would refuse it with `InvalidArgument`, the refusal would fall
+into `coordfence.fence`'s transient arm rather than its stale arm, and the driver would burn its attempt
+budget, relinquish the lease, and abort the resume. The floor
+is retired by the release that tightens the check to `CHECK (coordination_generation >= 1)`, which is OD9's
+subject, so this rests on the same §10.5 argument that defers the tightening. The withdrawal also retires the
+request for a human's eye on an amended `TestFenceZeroGenerationFencesAtBaseline`, because the test is left
+as it landed.
 
 **OD9. Whether a later release adds `CHECK (coordination_generation >= 1)` as a Phase-3 migration.** 0181
 leaves `migrations/0050_session_record_fields.up.sql`'s `CHECK (coordination_generation >= 0)` in place, and
 the two session-store `Create` floors are the whole enforcement of the baseline. The review recorded the
 tightening as defensible defence in depth that costs a separate proposal, and recorded that nothing in this
-proposal depends on it. No recommendation was derived.
+proposal depends on it. The answer also settles the retained `coordfence` floor: OD8's withdrawal
+conditions that floor's retirement on this tightening release, so answering OD9 no leaves the floor
+permanent and owned by nothing. The coupling runs one way and is recorded in neither entry. No
+recommendation was derived.
 
 **OD10. Whether the sentences calling a barrier's generation the current one are edit sites.** SPEC-2 leaves
 §10.1.8 step 1 and §29.7's trace step 4 unedited, on the ground that each names the session row value the
@@ -249,7 +344,7 @@ a barrier assembled from the mirror in that interval carries a value that is not
 both sentences are false on that path. The mirror lag is recorded below as a shipped-tree defect this proposal
 does not stage. No recommendation was derived.
 
-**OD11. Whether this proposal stages a claim-register deliverable for the interval between S1 and S5.**
+**OD11. Whether this proposal stages a claim-register deliverable for the interval between S2 and S7.**
 §28.4 requires every normative statement a section makes about a mechanism to carry a row in
 `tests/claim-map.json`, and requires a row that is not `WIRED` to name, through a deferral identifier, the step
 that closes it. SPEC-2 stages §28.5.1, §28.6, and §28.8 statements that do not hold in the shipped adapter until
@@ -354,5 +449,5 @@ None blocks sign-off. Each was confirmed against the working tree.
 | CODE-1 | `pkg/adapter/coordination.go`, `server.go`, `slot.go`, `checkpoint.go`, `resume.go`, and `tests/testinfra/coordfixture/coordfixture.go` | `coordinationState` and `barrierGate` move from `Server` onto the slot registry entry, each RPC resolves that entry once for the session it names, and the pod-wide accessors become per-session reads. |
 | CODE-2 | `pkg/adapter/coordination.go` | `CheckpointBarrier`'s generation gate reads the resolved entry's value and accepts a barrier for a bound session the pod holds no fenced generation for. |
 | CODE-3 | `pkg/adapter/holdstate.go` and `pkg/adapter/slotsession.go` | The hold stays pod-scoped, its arming line drops the generation, and each terminated session's `coordinator_lost` record and post-mortem carry that session's own value or zero. |
-| CODE-4 | `migrations/0181_sessions_coordination_generation_baseline.up.sql` and its `.down.sql`, `pgstore.go`, `memstore.go`, and `coordfence.go` | The session row's counter is baselined at 1 in the schema and on both session-store create paths, and the gateway fence path's floor of a non-positive row value is deleted. |
+| CODE-4 | `migrations/0181_sessions_coordination_generation_baseline.up.sql` and its `.down.sql`, `pgstore.go`, and `memstore.go` | The session row's counter is baselined at 1 in the schema and on both session-store create paths. |
 | TEST-1 | `pkg/adapter/*_test.go`, `tests/tier4_integration`, and `tests/tier7a_load_local` | Two co-tenant sessions hand off, drain, and lose their coordinator independently, on proposal 0060's two-replica harness. |
