@@ -492,20 +492,6 @@ t.section("B6g. startPhase skips the phases before it");
   t.check("new mode refuses a later start", !!error && /would skip the phases that write the/.test(error.message), error && error.message);
 }
 
-t.section("B6h. the failure breaker stops paying for retries that cannot help");
-{
-  // The weekly cap hit mid-run and every remaining agent burned all four
-  // attempts against a limit no retry or tier fallback could satisfy.
-  const { calls } = await runWorkflow(WF, REVIEW_ARGS, { default: null });
-  const perLabel = {};
-  for (const c of calls) perLabel[c.label] = (perLabel[c.label] || 0) + 1;
-  const counts = Object.values(perLabel);
-  t.check("early agents still get their full retry budget", counts.some((n) => n >= 4), JSON.stringify(perLabel).slice(0, 120));
-  t.check("but later ones are cut to a single attempt", counts.some((n) => n === 1), JSON.stringify(perLabel).slice(0, 120));
-  const total = calls.length;
-  t.check("so a fully failing run does not pay 4x for every agent", total < counts.length * 4, total + " calls for " + counts.length + " agents");
-}
-
 t.section("B7. the spec loop is skipped when nothing is staged for spec");
 {
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));

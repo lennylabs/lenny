@@ -123,29 +123,6 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
 
-// A run-wide circuit breaker over consecutive agent failures.
-//
-// robustAgent retries four times and falls back a tier on attempts 3+, which is
-// right for a 529 that is capacity-pool-specific and wrong for anything
-// account-level. A measured run proved the difference: the weekly cap hit
-// mid-flight and every remaining agent burned all four attempts against a limit
-// no model and no retry could satisfy. 40 errors, every one `rate_limit`, and
-// the tier distribution made it look like the small models were failing -- 20 of
-// 26 sonnet calls failed against 20 of 104 opus -- when in fact sonnet is only
-// ever reached AS a fallback retry, so it inherits an already-failing context
-// and can never look healthy. Haiku, which names its own model and is never a
-// fallback target, failed zero times.
-//
-// The script cannot read a failure reason: agent() returns null and the sandbox
-// exposes nothing else. What it CAN see is the shape -- an account-level
-// condition fails every agent regardless of label, model or prompt, while a
-// per-agent fault does not. So the breaker counts failures with no intervening
-// success and, once tripped, stops spending retries: one attempt per agent
-// instead of four. It re-arms on the first success, so a transient burst costs
-// nothing permanent.
-let consecutiveAgentFailures = 0;
-let breakerAnnounced = false;
-const FAILURE_BREAKER = 6;
 if (!MODELS.includes(baseModel)) {
   throw new Error(
     'args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"',
@@ -4035,32 +4012,11 @@ async function robustAgent(prompt, opts, attempts = 4) {
   // rescue a hard account-level "session limit" (the whole account is capped) —
   // that still requires the account switch or waiting for the reset.
   const fallbackAt = 3;
-  // Tripped: the failures are not about this agent, so retrying it is waste.
-  if (consecutiveAgentFailures >= FAILURE_BREAKER) {
-    if (!breakerAnnounced) {
-      breakerAnnounced = true;
-      log(
-        "FAILURE BREAKER: " + consecutiveAgentFailures + " agents have failed with no success " +
-          "between them. That shape is account-level rather than per-agent, and no retry or tier " +
-          "fallback satisfies it, so each remaining agent now gets ONE attempt instead of " + attempts +
-          ". The breaker re-arms on the first success.",
-      );
-    }
-    attempts = 1;
-  }
   for (let i = 1; i <= attempts; i++) {
     const callOpts =
       i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
     const r = await agent(prompt, callOpts);
-    if (r !== null && r !== undefined) {
-      if (breakerAnnounced) {
-        log("FAILURE BREAKER re-armed: an agent succeeded, so retries are restored.");
-        breakerAnnounced = false;
-      }
-      consecutiveAgentFailures = 0;
-      return r;
-    }
-    consecutiveAgentFailures++;
+    if (r !== null && r !== undefined) return r;
     if (i < attempts) {
       log(
         "  " +

@@ -355,11 +355,12 @@ fallback retry, so it is sampled exclusively from already-failing contexts and c
 `haiku`, which names its own model and is never a fallback target, failed zero times in the same run. Every
 one of those failures was `rate_limit`.
 
-A run-wide breaker exists because of that run. The script cannot read a failure reason, since `agent()`
-returns null and the sandbox exposes nothing else, but it can see the shape: an account-level condition
-fails every agent regardless of label, model, or prompt. After six failures with no success between them,
-each remaining agent gets one attempt instead of four, and the breaker re-arms on the first success. Without
-it, a capped run pays four attempts and a pointless tier fallback for every agent it has left.
+Read the timing before the distribution. In that run every one of the 40 failures fell inside a 72-second
+window, after 3h49m of clean running across all three models and with normal operation resuming five
+minutes later. Roughly ten agents were in flight and each spent its whole retry budget inside that window,
+because the retries are fast relative to a short rate-limit window. That is a transient to ride out rather
+than a per-agent fault, and neither the model nor the effort level distinguishes it: an earlier run at the
+same tier recorded none.
 
 ## Changing an argument on a run in flight
 
