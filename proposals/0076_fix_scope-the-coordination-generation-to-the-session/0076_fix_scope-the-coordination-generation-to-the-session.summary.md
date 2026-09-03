@@ -152,7 +152,9 @@ entry the generation is recorded on, so it is an address, 0075's counterexample 
 retyping deliverable loses its justification. §6 currently files this as a rename whichever lands second
 rebases onto, which understates it. 0075 is an unreviewed draft, so the cost of obsoleting it is low, and
 the reviewer should be told they are deciding it. Reclassifying also obliges a rewrite of the tier-3
-comment, and neither that file nor the tier-0 scope test is named in §9.
+comment, and neither that file nor the tier-0 scope test is named in §9. The review log routed one
+further knock-on that OD3 does not name: `CoordinatorFenceRequest` is the only Adapter-service example
+`spec/04:151` carries, so reclassifying the row obliges a restatement of that line as well.
 
 **OD4 is withdrawn.** It asked whether to state the barrier quiescence unit or to delete a design claim,
 and the validation pass found unanimously that it was mis-stated. The design claims that §10.1.8 step 3
@@ -209,6 +211,69 @@ value, no operational RPC is gated on it, and the resume path fences immediately
 tombstone surviving the entry would reintroduce the second per-session lifetime D2 exists to remove. This
 is a behavioural consequence the per-session move creates, so it needs stating rather than leaving to be
 discovered.
+
+The decisions below reached this section from the review log's open list rather than from the derivation and
+validation pass the entries above went through. Each states the ground the log entry gives, and an entry the
+loop left without a recommendation says so.
+
+**OD8. Whether CODE-4 deletes the gateway fence path's floor of a non-positive row value.** CODE-4 stages the
+deletion of the floor at `pkg/gateway/coordination/coordfence/coordfence.go:147-153`, and the ground SPEC-1
+gives for it is that a session row can no longer carry a non-positive value. That ground is false for the
+rolling window. The migrate Job is a `pre-install,pre-upgrade` hook that completes before the gateway
+Deployment rolls (`charts/lenny/templates/migrate-job.yaml:10-16`), and `pgstore.Create` in the still-running
+old fleet binds `sess.CoordinationGeneration` straight through (`pgstore.go:177`, `:260`), so every session
+that fleet inserts during the window carries an explicit 0 that 0181's one-shot backfill has already run past.
+With the floor deleted, `fenceResumedPod` reads that 0 and sends it, the adapter refuses it with
+`InvalidArgument`, and that outcome falls into `coordfence.fence`'s transient arm rather than its stale arm, so
+the driver burns all three attempts, relinquishes the lease, and aborts the resume, where the shipped floor
+fenced at 1 and the resume succeeded. The sweeper path self-heals, because `RecordHandoff` bumps 0 to 1 before
+it fences, and the client-driven resume path does not, because it fences without bumping.
+**Recommendation, as the review derived it: keep the floor until the release that tightens the check to
+`CHECK (coordination_generation >= 1)` under §10.5's Phase 3.** Answering this also settles the two SPEC-1
+sentences that carry the false ground, and it settles the amended form of
+`TestFenceZeroGenerationFencesAtBaseline`, which the review asked a human to read at sign-off because the
+amendment leaves the tree's only coordfence baseline case asserting a wire value production always rejects.
+
+**OD9. Whether a later release adds `CHECK (coordination_generation >= 1)` as a Phase-3 migration.** 0181
+leaves `migrations/0050_session_record_fields.up.sql`'s `CHECK (coordination_generation >= 0)` in place, and
+the two session-store `Create` floors are the whole enforcement of the baseline. The review recorded the
+tightening as defensible defence in depth that costs a separate proposal, and recorded that nothing in this
+proposal depends on it. No recommendation was derived.
+
+**OD10. Whether the sentences calling a barrier's generation the current one are edit sites.** SPEC-2 leaves
+§10.1.8 step 1 and §29.7's trace step 4 unedited, on the ground that each names the session row value the
+dispatcher copies onto the wire, which the baseline makes positive for every session. On the sweep that
+performs a handoff, `pkg/gateway/coordination/coordination/coordination.go:430` passes the pre-bump snapshot
+value to `upsertMirror` while the pod is fenced at the post-handoff generation minted in the same iteration, so
+a barrier assembled from the mirror in that interval carries a value that is not the session's current one and
+both sentences are false on that path. The mirror lag is recorded below as a shipped-tree defect this proposal
+does not stage. No recommendation was derived.
+
+**OD11. Whether this proposal stages a claim-register deliverable for the interval between S1 and S5.**
+§28.4 requires every normative statement a section makes about a mechanism to carry a row in
+`tests/claim-map.json`, and requires a row that is not `WIRED` to name, through a deferral identifier, the step
+that closes it. SPEC-2 stages §28.5.1, §28.6, and §28.8 statements that do not hold in the shipped adapter until
+CODE-1 and CODE-2 land, so the `CoordinatorFence` and `CheckpointBarrier` rows carry a status that is wrong for
+that interval. Both rows are already present and `WIRED`, so the obligation to carry a row is met and the
+subject is the status those rows carry. The register is generated from the root `gateway-runtime-comms.md`
+§7.1 by `scripts/seed-claim-register.py` and byte-diffed at tier 0, so a status change lands in that source
+document and in a regeneration rather than in the register file. §28.4's status set has no value for a mechanism
+that is rescoped in part, so a deliverable closing this has to argue that the obligation falls on the statement
+rather than on the mechanism. No deliverable stages it today, and no recommendation was derived.
+
+**OD12. A superseded replica's checkpoint stream against a quiesced pod.** D7 has the pod accept a barrier
+whose generation matches the value it holds for the named session, and the barrier's generation is read from
+state the replicas share, so a replica that has lost coordination can have its barrier accepted. Whether the
+stream that replica then opens against the quiesced pod is acceptable, and whether an accepted false-positive
+barrier is followed by a stream at all, is unanswered. The review recorded the drain-budget cost as bounded to
+one 90-second wall-clock window across all pods, with the manifest write guarded by supersede-on-write and
+`partial_manifest_active_uniq`. No recommendation was derived.
+
+**OD13. Whether TEST-1 owes a case for a barrier naming an unbound session.** D7 removes the generation gate's
+refusal for a bound session the pod holds no fenced generation for, which leaves `checkSessionBound` the sole
+fail-closed guard on the barrier path. No test in the tree asserts that `CheckpointBarrier` for a session with
+no slot binding is refused. The gap was filed in the non-spec review and landed in neither TEST-1 nor §8. No
+recommendation was derived.
 
 ### Items §7 lists, and how they should be dispositioned
 
