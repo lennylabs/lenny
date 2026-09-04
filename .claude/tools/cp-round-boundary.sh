@@ -43,6 +43,7 @@
 set -uo pipefail
 
 DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=2000; COMPACT_GROWTH=400
+STATE_JSON=""
 # The trigger and the target are SEPARATE numbers, and that is the whole point.
 # They used to be one: compaction became due at 80 lines and the pass was told to
 # reach 80 lines, so the moment a run could not get under 80 it paid for a pass
@@ -74,6 +75,7 @@ while [ $# -gt 0 ]; do
     --standing-trigger) STANDING_TRIGGER="$2"; shift 2 ;;
     --compact-growth) COMPACT_GROWTH="$2"; shift 2 ;;
     --compacted) COMPACTED="$2"; shift 2 ;;
+    --state-json) STATE_JSON="$2"; shift 2 ;;
     *) echo "cp-round-boundary: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -83,6 +85,20 @@ done
 
 [ -n "$REPO" ] || REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STATE="$REPO/scratchpad/cp-state/$TAG"
+# The loop's resume state. It used to be written by the calling agent through a
+# heredoc, which made the round boundary the only agent asked to run TWO shell
+# commands. That shape was classified as unsafe and the agent was blocked before
+# it ran, so the state was never written, the shards were never merged, and the
+# loop could not converge: `closeRound` reads a failed boundary as a round that
+# cannot certify, and a clean full sweep then never ends the loop. Writing it
+# here leaves the agent with one command, the same shape as the snapshot agent.
+# It is written BEFORE any other work so that a later failure still leaves a
+# resumable state behind.
+if [ -n "$STATE_JSON" ]; then
+  mkdir -p "$REPO/scratchpad/cp-state/$TAG" || exit 1
+  printf '%s\n' "$STATE_JSON" > "$REPO/scratchpad/cp-state/$TAG/state-$LOOP.json" || exit 1
+fi
+
 SHARDS="$REPO/scratchpad/cp-log/$TAG"
 SNAPS="$REPO/scratchpad/cp-snap/$TAG"
 mkdir -p "$STATE" "$SHARDS" "$SNAPS" || { echo "cp-round-boundary: cannot create state dirs" >&2; exit 1; }

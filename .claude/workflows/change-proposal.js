@@ -463,6 +463,14 @@ function DEVIATIONS_BLOCK() {
   );
 }
 
+// Single-quote a string for a POSIX shell, closing and reopening the quote
+// around each embedded quote. The loop's resume state travels to the round
+// boundary this way, and an anchored argument value with an apostrophe in it
+// would otherwise end the quoting and change the command.
+function shellQuote(s) {
+  return "'" + String(s).replace(/'/g, "'\\''") + "'";
+}
+
 function logBlock(label, round) {
   // The round is in the shard name because two rounds of the same lens would
   // otherwise write the same path and the second would overwrite the first.
@@ -4613,6 +4621,9 @@ async function runReviewLoop(cfg) {
   // It runs on EVERY path out of a round, including the ones that found
   // nothing. A round that returns early still wrote log shards and still owes
   // the next round a snapshot, and skipping it there orphaned both.
+  let boundaryFailStreak = 0;
+  const BOUNDARY_FAIL_LIMIT = 2;
+
   async function closeRound(rnd, complete) {
     // The state a fresh relaunch needs to continue this loop rather than
     // restart it. Deliberately small: the round, what has retired, how many
@@ -4632,11 +4643,17 @@ async function runReviewLoop(cfg) {
       ),
     });
     const raw = await robustAgent(
-      "Run exactly these two commands and reply with the stdout of the SECOND and nothing else:\n\n" +
-        "mkdir -p " + repo + "/scratchpad/cp-state/" + runTag + " && cat > " +
-        repo + "/scratchpad/cp-state/" + runTag + "/" + "state-" + LOOP.name + ".json" +
-        " <<'LENNYSTATE'\n" + stateJson + "\nLENNYSTATE\n\n" +
+      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
         "bash " + repo + "/.claude/tools/cp-round-boundary.sh" +
+        // The resume state travels as an argument and the script writes it. It
+        // used to be a second command, a heredoc the agent ran before this one,
+        // and that two-command shape was classified as unsafe: the agent was
+        // blocked before it ran, so it left no transcript, `robustAgent`
+        // returned null, and `closeRound` read every round as one that could not
+        // certify. A clean full sweep then never converged and the loop spent
+        // its whole budget re-reviewing unchanged text. One command, like the
+        // snapshot agent, which has never been blocked.
+        " --state-json " + shellQuote(stateJson) +
         " --dir '" + P.dir + "'" +
         " --tag '" + runTag + "'" +
         " --loop '" + LOOP.name + "'" +
@@ -4652,9 +4669,9 @@ async function runReviewLoop(cfg) {
         // as a pass that failed, raising the target past the current size and
         // permanently excusing the section that needed compacting.
         " --compacted " + (compactionRan ? "1" : "0") +
-        "\n\nThe second prints one line of JSON. Reply with that line verbatim. If either exits " +
-        "non-zero, reply with the single word FAILED followed by its stderr. Do nothing else: do not " +
-        "read, summarise, or edit any other file.",
+        "\n\nIt prints one line of JSON. Reply with that line verbatim. If it exits non-zero, reply " +
+        "with the single word FAILED followed by its stderr. Do nothing else: do not read, summarise, " +
+        "or edit any other file.",
       { label: "r" + rnd + ":round-boundary", model: "haiku", effort: "high", phase: LOOP.name + " R" + rnd + ": fix" },
     );
     let boundary = null;
@@ -4668,9 +4685,11 @@ async function runReviewLoop(cfg) {
       // The bookkeeping is not optional: without it the log is unmerged, the
       // audit did not run, and the next round has no snapshot to diff against.
       // A round that could not close is not a round that can certify.
+      boundaryFailStreak++;
       log(
         "Round " + rnd + ": the round-boundary script did not complete; round INCONCLUSIVE " +
-          "(the log is unmerged and the next round has no snapshot)",
+          "(the log is unmerged and the next round has no snapshot)" +
+          (boundaryFailStreak > 1 ? " — " + boundaryFailStreak + " in a row" : ""),
       );
       return false;
     }
@@ -4738,6 +4757,7 @@ async function runReviewLoop(cfg) {
           boundary.standingTarget + " (raise " + boundary.targetRaises + ")",
       );
     }
+    boundaryFailStreak = 0;
     if (boundary.targetRaises !== undefined) standingRaises = boundary.targetRaises;
     compactionRan = false;
     if (boundary.compactionDue) {
@@ -4748,6 +4768,22 @@ async function runReviewLoop(cfg) {
   }
 
   while (round < maxRounds && !converged) {
+    // A round cannot certify without its bookkeeping, so a boundary that fails
+    // every round makes the loop unable to converge no matter how clean the
+    // reviews are: `closeRound` returns false, `roundComplete` is false, and the
+    // `isSweep && roundComplete` gate never fires. Nothing used to notice, and a
+    // measured run spent its whole budget re-reviewing unchanged text while the
+    // log went unmerged. Two consecutive failures is the whole signal: the first
+    // may be transient, the second is a condition more rounds cannot fix.
+    if (boundaryFailStreak >= BOUNDARY_FAIL_LIMIT) {
+      log(
+        "Round " + round + ": the round boundary failed " + boundaryFailStreak +
+          " rounds running, so no round can certify and the loop cannot converge. Stopping rather " +
+          "than re-reviewing unchanged text. The log is unmerged and no resume state was written.",
+      );
+      LOOP.bookkeepingFailed = boundaryFailStreak;
+      break;
+    }
     round++;
     const roundStartSnap = await snapshot("r" + round + "-start");
     // One pool, one rule. A lens runs unless it has retired, and when every

@@ -1265,12 +1265,55 @@ t.section("B18b. the round boundary is one exact command and nothing else");
   const b = matching(calls, "r1:round-boundary")[0];
   t.check("a boundary agent runs", !!b);
   t.check("it runs on haiku", b.opts.model === "haiku");
-  t.check("its prompt is the state write plus one invocation of the script", /Run exactly these two commands/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
-  t.check("it records the loop state for a resume", /scratchpad\/cp-state\/.*state-non-spec\.json/.test(b.prompt));
+  // ONE command. The state write used to be a second command, a heredoc the
+  // agent ran first, and that two-command shape was classified as unsafe: the
+  // agent was blocked before it ran, left no transcript, and every round read as
+  // one that could not certify, so a clean full sweep never converged. The
+  // script writes the state now, from an argument.
+  t.check("its prompt is a single invocation of the script", /Run exactly this command/.test(b.prompt) && /cp-round-boundary\.sh/.test(b.prompt));
+  t.check("with no second command and no heredoc", !/two commands/.test(b.prompt) && !/<</.test(b.prompt) && !/mkdir -p/.test(b.prompt));
+  t.check("it carries the loop state for a resume", /--state-json '/.test(b.prompt));
+  t.check(
+    "and that state names the loop and the round",
+    /--state-json '[^']*"loop":"non-spec"/.test(b.prompt) && /--state-json '[^']*"round":1/.test(b.prompt),
+    (b.prompt.match(/--state-json '[^']{0,80}/) || [""])[0],
+  );
   t.check("it carries the loop, round, tag and thresholds", /--loop 'non-spec'/.test(b.prompt) && /--round 1/.test(b.prompt) && /--compact-at 2000/.test(b.prompt));
   t.check("the target and the trigger are passed separately", /--standing-target 200/.test(b.prompt) && /--standing-trigger 320/.test(b.prompt));
   t.check("and no other instruction", /Do nothing else: do not\s+read, summarise, or edit any other file/.test(b.prompt));
   t.check("exactly one per round", matching(calls, "r1:round-boundary").length === 1);
+}
+
+t.section("B18b2. a boundary that keeps failing stops the loop instead of spinning");
+{
+  // The failure this pins cost a measured run its whole budget. The boundary
+  // agent was blocked before it ran, so closeRound returned false every round,
+  // roundComplete was false every round, and the `isSweep && roundComplete` gate
+  // never fired. Clean full sweeps kept finding nothing and the loop kept
+  // re-reviewing unchanged text with the log unmerged the whole time.
+  const { logs, result } = await runWorkflow(WF, { ...REVIEW_ARGS, maxNonSpecReviewRounds: 8 }, logStubs({
+    "*:round-boundary": "FAILED: the agent was blocked",
+  }));
+  const stop = logs.find((l) => /rounds running, so no round can certify/.test(l));
+  t.check("the loop stops on the streak", !!stop, logs.slice(-2).join(" | "));
+  t.check("it says the loop cannot converge", !!stop && /cannot converge/.test(stop), stop);
+  t.check("it says the log is unmerged", !!stop && /log is unmerged/.test(stop), stop);
+  // The budget is 8; stopping on the streak must cost far fewer than that.
+  const rounds = new Set(logs.map((l) => (l.match(/^Round (\d+):/) || [])[1]).filter(Boolean));
+  t.check("well short of the round budget", rounds.size <= 4, [...rounds].join(","));
+  t.check("and the run does not claim convergence", !result.review.converged, String(result.review.converged));
+}
+{
+  // One failure is not the signal: it may be transient, and the merge is
+  // idempotent, so the next round's boundary sweeps the orphaned shards.
+  let n = 0;
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, logStubs({
+    "*:round-boundary": () => (++n === 1 ? "FAILED: transient" : BOUNDARY()),
+  }));
+  t.check(
+    "a single failure does not stop the loop",
+    !logs.some((l) => /rounds running, so no round can certify/.test(l)),
+  );
 }
 
 t.section("B18c. a failed boundary makes the round inconclusive");
@@ -3961,14 +4004,14 @@ t.section("R68. every recheck's artifacts land under its own name");
 
   const boundaries = run.calls.filter((c) => /:round-boundary$/.test(c.label));
   const loopOf = (c) => (c.prompt.match(/--loop '([^']+)'/) || [])[1];
-  const stateOf = (c) => (c.prompt.match(/cp-state\/[^/]+\/state-([^.]+)\.json/) || [])[1];
+  const stateOf = (c) => (c.prompt.match(/--state-json '[^']*"loop":"([^"]+)"/) || [])[1];
   t.check(
     "each boundary names its own loop",
     NAMES.every((n) => boundaries.some((c) => loopOf(c) === n)),
     [...new Set(boundaries.map(loopOf))].join(","),
   );
   t.check(
-    "and writes the state file of that same loop",
+    "and the state it carries names that same loop",
     boundaries.every((c) => stateOf(c) === loopOf(c)),
     boundaries.map((c) => stateOf(c) + "/" + loopOf(c)).join(" "),
   );

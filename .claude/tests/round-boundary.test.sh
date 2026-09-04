@@ -248,6 +248,27 @@ check "and its file is byte-identical" "$before" "$(md5sum < "$SPECF")"
 rm -f "$ARCH2"
 fresh_log
 
+echo; echo "T10c2. the script writes the loop state itself, from an argument"
+# It used to be a heredoc the calling agent ran as a SECOND command. That shape
+# was classified as unsafe and the agent was blocked before it ran, so the state
+# was never written and the loop could never certify a round.
+STATEDIR2="$REPO/scratchpad/cp-state/$TAG"
+rm -rf "$STATEDIR2"
+OUT="$(run spec 30 --state-json '{"loop":"spec","round":30,"note":"it'"'"'s quoted"}')"
+check "the state file is written" "yes" "$([ -f "$STATEDIR2/state-spec.json" ] && echo yes || echo no)"
+check "with the content it was given" "yes" \
+  "$(grep -q '"round":30' "$STATEDIR2/state-spec.json" && echo yes || echo no)"
+check "an apostrophe survives the shell" "yes" \
+  "$(grep -q "it's quoted" "$STATEDIR2/state-spec.json" && echo yes || echo no)"
+check "the state is named for the loop" "yes" \
+  "$([ -f "$STATEDIR2/state-spec.json" ] && echo yes || echo no)"
+# A run that passes none still works: the flag is optional.
+OUT="$(run non-spec 31)"
+contains "no state argument is not an error" "$OUT" '"merged"'
+check "and no state file is invented" "no" \
+  "$([ -f "$STATEDIR2/state-non-spec.json" ] && echo yes || echo no)"
+rm -rf "$STATEDIR2"
+
 echo; echo "T10d. a shard named outside the merge convention is counted and named, not lost"
 # The merge selects by "$LOOP.*.md". A shard an agent named anything else is
 # invisible to EVERY round, is never merged, and used to be reported nowhere at
