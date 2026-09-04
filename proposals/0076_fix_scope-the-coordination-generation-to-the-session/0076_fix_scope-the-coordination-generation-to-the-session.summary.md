@@ -223,7 +223,9 @@ enumerate the older and the higher case and are silent on the equal one.
 predicate, and SCHEMA-1 re-scopes it to the session while keeping the "not greater than" comparison the
 shipped handler performs, so nothing this change applies contradicts the code on the equal case. Answering
 this decision the other way moves that comment, `pkg/adapter/coordination.go:99`, and the staged §28.6
-`CH-FENCE` arm together.
+`CH-FENCE` arm together. No deliverable here stages that code change. CODE-2 is scoped to
+`pkg/adapter/coordination.go:236` and nothing in this proposal touches the fence guard at `:99`, so a "yes"
+is a successor's deliverable unless the reviewer directs that it be staged here.
 
 **OD3. `spec/04` §4.1's message-scope row, and proposal 0075.** The row classifies
 `CoordinatorFenceRequest` as pod-scoped, and the paragraph below it grounds that on the message staying
@@ -282,6 +284,8 @@ The cost of landing here is that the reviewer approves a production migration an
 create paths inside a proposal whose subject is the generation's scope. The cost of splitting is that
 SPEC-1's unset arm ships with no code behind it, leaving a spec-to-code gap on the barrier path for the
 interval, and that the successor must still amend the same landed tests this proposal already schedules.
+A split answer also deletes SPEC-3 entirely and SPEC-1's §10.1 baseline paragraph, which is the largest
+effect any open decision has on the staged spec text.
 One repair the earlier draft credited to the baseline, the first crash-takeover fence rejected at 1, is
 also fixed by OD2's remedy, so it is not exclusive to CODE-4.
 
@@ -312,7 +316,11 @@ is a behavioural consequence the per-session move creates, so it needs stating r
 discovered. The specification half of the question is answered: `spec/07` fixes the `resuming → running`
 transition as a re-attach on a replacement pod, so in specification terms a session does not return to the
 pod it unbound from. What remains open is code-side reachability, because the adapter bars nothing and
-nobody has checked the gateway placement path.
+nobody has checked the gateway placement path. The recommendation and D6 also state the unit differently.
+D6's first sentence fixes the value as unset until that session's first accepted fence on the pod, and
+SPEC-1 stages that form alone, while the recommendation here and D6's closing clause name the session's
+binding on the pod. The two coincide only while a rebind onto the same pod is unreachable, so accepting the
+recommendation changes a SPEC-1 sentence.
 
 The decisions below reached this section from the review log's open list rather than from the derivation and
 validation pass the entries above went through. Each states the ground the log entry gives, and an entry the
@@ -387,6 +395,31 @@ refusal for a bound session the pod holds no fenced generation for, which leaves
 fail-closed guard on the barrier path. No test in the tree asserts that `CheckpointBarrier` for a session with
 no slot binding is refused. The gap was filed in the non-spec review and landed in neither TEST-1 nor §8. No
 recommendation was derived.
+
+**OD14. Whether migration 0181's backfill runs unbatched, and what bounds a migration's run time.** 0181
+backfills the counter with a single `UPDATE sessions SET coordination_generation = 1 WHERE
+coordination_generation = 0` over the whole table, and the migrate Job is a `pre-install,pre-upgrade` hook
+that completes before the gateway Deployment rolls, so the update's duration is added to every upgrade.
+Two review readings reached opposite answers and neither corrects the other. Against the unbatched form:
+`sessions` rows are never purged, the table reaches order 10^6 rows within a year at Tier 3, the predicate
+matches essentially every row, and the landed `UPDATE ... SET` backfills in the tree all target small
+configuration tables, so the precedent does not cover a session-scale one. For it: a backfill that wins the
+row lock cannot corrupt a concurrent writer, because `RecordHandoff` goes through `Update`'s
+`SELECT ... FOR UPDATE` and both stores clamp to the previous value, and unbatched backfills have precedent
+in migrations 0053, 0054, 0058, 0064, 0105, and 0178. The two grounds do not meet: one is about the hook's
+duration and the other about correctness. Neither this proposal, the chart, nor `spec/` states a wall-clock
+or row-count budget for a migration run against a live top-tier fleet, so a decision to keep the backfill
+whole is also a decision to write that budget down. No recommendation was derived.
+
+**OD15. Whether the barrier ack deadline is sized for the sessions D7 admits.** Before this change a
+session that had neither resumed nor been taken over was refused at the barrier and captured by a dedicated
+post-barrier checkpoint under its own tiered cap. Under D7 its barrier is accepted, so a large workspace is
+captured inside the shared `checkpointBarrierAckTimeoutSeconds` window instead. The review judged the effect
+immaterial at Tier 3, where the sequential post-barrier loop reaches few sessions, and recorded that sizing
+`checkpointBarrierAckTimeoutSeconds` against `max_tiered_checkpoint_cap` for the whole coordinated set
+rather than for one slot is a human's call. The agent-pod floor the CRD webhook enforces already carries the
+co-tenancy factor and no CRD field carries the gateway grace period, so no admission check vets that budget.
+No recommendation was derived.
 
 ### Items §7 lists, and how they should be dispositioned
 
