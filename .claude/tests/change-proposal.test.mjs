@@ -466,6 +466,31 @@ t.section("B6e. what the deleted lens carried is absent from the parent and live
   }
 }
 
+t.section("B6g. decisionsFirst fires the phase before the spec review");
+{
+  // Off by default: the ordinary run adjudicates what the spec loop leaves.
+  const off = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const firstLoopAt = (r) => r.calls.findIndex((c) => /^r1:review:/.test(c.label || ""));
+  const firstPhaseAt = (r) => r.calls.findIndex((c) => /^workflow:.*decisions/.test(c.label || ""));
+  t.check("by default the phase does not run before the spec loop",
+    firstPhaseAt(off) === -1 || firstPhaseAt(off) > firstLoopAt(off),
+    firstPhaseAt(off) + " vs " + firstLoopAt(off));
+
+  const on = await runWorkflow(WF, { ...REVIEW_ARGS, decisionsFirst: true }, loopStubs());
+  t.check("with decisionsFirst the phase runs first", firstPhaseAt(on) > -1 && firstPhaseAt(on) < firstLoopAt(on),
+    firstPhaseAt(on) + " vs " + firstLoopAt(on));
+  t.check("and it is the pre-spec-loop trigger",
+    on.calls.some((c) => /^workflow:/.test(c.label || "") && /pre-spec-loop/.test(c.prompt)),
+    on.calls.filter((c) => /^workflow:/.test(c.label || "")).map((c) => c.prompt.slice(0, 60)).join(" | "));
+
+  // It sits before every path that can skip the loop, so a run that reviews no
+  // spec staging still adjudicates.
+  const noSpec = await runWorkflow(WF, { ...REVIEW_ARGS, decisionsFirst: true },
+    loopStubs({ "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }));
+  t.check("and fires even when the spec loop is skipped entirely",
+    noSpec.calls.some((c) => /^workflow:/.test(c.label || "") && /pre-spec-loop/.test(c.prompt)));
+}
+
 t.section("B6f. the base tier is a workflow argument, independent of the session");
 {
   // The session's model and effort are deliberately NOT inherited: a loop that
@@ -1267,6 +1292,52 @@ t.section("B18a2. a shard the merge could not match is reported to the operator"
     "*:round-boundary": BOUNDARY({ strayShards: 0, strayShardNames: "" }),
   }));
   t.check("a clean boundary is silent about strays", !logs.some((l) => /merge pattern/.test(l)));
+}
+
+t.section("B6i. skipBootstrap drops the backfill and the conventions pass, not the migration");
+{
+  const off = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  t.check("by default the backfill runs", matching(off.calls, "bootstrap").length === 1);
+  t.check("and so does the conventions pass", matching(off.calls, "conventions").length === 1);
+
+  const on = await runWorkflow(WF, { ...REVIEW_ARGS, skipBootstrap: true }, loopStubs());
+  t.check("with skipBootstrap neither runs", matching(on.calls, "bootstrap").length === 0 &&
+    matching(on.calls, "conventions").length === 0,
+    matching(on.calls, "bootstrap").length + "/" + matching(on.calls, "conventions").length);
+  t.check("and both are reported rather than silently absent",
+    on.logs.filter((l) => /skipBootstrap is set/.test(l)).length === 2,
+    on.logs.filter((l) => /skipBootstrap/.test(l)).join(" | "));
+  t.check("the review still runs", matching(on.calls, "r1:review:").length > 0,
+    String(matching(on.calls, "r1:review:").length));
+
+  // The migration is NOT skippable: a legacy proposal has no files to review, so
+  // skipping it would review a layout that does not exist.
+  const legacy = await runWorkflow(WF, { ...REVIEW_ARGS, skipBootstrap: true },
+    loopStubs({ "workflow:*migrate-proposal*": { status: "migrated", dir: "proposals/0081_fix_x" } }));
+  t.check("a legacy proposal is still migrated",
+    legacy.calls.some((c) => /migrate-proposal/.test(c.label || "")) ||
+      !legacy.logs.some((l) => /Legacy single-file/.test(l)),
+    legacy.calls.filter((c) => /migrate/.test(c.label || "")).map((c) => c.label).join(","));
+}
+
+t.section("B6h. the staged change files never reference an open decision");
+{
+  // The staged files say what an implementor builds. A question nobody has
+  // answered is not something to build, and a reader of the staged text should
+  // not have to go and find out how one was settled.
+  const F = { title: "T1", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" };
+  const { calls } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1));
+  const fixers = calls.filter((c) => /:fix(:|$)/.test(c.label || ""));
+  t.check("a fixer runs in this fixture", fixers.length > 0, String(fixers.length));
+  t.check(
+    "every fixer is told not to reference an open decision in the staged files",
+    fixers.every((c) => /NEVER REFERENCE AN OPEN DECISION IN THE STAGED CHANGE FILES/.test(c.prompt)),
+    fixers.filter((c) => !/NEVER REFERENCE AN OPEN DECISION/.test(c.prompt)).map((c) => c.label).join(","),
+  );
+  t.check(
+    "and told what to write instead",
+    fixers.every((c) => /becomes a requirement in its own terms with no trace of the question/.test(c.prompt)),
+  );
 }
 
 t.section("B18b. the round boundary is one exact command and nothing else");

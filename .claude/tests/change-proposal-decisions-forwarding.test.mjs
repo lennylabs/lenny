@@ -183,4 +183,36 @@ t.check(
   t.check("every declared argument is read by the child", orphans.length === 0, orphans.join(", "));
 }
 
+// The trigger is the other half of the seam. The parent names the site it fired
+// from and the child validates that name against its own list, throwing before
+// it spawns anything if the name is unknown. `pre-spec-loop` was added to the
+// parent and not to the child: every firing threw, the parent caught it,
+// recorded a failed firing, and ran on as though the phase had found nothing.
+// Neither behavioural suite could see it, because the parent's stubs the child's
+// return and the child's own tests only ever pass triggers the child knows.
+t.section("F2. every trigger the parent can fire is one the child accepts");
+{
+  const parent = loadWorkflow(WF);
+  const child = loadWorkflow(CHILD);
+
+  const sent = [...parent.matchAll(/fireDecisionsPhase\("([a-z-]+)"\)/g)].map((m) => m[1]);
+  t.check("the parent fires from more than one site", sent.length > 1, sent.join(", "));
+
+  const listed = child.slice(child.indexOf("const TRIGGERS = ["));
+  const accepted = [...listed.slice(0, listed.indexOf("]")).matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  t.check("the child declares its accepted triggers", accepted.length > 0, accepted.join(", "));
+
+  const unknown = [...new Set(sent)].filter((tr) => !accepted.includes(tr));
+  t.check(
+    "every trigger the parent sends is one the child accepts",
+    unknown.length === 0,
+    unknown.join(", ") || "none",
+  );
+
+  // The reverse is a weaker signal but still worth naming: a trigger the child
+  // accepts and no site sends is a name that will never appear in a log.
+  const unused = accepted.filter((tr) => tr !== "unspecified" && !sent.includes(tr));
+  t.check("and the child accepts no trigger no site sends", unused.length === 0, unused.join(", ") || "none");
+}
+
 t.done();

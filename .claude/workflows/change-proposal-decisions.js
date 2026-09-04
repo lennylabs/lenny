@@ -72,6 +72,13 @@ const runTag =
 // A caller that names no site gets "unspecified", which names none: picking one
 // of the real sites as a default would put a false one in the log.
 const TRIGGERS = [
+  // Before the spec review rather than after it, when the caller sets
+  // decisionsFirst. It was added to the parent without being added here, and the
+  // child rejected its own argument before spawning anything: the parent caught
+  // the throw, recorded a failed firing, and ran the spec loop as if the phase
+  // had simply found nothing. The harness could not catch it because it stubs
+  // the subworkflow's RETURN and never executes the child.
+  "pre-spec-loop",
   "post-spec-loop",
   "post-non-spec-loop",
   "post-spec-recheck",

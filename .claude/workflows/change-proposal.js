@@ -83,6 +83,12 @@ const maxNonSpecReviewRounds =
 // reviews staging the phase has already reconciled. Off by default: the ordinary
 // run adjudicates what the spec loop leaves behind.
 const decisionsFirst = !!input.decisionsFirst;
+// Skip the backfill and the conventions pass. Both are one-shot repairs of a
+// proposal's own files, and a proposal a recent run already took through them
+// pays for two agents that find nothing. The MIGRATION is not skippable: a
+// legacy single-file proposal has no files for the loops to review, so skipping
+// it would review a layout that does not exist.
+const skipBootstrap = !!input.skipBootstrap;
 const periodEvery = input.periodEvery || 3;
 const maxPeriodicFirings = input.maxPeriodicFirings || 5;
 // How many times a spec/non-spec recheck pair may alternate, and how many times
@@ -404,6 +410,9 @@ const ARG_CLASS = {
   // launch: it decides where the first firing goes, which is fixed before the
   // run starts and meaningless to change once the spec loop is behind it.
   decisionsFirst: "launch",
+  // launch: both passes it governs run once, before anything else, so flipping
+  // it mid-run could only ever be read after the work it skips is behind.
+  skipBootstrap: "launch",
   periodEvery: "forward",
   maxPeriodicFirings: "forward",
   maxRecheckPairs: "forward",
@@ -1696,6 +1705,9 @@ if (mode !== "new") {
     log("Migrated; reviewing " + P.dir);
   }
 
+  if (skipBootstrap) {
+    log("skipBootstrap is set; the backfill pass does NOT run");
+  } else
   await robustAgent(
     "Fill in whatever a change proposal's files are missing, deriving everything from what the document " +
       "already says.\n\n" +
@@ -1736,7 +1748,9 @@ if (mode !== "new") {
 
 // ---- Conventions pass (shared, one-shot, outside the error loop) ----
 
-if (runsPhase("conventions")) {
+if (skipBootstrap) {
+  log("skipBootstrap is set; the conventions pass does NOT run");
+} else if (runsPhase("conventions")) {
 phase("Conventions");
 await robustAgent(
   "Check a proposal's files against the written conventions and fix only violations.\n\n" +
