@@ -18,7 +18,7 @@ This skill produces a reviewed proposal under `proposals/` and converges it agai
 ```
 proposals/NNNN_kind_slug/
   NNNN_kind_slug.problem-statement.md         what is wrong, and the evidence
-  NNNN_kind_slug.summary.md                   what changes, goals, non-goals, fixed decisions,
+  NNNN_kind_slug.summary.md                   what changes, goals, non-goals, decisions,
                                               watch-outs, and the deliverable index
   NNNN_kind_slug.status.md                    typed frontmatter: Draft, Reviewed, Approved, Implemented
   NNNN_kind_slug.implementation-checklist.md  the one execution sequence
@@ -64,7 +64,7 @@ The spec staging converges first, alone. Then the non-spec staging converges, wi
 
 **Between them is a reconciliation.** One pass rebuilds the deliverable index and writes the checklist's spec-lane steps as the leading block, and it discharges the `DEFERRED` entries the spec loop recorded: it applies the ones that are repairs to text already written, filing a `CORRECTS` for each, and carries forward as an `OPEN` any that would require authoring a staged change no non-spec lens has read. That is the one place the pass changes what the proposal says, and only to apply a correction the spec loop already derived. Before it existed, those corrections accumulated for four and a half hours on a measured run as an errata list in the summary promising fixes that no lane owned. That is why the spec loop's lenses are told drift in the checklist and the index is expected there and is not a finding: it is scheduled, not overlooked. It runs **whether or not the spec loop converged**, because a loop that exhausted its budget has more unreconciled consequences than one that converged, and it is told which case it is in so it reconciles to the current text rather than guessing where open findings will land.
 
-**The spec loop runs a smaller pool.** It drops the `test-coverage` lens (`open-decisions` runs in both, because a decision staged in the spec half is still a decision), since the tests a change needs are staged in the non-spec half, so spec convergence certifies nothing about test coverage.
+**The spec loop runs a smaller pool.** It drops the `test-coverage` lens, since the tests a change needs are staged in the non-spec half, so spec convergence certifies nothing about test coverage.
 
 **The reconciliation does not run after an introspection stop.** A `halt` or `reframe` ends the run where it stands and nothing is reconciled.
 
@@ -76,107 +76,169 @@ Each loop keeps its own rounds, retired set, sweeps, and convergence, because a 
 
 Convergence is unchanged: a lens that finds nothing retires, a full sweep of the pool runs when every lens has retired, and a clean complete sweep converges. `operational` and `fresh` were once a second pool with their own schedule, one rotating in per round. That is a second mechanism for the job retirement already does, and the worse of the two, because it withheld a lens on a round number rather than on evidence. It also produced a lens that had never run, which cannot retire, which blocks the sweep, so a clean proposal spent a whole round discharging one lens: a measured run went thirteen lenses, then `fresh` alone, then a fourteen-lens sweep. The singleton round costs a snapshot, a dedup, the verifiers and a boundary whatever it contains. A round now **closes before it may certify**, because a round whose bookkeeping did not complete left its log unmerged and the next round without a snapshot.
 
-### Open decisions
+### The open-decisions-and-impact-review phase
 
-One lens owns every decision the proposal has not closed, and it is the only lens permitted to file on a
-section recording decisions for the human reviewer. Every other lens leaves those sections alone, which is
-what stops a dozen reviewers re-litigating one decision every round. The review bar is built per lens for
-this one clause, so each lens reads a single rule stated positively about a section that either is or is
-not its own. A shared string carrying an "unless your lens is X" carve-out would make every other lens
-read an exception that does not apply to it and make the one lens that needs it read the prohibition
-first, and both are self-identification steps that can fail. The cost of that immunity, before this
-lens existed, was that a decision parked in the open-decisions section could go stale, be answered
-elsewhere, or ask the wrong question, and nothing in the loop was allowed to notice.
+Resolving an open decision is different work from fixing a gap. A gap is a defect: the proposal is wrong,
+incomplete, or contradicts itself, and repairing it makes a false thing true. An open decision is a question
+the proposal deliberately left unanswered, so answering it is an act of authoring and produces text that did
+not exist before. The review loop is built for repair end to end. A lens files a defect claim, the
+materiality skeptic asks whether leaving it unfixed would make the applied spec inconsistent, a citation
+false, or the described implementation not work, and an entry in the open-decisions section stages no spec
+edit, no code, and no test, so its wording cannot make any of those wrong. On a measured run the skeptics
+refused most of what the retired `open-decisions` lens filed, and they were right to: the repair gate admits
+a resolution only where the resolution happens also to be a defect, and that band is chosen by coincidence
+rather than by the decision's importance. So the lens is gone and this phase owns the work, with a gate and
+a write path of its own.
 
-**An open decision is the whole of its subject.** A decision the proposal records as settled is not the
-lens's, and it may not re-open one, re-argue it, or file a finding that it was decided wrongly. That covers
-the settled-decisions section, a non-goal recorded with its reason, and a historical pass record. Those are
-the record of work already done, and the argument for reopening one always reads well, because once a
-decision closed nobody kept writing down the counter-argument. The one exception is cascade: when an answer
-available to an open decision would falsify a settled one, that goes in the open decision's own `cascades`
-field, naming which answer falsifies what. It never becomes a decision of its own, since nobody is asking
-whether the settled decision was right; the cascade is part of what an answer costs.
+**It is a subworkflow**, at `.claude/workflows/change-proposal-decisions.js`, invoked by path from the
+review workflow. One invocation is one firing, and each firing runs every sub-task.
 
-Decisions live in four places and the lens inventories all four before judging any: the open-decisions
-section, a detailed-design item still stated as a choice rather than a constraint, an `IMPLEMENTOR'S CHOICE:`
-marker, and an unclosed `OPEN` in the review log. The last is the one that leaks, because the human never
-reads the review log. A decision that appears in one of these and is settled elsewhere counts as open, since
-the proposal disagrees with itself about whether it is decided; resolving it means deleting the open
-statement and citing the settled one.
+**The collectors are separate briefs.** One brief over every population would ask its question of all of
+them, and the question that fits a decision left to the human is the wrong one to ask of a bounded
+implementor blank. Sub-task 1 collects every decision the proposal leaves to a human, including any left in
+a staged change file's retired `## Open decisions for review` section, and decides for each whether it is
+really the human's or whether the workflow can answer it; three independent agents run it, because it is the
+widest judgment in the phase, and an item reaches `resolve` only when all three resolve it to the same
+answer. Sub-task 2 collects every `IMPLEMENTOR'S CHOICE:` marker and every unbounded blank, and specifies
+one only where leaving it to the implementor is a clear risk or an obviously wrong path; the default is to
+leave it alone, because the escape hatch exists so a proposal does not grow hair. Sub-task 3 collects every
+defect the proposal calls out as out of scope and asks whether that is the right call, defaulting to yes,
+and stages a fix where it is not. Sub-task 4 sweeps `proposals/` for impacts, under the rule that a draft
+may be invalidated freely, a recently reviewed proposal warrants care, and an implemented one is already in
+the tree; the corpus inventory it reads is gathered by one cheap agent at the phase's first firing, carried
+on the phase state, and reused by every later firing, with a legacy single-file proposal's last commit date
+declared as such where `proposal-status.mjs` carries no review date.
+Sub-task 5 is the gate, sub-task 6 the write path, sub-task 7 the summary cleanup, and sub-task 8 a
+read-only check of factual accuracy and format conformance.
 
-**It elaborates before it determines.** The lens works in four steps and may not form a determination before
-the last: inventory every decision without judging any, elaborate one at a time by opening the primary
-sources and quoting the load-bearing sentence, interrogate by writing the questions a skeptical reviewer
-would ask about the ground rather than the choice and answering each from a file opened in the pass, and
-only then determine. At least one question per decision must be one whose answer would kill the answer the
-agent is drifting toward, and a question that cannot be answered is a result rather than a gap: it is
-either the fact that would reverse the decision or the reason the decision is the human's.
+**Falsification and Apply are one agent per item.** A single agent reading a dozen dispositions gives each
+one a fraction of its attention and returns a verdict that answers to the batch rather than to the item; a
+falsifier holding one item can open every file that item touches. The fan-out pays twice: each Apply
+produces its own diff, which is what detecting a reversal per item rests on, and an agent that dies takes
+one item with it rather than the batch. Falsifiers run in parallel. **Apply agents run sequentially**,
+because they edit the same files and concurrent edits to one markdown file lose writes, and each after the
+first is told what the earlier ones in that firing wrote.
 
-The third step is the one that earns the lens its cost. On a measured run the output was produced without
-it, from five agents' summaries of the evidence rather than the evidence, and a single follow-up question
-from a human reversed the recommendation on the spot. The human supplied no decision and nothing new beyond
-one document finally read in full.
+**The gate is falsification rather than defect review.** The question about an authoring act is whether the
+judgment is sound, which is what a falsification panel asks, and the brief differs by disposition following
+the introspection panels. The defaults are asymmetric and are drawn from the two gates the workflow already
+runs. A disposition that creates text nothing else reviews takes the defect gate's posture and needs
+affirmative support, so an uncertain verdict refutes it. A disposition that leaves the proposal as it stands
+takes the falsification panel's posture and stands unless its falsifier refutes it conclusively. The tally
+is script-side: if Apply decided what survived, the gate would not be a gate.
 
-Because prompt text alone did not hold on this workflow before, the lens also has its own output schema,
-which is the only enforcement here that is checked at the tool-call layer and retried on mismatch. Each
-decision carries required fields for the quoted ground, the questions asked and answered, the case for and
-against written at their best, the one fact that would flip it, and whether choosing differently changes
-anything downstream. A schema field can still be back-filled to justify a conclusion already reached, which
-is why the procedure states an order of work and the fields are its receipts. Neither half is sufficient
-alone.
+**A refuted disposition is set aside rather than replaced.** The phase invents no substitute. A refuted
+`resolve` leaves the decision open and its entry stays listed for the human, a refuted `human` names no
+replacement and carries the refutation against it, and a refuted `implementor` leaves the blank as the
+proposal wrote it. Each item's record carries the refutation, so a later firing sees that the ground was
+contested without re-arguing it.
 
-**The test, in order.** Resolve it when the answer is derivable from the tree, the spec, a landed proposal,
-or the proposal's own staged text, citing where; this is the outcome to reach for, because a decision
-parked for a human that the repository already answers costs a review cycle and teaches the reviewer the
-list is noise. Leave it to the implementor when the choice is local, reversible, and has no consequence in
-another section. Give it to the human only when it trades two goods the proposal cannot rank, changes what
-the proposal is, commits the platform to a contract no evidence settles, decides another proposal's fate or
-is decided by one, or accepts a named residual cost. A decision passes to the human only if a person could
-answer it in one sitting without reading the whole proposal; one that fails that is restated until it
-passes, or resolved.
+**A reversal is not re-argued.** Before a later firing adjudicates anything it checks each applied item
+against the tree. Where the review loop reverted or overwrote what the phase wrote, the item is marked
+CONTESTED, recorded with both positions, and routed to the human. It is never re-applied and never
+re-adjudicated, which is the whole of the loop-prevention rule. Reopening an item because its text changed
+is what would make the phase insist. An item nothing has touched carries its earlier disposition forward,
+and an item whose entry the loop reworded matches its record through the stable identifier and carries
+forward too.
 
-**The blank is protected.** A properly marked `IMPLEMENTOR'S CHOICE:` exists so a proposal does not grow
-hair, and this lens gets no new licence over it. The bar's existing rule is unchanged and is the whole of
-what any lens may file: a marker with no constraint, a blank over something the format bars from
-delegation, and an unmarked gap. Moving a decision off the human's list into a properly bounded blank is a
-good outcome the lens is told to recommend, and over-specification stays a defect.
+**What it may edit** is `spec-changes.md`, `non-spec-changes.md`, and the summary, plus the review log,
+where it records what it wrote and files the `DEFERRED` entries the cleanup relocates, and
+`.problem-statement.md`, where it may correct a falsehood and may not restate what the problem is. It
+authors into the staged change files because that is where a resolution belongs and because the review that
+follows certifies it. The implementation checklist and every file outside the proposal are out of bounds.
+Under `lockSpecChanges` the spec staging is closed, and a resolution needing it is recorded for the operator
+with the edit it would have made rather than staged.
 
-**The lens owns `## Open decisions` and reconciles it every round.** That section is a required part of the
-summary and is the proposal's live answer to what is still undecided, rather than a list written once. The
-lens looks for five drifts and files each as a finding: a decision living only in the review log or a
-staged-changes bullet, where the human never sees it; an entry a later round answered; an entry whose
-citation or quoted text has drifted; an entry asking a question the proposal does not face or asking it in
-a form nobody could answer in one sitting; and an entry about a deliverable the proposal no longer stages.
-Each decision carries what the lens did to its entry, so maintenance is recorded rather than assumed. Each entry states the question so it can be answered without reading the
-proposal, the recommendation, the ground with citations, the alternatives and why each lost, what deciding
-otherwise costs, a confidence, and where the decision came from. A decision resolved after being carried
-there is withdrawn in place with its reason rather than deleted, because a list that quietly loses an entry
-teaches its next reader the entry was answered. The reconciliation pass between the loops carries the spec
-loop's routed decisions into that section, since the spec loop can route a decision to a human but the
-human does not read the log it routes to.
+**Change detection comes from git rather than from the agents.** The workflow commits the proposal directory
+before each firing, and the firing reads `git status --porcelain` and a diff around each Apply under that
+same pathspec. An Apply that claims a resolution landed while its diff is empty is recorded as a failed
+item. The same evidence is what a later firing compares against to detect a reversal.
 
-**It reads sideways, and asks whether the cross-proposal effect is a decision at all.** No other lens reads
-`proposals/`. When a staged change bears on another proposal, the first question is whether choosing
-differently would change that effect. If every available answer affects it identically, the effect is
-already settled by a deliverable nobody is questioning, so the output is a row in the impact section rather
-than a question. That distinction is not academic: the first decision this lens was designed against was
-routed to a human on the ground that it decided another proposal's fate, and it did not. The proposal's
-central deliverable decided that, under every answer to the question being asked.
+**Where it fires.** Every review loop is followed by a firing: the spec loop, the non-spec loop, and every
+recheck of either lane. That is why there is no condition asking whether any decision changed, since the
+answer is always to look, and carrying an untouched item's disposition forward is what keeps an empty firing
+cheap. The firing after the spec loop sits before the non-spec loop starts and runs on the paths where the
+spec loop never ran and on the paths where the non-spec loop does not run, so a run that stops early is
+still adjudicated once. A periodic firing runs inside the non-spec loop as well, at the round boundary every
+`periodEvery` rounds, so decisions are adjudicated as they accumulate rather than in one batch at the end.
+Its cadence counts firings rather than rounds, a round that exits on introspection is covered by the
+post-loop firing instead, and no periodic firing runs inside a recheck. It is the only trigger whose count
+is open-ended and the only one with a budget of its own, `maxPeriodicFirings`: exhausting it stops the
+periodic trigger for the rest of the run, is reported in the result object, and leaves every post-loop
+firing running. **All firings are full firings.**
 
-When the choice does change the outcome, the status decides who answers. An `Implemented` proposal is in
-the tree and is unaffected. A `Draft` may be invalidated freely and is recorded rather than asked about. A
-`Reviewed` or `Approved` proposal last reviewed within fourteen days goes to the human, because convergence
-and human attention were recently spent on it; an older one is recorded with the note that it may have
-drifted anyway. The status comes from `.claude/tools/proposal-status.mjs --json`, which carries the review
-and approval dates for a folder-layout proposal. A legacy single-file proposal has none, so the fallback is
-the file's last commit date, declared as such, because that is when someone last touched the file rather
-than when it was reviewed.
+### Rechecks, and when the run may converge
 
-`## Impact on other proposals` is a required part of the summary and is the only place the proposal asserts
-anything about another proposal's continued validity. Non-goals states what this proposal will not do and
-Dependencies states what it applies after, and neither may restate an impact. One proposal carrying two
-claims about another is how they come to contradict each other: 0076 said both that whichever landed second
-would rebase and that it was independent of 0075, and neither was true.
+The run may converge only when no lane's staging has changed since that lane's own last review. A firing is
+what can change a lane's staging after its review, and a recheck is what reviews it again. Every line the
+phase writes into `spec-changes.md` is therefore read by a spec-scoped review and every line it writes into
+`non-spec-changes.md` by a non-spec-scoped one, under that lane's own `editable` and `scopeNote`.
+
+Each trigger is a content hash taken by the script rather than a claim from an agent. The spec hash covers
+`spec-changes.md` and is taken at each spec-scoped convergence; the non-spec hash covers
+`non-spec-changes.md` and the summary and is taken at each non-spec-scoped one. Both are re-taken at every
+convergence, because a baseline held from the first one would read a recheck's own edits as drift and fire
+against them forever. On a run whose spec loop never ran, the spec baseline is taken immediately before the
+first firing, which is the last point that lane was settled.
+
+A post-convergence spec edit runs a **recheck pair**: a `spec-recheck` and then a `non-spec-recheck`, each
+carrying its lane's pool, `editable`, and `scopeNote` unchanged, on `maxRecheckRounds`, with a firing after
+each. The pair is not symmetry for its own sake. A spec edit can falsify non-spec text whether or not the
+spec fixer touched that file, and the spec fixer may repair such a statement directly, so the result is
+non-spec text no non-spec lens has read, which is the outcome the fixer's own rule exists to prevent. The
+trigger is any post-convergence spec edit rather than the phase's alone, since the non-spec fixer holds the
+same permission. When the non-spec hash has moved and the spec hash has not, a **lone `non-spec-recheck`**
+runs with no `spec-recheck` in front of it. When both have moved, the pair runs and no lone recheck is
+taken, because the pair's `non-spec-recheck` already reads that text. Each recheck's scope note names the
+delta since that lane's last convergence as its lenses' focus while they still read the whole staging: the
+pool does not shrink and the attention narrows. Under `lockSpecChanges` no post-convergence spec edit
+happens, so no pair runs.
+
+A pair can beget a pair, because `non-spec-recheck` keeps the permission to edit `spec-changes.md` and such
+an edit lands after `spec-recheck` converged. Nothing in the mechanism makes the exchange shrink, so budgets
+bound it: `maxRecheckPairs` bounds the pair and `maxNonSpecRechecks` the lone recheck, counted separately
+because a firing follows every recheck and a lone recheck can beget a pair exactly as a pair can.
+Exhausting either is a reported stop condition, naming the lane, its files, the outstanding edit, the last
+firing that wrote, and what to raise, in the same posture the run takes for `spec-not-converged`: the run
+stops taking rechecks, does not converge, and returns status `recheck-budget-exhausted`. In the ordinary
+case no recheck runs at all.
+
+### The summary the phase leaves behind
+
+`summary.md` carries these sections, in this order, and nothing else:
+
+```
+# Summary: <title>
+## Summary                        a container that carries no prose of its own, holding:
+      **Problem statement.**      what the change repairs, without the evidence, the citations, or the
+                                  refuted premises, which stay in the problem statement file
+      **What changes.**           one bullet per top-level change, each naming the surface it lands on
+      **Decisions.**              the decisions an implementor must not revisit, one line each
+      **Watch out for.**          the traps
+## Goals
+## Non-goals
+## Open decisions for human to make
+## Defects in the shipped tree that this proposal does not stage
+## Impacts on other proposals
+## Deliverable index
+```
+
+Each entry under `## Open decisions for human to make` states the question so it can be answered without
+reading the proposal, the recommendation, the ground, the alternatives and why each lost, what deciding
+otherwise costs, and a confidence. It also carries a stable identifier, stamped when the entry is first
+written and preserved by every later edit of that entry, which is what a later firing matches an item to its
+record through. **A resolved or withdrawn decision leaves the summary**, and its record is returned in
+`decisionsResolved` rather than parked in the file: a section that keeps answered entries teaches its reader
+the list is noise. `## Impacts on other proposals` is the only place the proposal asserts anything about
+another proposal's continued validity, which is why it is a section rather than a labelled part.
+`## Deliverable index` stays last and the phase leaves it exactly as it stands, since the reconciliation
+pass between the loops owns it.
+
+The cleanup pass runs after Apply, because what belongs in each section depends on what Apply resolved, and
+it relocates rather than deletes: a block of confirmed shipped-tree defects is promoted to its own section,
+prose about other proposals merges into the impacts section, and corrections the proposal owes to files its
+loop could not edit become `DEFERRED` entries in the review log. A summary carrying `**Fixed decisions.**`
+is renamed in place.
 
 ### Verification
 
@@ -276,6 +338,11 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `maxSpecReviewRounds` | forward | 15 | budget for the spec loop |
 | `maxNonSpecReviewRounds` | forward | 15 | budget for the non-spec loop; it wins over `maxReviewRounds`, which applies only when this is unset |
 | `maxReviewRounds` | forward | none | a fallback budget for the non-spec loop, used only when `maxNonSpecReviewRounds` is absent |
+| `periodEvery` | forward | 3 | rounds between periodic firings of the open-decisions phase, counted at the non-spec loop's round boundary |
+| `maxPeriodicFirings` | forward | 5 | the periodic firing's own budget; exhausting it is reported and stops that trigger alone, leaving every post-loop firing running |
+| `maxRecheckPairs` | forward | 2 | how many `spec-recheck` plus `non-spec-recheck` pairs may run; exhausting it stops the run with the outstanding spec edit unreviewed |
+| `maxNonSpecRechecks` | forward | 2 | how many lone `non-spec-recheck` loops may run, under the same reported stop |
+| `maxRecheckRounds` | forward | 5 | round budget for each recheck loop, held apart from the two loop budgets above |
 | `skipSpecReview`, `skipNonSpecReview` | launch | false | a skipped loop certifies nothing about its half, echoed in the result |
 | `lockSpecChanges` | forward | false | the non-spec loop may never edit the spec staging; such a finding becomes an open decision |
 | `allowNonSpecOnUnconvergedSpec` | forward | false | runs the non-spec loop even when the spec loop exhausted its budget; otherwise the run stops at `spec-not-converged` |
@@ -308,7 +375,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. `introspect` reaches only the gate by prefix fallback; the introspection pass itself takes no injected text. To add text to every review lens use `lensPrompt`, which is a standalone argument rather than a `prompts` key. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
-Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `open-decisions`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
+Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
 
 ### Starting partway through
 
@@ -414,9 +481,10 @@ Agents do NOT inherit the session's model or effort: the tier is `baseModel` and
 
 1. Run `git status --porcelain` and confirm the only changes are inside the proposal directory, plus the reference retargeting if a migration ran. Restore anything else and report the violation.
 2. Report the path, the title, what validation refuted, what the challenge dropped, whether each loop converged, the rounds, and the findings fixed. Report `review.loops[].specTouched` when the non-spec loop edited the spec staging.
-3. A run the introspection pass stopped returns status `stopped-halt` or `stopped-reframe`; report it as stopped with its findings open rather than as reviewed.
-4. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
-5. Do not apply any staged edit, and do not commit unless asked.
+3. Report `decisionsResolved` and `decisionsLeftToHuman`. The first names each decision the run closed, with its disposition, its citation, and the authority that resolved or withdrew it, because a withdrawal citing a falsification panel and one citing nobody render identically in the file. The second is what the human still has to answer. `decisions.rechecks` and `rechecks.stop` say whether a recheck ran and whether a budget stopped the run with a lane's staging unreviewed.
+4. A run the introspection pass stopped returns status `stopped-halt` or `stopped-reframe`; report it as stopped with its findings open rather than as reviewed.
+5. On convergence the status is `Reviewed`. The next step is sign-off, which a human records as `Approved`, after which `implement-proposal` runs the sequence.
+6. Do not apply any staged edit. This workflow does commit: it commits the proposal directory before each firing of the open-decisions-and-impact-review phase, because that phase reads the tree to tell what it changed rather than taking its agents' word for it. Commit nothing else unless asked.
 
 ## Maintenance
 

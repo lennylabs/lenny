@@ -25,6 +25,31 @@
     "blocks": []
   },
   {
+    "label": "hash:spec:first-firing",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
+    "phase": "",
+    "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "hash:spec:after-first-firing",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
     "label": "snap:r1-start",
     "phase": "",
     "model": "haiku",
@@ -203,21 +228,6 @@
     "phase": "non-spec R1: review",
     "model": "opus",
     "schema": "coverage+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
-    "label": "r1:review:open-decisions",
-    "phase": "non-spec R1: review",
-    "model": "opus",
-    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
@@ -567,21 +577,6 @@
     ]
   },
   {
-    "label": "r3:review:open-decisions",
-    "phase": "non-spec R3: review",
-    "model": "opus",
-    "schema": "coverage+decisions+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
     "label": "r3:review:operational",
     "phase": "non-spec R3: review",
     "model": "opus",
@@ -621,6 +616,40 @@
     ]
   },
   {
+    "label": "hash:non-spec:non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
+    "phase": "",
+    "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "hash:spec:after-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:non-spec:after-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
     "label": "verify-checklist",
     "phase": "Review",
     "model": "sonnet",
@@ -645,6 +674,15 @@
     "schema": "",
     "blocks": [
       "file-ownership"
+    ]
+  },
+  {
+    "label": "log:unclosed-markers",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
     ]
   }
 ]

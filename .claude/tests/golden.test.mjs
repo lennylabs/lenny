@@ -41,6 +41,14 @@ const BLOCKS = [
   ["one-command", /Run exactly (this command|these two commands)/],
   ["scoping", /ONLY the tiers this fix warrants/],
   ["caller-prompt", /ADDITIONAL INSTRUCTION FROM THE CALLER/],
+  // The open-decisions phase's own three. It writes the review log directly
+  // rather than through a shard, it commits under one pathspec before it
+  // writes, and its mechanical readers are given an exact command list, so
+  // each is the same class of invariant as the entries above and none of them
+  // is matched by one.
+  ["log-write", /WHERE IN THE LOG YOUR BLOCK GOES/],
+  ["pathspec-scope", /THE PATHSPEC IS THE WHOLE SCOPE/],
+  ["commands", /Run these commands in|Run this in /],
 ];
 
 function digest(calls) {
@@ -62,6 +70,12 @@ const CASES = [
     args: { mode: "review", proposalPath: "proposals/0081_fix_x", date: "d", exemplar: "e.md", repoRoot: "/repo", maxSpecReviewRounds: 4, maxNonSpecReviewRounds: 4 },
     stubs: {
       bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" }, "snap*": "DONE",
+      // The lane content hashes the recheck trigger compares. A stub that
+      // answers with no digest reads as "unreadable", which resolves toward
+      // reviewing and makes every stubbed run spend its whole recheck budget;
+      // one steady digest is the ordinary case, where no lane moves after its
+      // own review and no recheck runs.
+      "hash:*": "0123456789ab",
       "*:review:*": { coverage: "c", findings: [] },
       "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/s","overrides":{}}',
       "spec-nonspec-handoff": "ok", "introspect*": null, growth: { documentWas: 1, documentNow: 1, grew: [] },
@@ -79,16 +93,98 @@ const CASES = [
       const F = { title: "T1", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" };
       return {
         bootstrap: "SKIPPED", conventions: "ok", "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" }, "snap*": "DONE",
+        "hash:*": "0123456789ab",
         "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: [F] } : { coverage: "c", findings: [] }),
         "*:dedup": { findings: [{ ...F, lenses: ["citations"] }] },
         "*:verify-material": { confirmed: true, reason: "m" },
         "*:verify-evidence": { confirmed: true, reason: "e" },
+        "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
         "*:fix-plan": { groups: [{ id: "G1", title: "g", rationale: "r", findings: [0], order: 1 }], notes: "" },
         "*:fix-design:*": { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" } }], groupNote: "", newMechanisms: [] },
-        "*:fix": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [] },
+        "*:fix:*": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [] },
         "*:post-fix-review": { findings: [] },
         "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunks":1,"snapshot":"/s","overrides":{}}',
         "introspect*": null, growth: { documentWas: 1, documentNow: 1, grew: [] }, default: {},
+      };
+    })(),
+  },
+  {
+    // The open-decisions-and-impact-review phase, which the two cases above
+    // never reach: the parent stubs this subworkflow's return, so nothing in
+    // its body runs there. The prompts it alone carries are the phase's own
+    // editable constant, the six falsification briefs, and the five Apply
+    // briefs, and a constraint dropped from any of them is invisible to every
+    // other layer. One item per disposition puts each of those briefs in the
+    // digest, and one of them reaches Apply.
+    name: "change-proposal-decisions",
+    wf: ".claude/workflows/change-proposal-decisions.js",
+    args: {
+      proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "d", runTag: "g",
+      firing: 2, trigger: "post-non-spec-loop", rejected: [],
+      // One applied record, in the shape the child's own return writes it, so
+      // the reversal check runs. Its identifier matches nothing this firing
+      // collects, so no item is carried forward and every one of them reaches
+      // the gate and the write path.
+      phaseState: {
+        firings: 1, periodicFirings: 0,
+        itemRecords: {
+          "id:OD-9": {
+            id: "id:OD-9", subTask: "human-decisions", question: "an earlier firing's question",
+            disposition: "resolve", gate: "stands", falsification: null, firing: 1,
+            applyStatus: "applied", wrote: "the answer firing 1 staged",
+            where: ["summary.md — ## Summary"], contested: null, unmatchedAt: [], lastSeen: 1,
+          },
+        },
+      },
+      lockSpecChanges: false, maxPeriodicFirings: 5,
+    },
+    stubs: (() => {
+      const E = (over) => ({
+        id: "", decision: "which timeout does the adapter use?", home: "summary-open-decisions",
+        deliverable: "SPEC-1", marker: "", groundQuotes: ['spec/04_gateway.md:12 — "it retries once"'],
+        questionsAsked: ["Q: what does the lease section say / A: it retries once (spec/04_gateway.md)"],
+        caseFor: "f", caseAgainst: "a", whatWouldFlipIt: "w", counterfactual: "c", cascades: [],
+        disposition: "human", recommendation: "r", summaryAction: "added", ...over,
+      });
+      const found = (...decisions) => ({ coverage: "swept the whole population", decisions });
+      const stands = { falsified: false, howConclusive: "none", theDispositionIAttacked: "d", reasoning: "r", evidence: [] };
+      // The Apply stage derives each item's own diff from the cumulative
+      // readings around it, so a stub answering every reading identically
+      // reports every Apply as empty and nothing is applied.
+      let n = 0;
+      const growing = () => {
+        n++;
+        return { files: Array.from({ length: n }, (_, i) => ({ path: "wrote" + i + ".md", added: 3, removed: 1 })), outsideProposal: [] };
+      };
+      return {
+        "*:commit": { outcome: "committed", sha: "c0ffee1", error: "", outsideProposal: [] },
+        "*:delta:firing": { files: [], outsideProposal: [] },
+        "*:delta:apply:*": growing,
+        "*:corpus": { proposals: [] },
+        "*:reversal-check": { items: [{ id: "id:OD-9", state: "present", nowCarries: "" }] },
+        // One item per disposition, so every falsification brief and every
+        // Apply brief is exercised. `implementor` is the one that needs no
+        // Apply, which is what its own row of the disposition table says.
+        "*:human-decisions:*": found(
+          E({ id: "OD-1", disposition: "resolve", answer: "thirty seconds, as the chart already sets", summaryAction: "withdrawn" }),
+          E({ id: "OD-2", decision: "does this proposal widen to the CLI?", disposition: "human" }),
+        ),
+        "*:implementor-blanks": found(E({
+          home: "implementor-blank", deliverable: "CODE-3", marker: "IMPLEMENTOR'S CHOICE: the retry jitter",
+          decision: "how much jitter?", disposition: "implementor", summaryAction: "not-applicable",
+        })),
+        "*:out-of-scope-defects": found(
+          E({ home: "out-of-scope-defect", deliverable: "CODE-4", marker: "out of scope: the drain race", decision: "does this proposal fix the drain race?", disposition: "out-of-scope-stands" }),
+          E({ home: "out-of-scope-defect", deliverable: "CODE-5", marker: "out of scope: the lease leak", decision: "does this proposal fix the lease leak?", disposition: "out-of-scope-wrong" }),
+        ),
+        "*:other-proposals": found(E({
+          home: "other-proposal", deliverable: "0074", marker: "proposals/0074_x", decision: "does this staging invalidate 0074?", disposition: "impact-row",
+        })),
+        "*:falsify:*": stands,
+        "*:apply:*": { outcome: "edited", wrote: "the text this item staged", where: ["summary.md — ## Open decisions for human to make"] },
+        "*:cleanup": { outcome: "rewritten", sections: [], relocated: [] },
+        "*:verify": { conforms: true, sections: [], defects: [] },
+        default: {},
       };
     })(),
   },

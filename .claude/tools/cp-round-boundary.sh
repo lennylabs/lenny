@@ -21,6 +21,8 @@
 # Prints one JSON object on stdout, on one line, and nothing else:
 #   {
 #     "merged": <shards folded into the review log>,
+#     "strayShards": <files in the shard dir the merge glob cannot match>,
+#     "strayShardNames": "<up to three of them, comma separated>",
 #     "ledgerLines": <lines under ## Ledger>,
 #     "compactionDue": true|false,
 #     "hunksKnown": true|false,   whether "hunks" had a baseline to compare against
@@ -295,6 +297,28 @@ if [ -d "$SHARDS" ] && [ -f "$LOG" ]; then
   done
 fi
 
+# Anything still in the shard directory did not match this loop's glob and never
+# will: the merge selects by "$LOOP.*.md", so a shard an agent named outside that
+# convention is invisible to every round, is never merged, and is never reported.
+# That has happened, and the agent's whole findings block was lost in silence.
+# Count them and name the first few, so a stray shard surfaces as a number the
+# caller can see instead of a file nobody looks at.
+stray=0
+stray_names=""
+if [ -d "$SHARDS" ]; then
+  for f in $(find "$SHARDS" -maxdepth 1 -type f -name '*.md' 2>/dev/null | sort); do
+    b=$(basename "$f")
+    case "$b" in
+      # The recheck lanes are numbered from the second pair on -- `spec-recheck-2`,
+      # `non-spec-recheck-2` -- so the prefixes are globbed. A lane name missing
+      # here reports a legitimate shard as stray, which is the opposite failure.
+      spec.*.md|non-spec.*.md|spec-recheck*.*.md|non-spec-recheck*.*.md|pre.*.md) continue ;;
+    esac
+    stray=$((stray + 1))
+    [ "$stray" -le 3 ] && stray_names="${stray_names}${stray_names:+,}${b}"
+  done
+fi
+
 # ---- 2. Sizes, for the compaction trigger --------------------------------
 #
 # The trigger is on the STANDING CONTEXT, not the ledger. Every agent is told to
@@ -497,5 +521,5 @@ if [ -f "$OV_FILE" ]; then
   fi
 fi
 
-printf '{"merged":%d,"ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"drained":%d,"evacuated":%d,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
-  "$merged" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$drained" "$evacuated" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"
+printf '{"merged":%d,"strayShards":%d,"strayShardNames":"%s","ledgerLines":%d,"standingLines":%d,"ledgerGrowth":%d,"compactionDue":%s,"hunksKnown":%s,"drained":%d,"evacuated":%d,"standingTarget":%d,"standingTrigger":%d,"targetRaises":%d,"targetRaisedNow":%s,"changedFiles":%s,"hunks":%d,"snapshot":"%s","overrides":%s}\n' \
+  "$merged" "$stray" "$(json_escape "$stray_names")" "$ledger_lines" "$standing_lines" "$growth" "$compaction_due" "$hunks_known" "$drained" "$evacuated" "$target" "$trigger" "$raises" "$raised_now" "$changed" "$hunks" "$(json_escape "$NEXT")" "$OVERRIDES"

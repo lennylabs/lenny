@@ -199,21 +199,6 @@
     ]
   },
   {
-    "label": "r1:review:open-decisions",
-    "phase": "spec R1: review",
-    "model": "opus",
-    "schema": "coverage+decisions+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
     "label": "r1:review:operational",
     "phase": "spec R1: review",
     "model": "opus",
@@ -427,21 +412,6 @@
     ]
   },
   {
-    "label": "r2:review:open-decisions",
-    "phase": "spec R2: review",
-    "model": "opus",
-    "schema": "coverage+decisions+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
     "label": "r2:review:operational",
     "phase": "spec R2: review",
     "model": "opus",
@@ -481,12 +451,37 @@
     ]
   },
   {
+    "label": "hash:spec:spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
     "label": "spec-nonspec-handoff",
     "phase": "Review",
     "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
+    ]
+  },
+  {
+    "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
+    "phase": "",
+    "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "hash:spec:after-first-firing",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
     ]
   },
   {
@@ -668,21 +663,6 @@
     "phase": "non-spec R1: review",
     "model": "opus",
     "schema": "coverage+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
-    "label": "r1:review:open-decisions",
-    "phase": "non-spec R1: review",
-    "model": "opus",
-    "schema": "coverage+decisions+findings",
     "blocks": [
       "read-only",
       "log-shard",
@@ -922,21 +902,6 @@
     ]
   },
   {
-    "label": "r2:review:open-decisions",
-    "phase": "non-spec R2: review",
-    "model": "opus",
-    "schema": "coverage+decisions+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "cache",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
     "label": "r2:review:operational",
     "phase": "non-spec R2: review",
     "model": "opus",
@@ -976,6 +941,40 @@
     ]
   },
   {
+    "label": "hash:non-spec:non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
+    "phase": "",
+    "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "hash:spec:after-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:non-spec:after-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
     "label": "verify-checklist",
     "phase": "Review",
     "model": "sonnet",
@@ -1000,6 +999,15 @@
     "schema": "",
     "blocks": [
       "file-ownership"
+    ]
+  },
+  {
+    "label": "log:unclosed-markers",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
     ]
   }
 ]

@@ -248,6 +248,33 @@ check "and its file is byte-identical" "$before" "$(md5sum < "$SPECF")"
 rm -f "$ARCH2"
 fresh_log
 
+echo; echo "T10d. a shard named outside the merge convention is counted and named, not lost"
+# The merge selects by "$LOOP.*.md". A shard an agent named anything else is
+# invisible to EVERY round, is never merged, and used to be reported nowhere at
+# all, so a whole findings block vanished in silence.
+printf -- '### [spec.1.ok.1]\n- FACT: merged fine\n' > "$REPO/scratchpad/cp-log/$TAG/spec.1.ok.md"
+printf -- '### [verify.x.1]\n- FACT: invented path\n' > "$REPO/scratchpad/cp-log/$TAG/verify.open-decisions.SPEC-2.md"
+OUT="$(run spec 20)"
+contains "the conforming shard still merges" "$OUT" '"merged":1'
+contains "the stray one is counted" "$OUT" '"strayShards":1'
+contains "and named, so it can be found" "$OUT" 'verify.open-decisions.SPEC-2.md'
+check "the stray file is NOT deleted" "yes" \
+  "$([ -f "$REPO/scratchpad/cp-log/$TAG/verify.open-decisions.SPEC-2.md" ] && echo yes || echo no)"
+check "its content is not in the log" "0" \
+  "$(grep -c 'invented path' "$LOG" || true)"
+rm -f "$REPO/scratchpad/cp-log/$TAG/verify.open-decisions.SPEC-2.md"
+
+echo; echo "T10e. every convention-conforming loop name is recognised, including the rechecks"
+# The ordinals matter: recheckName() numbers the second pair onward, so a run at
+# the shipped maxRecheckPairs of 2 creates spec-recheck-2 and non-spec-recheck-2.
+for L in spec non-spec spec-recheck non-spec-recheck spec-recheck-2 non-spec-recheck-2 spec-recheck-3; do
+  printf -- "### [$L.1.z.1]\n- FACT: $L\n" > "$REPO/scratchpad/cp-log/$TAG/$L.1.z.md"
+done
+OUT="$(run spec 21)"
+contains "a spec shard merges and no lane is called stray" "$OUT" '"strayShards":0'
+rm -f "$REPO/scratchpad/cp-log/$TAG"/*.md
+fresh_log
+
 echo; echo "T11l. the ledger drains to a SEPARATE archive file after a pass, and only then"
 STATEDIR="$REPO/scratchpad/cp-state/$TAG"
 ARCH="$DIR/0099_fix_t.review-log-archive.md"

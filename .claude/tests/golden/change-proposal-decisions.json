@@ -1,0 +1,297 @@
+[
+  {
+    "label": "f2:reversal-check",
+    "phase": "Collect",
+    "model": "haiku",
+    "schema": "items",
+    "blocks": []
+  },
+  {
+    "label": "f2:corpus",
+    "phase": "Collect",
+    "model": "haiku",
+    "schema": "proposals",
+    "blocks": [
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:human-decisions:1",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:human-decisions:2",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:human-decisions:3",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:implementor-blanks",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:out-of-scope-defects",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:other-proposals",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:falsify:0",
+    "phase": "Falsify",
+    "model": "opus",
+    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:falsify:1",
+    "phase": "Falsify",
+    "model": "opus",
+    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:falsify:2",
+    "phase": "Falsify",
+    "model": "opus",
+    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:falsify:3",
+    "phase": "Falsify",
+    "model": "opus",
+    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:falsify:4",
+    "phase": "Falsify",
+    "model": "opus",
+    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:falsify:5",
+    "phase": "Falsify",
+    "model": "opus",
+    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:commit",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "error+outcome+outsideProposal+sha",
+    "blocks": [
+      "pathspec-scope",
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:apply:0",
+    "phase": "Apply",
+    "model": "opus",
+    "schema": "note+outcome+where+wrote",
+    "blocks": [
+      "file-ownership",
+      "log-shard",
+      "evidence",
+      "log-write"
+    ]
+  },
+  {
+    "label": "f2:delta:apply:0",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "files+outsideProposal",
+    "blocks": [
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:apply:1",
+    "phase": "Apply",
+    "model": "opus",
+    "schema": "note+outcome+where+wrote",
+    "blocks": [
+      "file-ownership",
+      "log-shard",
+      "evidence",
+      "log-write"
+    ]
+  },
+  {
+    "label": "f2:delta:apply:1",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "files+outsideProposal",
+    "blocks": [
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:apply:2",
+    "phase": "Apply",
+    "model": "opus",
+    "schema": "note+outcome+where+wrote",
+    "blocks": [
+      "file-ownership",
+      "log-shard",
+      "evidence",
+      "log-write"
+    ]
+  },
+  {
+    "label": "f2:delta:apply:2",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "files+outsideProposal",
+    "blocks": [
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:apply:3",
+    "phase": "Apply",
+    "model": "opus",
+    "schema": "note+outcome+where+wrote",
+    "blocks": [
+      "file-ownership",
+      "log-shard",
+      "evidence",
+      "log-write"
+    ]
+  },
+  {
+    "label": "f2:delta:apply:3",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "files+outsideProposal",
+    "blocks": [
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:apply:4",
+    "phase": "Apply",
+    "model": "opus",
+    "schema": "note+outcome+where+wrote",
+    "blocks": [
+      "file-ownership",
+      "log-shard",
+      "evidence",
+      "log-write"
+    ]
+  },
+  {
+    "label": "f2:delta:apply:4",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "files+outsideProposal",
+    "blocks": [
+      "commands"
+    ]
+  },
+  {
+    "label": "f2:cleanup",
+    "phase": "Cleanup",
+    "model": "opus",
+    "schema": "note+outcome+relocated+sections",
+    "blocks": [
+      "file-ownership",
+      "log-shard",
+      "evidence",
+      "log-write"
+    ]
+  },
+  {
+    "label": "f2:verify",
+    "phase": "Verify",
+    "model": "opus",
+    "schema": "conforms+defects+note+sections",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:delta:firing",
+    "phase": "Apply",
+    "model": "haiku",
+    "schema": "files+outsideProposal",
+    "blocks": [
+      "commands"
+    ]
+  }
+]

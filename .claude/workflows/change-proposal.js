@@ -65,11 +65,36 @@ const context = input.context || "none provided";
 const maxSpecReviewRounds = input.maxSpecReviewRounds || 15;
 const maxNonSpecReviewRounds =
   input.maxNonSpecReviewRounds || input.maxReviewRounds || 15;
+// The open-decisions-and-impact-review phase's own budgets. The phase is a
+// subworkflow fired after every review loop, every periodEvery rounds inside
+// the non-spec loop, and after each recheck.
+//
+// The periodic firing is the only one whose count is open-ended, so it is the
+// only one that takes a count of its own. Every post-loop firing is structural,
+// one per loop, and the number of loops is bounded by the recheck budgets. A
+// single budget spanning both would be worse than none, because the periodic
+// trigger would consume it on a long run and starve the firing that matters
+// most: with periodEvery at 3 and a loop running nine rounds, a shared cap of 3
+// blocks the last firing exactly on the runs where decisions have accumulated
+// most.
+const periodEvery = input.periodEvery || 3;
+const maxPeriodicFirings = input.maxPeriodicFirings || 5;
+// How many times a spec/non-spec recheck pair may alternate, and how many times
+// the lone non-spec recheck may run. A firing that changes a lane's staging
+// leaves that lane stale, and these bound the re-review that follows.
+const maxRecheckPairs = input.maxRecheckPairs || 2;
+const maxNonSpecRechecks = input.maxNonSpecRechecks || 2;
+// A recheck's own round budget, held apart from the two loop budgets above. A
+// recheck re-reads a lane whose staging is settled apart from one delta, so it
+// converges in fewer rounds than the loop that authored the lane from nothing,
+// and a recheck that needs fifteen rounds is a lane that has come apart rather
+// than one that needs more budget.
+const maxRecheckRounds = input.maxRecheckRounds || 5;
 // When set, the non-spec loop may never edit the staged spec edits: a finding
 // whose only remedy is a spec edit is closed by recording an open decision.
 // Off by default, because a non-spec finding that genuinely needs a small spec
 // correction is better fixed than escalated.
-const lockSpecChanges = !!input.lockSpecChanges;
+let lockSpecChanges = !!input.lockSpecChanges;
 // The only cap on the fix split. More groups is more focus and more agents;
 // fewer is cheaper and regresses more. Group SIZE is uncapped by design.
 let maxFixGroups = input.maxFixGroups || 7;
@@ -321,12 +346,13 @@ function promptFor(key) {
   );
 }
 
-// READ_ONLY has to permit ONE write, or every reviewing agent carries two
-// incompatible instructions: "do not create, edit, or delete any file" and
-// "append your entries to the review log". Which one it follows is not
-// something to leave to chance, so the exception is stated in the constant.
-// The shard path is per-agent because a dozen lenses appending to one file in
-// parallel lose writes; the round-boundary script folds them in afterwards.
+// A reviewing agent that also writes a log shard carries two instructions that
+// look incompatible: "do not create, edit, or delete any file" and "append your
+// entries to the review log". Which one it follows is not something to leave to
+// chance, so the exception is stated in the constant -- but only in the variant
+// used where a shard is actually named. The shard path is per-agent because a
+// dozen lenses appending to one file in parallel lose writes; the round-boundary
+// script folds them in afterwards.
 // ---- Argument classification ---------------------------------------------
 //
 // Every argument is FORWARD, ANCHORED, or LAUNCH, and which one decides how a
@@ -369,6 +395,11 @@ const ARG_CLASS = {
   maxReviewRounds: "forward",
   maxSpecReviewRounds: "forward",
   maxNonSpecReviewRounds: "forward",
+  periodEvery: "forward",
+  maxPeriodicFirings: "forward",
+  maxRecheckPairs: "forward",
+  maxNonSpecRechecks: "forward",
+  maxRecheckRounds: "forward",
   skipSpecReview: "launch",
   skipNonSpecReview: "launch",
   lockSpecChanges: "forward",
@@ -399,8 +430,19 @@ const ARG_CLASS = {
 };
 
 const READ_ONLY =
+  "You are a read-only investigator. Do not create, edit, or delete any file. " +
+  "Cite evidence as file:line.";
+
+// The shard exception belongs with the prompt that NAMES the shard. Stating it
+// unconditionally told a dozen agents they had "your own log shard, named below"
+// when nothing below named one, and an agent that took the offer invented a path.
+// A shard named outside the merge convention is invisible to the round boundary
+// forever, so the whole block was lost in silence. Use this variant only where a
+// logBlock() follows.
+const READ_ONLY_LOGGED =
   "You are a read-only investigator. Do not create, edit, or delete any file " +
-  "EXCEPT your own log shard, named below, which you append to before you return. " +
+  "EXCEPT the one log shard named below, at exactly the path given, which you append to before you " +
+  "return. Do not invent a shard path: a file named anything else is never merged and is lost. " +
   "Cite evidence as file:line.";
 
 // What every agent is told about the review log: read the curated part, write
@@ -515,12 +557,20 @@ const PREMISE_VERDICT = {
 // format reaches every agent that reads or writes it.
 const FORMAT_SUMMARY =
   'A "## Summary" section, unnumbered, immediately after the staging boilerplate and before "## 0." or "## 1.". ' +
-  "It is the section every implementor agent reads first and the only one all of them read, so it orients rather than argues. It is also the file the HUMAN reviewer reads, which is why the open decisions live here rather than at the end of the staged changes. Four labelled parts:\n" +
-  '  **What changes.** Three to six bullets, one per top-level change, each naming the surface it lands on.\n' +
-  '  **Fixed decisions.** The decisions an implementor must not revisit, one line each. This is distinct from the Decisions section, which says why a decision was taken; this says which are closed.\n' +
-  '  **Watch out for.** The traps: a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, a prior attempt that failed and why.\n' +
-  '  **Open decisions.** Every decision still open for the human reviewer, each stating the question so it can be answered without reading the proposal, the recommendation, the ground, the alternatives and why each lost, what deciding otherwise costs, and a confidence. A decision resolved after being carried here is withdrawn in place with its reason rather than deleted. This part is written by the review loops rather than at drafting time, so it starts empty and says so.\n' +
-  '  **Impact on other proposals.** One row per proposal this change bears on: its id, its status, what this change does to it, and what it must do about it. This is the ONLY place the proposal asserts anything about another proposal\'s continued validity. Non-goals states what this proposal will not do and Dependencies states what it applies after; neither may restate an impact, because one proposal carrying two claims about another is how they come to contradict each other.\n';
+  "It is the section every implementor agent reads first and the only one all of them read, so it orients rather than argues. It is also the file the HUMAN reviewer reads, which is why the open decisions live here rather than at the end of the staged changes.\n" +
+  "The summary carries these headings, in this order, and nothing else:\n" +
+  "  `# Summary: <title>`\n" +
+  "  `## Summary` — a container that carries no prose of its own, holding these labelled parts in order:\n" +
+  "    **Problem statement.** What the change repairs, without the evidence, the citations, or the refuted premises, which stay in the problem statement file.\n" +
+  "    **What changes.** Three to six bullets, one per top-level change, each naming the surface it lands on.\n" +
+  "    **Decisions.** The decisions an implementor must not revisit, one line each. The proposal's own numbered decisions section says why a decision was taken; this part says which are closed.\n" +
+  "    **Watch out for.** The traps: a surface that looks safe to change and is not, an ordering that matters, a test that will mislead, a prior attempt that failed and why.\n" +
+  "  `## Goals`\n" +
+  "  `## Non-goals`\n" +
+  "  `## Open decisions for human to make` — every decision still open for the human reviewer, each stating the question so it can be answered without reading the proposal, the recommendation, the ground, the alternatives and why each lost, what deciding otherwise costs, and a confidence. Each entry also carries a stable identifier, stamped when the entry is first written and preserved by every later edit of that entry. This section is written by the review loops rather than at drafting time, so it starts empty and says so.\n" +
+  "  `## Defects in the shipped tree that this proposal does not stage` — one entry per defect this proposal confirms in the shipped tree and deliberately leaves unstaged, saying what it is and why it stays out of scope. It holds no decisions.\n" +
+  "  `## Impacts on other proposals` — one row per proposal this change bears on: its id, its status, what this change does to it, and what it must do about it. This is the ONLY place the proposal asserts anything about another proposal's continued validity. Non-goals states what this proposal will not do and Dependencies states what it applies after; neither may restate an impact, because one proposal carrying two claims about another is how they come to contradict each other.\n" +
+  "  `## Deliverable index` — one line per staged deliverable, `SPEC-1 — <file it lands in> — <one line>`. It is the ONLY place a deliverable id resolves, and the checklist and both change files cite it, so every id used anywhere appears here exactly once.\n";
 
 const FORMAT_CHECKLIST =
   'An "## Implementation checklist" section, unnumbered, immediately after the Summary. It is the implementation sequence, ' +
@@ -686,70 +736,6 @@ const REVIEW_FINDINGS = {
       description:
         "Before listing findings: name the proposal sections you examined under this lens, and anything your lens covers that you could NOT verify and why. If you are returning an empty findings list, this is the evidence that the list is empty because the proposal is clean rather than because you stopped early.",
     },
-    findings: FINDINGS.properties.findings,
-  },
-};
-
-// The open-decisions lens returns its findings like every other lens, and a
-// structured elaboration beside them. The elaboration is not decoration: a
-// schema field is validated at the tool-call layer and the model retries on a
-// mismatch, which is the only enforcement in this workflow that actually bites.
-//
-// It exists because prompt text alone did not hold. On a measured run this
-// lens's output was produced from five agents' summaries of the evidence rather
-// than the evidence, and one follow-up question from a human -- "elaborate on
-// this one" -- reversed the recommendation on the spot, with no decision from
-// the human and nothing new beyond one document finally read in full.
-//
-// A schema field can still be back-filled to justify a conclusion already
-// reached, which is why the prompt states the procedure as an ORDER OF WORK and
-// these fields are its receipts. Neither half is sufficient alone.
-// The open-decisions lens returns its findings like every other lens, and a
-// structured elaboration beside them. The elaboration is the receipt for the
-// procedure in the lens prompt: a schema field is validated at the tool-call
-// layer and the model retries on a mismatch, which is the only enforcement in
-// this workflow that actually bites.
-//
-// IT IS DELIBERATELY SMALL, and the field descriptions live in the prompt
-// instead. The first version carried 22 descriptions totalling 2.5k characters
-// over nested objects, and the API refused every call it was attached to:
-// "output schema too large to classify safely". The lens failed 12 times across
-// 3 rounds, never ran, never retired, and so blocked the sweep for a whole run.
-// A schema that cannot be sent enforces nothing, so structure that earns its
-// size stays and prose moves to the prompt. groundQuotes and questionsAsked are
-// arrays of strings rather than of objects for the same reason; the prompt fixes
-// their format, and what the schema still enforces is that they are PRESENT and
-// non-empty, which is the forcing function that matters.
-const DECISION_ENTRY = {
-  type: "object",
-  required: [
-    "decision", "home", "groundQuotes", "questionsAsked", "caseFor", "caseAgainst",
-    "whatWouldFlipIt", "counterfactual", "cascades", "disposition", "recommendation",
-    "summaryAction",
-  ],
-  properties: {
-    decision: { type: "string" },
-    home: { type: "string", enum: ["open-decisions-section", "design-item", "implementor-blank", "review-log-open"] },
-    groundQuotes: { type: "array", minItems: 1, items: { type: "string" } },
-    questionsAsked: { type: "array", minItems: 1, items: { type: "string" } },
-    caseFor: { type: "string" },
-    caseAgainst: { type: "string" },
-    whatWouldFlipIt: { type: "string" },
-    counterfactual: { type: "string" },
-    cascades: { type: "array", items: { type: "string" } },
-    disposition: { type: "string", enum: ["resolve", "implementor", "human"] },
-    recommendation: { type: "string" },
-    summaryAction: { type: "string", enum: ["added", "updated", "withdrawn", "unchanged", "not-applicable"] },
-    affectsProposals: { type: "array", items: { type: "string" } },
-  },
-};
-
-const OPEN_DECISIONS_FINDINGS = {
-  type: "object",
-  required: ["coverage", "decisions", "findings"],
-  properties: {
-    coverage: REVIEW_FINDINGS.properties.coverage,
-    decisions: { type: "array", items: DECISION_ENTRY },
     findings: FINDINGS.properties.findings,
   },
 };
@@ -1336,8 +1322,11 @@ if (mode === "new") {
         ? "   Under `## Evidence`, place these citations the caller gathered, each marked `unverified` " +
           "because nothing has checked them yet:\n---\n" + context + "\n---\n\n"
         : "") +
-      "2. " + P.summary + " — `# Summary: <title>` then `## What changes`, `## Goals`, `## Non-goals`, " +
-      "`## Fixed decisions`, `## Watch out for`, `## Deliverable index`. All empty.\n\n" +
+      "2. " + P.summary + " — `# Summary: <title>`, then `## Summary` holding the labelled parts " +
+      "`**Problem statement.**`, `**What changes.**`, `**Decisions.**`, `**Watch out for.**`, then " +
+      "`## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped " +
+      "tree that this proposal does not stage`, `## Impacts on other proposals`, `## Deliverable " +
+      "index`. All empty.\n\n" +
       "3. " + P.status + " — frontmatter and nothing else:\n" +
       "```\n---\nproposal: " + P.stem + "\ntitle: <the title>\nkind: " + seedKind + "\nstatus: Draft\n" +
       "drafted-date: " + date + "\ndrafted-by: change-proposal\nreviewed-date: \nreviewed-by: \n" +
@@ -1347,7 +1336,7 @@ if (mode === "new") {
       "`## Edge cases and accepted failure modes`, `## Staged edits`, `## Spec files touched`. All empty.\n\n" +
       "6. " + P.nonSpec + " — `# Non-spec changes — <title>` then `## Design (implementation-facing)`, " +
       "`## Staged code changes`, `## Staged schema, chart, and migration changes`, `## Staged docs changes`, " +
-      "`## Testing`, `## Edge cases and accepted failure modes`, `## Open decisions for review`, " +
+      "`## Testing`, `## Edge cases and accepted failure modes`, " +
       "`## Files touched on application (non-spec)`. All empty.\n\n" +
       "7. " + P.log + " — `# Review log — " + P.stem + "` then `## Standing context`, `## Ledger`, " +
       "and nothing else. All empty. There is no Retired section: aged entries move " +
@@ -1614,11 +1603,7 @@ if (mode === "new") {
       JSON.stringify(droppedChanges, null, 2) +
       "\n\nDate: " + date + "\n\n" +
       "WHAT GOES WHERE.\n\n" +
-      P.summary + " — " + FORMAT_SUMMARY +
-      "  Plus `## Goals` and `## Non-goals`, and `## Deliverable index`: one line per staged deliverable, " +
-      "`SPEC-1 — <file it lands in> — <one line>`. The index is the ONLY place a deliverable id resolves, " +
-      "and the checklist and both change files cite it, so every id you use anywhere must appear here " +
-      "exactly once.\n\n" +
+      P.summary + " — " + FORMAT_SUMMARY + "\n" +
       P.spec + " — the staged SPEC edits and nothing else. Under `## Design (as the spec must state it)`, " +
       "the mechanism as the specification must state it. Under `## Staged edits`, one `### SPEC-n · " +
       "spec/<file> § <section>` per edit, each with an anchor instruction (\"Append after …\", \"Replace the " +
@@ -1631,8 +1616,7 @@ if (mode === "new") {
       "insightful tests to add during implementation: one per behaviour the proposal changes, mapped to the " +
       "tiers the change reaches per .claude/rules/test-coverage.md, each covering the non-happy path it " +
       "needs (empty, error, concurrent, boundary, and spec-named-failure) and carrying a `// spec:` tie. A " +
-      'vague "add tests" note is not a Testing section. Under `## Open decisions for review`, only ' +
-      "decisions that genuinely belong to the human reviewer.\n\n" +
+      'vague "add tests" note is not a Testing section.\n\n' +
       P.checklist + " — " + FORMAT_CHECKLIST +
       "  One lane per step: a step names deliverables of ONE lane only, because the lane selects which " +
       "handler the implementation pipeline runs and a step with two has none. The standard pattern is every " +
@@ -1705,14 +1689,12 @@ if (mode !== "new") {
       "If all of them have content, change NOTHING and reply SKIPPED.\n\n" +
       "For each that is empty or absent, derive it.\n\n" +
       P.summary + " — " + FORMAT_SUMMARY +
-      "  Plus `## Goals`, `## Non-goals`, and `## Deliverable index`. Its top-level changes are the staged " +
-      "deliverables grouped by what they accomplish rather than listed one by one. Its fixed decisions are " +
-      "the proposal's own decisions reduced to the line an implementor needs, stripped of the reasoning. " +
-      "Its watch-outs come from the recorded limits, the open questions, the accepted failure modes, and " +
-      "the review history: a trap the loop already fell into is exactly what an implementor needs warning " +
-      "about. The deliverable index lists every staged deliverable id with the file it lands in and one " +
-      "line; if the document uses no ids, assign them now (SPEC-1, CODE-1, TEST-1) and use the same ids " +
-      "everywhere.\n\n" +
+      "  Its top-level changes are the staged deliverables grouped by what they accomplish rather than " +
+      "listed one by one. Its decisions are the proposal's own decisions reduced to the line an " +
+      "implementor needs, stripped of the reasoning. Its watch-outs come from the recorded limits, the " +
+      "open questions, the accepted failure modes, and the review history: a trap the loop already fell " +
+      "into is exactly what an implementor needs warning about. If the document uses no deliverable ids, " +
+      "assign them now (SPEC-1, CODE-1, TEST-1) and use the same ids everywhere.\n\n" +
       P.checklist + " — " + FORMAT_CHECKLIST +
       "  Derive it from the staged deliverables and the dependencies the document states between them. Read " +
       "the staged changes and the files-touched list together: a deliverable that edits a file another " +
@@ -1774,21 +1756,20 @@ const CONTEXT =
   "\n" +
   EVIDENCE;
 
-// The open-decisions clause is the one part of the bar that differs by lens, so
-// the bar is built per lens rather than shared verbatim.
+// Every lens reads the same bar. The clause about the sections recording
+// deliberately open decisions no longer differs by lens, because whether a
+// decision should be open at all is settled outside the review loop, so the
+// clause states both halves of what any lens may do with a decision entry.
 //
-// The first version of this shaped the difference as an exception inside one
-// shared string: "...are not findings, UNLESS your lens is `open-decisions`."
-// That makes every one of the other lenses read a carve-out that does not apply
-// to them, and makes the single lens that needs it read the prohibition first
-// and then notice it is exempt. Both are self-identification steps, and a
-// self-identification step is a thing that can simply fail. Each lens now reads
-// one rule, stated positively, about a section that either is or is not its own.
-const DECISIONS_NOT_YOURS =
-  "Sections recording deliberately open decisions for the human reviewer are not findings. Another lens owns them.";
-const DECISIONS_YOURS =
-  "Sections recording deliberately open decisions for the human reviewer ARE YOURS. You are the only lens that may file on them, so a decision that has gone stale, that the repository already answers, or that asks the wrong question is yours to catch or nobody's.";
-const barFor = (lensKey) =>
+// The bar was built per lens while one lens owned those sections and the rest
+// were told another lens did. Shaping that difference as an exception inside
+// one shared string ("...are not findings, UNLESS your lens is X") was tried
+// first and rejected: it makes every one of the other lenses read a carve-out
+// that does not apply to them, and makes the single lens that needs it read the
+// prohibition first and then notice it is exempt. Both are self-identification
+// steps, and a self-identification step is a thing that can simply fail. With
+// the clause uniform, no lens has to identify itself at all.
+const barFor = () =>
   "REPORT ONLY REAL ERRORS. A finding qualifies only if at least one of these holds:\n" +
   "(a) A citation in the proposal is false: the cited file, line, or section does not say what the proposal claims, or the proposal attributes behavior to the wrong component.\n" +
   "(b) The proposal assigns an actor an action it cannot perform: it violates the section 4.6.3 ownership table or RBAC, the section 13.2 egress posture, the section 10.3 zero-RBAC agent-pod posture, admission-webhook in-process purity, process boundaries between deployment models, or spec/18 build-phase ordering.\n" +
@@ -1796,17 +1777,17 @@ const barFor = (lensKey) =>
   "(d) The proposal misses an edit site: a spec/, docs/, schemas/, or charts/ surface that would become wrong after the proposed edits are applied and that is absent from the proposal's edit lists. Editing a generated artifact instead of its authoring source counts.\n" +
   "(e) A described mechanism cannot work: race conditions, bypassable mandatory gates, unreachable trigger states, wrong defaults, mismatched granularity, predicate drift between sections, or ordering problems.\n" +
   "(f) The proposal changes behavior but does not list the tests that behavior requires: the Testing section is absent, omits a tier the change plainly reaches, names no concrete test for a behavior the proposal changes, or lists only a happy-path test where the change introduces an error, concurrent, boundary, security or fail-closed, or spec-named-failure path (see .claude/rules/test-coverage.md). A proposal must list the specific, insightful, relevant new tests to add during implementation.\n\n" +
-  "A PROPERLY MARKED BLANK IS NOT A FINDING. A proposal may delegate a detail to the implementor with an explicit \"IMPLEMENTOR'S CHOICE:\" marker that names what is open AND the constraint any answer must satisfy. Do not report such a marker as an underspecified target, a missing edit site, or an unresolvable anchor: it is the format working as intended. Three things about a blank ARE findings, and you should report them. A marker with no constraint, because that delegates without bounding. A blank over something the format bars from delegation, which is a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering another step depends on, a name appearing in more than one place, or anything a test must assert. And a gap that is left unmarked, which is the ordinary underspecified-target finding and is unaffected by this rule.\n\n" +
+  "A PROPERLY MARKED BLANK IS NOT A FINDING. A proposal may delegate a detail to the implementor with an explicit \"IMPLEMENTOR'S CHOICE:\" marker that names what is open AND the constraint any answer must satisfy. Do not report such a marker as an underspecified target, a missing edit site, or an unresolvable anchor: it is the format working as intended. Three things about a blank ARE findings, and you should report them. A marker with no constraint, because that delegates without bounding. A blank over something the format bars from delegation, which is a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering another step depends on, a name appearing in more than one place, or anything a test must assert. And a gap that is left unmarked, which is the ordinary underspecified-target finding and is unaffected by this rule. The symmetry holds in the other direction as well: over-specification is itself a defect, so a finding that would convert a bounded blank into specified text needs to clear the same bar as any other finding.\n\n" +
   "DO NOT report: style or wording, documentation polish, optional improvements, additional nice-to-have tests beyond the coverage the change requires, hypothetical hardening, redundancy, preferences between workable designs, or anything whose absence does not make the applied spec or implementation wrong. If you are unsure whether something meets the bar, do not report it. An empty findings list is a fully acceptable answer and is the expected answer for a converged proposal.\n\n" +
   'The proposal\'s "Resolved in adversarial review" section is a historical record of earlier passes; its descriptions of earlier drafts are not findings. ' +
-  (lensKey === "open-decisions" ? DECISIONS_YOURS : DECISIONS_NOT_YOURS) +
+  "Sections recording deliberately open decisions for the human reviewer are settled outside this review. Whether a decision should be open at all, and how an open decision is framed, are not yours to file on. A false citation inside a decision entry is a finding exactly as anywhere else, under (a) and on the same evidence." +
   "\n\n" +
   "Every finding MUST carry evidence: exact file paths with line numbers and short quotes for both the proposal's claim and the contradicting source. Read the files to verify line numbers; never cite from memory.\n\n" +
   "BE EXHAUSTIVE IN THIS ONE PASS. Report every finding that meets the bar now, in this single response. This loop retires a lens once it returns nothing, so your lens may not run again before the proposal is certified: a finding you hold back is not caught by a later pass of your own lens, and it costs an entire extra round for every other reviewer. Before returning, walk the proposal section by section and ask, for each section, whether your lens has anything on it; do not stop at the first finding or at the most severe one, and do not withhold a substantiated finding because the proposal reads as polished elsewhere or because you have already reported several. There is no cap on how many findings you may return.\n\n" +
   "Exhaustiveness does NOT relax the bar. Each finding still costs two verification agents, and one that fails verification wastes them and pollutes the refuted list, so a speculative finding is worse than no finding. The target is: everything that meets the bar, nothing that does not.";
 
-// The redesign reviewers run three fixed judges, none of them `open-decisions`.
-const BAR = barFor(null);
+// The redesign reviewers run three fixed judges over the same bar every lens reads.
+const BAR = barFor();
 
 const LENSES = [
   {
@@ -1885,144 +1866,6 @@ const LENSES = [
   {
     key: "test-coverage",
     text: "Lens: test coverage. Always run. A proposal must list the specific, insightful, relevant new tests to add during implementation for the behavior it changes, not a vague 'add tests' note. Read the proposal's Testing section against .claude/rules/test-coverage.md and .claude/rules/spec-driven-development.md. For every behavior the staged changes add or change (a new field, default, error code, endpoint, flag, condition, metric, alert, lifecycle step, sequence or ordering rule, security or isolation control, or recovery/failover path), verify the Testing section names a concrete test that pins that behavior, mapped to the tier(s) the change actually reaches: tier 1 pure logic; tier 2 a controller or anything reading or writing the kube-apiserver; tier 3 a wire contract (proto, JSONL, HTTP, CRD schema); tier 4 a multi-service flow; tier 5 a cluster behavior (pod lifecycle, NetworkPolicy, admission, mTLS, drain); tier 7 concurrency, ordering, atomicity, or rate; tier 8 a failure or recovery path; tier 9 auth, isolation, egress, or credential handling; tier 10 a runtime-adapter contract; tier 11 docs, alerts, or runbooks. The listed tests must cover the non-happy-path the spec names (empty, error, concurrent, boundary, and spec-named-failure), not the happy path alone, and each should carry a // spec: tie to the section it exercises. A finding is: no Testing section; a Testing section that omits a tier the change plainly reaches; a behavior the proposal changes with no listed test; a listed test that exercises only the happy path where the change introduces an obvious error, concurrent, boundary, or spec-named-failure path (for a security, isolation, or fail-closed change, no test asserting the deny/fail-closed path; for a recovery, idempotency, or dedup change, no test asserting the replay/crash/failover path); or a Testing section so vague it names no concrete test. Do NOT report additional nice-to-have tests beyond the coverage the changed behavior requires, a preference between equivalent test framings, or an absent coverage percentage. This lens owns test-listing adequacy; do not re-file docs, edit-site, or mechanism findings here.",
-  },
-  {
-    key: "open-decisions",
-    text:
-      "Lens: open decisions. Always run. This lens owns every decision the proposal has not CLOSED, " +
-      "wherever it lives, and it is the ONLY lens permitted to file on a section recording decisions for " +
-      "the human reviewer. It has two goals. Resolve what can be resolved, bound what cannot, and leave " +
-      "the human a short list they can actually answer. And keep the summary's `## Open decisions` " +
-      "section current every round, because that section is the proposal's live answer to what is still " +
-      "undecided and a reviewer signs off from it.\n\n" +
-      "AN OPEN DECISION IS THE WHOLE OF YOUR SUBJECT. A decision the proposal records as SETTLED is not " +
-      "yours. Do not re-open it, do not re-argue it, and do not file a finding that it was decided " +
-      "wrongly, however tempting the argument. That applies to the proposal's settled-decisions section, " +
-      "to a non-goal recorded with its reason, and to a historical pass record of what an earlier round " +
-      "resolved. Those are the record of work already done, and re-litigating them is the failure this " +
-      "scope exists to prevent: a settled decision reopened costs a round, and the argument for reopening " +
-      "it always reads well because nobody wrote down the counter-argument once it was closed.\n" +
-      "  THE ONE EXCEPTION IS CASCADE. When an answer available to an OPEN decision would FALSIFY a " +
-      "settled one, that is not a re-litigation and you must say so. It belongs inside the open " +
-      "decision's own entry, in its `cascades` field, naming the settled decision and which answer " +
-      "falsifies it. It never becomes a decision of its own, because nobody is asking whether the " +
-      "settled decision was right; what is in question is the open one, and the cascade is part of what " +
-      "the answer costs.\n\n" +
-      "WHERE OPEN DECISIONS LIVE. Build the inventory before judging any of it, because the defect this " +
-      "lens exists to catch is a decision recorded in one place and already answered in another. Four " +
-      "homes: the proposal's open-decisions section; a detailed-design item still stated as a choice " +
-      "rather than as a constraint; every `IMPLEMENTOR'S CHOICE:` marker; and every unclosed `OPEN` in " +
-      "the review log's standing context, which is the home the human never reads. A decision that " +
-      "appears in one of these AND is settled elsewhere is open in the sense that matters, because the " +
-      "proposal disagrees with itself about whether it is decided; resolving it means deleting the open " +
-      "statement and citing the settled one.\n\n" +
-      "PROCEDURE. Work in this order, and do not let a determination form before step 4.\n" +
-      "  1. INVENTORY. Sweep all four homes and list every decision the proposal has not closed. Judge " +
-      "none of them yet. A decision you skip here is one no other lens may raise, because every other " +
-      "lens is barred from these sections.\n" +
-      "  2. ELABORATE, one decision at a time. State what is actually being decided, what the proposal " +
-      "says about it, and what the primary sources say. Open them and quote the load-bearing sentence. " +
-      "A summary of a source is not the source, and a citation travels between agents without its " +
-      "context.\n" +
-      "  3. INTERROGATE. Write the questions a skeptical reviewer would ask about the GROUND rather " +
-      "than about the choice: 'what does that document actually argue', never 'which option is " +
-      "better'. At least one must be a question whose answer would KILL the answer you are drifting " +
-      "toward. Then answer each from a file you open in this pass, quoting what you find. A question " +
-      "you cannot answer is a result rather than a gap: it is either the fact that would reverse the " +
-      "decision, or the reason the decision is genuinely the human's, and it is recorded as an " +
-      "`UNVERIFIED` line.\n" +
-      "  4. DETERMINE. Only now apply the test below.\n" +
-      "WHAT EACH FIELD OF `decisions` HOLDS, since the schema states only the shape. `decision`: the " +
-      "question, stated so a person could answer it in one sitting without reading the proposal. " +
-      "`groundQuotes`: one entry per load-bearing sentence, written as `file:line — \"the sentence, " +
-      "verbatim\"`, from sources you opened in this pass. `questionsAsked`: one entry per question, " +
-      "written as `Q: ... / A: ... (file you opened)`, and an answer you could not find says so " +
-      "plainly. `caseFor` and `caseAgainst`: each at its best, written before you chose. " +
-      "`whatWouldFlipIt`: the one fact whose discovery reverses you. `counterfactual`: whether " +
-      "choosing differently changes anything downstream. `cascades`: one entry per settled decision " +
-      "an answer here would falsify, as `the settled decision (where recorded) — falsified by which " +
-      "answer`, empty when none. `summaryAction`: what you did to this decision's entry in the " +
-      "summary, and never `not-applicable` for one the summary already carried, because a carried " +
-      "decision is withdrawn in place rather than deleted. `affectsProposals`: one entry per other " +
-      "proposal, as `id (status, date, where the date came from) — effect — changes with the choice: " +
-      "yes|no`.\n" +
-      "Step 3 is where this lens earns its cost. On a measured run its output was produced without it, " +
-      "and one follow-up question from a human -- nothing more than 'elaborate on this one' -- " +
-      "reversed the recommendation on the spot. The human supplied no decision and no new information. " +
-      "The only thing that changed was that one document was read in full instead of quoted from five " +
-      "agents' summaries of it. Your `decisions` array is the receipt for each step, and a receipt " +
-      "written after the fact is the failure this procedure exists to prevent.\n\n" +
-      "THE TEST (step 4), applied to each decision in this order.\n" +
-      "  RESOLVE IT when the answer is derivable: the tree, the spec, a landed proposal, or the " +
-      "proposal's own staged text fixes it and you can cite where. This is the outcome to reach for. A " +
-      "decision parked for a human that the repository already answers costs a review cycle and teaches " +
-      "the reviewer that the list is noise. File a finding whose fix deletes the decision and states the " +
-      "answer with its citation.\n" +
-      "  LEAVE IT TO THE IMPLEMENTOR when the choice is local, reversible, and has no consequence in " +
-      "another section. Moving a decision off the human's list into a properly bounded " +
-      "`IMPLEMENTOR'S CHOICE:` marker is a GOOD outcome and you should recommend it wherever it fits.\n" +
-      "  GIVE IT TO THE HUMAN only when one of these holds: it trades two goods the proposal cannot rank, " +
-      "such as scope, review burden, or release timing; it changes what the proposal IS, by widening or " +
-      "narrowing the deliverable; it commits the platform to a contract no evidence in the tree settles; " +
-      "it decides another proposal's fate or is decided by one; or it accepts a named residual cost.\n\n" +
-      "THE NEGATIVE TEST. A decision belongs to the human only if a person could answer it in one sitting " +
-      "without reading the whole proposal. One that fails this is not ready to delegate: file a finding " +
-      "whose fix restates it until it passes, or resolves it outright. A question that comes back " +
-      "unanswered has cost a human's attention and bought nothing.\n\n" +
-      "DO NOT DEVALUE THE BLANK. A properly marked `IMPLEMENTOR'S CHOICE:` is the format working as " +
-      "intended. It exists so a proposal does not grow hair, and it is not yours to expand, second-guess, " +
-      "or promote to a human decision because you would have specified it. The bar's existing rule is the " +
-      "whole of your licence here and it is UNCHANGED for you: a marker with no constraint, a blank over " +
-      "something the format bars from delegation, and an unmarked gap are findings, and nothing else " +
-      "about a blank is. Never file a blank as an open decision merely because it is open; being open is " +
-      "what it is for. Over-specification is itself a defect, so a finding that would convert a bounded " +
-      "blank into specified text needs to clear the same bar as any other finding.\n\n" +
-      "YOU OWN `## Open decisions` IN THE SUMMARY, AND YOU RECONCILE IT EVERY ROUND. It is the file a " +
-      "reviewer signs off from, so it is the proposal's live answer to what is still undecided rather " +
-      "than a list somebody wrote once. Every round, bring it back into agreement with what the proposal " +
-      "now says, and set `summaryAction` on each decision to record what you did. Five drifts to look " +
-      "for, and each is a finding when you find it.\n" +
-      "  MISSING. A decision that lives only in the review log, only in a detailed-design bullet, or " +
-      "only in a list at the end of the staged changes. The human never sees those, so the decision is " +
-      "not being made. Add it.\n" +
-      "  RESOLVED SINCE. An entry a later round answered, here or anywhere else in the proposal. " +
-      "Withdraw it IN PLACE with the reason and the citation, never by deleting the entry: a list that " +
-      "quietly loses a line teaches its next reader that the line was answered, and a later round " +
-      "re-derives it. This is the rule the validation consolidator already follows for refuted " +
-      "premises.\n" +
-      "  STALE GROUND. An entry whose citation has drifted, whose quoted text the staging has since " +
-      "changed, or whose recommendation rests on something a later round falsified. Rewrite it against " +
-      "the current text.\n" +
-      "  MIS-STATED. An entry asking a question the proposal does not actually face, or asking it in a " +
-      "form a person could not answer in one sitting. Restate it, or resolve it and withdraw it.\n" +
-      "  ORPHANED. An entry about a deliverable the proposal no longer stages. Withdraw it with that " +
-      "reason.\n" +
-      "  A summary entry that disagrees with the staged text is the SUMMARY's defect, not the staging's, " +
-      "unless the staging is what a round just changed. Each entry carries the question stated so it can " +
-      "be answered without reading the proposal, the recommendation, the ground with citations, the " +
-      "alternatives considered and why each lost, what the reviewer gives up by deciding the other way, " +
-      "a confidence with what would raise it, and where the decision came from.\n\n" +
-      "READ SIDEWAYS, THEN ASK WHETHER IT IS EVEN A DECISION. No other lens reads `proposals/`. When a " +
-      "staged change bears on another proposal, first ask whether choosing differently would change " +
-      "that effect. If every available answer affects it identically, the effect is already settled by " +
-      "a deliverable nobody is questioning, and your output is a row in `## Impact on other proposals`, " +
-      "never a question for a human. Set `changesWithChoice` to record which case you are in.\n" +
-      "  When the choice DOES change the other proposal's outcome, the status decides who answers. An " +
-      "`Implemented` proposal is already in the tree and is not affected. A `Draft` may be invalidated " +
-      "freely: record it and move on. A `Reviewed` or `Approved` proposal last reviewed within fourteen " +
-      "days goes to the human, because convergence and human attention were recently spent on it and " +
-      "this change spends them again; an older one is recorded with the note that it may have drifted " +
-      "regardless. Read the status with `.claude/tools/proposal-status.mjs <proposal> --json`, which " +
-      "carries `reviewed-date` and `approved-date` for a folder-layout proposal. A legacy single-file " +
-      "proposal has no dates, so fall back to the file's last commit date and say so: that is when " +
-      "someone last touched the file rather than when it was reviewed, and the two differ.\n" +
-      "  Naming the effect is not optional. Recording it as a rebase for whichever lands second is not " +
-      "enough: say which of the other proposal's deliverables lose their subject and which survive.\n\n" +
-      "NOT FINDINGS. A settled decision you would have decided differently, which is the one this scope " +
-      "most wants you to leave alone. A decision correctly recorded for the human with its constraint and its " +
-      "recommendation. A properly bounded blank. A decision the proposal resolved and recorded as " +
-      "resolved, including inside a historical pass record. Your own preference between two answers the " +
-      "proposal weighed and chose between with a stated reason.",
   },
 ];
 
@@ -2284,12 +2127,12 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
     " of an iterative convergence loop for a change proposal.\n\n" +
     CONTEXT +
     "\n\n" +
-    READ_ONLY +
+    READ_ONLY_LOGGED +
     "\n\n" +
-    barFor(lens.key) +
+    barFor() +
     "\n\n" +
     lens.text +
-    LOOP.scopeNote +
+    LOOP.scopeNote() +
     DEVIATIONS_BLOCK() +
     logBlock("review-" + lens.key, round) +
     history +
@@ -2631,7 +2474,7 @@ function fixDesignPrompt(group, confirmed, round) {
         : "";
   return (
     "Decide HOW each finding in one group should be fixed, before anything is edited.\n\n" +
-    READ_ONLY +
+    READ_ONLY_LOGGED +
     " You produce a design; a different agent applies it.\n\n" +
     CONTEXT +
     "\n\nLoop: " + LOOP.name + ". Round " + round + ". Group " + group.id + " — " + (group.title || "") +
@@ -2752,7 +2595,7 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     (group ? ", working on group " + group.id + " of this round's findings" : "") +
     ".\n\n" +
     CONTEXT +
-    "\n\nHARD CONSTRAINT. " + LOOP.editable +
+    "\n\nHARD CONSTRAINT. " + LOOP.editable() +
     "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/: this proposal STAGES its " +
     "changes and never applies them.\n\nApply EXACTLY the confirmed findings below using Edit (or Write for large restructures). Requirements:\n" +
     "- Before each edit, re-verify the relevant spec/code citations yourself with Grep/Read; every claim that remains in the proposal must be accurate and carry file:line evidence. Re-verify every citation in text you touch, including stale line numbers.\n" +
@@ -2765,21 +2608,22 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     "the constraint any solution must satisfy, and list it in escalated. That is a complete fix, not a " +
     "deferral. Prefer a specified mechanism to an escalation, and an escalation to an unspecified " +
     "mechanism. " +
-    (LOOP && LOOP.name === "spec"
-      ? "The proposal's open-decisions section is in the non-spec staging, which you may not author into, " +
-        "so record yours in the staged spec edits beside the text it concerns.\n"
-      : "Record it in the proposal's open-decisions section.\n") +
+    (LOOP && LOOP.lane === "spec"
+      ? "The open decisions live under `## Open decisions for human to make` in " + P.summary + ", where " +
+        "your grant covers the deliverable index and the statements your own edits falsify and nothing " +
+        "else, so record yours in the staged spec edits beside the text it concerns.\n"
+      : "Record it under `## Open decisions for human to make` in " + P.summary + ".\n") +
     "- NEVER WRITE A COUNT of staged edits, sites, statements, rewrites, or files. Name the set, or point at the enumeration that carries it. A count goes stale the moment another fix adds one, and in this loop a stale count becomes a finding, a round, and two verification agents. The documentation rules ban counts for the same reason.\n" +
     "- AFTER YOUR EDITS, reconcile every enumeration and cross-reference that names a section you touched. A fix that corrects one section and leaves another section's list of that section's contents stale is two findings rather than one.\n" +
     "- When a fix changes a trigger predicate or invariant, propagate the exact same predicate to every section that states it (design sections, summary tables, constant comments, proposed spec text, and tests) so no drift is introduced.\n" +
     "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
-    (LOOP && LOOP.name === "spec"
+    (LOOP && LOOP.lane === "spec"
       ? "- THE IMPLEMENTATION CHECKLIST IS NOT YOURS. Your HARD CONSTRAINT puts it out of bounds and the " +
         "reconciliation pass between the loops owns it. When an edit of yours adds, removes, merges, " +
         "splits or resequences a staged deliverable, record it as a `DEFERRED [" + P.checklist + "]` line " +
         "in your log shard naming the step that is now wrong and what is true instead. That pass closes it.\n"
       : "- KEEP THE IMPLEMENTATION CHECKLIST CURRENT. It is maintained as the proposal changes rather than derived at the end. Any edit that adds, removes, merges, splits, or resequences a staged deliverable changes the checklist in the same edit: add or remove its step, correct the deliverable ids a step names, and correct any Depends-on that the change reorders. Every staged deliverable appears in exactly one step and no step names one that does not exist. Leave every box unchecked.\n") +
-    (LOOP && LOOP.name === "spec"
+    (LOOP && LOOP.lane === "spec"
       ? "- KEEP THE SUMMARY'S DELIVERABLE INDEX TRUE, and correct any statement there your own edit has " +
         "falsified. Do NOT write a newly created trap into its watch-out section: your HARD CONSTRAINT " +
         "bars it, and that section growing into an errata list of fixes no lane owned is the failure the " +
@@ -2897,7 +2741,7 @@ function followUpFixPrompt(findings, round) {
     " of the " + LOOP.name + " loop. A post-fix review of the previous fixer's edits found the defects " +
     "below in that fixer's own work.\n\n" +
     CONTEXT +
-    "\n\nHARD CONSTRAINT. " + LOOP.editable +
+    "\n\nHARD CONSTRAINT. " + LOOP.editable() +
     "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
     "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. When a defect is drift between a changed statement and its parallels, make every statement agree rather than reverting the original fix. Append your corrections as bullets to the SAME numbered pass subsection the previous fixer created in the proposal's adversarial-review-history section, rather than opening a new pass, because these are corrections to that pass and not a separate round. Follow " +
     repo +
@@ -3359,7 +3203,7 @@ async function runRedesign(areas, rnd, why) {
       "each anchor against the current text before you write. An anchor that does not appear is a defect in " +
       "the redesign rather than a licence to guess: skip that edit, apply the rest, and say which you skipped " +
       "and why.\n\n" +
-      "Then reconcile the proposal with what you changed: the Summary's fixed decisions and watch-outs, the " +
+      "Then reconcile the proposal with what you changed: the Summary's decisions and watch-outs, the " +
       "implementation checklist's steps and their dependencies, the files-touched section, and the testing " +
       "section. A redesign that deletes a mechanism leaves its steps, its tests, and its files behind unless " +
       "you remove them.\n\n" +
@@ -3932,7 +3776,7 @@ async function introspect(rnd, reason, churn, byCadence) {
       "2. Is any mechanism now described in more than one place, in different words? Read the sections that " +
       "grew and check. Two deliverables staging different rewrites of the same text is the defect this " +
       "question exists to catch, and it is invisible to the reviewers because each reads its own section.\n" +
-      "3. Do the accumulated fixes still satisfy the proposal's Decisions and its Summary's fixed decisions, " +
+      "3. Do the accumulated fixes still satisfy the proposal's Decisions and its Summary's decisions, " +
       "or has a decision been eroded by fixes that each looked local? Read them and check against what the " +
       "document now stages.\n" +
       "4. Is any area quiet because it is clean, or because no lens is examining it? A flat finding rate reads " +
@@ -3980,6 +3824,23 @@ async function introspect(rnd, reason, churn, byCadence) {
 
 phase("Review");
 
+// The tool-call schema is enforced on the model's own structured output, and the
+// cache path in cacheBlock() steps around it: the agent prints a JSON file it
+// wrote itself on an earlier run and returns that verbatim, so a key the schema
+// marks `required` can simply be absent. `decisions` is required on
+// OPEN_DECISIONS_FINDINGS, now in change-proposal-decisions.js, and was missing
+// from two of six observed returns, and the hole is in the cache path rather
+// than in one lens, so it reaches every agent that caches. This names the top-level required keys a return does not
+// carry; robustAgent treats a non-empty list as it treats a null return, so the
+// call is retried and, once the attempts are exhausted, the caller's existing
+// null guard runs. Only the top level is checked: the failure this closes is a
+// whole field absent from a cached object.
+function missingRequired(r, schema) {
+  if (!r || typeof r !== "object") return [];
+  if (!schema || !Array.isArray(schema.required)) return [];
+  return schema.required.filter((k) => !Object.prototype.hasOwnProperty.call(r, k));
+}
+
 // robustAgent wraps agent() with script-level retries so a transient API failure
 // (529 "Overloaded", "Server is temporarily limiting requests", rate limit) does
 // not silently drop the call. agent() returns null when the runtime's own retries
@@ -4016,7 +3877,17 @@ async function robustAgent(prompt, opts, attempts = 4) {
     const callOpts =
       i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
     const r = await agent(prompt, callOpts);
-    if (r !== null && r !== undefined) return r;
+    if (r !== null && r !== undefined) {
+      const missing = missingRequired(r, opts.schema);
+      if (missing.length === 0) return r;
+      log(
+        "  " +
+          (opts && opts.label ? opts.label : "agent") +
+          ": return is missing required field(s) " +
+          missing.join(", ") +
+          ", discarding it",
+      );
+    }
     if (i < attempts) {
       log(
         "  " +
@@ -4055,6 +3926,273 @@ let lastRoundSnap = null;
 const rejected = [];
 const history = [];
 
+// ---- The open-decisions-and-impact-review phase --------------------------
+//
+// The phase adjudicates and authors the decisions the proposal leaves open, and
+// it is a subworkflow of its own. One invocation is one firing, and a firing is
+// a full pass of all eight of its sub-tasks. Every review loop is followed by
+// one, and every one of those post-loop sites is a straight-line call OUTSIDE
+// every loop, so neither SPEC_EDITABLE nor NONSPEC_EDITABLE binds them and no
+// convergence-gate hook is needed: a firing that changes a lane's staging
+// leaves that lane stale, and a stale lane is re-reviewed by a recheck.
+//
+// There is no "did any decisions appear" condition on any site. A condition
+// that decides whether to look is unnecessary when the answer is always to
+// look, and carrying an untouched item's disposition forward is what keeps an
+// empty firing cheap.
+//
+// The cross-firing state (the per-item records, the corpus inventory, and the
+// firing counter) is held HERE and handed in, because the child is a fresh
+// script per firing: it returns the state it leaves behind and the next firing
+// gets it back. The run-wide refuted list travels with it, so an item an
+// earlier firing routed to the human may be resolvable once the skeptics have
+// refuted the ground it rested on. The standing context is not passed; the
+// child reads it from the review log, as every other agent does.
+let decisionsState = {};
+let decisionFirings = 0;
+const decisionRuns = [];
+// The periodic trigger's own counters. periodicTails counts the rounds that
+// reached the ordinary loop tail, which is what the cadence divides; see the
+// hook at the tail of runReviewLoop for why that is not the round number.
+// periodicFirings is what maxPeriodicFirings bounds, and periodicBudgetSpent
+// records the stop for the result object.
+let periodicTails = 0;
+let periodicFirings = 0;
+let periodicBudgetSpent = false;
+
+// One item as the result reports it. The child carries each item's readings,
+// its falsification and its Apply claim whole, which is what the child's own
+// stages need and far more than a reader of the run's result wants: the
+// question, the disposition and the identifier are what name a decision.
+const decisionItem = (i) => ({
+  id: i.id,
+  disposition: i.disposition,
+  question: String(i.question || "").slice(0, 300),
+});
+
+async function fireDecisionsPhase(trigger) {
+  const n = ++decisionFirings;
+  phase("Decisions");
+  log("Open-decisions firing " + n + " (" + trigger + ")");
+  let res = null;
+  let failure = "";
+  try {
+    // Invoked by PATH rather than by name, for the reason implement-proposal.js
+    // states at its own subworkflow call: a named workflow resolves to a copy
+    // the runtime cached, which can be older than the file on disk, so a run
+    // launched moments after an edit to the child would run the previous
+    // revision. A path is read from disk at call time.
+    res = await workflow(
+      { scriptPath: repo + "/.claude/workflows/change-proposal-decisions.js" },
+      {
+        proposalPath: path,
+        repoRoot: repo,
+        date,
+        runTag,
+        firing: n,
+        trigger,
+        rejected,
+        phaseState: decisionsState,
+        lockSpecChanges,
+        baseModel,
+        baseEffort,
+        maxPeriodicFirings,
+      },
+    );
+  } catch (e) {
+    failure = (e && e.message) || "threw with no message";
+  }
+  // A subworkflow that RETURNS null did not throw, so the catch above never
+  // sees it and every read below would dereference null. A null result is the
+  // same condition as a throw and takes the same exit, following
+  // implement-proposal.js: the firing is recorded as failed and the run says
+  // so.
+  if (!res) {
+    const dead = {
+      firing: n,
+      trigger,
+      // Whether the firing ran at all. A firing that died adjudicated nothing,
+      // which is a different answer from one that ran and found nothing, so
+      // the empty lists a reader of the block reads per firing are stated here
+      // rather than left absent.
+      ran: false,
+      status: "failed",
+      reason: failure || "the subworkflow returned no result",
+      applied: [],
+      failed: [],
+      contested: [],
+      setAside: [],
+      recordedForOperator: [],
+      decisionsResolved: [],
+      decisionsLeftToHuman: [],
+      deadAgents: [],
+      unadjudicated: [],
+      changedFiles: null,
+    };
+    decisionRuns.push(dead);
+    log(
+      "Open-decisions firing " + n + " FAILED: " + dead.reason +
+        ". This firing adjudicated nothing; the run continues.",
+    );
+    return dead;
+  }
+  // The state the child leaves behind is what makes a later firing carry an
+  // untouched item's disposition forward and see a reversal of one it applied.
+  if (res.phaseState && typeof res.phaseState === "object") decisionsState = res.phaseState;
+  const record = {
+    firing: n,
+    trigger,
+    ran: (res.status || "done") === "done",
+    status: res.status || "done",
+    abortReason: res.abortReason || null,
+    // What it applied, each with the git evidence the child recorded it
+    // against: the files the tree reported changed around that item's own
+    // Apply agent. An item is listed here only when that diff was non-empty.
+    applied: (res.applied || []).map((a) => ({
+      ...decisionItem(a),
+      where: (a.claim && a.claim.where) || [],
+      files: a.files || [],
+    })),
+    // The items the Apply stage recorded as failed, each with its reason. An
+    // Apply that claimed a resolution landed against an empty diff is one of
+    // them, and reads differently from one whose agent died.
+    failed: (res.failedItems || []).map((f) => ({ ...decisionItem(f), reason: f.reason || "" })),
+    // Every item a reversal has contested, cumulative across the run rather
+    // than this firing's alone: the child reports the whole contested record,
+    // because an item contested at an earlier firing is still the human's.
+    contested: res.contested || [],
+    // Set aside by the item's own falsifier: not applied, and the entry stays
+    // listed for the human.
+    setAside: (res.items || [])
+      .filter((i) => i.gate === "refuted")
+      .map((i) => ({
+        ...decisionItem(i),
+        howConclusive: (i.falsification && i.falsification.howConclusive) || "",
+      })),
+    recordedForOperator: (res.recordedForOperator || []).map(decisionItem),
+    decisionsResolved: res.decisionsResolved || [],
+    decisionsLeftToHuman: res.decisionsLeftToHuman || [],
+    // Every agent of this firing that died after its retries, and every
+    // sub-task population a dead collector left unadjudicated. A named
+    // population means the firing is silent about it rather than clear of it.
+    deadAgents: res.deadAgents || [],
+    unadjudicated: res.unadjudicated || [],
+    // Built by the child from the tree rather than from its agents. Null means
+    // the change detection itself died, which is a different answer from an
+    // empty list.
+    changedFiles: res.changedFiles || null,
+    periodicBudgetSpent: !!res.periodicBudgetSpent,
+  };
+  decisionRuns.push(record);
+  log(
+    "Open-decisions firing " + n + " (" + trigger + "): " + record.status +
+      (record.abortReason ? " — " + record.abortReason : "") + ", " +
+      record.decisionsResolved.length + " decision(s) resolved or withdrawn, " +
+      record.decisionsLeftToHuman.length + " left to the human, " + record.applied.length +
+      " item(s) applied, " + record.failed.length + " failed, " + record.setAside.length +
+      " set aside, " + record.contested.length + " contested" +
+      (record.deadAgents.length > 0 ? ", " + record.deadAgents.length + " dead agent(s)" : "") + "; " +
+      (record.changedFiles
+        ? record.changedFiles.length + " file(s) changed" +
+          (record.changedFiles.length
+            ? ": " + record.changedFiles.map((f) => f.path).join(", ")
+            : "")
+        : "change detection unavailable"),
+  );
+  return record;
+}
+
+// ---- The recheck trigger: what each lane's staging has done since its review -
+//
+// The run may converge only when no lane's staging has changed since that
+// lane's own last review. A firing is what can change a lane's staging after
+// its review, and the other lane's fixer can change it too, so the trigger is
+// read from the TREE rather than from any agent's report: a content hash of the
+// lane's files, taken at each of that lane's convergences and compared
+// afterwards. Agents do not report drift; the tree does.
+//
+// Re-taking the baseline at EVERY convergence of that lane is what keeps the
+// trigger honest. A baseline held from the first convergence would read a
+// recheck's own edits as drift and fire against them forever.
+//
+// The driver that decides when a recheck runs reads these helpers; it lands
+// with the recheck call sites.
+
+// The spec lane is the staged spec edits. The non-spec lane is the staged
+// non-spec changes AND the summary, because a firing that only rewrites the
+// summary has still written text no non-spec lens has read.
+function laneFiles(lane) {
+  return lane === "spec" ? [P.spec] : [P.nonSpec, P.summary];
+}
+
+// One cheap agent, one command, the digest and nothing else -- the idiom
+// closeRound and the resume-state read already use, and the same hash
+// cacheBlock computes over the staging.
+async function contentHash(files, label) {
+  const raw = await robustAgent(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "cat " + files.join(" ") + " 2>/dev/null | md5sum | cut -c1-12" +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label, model: "haiku", effort: "high", phase: "Review" },
+  );
+  const m = String(raw || "").trim().match(/[0-9a-f]{12}/);
+  return m ? m[0] : null;
+}
+
+// Null means no baseline has been taken for that lane yet, or the digest could
+// not be read. Both are the same answer to the comparison below.
+let specBaseline = null;
+let nonSpecBaseline = null;
+// What a recheck's lenses diff against to see the delta: the snapshot that
+// lane's last round boundary left behind, which is the staging as that lane's
+// review last certified it. It is captured with the baseline because that is
+// the moment it names the lane's last convergence: `lastRoundSnap` moves on as
+// soon as the next loop closes a round, and the snapshot it named stays on disk
+// under its own loop's name.
+let specDeltaAnchor = null;
+let nonSpecDeltaAnchor = null;
+
+async function takeBaseline(lane, at) {
+  const h = await contentHash(laneFiles(lane), "hash:" + lane + ":" + at);
+  if (lane === "spec") {
+    specBaseline = h;
+    specDeltaAnchor = lastRoundSnap;
+  } else {
+    nonSpecBaseline = h;
+    nonSpecDeltaAnchor = lastRoundSnap;
+  }
+  log(
+    "Baseline for the " + lane + " lane taken at " + at + ": " +
+      (h ? h : "UNREADABLE, so the next comparison treats the lane as moved"),
+  );
+  return h;
+}
+
+const takeSpecBaseline = (at) => takeBaseline("spec", at);
+const takeNonSpecBaseline = (at) => takeBaseline("non-spec", at);
+
+// Whether this lane's staging has moved since its own last review.
+async function laneMoved(lane, at) {
+  const before = lane === "spec" ? specBaseline : nonSpecBaseline;
+  const after = await contentHash(laneFiles(lane), "hash:" + lane + ":" + at);
+  // An unread digest is not evidence that nothing moved. Doubt resolves toward
+  // reviewing, the posture the spec probe already takes when its answer is
+  // unreadable: an unnecessary recheck costs a bounded number of rounds, and a
+  // missed one converges the run over text no reviewer in that lane has read.
+  if (before === null || after === null) {
+    log(
+      "The " + lane + " lane's baseline comparison at " + at + " could not be read (" +
+        (before === null ? "no baseline" : "baseline " + before) + ", " +
+        (after === null ? "no current digest" : "now " + after) + "); treating the lane as MOVED",
+    );
+    return { moved: true, certain: false, before, after };
+  }
+  return { moved: after !== before, certain: true, before, after };
+}
+
+const specStagingMoved = (at) => laneMoved("spec", at);
+const nonSpecStagingMoved = (at) => laneMoved("non-spec", at);
+
 // Per-loop. The spec loop and the non-spec loop each keep their own round
 // counter, retired set, sweep count and convergence, because each certifies a
 // different half of the proposal and a lens satisfied by the spec staging has
@@ -4063,6 +4201,11 @@ let LOOP = null;
 function newLoop(cfg) {
   return {
     name: cfg.name,
+    // The lane whose staging this loop certifies. It is separate from the
+    // name because a loop's artifacts (state file, log shards, snapshots) are
+    // keyed on the name, while the fixer brief depends only on which half of
+    // the proposal the loop may author into.
+    lane: cfg.lane,
     round: 0,
     reviewersFailed: false,
     verifiersFailed: [],
@@ -4531,6 +4674,18 @@ async function runReviewLoop(cfg) {
       );
       return false;
     }
+    // A shard the merge glob cannot match is invisible to every round and is
+    // never merged. Counting it in the script was half the fix: a number nothing
+    // reads is as silent as the file was. Surface it here, where the round's own
+    // log line is the one an operator reads.
+    if ((boundary.strayShards || 0) > 0) {
+      log(
+        "Round " + rnd + ": " + boundary.strayShards + " shard(s) in the log directory match no " +
+          "loop's merge pattern and were NOT merged" +
+          (boundary.strayShardNames ? " (" + boundary.strayShardNames + ")" : "") +
+          "; the agent that wrote one named it outside the convention and its block is not in the log",
+      );
+    }
     const h = history[history.length - 1];
     // Scoped to the loop as well as the round: `history` spans the spec and
     // non-spec loops, and a round that closes before pushing its own entry
@@ -4538,6 +4693,7 @@ async function runReviewLoop(cfg) {
     // round numbers happen to match.
     if (h && h.round === rnd && h.loop === LOOP.name) {
       h.sectionsChanged = boundary.hunks || 0;
+      if ((boundary.strayShards || 0) > 0) h.strayShards = boundary.strayShards;
       if ((boundary.changedFiles || []).length) h.filesChanged = boundary.changedFiles;
     }
     // A fixer that edited nothing must not have its findings entered in the
@@ -4632,7 +4788,7 @@ async function runReviewLoop(cfg) {
           robustAgent(reviewPrompt(l, round, fixedTitles, rejected, lastRoundSnap), {
             label: "r" + round + ":review:" + l.key,
             phase: LOOP.name + " R" + round + ": review",
-            schema: l.key === "open-decisions" ? OPEN_DECISIONS_FINDINGS : REVIEW_FINDINGS,
+            schema: REVIEW_FINDINGS,
           }),
       ),
     );
@@ -5560,7 +5716,7 @@ async function runReviewLoop(cfg) {
           history[history.length - 1].pruneDeclined = fresh;
         } else {
           prunesRun++;
-          await robustAgent(
+          const prunedOk = await robustAgent(
             "Prune over-specified sections of a change proposal.\n\n" +
               "HARD CONSTRAINT: the only file you may edit is " + path +
               ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
@@ -5578,6 +5734,17 @@ async function runReviewLoop(cfg) {
               "back unless it can see why it went. Follow " + repo + "/.claude/rules/doc-style.md.",
             { label: "prune:r" + round, phase: LOOP.name + " R" + round + ": prune" },
           );
+          // A prune agent that died pruned nothing. Recording it as done marks the
+          // sections pruned, spends a pass on the history, and clears the retirement
+          // set on the strength of an edit that never landed, which is the failure
+          // the budget below exists to prevent, reached by another route.
+          if (!prunedOk) {
+            history[history.length - 1].pruneFailed = fresh;
+            log(
+              "Round " + round + ": the prune agent did not return; nothing was pruned and the " +
+                "retirement set stands",
+            );
+          } else {
           for (const s of fresh) prunedSections.add(key(s));
           pruneHistory.push({
             tag: prunesRun,
@@ -5596,6 +5763,7 @@ async function runReviewLoop(cfg) {
           // could never drain toward a sweep.
           retired.clear();
           log("Round " + round + ": pruned " + fresh.length + " section(s)");
+          }
         }
       }
 
@@ -5628,6 +5796,60 @@ async function runReviewLoop(cfg) {
     }
 
     roundComplete = (await closeRound(round, roundComplete)) && roundComplete;
+    // The periodic firing of the open-decisions-and-impact-review phase, so that
+    // decisions are adjudicated as they accumulate rather than only in a batch
+    // at the end of the loop.
+    //
+    // Gated on the exact name "non-spec". A recheck is meant to be short and a
+    // firing at its round boundary would fight that, and the SPEC loop's
+    // boundary is bound by SPEC_EDITABLE, which opens non-spec-changes.md only
+    // for the consequence repair NON_SPEC_CONSEQUENCE_RULE defines (it states
+    // "YOU MAY NOT AUTHOR"), grants the summary only its index and the
+    // statements the fixer's own edits falsify, and sits beside SPEC_SCOPE_NOTE,
+    // which tells every lens that drift in the deliverable index is expected
+    // there and is not a finding. This phase's authoring falls outside all of
+    // that.
+    //
+    // The round that stops on introspection is suppressed here and fires once,
+    // through the post-loop firing, so the same staging is not adjudicated
+    // twice.
+    //
+    // THE CADENCE COUNTS FIRINGS RATHER THAN ROUNDS. A round that takes the
+    // continue after the clean-round closeRound, or the break after the
+    // every-reviewer-failed one, never reaches this tail, so periodEvery divides
+    // a counter incremented HERE rather than the round number. The other three
+    // closeRound sites are deliberately not hooked: two are followed immediately
+    // by `if (isSweep && roundComplete) { converged = true }`, so a firing there
+    // would be certified by nothing, since the recheck pair's trigger is a hash
+    // of spec-changes.md and a firing may change only non-spec-changes.md or the
+    // summary; the third is followed immediately by break. All three are already
+    // covered by the post-loop firing rule, so hooking only this site changes
+    // WHEN the adjudication happens rather than whether it happens.
+    //
+    // maxPeriodicFirings bounds THIS trigger alone: exhausting it stops the
+    // periodic firing for the rest of the run while every post-loop firing
+    // continues. It is a cost control rather than the runaway bound. maxRounds
+    // is that: the phase files no findings, so it cannot add rounds directly,
+    // and the one thing it can do is author text the next sweep finds defects
+    // in, which triggers fixes, which extends the loop, and that cycle runs
+    // through rounds.
+    if (LOOP.name === "non-spec" && !stoppedByIntrospection) {
+      periodicTails++;
+      if (periodicTails % periodEvery === 0) {
+        if (periodicFirings >= maxPeriodicFirings) {
+          if (!periodicBudgetSpent) {
+            periodicBudgetSpent = true;
+            log(
+              "Round " + round + ": the periodic open-decisions budget of " + maxPeriodicFirings +
+                " firing(s) is spent, so no further periodic firing runs. Every post-loop firing still runs.",
+            );
+          }
+        } else {
+          periodicFirings++;
+          await fireDecisionsPhase("periodic");
+        }
+      }
+    }
     // The stop breaks HERE rather than at the verdict, so the halting round
     // closes through the same statement every other round does and the two
     // cannot drift apart again. Measured: a halt in round 2 ran no
@@ -5731,7 +5953,7 @@ const NON_SPEC_CONSEQUENCE_RULE =
   "    WHEN THE FILE IS EMPTY there is nothing to repair, whatever your edit implies about the work it " +
   "will need. Name that consequence in your summary and leave the file alone.\n";
 
-const SPEC_EDITABLE =
+const SPEC_EDITABLE = () =>
   "You may edit ONLY these files:\n" +
   "  " + P.spec + " — the staged spec edits, which is what this loop converges\n" +
   PROBLEM_STATEMENT_RULE +
@@ -5747,7 +5969,7 @@ const SPEC_EDITABLE =
   "Every other file in the proposal, including the implementation checklist, and every file outside it, " +
   "is out of bounds.";
 
-const NONSPEC_EDITABLE =
+const NONSPEC_EDITABLE = () =>
   "You may edit ONLY these files:\n" +
   "  " + P.nonSpec + " — the staged code, schema, chart, migration, docs and test changes\n" +
   PROBLEM_STATEMENT_RULE +
@@ -5756,13 +5978,13 @@ const NONSPEC_EDITABLE =
   "  " + P.log + " — your log shard\n" +
   (lockSpecChanges
     ? "  " + P.spec + " is LOCKED for this run. A finding whose only remedy is a spec edit is closed by " +
-      "recording an open decision in " + P.nonSpec + " with the constraint any answer must satisfy, which " +
-      "is a complete fix rather than a deferral."
+      "recording an open decision under `## Open decisions for human to make` in " + P.summary + " with " +
+      "the constraint any answer must satisfy, which is a complete fix rather than a deferral."
     : "  " + P.spec + " — permitted, but PREFER any resolution that does not touch it. The staged spec " +
       "edits converged in an earlier loop and every edit here reopens that. When you do edit it, say so " +
       "plainly in your summary so the round records it.");
 
-const SPEC_SCOPE_NOTE =
+const SPEC_SCOPE_NOTE = () =>
   "\n\nSCOPE OF THIS LOOP. You are reviewing the STAGED SPEC EDITS in " + P.spec + ". Read whatever else " +
   "you need — the problem statement, the non-spec staging, the checklist — but report only findings whose " +
   "fix lands in the staged spec edits. A finding whose only remedy is a code, test, or docs change is out " +
@@ -5776,7 +5998,7 @@ const SPEC_SCOPE_NOTE =
   "and let the fixer propagate it. Do not file the non-spec statement as a separate finding: it costs " +
   "two verifiers and closes nothing this loop is converging.";
 
-const NONSPEC_SCOPE_NOTE =
+const NONSPEC_SCOPE_NOTE = () =>
   "\n\nSCOPE OF THIS LOOP. Read the staged spec edits in " + P.spec + " and the staged non-spec changes " +
   "in " + P.nonSpec + " AS ONE DOCUMENT, together with the checklist and the summary. A non-spec change " +
   "that contradicts a staged spec edit is a finding, and only a reviewer holding both can see it, which is " +
@@ -5787,6 +6009,257 @@ const NONSPEC_SCOPE_NOTE =
       "open decision rather than by editing."
     : "The staged spec edits converged in an earlier loop. Prefer a finding whose fix lands in the non-spec " +
       "staging; report one that needs a spec edit when it is genuinely the only remedy.");
+
+// ---- The two recheck loops -----------------------------------------------
+//
+// A lane whose staging changed after its review is a lane no reviewer has read
+// in its current state, and a recheck is what reads it again. Each recheck is
+// its lane's review phase in every respect that governs behaviour: the same
+// pool, the same editable grant, the same scope note, and the same lane, so its
+// fixer reads its lane's brief rather than the other lane's. It differs in its
+// name, its round budget, and the delta its scope note points its lenses at.
+//
+// THE DISTINCT NAME IS WHAT MAKES THIS CHEAP. Every artifact of a loop derives
+// from cfg.name: the state file, the log shards through logBlock, the snapshots,
+// and the boundary script's --loop argument. A distinct name gets its own
+// namespace, so the collisions that make re-entering an exited loop under its
+// original name unbuildable do not arise. Nothing branches on the name except
+// the periodic firing's gate, which is keyed on the exact name `non-spec`, so
+// no periodic firing runs at a recheck's round boundary.
+//
+// Each recheck re-takes its own lane's baseline as it returns, because its
+// convergence is one of that lane's convergences. Skipping that would leave the
+// recheck's own edits outstanding against the baseline it was fired from, and
+// the next comparison would fire another recheck against them, forever.
+//
+// The driver that decides WHEN these run lands with the recheck call sites.
+
+// The text added or changed in this lane's staging since the lane's own last
+// review. It is where a recheck's lenses spend their attention; the pool does
+// not shrink and the whole staging is still read.
+//
+// The anchor is the snapshot captured with the lane's baseline, and
+// diffInstruction already tells a reviewer how to read one. Where there is no
+// anchor -- a lane whose loop never ran, or a boundary that failed -- the note
+// still names the focus and says the diff is unavailable, rather than pointing
+// at a snapshot that is not there.
+function deltaNote(lane) {
+  const anchor = lane === "spec" ? specDeltaAnchor : nonSpecDeltaAnchor;
+  const files = laneFiles(lane).join(" and ");
+  return (
+    "\n\nTHIS IS A RECHECK, AND THE DELTA IS WHERE YOU LOOK FIRST. This lane's staging (" + files +
+    ") changed after this lane's last review converged, which is why this loop is running: that text is " +
+    "the only text here that no reviewer in this lane has read. Read the whole staging as the scope above " +
+    "states, and spend your attention on what changed since then.\n" +
+    (anchor
+      ? diffInstruction(anchor) + " The delta this loop exists for is the part of that diff inside " +
+        files + ".\n"
+      : "No snapshot of the staging as it stood at that convergence is available, so locate the change " +
+        "from the review log, where the open-decisions-and-impact-review phase records what it applied.\n") +
+    "A defect anywhere in the staging is still a finding. The delta is where to look first, not the " +
+    "limit of what you may report."
+  );
+}
+
+// A run may take more than one recheck of a lane, and every loop artifact
+// derives from the loop's name: the state file, the log shards, the snapshots,
+// and the boundary script's --loop argument. A second recheck under the first
+// one's name would re-enter an exited loop's namespace, which is the collision
+// the distinct names exist to avoid, so each recheck after the first carries
+// its ordinal. The counter is shared across pairs and lone rechecks, because a
+// lone non-spec recheck and a pair's own non-spec recheck are the same loop
+// name. The suffix does not reach the periodic firing's gate, which is keyed on
+// the exact name `non-spec`.
+let specRecheckRuns = 0;
+let nonSpecRecheckRuns = 0;
+const recheckName = (base, nth) => (nth > 1 ? base + "-" + nth : base);
+
+async function runSpecRecheck() {
+  const nth = ++specRecheckRuns;
+  const loop = await runReviewLoop({
+    name: recheckName("spec-recheck", nth),
+    lane: "spec",
+    // The spec lane's pool, unchanged: test-coverage is dropped here for the
+    // same reason the spec loop drops it.
+    pool: POOL.filter((l) => l.key !== "test-coverage"),
+    maxRounds: maxRecheckRounds,
+    editable: SPEC_EDITABLE,
+    scopeNote: () => SPEC_SCOPE_NOTE() + deltaNote("spec"),
+    target: P.spec,
+  });
+  await takeSpecBaseline(loop.name);
+  return loop;
+}
+
+async function runNonSpecRecheck() {
+  const nth = ++nonSpecRecheckRuns;
+  const loop = await runReviewLoop({
+    name: recheckName("non-spec-recheck", nth),
+    lane: "non-spec",
+    pool: POOL,
+    maxRounds: maxRecheckRounds,
+    editable: NONSPEC_EDITABLE,
+    scopeNote: () => NONSPEC_SCOPE_NOTE() + deltaNote("non-spec"),
+    target: P.nonSpec,
+  });
+  await takeNonSpecBaseline(loop.name);
+  return loop;
+}
+
+// ---- The recheck driver: where a pair runs, and what bounds the alternation --
+//
+// A spec edit landing after the spec review has concluded sends the run back to
+// a spec review, and that spec review is FOLLOWED BY a non-spec review: the two
+// always run together as a RECHECK PAIR, with a firing after each loop returns,
+// so the firing that follows `spec-recheck` sits between the two and the pair
+// stays adjacent.
+//
+// The pair is not symmetry for its own sake. A spec-recheck changes the staged
+// spec text, the non-spec loop reads both change files as one document, and
+// NON_SPEC_CONSEQUENCE_RULE also permits a spec fixer to repair a non-spec
+// statement its own edit falsified, so either way the result is non-spec text
+// that no non-spec lens has read, which is the outcome that rule exists to
+// prevent. The trigger is any post-convergence spec edit rather than the
+// phase's edits alone, because the non-spec fixer holds the same permission
+// under NONSPEC_EDITABLE.
+//
+// The firing that follows a `spec-recheck` is itself a writer: its spec edit is
+// outstanding against the baseline that recheck re-took at its convergence, so
+// it consumes another pair rather than being settled by the `non-spec-recheck`
+// that follows it, which reads it under NONSPEC_SCOPE_NOTE rather than as a
+// spec reviewer.
+//
+// A LONE `non-spec-recheck` runs where the non-spec baseline has moved and the
+// spec hash has not. Where both have moved the pair runs and no lone recheck is
+// taken, because the pair's own `non-spec-recheck` already reads that text.
+//
+// The two budgets are counted SEPARATELY because a firing follows every
+// recheck, so a lone recheck can beget a pair exactly as a pair can, and a
+// budget named for pairs cannot account for a loop that runs alone.
+let recheckPairs = 0;
+let loneRechecks = 0;
+let recheckStop = null;
+const recheckLoops = [];
+// Whether a lane's staging is still outstanding against that lane's own last
+// review. Set only where a budget ran out with an edit unreviewed, which is
+// what keeps such a run from converging: every loop it ran may have converged
+// and the staging still carry text no reviewer in that lane has read.
+let specOutstanding = false;
+let nonSpecOutstanding = false;
+
+// The reported stop, in the posture the run already takes for
+// `spec-not-converged`: it names the file, the outstanding edit, and what last
+// wrote to that lane, and the run stops saying what it was still finding rather
+// than converging over it.
+function recheckBudgetStop(lane, moved, at, budget, limit) {
+  const lastFiring = decisionRuns[decisionRuns.length - 1] || null;
+  const stop = {
+    budget,
+    limit,
+    lane,
+    files: laneFiles(lane),
+    outstanding: moved.certain
+      ? "the staging hashed " + moved.before + " when this lane's review last converged and hashes " +
+        moved.after + " now"
+      : "the comparison could not be read, so the lane is treated as moved",
+    detectedAt: at,
+    // The best available answer to WHO made the outstanding edit: a hash names
+    // the file rather than the writer, and the last firing reports the files it
+    // changed. A lane whose last writer was a fixer shows an empty or absent
+    // list here, which is itself the answer.
+    lastWriter: lastFiring
+      ? {
+          firing: lastFiring.firing,
+          trigger: lastFiring.trigger,
+          changedFiles: lastFiring.changedFiles,
+        }
+      : null,
+    pairs: recheckPairs,
+    loneRechecks,
+    resume: "Raise " + budget + " above " + limit + " and resume, so the outstanding edit is reviewed.",
+  };
+  log(
+    "The " + lane + " lane's staging changed after its own last review and the " + budget + " budget of " +
+      limit + " is spent; the run STOPS with that edit unreviewed rather than converging over it. Files: " +
+      stop.files.join(", ") + ". " + stop.outstanding[0].toUpperCase() + stop.outstanding.slice(1) + ". " +
+      (stop.lastWriter
+        ? "Last firing: " + stop.lastWriter.trigger + ", which changed " +
+          (stop.lastWriter.changedFiles
+            ? stop.lastWriter.changedFiles.length + " file(s)"
+            : "an unreported set of files")
+        : "No firing had run") +
+      ". " + stop.resume,
+  );
+  return stop;
+}
+
+async function runRecheckPair() {
+  recheckPairs++;
+  log(
+    "The staged spec edits changed after the spec lane's last review; running recheck pair " +
+      recheckPairs + " of " + maxRecheckPairs,
+  );
+  recheckLoops.push(await runSpecRecheck());
+  await fireDecisionsPhase("post-spec-recheck");
+  recheckLoops.push(await runNonSpecRecheck());
+  await fireDecisionsPhase("post-non-spec-recheck");
+}
+
+async function runLoneNonSpecRecheck() {
+  loneRechecks++;
+  log(
+    "The staged non-spec changes or the summary moved after the non-spec lane's last review while the " +
+      "staged spec edits did not; running lone non-spec recheck " + loneRechecks + " of " +
+      maxNonSpecRechecks,
+  );
+  recheckLoops.push(await runNonSpecRecheck());
+  await fireDecisionsPhase("post-non-spec-recheck");
+}
+
+// Drive both lanes until neither is outstanding or a budget runs out. The spec
+// lane is read first, because a pair carries the non-spec review of whatever
+// the spec recheck changed and a lone recheck taken alongside it would read the
+// same text twice.
+//
+// `allowLone` is false at the site after the firing that follows the spec loop:
+// the non-spec baseline is first taken at the non-spec loop's convergence, and
+// the non-spec loop that follows that firing is what certifies its non-spec
+// text, so no lone recheck can be triggered there.
+async function driveRechecks(at, allowLone) {
+  // A budget already spent does not refill, and the lane it left outstanding is
+  // already reported, so a second drive would spend two more agents to reach
+  // the answer the first one recorded. The run continues to its remaining
+  // loops; what it does not do is take another recheck.
+  if (recheckStop) return;
+  for (let pass = 1; ; pass++) {
+    const tag = at + (pass > 1 ? ":" + pass : "");
+    // Under lockSpecChanges no post-convergence spec edit happens: neither
+    // fixer may write the staged spec edits, and the phase reports the edit it
+    // would have made instead of staging it. Comparing anyway would let one
+    // unreadable digest spend the pair budget on an edit that cannot exist.
+    if (!lockSpecChanges) {
+      const spec = await specStagingMoved(tag);
+      if (spec.moved) {
+        if (recheckPairs >= maxRecheckPairs) {
+          recheckStop = recheckBudgetStop("spec", spec, tag, "maxRecheckPairs", maxRecheckPairs);
+          specOutstanding = true;
+          return;
+        }
+        await runRecheckPair();
+        continue;
+      }
+    }
+    if (!allowLone) return;
+    const nonSpec = await nonSpecStagingMoved(tag);
+    if (!nonSpec.moved) return;
+    if (loneRechecks >= maxNonSpecRechecks) {
+      recheckStop = recheckBudgetStop("non-spec", nonSpec, tag, "maxNonSpecRechecks", maxNonSpecRechecks);
+      nonSpecOutstanding = true;
+      return;
+    }
+    await runLoneNonSpecRecheck();
+  }
+}
 
 // The probe's answer is a field rather than a word in prose. Measured against
 // the substring gate this replaces: a reply of "NO - the proposal stages
@@ -5853,6 +6326,7 @@ if (!hasSpecChanges) {
 } else {
   specLoop = await runReviewLoop({
     name: "spec",
+    lane: "spec",
     // The spec loop drops test-coverage: the tests a change needs are staged in
     // the non-spec half, so spec convergence certifies nothing about them.
     pool: POOL.filter((l) => l.key !== "test-coverage"),
@@ -5861,6 +6335,10 @@ if (!hasSpecChanges) {
     scopeNote: SPEC_SCOPE_NOTE,
     target: P.spec,
   });
+  // The spec lane is settled here, so this is the baseline every later
+  // comparison is against: anything written to the staged spec edits after this
+  // point is text this review has not read.
+  await takeSpecBaseline("spec-loop");
 }
 
 // Between the loops: the checklist has not been written against the spec
@@ -5914,11 +6392,11 @@ if (specLoop && !stoppedByIntrospection) {
       "5. CARRY THE OPEN DECISIONS INTO THE SUMMARY. The spec loop routes decisions it cannot close to " +
       "the human, as `OPEN` lines in " + P.log + ". The human never reads that log. For every unclosed " +
       "`OPEN` that is a DECISION rather than an unanswered verification question, ensure the summary's " +
-      "`## Open decisions` section carries it, with the question stated so it can be answered without " +
-      "reading the proposal and with whatever ground the log entry gives. Do not invent a recommendation " +
-      "the loop did not derive; an entry the spec loop left without one says so, and the non-spec loop's " +
-      "open-decisions lens supplies it. A decision that reaches sign-off visible only in the review log " +
-      "is a decision the reviewer never made.\n\n" +
+      "`## Open decisions for human to make` section carries it, with the question stated so it can be " +
+      "answered without reading the proposal and with whatever ground the log entry gives. Do not invent " +
+      "a recommendation the loop did not derive; an entry the spec loop left without one says so, and the " +
+      "open-decisions-and-impact-review phase supplies it. A decision that reaches sign-off visible only " +
+      "in the review log is a decision the reviewer never made.\n\n" +
       "Steps 1 through 3 are not a review round: do not reopen a decision, do not edit a staged change, " +
       "and do not improve any wording. Steps 4 and 5 are the one place this pass changes what the " +
       "proposal says, and only to apply a correction the spec loop already derived or to move a decision " +
@@ -5932,6 +6410,32 @@ if (specLoop && !stoppedByIntrospection) {
       (specLoop.converged ? "settled" : "UNSETTLED") + " spec staging",
   );
 }
+
+// The first firing of the open-decisions-and-impact-review phase: after the
+// spec review concludes, regardless of how many rounds it took.
+//
+// The site is STRAIGHT-LINE rather than inside the branch above, which is what
+// makes it run on the three paths where the spec loop never ran at all
+// (!hasSpecChanges, skipSpecReview, and a startPhase past spec-review, each
+// leaving specLoop null) and on all four paths that run no non-spec loop. A run
+// that stops early therefore still gets one adjudication.
+//
+// On the three paths where the spec loop never ran, the spec lane has been
+// settled since the run started and nothing has written to it, so the baseline
+// is taken here: the last point the lane was settled, which makes the trigger
+// decidable on every path. It is also re-taken here when the digest at the
+// loop's own convergence could not be read, which nothing has changed since.
+if (specBaseline === null) await takeSpecBaseline("first-firing");
+await fireDecisionsPhase("post-spec-loop");
+
+// If that firing touched the staged spec edits, the spec lane is stale and a
+// recheck pair runs BEFORE the non-spec loop starts. The non-spec loop's
+// premise is that the spec staging is settled, so restoring the premise before
+// it runs costs less than invalidating it afterwards. No lone non-spec recheck
+// can be triggered here: the non-spec baseline is first taken at the non-spec
+// loop's convergence, and that loop is what certifies this firing's non-spec
+// text.
+await driveRechecks("after-first-firing", false);
 
 // The non-spec loop does not start on a spec staging that is still moving.
 //
@@ -5952,23 +6456,60 @@ if (specBlocked) {
 } else if (!stoppedByIntrospection && !input.skipNonSpecReview && runsPhase("non-spec-review")) {
   nonSpecLoop = await runReviewLoop({
     name: "non-spec",
+    lane: "non-spec",
     pool: POOL,
     maxRounds: maxNonSpecReviewRounds,
     editable: NONSPEC_EDITABLE,
     scopeNote: NONSPEC_SCOPE_NOTE,
     target: P.nonSpec,
   });
+  // The non-spec lane is settled here. The baseline is taken before the firing
+  // below for the same reason the spec one is: what the firing writes is what
+  // the comparison has to be able to see.
+  await takeNonSpecBaseline("non-spec-loop");
+  // The second firing. It reads the run-wide refuted list COMPLETE, so an item
+  // an earlier firing routed to the human may be resolvable now that the
+  // skeptics have refuted the ground it rested on.
+  await fireDecisionsPhase("post-non-spec-loop");
+  // Both lanes are read here, which is the position that covers the periodic
+  // firings, the firing above, and the non-spec fixer alike: a spec edit made
+  // anywhere in the loop runs a pair, and a non-spec edit with the spec lane
+  // settled runs a lone non-spec recheck.
+  await driveRechecks("after-non-spec-loop", true);
 } else if (input.skipNonSpecReview) {
   log("skipNonSpecReview is set; the non-spec staging is NOT reviewed by this run");
 }
 
-// The run converged when every loop it ran converged. A skipped loop certifies
-// nothing about its half, which the result records.
-const ranLoops = [specLoop, nonSpecLoop].filter(Boolean);
+// The four paths that run no non-spec loop: specBlocked, skipNonSpecReview,
+// stoppedByIntrospection, and a startPhase past non-spec-review. Each of them
+// reaches the end of the run with the firing after the spec review as its only
+// adjudication, and says so rather than leaving a reader to infer it.
+if (!nonSpecLoop) {
+  log(
+    "No non-spec review loop ran, so no open-decisions firing followed one; " +
+      (recheckLoops.length > 0
+        ? "the firings after the spec review and after its " + recheckLoops.length +
+          " recheck loop(s) are this run's adjudications of the open decisions."
+        : "the firing after the spec review is this run's only post-loop adjudication of the open " +
+          "decisions."),
+  );
+}
+
+// The run converged when every loop it ran converged AND neither lane's staging
+// is outstanding against its own last review. A skipped loop certifies nothing
+// about its half, which the result records, and a run that spent a recheck
+// budget with an edit still unreviewed has not converged however its loops
+// ended.
+//
+// Every recheck loop counts here, so the round total, the sweep totals and
+// reviewersFailed account for the rechecks as well as the two lane loops.
+const ranLoops = [specLoop, nonSpecLoop, ...recheckLoops].filter(Boolean);
 const converged =
   ranLoops.length > 0 &&
   ranLoops.every((l) => l.converged) &&
-  !stoppedByIntrospection;
+  !stoppedByIntrospection &&
+  !specOutstanding &&
+  !nonSpecOutstanding;
 const round = ranLoops.reduce((n, l) => n + l.round, 0);
 const reviewersFailed = ranLoops.some((l) => l.reviewersFailed);
 
@@ -6054,19 +6595,87 @@ if (converged) {
   log("Status recorded: " + history);
 }
 
+// ---- What the run decided, and what it leaves open ------------------------
+//
+// The child reports per firing and an operator reads per run, so the two
+// decision lists are folded across the firings by identifier, in firing order:
+// an item one firing resolved and a later one contested appears once, under
+// the later firing's answer. Concatenating the lists instead would report one
+// decision as both closed and still open, which is the reading a firing that
+// carries an earlier disposition forward produces on its own.
+function foldDecisions() {
+  const byId = new Map();
+  for (const r of decisionRuns) {
+    for (const d of r.decisionsResolved) {
+      byId.set(d.id, { list: "resolved", firing: r.firing, trigger: r.trigger, entry: d });
+    }
+    for (const d of r.decisionsLeftToHuman) {
+      byId.set(d.id, { list: "human", firing: r.firing, trigger: r.trigger, entry: d });
+    }
+  }
+  const resolved = [];
+  const leftToHuman = [];
+  for (const v of byId.values()) {
+    // Which firing spoke last about the item, so a reader can find the record
+    // the entry came from. The entry's own fields, including the authority,
+    // are the child's and are carried through unchanged.
+    const entry = { ...v.entry, firing: v.firing, trigger: v.trigger };
+    (v.list === "resolved" ? resolved : leftToHuman).push(entry);
+  }
+  return { resolved, leftToHuman };
+}
+const decided = foldDecisions();
+
+// The last firing that returned a result at all. The contested set it carries
+// is the cross-firing record as it stands rather than that firing's own work,
+// which is why the run-wide list is read from it rather than summed.
+const lastLiveFiring = [...decisionRuns].reverse().find((r) => r.ran) || null;
+
+// Unclosed OPEN and DEFERRED markers in the review log. A run can report
+// convergence with two findings fixed while carrying dozens of unclosed
+// markers, and has: nothing between the loops discharges them, and the result
+// object reported the findings it fixed and nothing about the markers. This is
+// a COUNT of the marker lines the live log still carries outside `## Retired`,
+// rather than a judgement about which of them something has closed.
+async function unclosedMarkers() {
+  const raw = await robustAgent(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "awk '/^## Retired/{r=1} r{next} /OPEN/{o++} /DEFERRED/{d++} END{print o+0, d+0}' " + P.log +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "log:unclosed-markers", model: "haiku", effort: "high", phase: "Review" },
+  );
+  const m = String(raw || "").trim().match(/(\d+)\s+(\d+)/);
+  // Null rather than zero when the count could not be read: a log nobody could
+  // count is not a log with nothing left in it.
+  return m ? { open: Number(m[1]), deferred: Number(m[2]) } : null;
+}
+const markers = await unclosedMarkers();
+log(
+  markers
+    ? "Review log: " + markers.open + " unclosed OPEN and " + markers.deferred +
+      " unclosed DEFERRED marker(s)"
+    : "Review log: the unclosed OPEN and DEFERRED counts could not be read",
+);
+
 return {
   mode,
   // A run stopped by the spec gate says so, rather than reporting "reviewed"
   // for a proposal whose non-spec staging nothing looked at. A run the
   // introspection pass halted or reframed says so first: it stopped at round 2
   // of 6 with its findings open, and "reviewed" is what a converged run says.
+  // A run that spent a recheck budget with a lane's staging still outstanding
+  // says so as well, because a lane carrying text no reviewer in it has read is
+  // not a reviewed lane; `rechecks.stop` names the lane, its files, the
+  // outstanding edit, and what to raise.
   status: stoppedByIntrospection
     ? "stopped-" + stoppedByIntrospection.verdict
     : mode === "new"
       ? "written"
       : specBlocked
         ? "spec-not-converged"
-        : "reviewed",
+        : recheckStop
+          ? "recheck-budget-exhausted"
+          : "reviewed",
   specGate: specBlocked
     ? {
         rounds: specLoop.round,
@@ -6085,6 +6694,106 @@ return {
     mode === "new"
       ? { kept: keptTitles, dropped: droppedChanges.map((d) => d.title) }
       : undefined,
+  // Every decision this run closed, and every one it leaves for the human,
+  // folded across the firings. Each closed entry names the question, the
+  // disposition, the citation, and the authority that resolved or withdrew it,
+  // which is the field that matters: the section carries withdrawn and
+  // replaced entries side by side, some citing a validation pass and some
+  // citing nobody at all, and without the authority they render identically.
+  decisionsResolved: decided.resolved,
+  decisionsLeftToHuman: decided.leftToHuman,
+  // The open-decisions-and-impact-review phase, per firing and run-wide.
+  decisions: {
+    // Every firing, in the order they ran: its trigger, whether it ran, what it
+    // applied with the git evidence behind each item, the items it recorded as
+    // failed, the items a reversal contested, the items its gate set aside, and
+    // any agent of its own that died. A failed firing is listed rather than
+    // dropped, because a run whose adjudication died reports differently from
+    // one that had nothing to adjudicate.
+    firings: decisionRuns,
+    fired: decisionRuns.length,
+    failedFirings: decisionRuns.filter((r) => !r.ran).length,
+    resolved: decided.resolved.length,
+    leftToHuman: decided.leftToHuman.length,
+    applied: decisionRuns.reduce((n, r) => n + r.applied.length, 0),
+    failedItems: decisionRuns.reduce((n, r) => n + r.failed.length, 0),
+    setAside: decisionRuns.reduce((n, r) => n + r.setAside.length, 0),
+    // From the last firing that returned rather than summed: the contested set
+    // is the cross-firing record as it stands, so summing it would count one
+    // contested item once per firing that saw it.
+    contested: lastLiveFiring ? lastLiveFiring.contested : [],
+    deadAgents: [...new Set(decisionRuns.flatMap((r) => r.deadAgents))],
+    unadjudicated: [...new Set(decisionRuns.flatMap((r) => r.unadjudicated))],
+    // The periodic trigger's own budget and what it spent. A run that exhausted
+    // the budget says so, because the firings it did not run are firings whose
+    // adjudication the post-loop firings did later rather than not at all.
+    periodic: {
+      periodEvery,
+      budget: maxPeriodicFirings,
+      firings: periodicFirings,
+      budgetSpent: periodicBudgetSpent,
+    },
+    // A firing follows every recheck, so the recheck counts are part of how
+    // many adjudications the run took. The loops themselves and the stop
+    // condition are under `rechecks`.
+    rechecks: {
+      pairs: recheckPairs,
+      pairBudget: maxRecheckPairs,
+      lone: loneRechecks,
+      loneBudget: maxNonSpecRechecks,
+    },
+    // The paths that run no loop of one lane, and what the phase did on each.
+    // Both are null on a run that ran both loops.
+    paths: {
+      // Each of the four paths that run no non-spec loop reaches the end of the
+      // run with no firing after one. The reason is named rather than left for
+      // a reader to infer from a null loop.
+      noNonSpecLoop: nonSpecLoop
+        ? null
+        : {
+            reason: specBlocked
+              ? "spec-not-converged"
+              : stoppedByIntrospection
+                ? "stopped-by-introspection"
+                : input.skipNonSpecReview
+                  ? "skipNonSpecReview"
+                  : "startPhase",
+            firingAfterNonSpecLoop: false,
+            adjudications: decisionRuns.filter((r) => r.ran).map((r) => r.trigger),
+          },
+      // The first firing's site is straight-line, so each of the three paths
+      // that run no spec loop is still adjudicated once.
+      noSpecLoop: specLoop
+        ? null
+        : {
+            reason: (specReviewSkipped && specReviewSkipped.reason) || "unknown",
+            firstFiringRan: decisionRuns.some((r) => r.trigger === "post-spec-loop" && r.ran),
+          },
+    },
+    // Unclosed OPEN and DEFERRED markers left in the review log, counted rather
+    // than adjudicated. Null when the count could not be read.
+    unclosedMarkers: markers,
+  },
+  // The rechecks this run took, and what was still outstanding if a budget ran
+  // out. `stop` is the reported stop condition: it names the lane, its files,
+  // the outstanding edit, and what to raise, in the posture specGate takes for
+  // a spec loop that did not converge.
+  rechecks: {
+    pairs: recheckPairs,
+    pairBudget: maxRecheckPairs,
+    lone: loneRechecks,
+    loneBudget: maxNonSpecRechecks,
+    roundBudget: maxRecheckRounds,
+    loops: recheckLoops.map((l) => ({
+      name: l.name,
+      rounds: l.round,
+      sweeps: l.sweeps,
+      converged: l.converged,
+    })),
+    specOutstanding,
+    nonSpecOutstanding,
+    stop: recheckStop,
+  },
   introspection: {
     passes: introspections,
     stoppedBy: stoppedByIntrospection,
@@ -6113,8 +6822,8 @@ return {
     converged,
     reviewersFailed,
     rounds: round,
-    sweeps: [specLoop, nonSpecLoop].filter(Boolean).reduce((n, l) => n + l.sweeps, 0),
-    loops: [specLoop, nonSpecLoop].filter(Boolean).map((l) => ({
+    sweeps: ranLoops.reduce((n, l) => n + l.sweeps, 0),
+    loops: ranLoops.map((l) => ({
       name: l.name,
       rounds: l.round,
       sweeps: l.sweeps,

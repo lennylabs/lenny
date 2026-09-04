@@ -7,7 +7,7 @@
 //
 // Run: node .claude/tests/change-proposal.test.mjs
 
-import { runWorkflow, suite, labels, matching, never, firstIndex, ordered } from "./harness.mjs";
+import { runWorkflow, suite, labels, matching, never, firstIndex, ordered, loadWorkflow } from "./harness.mjs";
 
 const t = suite("change-proposal");
 const WF = ".claude/workflows/change-proposal.js";
@@ -229,7 +229,13 @@ t.section("B6. Bootstrap migrates a legacy proposal, then backfills");
     { mode: "review", proposalPath: "proposals/0076_fix_y", date: "2026-08-31", exemplar: "e.md", repoRoot: "/repo", maxReviewRounds: 1 },
     newStubs(),
   );
-  t.check("a folder-layout proposal is not migrated", never(calls, "workflow:"));
+  // Named by the migrator's own script path rather than by "workflow:", because
+  // the run now fires the open-decisions subworkflow too and a bare prefix would
+  // read that as a migration.
+  t.check(
+    "a folder-layout proposal is not migrated",
+    never(calls, "workflow:/repo/.claude/workflows/migrate-proposal.js"),
+  );
   t.check("bootstrap still runs to backfill", !never(calls, "bootstrap"));
 }
 
@@ -258,6 +264,14 @@ const REVIEW_ARGS = {
   maxNonSpecReviewRounds: 4,
 };
 
+// The recheck trigger hashes each lane's files at that lane's convergence and
+// compares afterwards. A stub that returns no digest reads as UNREADABLE, which
+// resolves toward reviewing, so every lane looks moved and the run spends its
+// whole recheck budget on a lane nothing edited. One steady digest is the
+// ordinary case: no lane moves after its own review, and no recheck runs. A
+// section about the recheck overrides it with a plan of its own.
+const HASH = "0123456789ab";
+
 // A stub table that drives one finding through one round of whichever loop is
 // running, then goes clean.
 const loopStubs = (over = {}) => {
@@ -272,10 +286,14 @@ const loopStubs = (over = {}) => {
     // Every round now closes through the boundary script, so a stub table that
     // omits it leaves every round unable to certify.
     "*:round-boundary": '{"merged":0,"ledgerLines":10,"ledgerGrowth":0,"compactionDue":false,"changedFiles":[],"hunksKnown":true,"hunks":3,"snapshot":"/repo/snap","overrides":{}}',
+    "hash:*": HASH,
     "*:review:*": { coverage: "c", findings: [] },
     "*:dedup": { findings: [] },
     "*:verify-material": { confirmed: true, reason: "material" },
     "*:verify-evidence": { confirmed: true, reason: "evidence holds" },
+    "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
+    "*:fix-plan": { groups: [], notes: "" },
+    "*:fix-design:*": { designs: [] },
     "*:fix:*": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [], escalated: [], designRejected: [] },
     "*:post-fix-review": { findings: [] },
     "verify-checklist": "ok",
@@ -312,111 +330,130 @@ t.section("B6c. snapshots are namespaced by run tag and by loop");
 // Match a review lens call in either loop: labels are r<N>:review:<lens>.
 const isLens = (c) => /^r\d+:review:/.test(c.label);
 
-t.section("B6d. the review bar is built per lens, so no lens reads another lens's rule");
+t.section("B6d. one decisions immunity reaches every lens, and no lens owns the section");
 {
-  // The open-decisions clause used to be one shared sentence carrying an
-  // "UNLESS your lens is X" carve-out. That made every other lens read an
-  // exception that did not apply to it, and made the one lens that needed the
-  // exception read the prohibition first and then notice it was exempt. Both
-  // are self-identification steps, and those fail.
-  const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
-  const od = calls.find((c) => /^r\d+:review:open-decisions$/.test(c.label));
-  const other = calls.find((c) => /^r\d+:review:citations$/.test(c.label));
-  t.check("the open-decisions lens runs", !!od);
-  t.check("an ordinary lens runs alongside it", !!other);
+  // The clause used to be built per lens: the lens that owned the decisions was
+  // told they ARE its findings, and every other lens was told another lens owned
+  // them. That lens is deleted, so the split has nothing left to describe, and
+  // one clause now reaches every prompt built through barFor. The shape this
+  // replaced -- one shared sentence carrying an "UNLESS your lens is X"
+  // carve-out -- stays wrong for the reason it always was: reading it is a
+  // self-identification step, and those fail.
+  const halves = (p) =>
+    /Whether a decision should be open at all, and how an open decision is framed, are not yours to file on\./.test(p) &&
+    /A false citation inside a decision entry is a finding exactly as anywhere else/.test(p);
+  const without = (cs) => cs.filter((c) => !halves(c.prompt)).map((c) => c.label).join(",") || "none";
+
+  // planPath adds PLAN_LENS to both pools. It is the one prompt built through
+  // barFor that no default run reaches, so it is enabled here.
+  const { calls } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, planPath: "docs/plans/remediation.md" },
+    loopStubs(),
+  );
+  const lenses = calls.filter(isLens);
+  const specLenses = lenses.filter((c) => /SCOPE OF THIS LOOP\. You are reviewing the STAGED SPEC EDITS/.test(c.prompt));
+  const nonLenses = lenses.filter((c) => /Read the staged spec edits .* AS ONE DOCUMENT/s.test(c.prompt));
+  const plan = lenses.filter((c) => c.label.endsWith(":plan-conformance"));
+
+  t.check("the non-spec pool runs", nonLenses.length > 0, String(nonLenses.length));
+  t.check("every lens in it carries both halves of the immunity", nonLenses.every((c) => halves(c.prompt)), without(nonLenses));
   t.check(
-    "the ordinary lens is told the decision sections are not its findings",
-    /open decisions for the human reviewer are not findings\. Another lens owns them\./.test(other.prompt),
+    "the spec pool runs, reduced by test-coverage",
+    specLenses.length > 0 && !specLenses.some((c) => c.label.endsWith(":test-coverage")),
+    String(specLenses.length),
+  );
+  t.check("and every lens in it carries them too", specLenses.every((c) => halves(c.prompt)), without(specLenses));
+  t.check("planPath adds the plan lens", plan.length > 0, String(plan.length));
+  t.check("which carries them as well", plan.every((c) => halves(c.prompt)), without(plan));
+  t.check(
+    "the blank rule reaches every lens, since that mechanism is not relaxed",
+    lenses.every((c) => /A PROPERLY MARKED BLANK IS NOT A FINDING/.test(c.prompt)),
   );
   t.check(
-    "and it is never told they ARE its findings",
-    !/ARE YOURS/.test(other.prompt),
+    "and the bar carries the blank symmetry the deleted lens used to state",
+    lenses.every((c) =>
+      /over-specification is itself a defect, so a finding that would convert a bounded blank into specified text/.test(c.prompt),
+    ),
   );
+
+  t.check("no lens is told the decisions ARE its findings", !calls.some((c) => /ARE YOURS/.test(c.prompt)));
   t.check(
-    "the open-decisions lens is told they are its own, positively",
-    /open decisions for the human reviewer ARE YOURS/.test(od.prompt),
+    "and none is told another lens owns them",
+    !calls.some((c) => /are not findings\. Another lens owns them\./.test(c.prompt)),
   );
+  t.check("no prompt carries a self-identifying carve-out", !calls.some((c) => /UNLESS your lens/.test(c.prompt)));
   t.check(
-    "and it never reads the prohibition it would have to except itself from",
-    !/are not findings\. Another lens owns them\./.test(od.prompt),
+    "no open-decisions lens runs in either pool or in the sweep that certifies convergence",
+    !lenses.some((c) => /:open-decisions$/.test(c.label)),
+    labels(calls).filter((l) => /open-decisions/.test(l)).join(",") || "none",
   );
-  t.check(
-    "neither prompt carries a self-identifying carve-out",
-    !/UNLESS your lens/.test(od.prompt) && !/UNLESS your lens/.test(other.prompt),
+
+  // The prompt checks above cannot see a branch that survived but stopped
+  // firing. What this design deletes is the branch, not only its output.
+  const src = loadWorkflow(WF);
+  for (const gone of ["DECISIONS_YOURS", "DECISIONS_NOT_YOURS", "lensKey"]) {
+    t.check(gone + " is gone from the source, not left unreachable", !src.includes(gone));
+  }
+
+  // The fourth consumer of the bar: the redesign subproposal's reviewers read
+  // BAR, which is barFor's output with no lens attached at all.
+  const rd = await runWorkflow(
+    WF,
+    {
+      ...REVIEW_ARGS, mode: "redesign", focusAreas: ["teardown"],
+      maxSpecReviewRounds: 1, maxNonSpecReviewRounds: 1, allowNonSpecOnUnconvergedSpec: true,
+    },
+    loopStubs({ "redesign*:review:*": { findings: [] }, "redesign*": "done" }),
   );
-  t.check(
-    "the blank rule is identical for both, since that mechanism is not relaxed",
-    /A PROPERLY MARKED BLANK IS NOT A FINDING/.test(od.prompt) &&
-      /A PROPERLY MARKED BLANK IS NOT A FINDING/.test(other.prompt),
-  );
+  const judges = matching(rd.calls, "redesign").filter((c) => /:review:/.test(c.label));
+  t.check("the redesign judges run over the same bar", judges.length > 0, String(judges.length));
+  t.check("and read the same clause", judges.every((c) => halves(c.prompt)), without(judges));
 }
 
-t.section("B6e. open-decisions is made to elaborate before it determines");
+t.section("B6e. what the deleted lens carried is absent from the parent and lives in the phase");
 {
-  // Prompt text alone did not hold: this lens's first output was produced from
-  // summaries of the evidence, and one follow-up question reversed it. The
-  // procedure states the order of work and the schema collects the receipts;
-  // neither half is sufficient alone, so both are pinned here.
+  // The lens is gone, so what the parent has to show is absence: no lens is
+  // handed the decisions schema, and no prompt carries the procedure that lens
+  // ran. The rules this design rehomed are checked here as text in the
+  // subworkflow that now owns them; how the phase's own agents read them is
+  // pinned by the phase's own test file.
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
-  const od = calls.find((c) => /^r\d+:review:open-decisions$/.test(c.label));
-  const other = calls.find((c) => /^r\d+:review:citations$/.test(c.label));
+  const lenses = calls.filter(isLens);
+  t.check("lenses run", lenses.length > 0, String(lenses.length));
+  t.check(
+    "none is handed a decisions schema",
+    lenses.every((c) => !c.opts.schema?.properties?.decisions),
+    lenses.filter((c) => c.opts.schema?.properties?.decisions).map((c) => c.label).join(",") || "none",
+  );
+  t.check(
+    "every lens returns coverage and findings and nothing else",
+    lenses.every((c) => (c.opts.schema?.required || []).join(",") === "coverage,findings"),
+  );
+  const procedure = [
+    "1. INVENTORY",
+    "2. ELABORATE",
+    "3. INTERROGATE",
+    "4. DETERMINE",
+    "YOU OWN `## Open decisions` IN THE SUMMARY",
+    "WHAT EACH FIELD OF `decisions` HOLDS",
+  ];
+  t.check(
+    "and the lens's own procedure reaches no prompt",
+    procedure.every((s) => !calls.some((c) => c.prompt.includes(s))),
+    procedure.filter((s) => calls.some((c) => c.prompt.includes(s))).join(" | ") || "none",
+  );
 
-  t.check("it alone is given the decisions schema", od.opts.schema && !!od.opts.schema.properties.decisions);
-  t.check("and no ordinary lens is", !other.opts.schema?.properties?.decisions);
-
-  const need = ["groundQuotes", "questionsAsked", "caseFor", "caseAgainst", "whatWouldFlipIt", "counterfactual", "disposition"];
-  // Guarded: without the schema every assertion below throws, which aborts the
-  // rest of the file and hides regressions that have nothing to do with it.
-  const item = od.opts.schema?.properties?.decisions?.items;
-  const req = item?.required || [];
-  t.check("every receipt field is required, not optional", need.every((f) => req.includes(f)), need.filter((f) => !req.includes(f)).join(",") || "all present");
-  t.check("a decision must quote at least one source", item?.properties?.groundQuotes?.minItems === 1);
-  t.check("and must carry at least one asked question", item?.properties?.questionsAsked?.minItems === 1);
-
-  const steps = ["1. INVENTORY", "2. ELABORATE", "3. INTERROGATE", "4. DETERMINE"];
-  const at = steps.map((x) => od.prompt.indexOf(x));
-  t.check("the four steps are all stated", at.every((i) => i >= 0), at.join(","));
-  t.check("and they are in order", at[0] < at[1] && at[1] < at[2] && at[2] < at[3]);
-  t.check("the test is step 4, after them", od.prompt.indexOf("THE TEST (step 4)") > at[3] - 1 && od.prompt.indexOf("THE TEST (step 4)") > at[1]);
-  t.check("step 3 demands a question that kills the leading answer", /KILL the answer you are drifting\s+toward/.test(od.prompt));
-  t.check("an unanswerable question is a result, not a gap", /a result rather than a gap/.test(od.prompt));
-
-  t.check("settled decisions are explicitly out of scope", /A decision the proposal records as SETTLED is not\s+yours/.test(od.prompt));
-  t.check("and re-litigating one is named the failure the scope prevents", /re-litigating them is the failure this\s+scope exists to prevent/.test(od.prompt));
-  t.check("cascade is the one exception, inside the open decision", /THE ONE EXCEPTION IS CASCADE/.test(od.prompt) && /never becomes a decision of its own/.test(od.prompt));
-  t.check("a settled decision decided differently is not a finding", /A settled decision you would have decided differently/.test(od.prompt));
-  t.check("cascade is a required field, so it must be considered", req.includes("cascades"));
-
-  t.check("it owns the summary section and reconciles it every round", /YOU OWN `## Open decisions` IN THE SUMMARY, AND YOU RECONCILE IT EVERY ROUND/.test(od.prompt));
-  const drifts = ["MISSING", "RESOLVED SINCE", "STALE GROUND", "MIS-STATED", "ORPHANED"];
-  t.check("all five drifts are enumerated", drifts.every((d) => od.prompt.includes(d)), drifts.filter((d) => !od.prompt.includes(d)).join(",") || "all");
-  t.check("a resolved entry is withdrawn in place, never deleted", /Withdraw it IN PLACE with the reason and the citation, never by deleting the entry/.test(od.prompt));
-  t.check("what it did to the summary is a required field", req.includes("summaryAction"));
-  t.check("and a carried decision can never be not-applicable", /never `not-applicable` for one the summary already carried/.test(od.prompt));
-
-  // The schema must stay SENDABLE. The first version carried 2.5k characters of
-  // descriptions over nested objects and the API refused every call it was
-  // attached to -- "output schema too large to classify safely" -- so the lens
-  // failed 12 times across 3 rounds, never ran, never retired, and blocked the
-  // sweep for a whole run. A schema that cannot be sent enforces nothing, so its
-  // size is a correctness property and gets a budget.
-  // The exact API threshold is unknown: the version that failed serialised to
-  // roughly 7.7k and this one to 3.9k, so the budget is set on the DELTA this
-  // lens adds over a plain one -- the part actually under our control -- with
-  // headroom over today's ~1.0k and far below the known-bad size.
-  const odBytes = JSON.stringify(od.opts.schema).length;
-  const plainBytes = JSON.stringify(other.opts.schema).length;
-  t.check("the decisions schema stays sendable", odBytes - plainBytes < 1500,
-    "adds " + (odBytes - plainBytes) + " bytes over a plain lens (budget 1500)");
-  t.check("and the field guidance lives in the prompt instead", /WHAT EACH FIELD OF `decisions` HOLDS/.test(od.prompt));
-
-  t.check("a cross-proposal effect is tested for counterfactual force first", /whether choosing differently would change\s+that effect/.test(od.prompt));
-  t.check("an identical-under-every-answer effect is a row, never a question", /never a question for a human/.test(od.prompt));
-  t.check("a Draft may be invalidated freely", /`Draft` may be invalidated\s+freely/.test(od.prompt));
-  t.check("a recently reviewed proposal goes to the human", /last reviewed within fourteen\s+days goes to the human/.test(od.prompt));
-  t.check("an Implemented proposal is not a concern", /`Implemented` proposal is already in the tree and is not affected/.test(od.prompt));
-  t.check("the status is read with the tool, not guessed", /proposal-status\.mjs <proposal> --json/.test(od.prompt));
-  t.check("and a commit-date fallback must be declared as such", /rather than when it was reviewed/.test(od.prompt));
+  const phase = loadWorkflow(".claude/workflows/change-proposal-decisions.js");
+  for (const [what, re] of [
+    ["the GIVE IT TO THE HUMAN test", /GIVE IT TO THE HUMAN only when one of these holds/],
+    ["the NEGATIVE TEST", /THE NEGATIVE TEST\. A decision belongs to the human only if a person could answer it in one sitting/],
+    ["the bar on promoting a bounded blank", /not yours to expand, second-guess, or promote to a human /],
+    ["the bar on filing a blank because it is open", /Never report a blank as an open decision merely because it is open/],
+  ]) {
+    t.check(what + " is in the phase's briefs", re.test(phase));
+    t.check(what + " reaches no prompt of the parent", !calls.some((c) => re.test(c.prompt)));
+  }
 }
 
 t.section("B6f. the base tier is a workflow argument, independent of the session");
@@ -425,9 +462,13 @@ t.section("B6f. the base tier is a workflow argument, independent of the session
   // silently changed tier because the operator switched their own model would
   // produce results nobody could compare against an earlier run.
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
-  const inherited = calls.filter((c) => !c.opts || !c.opts.model);
+  // A subworkflow call is not an agent and carries no tier of its own: the base
+  // model and effort reach the child as arguments, which
+  // .claude/tests/change-proposal-decisions-forwarding.test.mjs asserts.
+  const agents = calls.filter((c) => !c.label.startsWith("workflow:"));
+  const inherited = agents.filter((c) => !c.opts || !c.opts.model);
   t.check("no agent is left on the session's model", inherited.length === 0, inherited.map((c) => c.label).join(","));
-  const noEffort = calls.filter((c) => !c.opts || !c.opts.effort);
+  const noEffort = agents.filter((c) => !c.opts || !c.opts.effort);
   t.check("and none on the session's effort", noEffort.length === 0, noEffort.map((c) => c.label).join(","));
 
   const base = calls.filter((c) => c.label.startsWith("r1:review:"));
@@ -706,7 +747,9 @@ t.section("B12b. an agent that omits its findings array does not kill the run");
   const f = (title) => ({ title, where: "w", claim: "c", why_wrong: "w", evidence: "e",
     suggested_fix: "f", area: "a", kind: "citation", introducedBy: "pre-existing" });
 
-  // 1. A review lens returns a well-formed object with no findings key.
+  // 1. A review lens returns an object with no findings key. The key is required
+  //    by its schema, so the return is discarded and the lens ends the round as
+  //    a failed one; the rest of the round runs regardless.
   {
     const { result, calls, error } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
       "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
@@ -738,8 +781,10 @@ t.section("B12b. an agent that omits its findings array does not kill the run");
     t.check("the run still completes", result && result.status !== undefined);
   }
 
-  // 3. The post-fix reviewer returns an object with no findings key: treated as
-  //    clean, and no follow-up fixer is launched.
+  // 3. The post-fix reviewer returns an object with no findings key. `findings`
+  //    is required by its schema, so the return is discarded and the call
+  //    retried; once the retries are spent the round records the review as
+  //    unavailable rather than reading the empty object as a clean verdict.
   {
     const { calls, logs, error } = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
       "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
@@ -749,8 +794,8 @@ t.section("B12b. an agent that omits its findings array does not kill the run");
     }));
     t.check("the run does not throw", !error, error && error.message);
     t.check("no follow-up fixer is launched", never(calls, "r1:follow-up-fix"));
-    t.check("the post-fix review is recorded as clean",
-      logs.some((l) => /post-fix review found no defect in the fixer's work/.test(l)));
+    t.check("the post-fix review is recorded as unavailable rather than clean",
+      logs.some((l) => /post-fix review unavailable after retries/.test(l)));
   }
 }
 
@@ -1192,6 +1237,28 @@ const BOUNDARY = (over = {}) =>
 
 const logStubs = (over = {}) => fixStubs(2, { "*:round-boundary": BOUNDARY(), ...over });
 
+t.section("B18a2. a shard the merge could not match is reported to the operator");
+{
+  // Counting stray shards in the boundary script was half the fix. A number
+  // nothing reads is as silent as the lost file was, and the whole point is that
+  // an agent naming its shard outside the convention loses its block without an
+  // error anywhere.
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, logStubs({
+    "*:round-boundary": BOUNDARY({ strayShards: 2, strayShardNames: "verify.od.SPEC-2.md,notes.md" }),
+  }));
+  const line = logs.find((l) => /match no loop's merge pattern/.test(l));
+  t.check("the round reports the stray shards", !!line, logs.slice(-3).join(" | "));
+  t.check("with the count", !!line && /2 shard\(s\)/.test(line), line);
+  t.check("and the names, so the file can be found", !!line && /verify\.od\.SPEC-2\.md/.test(line), line);
+}
+{
+  // And says nothing when there are none, so the line stays worth reading.
+  const { logs } = await runWorkflow(WF, REVIEW_ARGS, logStubs({
+    "*:round-boundary": BOUNDARY({ strayShards: 0, strayShardNames: "" }),
+  }));
+  t.check("a clean boundary is silent about strays", !logs.some((l) => /merge pattern/.test(l)));
+}
+
 t.section("B18b. the round boundary is one exact command and nothing else");
 {
   const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
@@ -1232,7 +1299,41 @@ t.section("B19. every parallel agent writes its own shard, and none writes the l
     "no agent is told to append to the review log itself",
     !calls.some((c) => /append[^.]*to .*review-log\.md/i.test(c.prompt)),
   );
-  t.check("READ_ONLY permits exactly that one write", calls.some((c) => /EXCEPT your own log shard/.test(c.prompt)));
+  // The shard exception is stated only in the variant used where a shard is
+  // actually named. Stating it unconditionally told agents they had "your own log
+  // shard, named below" when nothing below named one, and an agent that took the
+  // offer invented a path the round boundary can never match, losing the block in
+  // silence.
+  const permissive = calls.filter((c) => /EXCEPT the one log shard named below/.test(c.prompt));
+  t.check("READ_ONLY permits exactly that one write", permissive.length > 0, String(permissive.length));
+  t.check(
+    "and every prompt that permits it also names the shard",
+    permissive.every((c) => /scratchpad\/cp-log\/[^\s]+\.md/.test(c.prompt)),
+  );
+  t.check(
+    "no prompt offers a shard it does not name",
+    !calls.some((c) => /EXCEPT your own log shard/.test(c.prompt)),
+  );
+  t.check(
+    "a read-only agent with no shard is told not to write at all",
+    calls.some((c) => /read-only investigator\. Do not create, edit, or delete any file\./.test(c.prompt)),
+  );
+  // The converse, and the direction that actually regressed: splitting the
+  // constant left one agent named a shard and forbidden to create any file, so
+  // it either skipped its block or invented a path the merge can never match.
+  // The check must run over a fix path, because fix-design is where it happened.
+  const forbidden = calls.filter(
+    (c) =>
+      /scratchpad\/cp-log\/[^\s]+\.md/.test(c.prompt) &&
+      /read-only investigator\. Do not create, edit, or delete any file\./.test(c.prompt) &&
+      !/EXCEPT the one log shard named below/.test(c.prompt),
+  );
+  t.check("this run reaches a fix-design agent", calls.some((c) => /fix-design/.test(c.label)));
+  t.check(
+    "no prompt names a shard while forbidding every write",
+    forbidden.length === 0,
+    forbidden.map((c) => c.label).join(","),
+  );
   t.check("the tag vocabulary is fixed", writers.every((c) => /CORRECTS \[id\]/.test(c.prompt) && /USEFUL \[id\]/.test(c.prompt)));
   t.check("the standing context is read first", writers.every((c) => /Read the\s+`## Standing context`/.test(c.prompt)));
   t.check("padding is discouraged", writers.some((c) => /padding it is worse than leaving it out/.test(c.prompt)));
@@ -1703,6 +1804,40 @@ t.section("B24c. a caller-requested redesign runs once for the run and respects 
     introStubs({ ...RD, "introspect:*": PASS({ verdict: "redesign", areas: ["a1"] }) }),
   );
   t.check("one redesign total across the run", tagsOf(one.calls) === "1", tagsOf(one.calls));
+}
+
+t.section("B24a2. a prune agent that dies prunes nothing, and says so");
+{
+  // The bookkeeping used to run on a discarded return: the sections were marked
+  // pruned, the history recorded a prune, and `retired.clear()` fired, all on
+  // the strength of an edit that never landed. Clearing the retirement set is
+  // the expensive half, because it costs the loop a whole serialised round.
+  const { calls, result, logs } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, introspectEvery: 1, maxNonSpecReviewRounds: 3 },
+    introStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "*:review:*": { coverage: "c", findings: fs(2) },
+      "*:dedup": { findings: fs(2).map((f) => ({ ...f, lenses: ["citations"] })) },
+      "introspect:*": PASS({ verdict: "prune", sections: ["## 3. Design"] }),
+      "prune:*": null,
+    }),
+  );
+  t.check("the prune agent was called", matching(calls, "prune:r").length > 0);
+  t.check(
+    "but nothing is recorded as pruned",
+    (result.introspection.prunes || []).length === 0,
+    JSON.stringify(result.introspection.prunes || []),
+  );
+  t.check(
+    "and the failure is reported rather than silent",
+    logs.some((l) => /prune agent did not return/.test(l)),
+    logs.filter((l) => /prune/.test(l)).join(" | "),
+  );
+  t.check(
+    "no round claims to have pruned sections",
+    !logs.some((l) => /pruned \d+ section/.test(l)),
+  );
 }
 
 t.section("B24b. a prune is budgeted, remembers what it deleted, and lets the pool drain");
@@ -2247,7 +2382,19 @@ t.section("X15. the handoff discharges them, and may not author to do it");
   t.check("and steps 4-5 are named as the exception", /Steps 4 and 5 are the one place this pass changes what the/.test(h.prompt));
   t.check("it has a fifth step carrying decisions to the summary", /5\. CARRY THE OPEN DECISIONS INTO THE SUMMARY/.test(h.prompt));
   t.check("because the human never reads the review log", /The human never reads that log/.test(h.prompt));
+  // The section it carries them into is the summary's own, under the name the
+  // summary now uses, and the recommendation an unresolved entry lacks is
+  // supplied by the phase rather than by the lens this design deleted.
+  t.check(
+    "into the section the summary now names",
+    /ensure the summary's\s+`## Open decisions for human to make` section carries it/.test(h.prompt),
+  );
   t.check("and it may not invent a recommendation the loop did not derive", /Do not invent a recommendation\s+the loop did not derive/.test(h.prompt));
+  t.check(
+    "the phase supplies the one the loop did not",
+    /open-decisions-and-impact-review phase supplies it/.test(h.prompt),
+  );
+  t.check("and no deleted lens is named as supplying it", !/open-decisions lens/.test(h.prompt));
 }
 
 t.section("X16. two locations are the same site only when they really are");
@@ -2571,7 +2718,7 @@ t.section("R43. the guards a mutation audit found deletable");
     "*:review:*": ({ label }) => (/^r1:/.test(label)
       ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] }),
     "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
-    "introspect*": { verdict: "prune", reasoning: "r", sections: ["## 3. Design"] },
+    "introspect*": { observations: [], caseHealthy: "h", caseUnhealthy: "u", verdict: "prune", reasoning: "r", sections: ["## 3. Design"] },
     "judge:*": { falsified: false, howConclusive: "none", reasoning: "stands" },
     "prune:*": "pruned",
   }));
@@ -2635,7 +2782,10 @@ t.section("R45. every lens runs in round one; none is withheld by rotation");
     "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
   }));
   const rounds = logs.filter((l) => /launching \d+ reviewers|FULL SWEEP/.test(l));
-  t.check("round one runs the whole pool", /launching 15 reviewers/.test(rounds[0] || ""), String(rounds[0]));
+  // The count is the non-spec pool's size, which fell by one when the
+  // open-decisions lens was deleted. A lens withheld by rotation shows here as
+  // a smaller number, which is the failure this pins.
+  t.check("round one runs the whole pool", /launching 14 reviewers/.test(rounds[0] || ""), String(rounds[0]));
   const firstRetire = logs.find((l) => /retiring/.test(l)) || "";
   t.check(
     "both extras retire in round one, so neither can block the sweep",
@@ -2644,6 +2794,1334 @@ t.section("R45. every lens runs in round one; none is withheld by rotation");
   );
   t.check("so the very next round is the sweep", /FULL SWEEP 1/.test(rounds[1] || ""), String(rounds[1]));
   t.check("and no round runs a lens alone", !logs.some((l) => /launching 1 reviewers/.test(l)));
+}
+
+// ---- The prerequisites the phase would otherwise inherit -----------------
+//
+// P1, P2 and P4 of the open-decisions-and-impact-review design. None of them
+// belongs to the phase; each is something the phase would otherwise inherit.
+
+t.section("R46. lockSpecChanges applies at any value, and a mid-run flip reaches the fixer");
+{
+  // It was `const` while the mid-run override table assigned to it, so writing
+  // the key at ANY value into the override file threw at the assignment and the
+  // run returned nothing at all.
+  // The flip is asserted at the fixer's prompt rather than at the config site,
+  // because the config site copies the constant onto the loop once, before
+  // round one, where a later flip cannot reach a prompt.
+  const flipAt = (v) => loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+    "hash:*": HASH,
+    // Findings in rounds 1 and 2, so a fixer runs on either side of the flip.
+    "*:review:*": ({ label }) =>
+      (/^r[12]:/.test(label) ? { coverage: "c", findings: [F(1)] } : { coverage: "c", findings: [] }),
+    "*:dedup": { findings: [{ ...F(1), lenses: ["citations"] }] },
+    "*:round-boundary": BOUNDARY(),
+    "r1:round-boundary": BOUNDARY({ overrides: { lockSpecChanges: v } }),
+  });
+  for (const v of [true, false]) {
+    const { result, error } = await runWorkflow(WF, REVIEW_ARGS, flipAt(v));
+    t.check("an override of lockSpecChanges=" + v + " does not throw", !error, String(error));
+    t.check("and the run still returns", !!result && result.status === "reviewed", String(result && result.status));
+  }
+
+  const { calls, logs, result } = await runWorkflow(WF, REVIEW_ARGS, flipAt(true));
+  t.check(
+    "the override is taken forward",
+    logs.some((l) => /overrides applied for the next round: lockSpecChanges=true/.test(l)),
+  );
+  const fix = (n) => calls.find((c) => c.label === "r" + n + ":fix:G1");
+  t.check("a fixer runs on either side of the flip", !!fix(1) && !!fix(2));
+  t.check(
+    "before it the fixer may touch the spec staging",
+    /spec-changes\.md — permitted, but PREFER/.test(fix(1).prompt) &&
+      !/spec-changes\.md is LOCKED for this run/.test(fix(1).prompt),
+  );
+  t.check(
+    "after it the fixer is told the spec staging is LOCKED",
+    /spec-changes\.md is LOCKED for this run/.test(fix(2).prompt) &&
+      !/spec-changes\.md — permitted, but PREFER/.test(fix(2).prompt),
+  );
+  t.check("and the run reports the value it ended on", result.review.lockSpecChanges === true);
+}
+
+t.section("R47. a schema'd return missing a required field is discarded, not believed");
+{
+  // The cache instruction has a lens print a JSON file it wrote on an earlier
+  // run and return it verbatim, outside the tool-call schema, so a key the
+  // schema marks `required` can simply be absent. Such a return reaching the
+  // loop is a lens that found nothing, which is what certifies convergence.
+  const bad = loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+    "hash:*": HASH,
+    // `coverage` is required on the review schema and is absent here.
+    "*:review:citations": { findings: [] },
+  });
+  const { calls, logs, result } = await runWorkflow(WF, REVIEW_ARGS, bad);
+  t.check(
+    "the call is retried to exhaustion",
+    calls.filter((c) => c.label === "r1:review:citations").length === 4,
+    String(calls.filter((c) => c.label === "r1:review:citations").length),
+  );
+  t.check(
+    "and the discard names the field",
+    logs.some((l) => /r1:review:citations: return is missing required field\(s\) coverage, discarding it/.test(l)),
+  );
+  t.check(
+    "the lens is counted failed rather than clean",
+    logs.some((l) => /Round 1: 1\/\d+ lenses failed after retries; round INCONCLUSIVE/.test(l)),
+  );
+  const loop = result.review.loops.find((l) => l.name === "non-spec");
+  t.check("it retires nothing", !loop.retiredLenses.includes("citations"), loop.retiredLenses.join(","));
+  t.check("and the loop cannot converge on it", result.review.converged === false);
+
+  // The control: the same table with a complete return converges, so the run
+  // above is stopped by the missing field and by nothing else.
+  const good = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+    "hash:*": HASH,
+  }));
+  t.check("a complete return does converge", good.result.review.converged === true);
+}
+
+t.section("R48. the summary's section list reaches every prompt that states it");
+{
+  // Three authorities stated the summary's structure and disagreed: the
+  // constant, the seeder that writes the skeleton, and the bootstrap that
+  // derives a missing one. They now state one list, so the list is asserted at
+  // each of them rather than at the constant alone.
+  const newRun = await runWorkflow(WF, NEW_ARGS, newStubs({ "hash:*": HASH }));
+  const reviewRun = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH }));
+  const promptFor = (name) =>
+    (newRun.calls.find((c) => c.label === name) || reviewRun.calls.find((c) => c.label === name) || {}).prompt;
+
+  const SECTIONS = [
+    "**Problem statement.**",
+    "**Decisions.**",
+    "## Open decisions for human to make",
+    "## Defects in the shipped tree that this proposal does not stage",
+    "## Impacts on other proposals",
+    "## Deliverable index",
+  ];
+  for (const name of ["write", "bootstrap", "init"]) {
+    const p = promptFor(name);
+    t.check("the " + name + " prompt exists", !!p);
+    const absent = SECTIONS.filter((s) => !p.includes(s));
+    t.check("and states every section of the list to " + name, absent.length === 0, absent.join(" | "));
+  }
+
+  const all = [...newRun.calls, ...reviewRun.calls];
+  t.check(
+    "no prompt still says **Fixed decisions.**",
+    !all.some((c) => /\*\*Fixed decisions\.\*\*/.test(c.prompt)),
+    all.filter((c) => /\*\*Fixed decisions\.\*\*/.test(c.prompt)).map((c) => c.label).join(","),
+  );
+  // A resolved decision now LEAVES the summary, so the clause that kept it
+  // there must not reach an agent that would obey it.
+  t.check(
+    "and none carries the withdraw-in-place clause",
+    !all.some((c) => /withdrawn in place/i.test(c.prompt)),
+    all.filter((c) => /withdrawn in place/i.test(c.prompt)).map((c) => c.label).join(","),
+  );
+  // The summary owns the open decisions, so the staged non-spec file no longer
+  // carries a section for them: neither the skeleton nor the instruction to
+  // fill it survives.
+  t.check("the seeder creates no decisions section in the staged changes", !/## Open decisions for review/.test(promptFor("init")));
+  t.check("and the writer is not told to fill one", !/## Open decisions for review/.test(promptFor("write")));
+}
+
+// ---- The open-decisions-and-impact-review phase: where it fires -----------
+//
+// The phase is a subworkflow, and the harness records a `workflow()` sub-call
+// as one entry whose prompt is the JSON of the argument object, returning from
+// a stub table without running the child's body. So what these sections test is
+// the parent's half: which loop each firing follows, which paths still get one,
+// and what the periodic cadence counts. The argument object itself is asserted
+// in .claude/tests/change-proposal-decisions-forwarding.test.mjs.
+
+const CHILD_LABEL = "workflow:/repo/.claude/workflows/change-proposal-decisions.js";
+
+// What the child returns when it ran and found nothing to do. A firing over an
+// unchanged staging is the ordinary case, so it is the default here.
+const CHILD_RETURN = {
+  status: "done",
+  phaseState: {},
+  items: [],
+  applied: [],
+  failedItems: [],
+  recordedForOperator: [],
+  decisionsResolved: [],
+  decisionsLeftToHuman: [],
+  contested: [],
+  deadAgents: [],
+  unadjudicated: [],
+  changedFiles: [],
+};
+const withChild = (ret = CHILD_RETURN) => ({
+  subworkflows: { "change-proposal-decisions.js": ret },
+});
+
+/** The argument object of every firing of a run, in order. */
+const firedWith = (calls) =>
+  calls.filter((c) => c.label === CHILD_LABEL).map((c) => JSON.parse(c.prompt));
+/** Just the triggers, which is what names the site each firing ran at. */
+const triggers = (calls) => firedWith(calls).map((f) => f.trigger);
+
+// The run's loops and firings in the order they happened. Each round-boundary
+// call names its own loop in the command it runs and each firing carries its
+// trigger, so consecutive boundaries of one loop collapse into one entry and a
+// firing inside a loop stays between two entries for that loop.
+const timeline = (calls) => {
+  const out = [];
+  for (const c of calls) {
+    if (/:round-boundary$/.test(c.label)) {
+      const loop = (c.prompt.match(/--loop '([^']+)'/) || [])[1];
+      if (out[out.length - 1] !== "loop:" + loop) out.push("loop:" + loop);
+    } else if (c.label === CHILD_LABEL) {
+      out.push("fire:" + JSON.parse(c.prompt).trigger);
+    }
+  }
+  return out;
+};
+
+// A lane's steady digest, and the one a lane that has moved reads. The recheck
+// trigger compares a lane's files against the digest taken at that lane's own
+// last convergence, so a plan names the exact hash labels that read something
+// else and every other label reads its lane's steady value.
+const LANE = { spec: "aaaaaaaaaaaa", "non-spec": "bbbbbbbbbbbb" };
+const MOVED = "cccccccccccc";
+const laneHashes = (plan = {}) => ({ label }) => {
+  const m = /^hash:(spec|non-spec):/.exec(label);
+  return (m && (plan[label] || LANE[m[1]])) || LANE.spec;
+};
+
+// Two findings in the rounds the pattern names and nothing in the rest, which
+// is what fixes how many rounds a loop runs and which of them reach the loop
+// tail. A round with confirmed findings runs to the tail; one that finds
+// nothing takes the clean-round `continue` before it.
+const findsIn = (rounds) => ({ label }) =>
+  (rounds.test(label) ? { coverage: "c", findings: fs(2) } : { coverage: "c", findings: [] });
+const DEDUP2 = { findings: fs(2).map((f) => ({ ...f, lenses: ["citations"] })) };
+
+t.section("R51. every review loop is followed by a firing, including each recheck of either lane");
+{
+  // A spec edit outstanding after the non-spec loop runs a recheck PAIR, and
+  // the firing after each of its loops is what makes the pair's own writing
+  // adjudicated rather than carried to the end of the run.
+  const pair = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "*:review:*": findsIn(/^r1:/),
+    "*:dedup": DEDUP2,
+    "hash:*": laneHashes({
+      "hash:spec:after-non-spec-loop": MOVED,
+      // The recheck re-takes its own lane's baseline as it returns, so the
+      // second pass compares against what the recheck certified and the run
+      // settles after one pair.
+      "hash:spec:spec-recheck": MOVED,
+      "hash:spec:after-non-spec-loop:2": MOVED,
+    }),
+  }), withChild());
+  t.check("the run completes", !pair.error, String(pair.error));
+  t.check(
+    "four loops ran",
+    (pair.result.review.loops || []).map((l) => l.name).join(",") ===
+      "spec,non-spec,spec-recheck,non-spec-recheck",
+    (pair.result.review.loops || []).map((l) => l.name).join(","),
+  );
+  t.check(
+    "and a firing sits after each of them, naming the loop it followed",
+    timeline(pair.calls).join(" ") ===
+      "loop:spec fire:post-spec-loop loop:non-spec fire:post-non-spec-loop " +
+      "loop:spec-recheck fire:post-spec-recheck loop:non-spec-recheck fire:post-non-spec-recheck",
+    timeline(pair.calls).join(" "),
+  );
+  t.check(
+    "so the run takes one firing per loop and no more",
+    triggers(pair.calls).length === pair.result.review.loops.length,
+    triggers(pair.calls).join(","),
+  );
+
+  // A non-spec edit with the spec lane settled runs a LONE non-spec recheck,
+  // which is a review loop like any other and is followed by a firing too.
+  const lone = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "*:review:*": findsIn(/^r1:/),
+    "*:dedup": DEDUP2,
+    "hash:*": laneHashes({
+      "hash:non-spec:after-non-spec-loop": MOVED,
+      "hash:non-spec:non-spec-recheck": MOVED,
+      "hash:non-spec:after-non-spec-loop:2": MOVED,
+    }),
+  }), withChild());
+  t.check(
+    "a lone non-spec recheck is followed by a firing as well",
+    timeline(lone.calls).join(" ") ===
+      "loop:spec fire:post-spec-loop loop:non-spec fire:post-non-spec-loop " +
+      "loop:non-spec-recheck fire:post-non-spec-recheck",
+    timeline(lone.calls).join(" "),
+  );
+  t.check("and no spec recheck ran beside it", lone.result.rechecks.pairs === 0,
+    String(lone.result.rechecks.pairs));
+}
+
+t.section("R52. the firing after the spec loop runs on each of the four paths that run no non-spec loop");
+{
+  // The site is straight-line, so a run that stops early still adjudicates
+  // once. Each path also has to SAY that no later firing ran, because a reader
+  // of the result cannot otherwise tell one adjudication from two.
+  const halting = {
+    "introspect:*": PASS({ verdict: "halt", questionForHuman: "which mechanism ships?" }),
+    "introspect-gate:*": { warranted: true, why: "the counter is right" },
+    "judge:*": { falsified: false, howConclusive: "none", theArgumentIAttacked: "a", reasoning: "could not" },
+    growth: { documentWas: 10, documentNow: 12, grew: [] },
+  };
+  const PATHS = [
+    // The spec loop exhausts a one-round budget with a finding open, so the
+    // non-spec loop is not run over staging that is still moving.
+    ["spec-not-converged", { maxSpecReviewRounds: 1 },
+      { "*:review:*": findsIn(/^r1:/), "*:dedup": DEDUP2 }],
+    ["skipNonSpecReview", { skipNonSpecReview: true }, {}],
+    // startPhase past both review phases, which is also one of R53's three.
+    ["startPhase", { startPhase: "finalize" }, {}],
+    ["stopped-by-introspection", { introspectEvery: 1 },
+      { "*:review:*": findsIn(/^r1:/), "*:dedup": DEDUP2, ...halting }],
+  ];
+  for (const [reason, args, over] of PATHS) {
+    const { result, calls, error } = await runWorkflow(
+      WF, { ...REVIEW_ARGS, ...args }, loopStubs({ "hash:*": HASH, ...over }), withChild(),
+    );
+    t.check("the " + reason + " path completes", !error, String(error));
+    t.check(
+      "no non-spec loop ran on the " + reason + " path",
+      !result.review.nonSpecReviewed,
+      String(result.review.nonSpecReviewed),
+    );
+    t.check(
+      "the firing after the spec review still ran",
+      triggers(calls).join(",") === "post-spec-loop",
+      triggers(calls).join(",") || "none",
+    );
+    const p = result.decisions.paths.noNonSpecLoop;
+    t.check("and the result names the path as " + reason, p && p.reason === reason, p && p.reason);
+    t.check(
+      "reporting that no later firing ran",
+      p && p.firingAfterNonSpecLoop === false && p.adjudications.join(",") === "post-spec-loop",
+      p && JSON.stringify(p.adjudications),
+    );
+  }
+}
+
+t.section("R53. the first firing runs on each of the three paths that run no spec loop");
+{
+  // The adjudication does not depend on a spec review having happened, so the
+  // firing whose trigger names the spec loop runs where that loop never did.
+  const PATHS = [
+    ["no-spec-changes", {}, { "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }],
+    ["skipSpecReview", { skipSpecReview: true }, {}],
+    ["startPhase", { startPhase: "non-spec-review" }, {}],
+  ];
+  for (const [reason, args, over] of PATHS) {
+    const { result, calls, error } = await runWorkflow(
+      WF, { ...REVIEW_ARGS, ...args }, loopStubs({ "hash:*": HASH, ...over }), withChild(),
+    );
+    t.check("the " + reason + " path completes", !error, String(error));
+    t.check("no spec loop ran on the " + reason + " path", !result.review.specReviewed);
+    t.check(
+      "the first firing ran anyway",
+      triggers(calls)[0] === "post-spec-loop",
+      triggers(calls).join(",") || "none",
+    );
+    const p = result.decisions.paths.noSpecLoop;
+    t.check("and the result names the path as " + reason, p && p.reason === reason, p && p.reason);
+    t.check("recording that the first firing ran", p && p.firstFiringRan === true);
+    // The non-spec loop runs on all three, so its own firing follows.
+    t.check(
+      "and the non-spec loop's firing follows it",
+      triggers(calls).join(",") === "post-spec-loop,post-non-spec-loop",
+      triggers(calls).join(","),
+    );
+  }
+}
+
+t.section("R54. the periodic firing runs in the non-spec loop only, and never at a recheck's boundary");
+{
+  // periodEvery at 1 fires at every round that reaches the loop tail, so any
+  // loop whose tail is reached and produces no firing is one the gate excluded.
+  // Round 1 of every loop here is the same round -- the labels carry the round
+  // rather than the loop -- and the non-spec loop's fires, which is what makes
+  // the silence of the other three evidence of the gate rather than of a round
+  // that never got there.
+  const { result, calls, error } = await runWorkflow(WF, { ...REVIEW_ARGS, periodEvery: 1 }, loopStubs({
+    "*:review:*": findsIn(/^r1:/),
+    "*:dedup": DEDUP2,
+    "hash:*": laneHashes({
+      "hash:spec:after-non-spec-loop": MOVED,
+      "hash:spec:spec-recheck": MOVED,
+      "hash:spec:after-non-spec-loop:2": MOVED,
+    }),
+  }), withChild());
+  t.check("the run completes", !error, String(error));
+  const line = timeline(calls);
+  t.check(
+    "all four loops run the same three rounds",
+    result.review.loops.every((l) => l.rounds === 3),
+    result.review.loops.map((l) => l.name + ":" + l.rounds).join(","),
+  );
+  t.check(
+    "exactly one periodic firing runs",
+    triggers(calls).filter((x) => x === "periodic").length === 1,
+    triggers(calls).join(","),
+  );
+  t.check(
+    "and it runs inside the non-spec loop",
+    line.every((e, i) => e !== "fire:periodic" || line[i - 1] === "loop:non-spec"),
+    line.join(" "),
+  );
+  const inLoop = (name) => {
+    const from = line.indexOf("loop:" + name);
+    const to = line.indexOf("fire:post-" + (name === "spec" ? "spec-loop" : name));
+    return from >= 0 && to > from ? line.slice(from, to) : [];
+  };
+  for (const name of ["spec", "spec-recheck", "non-spec-recheck"]) {
+    t.check(
+      "no periodic firing runs at the " + name + " loop's round boundary",
+      !inLoop(name).includes("fire:periodic"),
+      inLoop(name).join(" ") || "the loop's segment was not found",
+    );
+  }
+  t.check(
+    "the result reports the cadence it ran at",
+    result.decisions.periodic.periodEvery === 1 && result.decisions.periodic.firings === 1,
+    JSON.stringify(result.decisions.periodic),
+  );
+}
+
+t.section("R55. the periodic cadence counts firings, so a round that never reaches the loop tail spends none");
+{
+  // A round that returns through the clean-round `continue`, or through the
+  // break every reviewer failing takes, jumps over the tail the periodic firing
+  // hooks. Counting rounds instead would fire at a boundary the round never
+  // reached, which is the whole reason the counter is incremented at the hook.
+  const nonSpecOnly = (over) => loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+    "hash:*": HASH,
+    "*:dedup": DEDUP2,
+    ...over,
+  });
+
+  const clean = await runWorkflow(WF, { ...REVIEW_ARGS, periodEvery: 1 },
+    nonSpecOnly({ "*:review:*": findsIn(/^r1:/) }), withChild());
+  const cleanLoop = clean.result.review.loops.find((l) => l.name === "non-spec");
+  t.check("three rounds run", cleanLoop.rounds === 3, String(cleanLoop.rounds));
+  t.check(
+    "two of them find nothing and return before the tail",
+    [2, 3].every((n) => clean.logs.some((l) => new RegExp("Round " + n + ": 0 raw findings").test(l))),
+    clean.logs.filter((l) => /raw findings/.test(l)).join(" | "),
+  );
+  t.check(
+    "so one firing runs at a cadence of one, rather than three",
+    clean.result.decisions.periodic.firings === 1,
+    JSON.stringify(clean.result.decisions.periodic),
+  );
+
+  const dead = await runWorkflow(WF, { ...REVIEW_ARGS, periodEvery: 1 }, nonSpecOnly({
+    "*:review:*": ({ label }) =>
+      (/^r1:/.test(label) ? { coverage: "c", findings: fs(2) }
+        : /^r2:/.test(label) ? null
+          : { coverage: "c", findings: [] }),
+  }), withChild());
+  const deadLoop = dead.result.review.loops.find((l) => l.name === "non-spec");
+  t.check("a round whose reviewers all fail ends the loop", deadLoop.rounds === 2, String(deadLoop.rounds));
+  t.check("and says so", dead.logs.some((l) => /Round 2: every reviewer failed; stopping/.test(l)));
+  t.check(
+    "that round reaches no tail and spends no firing",
+    dead.result.decisions.periodic.firings === 1,
+    JSON.stringify(dead.result.decisions.periodic),
+  );
+
+  // The distinguishing shape. At a cadence of two, with rounds 1, 3 and 5
+  // returning before the tail and rounds 2 and 4 reaching it, counting tails
+  // fires once, at round 4. Counting rounds fires twice, at rounds 2 and 4,
+  // so a `round % periodEvery` gate fails here and nowhere else in the suite.
+  const skipped = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, periodEvery: 2, maxNonSpecReviewRounds: 6 },
+    nonSpecOnly({ "*:review:*": findsIn(/^r2:|^r4:/) }),
+    withChild(),
+  );
+  const skippedLoop = skipped.result.review.loops.find((l) => l.name === "non-spec");
+  t.check("six rounds run at a cadence of two", skippedLoop.rounds === 6, String(skippedLoop.rounds));
+  t.check(
+    "three of them find nothing and return before the tail",
+    [1, 3, 5].every((n) => skipped.logs.some((l) => new RegExp("Round " + n + ": 0 raw findings").test(l))),
+    skipped.logs.filter((l) => /raw findings/.test(l)).join(" | "),
+  );
+  t.check(
+    "so the firing lands on the second round that reached the tail, and runs once",
+    skipped.result.decisions.periodic.firings === 1
+      && skipped.result.decisions.periodic.periodEvery === 2,
+    JSON.stringify(skipped.result.decisions.periodic),
+  );
+}
+
+t.section("R56. a round that exits on introspection fires once, through the post-loop firing");
+{
+  // The periodic firing is suppressed on the halting round so the same staging
+  // is not adjudicated twice: the firing after the loop covers it.
+  const base = (over) => loopStubs({
+    "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+    "hash:*": HASH,
+    "*:review:*": findsIn(/^r1:/),
+    "*:dedup": DEDUP2,
+    "introspect-gate:*": { warranted: true, why: "the counter is right" },
+    "judge:*": { falsified: false, howConclusive: "none", theArgumentIAttacked: "a", reasoning: "could not" },
+    growth: { documentWas: 10, documentNow: 12, grew: [] },
+    ...over,
+  });
+  const ARGS = { ...REVIEW_ARGS, periodEvery: 1, introspectEvery: 1 };
+
+  const halted = await runWorkflow(WF, ARGS,
+    base({ "introspect:*": PASS({ verdict: "halt", questionForHuman: "q" }) }), withChild());
+  t.check("the run stops on the halt", halted.result.status === "stopped-halt", halted.result.status);
+  t.check(
+    "the halting round is round one",
+    halted.result.review.loops.find((l) => l.name === "non-spec").rounds === 1,
+  );
+  t.check(
+    "no periodic firing runs on it",
+    !triggers(halted.calls).includes("periodic"),
+    triggers(halted.calls).join(","),
+  );
+  t.check(
+    "and the firing after the loop covers it",
+    triggers(halted.calls).join(",") === "post-spec-loop,post-non-spec-loop",
+    triggers(halted.calls).join(","),
+  );
+
+  // The control: the same round without the halt does fire periodically, so
+  // the absence above is the suppression rather than a round short of cadence.
+  const healthy = await runWorkflow(WF, ARGS, base({ "introspect:*": PASS() }), withChild());
+  t.check(
+    "the same round without the halt fires periodically",
+    triggers(healthy.calls).join(",") === "post-spec-loop,periodic,post-non-spec-loop",
+    triggers(healthy.calls).join(","),
+  );
+}
+
+t.section("R57. every post-loop firing runs whether or not anything changed, and the last reads the whole refuted list");
+{
+  // There is no "did any decisions appear" condition on any site: a firing runs
+  // when nothing has changed, and carrying an untouched item's disposition
+  // forward is what keeps it cheap.
+  const steady = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH }), withChild());
+  t.check("both firings ran over an unchanged staging", steady.result.decisions.fired === 2,
+    String(steady.result.decisions.fired));
+  t.check("neither failed", steady.result.decisions.failedFirings === 0);
+  t.check(
+    "and each reports that nothing changed",
+    steady.result.decisions.firings.every((f) => f.ran && f.changedFiles.length === 0),
+    JSON.stringify(steady.result.decisions.firings.map((f) => f.changedFiles)),
+  );
+
+  // The run-wide refuted list grows as the skeptics refuse findings, and the
+  // firing after the non-spec loop reads it complete: an item an earlier firing
+  // routed to the human may be resolvable once the ground it rested on is gone.
+  let dedups = 0;
+  const refuting = await runWorkflow(WF, REVIEW_ARGS, loopStubs({
+    "hash:*": HASH,
+    "*:review:*": findsIn(/^r1:/),
+    // One refuted finding per loop, titled for the loop that produced it, so
+    // the second firing's list can be told from the first's.
+    "*:dedup": () => {
+      const n = ++dedups;
+      return { findings: [{ ...F(n), title: "refuted-" + n, lenses: ["citations"] }] };
+    },
+    "*:verify-material": { confirmed: false, reason: "it changes nothing a reader acts on" },
+  }), withChild());
+  const lists = firedWith(refuting.calls).map((f) => (f.rejected || []).map((r) => r.title));
+  t.check(
+    "the first firing carries what the spec loop refuted",
+    JSON.stringify(lists[0]) === JSON.stringify(["refuted-1"]),
+    JSON.stringify(lists[0]),
+  );
+  t.check(
+    "and the firing after the non-spec loop carries both, complete",
+    JSON.stringify(lists[1]) === JSON.stringify(["refuted-1", "refuted-2"]),
+    JSON.stringify(lists[1]),
+  );
+}
+
+t.section("R58. maxPeriodicFirings bounds the periodic firing alone");
+{
+  // The periodic firing is the only one whose count is open-ended, so it is the
+  // only one with a budget. Exhausting it must not take the structural firings
+  // with it: those are one per loop and the loop count is already bounded.
+  const { result, calls, error, logs } = await runWorkflow(
+    WF,
+    { ...REVIEW_ARGS, periodEvery: 1, maxPeriodicFirings: 2, maxNonSpecReviewRounds: 6 },
+    loopStubs({
+      "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" },
+      "hash:*": HASH,
+      "*:review:*": findsIn(/^r[1234]:/),
+      "*:dedup": DEDUP2,
+    }),
+    withChild(),
+  );
+  t.check("the run completes", !error, String(error));
+  t.check(
+    "four rounds reach the tail",
+    result.review.loops.find((l) => l.name === "non-spec").rounds === 6,
+    String(result.review.loops.find((l) => l.name === "non-spec").rounds),
+  );
+  t.check(
+    "the periodic firing stops at its budget",
+    triggers(calls).filter((x) => x === "periodic").length === 2,
+    triggers(calls).join(","),
+  );
+  t.check(
+    "every post-loop firing still runs",
+    triggers(calls).filter((x) => x !== "periodic").join(",") === "post-spec-loop,post-non-spec-loop",
+    triggers(calls).join(","),
+  );
+  t.check(
+    "the stop is reported once, saying the post-loop firings continue",
+    logs.filter((l) => /periodic open-decisions budget of 2 firing\(s\) is spent/.test(l)).length === 1
+      && logs.some((l) => /Every post-loop firing still runs/.test(l)),
+    logs.filter((l) => /budget of 2/.test(l)).join(" | "),
+  );
+  t.check(
+    "and the result carries the stop out of the run",
+    result.decisions.periodic.budgetSpent === true && result.decisions.periodic.budget === 2,
+    JSON.stringify(result.decisions.periodic),
+  );
+}
+
+t.section("R59. a null return from the child is a failed firing, exactly as a throw is");
+{
+  // A subworkflow that RETURNS null did not throw, so a catch never sees it and
+  // every read of the result would dereference null. Both are the same
+  // condition and take the same exit: the firing is recorded as failed, the run
+  // says so, and the remaining loops still run.
+  const nulled = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH }), withChild(null));
+  t.check("a null return does not crash the run", !nulled.error, String(nulled.error));
+  t.check("the run still reports itself reviewed", nulled.result.status === "reviewed", nulled.result.status);
+  t.check(
+    "both firings are recorded as failed rather than dropped",
+    nulled.result.decisions.fired === 2 && nulled.result.decisions.failedFirings === 2,
+    JSON.stringify([nulled.result.decisions.fired, nulled.result.decisions.failedFirings]),
+  );
+  t.check(
+    "each says what happened, and that the run continues",
+    nulled.logs.filter((l) => /FAILED: the subworkflow returned no result\. This firing adjudicated nothing; the run continues\./.test(l)).length === 2,
+    nulled.logs.filter((l) => /firing \d+ FAILED/.test(l)).join(" | "),
+  );
+  t.check(
+    "and the empty lists a reader reads per firing are stated rather than absent",
+    nulled.result.decisions.firings.every(
+      (f) => f.ran === false && f.status === "failed" && f.applied.length === 0
+        && f.decisionsLeftToHuman.length === 0 && f.changedFiles === null,
+    ),
+    JSON.stringify(nulled.result.decisions.firings[0]),
+  );
+
+  // A child that THROWS reaches the same record through the catch, differing
+  // only in the reason. The stub table's getter is the only way to make the
+  // harness's subworkflow throw rather than return.
+  const throwing = {};
+  Object.defineProperty(throwing, "change-proposal-decisions.js", {
+    enumerable: true,
+    get() { throw new Error("the child blew up"); },
+  });
+  const threw = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH }), { subworkflows: throwing });
+  t.check("a throw does not crash the run either", !threw.error, String(threw.error));
+  const strip = (r) => r.decisions.firings.map((f) => ({ ...f, reason: "" }));
+  t.check(
+    "and is recorded exactly as the null return is, apart from the reason",
+    JSON.stringify(strip(threw.result)) === JSON.stringify(strip(nulled.result)),
+    JSON.stringify(strip(threw.result)[0]),
+  );
+  t.check(
+    "the reason names the failure the child raised",
+    threw.result.decisions.firings.every((f) => f.reason === "the child blew up"),
+    threw.result.decisions.firings.map((f) => f.reason).join(" | "),
+  );
+}
+
+// ---- Rechecks: what re-reads a lane whose staging moved after its review --
+//
+// The run may converge only when no lane's staging has changed since that
+// lane's own last review. A firing is what can change a lane's staging after
+// its review, and a recheck is what reviews it again. The trigger is a content
+// hash of the lane's files rather than an agent's report, so these sections
+// stub that hash and nothing else decides whether a lane moved.
+//
+// The stub models a FILE rather than a reading: a lane's digest keeps whatever
+// value it was last given, so an edit made at one comparison is still there at
+// the next one and at the baseline a recheck re-takes as it returns. A plan
+// naming a label is the edit that landed just before the hash at that label was
+// taken. `laneHashes` above answers each label independently, which is the
+// wrong model here: a lane that moved once would read as moving back.
+const edit = (n) => String(n).repeat(12);
+const laneTape = (plan = {}) => {
+  const cur = { spec: LANE.spec, "non-spec": LANE["non-spec"] };
+  return ({ label }) => {
+    const m = /^hash:(spec|non-spec):/.exec(label);
+    if (!m) return LANE.spec;
+    if (Object.prototype.hasOwnProperty.call(plan, label)) cur[m[1]] = plan[label];
+    return cur[m[1]];
+  };
+};
+
+// Labels carry the round but not the loop, because `round` restarts in every
+// loop. The loop is in the call's phase, which is `<loop> R<n>: <stage>`.
+const callsInLoop = (calls, name) =>
+  calls.filter((c) => c.opts && typeof c.opts.phase === "string" && c.opts.phase.startsWith(name + " R"));
+const lensesOf = (calls, name) =>
+  callsInLoop(calls, name).filter((c) => /^r1:review:/.test(c.label)).map((c) => c.label.split(":")[2]).sort();
+const fixerOf = (calls, name) =>
+  (callsInLoop(calls, name).find((c) => /^r\d+:fix:/.test(c.label)) || {}).prompt || "";
+const loopNames = (r) => (r.result.review.loops || []).map((l) => l.name);
+
+// One group, so the confirmed findings of every loop reach a fixer and the
+// fixer brief each lane hands its own loop is observable.
+const ONE_GROUP = plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1 }]);
+const recheckStubs = (tape, over = {}) =>
+  loopStubs({
+    "*:review:*": findsIn(/^r1:/),
+    "*:dedup": DEDUP2,
+    "*:fix-plan": ONE_GROUP,
+    "hash:*": tape,
+    ...over,
+  });
+
+// What each lane's constants say, at the prompt each of them reaches.
+const SPEC_SCOPE = /SCOPE OF THIS LOOP\. You are reviewing the STAGED SPEC EDITS/;
+const NONSPEC_SCOPE = /Read the staged spec edits in .* AS ONE DOCUMENT/;
+const SPEC_GRANT = /the staged spec edits, which is what this loop converges/;
+const NONSPEC_GRANT = /the staged code, schema, chart, migration, docs and test changes/;
+const SPEC_BRIEF = /THE IMPLEMENTATION CHECKLIST IS NOT YOURS/;
+const NONSPEC_BRIEF = /KEEP THE IMPLEMENTATION CHECKLIST CURRENT/;
+const DELTA = /THIS IS A RECHECK, AND THE DELTA IS WHERE YOU LOOK FIRST/;
+
+t.section("R60. a spec edit by the firing after the spec loop runs a pair before the non-spec loop starts");
+{
+  // The control first: a run whose lanes both read the same digest at every
+  // comparison takes no recheck at all, so every recheck below is fired by the
+  // edit its own tape stages and by nothing in the harness.
+  const steady = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape()), withChild());
+  t.check("the control completes", !steady.error, String(steady.error));
+  t.check(
+    "a run over unmoved staging takes no recheck and converges",
+    steady.result.rechecks.pairs === 0 && steady.result.rechecks.lone === 0 &&
+      steady.result.review.converged === true,
+    JSON.stringify(steady.result.rechecks),
+  );
+
+  // The non-spec loop's premise is that the spec staging is settled, so a spec
+  // edit made by the firing that precedes it is reviewed BEFORE it starts
+  // rather than invalidating it afterwards.
+  const early = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-first-firing": edit(1),
+  })), withChild());
+  t.check("the run completes", !early.error, String(early.error));
+  t.check(
+    "the pair runs between the firing and the non-spec loop",
+    timeline(early.calls).join(" ") ===
+      "loop:spec fire:post-spec-loop loop:spec-recheck fire:post-spec-recheck " +
+      "loop:non-spec-recheck fire:post-non-spec-recheck loop:non-spec fire:post-non-spec-loop",
+    timeline(early.calls).join(" "),
+  );
+  t.check("one pair was spent", early.result.rechecks.pairs === 1, String(early.result.rechecks.pairs));
+  t.check(
+    "and the run still converges, because the recheck read the edit",
+    early.result.review.converged === true && early.result.status === "reviewed",
+    early.result.status,
+  );
+
+  // The same on a path that ran NO spec loop: the baseline is taken at the
+  // first firing, which is the last point that lane was settled, so the trigger
+  // is decidable there too.
+  const noSpecLoop = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-first-firing": edit(1),
+  }), { "probe:spec-changes": { stagesSpecChanges: false, why: "headings only" } }), withChild());
+  t.check("that run completes too", !noSpecLoop.error, String(noSpecLoop.error));
+  t.check(
+    "no spec loop ran",
+    !loopNames(noSpecLoop).includes("spec"),
+    loopNames(noSpecLoop).join(","),
+  );
+  t.check(
+    "the baseline was taken at the first firing rather than at a loop",
+    noSpecLoop.calls.some((c) => c.label === "hash:spec:first-firing") &&
+      !noSpecLoop.calls.some((c) => c.label === "hash:spec:spec-loop"),
+    noSpecLoop.calls.filter((c) => /^hash:spec:/.test(c.label)).map((c) => c.label).join(","),
+  );
+  t.check(
+    "and the firing's spec edit still runs a pair before the non-spec loop",
+    timeline(noSpecLoop.calls).join(" ") ===
+      "fire:post-spec-loop loop:spec-recheck fire:post-spec-recheck " +
+      "loop:non-spec-recheck fire:post-non-spec-recheck loop:non-spec fire:post-non-spec-loop",
+    timeline(noSpecLoop.calls).join(" "),
+  );
+}
+
+t.section("R61. a spec edit by any later firing, or by the non-spec fixer, runs a pair");
+{
+  // The trigger is the tree, so it does not matter which agent wrote the edit.
+  // That is the point: the non-spec fixer holds the same permission over the
+  // staged spec edits that the phase does, and scoping the trigger to the
+  // phase's own edits would leave half the requirement met.
+  const late = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+  })), withChild());
+  t.check("the run completes", !late.error, String(late.error));
+  t.check(
+    "the pair runs after the non-spec loop and its firing",
+    timeline(late.calls).join(" ") ===
+      "loop:spec fire:post-spec-loop loop:non-spec fire:post-non-spec-loop " +
+      "loop:spec-recheck fire:post-spec-recheck loop:non-spec-recheck fire:post-non-spec-recheck",
+    timeline(late.calls).join(" "),
+  );
+
+  // The same comparison covers the non-spec fixer, which writes inside the loop
+  // rather than after it. The fixer ran and its grant names the staged spec
+  // edits, so the edit the comparison sees is one it was permitted to make.
+  t.check(
+    "the non-spec fixer ran under a grant that permits the staged spec edits",
+    /permitted, but PREFER any resolution that does not touch it/.test(fixerOf(late.calls, "non-spec")),
+    fixerOf(late.calls, "non-spec") ? "the fixer ran under another grant" : "no fixer ran in the non-spec loop",
+  );
+  t.check("and one pair was spent on the outstanding edit", late.result.rechecks.pairs === 1,
+    String(late.result.rechecks.pairs));
+}
+
+t.section("R62. every spec-recheck is followed by a non-spec-recheck, which reads the non-spec lane");
+{
+  // A spec-recheck changes the staged spec text, the non-spec loop reads both
+  // change files as one document, and the spec fixer may repair a non-spec
+  // statement its own edit falsified. Either way the result is non-spec text no
+  // non-spec lens has read, so the non-spec-recheck runs whether or not the
+  // non-spec staging moved.
+  const pair = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+  })), withChild());
+  t.check("the run completes", !pair.error, String(pair.error));
+  t.check(
+    "nothing moved the non-spec lane, so no lone recheck was owed",
+    pair.result.rechecks.lone === 0,
+    String(pair.result.rechecks.lone),
+  );
+  const line = timeline(pair.calls).join(" ");
+  t.check(
+    "the non-spec-recheck runs anyway, immediately after the spec-recheck's firing",
+    /loop:spec-recheck fire:post-spec-recheck loop:non-spec-recheck/.test(line),
+    line,
+  );
+
+  // Over two pairs, so "every" has more than one instance to hold over. The
+  // pair stays adjacent: the firing that follows the spec-recheck sits between
+  // its two loops rather than after both.
+  const twice = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+    "hash:spec:spec-recheck": edit(2),
+    "hash:spec:after-non-spec-loop:2": edit(3),
+    "hash:spec:spec-recheck-2": edit(4),
+  })), withChild());
+  const entries = timeline(twice.calls);
+  const specRechecks = entries.filter((e) => /^loop:spec-recheck/.test(e)).length;
+  t.check("two spec-rechecks ran", specRechecks === 2, entries.join(" "));
+  t.check(
+    "and each is followed by its firing and then by a non-spec-recheck",
+    entries.every((e, i) =>
+      !/^loop:spec-recheck/.test(e) ||
+      (entries[i + 1] === "fire:post-spec-recheck" && /^loop:non-spec-recheck/.test(entries[i + 2] || ""))),
+    entries.join(" "),
+  );
+
+  // What the non-spec-recheck reads is the non-spec lane: a repair the
+  // spec-recheck's fixer made in the non-spec staging is inside its scope, and
+  // its own fixer holds the non-spec brief through the lane on the loop config
+  // rather than through the loop's name. The two constants reach different
+  // prompts, so each is asserted where it lands: the scope note reaches every
+  // lens, and the editable grant reaches the fixer.
+  t.check(
+    "the spec-recheck's fixer may repair what its own spec edit falsified",
+    /REPAIR ONLY WHAT YOUR OWN EDIT FALSIFIED/.test(fixerOf(pair.calls, "spec-recheck")),
+  );
+  t.check(
+    "its lenses are briefed with NONSPEC_SCOPE_NOTE",
+    callsInLoop(pair.calls, "non-spec-recheck").filter((c) => /^r\d+:review:/.test(c.label))
+      .every((c) => NONSPEC_SCOPE.test(c.prompt) && !SPEC_SCOPE.test(c.prompt)),
+  );
+  t.check(
+    "its fixer is granted the non-spec files by NONSPEC_EDITABLE",
+    NONSPEC_GRANT.test(fixerOf(pair.calls, "non-spec-recheck")) &&
+      !SPEC_GRANT.test(fixerOf(pair.calls, "non-spec-recheck")),
+  );
+  t.check(
+    "and reads the non-spec fixer brief rather than the spec one",
+    NONSPEC_BRIEF.test(fixerOf(pair.calls, "non-spec-recheck")) &&
+      !SPEC_BRIEF.test(fixerOf(pair.calls, "non-spec-recheck")),
+  );
+}
+
+t.section("R63. each recheck is its lane's review phase: pool, scope note, grant, and fixer brief");
+{
+  const run = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+  })), withChild());
+  t.check("the run completes", !run.error, String(run.error));
+
+  // The pools are asserted against the lane loops rather than against a count,
+  // because a lens added to the pool must reach both.
+  t.check(
+    "the non-spec-recheck runs the full pool",
+    lensesOf(run.calls, "non-spec-recheck").join(",") === lensesOf(run.calls, "non-spec").join(","),
+    lensesOf(run.calls, "non-spec-recheck").join(","),
+  );
+  t.check(
+    "the spec-recheck runs the spec lane's pool, with test-coverage dropped",
+    lensesOf(run.calls, "spec-recheck").join(",") ===
+      lensesOf(run.calls, "non-spec").filter((k) => k !== "test-coverage").join(","),
+    lensesOf(run.calls, "spec-recheck").join(","),
+  );
+  t.check(
+    "which is the pool the spec loop itself ran",
+    lensesOf(run.calls, "spec-recheck").join(",") === lensesOf(run.calls, "spec").join(","),
+    lensesOf(run.calls, "spec").join(","),
+  );
+
+  t.check(
+    "the spec-recheck's lenses read SPEC_SCOPE_NOTE",
+    callsInLoop(run.calls, "spec-recheck").filter((c) => /^r\d+:review:/.test(c.label))
+      .every((c) => SPEC_SCOPE.test(c.prompt) && !NONSPEC_SCOPE.test(c.prompt)),
+  );
+  t.check(
+    "and its fixer reads SPEC_EDITABLE and the spec brief",
+    SPEC_GRANT.test(fixerOf(run.calls, "spec-recheck")) &&
+      SPEC_BRIEF.test(fixerOf(run.calls, "spec-recheck")) &&
+      !NONSPEC_BRIEF.test(fixerOf(run.calls, "spec-recheck")),
+  );
+
+  // The delta is what a recheck differs by. It names the text added since that
+  // lane's last convergence as where the lenses look first, and says a defect
+  // anywhere in the staging is still a finding.
+  for (const name of ["spec-recheck", "non-spec-recheck"]) {
+    const lenses = callsInLoop(run.calls, name).filter((c) => /^r1:review:/.test(c.label));
+    t.check(
+      "every lens of the " + name + " is pointed at the delta",
+      lenses.length > 0 && lenses.every((c) => DELTA.test(c.prompt)),
+      String(lenses.length),
+    );
+    t.check(
+      "without narrowing what it may report",
+      lenses.every((c) => /A defect anywhere in the staging is still a finding/.test(c.prompt)),
+    );
+  }
+  t.check(
+    "no lens of either lane loop is told it is rechecking",
+    [...callsInLoop(run.calls, "spec"), ...callsInLoop(run.calls, "non-spec")]
+      .filter((c) => /^r\d+:review:/.test(c.label)).every((c) => !DELTA.test(c.prompt)),
+  );
+}
+
+t.section("R64. a recheck's convergence settles its own edits, and an edit after it is outstanding again");
+{
+  // The baseline is re-taken at each recheck's convergence. Without that, the
+  // recheck's own edits would read as drift at the next comparison and fire
+  // another pair against them, forever.
+  const settles = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+    // The spec-recheck edited the staged spec file, and that is all that
+    // changed. Its own convergence is what the next comparison reads against.
+    "hash:spec:spec-recheck": edit(2),
+  })), withChild());
+  t.check("the run completes", !settles.error, String(settles.error));
+  t.check("one pair runs and no more", settles.result.rechecks.pairs === 1,
+    String(settles.result.rechecks.pairs));
+  t.check(
+    "and the run converges over the recheck's own edits",
+    settles.result.review.converged === true && settles.result.status === "reviewed",
+    settles.result.status,
+  );
+
+  // A firing that follows a recheck and changes that lane's staging leaves the
+  // lane stale again, and the lane is reviewed again. The comparison after the
+  // pair is where such an edit shows, whether the firing after the spec-recheck
+  // made it or the non-spec-recheck did.
+  const again = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+    "hash:spec:spec-recheck": edit(2),
+    "hash:spec:after-non-spec-loop:2": edit(3),
+    "hash:spec:spec-recheck-2": edit(4),
+  })), withChild());
+  t.check("that run completes", !again.error, String(again.error));
+  t.check("a second pair runs", again.result.rechecks.pairs === 2, String(again.result.rechecks.pairs));
+  t.check(
+    "under its own name, so it does not re-enter the first pair's namespace",
+    loopNames(again).join(",") ===
+      "spec,non-spec,spec-recheck,non-spec-recheck,spec-recheck-2,non-spec-recheck-2",
+    loopNames(again).join(","),
+  );
+  t.check(
+    "the run converges once the edit has been reviewed",
+    again.result.review.converged === true, String(again.result.status),
+  );
+  t.check(
+    "and the budget bounds the alternation at maxRecheckPairs",
+    again.result.rechecks.pairs === again.result.rechecks.pairBudget,
+    JSON.stringify([again.result.rechecks.pairs, again.result.rechecks.pairBudget]),
+  );
+}
+
+t.section("R65. exhausting either recheck budget stops the run rather than converging");
+{
+  // The posture is the one the run already takes for a spec loop that did not
+  // converge: it says what it was still finding rather than converging over
+  // text no reviewer in that lane has read.
+  const pairs = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+    "hash:spec:spec-recheck": edit(2),
+    "hash:spec:after-non-spec-loop:2": edit(3),
+    "hash:spec:spec-recheck-2": edit(4),
+    "hash:spec:after-non-spec-loop:3": edit(5),
+  })), withChild());
+  t.check("the run completes", !pairs.error, String(pairs.error));
+  t.check("the budget stops the alternation", pairs.result.rechecks.pairs === 2,
+    String(pairs.result.rechecks.pairs));
+  t.check(
+    "the run does NOT converge over the unreviewed edit",
+    pairs.result.review.converged === false && pairs.result.status === "recheck-budget-exhausted",
+    pairs.result.status,
+  );
+  const stop = pairs.result.rechecks.stop || {};
+  t.check("the stop names the lane", stop.lane === "spec", String(stop.lane));
+  t.check("and the budget that ran out", stop.budget === "maxRecheckPairs" && stop.limit === 2,
+    JSON.stringify([stop.budget, stop.limit]));
+  t.check(
+    "and the file the outstanding edit is in",
+    (stop.files || []).some((f) => /spec-changes\.md$/.test(f)),
+    (stop.files || []).join(","),
+  );
+  t.check(
+    "and the outstanding edit itself, as the two digests",
+    typeof stop.outstanding === "string" && stop.outstanding.includes(edit(4)) &&
+      stop.outstanding.includes(edit(5)),
+    String(stop.outstanding),
+  );
+  t.check("the lane is reported outstanding", pairs.result.rechecks.specOutstanding === true);
+  t.check(
+    "the stop is logged once, naming what to raise",
+    pairs.logs.filter((l) => /maxRecheckPairs budget of 2 is spent/.test(l)).length === 1 &&
+      pairs.logs.some((l) => /Raise maxRecheckPairs above 2 and resume/.test(l)),
+    pairs.logs.filter((l) => /budget of 2 is spent/.test(l)).join(" | "),
+  );
+
+  // The lone recheck's budget is counted separately, because a lone recheck can
+  // beget a pair exactly as a pair can, and a budget named for pairs cannot
+  // account for a loop that runs alone.
+  const lone = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:non-spec:after-non-spec-loop": edit(1),
+    "hash:non-spec:non-spec-recheck": edit(2),
+    "hash:non-spec:after-non-spec-loop:2": edit(3),
+    "hash:non-spec:non-spec-recheck-2": edit(4),
+    "hash:non-spec:after-non-spec-loop:3": edit(5),
+  })), withChild());
+  t.check("that run completes", !lone.error, String(lone.error));
+  t.check("two lone rechecks ran and no pair", lone.result.rechecks.lone === 2 &&
+    lone.result.rechecks.pairs === 0, JSON.stringify(lone.result.rechecks.lone));
+  t.check(
+    "the run does not converge either",
+    lone.result.review.converged === false && lone.result.status === "recheck-budget-exhausted",
+    lone.result.status,
+  );
+  const ls = lone.result.rechecks.stop || {};
+  t.check("the report names the non-spec lane and its budget",
+    ls.lane === "non-spec" && ls.budget === "maxNonSpecRechecks", JSON.stringify([ls.lane, ls.budget]));
+  t.check(
+    "and both files of that lane, since the summary is in it",
+    (ls.files || []).some((f) => /non-spec-changes\.md$/.test(f)) &&
+      (ls.files || []).some((f) => /summary\.md$/.test(f)),
+    (ls.files || []).join(","),
+  );
+  t.check("the lane is reported outstanding", lone.result.rechecks.nonSpecOutstanding === true);
+}
+
+t.section("R66. the lone non-spec recheck: when it runs alone, and when the pair covers it");
+{
+  // A lone recheck arises only where no non-spec review already follows.
+  const alone = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:non-spec:after-non-spec-loop": edit(1),
+    "hash:non-spec:non-spec-recheck": edit(1),
+  })), withChild());
+  t.check("the run completes", !alone.error, String(alone.error));
+  t.check(
+    "a terminal firing that moved only the non-spec lane runs one recheck and no spec-recheck",
+    timeline(alone.calls).join(" ") ===
+      "loop:spec fire:post-spec-loop loop:non-spec fire:post-non-spec-loop " +
+      "loop:non-spec-recheck fire:post-non-spec-recheck",
+    timeline(alone.calls).join(" "),
+  );
+  t.check("counted against its own budget", alone.result.rechecks.lone === 1 &&
+    alone.result.rechecks.pairs === 0, JSON.stringify(alone.result.rechecks));
+
+  // Where BOTH lanes moved, the pair runs and no lone recheck is taken beside
+  // it: the pair's own non-spec-recheck already read that text, which is what
+  // the baseline re-taken at its convergence records.
+  const both = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+    // The firing moved the non-spec lane too. The pair's re-take is the first
+    // non-spec hash after it, because the spec comparison fires first.
+    "hash:non-spec:non-spec-recheck": edit(2),
+  })), withChild());
+  t.check("that run completes", !both.error, String(both.error));
+  t.check(
+    "one pair runs and no lone recheck follows it",
+    both.result.rechecks.pairs === 1 && both.result.rechecks.lone === 0,
+    JSON.stringify(both.result.rechecks),
+  );
+  t.check(
+    "so the non-spec lane is reviewed once rather than twice",
+    loopNames(both).filter((n) => /^non-spec-recheck/.test(n)).length === 1,
+    loopNames(both).join(","),
+  );
+
+  // A lone recheck can beget a pair, because the permission over the staged
+  // spec edits is not withdrawn inside one.
+  const begets = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:non-spec:after-non-spec-loop": edit(1),
+    "hash:non-spec:non-spec-recheck": edit(1),
+    "hash:spec:after-non-spec-loop:2": edit(2),
+  })), withChild());
+  t.check("that run completes", !begets.error, String(begets.error));
+  t.check(
+    "the spec edit made inside the lone recheck runs a pair after it",
+    timeline(begets.calls).join(" ") ===
+      "loop:spec fire:post-spec-loop loop:non-spec fire:post-non-spec-loop " +
+      "loop:non-spec-recheck fire:post-non-spec-recheck " +
+      "loop:spec-recheck fire:post-spec-recheck loop:non-spec-recheck-2 fire:post-non-spec-recheck",
+    timeline(begets.calls).join(" "),
+  );
+  t.check("each budget counts its own", begets.result.rechecks.lone === 1 &&
+    begets.result.rechecks.pairs === 1, JSON.stringify(begets.result.rechecks));
+}
+
+t.section("R67. under lockSpecChanges no pair runs, and the spec lane is not even compared");
+{
+  // Neither fixer may write the staged spec edits and the phase records the
+  // edit it would have made instead of staging it, so no post-convergence spec
+  // edit can exist. Comparing anyway would let one unreadable digest spend the
+  // pair budget on an edit that cannot happen.
+  const locked = await runWorkflow(WF, { ...REVIEW_ARGS, lockSpecChanges: true }, recheckStubs(laneTape({
+    "hash:spec:after-first-firing": edit(1),
+    "hash:spec:after-non-spec-loop": edit(2),
+    "hash:non-spec:after-non-spec-loop": edit(3),
+    "hash:non-spec:non-spec-recheck": edit(3),
+  })), withChild());
+  t.check("the run completes", !locked.error, String(locked.error));
+  t.check("no pair runs", locked.result.rechecks.pairs === 0, String(locked.result.rechecks.pairs));
+  t.check(
+    "and no spec comparison is taken at all",
+    !locked.calls.some((c) => /^hash:spec:after-/.test(c.label)),
+    locked.calls.filter((c) => /^hash:spec:/.test(c.label)).map((c) => c.label).join(","),
+  );
+  t.check(
+    "the non-spec lane is still compared, and still rechecked when it moves",
+    locked.result.rechecks.lone === 1,
+    String(locked.result.rechecks.lone),
+  );
+  t.check("the run reports the lock it ran under", locked.result.review.lockSpecChanges === true);
+}
+
+t.section("R68. every recheck's artifacts land under its own name");
+{
+  // Every artifact of a loop derives from its name: the state file, the log
+  // shards, the snapshots, and the boundary script's --loop argument. A recheck
+  // sharing the name of the loop it rechecks would re-enter an exited loop's
+  // namespace, which is the collision the distinct names exist to avoid.
+  const run = await runWorkflow(WF, REVIEW_ARGS, recheckStubs(laneTape({
+    "hash:spec:after-non-spec-loop": edit(1),
+    "hash:spec:spec-recheck": edit(2),
+    "hash:spec:after-non-spec-loop:2": edit(3),
+    "hash:spec:spec-recheck-2": edit(4),
+  })), withChild());
+  t.check("the run completes", !run.error, String(run.error));
+  const NAMES = ["spec", "non-spec", "spec-recheck", "non-spec-recheck", "spec-recheck-2", "non-spec-recheck-2"];
+  t.check("six loops ran", loopNames(run).sort().join(",") === [...NAMES].sort().join(","),
+    loopNames(run).join(","));
+  t.check(
+    "and every one of them is a row in review.loops",
+    run.result.review.loops.every((l) => typeof l.rounds === "number" && "converged" in l),
+    JSON.stringify(run.result.review.loops.map((l) => l.name)),
+  );
+  t.check(
+    "the rechecks are also reported under rechecks.loops",
+    run.result.rechecks.loops.map((l) => l.name).join(",") ===
+      "spec-recheck,non-spec-recheck,spec-recheck-2,non-spec-recheck-2",
+    run.result.rechecks.loops.map((l) => l.name).join(","),
+  );
+
+  const boundaries = run.calls.filter((c) => /:round-boundary$/.test(c.label));
+  const loopOf = (c) => (c.prompt.match(/--loop '([^']+)'/) || [])[1];
+  const stateOf = (c) => (c.prompt.match(/cp-state\/[^/]+\/state-([^.]+)\.json/) || [])[1];
+  t.check(
+    "each boundary names its own loop",
+    NAMES.every((n) => boundaries.some((c) => loopOf(c) === n)),
+    [...new Set(boundaries.map(loopOf))].join(","),
+  );
+  t.check(
+    "and writes the state file of that same loop",
+    boundaries.every((c) => stateOf(c) === loopOf(c)),
+    boundaries.map((c) => stateOf(c) + "/" + loopOf(c)).join(" "),
+  );
+
+  const dests = run.calls.filter((c) => /^snap:/.test(c.label))
+    .map((c) => (c.prompt.match(/cp -r \S+ (\S+)/) || [])[1]);
+  t.check(
+    "no two snapshots of the run share a destination",
+    new Set(dests).size === dests.length, String(dests.length - new Set(dests).size),
+  );
+  for (const n of NAMES) {
+    t.check(
+      "the " + n + " loop snapshots under its own name",
+      dests.some((d) => d && d.startsWith("/repo/scratchpad/cp-snap/0081_fix_x/" + n + "-r")),
+      dests.join(" "),
+    );
+  }
+
+  // The shards are what the boundary script merges, and it merges by the loop
+  // name in the shard's own filename. A recheck writing under the name of the
+  // loop it rechecks would have its log merged at that loop's next boundary,
+  // so each shard is checked against the loop of the agent that writes it.
+  const SHARD = /scratchpad\/cp-log\/[^/]+\/([^\s/]+)\.md/g;
+  const shardsOf = (c) => [...c.prompt.matchAll(SHARD)].map((m) => m[1]);
+  const written = [];
+  for (const c of run.calls) {
+    const phase = (c.opts && c.opts.phase) || "";
+    const name = NAMES.find((n) => phase.startsWith(n + " R"));
+    if (name) for (const s of shardsOf(c)) written.push({ name, shard: s });
+  }
+  t.check("shards were written", written.length > 0, String(written.length));
+  t.check(
+    "every agent's shard is named for the loop that agent ran in",
+    written.every((w) => w.shard.startsWith(w.name + ".")),
+    written.filter((w) => !w.shard.startsWith(w.name + ".")).map((w) => w.name + ":" + w.shard).join(" "),
+  );
+  for (const n of NAMES) {
+    t.check("the " + n + " loop wrote shards of its own", written.some((w) => w.name === n));
+  }
+  t.check(
+    "and no two agents of the run write the same shard path, so none is overwritten",
+    new Set(written.map((w) => w.shard)).size === written.length,
+    written.map((w) => w.shard).filter((s, i, a) => a.indexOf(s) !== i).join(" ") || "all distinct",
+  );
+}
+
+// ==========================================================================
+t.section("R69. the two decision lists are folded across firings by identifier, and the later firing wins");
+// ==========================================================================
+{
+  // The child reports per firing and an operator reads per run. A resolution
+  // leaves the human's section, so a later firing collects no item for it and
+  // names it on neither list; a reversal re-lists it as contested. Folding by
+  // identifier is what keeps one decision from being reported as both closed
+  // and still open, which is what concatenating the firings' lists would say.
+  const first = {
+    ...CHILD_RETURN,
+    decisionsResolved: [
+      { id: "id:OD-1", question: "q1", kind: "resolved", authority: "the falsification gate" },
+      { id: "id:OD-2", question: "q2", kind: "withdrawn", authority: "a validation pass" },
+    ],
+  };
+  const second = {
+    ...CHILD_RETURN,
+    decisionsLeftToHuman: [
+      { id: "id:OD-1", question: "q1", gate: "contested", reason: "CONTESTED: the loop reversed it" },
+    ],
+  };
+  // The harness reads the stub table on every call, so a getter is what lets
+  // one firing be answered differently from the next.
+  const table = {};
+  let nth = 0;
+  Object.defineProperty(table, "change-proposal-decisions.js", {
+    enumerable: true,
+    get() { return [first, second][Math.min(nth++, 1)]; },
+  });
+  const run = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH }), { subworkflows: table });
+  const closed = run.result.decisionsResolved;
+  const human = run.result.decisionsLeftToHuman;
+  t.check(
+    "the reversed decision is listed once, and under the later firing's answer",
+    human.filter((d) => d.id === "id:OD-1").length === 1 && !closed.some((d) => d.id === "id:OD-1"),
+    JSON.stringify([closed.map((d) => d.id), human.map((d) => d.id)]),
+  );
+  t.check(
+    "carrying the firing and the trigger that last spoke about it",
+    human[0].firing === 2 && human[0].trigger === "post-non-spec-loop",
+    JSON.stringify([human[0].firing, human[0].trigger]),
+  );
+  t.check(
+    "a decision the later firing never named keeps the firing that closed it",
+    closed.length === 1 && closed[0].id === "id:OD-2" && closed[0].firing === 1 &&
+      closed[0].trigger === "post-spec-loop",
+    JSON.stringify(closed),
+  );
+  t.check(
+    "and the entry's own fields, including the authority, are the child's",
+    closed[0].kind === "withdrawn" && closed[0].authority === "a validation pass",
+    JSON.stringify(closed[0]),
+  );
+  t.check(
+    "the counts an operator reads are the folded lists' own",
+    run.result.decisions.resolved === 1 && run.result.decisions.leftToHuman === 1,
+    JSON.stringify([run.result.decisions.resolved, run.result.decisions.leftToHuman]),
+  );
+}
+
+// ==========================================================================
+t.section("R70. the unclosed OPEN and DEFERRED counts are read, and a count nobody could read is null");
+// ==========================================================================
+{
+  // Null rather than zero is the load-bearing part. A log the counting agent
+  // could not read is not a log with nothing left in it, so a dead or
+  // unreadable count must not be reported as a clean one.
+  const withCounts = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH, "log:unclosed-markers": "3 7" }));
+  t.check(
+    "the counts reach the result object",
+    JSON.stringify(withCounts.result.decisions.unclosedMarkers) === JSON.stringify({ open: 3, deferred: 7 }),
+    JSON.stringify(withCounts.result.decisions.unclosedMarkers),
+  );
+  t.check(
+    "and are logged",
+    withCounts.logs.some((l) => /Review log: 3 unclosed OPEN and 7 unclosed DEFERRED marker\(s\)/.test(l)),
+    withCounts.logs.filter((l) => /Review log:/.test(l)).join(" | "),
+  );
+
+  const unreadable = await runWorkflow(
+    WF, REVIEW_ARGS,
+    loopStubs({ "hash:*": HASH, "log:unclosed-markers": "awk: cannot open the log" }),
+  );
+  t.check(
+    "an unreadable count is null rather than zero",
+    unreadable.result.decisions.unclosedMarkers === null,
+    JSON.stringify(unreadable.result.decisions.unclosedMarkers),
+  );
+  t.check(
+    "and says the counts could not be read",
+    unreadable.logs.some((l) => /Review log: the unclosed OPEN and DEFERRED counts could not be read/.test(l)),
+    unreadable.logs.filter((l) => /Review log:/.test(l)).join(" | "),
+  );
+
+  const deadCount = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH, "log:unclosed-markers": null }));
+  t.check(
+    "a dead counting agent is null too",
+    deadCount.result.decisions.unclosedMarkers === null,
+    JSON.stringify(deadCount.result.decisions.unclosedMarkers),
+  );
+  t.check(
+    "and is not reported as a log with nothing left in it",
+    deadCount.logs.some((l) => /the unclosed OPEN and DEFERRED counts could not be read/.test(l)) &&
+      !deadCount.logs.some((l) => /unclosed OPEN and \d+ unclosed DEFERRED/.test(l)),
+    deadCount.logs.filter((l) => /Review log:/.test(l)).join(" | "),
+  );
 }
 
 t.done();
