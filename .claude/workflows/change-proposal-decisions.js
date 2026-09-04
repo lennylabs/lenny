@@ -892,15 +892,14 @@ function contestedReport() {
 // in a staged change file is a MIGRATION rather than a live summary entry, and
 // only a separate home makes the two distinguishable in the counts this phase
 // returns. The last two homes are what sub-tasks 3 and 4 collect from.
-const HOMES = [
-  "summary-open-decisions",
-  "staged-open-decisions",
-  "design-item",
-  "implementor-blank",
-  "review-log-open",
-  "out-of-scope-defect",
-  "other-proposal",
-];
+// The phase collects the summary's decisions section, the out-of-scope defect
+// declarations and the cross-proposal impacts, and nothing else. Four homes were
+// dropped after a measured firing: `review-log-open` (six of its seven items
+// fell, and it dragged in an UNVERIFIED tag and a duplicate), `implementor-blank`
+// (the phase does not audit the escape hatch), `staged-open-decisions` and
+// `design-item` (both duplicated what sub-tasks 1 and 2 already held, and one
+// marker reached two falsifiers under two homes with opposite verdicts).
+const HOMES = ["summary-open-decisions", "out-of-scope-defect", "other-proposal"];
 
 // What the phase decided to do with an item. The lens carried the first three;
 // sub-task 3's two outcomes and sub-task 4's impact row are their own values
@@ -961,7 +960,7 @@ const DECISION_ENTRY = {
   required: [
     "id", "decision", "home", "deliverable", "marker", "groundQuotes", "questionsAsked",
     "caseFor", "caseAgainst", "whatWouldFlipIt", "counterfactual", "cascades", "disposition",
-    "recommendation", "summaryAction",
+    "recommendation", "whatIsStaged", "confidence", "summaryAction",
   ],
   properties: {
     id: { type: "string" },
@@ -979,6 +978,15 @@ const DECISION_ENTRY = {
     disposition: { type: "string", enum: DISPOSITIONS },
     answer: { type: "string" },
     recommendation: { type: "string" },
+    // What the proposal STAGES on this question today, in its own words, or the
+    // empty string when it stages nothing either way. A proposal that already
+    // stages an answer has half-decided the question, and a recommendation
+    // pointing the other way means the staged text and the reviewer's brief
+    // disagree about what is being built.
+    whatIsStaged: { type: "string" },
+    // How sure the reading is of its recommendation. It gates how opinionated
+    // the phase is allowed to be: see CONFIDENCE_RULE.
+    confidence: { type: "string", enum: ["high", "moderate", "low"] },
     summaryAction: { type: "string", enum: ["added", "updated", "withdrawn", "unchanged", "not-applicable"] },
     affectsProposals: { type: "array", items: { type: "string" } },
     changesWithChoice: { type: "boolean" },
@@ -1116,6 +1124,50 @@ const ENTRY_FIELDS =
 
 // The frame every collector's prompt is built on, so the four differ in their
 // population and their question and in nothing else.
+// What the proposal already stages is evidence about the answer, and the two must
+// not disagree. A proposal that stages an answer has half-decided the question:
+// either that is the right answer, in which case it is the recommendation, or it
+// is wrong, in which case the staged text is a defect this phase names rather
+// than a recommendation it contradicts in silence.
+// The staged change files say what an implementor builds. A decision the human
+// has not answered is not something to build, so it has no business being cited
+// there: a reader of the staged text should never have to go and find out how a
+// question was settled before they can read what is being asked of them.
+const NO_DECISION_REFS_RULE =
+  "NEVER REFERENCE AN OPEN DECISION IN A STAGED CHANGE FILE. The staged spec changes and the staged " +
+  "non-spec changes state what an implementor builds, and nothing else. Do not cite an open decision by " +
+  "its identifier there, do not write that a deliverable is conditional on one, and do not carry a " +
+  "pointer to the summary's decisions section. That holds for a decision the phase resolves as much as " +
+  "for one left to the human: when a decision is answered, the staged text states the ANSWER as a " +
+  "requirement, in its own terms, with no trace of the question. When a decision is NOT answered, the " +
+  "staged files say nothing about it at all and the question lives in the summary alone.";
+
+const STAGED_ALIGNMENT_RULE =
+  "WHAT THE PROPOSAL ALREADY STAGES IS PART OF THE ANSWER. For every decision, read what the staged " +
+  "spec and non-spec changes build TODAY on that question and put it in `whatIsStaged`, quoting the " +
+  "staged sentence, or the empty string when they stage nothing either way.\n" +
+  "IF THE PROPOSAL STAGES AN ANSWER, THAT IS YOUR RECOMMENDATION unless you can say why the staged text " +
+  "is wrong. A recommendation pointing away from what the proposal builds leaves the reviewer holding a " +
+  "brief that contradicts the deliverable, and whichever they pick something has to be rewritten that " +
+  "nobody has reviewed. When the staged answer IS wrong, say so in `recommendation` in those words, name " +
+  "the staged sentence, and treat the mismatch as the finding rather than the preference.";
+
+// How opinionated the phase is allowed to be. The operator's instruction: a
+// recommendation the reading is sure of is a decision the workflow can take.
+const CONFIDENCE_RULE =
+  "HOW SURE YOU ARE DECIDES WHO ANSWERS. Set `confidence` for every item.\n" +
+  "  - `high`: the ground settles it and a reviewer reading the same files would reach the same answer. " +
+  "RESOLVE IT. Do not route a decision to the human that you are sure of; a question whose answer you " +
+  "would defend costs a human's attention and buys nothing.\n" +
+  "  - `moderate`: the ground points one way and something is left open. RESOLVE IT ONLY IF the proposal " +
+  "already stages that same answer, because the staging is then the second reading that makes it sure. " +
+  "Otherwise it is the human's.\n" +
+  "  - `low`: the ground does not settle it. The human's.\n" +
+  "SCOPE, SPECIFICALLY. A decision about whether something belongs in this proposal, where the proposal " +
+  "ALREADY STAGES the scope in question, is closed: the answer is that it stays in. Resolve it and say " +
+  "that the staged deliverable is the answer. Scope is only the human's where the proposal does not yet " +
+  "build the thing being questioned.";
+
 function briefFrame(head, body) {
   return (
     "You are one collector inside the open-decisions-and-impact-review phase of a change proposal's " +
@@ -1163,20 +1215,16 @@ function humanDecisionsBrief() {
   return briefFrame(
     "Your population is EVERY DECISION THIS PROPOSAL LEAVES TO A HUMAN. For each one, decide whether it is " +
       "really the human's or whether this workflow can answer it satisfactorily.",
-    "WHERE THEY LIVE. Build the inventory before judging any of it, because the defect this sweep exists to " +
-      "catch is a decision recorded in one place and already answered in another.\n" +
-      "  - `## Open decisions for human to make` in the summary. `home`: summary-open-decisions.\n" +
-      "  - A `## Open decisions for review` section an older proposal left in a STAGED CHANGE FILE. Sweep " +
-      "EVERY staged change file for it, the staged spec changes included, rather than the non-spec file " +
-      "alone. `home`: staged-open-decisions. That section is retired: a live entry there migrates into " +
-      "`## Open decisions for human to make`, a resolved or withdrawn entry leaves both files, and the " +
-      "staged section is deleted once it is empty. Say which of the three each entry needs in " +
-      "`recommendation`.\n" +
-      "  - A detailed-design item still stated as a choice rather than as a constraint. `home`: " +
-      "design-item.\n" +
-      "  - An unclosed `OPEN` in the review log's standing context, which is the home the human never " +
-      "reads. `home`: review-log-open.\n" +
-      "A decision that appears in one of these AND is settled elsewhere is open in the sense that matters, " +
+    "WHERE THEY LIVE. ONE HOME: the `## Open decisions for human to make` section of the summary. " +
+      "`home`: summary-open-decisions. That section is the proposal's statement of what it is asking a " +
+      "human for, and it is the only place this sub-task reads decisions from.\n" +
+      "DO NOT SWEEP ANYWHERE ELSE FOR THEM. Not the review log's unclosed `OPEN` entries, not a " +
+      "`## Open decisions for review` section in a staged change file, not detailed-design prose still " +
+      "phrased as a choice, and not an `IMPLEMENTOR'S CHOICE:` marker. Each of those was collected once " +
+      "and each cost more than it returned: the review log yielded one live question against six that " +
+      "fell, and the other three duplicated items another sub-task already held, so one marker reached " +
+      "two falsifiers under two homes and came back with opposite verdicts.\n" +
+      "A decision in the section that IS settled elsewhere is open in the sense that matters, " +
       "because the proposal disagrees with itself about whether it is decided; resolving it means deleting " +
       "the open statement and citing the settled one.\n\n" +
       "A SETTLED DECISION IS NOT YOURS. Do not re-open one, do not re-argue it, and do not report that it " +
@@ -1189,8 +1237,7 @@ function humanDecisionsBrief() {
       "never becomes a decision of its own, because nobody is asking whether the settled decision was " +
       "right; what is in question is the open one, and the cascade is part of what the answer costs.\n\n" +
       "PROCEDURE. Work in this order, and do not let a determination form before step 4.\n" +
-      "  1. INVENTORY. Sweep all four homes and list every decision the proposal has not closed. Judge " +
-      "none of them yet.\n" +
+      "  1. INVENTORY. List every decision the summary's section leaves open. Judge none of them yet.\n" +
       "  2. ELABORATE, one decision at a time. State what is actually being decided, what the proposal " +
       "says about it, and what the primary sources say. Open them and quote the load-bearing sentence.\n" +
       "  3. INTERROGATE. Write the questions a skeptical reviewer would ask about the GROUND rather than " +
@@ -1227,10 +1274,6 @@ function humanDecisionsBrief() {
       "THE SUMMARY ENDS UP CARRYING THE SURVIVORS AND ONLY THE SURVIVORS. An answerable decision is " +
       "answered and its answer staged into the proposal; a resolved or withdrawn decision leaves that " +
       "file rather than being kept in place. Set `summaryAction` to what this item's summary entry needs.\n" +
-      "  MISSING. A survivor whose only home is a design item, an unclosed `OPEN` in the review log, or " +
-      "an older proposal's staged section. The human never reads those, so the decision is not being " +
-      "made: it joins the section, and `summaryAction` is `added` rather than `unchanged` or " +
-      "`not-applicable`.\n" +
       "AN ENTRY THE SUMMARY ALREADY CARRIES IS READ AGAINST THE STAGING AS IT NOW STANDS, because both " +
       "loops have edited the proposal since it was written, and an entry that has fallen out of agreement " +
       "with the proposal is what this sweep exists to catch.\n" +
@@ -1249,34 +1292,14 @@ function humanDecisionsBrief() {
       "see the other two and you are not deciding the outcome: an item reaches `resolve` only when all " +
       "three of you resolve it to the same answer, and it is the human's otherwise. So return YOUR reading, " +
       "with the ground you actually opened, rather than the reading you expect to be agreed with." +
-      (refutedBlock() ? "\n\n" + refutedBlock() : ""),
+      (refutedBlock() ? "\n\n" +
+      CONFIDENCE_RULE + "\n\n" +
+      STAGED_ALIGNMENT_RULE +  refutedBlock() : ""),
   );
 }
 
 // Sub-task 2. One agent. The default is to leave a blank alone, and the two
 // protections below are the tree's only statement of what a blank is for.
-function implementorBlanksBrief() {
-  return briefFrame(
-    "Your population is EVERY DECISION THIS PROPOSAL LEAVES TO THE IMPLEMENTOR: every " +
-      "`IMPLEMENTOR'S CHOICE:` marker, and every unbounded blank.",
-    "WHAT AN UNBOUNDED BLANK IS. A marker with no constraint, a blank over something the format bars from " +
-      "delegation, and an unmarked gap where the proposal simply stops short of saying what happens. " +
-      "`home`: implementor-blank for all of them.\n\n" +
-      "SPECIFY ONE ONLY WHERE LEAVING IT TO THE IMPLEMENTOR IS A CLEAR RISK OR AN OBVIOUSLY WRONG PATH. " +
-      "THE DEFAULT IS TO LEAVE IT ALONE. `disposition`: `implementor` for a blank that stands, which is " +
-      "most of them, and `resolve` for one you are asking this phase to specify, with what it must say in " +
-      "`recommendation`. Over-specification is itself a defect, so a `resolve` here clears the same bar as " +
-      "a resolution anywhere else in this phase: it is refuted unless you can show the risk.\n\n" +
-      "A properly marked `IMPLEMENTOR'S CHOICE:` is the format working as intended. It exists so a " +
-      "proposal does not grow hair, and it is not yours to expand, second-guess, or promote to a human " +
-      "decision because you would have specified it.\n" +
-      "Never report a blank as an open decision merely because it is open; being open is what it is for.\n\n" +
-      "So a bounded blank is not your finding, a preference between two ways of bounding one is not your " +
-      "finding, and a blank you would have specified is not your finding. What is: a marker that delegates " +
-      "without any constraint at all, a blank over a choice the proposal cannot delegate, and a gap nobody " +
-      "marked.",
-  );
-}
 
 // Sub-task 3. One agent. Its default is the opposite of the defect gate's, and
 // that is why its outcomes are their own dispositions rather than `resolve`:
@@ -1521,9 +1544,17 @@ async function collectHumanDecisions() {
     // as alternatives rather than one of them picked silently.
     const answers = readings.map((x) => normalizeAnswer(x.answer));
     const agreed = unanimousResolve && answers.every((a) => a && a === answers[0]);
-    const disposition = agreed ? "resolve" : "human";
+    // Three readings that agree the decision is the IMPLEMENTOR'S take it off
+    // the human's list without this phase answering it. Sub-task 2 used to be
+    // the only route to that disposition, and deleting it left the DELEGATION
+    // falsifier brief unreachable; a decision the summary carries that is really
+    // a bounded build choice is the case it exists for.
+    const unanimousImplementor =
+      readings.length === 3 && readings.every((x) => x.disposition === "implementor");
+    const disposition = agreed ? "resolve" : unanimousImplementor ? "implementor" : "human";
     let agreement = "split";
     if (agreed) agreement = "unanimous-resolve";
+    else if (unanimousImplementor) agreement = "unanimous-implementor";
     else if (unanimousResolve) agreement = "divergent-resolve";
     else if (readings.length < 3) agreement = "incomplete-readings";
     out.push({
@@ -1984,7 +2015,7 @@ const APPLIERS = {
       "decision leaves that list, and no `### Retired` or equivalent block replaces it. Where the item " +
       "was found in a staged change file's `## Open decisions for review` section, delete its entry " +
       "there as well, and delete that section once it is empty: a resolved entry leaves both files. " +
-      "Write the answer and nothing that widens the deliverable beyond it.",
+      "Write the answer and nothing that widens the deliverable beyond it.\n\n" + NO_DECISION_REFS_RULE,
   },
   human: {
     brief:
@@ -1995,7 +2026,7 @@ const APPLIERS = {
       "was found in a staged change file's `## Open decisions for review` section, MIGRATE it: write the " +
       "entry in the summary, delete it there, and delete that section once it is empty, because the " +
       "summary's section is the one home for these now. Do not stage an answer: the phase gated this item " +
-      "as the human's.",
+      "as the human's.\n\n" + NO_DECISION_REFS_RULE,
   },
   "out-of-scope-stands": {
     brief:
@@ -2907,15 +2938,6 @@ const corpus = await corpusInventory();
 items.push(...(await collectHumanDecisions()));
 items.push(
   ...(await collectSingle({
-    key: "implementor-blanks",
-    title: "Sub-task 2 (decisions left to the implementor)",
-    prompt: implementorBlanksBrief(),
-    allowed: ["implementor", "resolve"],
-    fallback: "implementor",
-  })),
-);
-items.push(
-  ...(await collectSingle({
     key: "out-of-scope-defects",
     title: "Sub-task 3 (out-of-scope defect declarations)",
     prompt: outOfScopeDefectsBrief(),
@@ -2932,6 +2954,59 @@ items.push(
     fallback: "impact-row",
   })),
 );
+// ---- Dedup, across every sub-task rather than within one ------------------
+//
+// Sub-task 1's join already dedupes its own three readings of one home. Nothing
+// deduped ACROSS sub-tasks, and a measured firing showed what that costs: one
+// question reached two falsifiers by two routes and came back with opposite
+// verdicts, and two more markers were adjudicated twice under different homes.
+// Two items are the same question when their questions normalise alike; the
+// first survives and carries the other's homes, so the report still says
+// everywhere it was found.
+function questionKey(item) {
+  return String(item.question || "")
+    .toLowerCase()
+    .replace(/`[^`]*`/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 18)
+    .join(" ");
+}
+{
+  const seen = new Map();
+  const merged = [];
+  const dropped = [];
+  for (const it of items) {
+    const k = questionKey(it);
+    // A question too short to normalise into anything is never merged: an empty
+    // key would collapse every such item onto one.
+    if (!k || k.length < 12) {
+      merged.push(it);
+      continue;
+    }
+    const first = seen.get(k);
+    if (!first) {
+      seen.set(k, it);
+      merged.push(it);
+      continue;
+    }
+    if (!first.alsoFoundIn) first.alsoFoundIn = [];
+    if (it.home && it.home !== first.home && !first.alsoFoundIn.includes(it.home)) {
+      first.alsoFoundIn.push(it.home);
+    }
+    dropped.push({ id: it.id, home: it.home, kept: first.id, keptHome: first.home });
+  }
+  if (dropped.length > 0) {
+    items.length = 0;
+    items.push(...merged);
+    log(
+      "Deduped " + dropped.length + " item(s) that restate a question another sub-task already holds: " +
+        dropped.map((d) => d.id + " (" + d.home + ") -> " + d.kept + " (" + d.keptHome + ")").join("; "),
+    );
+  }
+}
+
 const tally = DISPOSITIONS.map(
   (d) => items.filter((i) => i.disposition === d).length + " " + d,
 ).filter((t) => !t.startsWith("0 "));

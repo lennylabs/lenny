@@ -77,6 +77,12 @@ const maxNonSpecReviewRounds =
 // most: with periodEvery at 3 and a loop running nine rounds, a shared cap of 3
 // blocks the last firing exactly on the runs where decisions have accumulated
 // most.
+// Fire the phase BEFORE the spec review rather than only after it. A proposal
+// whose decisions are still open is one whose staged text may be answering a
+// question nobody has settled, and adjudicating first means the spec loop
+// reviews staging the phase has already reconciled. Off by default: the ordinary
+// run adjudicates what the spec loop leaves behind.
+const decisionsFirst = !!input.decisionsFirst;
 const periodEvery = input.periodEvery || 3;
 const maxPeriodicFirings = input.maxPeriodicFirings || 5;
 // How many times a spec/non-spec recheck pair may alternate, and how many times
@@ -395,6 +401,9 @@ const ARG_CLASS = {
   maxReviewRounds: "forward",
   maxSpecReviewRounds: "forward",
   maxNonSpecReviewRounds: "forward",
+  // launch: it decides where the first firing goes, which is fixed before the
+  // run starts and meaningless to change once the spec loop is behind it.
+  decisionsFirst: "launch",
   periodEvery: "forward",
   maxPeriodicFirings: "forward",
   maxRecheckPairs: "forward",
@@ -2555,6 +2564,18 @@ function fixDesignPrompt(group, confirmed, round) {
   );
 }
 
+// The staged change files say what an implementor builds. A question nobody has
+// answered is not something to build, so it does not belong there: the summary's
+// decisions section is its one home, and a reader of the staged text should not
+// have to go and find out how a question was settled to read what is asked of
+// them. The phase's Apply agents carry the same rule.
+const NO_DECISION_REFS_IN_STAGING =
+  "\n\nNEVER REFERENCE AN OPEN DECISION IN THE STAGED CHANGE FILES. Do not cite one by its identifier " +
+  "in the staged spec changes or the staged non-spec changes, do not write that a staged deliverable is " +
+  "conditional on one, and do not leave a pointer to the summary's decisions section. State what is to " +
+  "be built. A decision that is answered becomes a requirement in its own terms with no trace of the " +
+  "question; one that is not answered lives in the summary and is absent from the staged files.";
+
 function fixPrompt(confirmed, round, strikes, group, design, earlier) {
   const SB_FIX = sitesBlock(confirmed);
   // What the groups before this one in THIS round actually did. Costs no agent
@@ -2679,6 +2700,7 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     logBlock("fix-" + (group ? group.id : "all"), round) +
     "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
     promptFor("fix")
+    + NO_DECISION_REFS_IN_STAGING
   );
 }
 
@@ -2756,6 +2778,7 @@ function followUpFixPrompt(findings, round) {
     "/.claude/rules/doc-style.md.\n\nDefects to correct (JSON):\n" +
     JSON.stringify(findings, null, 2) +
     "\n\nReturn a short summary of each edit you made."
+    + NO_DECISION_REFS_IN_STAGING
   );
 }
 
@@ -6358,6 +6381,11 @@ const specProbe = await robustAgent(
 // returns "reviewed", so doubt resolves toward reviewing. `specProbe` is null
 // when the probe died after all of robustAgent's retries, which is the case the
 // old `|| "YES"` default covered and this keeps.
+// Before the spec loop, when the caller asked for it. It sits after the probe so
+// the phase's own log line lands next to the loop's, and before every path that
+// can skip the loop, so a run that reviews no spec staging still adjudicates.
+if (decisionsFirst) await fireDecisionsPhase("pre-spec-loop");
+
 const specProbeRead = !!specProbe && typeof specProbe.stagesSpecChanges === "boolean";
 const hasSpecChanges = !specProbeRead || specProbe.stagesSpecChanges;
 

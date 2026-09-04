@@ -136,12 +136,23 @@ t.section("D1. every firing runs the collectors, each under its own brief");
     new Set(readings.map((c) => c.prompt)).size === 1,
   );
   for (const [name, label] of [
-    ["sub-task 2", "f1:implementor-blanks"],
     ["sub-task 3", "f1:out-of-scope-defects"],
     ["sub-task 4", "f1:other-proposals"],
   ]) {
     t.check(name + " runs once", matching(calls, label).length === 1);
   }
+  // The phase does not audit the implementor's escape hatch. A measured firing
+  // collected the blanks as their own population AND again as design items, so
+  // one marker reached two falsifiers under two homes and came back with
+  // opposite verdicts. It no longer looks for them at all.
+  t.check(
+    "no collector sweeps the implementor's blanks",
+    matching(calls, "f1:implementor-blanks").length === 0,
+  );
+  t.check(
+    "and sub-task 1 is told in terms which homes it does not sweep",
+    /DO NOT SWEEP ANYWHERE ELSE FOR THEM/.test(promptOf(calls, "f1:human-decisions:1")),
+  );
   t.check("sub-task 7 runs", matching(calls, "f1:cleanup").length === 1);
   t.check("sub-task 8 runs", matching(calls, "f1:verify").length === 1);
   t.check("and the cleanup runs after the write path", firstIndex(calls, "f1:cleanup") > firstIndex(calls, "f1:commit"));
@@ -151,7 +162,6 @@ t.section("D1. every firing runs the collectors, each under its own brief");
   // reason there are four rather than one merged inventory.
   const POP = [
     ["f1:human-decisions:1", "Your population is EVERY DECISION THIS PROPOSAL LEAVES TO A HUMAN"],
-    ["f1:implementor-blanks", "Your population is EVERY DECISION THIS PROPOSAL LEAVES TO THE IMPLEMENTOR"],
     ["f1:out-of-scope-defects", "Your population is EVERY DEFECT THIS PROPOSAL EXPLICITLY CALLS OUT AS OUT OF SCOPE"],
     ["f1:other-proposals", "Your population is EVERY OTHER PROPOSAL ON DISK THIS ONE BEARS ON"],
   ];
@@ -166,12 +176,9 @@ t.section("D1. every firing runs the collectors, each under its own brief");
   const REHOMED = [
     ["the GIVE IT TO THE HUMAN test", "f1:human-decisions:1", "GIVE IT TO THE HUMAN only when one of these holds"],
     ["the NEGATIVE TEST", "f1:human-decisions:1", "THE NEGATIVE TEST. A decision belongs to the human only if a person could answer it in one sitting"],
-    ["the bar on promoting a bounded blank", "f1:implementor-blanks", "not yours to expand, second-guess, or promote to a human "],
-    ["the bar on filing a blank because it is open", "f1:implementor-blanks", "Never report a blank as an open decision merely because it is open"],
     ["the STALE GROUND reconciliation", "f1:human-decisions:1", "STALE GROUND. Its citation, the text it quotes"],
     ["the MIS-STATED reconciliation", "f1:human-decisions:1", "MIS-STATED. It asks a question this proposal does not actually face"],
     ["the ORPHANED reconciliation", "f1:human-decisions:1", "ORPHANED. Its subject is a deliverable this proposal no longer stages"],
-    ["the MISSING drift", "f1:human-decisions:1", "MISSING. A survivor whose only home is a design item"],
     ["the RESOLVED SINCE drift", "f1:human-decisions:1", "RESOLVED SINCE. A later round answered it"],
   ];
   // The three readings of sub-task 1 share one brief, so the comparison is
@@ -187,20 +194,22 @@ t.section("D1. every firing runs the collectors, each under its own brief");
 
   // The drift set is pinned as a set, the way the design states it, so a later
   // edit cannot carry one of the five away unnoticed.
-  const DRIFTS = ["MISSING", "RESOLVED SINCE", "STALE GROUND", "MIS-STATED", "ORPHANED"];
+  // MISSING went with the sweep it depended on. It told the collector to find a
+  // decision whose only home was a design item, an unclosed `OPEN` in the review
+  // log, or an older proposal's staged section, and add it to the summary —
+  // which is the sweep the phase no longer does, so the brief was arguing with
+  // itself. Sub-task 1 reads the summary alone, so nothing it holds can be
+  // missing from the summary.
+  const DRIFTS = ["RESOLVED SINCE", "STALE GROUND", "MIS-STATED", "ORPHANED"];
+  t.check(
+    "the MISSING drift went with the sweep it depended on",
+    !promptOf(calls, "f1:human-decisions:1").includes("MISSING. A survivor whose only home"),
+  );
   const lost = DRIFTS.filter((d) => !promptOf(calls, "f1:human-decisions:1").includes(d));
   t.check("all five drifts the deleted lens named are still named", lost.length === 0, lost.join(",") || "all");
 
   // The defaults each brief states, which are what make a blank and an
   // out-of-scope call survive by construction rather than by argument.
-  t.check(
-    "sub-task 2 defaults to leaving the blank alone",
-    promptOf(calls, "f1:implementor-blanks").includes("THE DEFAULT IS TO LEAVE IT ALONE"),
-  );
-  t.check(
-    "and protects a marker against narrowing inside it",
-    promptOf(calls, "f1:implementor-blanks").includes("a preference between two ways of bounding one is not your finding"),
-  );
   t.check(
     "sub-task 3 defaults to the call standing",
     promptOf(calls, "f1:out-of-scope-defects").includes("THE DEFAULT IS THAT THE CALL IS RIGHT"),
@@ -210,7 +219,6 @@ t.section("D1. every firing runs the collectors, each under its own brief");
   // sub-task's population goes unadjudicated, and the firing says so rather
   // than reporting nothing to do.
   for (const [name, key, line] of [
-    ["sub-task 2", "implementor-blanks", "Sub-task 2 (decisions left to the implementor)"],
     ["sub-task 3", "out-of-scope-defects", "Sub-task 3 (out-of-scope defect declarations)"],
     ["sub-task 4", "other-proposals", "Sub-task 4 (impacts on other proposals)"],
   ]) {
@@ -237,14 +245,18 @@ t.section("D1. every firing runs the collectors, each under its own brief");
 }
 
 // ==========================================================================
-t.section("D2. a bounded blank and an out-of-scope call survive their sub-task by default");
+t.section("D2. a decision left to the implementor and an out-of-scope call survive by default");
 // ==========================================================================
 {
   // The two defaults, exercised rather than read: each item reaches its own
   // falsifier under the brief its disposition calls for, stands under the
   // standing posture, and is not rewritten.
+  // Sub-task 2 is gone: the phase no longer sweeps for `IMPLEMENTOR'S CHOICE:`
+  // markers. `implementor` survives as a DISPOSITION, because moving a decision
+  // off the human's list into a properly bounded blank is still a good outcome —
+  // it just has to come from a decision the summary was carrying.
   const blank = entry({
-    home: "implementor-blank",
+    home: "summary-open-decisions",
     deliverable: "CODE-3",
     marker: "IMPLEMENTOR'S CHOICE: any buffer size between 4 and 64 KiB",
     decision: "how large is the read buffer?",
@@ -263,13 +275,13 @@ t.section("D2. a bounded blank and an out-of-scope call survive their sub-task b
   });
   const { result, calls } = await fire(
     {},
-    { "f1:implementor-blanks": found(blank), "f1:out-of-scope-defects": found(defect) },
+    { "f1:human-decisions:*": found(blank), "f1:out-of-scope-defects": found(defect) },
   );
   const b = itemById(result, "marker:code-3:implementor's choice: any buffer size between 4 and 64 kib");
   const d = itemById(result, "marker:code-4:out of scope: the flaky drain test");
-  t.check("the blank is collected", !!b, ids(result && result.items));
+  t.check("the decision is collected", !!b, ids(result && result.items));
   t.check("the out-of-scope call is collected", !!d, ids(result && result.items));
-  t.check("the blank keeps its implementor disposition", b && b.disposition === "implementor", b && b.disposition);
+  t.check("it keeps its implementor disposition", b && b.disposition === "implementor", b && b.disposition);
   t.check("and stands at the gate", b && b.gate === "stands" && b.survives === true, b && b.gate);
   t.check("under the DELEGATION brief", /You are the DELEGATION judge/.test(promptOf(calls, "f1:falsify:0")));
   t.check("which stands unless conclusively falsified", /STANDS UNLESS YOU FALSIFY IT CONCLUSIVELY/.test(promptOf(calls, "f1:falsify:0")));
@@ -284,12 +296,12 @@ t.section("D2. a bounded blank and an out-of-scope call survive their sub-task b
   // A disposition outside a brief's own vocabulary is read as the brief being
   // stepped outside, and clamps to that brief's default rather than becoming a
   // new outcome.
-  const strayed = await fire({}, { "f1:implementor-blanks": found({ ...blank, disposition: "human" }) });
-  const s = itemById(strayed.result, "marker:code-3:implementor's choice: any buffer size between 4 and 64 kib");
-  t.check("a disposition the brief may not return clamps to its default", s && s.disposition === "implementor", s && s.disposition);
+  const strayed = await fire({}, { "f1:out-of-scope-defects": found({ ...defect, disposition: "human" }) });
+  const s = itemById(strayed.result, "marker:code-4:out of scope: the flaky drain test");
+  t.check("a disposition the brief may not return clamps to its default", s && s.disposition === "out-of-scope-stands", s && s.disposition);
   t.check(
     "and the clamp is logged",
-    strayed.logs.some((l) => /is not one this brief may return; recorded as implementor/.test(l)),
+    strayed.logs.some((l) => /is not one this brief may return; recorded as out-of-scope-stands/.test(l)),
   );
 
   // `not-applicable` says the summary holds NO entry for the item, which is the
@@ -306,6 +318,42 @@ t.section("D2. a bounded blank and an out-of-scope call survive their sub-task b
     "under the brief that writes the row",
     promptOf(absent.calls, "f1:apply:0").includes("## Defects in the shipped tree that this proposal does not stage"),
   );
+}
+
+// ==========================================================================
+t.section("D2b. dedup runs across sub-tasks, not only within sub-task 1's readings");
+{
+  // A measured firing collected one question from two homes, gave each copy its
+  // own falsifier, and got opposite verdicts back. Sub-task 1's join deduped its
+  // own three readings and nothing deduped across sub-tasks.
+  const q = "does this proposal owe a wall-clock budget for the migration backfill?";
+  const inSummary = entry({ id: "OD-9", decision: q, disposition: "human", summaryAction: "updated" });
+  const asDefect = entry({
+    home: "out-of-scope-defect", deliverable: "CODE-4", marker: "out of scope: the migration budget",
+    decision: q, disposition: "out-of-scope-stands", summaryAction: "added",
+  });
+  const { result, calls, logs } = await fire({}, {
+    "f1:human-decisions:*": found(inSummary),
+    "f1:out-of-scope-defects": found(asDefect),
+  });
+  t.check("the question is held once", (result.items || []).length === 1, ids(result && result.items));
+  t.check("and gets one falsifier, not two", matching(calls, "f1:falsify:").length === 1,
+    String(matching(calls, "f1:falsify:").length));
+  t.check("the survivor is the first sub-task's", (result.items || [])[0] && result.items[0].id === "id:OD-9",
+    (result.items || []).map((i) => i.id).join(","));
+  t.check("the dropped copy's home is carried on the survivor",
+    ((result.items || [])[0] || {}).alsoFoundIn?.includes("out-of-scope-defect"),
+    JSON.stringify(((result.items || [])[0] || {}).alsoFoundIn));
+  t.check("and the merge is logged", logs.some((l) => /^Deduped 1 item\(s\)/.test(l)),
+    logs.filter((l) => /Dedup/.test(l)).join(" | "));
+}
+{
+  // Two genuinely different questions are not merged just because both are short
+  // or share words.
+  const a = entry({ id: "OD-1", decision: "does the barrier gate stay equality, or become >=?", disposition: "human" });
+  const b = entry({ id: "OD-2", decision: "does the fence carry the pre-bump or post-bump generation?", disposition: "human" });
+  const { result } = await fire({}, { "f1:human-decisions:*": found(a, b) });
+  t.check("distinct questions both survive", (result.items || []).length === 2, ids(result && result.items));
 }
 
 // ==========================================================================
@@ -469,8 +517,11 @@ t.section("D4. the gate: one falsifier per item, asymmetric defaults, a script-s
     summaryAction: "updated",
   });
   const HUMAN = entry({ id: "OD-2", decision: "does this proposal widen to the CLI?", disposition: "human", summaryAction: "added" });
+  // Reaches `implementor` through sub-task 1's join now that sub-task 2 is gone:
+  // three readings agreeing the decision is a bounded build choice take it off
+  // the human's list without this phase answering it.
   const BLANK = entry({
-    home: "implementor-blank", deliverable: "CODE-3", marker: "IMPLEMENTOR'S CHOICE: the retry jitter",
+    id: "OD-3", deliverable: "CODE-3", marker: "IMPLEMENTOR'S CHOICE: the retry jitter",
     decision: "how much jitter?", disposition: "implementor", summaryAction: "not-applicable",
   });
   const DEFECT = entry({
@@ -478,11 +529,10 @@ t.section("D4. the gate: one falsifier per item, asymmetric defaults, a script-s
     decision: "does this proposal fix the drain race?", disposition: "out-of-scope-stands", summaryAction: "added",
   });
   const population = {
-    "f1:human-decisions:*": found(RESOLVE, HUMAN),
-    "f1:implementor-blanks": found(BLANK),
+    "f1:human-decisions:*": found(RESOLVE, HUMAN, BLANK),
     "f1:out-of-scope-defects": found(DEFECT),
   };
-  const K = { resolve: "id:OD-1", human: "id:OD-2", blank: "marker:code-3:implementor's choice: the retry jitter", defect: "marker:code-4:out of scope: the drain race" };
+  const K = { resolve: "id:OD-1", human: "id:OD-2", blank: "id:OD-3", defect: "marker:code-4:out of scope: the drain race" };
 
   const run = await fire({}, {
     ...population,

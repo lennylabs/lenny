@@ -49,17 +49,6 @@
     ]
   },
   {
-    "label": "f2:implementor-blanks",
-    "phase": "Collect",
-    "model": "opus",
-    "schema": "coverage+decisions",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence"
-    ]
-  },
-  {
     "label": "f2:out-of-scope-defects",
     "phase": "Collect",
     "model": "opus",
@@ -127,17 +116,6 @@
   },
   {
     "label": "f2:falsify:4",
-    "phase": "Falsify",
-    "model": "opus",
-    "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence"
-    ]
-  },
-  {
-    "label": "f2:falsify:5",
     "phase": "Falsify",
     "model": "opus",
     "schema": "evidence+fallbackDisposition+falsified+howConclusive+reasoning+theDispositionIAttacked",

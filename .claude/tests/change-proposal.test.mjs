@@ -448,11 +448,21 @@ t.section("B6e. what the deleted lens carried is absent from the parent and live
   for (const [what, re] of [
     ["the GIVE IT TO THE HUMAN test", /GIVE IT TO THE HUMAN only when one of these holds/],
     ["the NEGATIVE TEST", /THE NEGATIVE TEST\. A decision belongs to the human only if a person could answer it in one sitting/],
-    ["the bar on promoting a bounded blank", /not yours to expand, second-guess, or promote to a human /],
-    ["the bar on filing a blank because it is open", /Never report a blank as an open decision merely because it is open/],
   ]) {
     t.check(what + " is in the phase's briefs", re.test(phase));
     t.check(what + " reaches no prompt of the parent", !calls.some((c) => re.test(c.prompt)));
+  }
+  // The two BLANK protections went with sub-task 2. They guarded a population
+  // this phase no longer collects: it does not sweep for `IMPLEMENTOR'S CHOICE:`
+  // markers, does not audit an existing one, and cannot promote one to a human
+  // decision because it never holds one. A rule against second-guessing a blank
+  // has nothing left to govern, and keeping it would imply the sweep still runs.
+  for (const [what, re] of [
+    ["the bar on promoting a bounded blank", /not yours to expand, second-guess, or promote to a human /],
+    ["the bar on filing a blank because it is open", /Never report a blank as an open decision merely because it is open/],
+  ]) {
+    t.check(what + " is gone from the phase with the sweep it guarded", !re.test(phase));
+    t.check(what + " reaches no prompt of the parent either", !calls.some((c) => re.test(c.prompt)));
   }
 }
 
