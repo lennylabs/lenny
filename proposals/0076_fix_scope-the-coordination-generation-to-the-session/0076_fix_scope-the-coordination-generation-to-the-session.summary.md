@@ -181,7 +181,7 @@ acknowledgement. The barrier's cache-fallback path reads the live session row pe
 (`cmd/lenny-gateway/httpsurface.go:588-602`), so it can carry the successor's post-compare-and-swap value
 while the pod is still fenced one below it. Widening would accept a barrier carrying a generation the
 pod's coordinator has not yet installed there.
-Widening also fixes nothing: the refusal that actually occurs on the healthy path comes from the mirror
+Widening also fixes nothing: the refusal that occurs on the healthy path comes from the mirror
 carrying a value *below* the pod's, which a wider comparison rejects just as equality does. The staged
 text already writes equality in every carrier, so this decision costs no edit. §4's stated ground for it
 is false and every validator confirmed the falsification independently. That sentence is proposal prose
@@ -346,20 +346,21 @@ recommendation was derived.
 **OD10 is withdrawn.** It asked whether the sentences calling a barrier's generation the current one are edit
 sites, and it named the wrong deliverable. SPEC-1 owns `spec/10_gateway-internals.md`, and SPEC-1 is what
 states that §10.1.8 step 1's clause reading that the `CheckpointBarrier` message carries the current
-`coordination_generation`, and §29.7's trace step 4, are not restated (`spec-changes.md:259-264`). SPEC-2's
-`spec/29` scope names §29.7's framing paragraph and leaves trace step 4 alone (`spec-changes.md:428-430`).
+`coordination_generation`, and §29.7's trace step 4, are not restated (`spec-changes.md:259-271`). SPEC-2's
+`spec/29` scope names §29.7's framing paragraph and leaves trace step 4 alone (`spec-changes.md:435-437`).
 SPEC-1 also does not leave §10.1.8 step 1 unedited: it rewrites step 1's closing sentence
 (`spec-changes.md:206-222`), and that closing sentence sits on the same physical line of
 `spec/10_gateway-internals.md` as the clause this entry is about, so a reviewer told that step 1 is untouched
-does not open the rewrite. Neither sentence is an edit site, on a ground SPEC-1 does not state. On the sweep
+does not open the rewrite. Neither sentence is an edit site, on the ground SPEC-1 now states. On the sweep
 that performs a handoff, `pkg/gateway/coordination/coordination/coordination.go:430` passes the pre-bump
 snapshot value to `upsertMirror` while the pod is fenced at the post-handoff generation minted in the same
 iteration, so a barrier assembled from the mirror in that interval carries a value that is not the session's
 current one, and both sentences are already false on that path in the shipped tree. That lag is recorded below
 as a shipped-tree defect this proposal does not stage, and this change neither creates nor repairs it. SPEC-1's
-staged ground, that each stays true because the baseline makes the row value positive, reaches the right
-conclusion by a route that does not hold. This disposition does not rest on the baseline, so a decision to
-split D7, the baseline, and migration 0181 out under OD5 leaves it standing.
+earlier ground, that each stays true because the baseline makes the row value positive, reached the right
+conclusion by a route that does not hold, and SPEC-1 now closes on the mirror lag instead. This disposition
+does not rest on the baseline, so a decision to split D7, the baseline, and migration 0181 out under OD5
+leaves it standing.
 
 **OD11. Whether this proposal stages a claim-register deliverable for the interval between S2 and S7.**
 §28.4 requires every normative statement a section makes about a mechanism to carry a row in
@@ -396,7 +397,7 @@ recommendation was derived.
   CODE-3 removes the one opposite-order acquisition that exists today.
 - **A fence for a session the pod holds no entry for.** The earlier draft of this section called this
   settled, and the validation pass found that wrong by a majority. The adapter half is settled, because
-  `checkSessionBound` refuses before the generation is read. The half §7 actually asks, whether such a
+  `checkSessionBound` refuses before the generation is read. The half §7 asks, whether such a
   fence is a rejection or a retryable race, is unanswered, and §4 states that the two must be
   distinguishable. They are not: the guard returns the same `FailedPrecondition` the stale path returns,
   and the fence driver maps every `FailedPrecondition` to the stale branch, so a fence that raced a bind

@@ -256,12 +256,19 @@ create-path floors never see. The adapter's refusal of a non-positive generation
 (`pkg/adapter/coordination.go:93-94`) and on the barrier path (`:224-226`) is unchanged, and it stays as the
 fail-closed backstop for a value the gateway should never send.
 
-The sentences elsewhere that state which value a barrier carries are not edit sites under the baseline.
-§10.1.8 step 1 reads that the `CheckpointBarrier` message carries the current `coordination_generation`
-(`spec/10_gateway-internals.md:183`), and §29.7's trace step 4 reads that the replica sends it "carrying the
-session's current `coordination_generation`" (`spec/29_communication-scenarios.md:1186`). Each names the row
-value the dispatcher copies onto the wire (`pkg/gateway/coordination/barrier/wiring.go:49`), which is positive
-for every session once the baseline is 1, so each stays true and neither is restated.
+The sentences elsewhere that state which value a barrier carries are not edit sites, and that ruling does
+not rest on the baseline. §10.1.8 step 1 reads that the `CheckpointBarrier` message carries the current
+`coordination_generation` (`spec/10_gateway-internals.md:183`), and §29.7's trace step 4 reads that the
+replica sends it "carrying the session's current `coordination_generation`"
+(`spec/29_communication-scenarios.md:1186`). Neither is restated, because each is already false on the
+handoff path in the shipped tree. On the healthy path the dispatcher copies onto the wire the generation
+the `coordination_lease` mirror row carries (`pkg/gateway/coordination/barrier/wiring.go:104-114`, `:49`)
+rather than the session row's, and the sweep writes that mirror from its pre-bump List snapshot
+(`pkg/gateway/coordination/coordination/coordination.go:430`) in the same iteration in which
+`RecordHandoff` bumps the row and the pod is fenced at the post-bump value (`:371`, `:399`, `:463-481`),
+so after a cross-replica takeover the mirror carries the prior generation for a whole sweep interval. That
+lag is a defect in the shipped tree that this proposal records rather than stages, and the baseline neither
+creates nor repairs it.
 
 `spec/28` and `spec/29` carry mirrors of the same reset clauses, and SPEC-2 takes its wording from the
 clauses written here so the mirrors do not state more than the section they mirror. Neither file states step
