@@ -49,7 +49,14 @@ export function loadWorkflow(relPath) {
 function resolveStub(stubs, call) {
   if (typeof stubs === "function") return stubs(call);
   const { label } = call;
-  if (Object.prototype.hasOwnProperty.call(stubs, label)) return stubs[label];
+  // An exact match is resolved the same way a glob match is, below: a function
+  // stub is CALLED. Returning it uncalled handed the workflow a function object,
+  // which is truthy, so a test that stubbed an exact label with a function
+  // silently asserted nothing and passed.
+  if (Object.prototype.hasOwnProperty.call(stubs, label)) {
+    const exact = stubs[label];
+    return typeof exact === "function" ? exact(call) : exact;
+  }
 
   let best = null;
   let bestScore = -1;

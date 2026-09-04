@@ -4153,6 +4153,43 @@ t.section("R70. the unclosed OPEN and DEFERRED counts are read, and a count nobo
     unreadable.logs.filter((l) => /Review log:/.test(l)).join(" | "),
   );
 
+  // A THROWING agent, not a dead one. `agent()` throws rather than returning
+  // null when a subagent finishes without calling StructuredOutput, and an
+  // uncaught throw takes the entire run with it: a measured run lost 53 agents
+  // and a hundred minutes to one growth agent that did not call its tool.
+  // robustAgent absorbs a throw the same way it absorbs a null.
+  {
+    const boom = () => { throw new Error("subagent completed without calling StructuredOutput"); };
+    const thrown = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH, conventions: boom }));
+    t.check("a throwing agent does not take the run down", !!thrown.result, String(thrown.result));
+    t.check(
+      "the run still reports its review",
+      !!(thrown.result && thrown.result.review),
+      JSON.stringify(thrown.result && Object.keys(thrown.result)),
+    );
+    t.check(
+      "and the throw is logged rather than swallowed",
+      thrown.logs.some((l) => /threw on attempt/.test(l)),
+      thrown.logs.filter((l) => /threw/.test(l)).slice(0, 2).join(" | "),
+    );
+    t.check(
+      "every attempt is tried before giving up",
+      thrown.logs.filter((l) => /conventions: threw on attempt/.test(l)).length === 4,
+      String(thrown.logs.filter((l) => /conventions: threw on attempt/.test(l)).length),
+    );
+  }
+  {
+    // Every lens throwing is survivable too: the round has no reviewers, which
+    // the loop already knows how to end, rather than an exception.
+    const boom = () => { throw new Error("classifier blocked the agent"); };
+    const allThrew = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH, "*:review:*": boom }));
+    t.check("a round whose every reviewer throws still returns", !!allThrew.result);
+    t.check(
+      "and does not claim convergence",
+      !(allThrew.result && allThrew.result.review && allThrew.result.review.converged),
+    );
+  }
+
   const deadCount = await runWorkflow(WF, REVIEW_ARGS, loopStubs({ "hash:*": HASH, "log:unclosed-markers": null }));
   t.check(
     "a dead counting agent is null too",

@@ -3884,7 +3884,22 @@ async function robustAgent(prompt, opts, attempts = 4) {
   for (let i = 1; i <= attempts; i++) {
     const callOpts =
       i >= fallbackAt ? { ...opts, model: "sonnet" } : opts;
-    const r = await agent(prompt, callOpts);
+    // `agent()` does not always signal failure by returning null: a subagent
+    // that finishes without calling StructuredOutput makes it THROW. An uncaught
+    // throw here takes the whole run down, and a measured run lost 53 agents and
+    // a hundred minutes to one growth agent that did not call its tool. A throw
+    // is a failed attempt, which is the case this function already exists to
+    // absorb, so it is caught and retried like any other.
+    let r = null;
+    try {
+      r = await agent(prompt, callOpts);
+    } catch (e) {
+      log(
+        "  " + (opts.label || "agent") + ": threw on attempt " + i + "/" + attempts + " — " +
+          String((e && e.message) || e).slice(0, 140),
+      );
+      r = null;
+    }
     if (r !== null && r !== undefined) {
       const missing = missingRequired(r, opts.schema);
       if (missing.length === 0) return r;
