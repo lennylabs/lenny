@@ -197,8 +197,8 @@ succeeded costs its lease, a sweep cycle, and one increment each of
 `lenny_coordinator_handoff_stale_total` and `lenny_coordinator_fence_relinquished_total`.
 **Recommendation: accept the equal case, and land it after the counter baseline rather than before.**
 
-The ordering is load-bearing and is the finding that reconciles a dissent in the validation pass. Today
-two different replicas can legitimately carry the same generation: `fenceResumedPod`
+The ordering determines whether the fix is safe and is the finding that reconciles a dissent in the
+validation pass. Today two different replicas can legitimately carry the same generation: `fenceResumedPod`
 (`pkg/gateway/sessionserver/start.go:4233-4240`) fences without incrementing, and `coordfence.go:147-153`
 floors a zero row to 1, so a resume coordinator fences at 1 while a later takeover's `RecordHandoff`
 bumps 0 to 1 and fences at 1. Accepting equality in that state would admit a genuine split-brain. Once
@@ -258,7 +258,7 @@ unless the reviewer directs that it be staged here.
 **OD4 is withdrawn.** It asked whether to state the barrier quiescence unit or to delete a design claim,
 and the validation pass found unanimously that it was mis-stated. The design claims that §10.1.8 step 3
 fixes *the gate's* unit at the session, which is about the `barrierGate` rather than the `quiesced` flag,
-and that claim is true and load-bearing for CODE-1. SPEC-2 already stages the narrowing that leaves
+and that claim is true and CODE-1 depends on it. SPEC-2 already stages the narrowing that leaves
 §29.10's clause unanswered. Nothing is owed and nothing should be deleted. The strongest ground for not
 stating the unit is one no earlier reading found: the only quiescence primitive the specification
 defines, the `checkpoint_request` frame in §28, carries no session identifier and is delivered to the
@@ -285,7 +285,7 @@ interval, and that the successor must still amend the same landed tests this pro
 One repair the earlier draft credited to the baseline, the first crash-takeover fence rejected at 1, is
 also fixed by OD2's remedy, so it is not exclusive to CODE-4.
 
-**OD6 is replaced.** Its load-bearing claim was that the pod-wide field is an accidental mutual exclusion
+**OD6 is replaced.** Its central claim was that the pod-wide field is an accidental mutual exclusion
 holding a pod to one coordinating replica, and every validator refuted it. The predicate at
 `pkg/adapter/coordination.go:99` compares generations and carries no replica term, so the identical
 interference fires when one replica coordinates both co-tenant sessions and fences the lower-generation
