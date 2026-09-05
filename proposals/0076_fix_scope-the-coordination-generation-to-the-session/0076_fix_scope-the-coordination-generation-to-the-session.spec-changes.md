@@ -87,6 +87,21 @@ one-coordinating-replica-per-session constraint that `REG-COORDLEASE` guards, an
 states the same baseline in §4.2, CODE-2 carries the gate change, and CODE-4 lands the baseline on the
 session row.
 
+**D8. The barrier gate's comparison is equality.** The pod refuses a `CheckpointBarrier` whose
+`coordination_generation` does not match the value it holds for the session the request names, and does not
+widen to accept any value at or above that one. The authority is shipped §10.1.2 step 3, which fixes the
+comparison for the whole class the barrier belongs to: "All subsequent gateway→pod RPCs include the local
+generation stamp. The pod accepts only RPCs whose generation matches the fenced value"
+(`spec/10_gateway-internals.md:41`). SPEC-1's §10.1.8 step 1 applies that predicate by reference rather than
+restating a comparison, and the shipped gate already performs it (`pkg/adapter/coordination.go:236`), so
+CODE-2 carries the operator unchanged. Widening admits a barrier carrying a generation no coordinator has
+fenced on the pod, which the barrier's cache fallback can produce by reading the live session row between a
+successor's compare-and-swap and its fence acknowledgement (`cmd/lenny-gateway/httpsurface.go:588-602`),
+and step 2 makes that acknowledgement a hard precondition for every operational RPC
+(`spec/10_gateway-internals.md:38`). Widening also recovers nothing on the healthy path, because the refusal
+that occurs there comes from the mirror carrying a value below the one the pod holds, which a wider
+comparison refuses exactly as equality does.
+
 ## 3. Design overview
 
 `coordinationState` moves from `Server` onto the per-session slot registry entry.
@@ -113,12 +128,6 @@ must be derived during convergence:
   initial condition holds under either resolution, because `checkSessionBound` rejects a fence for an
   unbound session before the generation is read (`pkg/adapter/coordination.go:89`,
   `pkg/adapter/slotsession.go:267`), so every fence that reaches the predicate names a bound entry.
-- Whether `CheckpointBarrier`'s gate stays equality or becomes "at least the last fenced generation".
-  Equality catches a barrier carrying a generation other than the one the pod holds for the session the
-  barrier names. The barrier's generation is read when the target set is assembled rather than stamped by
-  the sending replica, so that catches a superseded sender whenever the assembly and the successor's fence
-  straddle each other in either order; confirm that a per-session counter does not change which barriers
-  that catches.
 - How the per-session gap reset is built, given that the adapter does not perform it today. SPEC-1 stages
   the reset's scope on the specification side, so the requirement is per session before any code is
   written. The adapter's gap branch logs `coordinator_generation_gap`, reports `gap_detected`, and then
@@ -148,25 +157,25 @@ session's last fenced generation, resets the transient tool-call and lifecycle s
 accumulated since its last fenced coordinator, and logs `coordinator_generation_gap` recording that
 session's two generations.
 
-That text lands in sentences §10.1.2 already carries, and it adds no bullet. The sentences are these. In the
-fence-announcement step, "The pod records the new generation and from this point rejects any RPC carrying an
-older generation" gains "for that session". In the "Gap detection on the pod" bullet, the
-`last_fenced_generation` parenthetical becomes "the generation from the last successfully acknowledged fence
-for that session on this pod", the initial condition is stated immediately after that parenthetical and
-before the clause list, and clauses (a), (b), and (c) gain the session qualifier. The predicate keeps its
-current form, and clause (d) and the closing sentence stating that a gap of exactly 1 is the normal case are
-unchanged. In step 3, the acceptance sentence and the sentence that follows it become "The pod
-accepts only RPCs whose generation matches the value it holds for the session the RPC names. A session for
-which the pod holds no fenced generation has no recorded value to match, so the pod does not reject that
-session's RPCs on generation grounds, and a `CheckpointBarrier` naming such a session is accepted and
-records no value. Because fence confirmation is required before this step is reached, the pod holds one
-generation for that session at a time and accepts only RPCs carrying it, so an RPC carrying a generation a
-later fence superseded is refused from the moment that fence is acknowledged." Step 3's opening sentence,
-which states that all subsequent gateway-to-pod RPCs include the local generation stamp, is unchanged,
-because it states what the coordinator this step addresses stamps on the RPCs it sends. The acceptance
-sentence that follows it is the one whose domain is the whole set of gateway-to-pod RPCs, including
-`CheckpointBarrier`, whose generation §10.1.8 step 1 states is the session's current
-`coordination_generation` read from state the replicas share, as D7 records.
+That text lands in sentences §10.1.2 already carries, and it adds no bullet. The sentences are these. In
+the fence-announcement step, "The pod records the new generation and from this point rejects any RPC
+carrying an older generation" gains "for that session". In the "Gap detection on the pod" bullet, the
+`last_fenced_generation` parenthetical becomes "the generation from the last successfully acknowledged
+fence for that session on this pod", the initial condition is stated immediately after that parenthetical
+and before the clause list, and clauses (a), (b), and (c) gain the session qualifier. The predicate keeps
+its current form, and clause (d) and the closing sentence stating that a gap of exactly 1 is the normal
+case are unchanged. In step 3, the acceptance sentence and the sentence that follows it become "The pod
+accepts only RPCs whose generation matches the value it holds for the session the RPC names. A session
+bound to the pod for which the pod holds no fenced generation has no recorded value to match, so the pod
+does not reject that session's RPCs on generation grounds, and a `CheckpointBarrier` naming such a
+session is accepted and records no value. Because fence confirmation is required before this step is
+reached, the pod holds one generation for that session at a time and accepts only RPCs carrying it, so an
+RPC carrying a generation a later fence superseded is refused from the moment that fence is
+acknowledged." Step 3's opening sentence, which states that all subsequent gateway-to-pod RPCs include
+the local generation stamp, is unchanged, because it states what the coordinator this step addresses
+stamps on the RPCs it sends. The acceptance sentence that follows it is the one whose domain is the whole
+set of gateway-to-pod RPCs, including `CheckpointBarrier`, whose generation §10.1.8 step 1 states is the
+session's current `coordination_generation` read from state the replicas share, as D7 records.
 
 Step 3 is an edit site because it restates the pod-side gate in the pod-singular form this change
 retires: "The pod accepts only RPCs whose generation matches the fenced value"
@@ -199,33 +208,32 @@ follow it. The clause also agrees with the two neighbouring statements of the sa
 summary bullet has the pod reject when the generation is stale (`spec/10_gateway-internals.md:30`,
 whose rejection sentence stands and which SPEC-1 opens below only to add the baseline sentence), and
 the §28.5.1 Messages wording SPEC-2 stages has the pod reject a generation older than the one it
-holds for that session. The comparison stays equality, because §7's first open decision reserves the
-operator for the reviewer and this edit changes only the unit of the value compared and the domain
-over which the comparison applies.
+holds for that session. The comparison stays equality, under D8, and this edit changes only the
+unit of the value compared and the domain over which the comparison applies.
 
 §10.1.8 step 1 states the barrier's own refusal as the only outcome, and it takes the qualifier D7
-requires. Its closing sentence, which reads "Pods receiving a barrier for a session no longer
-coordinated by this replica (a false-positive surviving the cache fallback) reject the barrier as
-a generation-stale RPC under the normal fencing rules — this is safe and does not require special
-handling" (`spec/10_gateway-internals.md:183`), becomes "Pods receiving a barrier for a session no
-longer coordinated by this replica (a false-positive surviving the cache fallback) apply to it the
-same generation rule as to any other gateway-to-pod RPC, stated in step 3 of the handoff protocol:
-the pod rejects the barrier as a generation-stale RPC when it holds a generation for that session
-that the barrier does not carry, and otherwise accepts it. The generation a barrier carries is
-read from the session's coordination state when the barrier-target set is assembled, rather than
-stamped by the draining replica, so the outcome follows from the generation the barrier carries
-alone. Either outcome is safe and requires no special handling." The acceptance predicate itself
-is stated once, in §10.1.2 step 3, and §10.1.8 applies it by reference. A restatement here in
-terms of which replica has fenced would be false in the false positive where the barrier carries
-the generation the acquiring replica's compare-and-swap wrote and the pod still holds the value
-the draining replica fenced, so the fencing rules refuse the barrier before the successor's fence
-lands and accept it after. §10.1.8 states no enumeration of the values a barrier can reach the pod
-carrying, because the assembly reads state that can sit on either side of the value the pod holds
-and which values are reachable is a property of the target producers rather than of this step. The
-rest of §10.1.8 is unchanged: steps 2, 3, and 4, the BarrierAck-timeout partial-capture rules, and
-the closing sentence bounding the rolling-update interruption window to one in-flight tool call
-per session all hold under D7 rather than needing a qualifier, because a barrier the pod accepts
-establishes the step-2 quiescence and the ack deadline stays the only failure arm §10.1.8 defines.
+requires. Its closing sentence, which reads "Pods receiving a barrier for a session no longer coordinated
+by this replica (a false-positive surviving the cache fallback) reject the barrier as a generation-stale
+RPC under the normal fencing rules — this is safe and does not require special handling"
+(`spec/10_gateway-internals.md:183`), becomes "Pods receiving a barrier for a session no longer
+coordinated by this replica (a false-positive surviving the cache fallback) apply to it the same
+generation rule as to any other gateway-to-pod RPC, stated in step 3 of the handoff protocol: for a
+session bound to the pod, the pod rejects the barrier as a generation-stale RPC when it holds a
+generation for that session that the barrier does not carry, and otherwise accepts it. The generation a
+barrier carries is read from the session's coordination state when the barrier-target set is assembled,
+rather than stamped by the draining replica, so the outcome follows from the generation the barrier
+carries alone. Either outcome is safe and requires no special handling." The acceptance predicate itself
+is stated once, in §10.1.2 step 3, and §10.1.8 applies it by reference. A restatement here in terms of
+which replica has fenced would be false in the false positive where the barrier carries the generation
+the acquiring replica's compare-and-swap wrote and the pod still holds the value the draining replica
+fenced, so the fencing rules refuse the barrier before the successor's fence lands and accept it after.
+§10.1.8 states no enumeration of the values a barrier can reach the pod carrying, because the assembly
+reads state that can sit on either side of the value the pod holds and which values are reachable is a
+property of the target producers rather than of this step. The rest of §10.1.8 is unchanged: steps 2, 3,
+and 4, the BarrierAck-timeout partial-capture rules, and the closing sentence bounding the rolling-update
+interruption window to one in-flight tool call per session all hold under D7 rather than needing a
+qualifier, because a barrier the pod accepts establishes the step-2 quiescence and the ack deadline stays
+the only failure arm §10.1.8 defines.
 
 §10.1's "Generation counters" bullet states the counter's role on the wire, and it gains one sentence,
 because D7's acceptance is unreachable unless the generation a replica carries on a gateway-to-pod message
@@ -394,22 +402,21 @@ the rule. The sentences below change.
   above states. The cell names one channel, so it takes that relation with no `CH-FENCE` arm. The cell's
   second clause, that the new holder must complete its fence before it opens one, is a sender-side duty and
   is unchanged, as are the cell's constraint sentence and the rest of the row, and the row stays one line.
-- §28.8's `CH-BARRIER` row, its "Holder of the exclusivity constraint changes" cell. Its closing
-  clause "so a barrier from a superseded replica is rejected on the stamp" (`:1808`) is replaced
-  by the predicate §10.1.8 step 1 states, at the level of detail the cell carries: the pod rejects
-  the barrier when it holds a generation for the session the barrier names that the barrier does
-  not carry, and otherwise accepts it. The rest of the constraint sentence, which states the
-  constraint, names `REG-COORDLEASE` and the generation stamp as the guard, and records that the
-  barrier carries that generation in its own message, is unchanged, as is the cell's second
-  sentence recording that the specification states no separate pod-level barrier lock. Only the
-  trailing clause of the constraint sentence is replaced, and the row stays one line. The clause
-  is an edit site because the pod cannot reject a barrier on the identity of its sender: the
-  message carries no replica identity and its generation is read from state the replicas share, so
-  a superseded replica's barrier can carry the very generation the pod holds, in which case the
-  staged predicate accepts it. The mechanism the clause would need to stay true, a replica
-  identifier on the wire and a pod-side view of `REG-COORDLEASE`, is a new protocol surface on the
-  one channel where a wrong rejection costs the session's quiescence and the acked-barrier record,
-  and forces a second capture.
+- §28.8's `CH-BARRIER` row, its "Holder of the exclusivity constraint changes" cell. Its closing clause "so
+  a barrier from a superseded replica is rejected on the stamp" (`:1808`) is replaced by the predicate
+  §10.1.8 step 1 states, at the level of detail the cell carries: for a session bound to the pod, the pod
+  rejects the barrier when it holds a generation for the session the barrier names that the barrier does
+  not carry, and otherwise accepts it. The rest of the constraint sentence, which states the constraint,
+  names `REG-COORDLEASE` and the generation stamp as the guard, and records that the barrier carries that
+  generation in its own message, is unchanged, as is the cell's second sentence recording that the
+  specification states no separate pod-level barrier lock. Only the trailing clause of the constraint
+  sentence is replaced, and the row stays one line. The clause is an edit site because the pod cannot
+  reject a barrier on the identity of its sender: the message carries no replica identity and its
+  generation is read from state the replicas share, so a superseded replica's barrier can carry the very
+  generation the pod holds, in which case the staged predicate accepts it. The mechanism the clause would
+  need to stay true, a replica identifier on the wire and a pod-side view of `REG-COORDLEASE`, is a new
+  protocol surface on the one channel where a wrong rejection costs the session's quiescence and the
+  acked-barrier record, and forces a second capture.
 
 SPEC-2 leaves the hold sentences in `spec/28` as they stand: the hold half of the `CH-FENCE` Degradation
 bullet, the hold sentence of §28.6's "The second opener on those channels" paragraph, and the "while the
@@ -466,9 +473,10 @@ paragraph applies the predicate §10.1.8 step 1 applies, and the Preconditions p
   fencing rules" (`spec/29_communication-scenarios.md:1150-1152`). It takes the same predicate §10.1.8 step 1
   applies, in one clause at the level of detail §29.7 carries: the barrier is rejected as a generation-stale
   RPC under the fencing rules when the pod holds a generation for that session that the barrier does not
-  carry, and is accepted otherwise. The guard on the pod holding a value is carried word for word from
-  §10.1.8 step 1, because a session for which the pod holds no fenced generation has no value the carried
-  generation could match, and that session is inside §29.7's own population. Step 5 of the trace, on which
+  carry, and, for a session bound to the pod, is accepted otherwise. The guard on the pod holding a value
+  is carried word for word from §10.1.8 step 1, because a session for which the pod holds no fenced
+  generation has no value the carried generation could match, and that session is inside §29.7's own
+  population. Step 5 of the trace, on which
   the adapter quiesces, is unchanged, and the paragraph's set of named outcomes stays closed, because both
   arms are now named.
 - §29.8's Preconditions paragraph fixes the pod's fenced value at the session row's counter: "the session's
@@ -550,14 +558,14 @@ the value the pod holds for the session the request names, and the message-level
 not disagree about the comparison.
 
 The remaining `coordination_generation` field comments in the file are carriers too. Each states the
-gateway's view of the active coordination generation for the session and then closes with an unconditional
-consequence. Most read that a pod validates the generation on every gateway-to-pod RPC and rejects a stale
-coordinator's request, "so a replica that has lost coordination cannot drive the pod (§10.1)", and
-`ShutdownRequest`'s variant closes "cannot tear the session down (§10.1)". SPEC-1's staged §10.1.2 step 3
-states that a session for which the pod holds no fenced generation has no recorded value to match, and D6
-together with §7's first open decision make that the ordinary state of a session that has neither resumed
-nor been taken over, so for that session class the pod rejects nothing on generation grounds and the
-consequence clause is false against the section it cites.
+gateway's view of the active coordination generation for the session and then closes with an
+unconditional consequence. Most read that a pod validates the generation on every gateway-to-pod RPC and
+rejects a stale coordinator's request, "so a replica that has lost coordination cannot drive the pod
+(§10.1)", and `ShutdownRequest`'s variant closes "cannot tear the session down (§10.1)". SPEC-1's staged
+§10.1.2 step 3 states that a session for which the pod holds no fenced generation has no recorded value
+to match, and D6 together with D7's enumeration of the only two fence drivers make that the ordinary
+state of a session that has neither resumed nor been taken over, so for that session class the pod
+rejects nothing on generation grounds and the consequence clause is false against the section it cites.
 
 Each of those comments takes one replacement for the span running from "A pod validates" to the end of the
 consequence clause: "A pod validates the generation on every gateway-to-pod RPC against the value it holds
@@ -612,17 +620,8 @@ create path.
 
 ## 7. Open decisions for review
 
-1. **Whether the barrier gate stays equality.** The gateway issues `CoordinatorFence` on the resume path
-   (`pkg/gateway/sessionserver/start.go:3975`, `:4067`, through `fenceResumedPod` at `:4233`) and on the
-   sweeper's crash-takeover re-adopt (`pkg/gateway/coordination/coordination/coordination.go:399` through
-   `cmd/lenny-gateway/coordination_seams.go:155-160`). Both paths drive the same `coordfence.Fencer`, and no
-   other call site drives it (`pkg/gateway/sessionserver/start.go:4237`,
-   `cmd/lenny-gateway/coordination_seams.go:233`), so a session that has neither resumed nor been taken over
-   holds no fenced generation on its pod. That case is settled by D7: the pod accepts a barrier naming a
-   bound session it holds no fenced generation for. What remains for the reviewer is whether the comparison
-   against a value the pod does hold stays equality.
-2. **Whether a fence for an unheld session is a rejection or a retryable race.**
-3. **Whether `coord.mu` becomes per-entry.**
+1. **Whether a fence for an unheld session is a rejection or a retryable race.**
+2. **Whether `coord.mu` becomes per-entry.**
 
 ## 10. Dependencies
 

@@ -93,7 +93,9 @@ CODE-1 reaches tiers 0, 1, 2, 4, 7a, and 8.
 
 `pkg/adapter/coordination.go:236`: the generation gate refuses the barrier when `initialized && gen !=
 fenced` holds for the entry resolved for the session the request names, which is D7 and staged §10.1.2
-step 3, whose comparison operator §7's first open decision owns. The entry the gate reads, and every other
+step 3. The comparison stays equality, under D8: shipped §10.1.2 step 3 states that the pod accepts only
+RPCs whose generation matches the fenced value (`spec/10_gateway-internals.md:41`), and the mismatch form
+on this line is that comparison. The entry the gate reads, and every other
 site that reads or writes the relocated state, is the one CODE-1's resolve rule fixes.
 
 ### CODE-3. Hold state
@@ -215,6 +217,17 @@ states otherwise.
   equal 7 (`:236`). `LastFencedGeneration` for `sess-a` still reads 7 after both. On a fresh pod with
   `sess-a` fenced at 7, `sess-b`'s first fence at 9 logs no `coordinator_generation_gap`, where the
   pre-fix pod-wide `initialized` makes it a gap (`:108-116`).
+- Tier 1, `pkg/adapter/coordination_test.go`: a `CheckpointBarrier` naming a session the pod holds no slot
+  binding for is refused with `FailedPrecondition` and `session <id> is not assigned to this pod`. The case
+  registers the session's slot entry without binding it, through `Server.RegisterUnboundSlotForTest`
+  (`pkg/adapter/export_test.go:61`), and drives a barrier for that session id. `checkSessionBound`
+  (`pkg/adapter/slotsession.go:267-275`, the refusal at `:271-274`) runs ahead of the barrier's `barrier_id`
+  check, its positive-generation check, and the generation gate (`pkg/adapter/coordination.go:216-218`), so
+  the refusal holds whatever generation the request carries and the case asserts the code and the message
+  rather than a gate verdict. This case does not fail against the pre-fix code. It pins the guard that D7
+  leaves as the barrier path's only refusal for a session the pod holds no fenced generation for, which
+  `.claude/rules/test-coverage.md` requires to be covered as an error path and
+  `.claude/rules/code-best-practices.md` requires to fail closed.
 - Tier 1, `pkg/adapter/coordination_test.go`: two bound sessions hold their own barrier gates. Each
   `link` and `complete` reaches only the barrier of the session whose `Checkpoint` stream carried it, a
   session holding no open gate ignores the other session's link, and each accepted barrier's ack carries
