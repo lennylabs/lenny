@@ -984,6 +984,12 @@ const DECISION_ENTRY = {
     cascades: { type: "array", items: { type: "string" } },
     disposition: { type: "string", enum: DISPOSITIONS },
     answer: { type: "string" },
+    // The answer reduced to a short key, so three readings that reached the same
+    // conclusion can be compared without their prose matching. Comparing the
+    // prose meant three agents had to write byte-identical sentences to agree,
+    // which never happened: a measured run had 21 of 41 readings proposing to
+    // resolve and resolved nothing.
+    answerKey: { type: "string" },
     recommendation: { type: "string" },
     // What the proposal STAGES on this question today, in its own words, or the
     // empty string when it stages nothing either way. A proposal that already
@@ -1161,6 +1167,26 @@ const STAGED_ALIGNMENT_RULE =
 
 // How opinionated the phase is allowed to be. The operator's instruction: a
 // recommendation the reading is sure of is a decision the workflow can take.
+// Three readings agree when they reached the same conclusion, not when they
+// wrote the same sentence. The key is what the script compares.
+const ANSWER_KEY_RULE =
+  "STATE YOUR ANSWER TWICE: once as prose in `answer`, and once as a SHORT KEY in `answerKey`. The key is " +
+  "two or three words naming the answer itself, in the terms the decision offers, and nothing else: " +
+  "`equality`, `widen-to-at-least`, `lands-here`, `splits-to-successor`, `stays-in-scope`. No sentence, no " +
+  "hedging, no citation. The script compares the KEY across the three independent readings, because three " +
+  "writers who reached one conclusion never phrase it alike, and comparing prose meant a run where 21 of " +
+  "41 readings proposed to resolve and nothing resolved. Two readings that choose the same key have " +
+  "agreed; two that write the same thought in different words have not, unless their keys match. Use the " +
+  "same key an earlier firing used for the same answer where the entry records one.";
+
+// An entry that says it is already withdrawn or replaced is not an open decision.
+const NOT_A_LIVE_DECISION_RULE =
+  "AN ENTRY THAT IS ALREADY WITHDRAWN OR REPLACED IS NOT YOURS TO COLLECT. Where the section's entry says " +
+  "in its own words that it is withdrawn, replaced, or already answered, it is a record of a decision that " +
+  "was closed, not a decision awaiting one. Do not return it. The cleanup pass removes it from the " +
+  "section; collecting it makes the phase report a closed question as one the human still owes an answer " +
+  "to, which is the opposite of what this sweep is for.";
+
 const CONFIDENCE_RULE =
   "HOW SURE YOU ARE DECIDES WHO ANSWERS. Set `confidence` for every item.\n" +
   "  - `high`: the ground settles it and a reviewer reading the same files would reach the same answer. " +
@@ -1299,6 +1325,8 @@ function humanDecisionsBrief() {
       "see the other two and you are not deciding the outcome: an item reaches `resolve` only when all " +
       "three of you resolve it to the same answer, and it is the human's otherwise. So return YOUR reading, " +
       "with the ground you actually opened, rather than the reading you expect to be agreed with." +
+      "\n\n" + NOT_A_LIVE_DECISION_RULE +
+      "\n\n" + ANSWER_KEY_RULE +
       "\n\n" + CONFIDENCE_RULE +
       "\n\n" + STAGED_ALIGNMENT_RULE +
       (refutedBlock() ? "\n\n" + refutedBlock() : ""),
@@ -1483,6 +1511,9 @@ function readingOf(agentIndex, entry) {
     disposition: entry.disposition,
     recommendation: entry.recommendation || "",
     answer: entry.answer || "",
+    answerKey: entry.answerKey || "",
+    confidence: entry.confidence || "",
+    whatIsStaged: entry.whatIsStaged || "",
     entry,
   };
 }
@@ -1537,14 +1568,36 @@ async function collectHumanDecisions() {
   for (const [key, readings] of byKey) {
     const first = readings[0].entry;
     const unanimousResolve = readings.length === 3 && readings.every((x) => x.disposition === "resolve");
-    // The answers are compared rather than the recommendations, because a
-    // recommendation is prose three independent writers never phrase alike and
-    // the answer is the one line each was told to state as the ground states
-    // it. Three agents that resolved an item to different answers have not
-    // agreed on anything, so the item is the human's, with all three recorded
-    // as alternatives rather than one of them picked silently.
-    const answers = readings.map((x) => normalizeAnswer(x.answer));
-    const agreed = unanimousResolve && answers.every((a) => a && a === answers[0]);
+    // Readings are compared on `answerKey` rather than on the answer's prose.
+    // Comparing prose required three independent writers to produce the same
+    // sentence, and a measured run had 21 of 41 readings proposing to resolve
+    // and resolving nothing, with three phrasings of one answer recorded as
+    // "alternatives" the reviewer was asked to pick between.
+    const keyOf = (x) => normalizeAnswer(x.answerKey || x.answer);
+    const resolvers = readings.filter((x) => x.disposition === "resolve" && keyOf(x));
+    const byAnswer = new Map();
+    for (const x of resolvers) {
+      const k = keyOf(x);
+      if (!byAnswer.has(k)) byAnswer.set(k, []);
+      byAnswer.get(k).push(x);
+    }
+    // The largest group of readings that resolved the item the same way.
+    let bloc = [];
+    for (const g of byAnswer.values()) if (g.length > bloc.length) bloc = g;
+    // A MAJORITY carries it, not unanimity, and how sure that majority is
+    // decides whether the workflow answers or the human does. `high` settles it.
+    // `moderate` settles it only when the proposal already stages that same
+    // answer, the staging being the second reading that makes it sure. Anything
+    // less is the human's.
+    const sure = bloc.some((x) => x.confidence === "high");
+    const stagedAgrees =
+      bloc.some((x) => x.confidence === "moderate") && bloc.some((x) => String(x.whatIsStaged || "").trim());
+    // THREE readings or nothing. A dead adjudicator leaves fewer, and two
+    // readings that agree are not a majority of three: the redundancy this
+    // sub-task buys is what makes a majority mean anything, so an item with a
+    // missing reading stands as the human's however sure the survivors are.
+    const agreed =
+      readings.length === 3 && bloc.length >= 2 && (bloc.length === 3 || sure || stagedAgrees);
     // Three readings that agree the decision is the IMPLEMENTOR'S take it off
     // the human's list without this phase answering it. Sub-task 2 used to be
     // the only route to that disposition, and deleting it left the DELEGATION
@@ -1554,7 +1607,7 @@ async function collectHumanDecisions() {
       readings.length === 3 && readings.every((x) => x.disposition === "implementor");
     const disposition = agreed ? "resolve" : unanimousImplementor ? "implementor" : "human";
     let agreement = "split";
-    if (agreed) agreement = "unanimous-resolve";
+    if (agreed) agreement = bloc.length === readings.length ? "unanimous-resolve" : "majority-resolve";
     else if (unanimousImplementor) agreement = "unanimous-implementor";
     else if (unanimousResolve) agreement = "divergent-resolve";
     else if (readings.length < 3) agreement = "incomplete-readings";
@@ -1569,8 +1622,25 @@ async function collectHumanDecisions() {
       // Recorded only where three agents agreed to resolve and disagreed about
       // the answer: that is the case where something was on the table to pick
       // between, and picking is what this phase does not do.
+      // Recorded only where readings resolved to GENUINELY different answers,
+      // which is now measured on the answer key rather than on its phrasing: one
+      // answer written three ways is not three alternatives.
       alternatives:
-        agreement === "divergent-resolve" ? readings.map((x) => x.answer || x.recommendation) : [],
+        !agreed && byAnswer.size > 1 ? [...byAnswer.keys()].map((k) => byAnswer.get(k)[0].answer || k) : [],
+      // What the readings that lost said, kept when a MAJORITY carried the item
+      // rather than all three. The phase now picks, so the minority reading has
+      // to survive the pick: a resolution that records only the winning answer
+      // is the silent pick this join was built to avoid, and the dissent is what
+      // a reviewer needs to judge whether the majority read it right.
+      dissent:
+        agreed && byAnswer.size > 1
+          ? [...byAnswer.entries()]
+              .filter(([k]) => k !== keyOf(bloc[0]))
+              .map(([k, g]) => g[0].answer || k)
+          : [],
+      resolvedBy: agreed
+        ? { of: bloc.length, readings: readings.length, confidence: sure ? "high" : stagedAgrees ? "moderate+staged" : "unanimous" }
+        : null,
     });
   }
   log(
@@ -2680,16 +2750,23 @@ function buildDecisionPayloads() {
     if (withdrawn && !authority) {
       // Refused. A withdrawal is the one disposition whose whole record is the
       // absence of an entry, so one that names nobody leaves a reader unable to
-      // tell it from an entry a fixer dropped. It is not recorded as closed and
-      // the decision stays the human's.
-      decisionsLeftToHuman.push({
+      // tell it from an entry a fixer dropped. The entry stays where it was.
+      //
+      // It is NOT reported as a decision left to the human. A refusal here means
+      // this phase's gate did not settle the item, which is the opposite of a
+      // finding that the human must answer it, and a measured run put eleven
+      // such items on the reviewer's list -- four of them entries that were
+      // already withdrawn before the run began and that the cleanup pass had
+      // just correctly deleted, so the report and the summary disagreed about
+      // the same four decisions.
+      refusedWithdrawals.push({
         ...base,
         reason:
           "a withdrawal naming no authority is refused: the item's disposition was not adjudicated by " +
-          "this phase's gate, so nothing here settled it",
+          "this phase's gate, so nothing here settled it and the entry stays as it was",
         gate: item.gate || "none",
       });
-      log("  " + item.id + ": withdrawal REFUSED, it names no authority; the decision stays the human's");
+      log("  " + item.id + ": withdrawal REFUSED, it names no authority; the entry stays as it was");
       continue;
     }
     if (resolved || withdrawn) {
@@ -2804,6 +2881,7 @@ function claimsBlock(cleanup) {
       cleanup: cleanup || "the cleanup agent returned nothing; the summary was not conformed by this firing",
       decisionsResolved,
       decisionsLeftToHuman,
+    refusedWithdrawals,
       applied,
       failedItems,
       recordedForOperator,
@@ -2923,6 +3001,11 @@ const recordedForOperator = [];
 // dozens of unclosed decisions is the gap these close.
 const decisionsResolved = [];
 const decisionsLeftToHuman = [];
+// Neither closed nor the human's: this phase's gate refused the withdrawal and
+// nothing here settled the item, so its entry stays exactly as it was. Reported
+// on its own so a reader can tell "the phase reached no verdict" from "the
+// reviewer owes an answer".
+const refusedWithdrawals = [];
 
 // Four collectors, each a separate brief over a different population: the
 // decisions left to the human, the blanks left to the implementor, the defects
@@ -3066,6 +3149,7 @@ if (commit.outcome === "failed") {
     recordedForOperator,
     decisionsResolved,
     decisionsLeftToHuman,
+    refusedWithdrawals,
     // The cross-firing record as this firing left it. Nothing new is written to
     // it on an abort, so what it carries is the earlier firings' dispositions
     // plus any reversal this firing's check found before it stopped.
@@ -3152,6 +3236,7 @@ return {
   recordedForOperator,
   decisionsResolved,
   decisionsLeftToHuman,
+  refusedWithdrawals,
   // What the cross-firing record says about this firing: the items a reversal
   // contested, the items carried forward untouched, and the prior records no
   // collected item matched, each under its own prior identifier.

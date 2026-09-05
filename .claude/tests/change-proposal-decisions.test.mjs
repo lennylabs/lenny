@@ -549,6 +549,65 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 }
 
 // ==========================================================================
+t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
+{
+  const mk = (over) => entry({ id: "OD-7", decision: "does the gate stay equality?", disposition: "resolve", summaryAction: "withdrawn", ...over });
+  // Three readings, one conclusion, three phrasings. Comparing the prose made
+  // this the human's and recorded the three sentences as "alternatives" to pick
+  // between; a measured run had 21 of 41 readings proposing to resolve and
+  // resolved nothing at all.
+  const three = (a, b, c) => ({
+    "f1:human-decisions:1": found(mk(a)),
+    "f1:human-decisions:2": found(mk(b)),
+    "f1:human-decisions:3": found(mk(c)),
+  });
+  const K = { answerKey: "equality", confidence: "high" };
+  const same = await fire({}, three(
+    { ...K, answer: "It stays an equality comparison." },
+    { ...K, answer: "Equality: the pod accepts only a matching generation." },
+    { ...K, answer: "The comparison remains equality against the held value." },
+  ));
+  const it0 = (r) => (r.items || []).find((x) => x.id === "id:OD-7");
+  t.check("one answer written three ways resolves", it0(same.result) && it0(same.result).disposition === "resolve",
+    it0(same.result) && it0(same.result).disposition);
+  t.check("and is not recorded as three alternatives",
+    ((it0(same.result) || {}).alternatives || []).length === 0,
+    JSON.stringify((it0(same.result) || {}).alternatives));
+
+  // Genuinely different answers are still the human's, measured on the key.
+  const split = await fire({}, three(
+    { ...K, answerKey: "equality", answer: "stays equality" },
+    { ...K, answerKey: "widen-to-at-least", answer: "widens to at least" },
+    { ...K, answerKey: "equality", answer: "stays equality" },
+  ));
+  const s2 = it0(split.result);
+  t.check("two keys against one is a real disagreement", s2 && s2.disposition === "resolve", s2 && s2.disposition);
+  // The phase picks now, so the minority reading has to survive the pick.
+  t.check("the losing answer is kept as dissent", (s2.dissent || []).length === 1, JSON.stringify(s2.dissent));
+  t.check("and is not passed off as an open alternative", (s2.alternatives || []).length === 0,
+    JSON.stringify(s2.alternatives));
+
+  // A majority that is not sure is the human's.
+  const unsure = await fire({}, three(
+    { answerKey: "equality", confidence: "low", answer: "stays equality" },
+    { answerKey: "equality", confidence: "low", answer: "stays equality" },
+    { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
+  ));
+  const u = it0(unsure.result);
+  t.check("a low-confidence majority does not resolve", u && u.disposition === "human", u && u.disposition);
+
+  // Moderate resolves when the proposal already stages that answer.
+  const staged = await fire({}, three(
+    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", answer: "stays equality" },
+    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", answer: "stays equality" },
+    { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
+  ));
+  const st = it0(staged.result);
+  t.check("a moderate majority the staging agrees with resolves", st && st.disposition === "resolve", st && st.disposition);
+  t.check("and records how it was carried", st && st.resolvedBy && st.resolvedBy.of === 2, JSON.stringify(st && st.resolvedBy));
+}
+
+// ==========================================================================
 t.section("D4. the gate: one falsifier per item, asymmetric defaults, a script-side tally");
 // ==========================================================================
 {
@@ -1251,10 +1310,25 @@ t.section("D11. what leaves the summary, and what a withdrawal must name");
   const unauthorised = await fire({}, { "f1:human-decisions:*": found(W), "f1:falsify:0": null });
   const ur = unauthorised.result;
   t.check("a withdrawal naming no authority is refused", !(ur.decisionsResolved || []).some((d) => d.id === "id:OD-2"), ids(ur.decisionsResolved));
+  // It is reported on its own rather than as a decision the reviewer owes an
+  // answer to. A refusal means this phase's gate did not settle the item, which
+  // is not a finding that the human must; a measured run put eleven such items
+  // on the reviewer's list, four of them entries already withdrawn before the
+  // run began and correctly deleted by the same firing's cleanup, so the report
+  // and the summary disagreed about the same four decisions.
   t.check(
-    "and the decision stays the human's",
-    (ur.decisionsLeftToHuman || []).some((d) => d.id === "id:OD-2" && /withdrawal naming no authority is refused/.test(d.reason)),
+    "the entry is reported as a refused withdrawal",
+    (ur.refusedWithdrawals || []).some((d) => d.id === "id:OD-2" && /withdrawal naming no authority is refused/.test(d.reason)),
+    ids(ur.refusedWithdrawals),
+  );
+  t.check(
+    "and is NOT reported as a decision left to the human",
+    !(ur.decisionsLeftToHuman || []).some((d) => d.id === "id:OD-2"),
     ids(ur.decisionsLeftToHuman),
+  );
+  t.check(
+    "the reason says the entry stays as it was",
+    (ur.refusedWithdrawals || []).some((d) => /the entry stays as it was/.test(d.reason)),
   );
   t.check("with the refusal logged", unauthorised.logs.some((l) => /withdrawal REFUSED, it names no authority/.test(l)));
 }
