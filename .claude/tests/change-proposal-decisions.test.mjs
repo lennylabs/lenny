@@ -752,6 +752,73 @@ t.section("D4. the gate: one falsifier per item, asymmetric defaults, a script-s
 }
 
 // ==========================================================================
+t.section("D4b. a refuted human disposition is acted on, and its answer designed");
+{
+  const H = entry({ id: "OD-9", decision: "does the gate stay equality?", disposition: "human", summaryAction: "unchanged" });
+  const REFUTE = (fb) => ({
+    theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive",
+    reasoning: "the shipped spec settles it", evidence: "spec/10:41", fallbackDisposition: fb,
+  });
+
+  // `implementor` needs no answer: the disposition is the outcome.
+  const toImpl = await fire({}, { "f1:human-decisions:*": found(H), "f1:falsify:0": REFUTE("implementor") });
+  const i1 = itemById(toImpl.result, "id:OD-9");
+  t.check("a refuted human the evidence calls the implementor's becomes implementor", i1 && i1.disposition === "implementor", i1 && i1.disposition);
+  t.check("and is NOT reported to the reviewer",
+    !(toImpl.result.decisionsLeftToHuman || []).some((d) => d.id === "id:OD-9"),
+    ids(toImpl.result.decisionsLeftToHuman));
+
+  // `resolve` needs an answer, and a separate agent designs it.
+  const design = {
+    answerable: true, answerKey: "equality", answer: "The gate compares for equality.",
+    authority: "spec/10_gateway-internals.md:41", why: "shipped step 3 fixes the comparison",
+    where: ["spec-changes.md — SPEC-1 §10.1.2"],
+  };
+  const toRes = await fire({}, {
+    "f1:human-decisions:*": found(H),
+    "f1:falsify:0": REFUTE("resolve"),
+    "f1:answer-design:0": design,
+    "f1:apply:0": { outcome: "edited", wrote: "The gate compares for equality.", where: ["spec-changes.md — SPEC-1"] },
+  });
+  t.check("a refuted human the evidence calls answerable reaches the designer",
+    matching(toRes.calls, "f1:answer-design:").length === 1,
+    String(matching(toRes.calls, "f1:answer-design:").length));
+  const i2 = itemById(toRes.result, "id:OD-9");
+  t.check("and becomes a resolution carrying the designed answer", i2 && i2.disposition === "resolve", i2 && i2.disposition);
+  t.check("which the phase reports as resolved", (toRes.result.decisionsResolved || []).some((d) => d.id === "id:OD-9"),
+    ids(toRes.result.decisionsResolved));
+  // The applier applies a design rather than deriving a second answer.
+  const ap = promptOf(toRes.calls, "f1:apply:0");
+  t.check("the applier is given the answer", /THE ANSWER IS ALREADY DESIGNED/.test(ap));
+  t.check("with the authority it rests on", /spec\/10_gateway-internals\.md:41/.test(ap));
+  t.check("and the sites it lands in", /SPEC-1 §10\.1\.2/.test(ap));
+  t.check("and is told not to re-derive it", /Apply it; do not re-derive it/.test(ap));
+  // The designer is not the falsifier.
+  t.check("the designer is a different agent from the falsifier",
+    promptOf(toRes.calls, "f1:answer-design:0") !== promptOf(toRes.calls, "f1:falsify:0"));
+
+  // A designer that cannot ground an answer hands the decision back.
+  const refused = await fire({}, {
+    "f1:human-decisions:*": found(H),
+    "f1:falsify:0": REFUTE("resolve"),
+    "f1:answer-design:0": { ...design, answerable: false, why: "nothing in the tree settles it" },
+  });
+  const i3 = itemById(refused.result, "id:OD-9");
+  t.check("an ungroundable answer leaves the decision the reviewer's", i3 && i3.disposition === "human", i3 && i3.disposition);
+  t.check("and it is reported to the reviewer",
+    (refused.result.decisionsLeftToHuman || []).some((d) => d.id === "id:OD-9"),
+    ids(refused.result.decisionsLeftToHuman));
+  t.check("with the designer's reason", refused.logs.some((l) => /no answer could be grounded/.test(l)));
+
+  // A dead designer is the same answer: nothing was designed, so nothing is applied.
+  const dead = await fire({}, {
+    "f1:human-decisions:*": found(H), "f1:falsify:0": REFUTE("resolve"), "f1:answer-design:0": null,
+  });
+  const i4 = itemById(dead.result, "id:OD-9");
+  t.check("a dead designer leaves the decision the reviewer's", i4 && i4.disposition === "human", i4 && i4.disposition);
+}
+
+// ==========================================================================
 t.section("D5. the write path: sequential, each after the first told what the earlier ones wrote");
 // ==========================================================================
 {
@@ -1191,6 +1258,17 @@ t.section("D9. sub-task 7's cleanup: the listed sections, in order, and nothing 
   const dead = await fire({}, { "f1:cleanup": null });
   t.check("a dead cleanup agent is reported rather than read as a clean pass", dead.result.summaryCleanup === null, JSON.stringify(dead.result.summaryCleanup));
   t.check("and logged", dead.logs.some((l) => /the summary is NOT conformed by this firing/.test(l)));
+}
+
+// ==========================================================================
+t.section("D9b. the cleanup corrects a section preamble its own moves falsify");
+{
+  const { calls } = await fire({}, {});
+  const c = promptOf(calls, "f1:cleanup");
+  t.check("a preamble is named as a claim about the entries", /A SECTION'S PREAMBLE IS A CLAIM ABOUT THE ENTRIES BELOW IT/.test(c));
+  t.check("to be corrected against the entries now present", /read it against the entries the section now carries and correct it to what is true/.test(c));
+  t.check("or deleted when nothing true is left", /delete it when nothing true is left to say/.test(c));
+  t.check("and it is placed inside the format pass, not outside it", /a preamble is\s+a statement/.test(c));
 }
 
 // ==========================================================================

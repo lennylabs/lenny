@@ -1934,6 +1934,29 @@ async function falsifyItem(item, index) {
   item.gate = gateVerdict(spec.needsSupport, v);
   item.survives = item.gate === "stands";
   item.falsification = v;
+  item.verdict = v;
+  // ACT ON THE FALLBACK. A falsifier that refutes a disposition is asked to name
+  // what the evidence does support, and until now the answer was logged and
+  // dropped: the phase recorded that an item was not the reviewer's and reported
+  // it to the reviewer anyway.
+  if (item.gate === "refuted" && item.disposition === "human") {
+    const fb = v.fallbackDisposition;
+    if (fb === "implementor") {
+      // No answer is needed: the disposition IS the outcome, and the item leaves
+      // the reviewer's list without this phase answering anything.
+      item.disposition = "implementor";
+      item.survives = true;
+      item.gate = "stands";
+      log("  " + label + ": human REFUTED; the evidence supports `implementor`, so the blank is the answer");
+    } else if (fb === "resolve") {
+      // The gate says an answer exists and the falsifier is not the agent to
+      // write it. Sub-task 5b designs it, and Apply applies that design.
+      item.needsAnswerDesign = true;
+      item.survives = true;
+      item.gate = "stands";
+      log("  " + label + ": human REFUTED; the evidence was said to support an answer, which sub-task 5b designs");
+    }
+  }
   if (item.gate === "refuted") {
     log(
       "  " + label + ": " + item.disposition + " REFUTED (" + (v.howConclusive || "unstated") + ")" +
@@ -1964,6 +1987,109 @@ async function falsifyAll(list) {
       (unexamined.length > 0 ? " (a dead falsifier leaves its own item unadjudicated and the rest proceed)" : ""),
   );
   return survived;
+}
+
+// ---- Sub-task 5b: designing the answer -------------------------------------
+//
+// The phase exists to ANSWER decisions, and until this stage it could only
+// answer one where three independent readings happened to reach the same answer
+// unprompted. Everything else went to the reviewer, including items the gate
+// itself said were answerable: a falsifier that refuted `human` was asked to
+// name what the evidence DID support, answered `resolve`, and nothing read the
+// answer -- the field was logged and dropped, so the phase recorded that an
+// answer existed and produced none.
+//
+// This is the split the review loop already runs between `fix-design` and `fix`:
+// one agent decides WHAT the answer is and where it lands, and the writer
+// applies a design rather than inventing one. It is a different agent from the
+// falsifier that judged the item, so nothing here judges and authors the same
+// decision.
+const ANSWER_DESIGN = {
+  type: "object",
+  required: ["answerable", "answer", "answerKey", "authority", "where", "why"],
+  properties: {
+    // The one honest exit. A designer that cannot ground an answer says so and
+    // the item is the reviewer's, with this reasoning attached, rather than
+    // being handed an answer nobody could derive.
+    answerable: { type: "boolean" },
+    answer: { type: "string", description: "the answer as it should be stated in the staged text" },
+    answerKey: { type: "string", description: "two or three words naming the answer" },
+    authority: { type: "string", description: "the file:line the answer rests on, quoted" },
+    where: { type: "array", items: { type: "string" }, description: "the staged sites the answer lands in" },
+    why: { type: "string", description: "why the ground settles it, or why nothing does" },
+  },
+};
+
+function answerDesignPrompt(item) {
+  const v = item.verdict || {};
+  return (
+    "You design the ANSWER to one open decision in the open-decisions-and-impact-review phase of a change " +
+    "proposal's review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". Another agent " +
+    "already judged that this decision is answerable from the repository rather than by a human. Your job " +
+    "is to say WHAT the answer is and WHERE it lands. You do not write it: a later agent applies your " +
+    "design.\n\n" +
+    COLLECTOR_READ_ONLY + "\n\n" +
+    FILE_MAP + "\n\n" +
+    EVIDENCE + "\n\n" +
+    "THE DECISION: " + String(item.question || "") + "\n" +
+    "WHAT THE PROPOSAL STAGES ON IT TODAY: " +
+    (item.readings || []).map((r) => r.whatIsStaged).filter(Boolean)[0] + "\n" +
+    "WHY IT IS ANSWERABLE: " +
+    (v.reasoning || "the gate refuted the claim that this is the reviewer's and named the evidence") + "\n" +
+    ((item.readings || []).length
+      ? "WHAT THE READINGS SAID:\n" +
+        item.readings.map((r) => "  - " + (r.disposition || "?") + ": " + (r.answer || r.recommendation || "")).join("\n") + "\n"
+      : "") +
+    "\n" +
+    "GROUND IT OR REFUSE IT. Open the files and quote the sentence the answer rests on: the specification " +
+    "as it stands, the code as it stands, a landed proposal, or this proposal's own settled decisions. An " +
+    "answer resting on what would be reasonable rather than on what a source says is not an answer, and " +
+    "`answerable` is false. Refusing is a result: the reviewer gets the decision with your reasoning, " +
+    "which is worth more than an invented answer that reaches the staged text.\n\n" +
+    STAGED_ALIGNMENT_RULE + "\n\n" +
+    NO_DECISION_REFS_RULE + "\n\n" +
+    "NAME THE SITES in `where`, one per staged location the answer changes, each as the file and the " +
+    "section. The applier edits exactly these and nothing else, so a site you omit is a place the " +
+    "proposal keeps saying the question is open."
+  );
+}
+
+async function designAnswers(list) {
+  const need = list.filter((item) => item.needsAnswerDesign);
+  if (need.length === 0) return;
+  log("Designing the answer for " + need.length + " item(s) the gate judged answerable, one agent each");
+  await parallel(
+    need.map((item, i) => () =>
+      robustAgent(answerDesignPrompt(item), {
+        label: "f" + firing + ":answer-design:" + i,
+        schema: ANSWER_DESIGN,
+        phase: "Answer",
+      }).then((d) => {
+        if (!d) {
+          // A dead designer leaves the item the reviewer's rather than
+          // unanswered-and-unreported: no answer was designed, so none can be
+          // applied, and saying nothing would drop the decision entirely.
+          item.disposition = "human";
+          item.answerDesign = { answerable: false, why: "the answer-design agent did not return" };
+          log("  " + item.id + ": the answer designer did not return; the decision stays the reviewer's");
+          return;
+        }
+        item.answerDesign = d;
+        if (!d.answerable) {
+          item.disposition = "human";
+          log("  " + item.id + ": no answer could be grounded; the decision stays the reviewer's — " + String(d.why || "").slice(0, 120));
+          return;
+        }
+        // The item becomes a resolution carrying its designed answer, and takes
+        // the `resolve` applier from here.
+        item.disposition = "resolve";
+        item.answer = d.answer;
+        item.answerKey = d.answerKey;
+        item.designedAt = firing;
+        log("  " + item.id + ": answer designed — " + String(d.answerKey || "").slice(0, 60));
+      }),
+    ),
+  );
 }
 
 // ---- The write path: one Apply per surviving item, sequentially ------------
@@ -2087,6 +2213,23 @@ const APPLIERS = {
       "was found in a staged change file's `## Open decisions for review` section, delete its entry " +
       "there as well, and delete that section once it is empty: a resolved entry leaves both files. " +
       "Write the answer and nothing that widens the deliverable beyond it.\n\n" + NO_DECISION_REFS_RULE,
+    // An answer sub-task 5b designed reaches its applier as a DESIGN rather than
+    // as a question to answer again. The applier writes what the design says,
+    // where the design says, following the parent's fix stage: the designer
+    // bounds the writer, and a writer that re-derives the answer is a second
+    // adjudication nothing gated.
+    designBlock: (item) =>
+      item.answerDesign && item.answerDesign.answerable
+        ? "\n\nTHE ANSWER IS ALREADY DESIGNED. Apply it; do not re-derive it.\n" +
+          "  ANSWER: " + String(item.answerDesign.answer || "") + "\n" +
+          "  IT RESTS ON: " + String(item.answerDesign.authority || "") + "\n" +
+          "  WHY THAT SETTLES IT: " + String(item.answerDesign.why || "") + "\n" +
+          "  THE SITES IT LANDS IN, all of them and nothing else:\n" +
+          (item.answerDesign.where || []).map((w) => "    - " + w).join("\n") + "\n" +
+          "A site the design names and you leave unedited is a place the proposal keeps saying the " +
+          "question is open. If applying it as designed would make something else false, say so in your " +
+          "return rather than quietly writing a different answer."
+        : "",
   },
   human: {
     brief:
@@ -2211,7 +2354,8 @@ function applyPrompt(item, spec, earlier) {
     FILE_MAP + "\n\n" +
     EVIDENCE + "\n\n" +
     STANDING_CONTEXT + "\n\n" +
-    "WHAT YOU WRITE FOR THIS ITEM. " + spec.brief + withdrawalNote(item) + "\n\n" +
+    "WHAT YOU WRITE FOR THIS ITEM. " + spec.brief + withdrawalNote(item) +
+    (spec.designBlock ? spec.designBlock(item) : "") + "\n\n" +
     IDENTIFIER_STAMP + "\n\n" +
     CHECKLIST_DEFERRAL + "\n\n" +
     "YOU HOLD ONE ITEM. Make the smallest edit that lands it, re-verify every citation you write or " +
@@ -2615,6 +2759,15 @@ function cleanupPrompt() {
     "identifier it carries, verbatim, through any rewrite of the entry: successive firings join on that " +
     "string, and an entry that loses it is adjudicated afresh next time. Do not renumber, normalise or " +
     "improve one, and do not reuse one a withdrawn entry held.\n\n" +
+    "A SECTION'S PREAMBLE IS A CLAIM ABOUT THE ENTRIES BELOW IT, and your own moves can falsify it. Where " +
+    "a section opens with a sentence describing how its entries were reached, how many there are, or what " +
+    "was done to them, read it against the entries the section now carries and correct it to what is true, " +
+    "or delete it when nothing true is left to say. A preamble asserting that every entry below it was " +
+    "derived and validated some number of times survived three passes of this cleanup while the entries it " +
+    "described were answered, withdrawn and replaced beneath it, so the section's own account of itself " +
+    "was the last false thing in a file this pass had just made true. This is inside a format pass rather " +
+    "than outside it: correcting a statement your own move falsified is the rule above, and a preamble is " +
+    "a statement.\n\n" +
     "THIS IS A FORMAT PASS, NOT A REVIEW. Do not re-adjudicate an item, do not answer an open decision, " +
     "do not add a decision the phase did not reach, and do not soften or sharpen an entry's " +
     "recommendation. Move text and correct a statement your own move falsifies, and change nothing else.\n\n" +
@@ -3125,6 +3278,12 @@ const survivors = [
   ...(await falsifyAll(matched.fresh)),
   ...matched.carried.filter((item) => item.survives),
 ];
+
+// Sub-task 5b. Between the gate and the write path: the gate says WHETHER a
+// decision is this workflow's to answer, and this says WHAT the answer is. An
+// item whose answer cannot be grounded comes back as the reviewer's.
+phase("Answer");
+await designAnswers(survivors);
 
 // The write path: the baseline commit, then one agent per surviving item that
 // needs an edit, run sequentially because they edit the same files.
