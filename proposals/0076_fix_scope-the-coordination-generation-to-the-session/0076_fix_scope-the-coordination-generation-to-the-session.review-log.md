@@ -5279,3 +5279,51 @@ strengths, which `[f1.other-proposals]`, `[f2.other-proposals-0075]`, and `[f3.o
 recorded before this pass. The row governs. No second row was added and no row was reworded here, and
 correcting an open decision's own statement of what its answer costs is the decision-holder's edit rather
 than a format pass's.
+
+### [f4.cleanup]
+
+DECISION: `summary.md` is left byte-for-byte as firing 4's write path left it, which is also byte-for-byte
+as `[f3.cleanup]` left it. The working tree is clean against `e3c4e57e2`, the baseline commit this firing
+opened with, so no write path moved a line in this file during firing 4 and no relocation was owed.
+FACT: the file carries the eight required sections in the required order and nothing else. Verified this
+pass by reading the headings directly: `# Summary: Scope the coordination generation to the session`, then
+`## Summary` whose first non-blank line is `**Problem statement.**` so the container carries no prose of
+its own, holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, and `**Watch out for.**`
+in that order, then `## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the
+shipped tree that this proposal does not stage`, `## Impacts on other proposals`, and `## Deliverable
+index` last.
+FACT: the file carries no `###` heading at any depth (`grep -c '^###'` returns 0), so there is no
+`### Retired` block or equivalent inside `## Open decisions for human to make` to delete, and no meta-list
+of staged items with a proposed disposition survives anywhere in it. The `**Fixed decisions.**` and
+`**What is fixed.**` labels stand under their listed names already.
+FACT: `## Open decisions for human to make` carries seven entries and every identifier is intact and
+unique: OD2, OD3, OD9, OD12, OD14, OD15, and OD16. That is the six items firing 4 carried as the human's,
+plus OD16, whose resolution the gate refuted and whose apply was not attempted, so OD16 stays where it
+stands. No identifier a withdrawn entry held is reused; OD8 appears only inside OD9's prose as a record of
+what it settled. OD14 was carried with `apply: applied`, and the applied edit landed outside this file:
+`summary.md` is unchanged and OD14 remains an open entry with no recommendation.
+FACT: both preambles in that section are true against the entries beneath them, re-read this pass. The
+first scopes its derivation-and-validation claim to OD2 and OD3, the two entries above the second preamble.
+The second states that the entries below it reached the section from the review log's open list and that an
+entry the loop left without a recommendation says so; OD9, OD14, and OD16 each open their disposition with
+"No recommendation is offered". The `## Defects` preamble ("None blocks sign-off. Each was confirmed
+against the working tree.") holds over the five entries below it, none of which carries a decision. This
+pass moved no text, so it falsified none of the three.
+FACT: the five entries under `## Defects in the shipped tree that this proposal does not stage` are the
+five confirmed shipped-tree defects firing 4 carried, verbatim: the barrier-target mirror lagging one
+generation across a takeover, the fence driver conflating three failure classes into one metric, the
+tier-3 comment claiming a coverage that does not exist, the absent `CH-ADAPTEREVENTS` gateway client, and
+the adapter's missing §10.1.2 cancel-and-reset.
+FACT: `## Impacts on other proposals` carries one row per proposal, for 0060, 0075, and 0080, which are the
+three impact-row items firing 4 carried. Proposal 0073 is addressed in the paragraph below the table rather
+than as a row, and no second row asserting any proposal's continued validity exists elsewhere in the file.
+FACT: `## Deliverable index` is preserved exactly, in last position, with its nine rows (SPEC-1 through
+SPEC-3, SCHEMA-1, CODE-1 through CODE-4, and TEST-1) unaltered in wording and order.
+DEFERRED: none. No correction owed to a file this loop may not edit surfaced in this pass.
+OPEN: `## Impacts on other proposals` and OD3 still state the effect on proposal 0075 at different
+strengths, unchanged since `[f3.cleanup]` recorded it. The row governs. Reconciling them means rewording
+either the row or an open decision's statement of what its answer costs, which belongs to the
+decision-holder rather than to a format pass.
+WATCHOUT: this file carries no `## Retired` section, so the splice point named for a cleanup block, the end
+of `## Ledger` and immediately before `## Retired`, is the end of the file. A later pass that adds
+`## Retired` must place it after this block rather than before it.

@@ -83,8 +83,8 @@ under the defects this proposal does not stage, so this change creates no edit s
   and the platform is recorded as pre-deployment with no deployments in the wild
   (`.claude/rules/code-best-practices.md:62`), so carrying it here costs a reviewer's attention to a
   schema change rather than exposure of a running installation.
-- CODE-1's lock order is the registry lock, then the entry lock, then the hold lock. The one
-  opposite-order acquisition in the tree is the read CODE-3 removes.
+- CODE-1's lock order is the registry lock, then the entry lock, then the hold lock. The one read that
+  would become an inversion if it moved inside the hold critical section is the read CODE-3 removes.
 - Relocating the `quiesced` flag onto the entry carries no specification claim about the quiescence unit,
   so a later implementor cannot read the field's placement as settling it.
 
@@ -157,7 +157,7 @@ are alive.
 - Changing which sessions a pod-level hold covers. D5 keeps the hold pod-scoped, and the residual is that a
   pod whose CH-ADAPTEREVENTS stream holder crashes freezes co-tenant sessions whose own coordinators are
   alive. Closing it would first require settling which replica's connection carries the pod's events when
-  more than one replica holds one, which `spec/28`'s CH-ADAPTEREVENTS degradation row records the
+  more than one replica holds one, which `spec/28`'s CH-ADAPTEREVENTS exclusivity bullet records the
   specification as not stating.
 - Tightening `migrations/0050_session_record_fields.up.sql`'s `CHECK (coordination_generation >= 0)` to
   `>= 1`. Migration 0181 carries the two `DEFAULT 1` clauses and the backfill, and the two session-store
