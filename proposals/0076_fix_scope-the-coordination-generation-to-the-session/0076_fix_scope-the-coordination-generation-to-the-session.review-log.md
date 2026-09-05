@@ -3983,3 +3983,68 @@ OD8, and OD10 are withdrawn and their identifiers are not reused. The one unclos
 not a decision, whether `pkg/gateway/sessionserver` placement can put a session back on a pod it unbound
 from, is an unanswered verification question and is already recorded inside OD7 as the fact that entry's
 recommendation does not wait on.
+
+### [f2.other-proposals-0075-anchor]
+
+DECISION: The 0075 impact row (`summary.md:855`) stands substantively as written. One mechanical correction
+applied: its self-anchor for the Non-goals bullet excluding the rename moves from `summary.md:131` to
+`summary.md:134`. Nothing else in the row moves, and no other file was edited for this item.
+FACT: The row's factual body re-verifies whole against the tree today. `pkg/adapter/server.go:302` still
+declares `coord coordinationState`, so the field 0075's counterexample rests on exists and CODE-1 deletes
+it (`summary.md:872`, `non-spec-changes.md:31-38`). 0075's ground quote sits at
+`proposals/0075_fix_derive-message-scope-from-the-address-type.md:85-89` and its pod-reuse guard argument at
+`:91-95`, both as the row cites them. 0075's Status line is `Draft for review.` (`:3`) and its Date is
+`2026-08-19` (`:4`), which `git log -1 --date=short` on that path confirms as the file's last-commit date.
+FACT: The three drifted 0075 anchors the row reports are exact: `message SessionId` is at
+`schemas/lenny-adapter.proto:589` against 0075's `:580`, `message CoordinatorFenceRequest` at `:1447`
+against `:1403-1404`, and `coord coordinationState` at `pkg/adapter/server.go:302` against `:304`. The
+deliverable split also resolves against 0075's own section 5: SCHEMA-1 at `:162-167`, SPEC-1 at `:169-173`,
+CODE-1 at `:175-178`, TEST-1 at `:180-182`, DOCS-1 at `:184-187`.
+WATCHOUT: The row and OD3 state the effect on 0075 at different strengths, the row deliverable by
+deliverable and OD3 as "without a subject". This is recorded and deliberately left alone: a pass may not
+edit an open decision's statement of what its answer costs, and the row governs.
+
+### [f2.cleanup]
+
+DECISION: `summary.md` is left as it stands. It already carries exactly the section list this phase fixes,
+in order, so this pass rewrote nothing, relocated nothing, deleted nothing, and wrote no `DEFERRED` or
+`OPEN` entry. This is the second cleanup firing on this file; `[f2.cleanup]` above recorded the same verdict
+before OD1 and OD13 were resolved out of the section.
+FACT (verified this run against the file): the headings are `# Summary: Scope the coordination generation
+to the session`, `## Summary`, `## Goals`, `## Non-goals`, `## Open decisions for human to make`,
+`## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, and
+`## Deliverable index`, in that order. There is no ninth heading and no heading below level two anywhere in
+the file.
+FACT: `## Summary` carries no prose of its own. Its four labelled parts are `**Problem statement.**` (`:5`),
+`**What changes.**` (`:24`), `**Decisions.**` (`:45`), and `**Watch out for.**` (`:78`), in that order.
+Neither `**What is fixed.**` nor `**Fixed decisions.**` appears anywhere in the file, so no rename was owed
+and `**Problem statement.**` was neither moved nor rewritten.
+FACT: `## Open decisions for human to make` carries OD2, OD3, OD5, OD7, OD9, OD11, OD12, OD14, OD15, and
+OD16, at `:164`, `:215`, `:268`, `:324`, `:392`, `:442`, `:454`, `:510`, `:582`, and `:655`. That is one
+entry for each of the ten items this firing classified as the human's, so nothing was added and nothing was
+dropped. Each keeps its stamped identifier verbatim. The identifiers of the entries resolved or withdrawn
+earlier, OD1, OD4, OD6, OD8, OD10, and OD13, appear nowhere as an entry heading and were not reused.
+FACT: the section carries no `### Retired` block or equivalent. There was none to check entries against and
+none to delete, so `relocated` reports nothing from it.
+FACT: `## Defects in the shipped tree that this proposal does not stage` carries the five confirmed
+out-of-scope entries verbatim as the earlier passes wrote them: the barrier-target mirror lag, the fence
+driver's conflation of three failure classes, the tier-3 coverage comment, the absent `CH-ADAPTEREVENTS`
+client, and the §10.1.2 cancel-and-reset. None was reworded and none carries a decision.
+FACT: the sixth out-of-scope marker, the pod-wide scope of the coordinator-loss hold, stands as a
+`## Non-goals` bullet (`summary.md:141-145`) rather than as a defect entry. Its firing disposition is
+no-edit-needed and `## Non-goals` is a listed section, so it was left where it is.
+FACT: `## Impacts on other proposals` carries one row each for 0060, 0075, and 0080, and the paragraph
+recording why 0073 carries no row. The 0075 row already carries the anchor correction
+`[f2.other-proposals-0075-anchor]` applied, so no second assertion about 0075 was added beside it.
+FACT: `## Deliverable index` is last and untouched. Its nine rows (SPEC-1 through SPEC-3, SCHEMA-1, CODE-1
+through CODE-4, and TEST-1) stand line for line as the reconciliation pass rebuilt them.
+WATCHOUT: OD3's cost paragraph and the 0075 impact row assert the same effect on 0075 at different
+strengths, the paragraph as leaving 0075's retyping deliverable "without a subject" and the row deliverable
+by deliverable. The two are cross-referenced rather than in conflict, and the row governs.
+`[f2.other-proposals-0075]` and the earlier `[f2.cleanup]` both recorded this and left OD3 alone; this pass
+did the same, because moving or softening an open decision's statement of what its answer costs is a
+review act rather than a format one.
+WATCHOUT: `## Summary`'s closing paragraph under `**Decisions.**` (`summary.md:74-76`) names two open
+questions adjacent to D1 through D7 and cites OD5 and OD3 by identifier, while the section carries ten
+entries. The sentence is scoped to the questions adjacent to the fixed decisions rather than to the
+section's whole contents, and it names identifiers that still exist, so it was left as written.
