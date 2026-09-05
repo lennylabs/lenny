@@ -3449,3 +3449,123 @@ gateway-side fix rather than to this proposal.
 OPEN: `0076...status.md`'s scope bullet states that one session's coordinator handoff "releases its
 coordinator-loss hold", which D5 refutes: the hold stays pod-scoped and a fence from any bound session is
 the correct exit from it. The remedy lands in the status file, which this pass may not edit.
+
+### [f2.out-of-scope-defects]
+
+DECISION: the §10.1.2 gap-path cancel-and-reset stays unimplemented and this proposal stages no fix.
+Written into `summary.md` `## Defects in the shipped tree that this proposal does not stage` as a new
+final bullet, "The adapter does not perform the §10.1.2 cancel-and-reset on a generation gap". No open
+decision was opened and no deliverable was added, so the deliverable set and the checklist are unchanged.
+FACT (verified this run against the working tree): the gap branch logs, sets `GapDetected`, and records
+the new value on the shared path (`pkg/adapter/coordination.go:108-121`); the concession is in the code
+twice, at `:80-81` and `:112-113`; the absence is registered as `"In-flight RPC cancellation on a
+generation gap"`, status `ABSENT`, deferral `R16` (`tests/claim-map.json:173-178`).
+FACT: the register row's `surface` reads `coordination.go:81-82` while the concession it names sits at
+`:80-81`; line 82 is the blank comment line. The row is unchanged by this pass, and the drift is recorded
+in the summary bullet.
+FACT: SCHEMA-1's wire lane, not SPEC-1 alone, carries the compliance assertion. `schemas/lenny-adapter.proto:158`
+states the adapter cancels and discards every in-flight RPC and resets transient tool-call state, and
+`:1458-1462` defines `gap_detected` as reporting that it "reset transient tool-call state per §10.1"; the
+staged text re-scopes both to the session rather than deleting them (`spec-changes.md:523-524`, `:535-537`).
+Both sentences are false about the tree before and after this change. The summary bullet says so.
+FACT: the problem statement's citations for this defect (`problem-statement.md:70-74`, naming
+`coordination.go:112-113` and `:119-121`) resolve against the tree as written, so no correction was owed
+there and none was made.
+WATCHOUT: CODE-1 rewrites the `CoordinatorFence` doc comment that holds the `:80-81` concession and the
+claim-register row's `surface` pointer. The concession sentences must survive that rewrite and the pointer
+must be re-resolved when CODE-1 lands.
+
+### [f2.other-proposals-0075]
+
+DECISION: the `## Impacts on other proposals` row for proposal 0075 stays and is tightened. It now carries
+0075's status date, the deliverable split, and the anchor drift, at `summary.md:862`. No other file changed,
+no open decision was opened or withdrawn, and no deliverable moved, so the checklist is unchanged.
+FACT (verified this run against the working tree): 0075 is `**Status:** Draft for review.` with
+`**Date:** 2026-08-19` (`proposals/0075_fix_derive-message-scope-from-the-address-type.md:3-4`), and
+`git log -1` on that path returns 9beebfbc9, 2026-08-19, so the header date is also the last-commit date.
+FACT: 0075's stated ground for its sole counterexample is that the handler "mutates `s.coord` ... a single
+`coordinationState` ... for the whole adapter process" and "The identifier selects nothing"
+(`0075...:85-89`). That is true of the tree today: `pkg/adapter/server.go:302` declares
+`coord coordinationState` on `Server`, and `CoordinatorFence` uses the session id only for
+`checkSessionBound` (`pkg/adapter/coordination.go:89`) before reading and writing `s.coord.lastFenced` and
+`s.coord.initialized` with no session key (`:98-121`). CODE-1 deletes that field
+(`non-spec-changes.md:33-36`).
+FACT: 0075 carries a second, independent argument at `:91-95` that the identifier stays load-bearing as a
+staleness guard against pod reuse across recycle boundaries. CODE-1 does not touch that argument, so the row
+says its SCHEMA-1, CODE-1, and DOCS-1 lose the ground 0075 states for them rather than that they are void.
+FACT: the deliverable split the row asserts resolves. SCHEMA-1 at `0075...:162-166`, SPEC-1 at `:169-172`,
+CODE-1 at `:174-177`, TEST-1 at `:179-181`, DOCS-1 at `:183-186`, and the checklist steps S1 through S5 at
+`:37-49`. Both DOCS-1 pages exist (`docs/reference/adapter-contract.md`, `docs/reference/metrics.md`).
+FACT: the effect runs one way. `spec-changes.md:597-598` and `:630` state that no deliverable here depends
+on 0075 landing, and no staged deliverable reads a renamed field or a guard type.
+WATCHOUT: 0075's proto and code anchors have drifted independently of this proposal. `SessionId` is at
+`schemas/lenny-adapter.proto:589` rather than the `:580` 0075 cites, `CoordinatorFenceRequest` is at
+`:1447-1448` rather than `:1403-1404`, and `s.coord` is at `pkg/adapter/server.go:302` rather than `:304`.
+The row records this so a rebase of 0075 is not mistaken for a consequence of this change.
+WATCHOUT: OD3's cost paragraph (`summary.md:262`) says a "yes" leaves 0075's retyping deliverable "without a
+subject", which is stronger than the row's "lose the ground 0075 states for them". OD3 belongs to another
+item and was left as it stands; if a later pass harmonises the two, the row is the section that governs.
+
+### [f2.other-proposals-0080]
+
+DECISION: the 0080 impact row stands and is sharpened. Both halves were re-verified against the live files
+rather than against the readings, and no new impact was found. Edited in place at `summary.md:863`; no other
+file changed.
+FACT: SPEC-2 removes the exact bullet 0080 §1.14 records. `spec/29_communication-scenarios.md:1523-1527` is
+the first bullet of §29.10's "What the specification does not state" list, it asks both halves §1.14 names,
+and `spec-changes.md:439-442` stages its removal.
+FACT: §29.10's list carries four bullets today (`spec/29_communication-scenarios.md:1523`, `:1528`, `:1536`,
+`:1540`), so 0080 §1.14's "the first of the five gaps" (`0080...:186`) is already stale before this change
+and drops to three on application. This is the clause added to the row.
+FACT: the claim-register row nearest this change stays `ABSENT`. `In-flight RPC cancellation on a generation
+gap` (`tests/claim-map.json:174-178`) is unmoved, because SPEC-1 re-scopes the gap reset per session and
+states that the staged text "does not assert that the adapter meets it" (`spec-changes.md:124-127`), and
+`spec-changes.md:434-436` states that no claim-register row moves. The row now names this ground in place of
+the bare "§1.12's claim-register rows are untouched".
+FACT: D5 declines the §2 item. `0080...:211` records "A hold entered for one session released by another's
+fence" as taken by 0076, restated at `:191-192`; `summary.md:8-10` and the staged §29.10 "Shared by the whole
+pod" bullet (`spec-changes.md:452-457`) keep the hold pod-scoped with a fence from any bound session as the
+correct exit.
+WATCHOUT: 0080 is out of bounds for every agent on this proposal and corrects its own entries. The row is the
+only record that this proposal declined an item another document says it took, so a later pass must not trim
+the §2 half as redundant with `## Non-goals`.
+
+### [f2.cleanup]
+
+DECISION: `summary.md` is left as it stands. It already carries exactly the section list this phase fixes,
+in order, so this pass rewrote nothing, relocated nothing, and deleted nothing.
+FACT (verified this run against the file): the headings are `# Summary: Scope the coordination generation
+to the session`, `## Summary`, `## Goals`, `## Non-goals`, `## Open decisions for human to make`,
+`## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, and
+`## Deliverable index`, with no ninth heading and no heading below level two anywhere in the file.
+FACT: `## Summary` carries no prose of its own. Its four labelled parts are `**Problem statement.**` (:5),
+`**What changes.**` (:24), `**Decisions.**` (:45), and `**Watch out for.**` (:75), in that order. Neither
+`**What is fixed.**` nor `**Fixed decisions.**` survives anywhere in the file, so no rename was owed.
+FACT: `## Open decisions for human to make` carries OD1, OD2, OD3, OD5, OD7, OD9, OD11, OD12, OD13, OD14,
+OD15, and OD16, each with the identifier it was stamped with. That is one entry for each of the twelve items
+this firing classified as the human's, so nothing was added and nothing was dropped. The identifiers of the
+withdrawn entries, OD4, OD6, OD8, and OD10, appear nowhere as a heading and were not reused.
+FACT: the section carries no `### Retired` block or equivalent. There was none to check entries against and
+none to delete.
+FACT: `## Defects in the shipped tree that this proposal does not stage` carries the four out-of-scope
+entries firing 1 confirmed (the barrier-target mirror lag, the fence driver's conflation of three failure
+classes, the tier-3 coverage comment, and the absent `CH-ADAPTEREVENTS` client) plus the §10.1.2
+cancel-and-reset entry this firing added, each verbatim as the earlier passes wrote it. None was reworded.
+FACT: the fifth out-of-scope marker, the pod-wide scope of the coordinator-loss hold, stands as a
+`## Non-goals` bullet (`summary.md:138-142`) rather than as a defect entry. Its firing disposition is
+no-edit-needed and `## Non-goals` is a listed section, so it was left where it is.
+FACT: `## Impacts on other proposals` carries one row each for 0060, 0075, and 0080, and the paragraph
+recording why 0073 carries no row. The 0060 row and the 0073 paragraph were both refuted at the gate this
+firing, so both stand unchanged.
+FACT: `## Deliverable index` is last and untouched. Its nine rows (SPEC-1 through SPEC-3, SCHEMA-1, CODE-1
+through CODE-4, and TEST-1) stand line for line as the reconciliation pass rebuilt them.
+WATCHOUT: OD3's cost paragraph and the 0075 impact row assert the same effect at different strengths. The
+paragraph says a "yes" leaves 0075's retyping deliverable "without a subject"; the row says SCHEMA-1,
+CODE-1, and DOCS-1 "lose the ground 0075 states for them". `[f2.other-proposals-0075]` above recorded the
+same disagreement and left OD3 as it stands. This pass did the same, because moving or softening the
+paragraph would edit an open decision's statement of what its answer costs, which a format pass may not do.
+The row governs if a later pass harmonises the two.
+WATCHOUT: `## Summary`'s closing paragraph under `**Decisions.**` (`summary.md:70-73`) names three open
+questions adjacent to the fixed decisions D1 through D7, while `## Open decisions for human to make` carries
+twelve entries. The sentence is scoped to the questions adjacent to D1 through D7 rather than to the
+section's whole contents, and no move this pass made bears on it, so it was left as written.

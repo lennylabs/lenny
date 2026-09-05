@@ -30,4 +30,4 @@ code, or doc file. Apply the changes in the "Proposed changes" section after sig
 
 ## Review history
 
-On 2026-09-03, the adversarial review ran the non-spec convergence loop on this proposal. The loop ran six rounds and converged. It fixed two findings and ran three full-pool sweeps. The spec loop was not run.
+On 2026-09-04, the adversarial review ran the spec convergence loop on this proposal. The loop ran two rounds and did not converge. One finding was fixed. The non-spec loop was not run. Since the spec loop did not converge, findings it had not closed remain open.

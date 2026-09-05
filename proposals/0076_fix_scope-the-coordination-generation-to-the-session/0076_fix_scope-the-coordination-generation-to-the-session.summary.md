@@ -820,6 +820,35 @@ None blocks sign-off. Each was confirmed against the working tree.
   unwired trigger does not falsify. Recording that separation is what the `UNWIRED` row exists for. The
   absence also bounds the risk of the one production-path behaviour change CODE-3 makes, which no
   deployed system reaches today.
+- **The adapter does not perform the §10.1.2 cancel-and-reset on a generation gap.** The gap branch logs
+  `coordinator_generation_gap`, sets `GapDetected`, and then records the new value on the same path a
+  non-gap fence takes (`pkg/adapter/coordination.go:108-121`). Nothing cancels the in-flight RPCs received
+  under the missing generations and nothing resets the transient tool-call state, and the code concedes the
+  absence twice, in the RPC doc comment (`:80-81`) and in the gap branch itself (`:112-113`). The absence is
+  already carried under §28.4's claim-register discipline as `"In-flight RPC cancellation on a generation
+  gap"`, status `ABSENT`, deferral `R16` (`tests/claim-map.json:173-178`); that row's `surface` names
+  `coordination.go:81-82` while the concession it points at sits at `:80-81`.
+
+  This proposal re-scopes the requirement and stages no implementation. SPEC-1 states the reset per session
+  (`0076_fix_scope-the-coordination-generation-to-the-session.spec-changes.md:145-148`) and says in the same
+  file that the staged text re-scopes the requirement without asserting that the adapter meets it (`:126-127`).
+  SCHEMA-1 does the same on the wire lane: `schemas/lenny-adapter.proto:157-162` states that the adapter
+  cancels and discards every in-flight RPC and resets transient tool-call state, and `:1458-1462` defines
+  `gap_detected` as reporting that the adapter "reset transient tool-call state per §10.1", and both
+  sentences take the session qualifier rather than being deleted
+  (`0076_fix_scope-the-coordination-generation-to-the-session.spec-changes.md:523-524`, `:535-537`). Both
+  are false about the tree before and after this change, so what moves is the unit of an obligation the
+  adapter meets in neither unit.
+
+  Implementing the reset is a whole adapter mechanism, covering cancellation of in-flight RPCs and a reset
+  of transient tool-call and lifecycle state, outside a code lane that relocates one recorded value onto the
+  slot registry entry. Nothing staged here depends on the reset: CODE-1 touches the gap branch only to read
+  `lastFenced` and `initialized` from the entry, CODE-2 is the barrier gate, and the staged gap cases assert
+  `gap_detected` false on a co-tenant's first fence
+  (`0076_fix_scope-the-coordination-generation-to-the-session.non-spec-changes.md:212-217`, `:260`). Two
+  things follow for the implementor. CODE-1 rewrites the doc comment the claim-register row's `surface`
+  points at, so that pointer is re-resolved when CODE-1 lands, and both concession sentences survive the
+  rewrite rather than being dropped with the pod-wide wording around them.
 
 ## Impacts on other proposals
 
@@ -830,8 +859,8 @@ what it applies after; neither restates a row below.
 | Proposal | Status | What this change does to it | What it must do about it |
 |:--|:--|:--|:--|
 | 0060 | Implemented | Nothing. The lease protocol, forced acquisition, and the lease co-location 0060 built are untouched, and TEST-1 runs on the two-replica harness it landed. | Nothing. |
-| 0075 | Draft | Removes its sole counterexample. 0075 derives message scope from the address type, and its one exception is `CoordinatorFenceRequest`, on the ground that the handler mutates one pod-wide `coordinationState` so the session identifier selects nothing. CODE-1 deletes that field and the identifier then resolves the entry the generation is recorded on. OD3 puts the reclassification to the reviewer. | If OD3 reclassifies the `spec/04` §4.1 row to session scope, 0075 drops its retyping deliverable or restates its ground on a field CODE-1 does not delete. |
-| 0080 | Draft, dated 2026-08-31 (`proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:7`), which is also the file's last-commit date | Invalidates two of its entries. §1.14 records the §29.10 hold-partitioning bullet as still unstated (`0080...:184-192`), and SPEC-2 stages that bullet's removal from §29.10's "What the specification does not state" list (`spec/29_communication-scenarios.md:1523-1527`) on the ground that SPEC-1's §10.1.2 and §10.1.4 state both answers (`0076...spec-changes.md:439-442`), so the entry loses its subject outright. §2 records the hold entered for one session and released by another's fence as work this proposal takes (`0080...:211`, restated at `:191-192`); D5 keeps the hold pod-scoped and makes a fence from any bound session the correct exit, so this proposal declines that item rather than taking it. §1.12's claim-register rows and §1.13's §29.10 spec-map exception are untouched, and §29.10's `Interrupt`-and-barrier bullet is narrowed rather than removed, so the gap it records survives in reduced form. | Correct both entries. 0080 self-describes as an early draft that is an inventory rather than a design (`0080...:3-6`), so both are editable. |
+| 0075 | Draft, dated 2026-08-19 (`proposals/0075_fix_derive-message-scope-from-the-address-type.md:4`), which is also the file's last-commit date | Removes the ground under its sole counterexample. 0075 derives message scope from the address type and excepts `CoordinatorFenceRequest`, on the ground that the handler verifies the session and then mutates `s.coord`, one pod-wide `coordinationState` for the whole adapter process, so "the identifier selects nothing" (`0075...:85-89`). CODE-1 deletes `Server.coord` (`pkg/adapter/server.go:302`) and records the generation on the slot entry the identifier resolves, so the identifier addresses that entry while remaining a staleness guard against pod reuse. The split across 0075's deliverables: SCHEMA-1 (the guard wrapper type and the retype), CODE-1 (the field rename), and DOCS-1 (`docs/reference/adapter-contract.md` and `docs/reference/metrics.md`) lose the ground 0075 states for them; SPEC-1 (state the derivation rule, retire 0073's §4.1 table) and TEST-1 (replace the tier-0 reconciliation gate with a type gate) keep their subject either way. OD3 puts the reclassification to the reviewer, and a "yes" removes the counterexample the derivation rule has to except, which strengthens SPEC-1 and TEST-1. | Restate SCHEMA-1, CODE-1, and DOCS-1 on the pod-reuse guard argument alone (`0075...:91-95`), or drop them. Under a "no" to OD3 the `spec/04` §4.1 row stays pod-scoped and 0075 owes a restated ground for the exception on a field that no longer exists. 0075's proto and code anchors have drifted independently of this change (`SessionId` is at `schemas/lenny-adapter.proto:589` rather than `:580`, `CoordinatorFenceRequest` at `:1447-1448` rather than `:1403-1404`, and `s.coord` at `pkg/adapter/server.go:302` rather than `:304`), so the correction rides an editing pass the file needs regardless. |
+| 0080 | Draft, dated 2026-08-31 (`proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:7`), which is also the file's last-commit date | Invalidates two of its entries. §1.14 records the §29.10 hold-partitioning bullet as still unstated (`0080...:184-192`), and SPEC-2 stages that bullet's removal from §29.10's "What the specification does not state" list (`spec/29_communication-scenarios.md:1523-1527`) on the ground that SPEC-1's §10.1.2 and §10.1.4 state both answers (`0076...spec-changes.md:439-442`), so the entry loses its subject outright. That entry's framing sentence, which calls this the first of the five gaps `spec/29` records as unstated (`0080...:186`), is already wrong against a list that carries four bullets today (`spec/29_communication-scenarios.md:1523`, `:1528`, `:1536`, `:1540`) and drops to three on application. §2 records the hold entered for one session and released by another's fence as work this proposal takes (`0080...:211`, restated at `:191-192`); D5 keeps the hold pod-scoped and makes a fence from any bound session the correct exit, so this proposal declines that item rather than taking it. §1.12's claim-register rows are untouched, including the one nearest this change: `In-flight RPC cancellation on a generation gap` (`tests/claim-map.json:174-178`) stays `ABSENT`, because SPEC-1 re-scopes the gap reset per session and does not assert that the adapter meets it (`0076...spec-changes.md:124-127`), and no claim-register row moves (`...spec-changes.md:434-436`). §1.13's §29.10 spec-map exception is untouched, and §29.10's `Interrupt`-and-barrier bullet is narrowed rather than removed, so the gap it records survives in reduced form. | Correct both entries, and the five-gap count with §1.14. 0080 self-describes as an early draft that is an inventory rather than a design (`0080...:3-6`), so all three are editable. |
 
 Proposal 0073 carries no row. It is Implemented (2026-08-31,
 `proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:3`), this change is built on the
