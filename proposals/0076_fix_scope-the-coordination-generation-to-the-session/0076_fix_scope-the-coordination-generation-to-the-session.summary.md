@@ -2,6 +2,25 @@
 
 ## Summary
 
+**Problem statement.** On a concurrent pod: a legitimate coordinator handoff rejected as
+`coordinator_handoff_stale`, a drain barrier rejected so the drain checkpoint runs unquiesced, a
+spurious `coordinator_generation_gap` event, a coordinator-lost post-mortem and log line that stamp
+one session's generation on every session the hold terminates, and a split-brain counter that
+increments on healthy handoffs. A hold released by an unrelated session's fence is not on that list:
+the hold is pod-scoped by D5, so a fence from any session on the pod is the correct exit from it. The
+coordinator-lost repair on that list is reached in the test suite alone until a gateway client opens the
+CH-ADAPTEREVENTS stream, which the defects section records. D7 and the counter baseline together add a
+barrier repair that is not specific to a concurrent pod. The
+drain barrier of a session that never resumed and was never taken over meets two refusals today: the
+adapter rejects the non-positive generation its row still carries before the gate is reached, and
+the gate then rejects the absence of a recorded value. The baseline removes the first and D7 removes
+the second, so that session is quiesced by its own preStop drain instead of being captured twice
+against a live workspace. Neither change delivers that repair without the other. The baseline also
+repairs a takeover defect in the shipped tree: a session fenced on resume at the gateway floor's 1
+while its row still reads 0 has its first crash-takeover fence rejected as
+`coordinator_handoff_stale`, so the takeover costs a sweep cycle of delay and a pair of split-brain
+metric increments that report a handoff that was healthy.
+
 **What changes.** The fenced coordination generation moves from one pod-wide field onto the per-session
 slot registry entry, so a fence for one session cannot fence another. The `CheckpointBarrier` gate and gap
 detection read the same per-session value, and the barrier gate that holds quiescence open and carries the
@@ -23,26 +42,7 @@ that a gateway-to-pod message carries the session's current `coordination_genera
 already false on the handoff path in the shipped tree, through the barrier-target mirror lag recorded below
 under the defects this proposal does not stage, so this change creates no edit site there.
 
-**What is fixed.** On a concurrent pod: a legitimate coordinator handoff rejected as
-`coordinator_handoff_stale`, a drain barrier rejected so the drain checkpoint runs unquiesced, a
-spurious `coordinator_generation_gap` event, a coordinator-lost post-mortem and log line that stamp
-one session's generation on every session the hold terminates, and a split-brain counter that
-increments on healthy handoffs. A hold released by an unrelated session's fence is not on that list:
-the hold is pod-scoped by D5, so a fence from any session on the pod is the correct exit from it. The
-coordinator-lost repair on that list is reached in the test suite alone until a gateway client opens the
-CH-ADAPTEREVENTS stream, which the defects section records. D7 and the counter baseline together add a
-barrier repair that is not specific to a concurrent pod. The
-drain barrier of a session that never resumed and was never taken over meets two refusals today: the
-adapter rejects the non-positive generation its row still carries before the gate is reached, and
-the gate then rejects the absence of a recorded value. The baseline removes the first and D7 removes
-the second, so that session is quiesced by its own preStop drain instead of being captured twice
-against a live workspace. Neither change delivers that repair without the other. The baseline also
-repairs a takeover defect in the shipped tree: a session fenced on resume at the gateway floor's 1
-while its row still reads 0 has its first crash-takeover fence rejected as
-`coordinator_handoff_stale`, so the takeover costs a sweep cycle of delay and a pair of split-brain
-metric increments that report a handoff that was healthy.
-
-**Fixed decisions.** These are closed. An implementor applies them and does not re-derive them.
+**Decisions.** These are closed. An implementor applies them and does not re-derive them.
 
 - **D1.** The pod side holds one fenced coordination generation per bound session in place of one value for
   the whole process.
@@ -67,10 +67,10 @@ metric increments that report a handoff that was healthy.
 - Relocating the `quiesced` flag onto the entry carries no specification claim about the quiescence unit,
   so a later implementor cannot read the field's placement as settling it.
 
-Three questions adjacent to these are open rather than fixed, and `## Open decisions` carries each: the
-comparison operator the barrier gate uses against a value the pod does hold (OD1), whether D7, the counter
-baseline, and migration 0181 land in this proposal at all (OD5), and how the `spec/04` §4.1 message-scope
-row is classified (OD3).
+Three questions adjacent to these are open rather than fixed, and `## Open decisions for human to make`
+carries each: the comparison operator the barrier gate uses against a value the pod does hold (OD1),
+whether D7, the counter baseline, and migration 0181 land in this proposal at all (OD5), and how the
+`spec/04` §4.1 message-scope row is classified (OD3).
 
 **Watch out for.** The spec-lane work covers `spec/10` under SPEC-1, `spec/28` and `spec/29` under
 SPEC-2, and `spec/04` §4.2 under SPEC-3, and steps S1, S2, and S3 land them in that order. Landing SPEC-1
@@ -101,29 +101,10 @@ no session id to pass. That step also rewires `pkg/adapter/checkpoint.go`, becau
 ceases to exist there and the `Checkpoint` stream links and completes on the entry
 `checkpointRootsForSession` resolves for it, so CODE-2 is the generation gate alone.
 
-A deliverable-side correction is still outstanding in the status file. SCHEMA-1's target list now
-names the whole carrier set SPEC-2 states, the fence and barrier RPC and message comments and the
-operational-RPC `coordination_generation` field comments included. The status file's scope bullet
-still states that one session's handoff releases another session's coordinator-loss hold, which D5
-refutes, and its closing paragraph still frames the hold's scope as the open question this change
-answers. The archived pass records in the review log's archive carry the
-rationale behind each correction already landed, and the review log's ledger carries the rest.
-
 The hold's scope is settled rather than open. D5 keeps it pod-scoped, because the only arming signal the
 adapter has is the close of the pod's single CH-ADAPTEREVENTS stream, which names no session. The cost is
 recorded as a non-goal: a pod whose stream holder crashes freezes co-tenant sessions whose own coordinators
-are alive. Proposal 0073 is converged and is not reopened; this proposal sequences after it.
-
-**Impact on other proposals.** This is the only place this proposal states anything about another
-proposal's continued validity. `## Non-goals` states what this proposal will not do and `## 10.
-Dependencies` in the spec changes states what it applies after; neither restates a row below.
-
-| Proposal | Status | What this change does to it | What it must do about it |
-|:--|:--|:--|:--|
-| 0060 | Implemented | Nothing. The lease protocol, forced acquisition, and the lease co-location 0060 built are untouched, and TEST-1 runs on the two-replica harness it landed. | Nothing. |
-| 0073 | Implemented | Nothing. This change reads the `checkSessionBound` guard and the slot registry 0073 landed, and D4 keeps both closed. | Nothing. A landed proposal is not edited. |
-| 0075 | Draft | Removes its sole counterexample. 0075 derives message scope from the address type, and its one exception is `CoordinatorFenceRequest`, on the ground that the handler mutates one pod-wide `coordinationState` so the session identifier selects nothing. CODE-1 deletes that field and the identifier then resolves the entry the generation is recorded on. OD3 puts the reclassification to the reviewer. | If OD3 reclassifies the `spec/04` §4.1 row to session scope, 0075 drops its retyping deliverable or restates its ground on a field CODE-1 does not delete. |
-| 0080 | Draft | Invalidates two of its entries. It records a hold entered for one session and released by another session's fence as work this proposal takes, which D5 refutes, and it records the §29.10 hold-partitioning bullet as an outstanding gap while SPEC-2 stages that bullet's removal. | Correct both entries. 0080 is an early draft, so both are editable. |
+are alive.
 
 ## Goals
 
@@ -165,18 +146,17 @@ Dependencies` in the spec changes states what it applies after; neither restates
   tightening in a later phase, and OD9 records the question.
 - Deciding whether two replicas may coordinate co-tenant sessions on one pod. The per-session
   `REG-COORDLEASE` already permits it, and this change removes a cross-session generation interlock that
-  delayed and mis-metered co-tenant handoffs whatever the number of replicas involved (OD6).
-- Repairing the defects listed under `### Defects in the shipped tree that this proposal does not stage`.
+  delayed and mis-metered co-tenant handoffs whatever the number of replicas involved.
+- Repairing the defects listed under `## Defects in the shipped tree that this proposal does not stage`.
   None of them blocks sign-off.
 
-## Open decisions
+## Open decisions for human to make
 
 Every decision below is open and needs a reviewer's answer before this proposal moves to `Approved`.
 Each was derived independently three times and then validated independently five more times against the
 working tree, with the validators instructed to falsify each recommendation rather than confirm it. Where
-a recommendation changed under that pass, the entry says so. An entry that leaves the list is restated in
-place as withdrawn or replaced rather than deleted, because a decision list that quietly drops an item
-teaches the next reader that it was answered.
+a recommendation changed under that pass, the entry says so. An entry that is withdrawn or replaced leaves
+this section, its record is kept in the review log, and the identifier it held is not reused.
 
 **OD1. The barrier gate's comparison.** §10.1.8's gate compares the barrier's `coordination_generation`
 with the session's last fenced value, and the question is whether that comparison stays equality.
@@ -217,7 +197,7 @@ The weight of a "yes" sits in the contract rather than in the code. CODE-1 moves
 proposal whichever way the decision goes, and the remedy is one comparison operator on a line CODE-1
 already edits. What a "yes"
 adds is the behavioural change and its carriers: the `accepted` sentence in the
-`CoordinatorFenceResponse` comment (`schemas/lenny-adapter.proto:1456-1458`), which is the one carrier
+`CoordinatorFenceResponse` comment (`schemas/lenny-adapter.proto:1455-1458`), which is the one carrier
 that states the fence's own acceptance predicate and which SCHEMA-1 otherwise re-scopes to the session
 while keeping the "not greater than" comparison the shipped handler performs; the staged §28.6 `CH-FENCE`
 arm; a §8 test case; and a checklist step. A "yes" also commits the platform on a point `spec/` leaves
@@ -281,8 +261,7 @@ type and `CoordinatorFenceRequest` is its sole counterexample, on the stated gro
 mutates one pod-wide `coordinationState` so the identifier selects nothing. CODE-1 deletes that ground and
 a "yes" deletes the counterexample, which leaves 0075's retyping deliverable without a subject. 0075 is an
 unreviewed draft, so the cost of obsoleting it is low. The reviewer answers Question A knowing that they
-are deciding it. The staged spec changes file this under §6 as a rename whichever proposal lands second
-rebases onto, which understates it.
+are deciding it.
 
 **Question B. If yes, does this proposal stage the `spec/04` §4.1 edit, or does a successor?**
 **Recommendation: a successor, and the staging here stands as it is. Confidence: moderate.** No `spec/04`
@@ -298,18 +277,6 @@ carrying a `:188` sentence this change falsifies until that successor lands, and
 contradiction in the interval. "No" keeps `:188` as written and keeps 0075's counterexample standing, at
 the price of a declared classification that disagrees with what the message addresses once CODE-1 lands,
 and of 0075 owing a restated ground for the exception on a field this proposal deletes.
-
-**OD4 is withdrawn.** It asked whether to state the barrier quiescence unit or to delete a design claim,
-and the validation pass found unanimously that it was mis-stated. The design claims that §10.1.8 step 3
-fixes *the gate's* unit at the session, which is about the `barrierGate` rather than the `quiesced` flag,
-and that claim is true and CODE-1 depends on it. SPEC-2 already stages the narrowing that leaves
-§29.10's clause unanswered. Nothing is owed and nothing should be deleted. The strongest ground for not
-stating the unit is one no earlier reading found: the only quiescence primitive the specification
-defines, the `checkpoint_request` frame in §28, carries no session identifier and is delivered to the
-pod's shared runtime process, so stating the session would commit the specification to a unit the wire
-contract underneath it cannot express. CODE-1 should state that relocating `quiesced` onto the entry
-carries no specification claim about the quiescence unit, so a later implementor does not read the
-field's placement as settling it.
 
 **OD5. Whether D7, the counter baseline, and migration 0181 land in this proposal or in a successor.**
 This proposal's subject is the unit the coordination generation is scoped to, and it also carries D7 (the
@@ -346,7 +313,12 @@ session-store create paths inside a proposal whose subject is the generation's s
 by a behaviour proposal has precedent here: proposal 0049 carried
 `migrations/0179_sessions_credential_deny.up.sql` as part of a credential-propagation fix. Precedent does
 not rank the trade, because the good at stake is the reviewer's own willingness to approve that migration
-inside this change, which no artifact in the tree spends on their behalf. **Splitting** leaves a
+inside this change, which no artifact in the tree spends on their behalf. What the migration does not put
+at stake is a running installation: `.claude/rules/code-best-practices.md:62` records the platform as
+pre-deployment with no deployments in the wild, so the cost of landing here is the reviewer's attention to
+a schema change and two create paths rather than exposure of a live fleet. That reading is not settled in
+the tree, because OD9 below prices the retained `>= 1` check against a still-running old fleet inserting an
+explicit zero during the roll, and nothing reconciles the two. **Splitting** leaves a
 spec-to-code gap on the barrier path until the successor lands.
 `.claude/rules/spec-driven-development.md:23` states that ordering as the normal one, "A spec change lands
 and is verified before the code that depends on it is written", so the gap a split opens is not a rule
@@ -355,25 +327,12 @@ migration from riding inside a fix proposal, 0181 is free under either answer
 (`migrations/0180_drop_checkpoint_slot_id.up.sql` is the last number taken), and no other proposal turns
 on it.
 
-What follows the answer. OD14, which asks whether 0181's backfill runs unbatched and what bounds a
-migration's run time, travels with 0181: a split moves that question into the successor rather than
-answering it. OD10's withdrawal stands under either answer, on its own statement that it does not rest on
-the baseline. One repair the earlier draft credited to the baseline, the first crash-takeover fence
-rejected at 1, is also reached by OD2's remedy, so it is not exclusive to CODE-4 and does not weigh here.
-
-**OD6 is replaced.** Its central claim was that the pod-wide field is an accidental mutual exclusion
-holding a pod to one coordinating replica, and every validator refuted it. The predicate at
-`pkg/adapter/coordination.go:99` compares generations and carries no replica term, so the identical
-interference fires when one replica coordinates both co-tenant sessions and fences the lower-generation
-one second. It is a cross-session interlock rather than a cross-replica one. It also does not exclude,
-because a higher generation is accepted today, and it is not durable: this proposal's own problem
-statement traces the refused session climbing past the co-tenant's value after a bounded number of
-cycles. Two replicas coordinating co-tenant sessions on one pod is reachable in the shipped tree.
-
-**Recommendation: keep the co-tenancy question a non-goal, and record that this change removes a
-cross-session generation interlock that delayed and mis-metered co-tenant handoffs regardless of how many
-replicas were involved.** It does not create multi-replica co-tenancy, which the per-session
-`REG-COORDLEASE` already permits.
+What follows the answer. OD14, which asks what bounds a migration's run time and whether 0181's backfill
+stays unbatched, travels with 0181: a split moves that question into the successor rather than
+answering it. The withdrawal of OD10, which the review log records, does not rest on the baseline, so it
+stands under either answer. One repair the earlier draft credited to the baseline, the first
+crash-takeover fence rejected at 1, is also reached by OD2's remedy, so it is not exclusive to CODE-4 and
+does not weigh here.
 
 **OD7. Rebind and the unset state.** This entry reached the section from the review log rather than from
 the derivation and validation pass the preamble above describes, and it was then read three times
@@ -393,7 +352,7 @@ The reviewer is asked two things. **Is that reset accepted as the behaviour of t
 first accepted fence on that pod?** The second question exists because the staged text already carries both
 forms. SPEC-1 stages "The value is unset until that session's first accepted fence on that pod"
 (`spec-changes.md:142`), which a rebind onto the same pod falsifies, while D6's closing clause names "the
-session's binding on the pod rather than the pod's lifetime" (`summary.md:56-59`), which holds whether or
+session's binding on the pod rather than the pod's lifetime" (`summary.md:60-61`), which holds whether or
 not such a rebind is reachable. D6 is a fixed decision whose two halves disagree with each other, so
 answering the second question aligns D6 with itself rather than reopening it.
 
@@ -419,11 +378,11 @@ Three alternatives were weighed. **Accepting the reset and keeping SPEC-1's "fir
 pod" wording** loses on truth conditions rather than on style: it is correct only while a rebind onto the
 same pod is unreachable, and nobody has traced that. **Carrying a tombstone that outlives the registry
 entry, so the value survives an unbind**, loses to D2, which is fixed and states that the value lives on the
-slot registry entry with no second map keyed by session identifier (`summary.md:47-48`). **Keeping the value
+slot registry entry with no second map keyed by session identifier (`summary.md:49-50`). **Keeping the value
 pod-wide for the rebind case** loses to D1, which is the proposal's subject.
 
 What each answer costs. **Accepting the reset and taking the binding form** costs one staged sentence at
-`spec-changes.md:142`, and aligning D6's first sentence at `spec-changes.md:33` and `summary.md:56` with its
+`spec-changes.md:142`, and aligning D6's first sentence at `spec-changes.md:33` and `summary.md:58` with its
 own closing clause. No deliverable, checklist step, or test moves, and SPEC-2 carries SPEC-1's statements
 into `spec/28` and `spec/29` rather than restating a unit of its own, so the mirrors follow the one edit.
 **Keeping the staged wording** costs no edit now and ships a specification sentence whose truth depends on
@@ -435,29 +394,13 @@ a session does not return to the pod it unbound from: `spec/07_session-lifecycle
 `resuming → running` as a re-attach on a replacement pod. Code-side reachability is open, because the
 adapter bars nothing and no one has traced whether `pkg/gateway/sessionserver` placement can put a session
 back on a pod it unbound from. That question stays here rather than moving to
-`### Defects in the shipped tree that this proposal does not stage`, which holds only findings confirmed
+`## Defects in the shipped tree that this proposal does not stage`, which holds only findings confirmed
 against the working tree. It bounds how often the residual can be incurred and it changes neither
 recommendation, because the binding form holds under both answers.
 
 The decisions below reached this section from the review log's open list rather than from the derivation and
 validation pass the entries above went through. Each states the ground the log entry gives, and an entry the
 loop left without a recommendation says so.
-
-**OD8 is withdrawn.** It asked whether CODE-4 deletes the gateway fence path's floor of a non-positive row
-value at `pkg/gateway/coordination/coordfence/coordfence.go:147-153`, and the ground SPEC-1 gave for the
-deletion was that a session row can no longer carry a non-positive value. That ground is false for the
-rolling window: the migrate Job is a `pre-install,pre-upgrade` hook that completes before the gateway
-Deployment rolls (`charts/lenny/templates/migrate-job.yaml:10-16`), and the still-running old fleet's
-`pgstore.Create` binds `sess.CoordinationGeneration` straight through (`pgstore.go:177`, `:260`), so it
-inserts rows at 0 that 0181's one-shot backfill has already run past. The design keeps the floor, and CODE-4
-now states the reason: `fenceResumedPod` fences on the value it reads without bumping it, so with the floor
-deleted that fence would carry 0, the adapter would refuse it with `InvalidArgument`, the refusal would fall
-into `coordfence.fence`'s transient arm rather than its stale arm, and the driver would burn its attempt
-budget, relinquish the lease, and abort the resume. The floor
-is retired by the release that tightens the check to `CHECK (coordination_generation >= 1)`, which is OD9's
-subject, so this rests on the same §10.5 argument that defers the tightening. The withdrawal also retires the
-request for a human's eye on an amended `TestFenceZeroGenerationFencesAtBaseline`, because the test is left
-as it landed.
 
 **OD9. Whether a later release adds `CHECK (coordination_generation >= 1)` as a Phase-3 migration.** This
 entry is about a release after this one. Nothing this proposal stages moves either way, and the answer is
@@ -477,7 +420,7 @@ enforcement (`non-spec-changes.md:130-135`). No reader of the check exists in th
 release, or is the retained `coordfence` floor accepted as permanent?** The second half is what gives the
 question a consequence. CODE-4 keeps `pkg/gateway/coordination/coordfence/coordfence.go:147-153`, the fence
 path's floor of a non-positive row value, and states that the floor is retired by the release that tightens
-the check (`non-spec-changes.md:154-155`); OD8's withdrawal above carries the same coupling. That sentence
+the check (`non-spec-changes.md:154-155`), which the withdrawn OD8 also recorded. That sentence
 is the only thing in the repository that owns the floor's retirement. `BUILD-GAPS.md`, `TEST-GAPS.md`, and
 `PROPOSAL-QUEUE.md` carry no finding or queued proposal for it, and no file outside this proposal mentions
 the tightening. Answering no therefore makes the floor permanent, correct, and owned by nothing.
@@ -509,25 +452,6 @@ through `Create` (`pkg/gateway/session/sessionstore/memstore/snapshot.go:27-37`)
 one of the two stores behind that interface, so the release that retires the floor has to establish that no
 configured store can deliver a non-positive value, rather than resting on the check alone.
 
-**OD10 is withdrawn.** It asked whether the sentences calling a barrier's generation the current one are edit
-sites, and it named the wrong deliverable. SPEC-1 owns `spec/10_gateway-internals.md`, and SPEC-1 is what
-states that §10.1.8 step 1's clause reading that the `CheckpointBarrier` message carries the current
-`coordination_generation`, and §29.7's trace step 4, are not restated (`spec-changes.md:259-271`). SPEC-2's
-`spec/29` scope names §29.7's framing paragraph and leaves trace step 4 alone (`spec-changes.md:435-437`).
-SPEC-1 also does not leave §10.1.8 step 1 unedited: it rewrites step 1's closing sentence
-(`spec-changes.md:206-222`), and that closing sentence sits on the same physical line of
-`spec/10_gateway-internals.md` as the clause this entry is about, so a reviewer told that step 1 is untouched
-does not open the rewrite. Neither sentence is an edit site, on the ground SPEC-1 now states. On the sweep
-that performs a handoff, `pkg/gateway/coordination/coordination/coordination.go:430` passes the pre-bump
-snapshot value to `upsertMirror` while the pod is fenced at the post-handoff generation minted in the same
-iteration, so a barrier assembled from the mirror in that interval carries a value that is not the session's
-current one, and both sentences are already false on that path in the shipped tree. That lag is recorded below
-as a shipped-tree defect this proposal does not stage, and this change neither creates nor repairs it. SPEC-1's
-earlier ground, that each stays true because the baseline makes the row value positive, reached the right
-conclusion by a route that does not hold, and SPEC-1 now closes on the mirror lag instead. This disposition
-does not rest on the baseline, so a decision to split D7, the baseline, and migration 0181 out under OD5
-leaves it standing.
-
 **OD11. Whether this proposal stages a claim-register deliverable for the interval between S2 and S7.**
 §28.4 requires every normative statement a section makes about a mechanism to carry a row in
 `tests/claim-map.json`, and requires a row that is not `WIRED` to name, through a deferral identifier, the step
@@ -540,13 +464,61 @@ document and in a regeneration rather than in the register file. §28.4's status
 that is rescoped in part, so a deliverable closing this has to argue that the obligation falls on the statement
 rather than on the mechanism. No deliverable stages it today, and no recommendation was derived.
 
-**OD12. A superseded replica's checkpoint stream against a quiesced pod.** D7 has the pod accept a barrier
-whose generation matches the value it holds for the named session, and the barrier's generation is read from
-state the replicas share, so a replica that has lost coordination can have its barrier accepted. Whether the
-stream that replica then opens against the quiesced pod is acceptable, and whether an accepted false-positive
-barrier is followed by a stream at all, is unanswered. The review recorded the drain-budget cost as bounded to
-one 90-second wall-clock window across all pods, with the manifest write guarded by supersede-on-write and
-`partial_manifest_active_uniq`. No recommendation was derived.
+**OD12. A superseded replica holding a session quiesced while it drives a checkpoint.** The pod's barrier
+gate carries no term for whether the sender still coordinates the session: it compares the barrier's
+generation with the value the pod holds and nothing else (`pkg/adapter/coordination.go:236`). The barrier's
+generation is read from the shared coordination state when the barrier-target set is assembled rather than
+stamped by the draining replica, so a replica that has just lost coordination can still have its barrier
+accepted, and the pod then holds that session quiesced while the replica drives a checkpoint stream against
+it. **The question for the reviewer: is it acceptable that a replica which no longer coordinates a session
+can hold that session quiesced for the length of the barrier ack window while it drives a checkpoint, and is
+the specification sentence asserting that both the acceptance and the rejection outcome are safe the sentence
+to sign off on?**
+
+**Recommendation: accept it, and take the staged sentence. Confidence: moderate on the first half, high on
+the facts below.** The confidence is moderate because the acceptance arm is a normative claim no shipped
+sentence makes, so a reviewer may reasonably want it argued in the specification rather than asserted.
+
+Three facts the answer turns on were each verified against the working tree. First, the acceptance is
+shipped behaviour that this proposal does not create. The gate at `pkg/adapter/coordination.go:236` tests
+`!initialized || gen != fenced`, which is the same test before and after D7; D7's own addition, the arm for
+a bound session the pod holds no value for, is unreachable for a superseded replica, because being
+superseded means a successor's fence was recorded and the pod therefore holds a value. Second, the stream
+is not consequent on acceptance. `pkg/gateway/coordination/barrier/barrier.go:220-227` starts the
+gateway-driven `Checkpoint` stream in a goroutine before `c.dispatch.Send` and joins it afterwards, for
+every target unconditionally, and `:228` records the stream's error without un-acking, so the superseded
+replica opens the stream whether the barrier is accepted or refused. The second half of the question as it
+was first written, whether an accepted false-positive barrier is followed by a stream at all, is answered by
+the tree and answered the other way round: the stream is not gated on the barrier. Third, the cost is a
+frozen session rather than a corrupted one. The adapter imposes no bound of its own on the hold
+(`pkg/adapter/coordination.go:264-268` waits on the stream or on the RPC context and starts no timer), so
+the only reclaimer is the gateway's RPC deadline, set from `checkpointBarrierAckTimeoutSeconds`
+(`pkg/gateway/podlifecycle/prestop/prestop.go:503`, default 90s), and that deadline is one wall-clock window
+across all of a replica's pods rather than per pod (`spec/10_gateway-internals.md:138`). The manifest write
+the stream performs is guarded by supersede-on-write and `partial_manifest_active_uniq`, so a stale
+coordinator's write cannot displace a successor's.
+
+What the proposal does put at stake is the specification's assertion. Shipped
+`spec/10_gateway-internals.md:183` gives rejection as the only outcome and asserts safety of that outcome
+alone. The staged §10.1.8 step 1 rewrite has the pod reject "when it holds a generation for that session
+that the barrier does not carry, and otherwise accepts it", and closes "Either outcome is safe and requires
+no special handling", which is a normative claim over the acceptance arm that no shipped sentence makes.
+Answering yes ratifies it.
+
+The alternatives, and why each lost. **Withdrawing the entry as mis-stated** was the first reading's
+recommendation, on the ground that nothing staged creates the acceptance. It lost because the staged
+sentence is a new assertion about a case the shipped text does not cover, and a reviewer signs off on the
+assertion even when the behaviour predates it. **Repairing the behaviour**, by carrying the sending
+replica's coordination status on the barrier or having the pod re-read the lease before quiescing, lost
+because it reaches into the gateway's barrier dispatch and the adapter's quiesce path, both of which the
+Non-goals exclude, and because it would leave the shipped acceptance undescribed for however long the
+successor takes. **Keeping the shipped rejection-only sentence** and staging no rewrite lost because the
+sentence is then false about the code under D7's per-session gate, which is the defect this proposal exists
+to remove.
+
+Deciding otherwise costs a successor proposal over the barrier dispatch and, until it lands, a §10.1.8
+step 1 that describes an outcome the pod does not take. Nothing in the deliverables changes either way:
+the answer selects whether the staged sentence stands, and the code lands as staged in both cases.
 
 **OD13. Whether TEST-1 owes a case for a barrier naming an unbound session.** D7 removes the generation gate's
 refusal for a bound session the pod holds no fenced generation for, which leaves `checkSessionBound` the sole
@@ -554,59 +526,62 @@ fail-closed guard on the barrier path. No test in the tree asserts that `Checkpo
 no slot binding is refused. The gap was filed in the non-spec review and landed in neither TEST-1 nor §8. No
 recommendation was derived.
 
-**OD14. Whether migration 0181's backfill runs unbatched, and what bounds a migration's run time.** 0181
-backfills the counter with a single `UPDATE sessions SET coordination_generation = 1 WHERE
-coordination_generation = 0` over the whole table, and the migrate Job is a `pre-install,pre-upgrade` hook
-that completes before the gateway Deployment rolls, so the update's duration is added to every upgrade.
-Two review readings reached opposite answers and neither corrects the other. Against the unbatched form:
-`sessions` rows are never purged, the table reaches order 10^6 rows within a year at Tier 3, the predicate
-matches essentially every row, and the landed `UPDATE ... SET` backfills in the tree all target small
-configuration tables, so the precedent does not cover a session-scale one. For it: a backfill that wins the
-row lock cannot corrupt a concurrent writer, because `RecordHandoff` goes through `Update`'s
-`SELECT ... FOR UPDATE` and both stores clamp to the previous value, and unbatched backfills have precedent
-in migrations 0053, 0054, 0058, 0064, 0105, and 0178. The two grounds do not meet: one is about the hook's
-duration and the other about correctness.
+**OD14. Whether the migrate Job gets a run-time budget, and whether 0181's backfill stays unbatched.**
+This entry travels with OD5: a "split" answer there moves migration 0181 into a successor and carries this
+question with it unanswered.
 
-**The second question for the reviewer: does this proposal write down a wall-clock or row-count budget for
-a migration run against a live top-tier fleet, or does the backfill's duration stay unbounded as every other
-migration's is?** A decision to keep the backfill whole is also a decision on this one, because the
-unbatched form's duration is added to every upgrade and no landed backfill runs against a table of the
-session table's size. This half of the entry reached the section from the review log's `### Open` list
-rather than from the derivation pass, and its premise was re-verified against the working tree in this
-round.
+The question, in one sitting: migration 0181 backfills the `sessions` table with a single
+`UPDATE sessions SET coordination_generation = 1 WHERE coordination_generation = 0` over the whole table,
+inside a Helm `pre-install,pre-upgrade` hook that completes before the gateway Deployment rolls, and no
+migration in this platform has a stated run-time budget. Accept the unbatched form and the absent budget, or
+commission a successor that writes a budget for the migrate Job?
 
-Nothing in the repository states such a budget. §10.5 supplies expand-contract phasing, `golang-migrate`
-tooling, pre-deploy-hook execution, an advisory lock, and re-runnability after a partial completion, and its
-one row-count number, the operator confirmation of the gate query plan for tables exceeding 1 million rows
-(`spec/10_gateway-internals.md:434`), is scoped to a Phase 3 gate's `COUNT(*)` preflight rather than to a
-Phase 1 backfill. The chart does not bound the Job either: `charts/lenny/templates/migrate-job.yaml` renders
-`backoffLimit` (`:42`) and `ttlSecondsAfterFinished: 600` (`:45`) and no `activeDeadlineSeconds`, and the
-`migrate` values block exposes only `backoffLimit: 5` (`charts/lenny/values.yaml:3791`). The chart bounds a
-Job where the spec gives it a number and leaves it unbounded otherwise, so the omission is per Job rather
-than uniform: `charts/lenny/templates/preflight-job.yaml:259` and
-`charts/lenny/templates/crd-validate-job.yaml:81` render `activeDeadlineSeconds` from
-`preflight.timeoutSeconds` and `charts/lenny/templates/backup-job.yaml:134` renders 7200, while the
-migrate, bootstrap, MinIO lifecycle, and deployment-config-sync hook Jobs render none. `spec/` states those
-two deadlines and no third (`spec/17_deployment-topology.md:571`, `spec/25_agent-operability.md:3995`), so
-writing a budget for the migrate Job means writing the number as well as the knob. The only bound in force today is
-whatever the deployer passes to Helm, and the documented upgrade command passes `--wait --timeout 10m`
-(`docs/operator-guide/upgrades.md:22`), which is an example command rather than a stated contract.
-`docs/runbooks/schema-migration-failure.md` states no expected or maximum run time.
+Correctness is not at issue, so the reviewer is ranking upgrade duration against scope rather than judging
+safety. A backfill that wins the row lock cannot corrupt a concurrent writer: `RecordHandoff` goes through
+`Update`'s `SELECT ... FOR UPDATE` and both stores clamp `CoordinationGeneration` to the previous value
+(`pgstore.go:460`, `:475-477`; `memstore.go:129`, `:144-146`).
 
-**No recommendation is offered on whether the platform needs the budget.** The trade is between an
-operational guarantee and the cost of owning one, and neither `spec/` nor the chart takes a position the
-repository can read off. **Confidence in the framing: high.** The three facts the answer turns on were each
-verified against the working tree: no budget is stated anywhere, the chart bounds the preflight,
-crd-validate, and backup Jobs and not the migrate Job, and §10.5's only row-count number belongs to the
-Phase 3 gate.
+The ground on duration. `sessions` rows are never purged, the table reaches order 10^6 rows within a year at
+Tier 3, and the predicate matches essentially every row, while the landed `UPDATE ... SET` backfills in the
+tree (migrations 0053, 0054, 0058, 0064, 0105, and 0178) all target small configuration tables, so the
+precedent does not cover a session-scale one. One fact bears on the batching half: both migration runners
+build the driver as `migratepg.WithInstance(db, &migratepg.Config{})`
+(`cmd/lenny-migrate/main.go:226`, `pkg/schemamigrate/schemamigrate.go:382`), which leaves multi-statement
+splitting off, so a migration file executes as one statement batch and batching inside 0181 would commit
+nothing between batches and release no locks. Batching that shortens the lock hold therefore means either
+splitting 0181 across migration files or changing the runner, neither of which this proposal stages.
 
-What each answer costs. **Writing the budget here** widens this proposal from session-scoping the
-coordination generation into migration policy, because the remedy lands in §10.5 or in the migrate Job
-template and this proposal stages an edit to neither. Its files-touched list carries `spec/10`'s §10.1
-subsections, `spec/28`, `spec/29`, `spec/04`, the proto, migration 0181, the two session stores, and tests,
-and no chart file (`non-spec-changes.md`, `## 9. Files touched on application`). **Leaving it unwritten**
-keeps the scope and leaves the migrate Job's run time bounded by nothing inside the release, so a backfill
-that blocks on a row lock runs until the deployer's own Helm timeout fires with the Job still running.
+The ground on the budget. Nothing in the repository states one. §10.5 supplies expand-contract phasing,
+`golang-migrate` tooling, pre-deploy-hook execution, an advisory lock, and re-runnability after a partial
+completion, and its one row-count number, the operator confirmation of the gate query plan for tables
+exceeding 1 million rows (`spec/10_gateway-internals.md:434`), is scoped to a Phase 3 gate's `COUNT(*)`
+preflight rather than to a Phase 1 backfill. The chart does not bound the Job either:
+`charts/lenny/templates/migrate-job.yaml` renders `backoffLimit` (`:42`) and `ttlSecondsAfterFinished: 600`
+(`:45`) and no `activeDeadlineSeconds`, and the `migrate` values block exposes only `backoffLimit: 5`
+(`charts/lenny/values.yaml:3791`). The omission is per Job rather than uniform:
+`charts/lenny/templates/preflight-job.yaml:259` and `charts/lenny/templates/crd-validate-job.yaml:81` render
+`activeDeadlineSeconds` from `preflight.timeoutSeconds` and `charts/lenny/templates/backup-job.yaml:134`
+renders 7200, while the migrate, bootstrap, MinIO lifecycle, and deployment-config-sync hook Jobs render
+none. `spec/` states those two deadlines and no third (`spec/17_deployment-topology.md:571`,
+`spec/25_agent-operability.md:3995`), so writing a budget for the migrate Job means writing the number as
+well as the knob. The only bound in force today is whatever the deployer passes to Helm, and the documented
+upgrade command passes `--wait --timeout 10m` (`docs/operator-guide/upgrades.md:22`), which is an example
+command rather than a stated contract. `docs/runbooks/schema-migration-failure.md` states no expected or
+maximum run time.
+
+**No recommendation is offered.** The trade is between an operational guarantee and the cost of owning one,
+and neither `spec/` nor the chart takes a position the repository can read off. **Confidence in the framing:
+high.** The facts the answer turns on were each verified against the working tree: no budget is stated
+anywhere, the chart bounds the preflight, crd-validate, and backup Jobs and not the migrate Job, §10.5's only
+row-count number belongs to the Phase 3 gate, and the runner applies a migration file as one statement batch.
+
+What each answer costs. **Accepting both** keeps the scope and leaves the migrate Job's run time bounded by
+nothing inside the release, so a backfill that blocks on a row lock runs until the deployer's own Helm
+timeout fires with the Job still running. **Writing the budget here** widens this proposal from
+session-scoping the coordination generation into migration policy, because the remedy lands in §10.5 or in
+the migrate Job template and this proposal stages an edit to neither. Its files-touched list carries
+`spec/10`'s §10.1 subsections, `spec/28`, `spec/29`, `spec/04`, the proto, migration 0181, the two session
+stores, and tests, and no chart file (`non-spec-changes.md`, `## 9. Files touched on application`).
 **Commissioning a successor** carries the same edit into a proposal whose subject is migration policy and
 costs the delay. It is the option that survives an answer of yes to the budget and no to writing it here, and
 nothing owns it today: `BUILD-GAPS.md` and `PROPOSAL-QUEUE.md` carry no finding or queued proposal for the
@@ -651,7 +626,11 @@ only after a successful send (`pkg/gateway/coordination/barrier/barrier.go:237`)
 per-session loop skips only acked sessions (`pkg/gateway/podlifecycle/prestop/prestop.go:395`), so an
 unacked session still receives its own capture under its own tier cap, on a wall-clock budget the loop
 starts fresh after the barrier returns (`prestop.go:380`). The cost of a slow co-tenant upload is drain
-wall-clock against the pod's real grace period rather than a lost checkpoint.
+wall-clock against the pod's real grace period rather than a lost checkpoint. The specification designs that
+outcome rather than leaving it undefined: a session that misses the deadline enters the BarrierAck-timeout
+partial-capture path, which finalises the session's partial-manifest intent row and preserves every chunk
+already committed, and falls back to the last periodic checkpoint only where no intent-row state exists
+(`spec/10_gateway-internals.md:187`, `:198`).
 
 The alternatives, and why each lost:
 
@@ -672,28 +651,44 @@ documentation update, and a tier-2 admission case to a proposal that stages none
 the §17.8.2 capacity derivation the current floor rests on. Accepting the residual costs a co-tenant
 worst case that no evidence in the tree prices against the 90-second default.
 
-### Items §7 lists, and how they should be dispositioned
+What the answer changes is the size of the exposed population rather than the mechanism. The adapter's
+coordination state is pod-wide today (`pkg/adapter/coordination.go:25-32`) and the barrier gate compares
+the request's generation against that pod-wide value (`pkg/adapter/coordination.go:236`), so two co-tenant
+sessions whose generations coincide, which is the ordinary outcome when one replica hands off all of its
+sessions, already enter one 90-second window and already serialize on the pod's checkpoint op lock
+(`pkg/adapter/checkpoint.go:111`). D7 together with CODE-1's per-slot gate widens the affected set from
+co-tenants whose generations coincide to every co-tenant pair, so the exposure grows under this proposal
+while the unmultiplied window predates it.
 
-- **`coord.mu`.** Not a reviewer decision. `coordinationState` embeds its mutex as its first field, so D2
-  moves the lock with the struct. Delete the item as an implementation choice with no external
-  consequence rather than as a settled design question. CODE-1 owes the resulting lock order, registry
-  lock then entry lock then hold lock, and the ordering was checked for an inverse path and has none;
-  CODE-3 removes the one opposite-order acquisition that exists today.
-- **A fence for a session the pod holds no entry for.** The earlier draft of this section called this
-  settled, and the validation pass found that wrong by a majority. The adapter half is settled, because
-  `checkSessionBound` refuses before the generation is read. The half §7 asks, whether such a
-  fence is a rejection or a retryable race, is unanswered, and §4 states that the two must be
-  distinguishable. They are not: the guard returns the same `FailedPrecondition` the stale path returns,
-  and the fence driver maps every `FailedPrecondition` to the stale branch, so a fence that raced a bind
-  costs the lease and increments the split-brain counter. Disposition: out of scope for this proposal,
-  with a named consequence and an owner, rather than settled.
-- **The `IMPLEMENTOR TO FILL THE BLANKS` headers.** Drop them, but not on the ground the earlier draft
-  gave. That ground was that every item beneath is derived or settled, and it is false: the second item
-  is OD1, which this document declares open, and it carries the false rationale OD1 corrects. Drop the
-  header together with that correction so the correction keeps a home. There are three such headers
-  rather than one, in §4, in §5, and in the non-spec changes.
+**OD16. Whether the three `IMPLEMENTOR TO FILL THE BLANKS` headers stay in the staged-change files.**
+`spec-changes.md:107` and `:134` and `non-spec-changes.md:6` each open a staged section with
+`**IMPLEMENTOR TO FILL THE BLANKS.** These are indicative targets; the text is written during convergence,
+against the post-0073 state of each file.` The question is whether a maintainer applying this proposal
+reads the staged sections as verbatim text to apply, in which case the three headers come out, or as
+targets to write against at application time, in which case they stay.
 
-### Defects in the shipped tree that this proposal does not stage
+The ground the review loop derived. The cleanup phase dispositioned all three as coming out, on the ground
+that a converged proposal's staged sections are verbatim staging and a header calling them indicative
+targets tells a maintainer applying tomorrow not to apply them as written. It also recorded that the
+earlier ground for dropping them, that every item beneath each header is derived or settled, is false: the
+second item under the `## 4. Detailed design` header is OD1's subject, which this section declares open,
+and it carries the rationale OD1 corrects. One archived refutation stands against four separate filings of
+the same finding, and no lens has broken the tie across four runs, which is why the item reaches the
+reviewer rather than a fixer.
+
+One fact bears on the answer and postdates the disposition. The spec loop's last run ended with findings
+still open, so the staged spec text has not converged and the headers' own condition, that the text is
+written during convergence, is not yet met for every section beneath them. Removing the headers while the
+staging is unsettled states a completeness the files do not have; keeping them past convergence leaves the
+instruction the disposition calls misleading.
+
+**No recommendation is offered.** The loop derived a disposition and a standing refutation against it and
+could not close either, and the convergence fact above bears on both. What either answer costs: dropping
+the headers touches three sites in two staged-change files and states that every item beneath is text to
+apply as written; keeping them leaves a maintainer to decide per section which staged text is verbatim.
+
+
+## Defects in the shipped tree that this proposal does not stage
 
 None blocks sign-off. Each was confirmed against the working tree.
 
@@ -786,7 +781,7 @@ None blocks sign-off. Each was confirmed against the working tree.
 
   The entry is conditional on OD3. A "yes" to OD3's Question A makes the fence session-scoped, and OD3
   already names the rewrite of this comment among the costs of staging that answer here rather than
-  leaving it to a successor (`0076_fix_scope-the-coordination-generation-to-the-session.summary.md:283-289`).
+  leaving it to a successor (`0076_fix_scope-the-coordination-generation-to-the-session.summary.md:259-265`).
   On that branch the repair is the addition of the fence to the suite rather than the deletion of a false
   clause, and it has to settle what value a map recording each member's retired field number holds for a
   message that never declared one. Repairing the comment now would pre-commit to whichever of the two the
@@ -826,29 +821,23 @@ None blocks sign-off. Each was confirmed against the working tree.
   absence also bounds the risk of the one production-path behaviour change CODE-3 makes, which no
   deployed system reaches today.
 
-### Cross-proposal consequences
+## Impacts on other proposals
 
-- **Proposal 0075.** Recorded under OD3. This change removes 0075's stated justification rather than
-  merely conflicting with its rename.
-- **Proposal 0080.** It records that a hold entered for one session and released by another's fence is
-  taken by this proposal, which D5 refutes, and it records the §29.10 hold-partitioning bullet as an
-  outstanding gap while SPEC-2 stages that bullet's removal. Approving this proposal invalidates both
-  entries. 0080 is an early draft and can be corrected.
+This is the only place this proposal states anything about another proposal's continued validity.
+`## Non-goals` states what this proposal will not do and `## 10. Dependencies` in the spec changes states
+what it applies after; neither restates a row below.
 
-### Corrections outstanding in the proposal
+| Proposal | Status | What this change does to it | What it must do about it |
+|:--|:--|:--|:--|
+| 0060 | Implemented | Nothing. The lease protocol, forced acquisition, and the lease co-location 0060 built are untouched, and TEST-1 runs on the two-replica harness it landed. | Nothing. |
+| 0075 | Draft | Removes its sole counterexample. 0075 derives message scope from the address type, and its one exception is `CoordinatorFenceRequest`, on the ground that the handler mutates one pod-wide `coordinationState` so the session identifier selects nothing. CODE-1 deletes that field and the identifier then resolves the entry the generation is recorded on. OD3 puts the reclassification to the reviewer. | If OD3 reclassifies the `spec/04` §4.1 row to session scope, 0075 drops its retyping deliverable or restates its ground on a field CODE-1 does not delete. |
+| 0080 | Draft, dated 2026-08-31 (`proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:7`), which is also the file's last-commit date | Invalidates two of its entries. §1.14 records the §29.10 hold-partitioning bullet as still unstated (`0080...:184-192`), and SPEC-2 stages that bullet's removal from §29.10's "What the specification does not state" list (`spec/29_communication-scenarios.md:1523-1527`) on the ground that SPEC-1's §10.1.2 and §10.1.4 state both answers (`0076...spec-changes.md:439-442`), so the entry loses its subject outright. §2 records the hold entered for one session and released by another's fence as work this proposal takes (`0080...:211`, restated at `:191-192`); D5 keeps the hold pod-scoped and makes a fence from any bound session the correct exit, so this proposal declines that item rather than taking it. §1.12's claim-register rows and §1.13's §29.10 spec-map exception are untouched, and §29.10's `Interrupt`-and-barrier bullet is narrowed rather than removed, so the gap it records survives in reduced form. | Correct both entries. 0080 self-describes as an early draft that is an inventory rather than a design (`0080...:3-6`), so both are editable. |
 
-- `pkg/gateway/runtime/adapterclient/coordinatorfence.go:37` states the first-fence exemption as per pod
-  lifetime, which SPEC-1 falsifies and which is already false today for a non-positive generation and for
-  an unbound session. It is the only production site outside the proto and §9 does not list the file.
-- The §28.4 claim-register work is narrower than the earlier draft stated. `tests/claim-map.json` already
-  carries a non-wired row for the barrier's generation field under a deferral id, so the correction is to
-  restatus it and to replace its note, which is false against the adapter's current comparison. The fence
-  request has no row and is exempted from the tier-0 gate by name, and whether that exemption survives
-  SPEC-2's new sentences is the open half.
-- The status file's scope bullet contradicts D5. The earlier draft also named a closing paragraph framing
-  the hold's scope as an open question, and no such paragraph exists.
-- §7's heading numbering jumps from 7 to 10 because §8 and §9 live in the non-spec changes. This is an
-  artifact of the folder layout rather than a defect.
+Proposal 0073 carries no row. It is Implemented (2026-08-31,
+`proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:3`), this change is built on the
+`checkSessionBound` guard and the slot registry it landed, D4 keeps both closed, and no staged deliverable
+edits a file under its directory, so its record stands unchanged. The sequencing is stated under `## 10.
+Dependencies` in the spec changes.
 
 ## Deliverable index
 

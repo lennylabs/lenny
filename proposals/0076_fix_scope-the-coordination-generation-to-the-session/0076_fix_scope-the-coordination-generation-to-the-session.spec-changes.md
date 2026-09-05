@@ -398,15 +398,18 @@ the rule. The sentences below change.
   clause "so a barrier from a superseded replica is rejected on the stamp" (`:1808`) is replaced
   by the predicate §10.1.8 step 1 states, at the level of detail the cell carries: the pod rejects
   the barrier when it holds a generation for the session the barrier names that the barrier does
-  not carry, and otherwise accepts it. The cell's constraint sentence and its closing sentence
-  recording that the specification states no separate pod-level barrier lock are unchanged, and
-  the row stays one line. The clause is an edit site because the pod cannot reject a barrier on
-  the identity of its sender: the message carries no replica identity and its generation is read
-  from state the replicas share, so a superseded replica's barrier can carry the very generation
-  the pod holds, in which case the staged predicate accepts it. The mechanism the clause would
-  need to stay true, a replica identifier on the wire and a pod-side view of `REG-COORDLEASE`, is
-  a new protocol surface on the one channel where a wrong rejection costs the session's quiescence
-  and the acked-barrier record, and forces a second capture.
+  not carry, and otherwise accepts it. The rest of the constraint sentence, which states the
+  constraint, names `REG-COORDLEASE` and the generation stamp as the guard, and records that the
+  barrier carries that generation in its own message, is unchanged, as is the cell's second
+  sentence recording that the specification states no separate pod-level barrier lock. Only the
+  trailing clause of the constraint sentence is replaced, and the row stays one line. The clause
+  is an edit site because the pod cannot reject a barrier on the identity of its sender: the
+  message carries no replica identity and its generation is read from state the replicas share, so
+  a superseded replica's barrier can carry the very generation the pod holds, in which case the
+  staged predicate accepts it. The mechanism the clause would need to stay true, a replica
+  identifier on the wire and a pod-side view of `REG-COORDLEASE`, is a new protocol surface on the
+  one channel where a wrong rejection costs the session's quiescence and the acked-barrier record,
+  and forces a second capture.
 
 SPEC-2 leaves the hold sentences in `spec/28` as they stand: the hold half of the `CH-FENCE` Degradation
 bullet, the hold sentence of §28.6's "The second opener on those channels" paragraph, and the "while the
@@ -535,10 +538,9 @@ sentence names is the transient tool-call state that session accumulated. The §
 not land on this comment. Applied to it, that wording would replace the two field definitions with a
 statement about the pod's treatment of later RPCs, which this message does not carry, and it would restate
 the acceptance predicate as "older than", which accepts a fence carrying the generation the pod already
-holds and contradicts `pkg/adapter/coordination.go:99`. Whether that equal case should be accepted is the
-summary's open decision OD2, on a fence carrying the generation the pod already recorded. It is a code
-change no deliverable here stages, so the wire text keeps the comparison the shipped handler performs until
-that decision is answered.
+holds and contradicts `pkg/adapter/coordination.go:99`. No deliverable here changes what the handler does
+with a fence carrying the generation the pod already holds, so the wire text keeps the comparison the
+shipped handler performs.
 
 The acceptance rule is carried by the `CheckpointBarrier` RPC doc comment (`:165-179`), by the message-level
 `CheckpointBarrierRequest` comment (`:1469-1474`), and by that message's `coordination_generation` field
@@ -592,8 +594,8 @@ create path.
 
 ## 6. Non-goals
 
-- **Renaming `CoordinatorFenceRequest`'s session field.** That is proposal 0075's subject. If both land,
-  whichever is second rebases onto the first.
+- **Renaming `CoordinatorFenceRequest`'s session field.** That is proposal 0075's subject. This proposal
+  stages no change to that field's name or type, and no deliverable here depends on 0075 landing.
 - **Changing the scoping of the gateway or Postgres side.** Both are already per session and are correct.
   What this proposal changes on the Postgres side is the value the `sessions.coordination_generation` counter
   starts at, under SPEC-3 and CODE-4. The lease protocol and §10.1.2 step 1's compare-and-swap are unchanged.
