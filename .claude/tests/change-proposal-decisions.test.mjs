@@ -357,6 +357,56 @@ t.section("D2b. dedup runs across sub-tasks, not only within sub-task 1's readin
 }
 
 // ==========================================================================
+t.section("D2c. the brief's rules on confidence, staging, and decision references");
+{
+  const { calls } = await fire({}, {});
+  const b = promptOf(calls, "f1:human-decisions:1");
+
+  // How opinionated the phase is allowed to be, which the operator set.
+  t.check("high confidence resolves rather than asking", /`high`[^]*RESOLVE IT/.test(b));
+  t.check(
+    "moderate resolves only where the staging already says the same",
+    /`moderate`[^]*RESOLVE IT ONLY IF the proposal\s+already stages that same answer/.test(b),
+  );
+  t.check("low is the human's", /`low`: the ground does not settle it\. The human's\./.test(b));
+  t.check(
+    "a scope question the proposal already stages is closed",
+    /ALREADY STAGES the scope in question, is closed/.test(b),
+  );
+
+  // What the proposal builds today is evidence about the answer.
+  t.check("the brief asks what the proposal stages today", /put it in `whatIsStaged`/.test(b));
+  t.check(
+    "and makes the staged answer the recommendation unless it is wrong",
+    /IF THE PROPOSAL STAGES AN ANSWER, THAT IS YOUR RECOMMENDATION/.test(b),
+  );
+  t.check(
+    "with the mismatch named as the finding rather than a preference",
+    /treat the mismatch as the finding rather than the preference/.test(b),
+  );
+
+  // Both fields are required of every entry, so a reading cannot omit them.
+  const schema = (calls.find((c) => (c.label || "").startsWith("f1:human-decisions:")) || {}).opts || {};
+  const req = ((schema.schema || {}).properties || {}).decisions;
+  const item = req && req.items && req.items.required;
+  t.check("whatIsStaged is required of every entry", (item || []).includes("whatIsStaged"), (item || []).join(","));
+  t.check("and so is confidence", (item || []).includes("confidence"), (item || []).join(","));
+}
+{
+  // The staged files state what is built, never the question behind it.
+  const { calls } = await fire({}, {
+    "f1:human-decisions:*": found(entry({ id: "OD-1", disposition: "resolve", answer: "equality", summaryAction: "withdrawn" })),
+    "f1:apply:0": { outcome: "edited", wrote: "The gate compares for equality.", where: [P.spec + " — SPEC-1"] },
+  });
+  const ap = promptOf(calls, "f1:apply:0");
+  t.check("the Apply brief bars referencing an open decision", /NEVER REFERENCE AN OPEN DECISION IN A STAGED CHANGE FILE/.test(ap));
+  t.check("by identifier", /Do not cite an open decision by\s+its identifier there/.test(ap));
+  t.check("as a conditional deliverable", /do not write that a deliverable is\s+conditional on one/.test(ap));
+  t.check("or as a pointer to the summary", /do not carry a\s+pointer to the summary's decisions section/.test(ap));
+  t.check("and says what to write instead", /the staged text states the ANSWER as a\s+requirement/.test(ap));
+}
+
+// ==========================================================================
 t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 // ==========================================================================
 {

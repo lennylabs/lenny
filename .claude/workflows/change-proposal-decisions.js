@@ -1299,18 +1299,12 @@ function humanDecisionsBrief() {
       "see the other two and you are not deciding the outcome: an item reaches `resolve` only when all " +
       "three of you resolve it to the same answer, and it is the human's otherwise. So return YOUR reading, " +
       "with the ground you actually opened, rather than the reading you expect to be agreed with." +
-      (refutedBlock() ? "\n\n" +
-      CONFIDENCE_RULE + "\n\n" +
-      STAGED_ALIGNMENT_RULE +  refutedBlock() : ""),
+      "\n\n" + CONFIDENCE_RULE +
+      "\n\n" + STAGED_ALIGNMENT_RULE +
+      (refutedBlock() ? "\n\n" + refutedBlock() : ""),
   );
 }
 
-// Sub-task 2. One agent. The default is to leave a blank alone, and the two
-// protections below are the tree's only statement of what a blank is for.
-
-// Sub-task 3. One agent. Its default is the opposite of the defect gate's, and
-// that is why its outcomes are their own dispositions rather than `resolve`:
-// the call standing is the answer this brief starts from.
 function outOfScopeDefectsBrief() {
   return briefFrame(
     "Your population is EVERY DEFECT THIS PROPOSAL EXPLICITLY CALLS OUT AS OUT OF SCOPE. For each one, " +
