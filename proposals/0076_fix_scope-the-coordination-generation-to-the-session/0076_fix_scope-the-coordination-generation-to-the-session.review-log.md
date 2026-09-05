@@ -2868,6 +2868,104 @@ returned nothing for this round, so "read the changed sections first and hardest
 That is now four consecutive rounds per the standing context; run the `diff -rq` first and do not spend a
 read looking for a fix stage that does not exist.
 
+
+### [non-spec-recheck.1.review-applicability.1]
+FACT: The applicability cache at /home/ec2-user/lenny/scratchpad/cp-cache/0076-run12/applicability-r1-8f4a274f2915.json was already populated and hit on this run, so this agent returned the cached empty findings list verbatim per the CACHE instruction and did no independent review. EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0076-run12/applicability-r1-8f4a274f2915.json:1
+WATCHOUT: The cached entry's own coverage text describes a SPEC-lane scope ("staged spec edits (SPEC-1, SPEC-2, SPEC-3) in spec-changes.md sections 2 through 10") and explicitly excludes the checklist ("Checklist and deliverable-index drift is out of scope for this loop"), yet the cache key hashes spec-changes + non-spec-changes + implementation-checklist together, so a non-spec-lane run over the same three files hits it. Applicability over the non-spec staging and over the implementation checklist may therefore never have been performed for this text. EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0076-run12/applicability-r1-8f4a274f2915.json:1
+OPEN: Should the cache key or filename be lane-scoped (e.g. applicability-<lane>-r1-$H.json) so a spec-lane result cannot satisfy a non-spec-lane recheck? A human or the orchestrator should decide; until then a certified-clean applicability verdict on this proposal may rest on a pass that did not read the non-spec staging or the checklist.
+
+
+### [non-spec-recheck.1.review-mechanism.1]
+
+WATCHOUT: the cp-cache key collides across lanes. `scratchpad/cp-cache/0076-run12/mechanism-r1-8f4a274f2915.json` was already populated by the SPEC lane's mechanism reviewer (its `coverage` opens "Spec lane, end-to-end mechanism" and explicitly disclaims the non-spec CODE-4 question as out of scope). The hash is computed over spec-changes + non-spec-changes + implementation-checklist only, so `summary.md` — which is this lane's entire delta — is not in the key. A non-spec reviewer that obeys the cache preamble literally returns the spec lane's answer and never reads the staging it was spawned for. I did the review instead and overwrote the file. EVIDENCE: scratchpad/cp-cache/0076-run12/mechanism-r1-8f4a274f2915.json; proposal file mtimes (non-spec-changes.md 09-05 04:56, spec-changes.md 08:09, summary.md 10:42) vs cache mtime 08:35.
+
+FACT: the run-12 non-spec delta is ONLY two cells of the `## Impacts on other proposals` table in `summary.md`. `diff -ru scratchpad/cp-snap/0076-run12/non-spec-r3 proposals/0076_...` shows non-spec-changes.md byte-identical; only summary.md and review-log.md differ. Both changed cells verify clean: `proposals/0075_...md:235-236` is the `## 10. Dependencies` "Independent of proposal 0076 … whichever lands second rebases onto the first"; `:192-193` is the Non-goals "The pod-wide coordination generation." bullet; and the 0080 row's re-anchored citation `spec-changes.md:146-151` is the "How the per-session gap reset is built … does not assert that the adapter meets it" bullet.
+
+FACT: the barrier-target generation reaches the pod through the `coordination_lease` MIRROR, not the session row, and the mirror is fed from the session row every sweep. `Sweeper` calls `upsertMirror(ctx, tenantID, row.ID, row.CoordinationGeneration)` with the value from its List snapshot (`pkg/gateway/coordination/coordination/coordination.go:430`, helper at `:544-556`), and `coordlease/pgstore.Upsert` binds `coordination_generation` as `$4` (`pkg/gateway/coordination/coordlease/pgstore/pgstore.go:48-58`). Two consequences a future reviewer should not re-derive: (1) D9's chain holds — CODE-4's session-row baseline of 1 propagates to the mirror on the next sweep, so a never-handed-off session's preStop barrier carries 1, clears the adapter's `gen <= 0` guard (`pkg/adapter/coordination.go:224-226`), and reaches D7's acceptance arm; (2) 0181's `DEFAULT 1` on `coordination_lease.coordination_generation` is inert for the same reason the proposal itself gives for the sessions row (the insert names the column), and the migration backfills only `sessions`, but a stale mirror row at 0 self-heals on the next sweep. Neither is a defect; this was the spec lane's recorded UNVERIFIED and it is now closed.
+
+FACT: the CODE-4 test blast-radius arithmetic in `non-spec-changes.md:348-391` is exact against the tree, checked line by line. `tests/tier8_chaos/coordination_crash_takeover_test.go` seeds unset at `:239-241` and asserts 1/1/2 at `:267`/`:283`/`:296` (→ 2/2/3), while the two `pod.LastFenced()` subtests seed 1 explicitly at `:118` and `:179`, so the CODE-1 and CODE-4 edits genuinely sit on disjoint lines. `tests/tier7a_load_local/coordination_colocation_race_test.go` seeds `CoordinationGeneration: 0` at `:144` and asserts 0 at `:287-288` (both shift), while `:130` seeds 1 and `:264-265` asserts 2 (unaffected). `coordination_takeover_test.go` `mustCreate` sites are `:74`, `:142`, `:241`, `:301`. `coordination_mirror_test.go` is correctly exempt: `s1` seeded at 2 (`:84`) and asserted at 2 (`:116-117`); `s2`/`done` seeded unset (`:85-86`) and never asserted on the generation.
+
+FACT: a sweep of every `*_test.go` naming `CoordinationGeneration` (34 files) turns up no additional class-1 site. Every other file that asserts a session row's generation seeds it explicitly and above zero — `pkg/gateway/sessionserver/coordination_fence_test.go` (4, 9, 14, 10), `failure_test.go` (7, 1, 11), `tests/tier4_integration/checkpoint_intent_generation_test.go` (set via Update) — and the `barrier.Target{CoordinationGeneration: 1}` constants in `concurrent_drain_test.go:79` and `prestop_no_double_checkpoint_test.go:121` are not session rows. The proposal's "this class has one site" claim for class 2 survives the sweep.
+
+FACT: D6's "for the duration of that session's binding on the pod" is mechanically exact, not approximate. `deregisterSlotLocked` DELETES the map key (`pkg/adapter/slotsession.go:174-189`, the `delete(s.slots, sessionID)` at `:180`) and `ensureSlotStateLocked` mints a fresh entry on the next claim, so no path clears `sessionID` while retaining the entry. A rebind therefore genuinely comes back with `lastFenced == 0` and `initialized == false`. The accessor blast radius is also closed: `Server.LastFencedGeneration()` has exactly three callers (`holdstate.go:119`, `coordination_test.go:73`, `coordfixture.go:115`), `s.barrier` is reached outside `pkg/adapter` non-test code only from `checkpoint.go:122`/`:124` and from `coordination_test.go:224-226`, `:282`, `:285`, `:356-357`, and `coordfixture` has exactly three importers (tier4, tier7a, tier8) — every one of them already in §9.
+
+DECISION: returned an empty findings list — BECAUSE tracing the fence, barrier-gate, gap-detection, hold-timeout, mirror-to-barrier, and migration/rollout flows from origin to final effect found no predicate drift, unreachable trigger, bypassable gate, granularity mismatch, or revert/rollout divergence that the staging does not already state. ALTERNATIVES rejected as below the materiality bar: (a) the "a case landing in `tests/tier2_component/stores/` alone leaves tier 0 red" rationale at `non-spec-changes.md:326-330` is over-stated, because `lint-migrations.sh` pass 3 greps the number as a bare substring anywhere under `tests/tier2_component/migrations/` (`scripts/lint-migrations.sh:74-90`) and the separately-staged `prodMigrationSchema` entry for 0181 already satisfies it — the placement is right, only the reason is one step too strong; (b) `summary.md:659` anchors the §9 list at `non-spec-changes.md:380-421` when the section runs 393-433, and `:300`/`:306` are each ~2 lines off — pure anchor drift that leaves every supported claim true; (c) `CheckpointBarrier`/`CoordinatorFence` run `checkSessionBound` and then resolve the entry, which is two lookups with an unstated disposition if the entry vanishes between them — the window contains no blocking call and any reasonable resolution is the same `FailedPrecondition`, so filing it would be a request to over-specify.
+
+UNVERIFIED: whether `newFencedServer` (`pkg/adapter/coordination_test.go`, used by `TestCheckpointBarrierRejectsWithoutFence` at `:189-197`) leaves the bound session UNfenced. The proposal's amendment disposition assumes it does. I read the call site but not the helper body; a fixer touching that disposition should confirm it.
+
+
+### [non-spec-recheck.2.review-fresh.1]
+WATCHOUT: the cache path this lane is told to read, scratchpad/cp-cache/0076-run12/fresh-r2-8f4a274f2915.json, holds an answer whose single finding (the TestCheckpointBarrierRejectsWithoutFence amendment) is on THIS round's refuted list. Returning the cache verbatim would have re-reported a refuted finding. Do not blind-return a cache hit; check its findings against the round's refuted list first. — EVIDENCE: scratchpad/cp-cache/0076-run12/fresh-r2-8f4a274f2915.json
+FACT: the delta this round is two cells only, in summary.md's cross-proposal impact table (the 0075 row gains the `0075...:235-236` Dependencies and `0075...:192-193` Non-goals corrections; the 0080 row's citation moves from spec-changes.md:124-127 to :146-151). All four new citations resolve: proposals/0075_fix_derive-message-scope-from-the-address-type.md:192-193 and :235-236, and the gap-reset bullet at proposals/0076.../...spec-changes.md:146-151. The diff against scratchpad/cp-snap/0076-run12/non-spec-recheck-r2 is EMPTY, so non-spec-changes.md did not move at all this round. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type.md:235-236
+FACT: tier 3 runs ONLY `./tests/tier3_contract/...` under the `contract` build tag; `contractTargets` with an empty subset list resolves to that glob and nothing else. A case placed anywhere under pkg/ is not tier 3 no matter what it asserts. — EVIDENCE: cmd/lenny-test/cmd_run.go:1382-1384
+FACT: the landed tier-3 coordination suites are descriptor-only. tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go has exactly one Test (field set and numbering of CheckpointBarrierResponse) and tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go pins field numbers and kinds. Neither exercises the accept/reject gate, so nothing landed at tier 3 turns red under D7 — and nothing landed there covers D7 either. — EVIDENCE: tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go:48
+FACT: `pkg/gateway/runtime/adapterclient/checkpointbarrier_test.go` is in §9 for a reason §8 never states: it drives a real `adapter.Server` and calls `srv.BarrierWaiting()`, a pod-wide accessor CODE-1 makes per-session. It is a tier-1 package test, not a tier-3 one. — EVIDENCE: pkg/gateway/runtime/adapterclient/checkpointbarrier_test.go:161
+FACT: all §9 coordfixture accessor call sites resolve: `Pod.Fence` at tier4:83, tier8:130/:184, tier7a:169; `LastFenced` at tier4:109/:110/:144/:145, tier8:150/:195/:223, tier7a:260/:261; `StaleRPCRejected` at tier4:151, tier8:165. The tier-4 split-brain session is seeded at `CoordinationGeneration: 1` explicitly (tests/tier4_integration/coordination_fence_split_brain_test.go:71-72), so it is correctly absent from CODE-4's baseline-shift list. — EVIDENCE: tests/tier4_integration/coordination_fence_split_brain_test.go:71
+FACT: 0181 is still the free migration number (migrations/0180_drop_checkpoint_slot_id.up.sql is the last), and the anchors CODE-4 cites hold: the lease column default at migrations/0164_coordination_lease.up.sql:44, the retained session check at migrations/0050_session_record_fields.up.sql:38-39, memstore's SchemaVersion normalisation at memstore.go:58-61, pgstore's at pgstore.go:244-248, and `coordination_generation` in the insert column list at pgstore.go:177. — EVIDENCE: migrations/0050_session_record_fields.up.sql:38-39
+FACT: `LastFencedGeneration()` has exactly one production caller, pkg/adapter/holdstate.go:119, as CODE-1 claims; the only other callers are tests/testinfra/coordfixture/coordfixture.go:115, pkg/adapter/coordination_test.go, and the adapterclient test. — EVIDENCE: pkg/adapter/holdstate.go:119
+DECISION: filed one finding, the tier-3 case with no home — BECAUSE §8:339-341 names a tier-3 wire case for the behavior D7/CODE-2 changes, the checklist declares tier 3 on S4, S6, and S7, and §9 lists no tests/tier3_contract surface at all, while §9 names a new-file home for every other new case ("a new file under `tests/tier2_component/migrations/`"). — ALTERNATIVES: rejected filing the unlocated tier-2 resume-fence case at :338, because §9 already lists two plausible tier-2 homes; rejected the missing `Pod.Fence`/`StaleRPCRejected` sites in the tier-8 and tier-7a bullets, because §9 lists both files and the step-split argument still holds on disjoint lines.
+
+
+### [non-spec-recheck.2.review-security.1]
+
+FACT: this round's delta is two table cells in `summary.md` only. `diff -rq` of the
+`non-spec-recheck-r2` snapshot against the live directory is empty, and `non-spec-r3`
+differs only in `summary.md` and the review log. `spec-changes.md`, `non-spec-changes.md`,
+and the checklist have been byte-identical since the `spec-r3` snapshot (same md5 prefix
+`8f4a274f2915` across spec-r3, non-spec-r3, and non-spec-recheck-r2).
+EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-snap/0076-run12/
+
+WATCHOUT: the cache path prescribed by the prompt is shared across LANES. The file
+`scratchpad/cp-cache/0076-run12/security-r2-8f4a274f2915.json` was written by the SPEC-lane
+security reviewer (its coverage names the `spec-r2` snapshot and says "this loop is
+spec-text only"), and the hash key does not include `summary.md`, so a non-spec lane that
+blindly returns it returns a spec-lane answer over text the spec lane never had to read.
+Verify the cached coverage names your own lane before returning it.
+EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0076-run12/security-r2-8f4a274f2915.json
+
+FACT: no lock inversion is introduced by CODE-1 + CODE-3, and this is worth not re-deriving.
+`CoordinatorFence` holds `coord.mu` and calls `exitHoldState`, which takes `hold.mu`
+(pkg/adapter/coordination.go:126, holdstate.go:143). The reverse order never occurs:
+`onHoldTimeout` unlocks `hold.mu` before pass 1 and pass 2
+(pkg/adapter/holdstate.go:188), so `terminateHeldSession` / `writeHoldPostMortem` reading
+each session's own `lastFenced` off the `*slotState` runs with `hold.mu` released, and
+`enterHoldState` reads its inputs through accessors before taking `hold.mu`
+(holdstate.go:116-121).
+EVIDENCE: pkg/adapter/holdstate.go:186-188, pkg/adapter/coordination.go:126
+
+FACT: `coordinationState.quiesced` is advisory today, not an enforced control. The
+quiesce-strict enforcement against StartSession/SendMessage is deferred to F-10.1.6, so
+re-scoping `quiesced` per session removes no shipped gate.
+EVIDENCE: pkg/adapter/coordination.go:33-38
+
+FACT: the pod's self-reported `CoordinatorFenceResponse.LastFencedGeneration` is never
+consumed as an authority. `coordfence.fence` re-reads the store on a stale rejection
+(`f.generations.CoordinationGeneration`) rather than trusting the pod's echoed value, so
+the trust-boundary bar is met before and after this change.
+EVIDENCE: pkg/gateway/coordination/coordfence/coordfence.go:170-176
+
+FACT: the barrier carries the `coordination_lease` MIRROR value (`Target.CoordinationGeneration`
+from the barrier-target query), not the session row. CODE-4 backfills only `sessions`, so a
+pre-existing lease row can sit at 0 while its session row is backfilled to 1. This is NOT a
+finding: a barrier at 0 is already refused `InvalidArgument` by the shipped positive-generation
+check, so the failure mode is unchanged and fail-closed.
+EVIDENCE: pkg/gateway/coordination/barrier/barrier.go:238-241, pkg/adapter/coordination.go:224-226,
+migrations/0164_coordination_lease.up.sql:40-44
+
+DECISION: returned an empty findings list. BECAUSE both security checks came back clean —
+no established control (zero-RBAC agent pod, default-deny egress, fail-closed admission,
+`checkSessionBound`, the positive-generation refusals) is removed, bypassed, or feature-gated,
+and every bound the change touches is sourced from Postgres through the gateway rather than
+from a pod self-report. ALTERNATIVES: filed nothing on the un-backfilled lease mirror or on
+D7's retirement of the never-fenced barrier refusal, because the first is unchanged
+fail-closed behavior and the second leaves `checkSessionBound` as the refusal, which the
+proposal pins with its own tier-1 error-path case (non-spec-changes.md:227-238).
+
+
+
+### [non-spec-recheck.2.review-test-coverage.1]
+FACT: Cache hit at /home/ec2-user/lenny/scratchpad/cp-cache/0076-run12/test-coverage-r2-8f4a274f2915.json returned this lens's own prior empty-findings answer over identical spec-changes+non-spec-changes+checklist text; returned it verbatim and did no re-review. EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0076-run12/test-coverage-r2-8f4a274f2915.json:1
+
 ## DECISION
 One finding filed. Both fixes land on their own subject; the residue is in a
 neighbouring SPEC-1 paragraph the G2 edit trimmed.
@@ -5099,3 +5197,85 @@ WATCHOUT: the disagreement in strength between the 0075 impact row and OD3's cos
 firing-1 shard recorded. The row states the effect deliverable by deliverable and OD3 states it as leaving
 0075's retyping deliverable without a subject. The row governs, and the disagreement is left where it is
 because editing an open decision's statement of what its answer costs is outside a format pass.
+
+### [f3.other-proposals]
+
+DECISION: Item `marker:0075:the pod. the identifier selects nothing.` lands as an impact row. The 0075 row
+in `## Impacts on other proposals` (`summary.md:748`) keeps its body and its "What it must do about it"
+cell gains one sentence naming 0075's own two statements of the relationship, which the cell did not carry:
+`## 10. Dependencies` calls this proposal independent and the collision a rebase for whichever lands second
+(`0075...:235-236`), and the Non-goals bullet calls the pod-wide counter a defect 0076 owns
+(`0075...:192-193`); after CODE-1 the first understates the effect, because a rebase leaves an argument
+standing and this deletes one, and the second describes a field that no longer exists. No other cell moved,
+no other row moved, and no file outside `summary.md` was edited for this item. The replacement is inside a
+single table line, so no line number anywhere in the file shifts.
+FACT: every anchor written or touched re-resolves today. `proposals/0075_...:3` is `Draft for review.`,
+`:4` is `2026-08-19`, and `git log -1` on the file returns 2026-08-19. `:89` is "the pod. The identifier
+selects nothing.", `:91` opens the pod-reuse guard argument, `:192-193` is the `The pod-wide coordination
+generation` Non-goals bullet, and `:235-236` is the `## 10. Dependencies` independence sentence.
+`pkg/adapter/server.go:302` is still `coord coordinationState`, and the three drifted 0075 anchors the row
+reports are unchanged from the `[f2.other-proposals-0075-anchor-2]` re-check.
+WATCHOUT: the Non-goals citation is written as `0075...:192-193` rather than `:193`, because the bullet's
+subject sits on `:192` and a reader following `:193` alone lands mid-sentence.
+OPEN: the row and OD3's cost paragraph still state the effect on 0075 at different strengths, as the two
+earlier firings recorded. The row governs. Editing an open decision's statement of what its answer costs
+belongs to the item that holds OD3, so it was left as it stands.
+
+### [f3.other-proposals-0080]
+
+DECISION: item `marker:0080:### 1.14 whether the adapter's hold state is partitioned per slot is still
+unstated`, disposition `impact-row`. The 0080 row in `summary.md` `## Impacts on other proposals`
+(line 749) already carried the disposition's text in full: both invalidated entries (§1.14 losing its
+subject to SPEC-2's §29.10 bullet removal, and §2's attribution of the hold-release item to this proposal,
+which D5 declines), the stale five-gap count, the surviving §1.12 and §1.13 entries, and the narrowed
+`Interrupt`-and-barrier bullet. The only edit this firing owed was the one drifted anchor.
+LANDED: in `summary.md`, the 0080 row's `What this change does to it` cell, the citation for the sentence
+stating that the staged text re-scopes the gap reset without asserting the adapter meets it, corrected from
+`0076...spec-changes.md:124-127` to `:146-151`. Nothing else in the row, the table, or the file was touched,
+and the replacement sits inside one table line, so no line number in the file shifts.
+FACT: every anchor in the row re-resolves today. `spec-changes.md:146-151` is the `How the per-session gap
+reset is built` bullet and `:151` ends "The staged text re-scopes the requirement and does not assert that
+the adapter meets it."; `:124-127` now carries `## 3. Design overview` prose about gap detection.
+`spec-changes.md:475-478` stages the removal of §29.10's first "does not state" bullet;
+`spec/29_communication-scenarios.md:1523-1527` is that bullet, and the list carries four bullets
+(`:1523`, `:1528`, `:1536`, `:1540`). `tests/claim-map.json:174-178` is the `In-flight RPC cancellation on a
+generation gap` row at `ABSENT`, and `spec-changes.md:457-469` states no row is restatused.
+`proposals/0080_...:7` is `2026-08-31`, `:3-6` is the EARLY DRAFT inventory disclaimer, `:186` is the
+five-gap sentence, `:191-192` and `:211` both attribute the hold-release item to this proposal.
+WATCHOUT: this anchor has now drifted twice inside the same review, both times because `spec-changes.md`
+`## 3. Design overview` and `## 4. Detailed design` grew above it. A later firing that edits either section
+re-checks the 0080 and 0075 rows before it finishes.
+
+### [f3.cleanup]
+
+DECISION: `summary.md` was left byte-for-byte as the firing's write path left it. It already carries the
+eight required sections in the required order and nothing else: the `# Summary:` title, `## Summary` as a
+container holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, and `**Watch out for.**`
+in that order and carrying no prose of its own, then `## Goals`, `## Non-goals`, `## Open decisions for
+human to make`, `## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other
+proposals`, and `## Deliverable index` last. No relocation was owed and none was made.
+FACT: the file carries no `###` heading at any depth, so there is no `### Retired` block or equivalent
+inside `## Open decisions for human to make` to delete, and no meta-list of staged items with a proposed
+disposition survives anywhere in it. The `**Fixed decisions.**` and `**What is fixed.**` labels are already
+carried under their listed names.
+FACT: `## Open decisions for human to make` carries seven entries and every identifier is intact and
+unique: OD2, OD3, OD9, OD12, OD14, OD15, and OD16. That set matches the six items this firing carried as
+the human's plus OD16, whose resolution the gate refuted, so OD16 stays where it stands. No identifier a
+withdrawn entry held is reused; OD8 appears only inside OD9's prose as a record of what it settled.
+FACT: both preambles in that section are true against the entries beneath them. The first scopes the
+derivation-and-validation claim to OD2 and OD3, which are the two entries above the second preamble; the
+second states that OD9, OD12, OD14, OD15, and OD16 reached the section from the review log's open list and
+that an entry the loop left without a recommendation says so, which OD9, OD14, and OD16 each do. The
+`## Defects` preamble ("None blocks sign-off. Each was confirmed against the working tree.") holds over the
+five entries below it, none of which carries a decision. Nothing this pass did falsified any of the three,
+because this pass moved no text.
+FACT: `## Deliverable index` is preserved exactly, in last position, with its nine rows (SPEC-1 through
+SPEC-3, SCHEMA-1, CODE-1 through CODE-4, and TEST-1) unaltered in wording and order.
+FACT: the two intra-file citations in the summary still resolve after this pass, because no line moved:
+`summary.md:150` is the Non-goals bullet on renaming the fence's session field, and `summary.md:262-268`
+is OD3's paragraph naming the cost of staging Question A's answer here.
+OPEN: `## Impacts on other proposals` and OD3 still state the effect on proposal 0075 at different
+strengths, which `[f1.other-proposals]`, `[f2.other-proposals-0075]`, and `[f3.other-proposals-0075]` each
+recorded before this pass. The row governs. No second row was added and no row was reworded here, and
+correcting an open decision's own statement of what its answer costs is the decision-holder's edit rather
+than a format pass's.
