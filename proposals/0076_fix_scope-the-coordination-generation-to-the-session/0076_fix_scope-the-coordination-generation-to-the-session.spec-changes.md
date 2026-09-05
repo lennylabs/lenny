@@ -30,7 +30,8 @@ fixes total connection loss as a whole-pod failure that puts every slot on the p
 and fires the whole-pod replacement trigger, so a partly held pod would contradict the gateway behavior the
 specification states. What moves is the generation the hold reports, which SPEC-1 and CODE-3 carry.
 
-**D6. A session's fenced generation is unset until that session's first accepted fence on the pod.** The
+**D6. A session's fenced generation is held for the duration of that session's binding on the pod, and
+within a binding it is unset until that session's first accepted fence.** The
 first fence for a session is recorded at whatever value it carries and is never a gap, and the gap predicate
 and the stale rejection are both defined only against a recorded value, so both apply from that session's
 second accepted fence onward. The pod admits no session-scoped RPC for a session before it is bound
@@ -102,6 +103,20 @@ and step 2 makes that acknowledgement a hard precondition for every operational 
 that occurs there comes from the mirror carrying a value below the one the pod holds, which a wider
 comparison refuses exactly as equality does.
 
+**D9. D7, SPEC-1's §10.1 counter-baseline paragraph, SPEC-3, CODE-4, and migration 0181 land in this
+proposal.** They are one deliverable rather than four separable ones. Once the fenced generation is held
+per session under D1, a bound session for which the pod holds no fenced generation becomes an ordinary
+reachable state that the shipped specification states no rule for, so SPEC-1 states one and that rule is
+D7. The adapter refuses a non-positive `coordination_generation` on the barrier
+(`pkg/adapter/coordination.go:224-225`) before it reaches the generation gate (`:236-238`), so for a
+never-handed-off session whose row still reads 0 the acceptance arm D7 states is unreachable, and the
+counter baseline SPEC-1, SPEC-3, and CODE-4 carry is the condition under which D7 fires at all. That chain
+is read from the shipped guard order rather than declared. Migration 0181 runs as a
+`pre-install,pre-upgrade` hook at weight -5 (`charts/lenny/templates/migrate-job.yaml:38-39`) that
+completes before the gateway Deployment rolls, and the platform is recorded as pre-deployment with no
+deployments in the wild (`.claude/rules/code-best-practices.md:62`), so the schema change carried here
+costs review attention rather than exposure of a running installation.
+
 ## 3. Design overview
 
 `coordinationState` moves from `Server` onto the per-session slot registry entry.
@@ -148,9 +163,10 @@ against the post-0073 state of each file.
 `spec/10` §10.1.2 states the pod-side fenced generation as one state model covering its scope, its initial
 condition, and what the gap path resets. The pod holds `last_fenced_generation` per bound session, and that
 value is the one every gateway-to-pod RPC naming that session is validated against, so a handoff for one
-session neither fences nor unfences another. The value is unset until that session's first
-accepted fence on that pod, that first fence is recorded at whatever value it carries and is subject to
-neither the stale rejection nor the gap predicate, and the gap predicate
+session neither fences nor unfences another. The pod holds that value for as long as the session is bound
+to it, and the value does not survive an unbind. Within one binding the value is unset until that session's
+first accepted fence, that first fence is recorded at whatever value it carries and is subject to neither
+the stale rejection nor the gap predicate, and the gap predicate
 `new_generation > last_fenced_generation + 1` applies from a session's second accepted fence onward. The gap
 path's reset is per session: it cancels and discards the in-flight RPCs received for that session after that
 session's last fenced generation, resets the transient tool-call and lifecycle state that session
@@ -438,9 +454,19 @@ unit for the compared value and defers to §10.1 for the rule. The generation-st
 criterion above: it states what the message carries and does not call that value the current one, so the
 baseline SPEC-1 and SPEC-3 state leaves it true.
 
-No §28.4 claim-register row moves. The rows in `tests/claim-map.json` name mechanisms and wire fields rather
-than the scope a sentence states, and their anchors resolve to headings this change does not move, so that
-file is not opened by this proposal.
+No §28.4 claim-register row moves, and none carries a wrong status during the interval in which the spec
+edits above have landed and the code has not. §28.4 defines each status against the mechanism a row names:
+`WIRED` means the mechanism is reachable from production code, `UNWIRED` that it is implemented and has no
+production caller, and `ABSENT` that it is specified and not implemented
+(`spec/28_communication-channels.md:163-165`). The `CoordinatorFence` row (`tests/claim-map.json:460-465`)
+and the `CheckpointBarrier` row (`:448-453`) are both `WIRED`, and the surfaces they name stay reachable
+across every step of this proposal, because the code deliverables edit those surfaces rather than remove
+them: the call sites at `pkg/gateway/coordination/coordfence/coordfence.go:159` and
+`pkg/gateway/coordination/barrier/wiring.go:49`, and the handlers at `pkg/adapter/coordination.go:84` and
+`:211`. Re-scoping what the specification says about a mechanism leaves the register's statement about that
+mechanism true, so no row is restatused and no deferral identifier is owed. The rows in
+`tests/claim-map.json` name mechanisms and wire fields rather than the scope a sentence states, and their
+anchors resolve to headings this change does not move, so that file is not opened by this proposal.
 
 **`spec/29_communication-scenarios.md`.** The §29.10 co-tenancy classification changes, §29.7's framing
 paragraph applies the predicate §10.1.8 step 1 applies, and the Preconditions paragraph and steps 2, 7, and
@@ -528,8 +554,8 @@ exemption, each with the pod as the unit, and by the message-level `CoordinatorF
 carrying a strictly older generation. Both take the §28.5.1 Messages wording above: the
 pod records the generation against the session the fence names, and from that point rejects every RPC
 carrying a generation older than the one it holds for that session. The `CoordinatorFence` RPC comment also
-takes D6's unit for the exemption, so it reads as the first fence for that session on this pod, and its gap
-sentence takes the session qualifier the Degradation bullet takes. The
+takes D6's unit for the exemption, so it reads as the first fence for that session within its current
+binding on this pod, and its gap sentence takes the session qualifier the Degradation bullet takes. The
 `CoordinatorFenceRequest.coordination_generation` field comment (`:1449-1451`) already states per-session
 monotonicity, which D1 and D3 make true, and it keeps its wording.
 

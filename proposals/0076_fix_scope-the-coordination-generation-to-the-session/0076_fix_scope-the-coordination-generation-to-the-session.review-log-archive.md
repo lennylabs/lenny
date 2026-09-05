@@ -12856,3 +12856,429 @@ claim) is accurate. `git diff 0b959a418..028127387` over `spec-changes.md` is 32
 them (the §28.8 `CH-BARRIER` preservation-clause repair, the OD2 sentence in the
 `CoordinatorFenceResponse` paragraph, and a non-goal about 0075), so a further security pass over this
 text buys nothing unless one of those four is rewritten.
+
+### [spec.2.review-fresh.1]
+
+DECISION: Returned an empty findings list on run 11 spec round 2 — BECAUSE every citation in `spec-changes.md` I could check resolved exactly, and no staged edit leaves the applied spec inconsistent, unimplementable, or missing a surface — ALTERNATIVES: I worked up and then dropped four candidates, listed below, each because a material skeptic would refute it as wording or as pre-existing drift.
+
+FACT: `spec-changes.md`, `non-spec-changes.md`, `summary.md`, and the checklist are BYTE-IDENTICAL to `scratchpad/cp-snap/0076-run11/spec-r2`; only the review log differs. `diff -rqu` between the two directories reports one differing file. — EVIDENCE: `diff -rqu scratchpad/cp-snap/0076-run11/spec-r2 proposals/0076_.../`
+
+FACT: every spec, proto, and code anchor in `spec-changes.md` that I sampled is exact at today's HEAD. Checked and correct: `spec/10:30`, `:37`, `:38`, `:41`, `:58`, `:60`, `:183`, `:184`, `:198`; `spec/28:237-240`, `:251-253`, `:291-296`, `:330-331`, `:333-335`, `:349-353`, `:361-365`, `:1675`, `:1679-1681`, `:1683-1685`, `:1805`, `:1806`, `:1807`, `:1808`; `spec/29:1150-1152`, `:1186`, `:1259-1261`, `:1274`, `:1307-1313`, `:1322-1326`, `:1523-1527`, `:1528-1535`, `:1540`; `spec/04:200`; `schemas/lenny-adapter.proto:153-162`, `:165-179`, `:1442-1446`, `:1449-1451`, `:1455-1462`, `:1469-1474`, `:1477-1479`, and all twelve operational field ranges; `pkg/adapter/coordination.go:89`, `:92-94`, `:99`, `:108-121`, `:216`, `:223-226`, `:228-231`, `:236-239`; `pkg/adapter/holdstate.go:39-44`, `:53-59`, `:107-112`, `:119`, `:225-229`, `:283-296`; `pkg/gateway/coordination/coordfence/coordfence.go:147-153`; `cmd/lenny-gateway/httpsurface.go:588-602`; `migrations/0050_session_record_fields.up.sql:38-39`; `pkg/gateway/sessionserver/start.go:4233-4245`. Do not re-derive these.
+
+FACT: the sweep for missed edit sites outside `spec/10`, `spec/28`, `spec/29` is empty. `coordination_generation` appears in `spec/` only at `spec/04:200`, `:323`, `:461`, `:711-712`, `spec/07:215`, `spec/12:160`, `spec/16:199`, `:208`, `spec/18:238` plus the three staged files; none of those states a pod-side unit or a counter baseline. `docs/` has two mentions (`docs/reference/adapter-contract.md:69`, `docs/getting-started/architecture.md:173`), neither of which states the pod-side rule or a baseline. `charts/` and `schemas/*.json` have none. `coordinator_connection_lost` occurs in `spec/` only at `spec/10:60` and `spec/29:1274`, both staged. — EVIDENCE: `grep -rn coordination_generation spec/ docs/ charts/ schemas/`
+
+FACT: the `coordinator_lost` log line and the on-disk post-mortem already carry a per-record generation field, so SPEC-1's §10.1.4 statement needs no schema or wire surface. — EVIDENCE: `pkg/adapter/holdstate.go:226-229` (`"last_generation", gen`), `:287-296` (`LastGeneration int64 \`json:"lastGeneration"\``)
+
+WATCHOUT: four candidate findings I derived and rejected; do not spend another pass on them unless you can beat the stated ground.
+  1. §10.1's staged baseline sentence closes "every generation a pod validates is positive and is strictly greater than the value carried before the takeover that fenced it" (`spec-changes.md:244-246`), while `fenceResumedPod` fences at the value it reads with no increment (`pkg/gateway/sessionserver/start.go:4237` → `coordfence.go:143-159`), so a resume-fenced pod validates a generation no takeover minted. REJECTED: the clause names "the takeover that fenced it", so on the resume path it has no referent and reads as vacuous rather than false, and the accept path is unaffected.
+  2. Staged §10.1.8 step 1 and §10.1.2 step 3 say a barrier for a bound session the pod holds no generation for "is accepted", while the retained non-positive `InvalidArgument` guard (`pkg/adapter/coordination.go:224-226`) refuses it when the barrier's cache fallback seeds 0 (`cmd/lenny-gateway/httpsurface.go:592-594`). REJECTED: already settled in `### Settled` ("the barrier's cache fallback puts a literal 0 on the wire and must not be floored"); the outcome is fail-closed and the spec states no non-positive guard to contradict.
+  3. SPEC-1's closing paragraph says SPEC-2 stages step 3's acceptance rule into §29.10's two bullets and "each takes the acceptance sentence above" (`spec-changes.md:283-284`), while SPEC-2's own bullets give different, §29.10-level wording (`:453-459`, `:466-470`). REJECTED: both wordings state the same rule; the mismatch is verbatim-adoption versus paraphrase, which is wording.
+  4. §28.5.1's `CH-BARRIER` Preconditions bullet names "the fence acknowledgement that govern[s] every gateway-to-pod RPC" (`spec/28:354-357`) and is absent from SPEC-2's non-site enumeration, while D7 accepts a barrier for a session no fence ever reached. REJECTED: it states a duty on the sending replica, which is the criterion's own non-site arm, and §10.1.2 step 2's duty binds only a replica that has just acquired coordination.
+
+FACT: §28.5.1's `CH-ATTACH` Exclusivity bullet (`spec/28:245-248`) is the one generation-bearing bullet in the `CH-ATTACH` card that SPEC-2's non-site enumeration does not name. It states the constraint and the guard and fixes no compared value, so it is a non-site under the stated criterion; the omission is from the enumeration, not from the edit set. — EVIDENCE: `spec/28_communication-channels.md:245-248`
+
+
+### [spec.2.review-mechanism.3]
+
+DECISION: returned an EMPTY findings list — BECAUSE `diff -rq scratchpad/cp-snap/0076-run11/spec-r2 <proposal dir>` reports exactly one differing file, `review-log.md`, so the staged spec text is byte-identical to the text run 11 round 1's eleven lenses cleared and its one finding (the bound-session qualifier) already landed; and every mechanism candidate I re-derived cold this pass resolved to a standing `### Traps` entry, a refuted class, or a human open decision — ALTERNATIVES: five declined, listed below.
+
+FACT: re-verified cold, independently of the log, that the staged replacements sit correctly in their host sentences: shipped §10.1.2 step 2 (`spec/10_gateway-internals.md:38`), its gap bullet (`:40`), step 3 (`:41`), §10.1.4 Observability (`:60`), §10.1.8 step 1's closing false-positive sentence (`:183`, on the same physical line as the "carries the current `coordination_generation`" clause), §28.5.1 `CH-FENCE` Messages/Exclusivity/Degradation (`spec/28:314-317`, `:329-332`, `:333-340`), §28.6 (`:1669-1677`, `:1679-1690`), §28.8 rows (`:1805-1808`), §29.7 framing (`spec/29:1150-1152`), §29.8 Preconditions/step 2/step 7/step 9 (`:1259-1264`, `:1274`, `:1307-1313`, `:1322-1326`), §29.10's three lists (`:1461-1543`). All resolve verbatim.
+
+FACT: the §29.10 removal is sound end to end. The bullet the staging deletes (`spec/29_communication-scenarios.md:1523-1527`) asks two questions, whether hold state is partitioned per slot and whether a fence for one slot's session holds a sibling slot's RPCs, and BOTH are answered by staged text: the §10.1.4 Observability sentence keeping the hold and the gauge pod-scoped, and the new §29.10 "Shared by the whole pod" hold bullet's "a successful fence for any one of those sessions exits the hold for the pod". I re-derived this rather than taking the proposal's word for it — EVIDENCE: spec/29_communication-scenarios.md:1519-1527, spec/10_gateway-internals.md:56-60
+
+FACT: the baseline shift is neutral for the two `MAX(coordination_generation)` consumers. `spec/10_gateway-internals.md:157` records the counter on the partial-manifest intent row and `:171` selects the active manifest under `coordination_generation = (SELECT MAX(...))`; both are per-session relative comparisons over a monotonic counter, so shifting a session's baseline from 0 to 1 changes no selection, and migration 0181's backfill closes the mixed-row window. Do not re-derive this as a missed SPEC-3 mirror — EVIDENCE: spec/10_gateway-internals.md:157, :171
+
+WATCHOUT: candidates I derived cold and killed this pass; do not respend a verification on any without new evidence. (1) Staged step 3's closing sentence ("Because fence confirmation is required before this step is reached, the pod holds one generation for that session at a time") read against the unset arm two sentences earlier — the premise is the handoff sequence's own step ordering, exactly as in the shipped sentence it replaces, so the two sentences partition the session population rather than contradict. (2) §10.1.8 step 1's staged provenance clause ("read from the session's coordination state when the barrier-target set is assembled") against step 1's retained "carries the current `coordination_generation`" — compatible, and the standing MISTAKE entry on provenance-versus-outcome already prices it. (3) Shipped gap clause (a) presupposing that RPCs from unfenced coordinators were ACCEPTED and are in flight, which step 3's equality gate contradicts — genuinely odd, but shipped and unchanged in substance by the re-scoping, so it fails the "becomes wrong" test. (4) §28.6's staged `CH-FENCE` arm being silent on an equal fence generation while §10.1.2's retry path resends the same value — pre-existing silence, two lenses already declined. (5) The design overview's "§10.1.8 step 3 already fixes the gate's unit at the session" against SPEC-2 keeping "the unit of the quiescence a barrier establishes" unanswered in §29.10 — different objects (the ack-to-checkpoint-id correlation versus whether quiescing one slot stops a co-tenant's dispatch), and the applied spec stays consistent either way.
+
+USEFUL [`### Traps`, "diff -rq is the cheapest move on this proposal"]: sixth consecutive round in which the "read the changed sections first" instruction has no target in the staged file. One call priced the whole reading order again.
+USEFUL [`### Settled`, "the `spec/28` and `spec/29` edit sites are settled by one membership criterion"]: I re-read §28.5.1, §28.6, and the §28.8 rows against the criterion cold and reached the same site set, including the `CH-FENCE` Exclusivity bullet as a site and both `CH-CHECKPOINT`/`CH-BARRIER` §28.5.1 Exclusivity bullets as non-sites. Confirming rather than deriving cost four `sed` calls.
+
+
+### [spec.1.review-applicability.1]
+
+DECISION: returned an EMPTY findings list — BECAUSE a full class-1 through class-6 simulation of the staged
+spec edits against the live tree produced nothing not already refuted or weighed-and-declined in the
+standing context. ALTERNATIVES rejected, each with its ground: (1) the two `IMPLEMENTOR TO FILL THE BLANKS`
+headers at `spec-changes.md:137` and `:158` — refuted repeatedly and now carried as OD16, a human decision;
+(2) staged §10.1.2 step 3's third sentence ("the pod holds one generation for that session at a time")
+against the unset arm two sentences earlier — killed explicitly at `review-log.md:2296` and `:1543`;
+(3) SPEC-1's step-2 instruction "gains `for that session`" without fixing the qualifier's attachment point —
+refuted class (i), recoverable from the §28.5.1 mirror; (4) SPEC-1 calling the "Generation counters" bullet
+§10.1's when it sits in §10.1.1 — standing Traps entry, loose rather than false.
+
+FACT: every anchor SPEC-1, SPEC-2, and SPEC-3 quote still resolves verbatim and uniquely as of this run.
+Re-checked by exact-string grep over `spec/*.md`: spec/10:30, :38, :41, :58, :60, :62, :183; spec/28:314-317,
+:329-332, :333-340, :1669-1677, :1679-1690, :1806, :1807, :1808; spec/29:1150-1152, :1186, :1259-1261,
+:1274, :1305-1312, :1322-1326, :1460-1470, :1519-1540; spec/04:200 (inside §4.2, whose heading is at
+spec/04:192). Four quotes return zero on a single-line grep purely because the spec wraps them across a
+newline; they are present. — EVIDENCE: spec/10_gateway-internals.md:38, :41; spec/28_communication-channels.md:1807
+
+FACT: the §28.8 exclusivity cell is field 5 of an `awk -F'|'` split on lines 1805-1808, not field 6, in the
+current file. `awk -F'|' 'NR>=1806 && NR<=1808 {print NR": "$5}'` prints the "Holder of the exclusivity
+constraint changes" cells that SPEC-2 stages. The standing context's pass-21 correction says to read the
+"Operator observable" column with `$6`; that is a different column and both recipes are consistent, but a
+reader who takes `$6` looking for the exclusivity cell gets the wrong one. — EVIDENCE:
+spec/28_communication-channels.md:1803 (header row), :1806-:1808
+
+USEFUL [Standing context, "Derived inventories. Do not re-derive any of these."]: it retired the whole
+docs/, charts/, sdks/, alert, and metric sweep for this lens and left only the anchor resolution and the
+relocation legs to check, which is perhaps twenty minutes of work rather than two hours.
+
+
+### [spec.1.review-citations.1]
+
+DECISION: returned an empty findings list — BECAUSE every concrete citation in `spec-changes.md` resolves verbatim at today's HEAD, including the sites the pass-2271 FACT list did not cover — ALTERNATIVES: filing the two known-loose rationale clauses (D7's `DEFAULT 0` "because", SPEC-2's "SPEC-1 leaves step 2 unchanged"), both rejected because the standing log records them as weighed-and-declined by two and three shards respectively.
+
+USEFUL [Settled: "Derived inventories. Do not re-derive any of these."]: the anchor-arithmetic bullet (§28.8 rows one physical line each, 1803 header through 1812 `CH-RUNTIMEOPS`; §28.5.1 `CH-FENCE` Messages `:314-317`, Exclusivity `:329-332`, Degradation `:333-340`; §28.6 `:1669-1677` and `:1679-1690`) let me confirm every `spec/28` quote with three `sed` calls instead of a file scan.
+
+USEFUL [Traps: "WATCHOUT: SPEC-2's §28.5.1 `CH-FENCE` Exclusivity bullet closes 'and SPEC-1 leaves step 2 unchanged'"]: I derived this independently and would have filed it; the entry named the exact refutation ground (the clause the rationale relies on is step 2's *window* sentence at `spec/10:38`, which SPEC-1 does not touch) and saved two verifiers.
+
+FACT: `tests/claim-map.json`'s two rows cite `coordfence.go:160` / `coordination.go:85` (fence) and `wiring.go:49` / `coordination.go:212` (barrier), while `spec-changes.md` cites the same surfaces at `:159`, `:84`, and `:211`. Both are right against their own baselines — the register's numbers are one off from HEAD by the known sub-line drift, and the proposal cites HEAD. Do not file either direction — EVIDENCE: tests/claim-map.json:452, :464; pkg/adapter/coordination.go:84, :211; pkg/gateway/coordination/coordfence/coordfence.go:159.
+
+FACT: the whole `tests/claim-map.json` neighbourhood the proposal cites is stable: `CheckpointBarrier` occupies exactly `:448-453` and `CoordinatorFence` exactly `:460-465`, both `WIRED`, with `Checkpoint` stream and the pod operation lock between them at `:454-459`.
+
+WATCHOUT: `bash cat` of `spec-changes.md`, `review-log.md`, or `deviations.md` overflows the tool's output cap and gets persisted to a file that itself overflows on re-read, burning two calls for nothing. Read them with `sed -n 'A,Bp'` in slices of about 150 lines — EVIDENCE: proposals/0076_fix_scope-the-coordination-generation-to-the-session/0076_fix_scope-the-coordination-generation-to-the-session.review-log.md (4,346 lines), .spec-changes.md (656 lines, 56KB).
+
+
+### [spec.1.review-client-surface.1]
+
+FACT: The whole client-facing surface this proposal can reach is `schemas/lenny-adapter.proto` and two
+unit-neutral docs lines. Re-verified independently this round: a grep for
+`coordination_generation|coordinationGeneration|CoordinationGeneration` over `charts/`, `sdks/`, `schemas/`,
+`docs/`, `pkg/gateway/externalapi/openapi/`, and `pkg/embedded/` returns exactly ONE hit,
+`docs/getting-started/concepts.md:101`, which describes the two counters and states no unit, baseline, or
+gate. The REST/OpenAPI document is at `pkg/gateway/externalapi/openapi/openapi.json` (NOT
+`pkg/gateway/openapi/openapi.json`, which does not exist) and its only "generation" hit is a pool
+Postgres-versus-CRD comparison at `:3318`. No CRD, no SDK type file, no JSONL or runtime-ops-events schema
+carries the counter or the coordinator-hold records — EVIDENCE: docs/getting-started/concepts.md:101;
+pkg/gateway/externalapi/openapi/openapi.json:3318.
+
+FACT: The proto carrier arithmetic in SPEC-2's closing paragraphs is exact and I re-verified it end to end
+rather than trusting the ledger. `int64 coordination_generation` occurs fourteen times; `gateway's view of
+the active` occurs thirteen (twelve operational + `CheckpointBarrierRequest` at `:1477`); the twelve line
+ranges SPEC-2 names resolve verbatim, `ShutdownRequest`'s clause really does close "cannot tear the session
+down" rather than "cannot drive the pod", and `AttachRequest` (`:995-1001`) and `CheckpointRequest`
+(`:1172-1178`) really do carry the extra frame-level trailing sentence SPEC-2 leaves alone. The seven
+rule carriers (`:153-162`, `:165-179`, `:1442-1446`, `:1449-1451`, `:1455-1462`, `:1469-1474`, `:1477-1479`)
+all resolve, as do the D7 anchors `:1475-1483` and `pkg/adapter/coordination.go:92`, `:99`, `:216`, `:223`,
+`:224-226`, `:236-239` — EVIDENCE: schemas/lenny-adapter.proto:969-1623; pkg/adapter/coordination.go:86-130,
+:210-239.
+
+FACT: `docs/reference/adapter-contract.md:69` reads "Announce new coordination generation on gateway
+handoff; precondition for any subsequent operational RPC" and `:68` states the barrier without a gate;
+`spec/04:711` and `:712` are the §4.7 twins of those rows and are equally unit-neutral. None of them fixes
+the value the pod compares against, so SPEC-1's re-scoping and D7's unset arm leave all four true, and the
+"precondition for any subsequent operational RPC" phrasing states §10.1.2 step 2's sender-side duty on the
+acquiring coordinator, which SPEC-1 does not touch. Do not file any of these four as an unstaged mirror —
+EVIDENCE: docs/reference/adapter-contract.md:68-69; spec/04_system-components.md:711-712.
+
+WATCHOUT: `docs/operator-guide/upgrades.md:47-48` says "the controller sends a `CheckpointBarrier`", which
+is a pre-existing misattribution (the draining gateway replica sends it). It reads as an attribution finding
+under a client-surface lens and is not one for this proposal: the sentence is unit-neutral about the
+generation and nothing this proposal stages makes it newly wrong — EVIDENCE:
+docs/operator-guide/upgrades.md:47-48.
+
+DECISION: Returned an empty findings list — BECAUSE every externally-consumed representation this change
+touches (the adapter proto's nineteen carriers) is enumerated in SPEC-2 with resolving anchors, and every
+parallel representation (REST/OpenAPI, MCP tool schemas, SDKs, CRDs, JSONL and ops-event schemas, charts)
+mentions the counter nowhere at all — ALTERNATIVES: filing the `CoordinatorFenceResponse.accepted` staged
+wording ("not greater than the generation the pod holds for the session the fence names") as silent about
+the D6 unset case; rejected because §10.1.2 owns the unset case, the `CoordinatorFence` RPC comment SCHEMA-1
+also stages carries D6's exemption in its session unit, and the wording matches
+`pkg/adapter/coordination.go:99` exactly, which is what the paragraph says it is preserving.
+
+
+### [spec.1.review-docs-alignment.1]
+DECISION: returned an empty findings list — BECAUSE the docs-alignment surface for this proposal is closed and I re-verified the closure independently rather than trusting the log: no `docs/` page states a pod-side unit, a counter baseline, or a generation gate; the change adds and removes no metric or alert, so no `docs/reference/metrics.md`, `docs/runbooks/`, or tier-11 alert-to-runbook companion is owed; and every accepted or deferred failure mode the proposal names resolves to landing spec text rather than to reasoning alone — ALTERNATIVES: filing `docs/reference/adapter-contract.md:69` (already DEFERRED four times, and its remedy is a docs edit this loop may not make); filing the mirror-lag or the unimplemented gap reset as undocumented accepted outcomes (both are shipped-tree code defects, and asking `spec/` to document a code bug inverts the doc-follows-spec guardrail).
+FACT: the accepted-failure-mode outcomes all land in staged spec text, checked one by one: the unfenced-session no-validation window in staged §10.1.2 step 3 ("the pod does not reject that session's RPCs on generation grounds"); the barrier acceptance in staged §10.1.2 step 3 and §10.1.8 step 1; the `0` sentinel on the per-session `coordinator_lost` record and the pod-level event losing its generation in staged §10.1.4; the D5 residual in shipped §10.1.4's "Whole-pod connection loss" paragraph plus SPEC-2's new §29.10 "Shared by the whole pod" hold bullet. — EVIDENCE: spec/10_gateway-internals.md:41, :58, :60, :183; spec/29_communication-scenarios.md:1478-1480
+FACT: re-verified every `spec/` and `docs/` anchor the docs lens depends on and all resolve verbatim: spec/10:30, :37, :38, :40, :41, :58, :60, :183; spec/28:314-317, :330-331, :333-334, :237-240, :349-353, :1675, :1679-1685, :1805-1808; spec/29:1150-1152, :1186, :1259-1263, :1274, :1309-1310, :1322-1326. `coordinator_connection_lost` occurs in `spec/` only at spec/10:60 and spec/29:1274, both staged, and nowhere under `docs/`. — EVIDENCE: grep -rn "coordinator_connection_lost\|coordinator_lost" spec/ docs/ schemas/
+USEFUL [Standing context, "The `docs/` surface states no unit, baseline, or gate"]: the thirteen-line `docs/` inventory (concepts.md:101, architecture.md:173, adapter-contract.md:68/:69/:96, metrics.md:40/:197/:307/:309/:310/:311/:312, upgrades.md:47-54) and the pre-existing-drift list beside it saved a full docs sweep; spot-checked four of the thirteen and each was unit-neutral as recorded.
+
+
+
+### [spec.1.review-edit-sites.1]
+
+DECISION: Returned an empty findings list — BECAUSE every spec/ surface that the staged edits falsify is either already staged or is ruled a non-site by a criterion I verified sentence by sentence — ALTERNATIVES: I considered filing `spec/04_system-components.md:175` and `:188` (the §4.1 Request Message Scope table classifying `CoordinatorFenceRequest` as `pod` scope, plus the declaring sentence "carries `session_id` and stays pod-scoped, which is why the classification is declared rather than derived"), which SPEC-1/SPEC-2/SPEC-3 do not touch and which D1 plainly falsifies; it is NOT a finding because `summary.md:231-287` records it as open decision OD3, and open decisions are settled outside this review.
+
+FACT: The exhaustive spec/ inventory for this proposal's identifiers, derived this pass. `coordination_generation` outside spec/10, /28, /29 appears only at spec/04:200 (SPEC-3's target), :323 (eviction-state record, unaffected by the 0→1 baseline), :461 (drain fencing, generic), :711, :712 (the §4.7 RPC table rows), spec/07:215 (the §7.2 snapshot-close bump), spec/12:160, spec/16:199, :208, and spec/18:238. None of those states an initial value, so the baseline-of-1 change has exactly one spec edit site and SPEC-3 has it. — EVIDENCE: spec/04_system-components.md:200, spec/04_system-components.md:323, spec/18_build-sequence.md:238
+
+FACT: The gap-reset rule has exactly four spec/ mirrors and the proposal stages all four: spec/10_gateway-internals.md:40, spec/28_communication-channels.md:333-335, spec/28_communication-channels.md:1807 (the `CH-FENCE` holder-change cell), and spec/29_communication-scenarios.md:1309-1311. A grep for `exceeds .*last fenced|more than one|last_fenced_generation` over spec/ returns no fifth carrier. — EVIDENCE: spec/28_communication-channels.md:333, spec/29_communication-scenarios.md:1309
+
+FACT: The `coordinator_connection_lost` event's "last known generation" clause, which SPEC-1's §10.1.4 Observability edit removes, has exactly two spec/ carriers and both are staged: spec/10_gateway-internals.md:60 and spec/29_communication-scenarios.md:1274. spec/16_observability.md carries only the `lenny_adapter_coordinator_hold` gauge row (:185), which names no generation, and no structured-event inventory row exists for `coordinator_connection_lost` or `coordinator_generation_gap` anywhere in spec/16 or spec/04's events table. So the event change opens no metric/alert/runbook companion pair. — EVIDENCE: spec/16_observability.md:185, spec/04_system-components.md:747
+
+FACT: `spec/` never carried the first-fence exemption in any form; a grep for "never treated as a gap", "first fence", and "pod's lifetime" over spec/ returns only unrelated pod-recycle text. The exemption lives only on the wire at schemas/lenny-adapter.proto:161-162, which is why SPEC-1 states it for the first time and SCHEMA-1 re-scopes the comment. — EVIDENCE: schemas/lenny-adapter.proto:161-162
+
+WATCHOUT: The §28.5.1 `CH-CHECKPOINT` and `CH-BARRIER` **Preconditions** bullets (spec/28_communication-channels.md:274-276 and :354-356) read "The generation stamp and the fence acknowledgement that govern every gateway-to-pod RPC (§10.1)" and look like fence-rule carriers, but they fix no compared value and defer to §10.1, so they are non-sites under the proposal's own criterion. They are absent from the proposal's explicit non-site list, which enumerates the `CH-ATTACH` Preconditions bullet instead; that absence is not a gap, because the list is not claimed to be exhaustive. Do not file them. — EVIDENCE: spec/28_communication-channels.md:274, spec/28_communication-channels.md:354
+
+WATCHOUT: The §28.8 `CH-ATTACH` row's generation-stale sentence is in the row's FOURTH pipe-delimited cell counting from the leading empty field, i.e. the "Holder of the exclusivity constraint changes" column, not in the "Transport fails mid-stream" column a naive read of `:1805` lands on. Split the line on `|` before quoting it; the transport column carries only the `resume_pending` text. — EVIDENCE: spec/28_communication-channels.md:1805
+
+FACT: Every proposal citation into spec/ that I spot-checked resolves exactly: spec/10:30, :37, :38, :41, :58, :183, :184, :198; spec/28:330-331, :333-335, :1675, :1679-1681, :1683-1685, :1805, :1806, :1807, :1808; spec/29:1150-1152, :1259-1261, :1274, :1309-1311, :1322-1326. Line numbers had not drifted as of this pass.
+
+USEFUL [Standing context, "The `spec/28` and `spec/29` edit sites are settled by one membership criterion"]: applying that criterion mechanically to every remaining generation sentence in spec/28 and spec/29 is what let me close the §28/§29 sweep in one pass instead of re-adjudicating each bullet.
+
+
+### [spec.1.review-feasibility.1]
+
+DECISION: returned EMPTY over run 12's spec staging — BECAUSE the only text that moved since run 11's baseline
+(`git diff 9816f4c37 -- ...spec-changes.md`) is D6's binding qualifier, the new D9, the new §28.4 claim-register
+paragraph, and one SCHEMA-1 clause, and every actor-action claim in those four verified clean against the tree —
+ALTERNATIVES: D8's "step 2 makes that acknowledgement a hard precondition for every operational RPC" (sender-side
+vs pod-side conflation) was the one candidate I worked up; it is already weighed and declined in `### Traps`
+(/tmp of review-log line ~1792), so I did not re-file it.
+
+FACT: every citation in the new D9 paragraph resolves. `charts/lenny/templates/migrate-job.yaml:38-39` is
+`"helm.sh/hook": pre-install,pre-upgrade` + `"helm.sh/hook-weight": "-5"`; `:10-16` is the comment stating the
+hook runs before the gateway Deployment; `.claude/rules/code-best-practices.md:62` is the pre-deployment
+sentence; `migrations/0050_session_record_fields.up.sql:38-39` is `coordination_generation BIGINT NOT NULL
+DEFAULT 0 / CHECK (coordination_generation >= 0)`; `migrations/` has no 0181 yet (highest is 0180).
+
+FACT: the new §28.4 paragraph's row offsets are right — `tests/claim-map.json:448-453` is the `CheckpointBarrier`
+WIRED row and `:460-465` the `CoordinatorFence` one, and `spec/28_communication-channels.md:163-165` carries the
+three status definitions. Note the register's own `surface` fields point one line BELOW the func lines the
+proposal cites (`coordination.go:212` vs the `func CheckpointBarrier` at `:211`, `:85` vs `:84`,
+`coordfence.go:160` vs the call at `:159`); the proposal cites the tree correctly and the register is the stale
+one, so do not read the mismatch as a proposal defect — EVIDENCE: tests/claim-map.json:452, pkg/adapter/coordination.go:211.
+
+FACT: re-verified the whole adapter guard order in one call, since three separate rationale chains rest on it.
+`pkg/adapter/coordination.go`: fence `checkSessionBound` :89, `gen := ...` :92, `gen <= 0` :93-94; barrier
+`checkSessionBound` :216, `gen := ...` :223, `gen <= 0` :224-226, gate comment :228-231, `!initialized || gen != fenced`
+:236-239. `pkg/gateway/coordination/coordfence/coordfence.go:147-153` is the non-positive floor to 1.
+
+WATCHOUT: the staged §29.10 "Shared by the whole pod" hold bullet says the hold "rejects every inbound RPC on the
+pod other than `CoordinatorFence`", while the shipped interceptor also allowlists `NegotiateVersion`, health
+checks, and `AdapterEvents` — EVIDENCE: pkg/adapter/holdstate.go:323-327, :345-348. It is NOT a finding: the
+staged bullet mirrors shipped `spec/10_gateway-internals.md:57` word for word, so the drift predates this
+proposal and filing it would reconcile the spec toward code on an unrelated surface. Do not spend a work-up.
+
+FACT: no `spec/` file carries a DDL default for `coordination_generation`, so SPEC-3's baseline has no second
+spec-side site to keep in agreement. `grep -rn coordination_generation spec/` outside 10/28/29 returns only
+`spec/04:200` (§4.2, the SPEC-3 site), `spec/04:323`, `spec/07:215`, `spec/07:398`, `spec/16:208`, and the two
+§10.1.7 manifest paragraphs, none of which fixes a starting value.
+
+FACT: the "last known generation" surface is exactly two sites, `spec/10_gateway-internals.md:60` (SPEC-1's
+§10.1.4 Observability edit) and `spec/29_communication-scenarios.md:1274` (SPEC-2's §29.8 step-2 bullet). The
+other `coordinator_lost` hits (`spec/04:747`, `spec/28:338`, `spec/28:1807`, `spec/29:1255`) carry no generation,
+so the staged edit list is complete on that axis.
+
+
+### [spec.1.review-fresh.1]
+
+DECISION: returned EMPTY over the run-12 spec staging — BECAUSE every anchor and code citation I re-resolved
+independently landed verbatim, and the three classes a fresh read generates on this text (the surviving
+`spec/10:30` split-brain consequence, the equal-generation silence in the staged §28.6 `CH-FENCE` arm, and the
+non-positive `InvalidArgument` guard versus the staged "positive generation" invariant) are each already
+adjudicated in `### Traps` with the reopening bar stated — ALTERNATIVES: filing any of the three, rejected
+because none clears the recorded refutation without new evidence.
+
+FACT: independently re-resolved, all correct, so a later fresh lens can skip them: `spec/10` :30 counters
+bullet, :38 step 2, :41 step 3, :58 post-mortem, :60 Observability, :183 §10.1.8 step 1, :184 step 2, :185
+step 3, :198 closing bound; `spec/28` :314-317 Messages, :329-332 Exclusivity, :333-340 Degradation,
+:1669-1677 one-holder, :1679-1690 second opener, :1805-1808 matrix cells; `spec/29` :1150-1152, :1186,
+:1259-1261, :1274, :1305-1313 step 7, :1322-1326 step 9, :1460-1543 §29.10; `spec/04` :175, :188, :200, :323,
+:461, :711, :712; `migrations/0050_session_record_fields.up.sql:38-39`; `pkg/adapter/coordination.go` :25-35,
+:84-130, :210-269; `pkg/adapter/holdstate.go` :107-133, :180-208, :225-232, :283-297; proto :153-162, :165-179,
+:1442-1451, :1455-1467, :1469-1483 — EVIDENCE: as listed.
+
+FACT: the `spec/04` fence surface outside §4.2 is exactly :175, :188, :323, :461, :711, :712, and every one is
+a non-site under SPEC-2's own membership criterion: :711 states what the barrier message carries with no gate,
+:712 states the fence as a sender-side precondition, :461 and :323 defer to §10.1, and :175/:188 are the §4.1
+classification OD3 owns. A fresh lens tempted to file a `spec/04` missed site should stop here — EVIDENCE:
+spec/04_system-components.md:461, :711-712.
+
+USEFUL [### Settled "The `spec/28` and `spec/29` edit sites are settled by one membership criterion"]: applying
+it to the `spec/04` sweep above decided all six sentences in one pass and saved a full re-derivation.
+USEFUL [### Traps "count the sentences in a §28.8 cell"]: the `awk -F'|' '{print $5}'` recipe is what made the
+`CH-BARRIER` trailing-clause disposition checkable at all; the row reads as having no exclusivity cell otherwise.
+
+
+### [spec.1.review-kubernetes.1]
+
+DECISION: returned empty — BECAUSE the staged spec text names no Kubernetes surface: `grep -inE 'sandbox|kube|controller|webhook|finaliz|CRD|status\.|apiserver|reconcil|informer|etcd|leader'` over `spec-changes.md` returns zero lines. ALTERNATIVES: I considered filing on the §10.1.4 Observability restaging (which sits in the same bullet list as the orphan-session reconciler and the zero-RBAC AdapterTerminating paragraph) but the staged sentence moves a generation between two adapter-local records (the `coordinator_lost` slog line and the local-disk post-mortem) and introduces no apiserver or `Sandbox.status` write.
+
+USEFUL [Standing context, "Two lens-scoping facts worth one grep each"]: that entry gave the exact grep and the `spec/18` phase-inversion non-finding, and it is correct as written — it turned this pass into one grep plus two confirmatory reads instead of a full re-derivation.
+
+FACT: `spec/10_gateway-internals.md:61` is the "Whole-pod connection loss when `maxConcurrentSessions > 1`" paragraph D5 rests on, and it reads exactly as D5 states (all active slots enter `resume_pending`, the whole-pod replacement trigger fires on total connection loss regardless of per-slot counts). `:57` carries the zero-RBAC / no-apiserver-path statement and `:58` the orphan-session reconciler keyed on `agent_pod_state`; neither reads the coordination generation. — EVIDENCE: spec/10_gateway-internals.md:57, :58, :61
+
+WATCHOUT: the review log's `## Standing context` is 2,260 lines and Bash pipelines through `awk|head` get persisted-output-truncated twice over, losing the tail. Extract it to a temp file with `awk '/^## Standing context/{f=1} f&&/^## /&&!/^## Standing context/{exit} f'` and read that file with the Read tool in offset windows. — EVIDENCE: proposals/0076_.../0076_....review-log.md:1
+
+FACT: this lens is recorded as exhausted across runs 6, 8, 10, and 11 on both lanes, reopening only if CODE-4 grows a chart or CRD deliverable or CODE-3 grows an apiserver / `Sandbox.status` write. Neither has happened in this staging. — EVIDENCE: /tmp/sc.txt:1427, :1985 (review-log Standing context)
+
+
+### [spec.1.review-mechanism.1]
+
+DECISION: returned an EMPTY findings list on run 12 spec round 1 — BECAUSE the staged spec text moved in exactly
+four places since the last mechanism pass (run 11's `[spec.2.review-mechanism.3]`, which was also empty), and each
+of the four is sound end to end against the tree; every other mechanism candidate I re-derived cold resolved to a
+standing `### Traps` entry, a refuted class, or a live human open decision — ALTERNATIVES: I worked up and dropped
+the four listed under WATCHOUT below.
+
+FACT: the delta since the last mechanism pass is small and closed. `diff -u scratchpad/cp-snap/0076-run11/spec-r3/...spec-changes.md`
+against the live file returns exactly four hunks: D6's binding-lifetime rewording, the new D9 paragraph, SPEC-1's
+matching §10.1.2 binding sentence ("The pod holds that value for as long as the session is bound to it, and the
+value does not survive an unbind"), the new §28.4 claim-register paragraph in SPEC-2, and SCHEMA-1's
+"within its current binding on this pod" exemption unit. `spec-r2` and `spec-r3` differ only in those, plus the log
+and status files. Start any run-12 mechanism pass from that diff rather than from the whole file.
+
+FACT: every anchor in the NEW text resolves exactly, checked cold this pass. `charts/lenny/templates/migrate-job.yaml:38-39`
+is the `helm.sh/hook: pre-install,pre-upgrade` / `hook-weight: "-5"` annotation pair and `:10-16` is the comment
+stating the Job runs before the gateway Deployment; `.claude/rules/code-best-practices.md:62` is the
+"pre-deployment and has no deployments in the wild" bullet; `pkg/adapter/coordination.go:224-225` is the barrier's
+non-positive `InvalidArgument` refusal and `:236-238` the `!initialized || gen != fenced` gate, in that order;
+`spec/28_communication-channels.md:163-165` carries the WIRED/UNWIRED/ABSENT definitions verbatim;
+`tests/claim-map.json:448-453` is the `CheckpointBarrier` row (claim at `:449`) and `:460-465` the
+`CoordinatorFence` row (claim at `:461`), both `WIRED`; and the four surfaces the new paragraph names resolve —
+`coordfence.go:159` (`fc.CoordinatorFence(...)`), `wiring.go:49` (`cl.CheckpointBarrier(...)`),
+`coordination.go:84` and `:211` (the two handler declarations). Do not re-derive these.
+
+FACT: the §28.4 paragraph's ruling survives the third relevant register row. Besides the two WIRED RPC rows it
+names, `tests/claim-map.json:75-81` files `CheckpointBarrierRequest.coordination_generation` as `UNWIRED` under
+deferral `R16`, and `:173-178` files "In-flight RPC cancellation on a generation gap" as `ABSENT` under the same
+deferral. Neither status is moved by the staged edits: the gap-reset re-scoping leaves the cancellation
+unimplemented (`ABSENT` stands) and the barrier FIELD row's already-false note is the pre-existing drift the
+summary's `### Corrections outstanding` owns. The paragraph's silence about those two rows is not a gap in its
+argument — EVIDENCE: tests/claim-map.json:75-81, :173-178
+
+FACT: no `spec/` surface outside the three staged files states a counter baseline, re-derived independently of the
+log. `grep -rn coordination_generation spec/` excluding `spec/10`, `spec/28`, `spec/29` returns `spec/18:238`,
+`spec/07:93`, `:215`, `:398`, `spec/04:200`, `:323`, `:461`, `:711-712`, `spec/16:199`, `:208`, `spec/12:160`, and
+every one of them is a unit- and baseline-neutral sentence. SPEC-3's §4.2 site is the only baseline carrier, so the
+baseline strands no mirror.
+
+WATCHOUT: four candidates I derived cold and killed this pass; do not respend a verification on one without new
+evidence. (1) D9's "pre-deployment with no deployments in the wild" against SPEC-1's and CODE-4's ground for
+retaining the `coordfence` floor, which rests on an old fleet still inserting zeros during the roll — the two are
+about different populations (no existing installation to expose versus a future upgrade's rolling window), and §10.5's
+expand-contract discipline is the stated authority for the second. (2) The new §10.1.2 binding sentence read as
+newly making a per-binding reset reachable that the pod-wide value did not have — `### Traps` already prices it
+("the rebind reset is not exploitable": a fence issues only after a step-1 CAS win), and the residual half is OD7.
+(3) The §28.4 paragraph's "none carries a wrong status during the interval" read against the acceptance arm being
+unimplemented until CODE-2 — the register's claims are at mechanism granularity ("`CheckpointBarrier`"), which stays
+`WIRED` throughout, so the objection is a granularity dispute rather than a wrong status. (4) SCHEMA-1's twelve
+operational-comment replacement ("rejects a request whose generation does not match it") read against the unset arm,
+where there is no value to match — the standing WATCHOUT on the pass-22 clause already covers it and the unset case
+is owned by §10.1.2 step 3 by design.
+
+USEFUL [`### Traps`, "diff -rq is the cheapest move on this proposal"]: seventh consecutive round. Here it was
+better than cheap: it reduced the whole reading order to four hunks and made the pass a verification of new text
+rather than a re-derivation of settled text.
+USEFUL [`### Settled`, "the binding qualifier landed in the four sentences an applier writes"]: I re-checked all
+four sites carry "a session bound to the pod" and that §28.6's second opener and §28.8's `CH-CHECKPOINT` cell
+correctly do not. Confirming cost three `sed` calls where deriving the site set would have cost a pass.
+
+
+### [spec.1.review-operational.1]
+
+DECISION: returned an EMPTY findings list for the operational lens — BECAUSE every observability surface the staging touches was re-verified against the tree and none is left inconsistent — ALTERNATIVES: rejected filing the §16.4 "session_id on every log line" tension against SPEC-1's pod-level `coordinator_connection_lost` sentence (see WATCHOUT below), and rejected filing the `coordinator-handoff-slow` runbook drift (pre-existing, docs-lane remedy, out of this loop's scope).
+FACT: the observability surface this proposal reaches is closed and was re-verified this round, not carried from the ledger. `CoordinatorHandoffSlow` is the only coordination alert in `pkg/alerting/rules/rules.go:1582-1587` (rendered into `docs/alerting/rules.yaml` and `charts/lenny/files/alerting-rules.yaml`), it evaluates `lenny_coordinator_handoff_duration_seconds_bucket` alone, and its runbook `docs/runbooks/coordinator-handoff-slow.md` names no generation, fence, or barrier — EVIDENCE: pkg/alerting/rules/rules.go:1583, docs/runbooks/coordinator-handoff-slow.md:27-40
+FACT: the coordination metric rows in `spec/16` are `spec/16_observability.md:183` (`lenny_coordinator_handoff_stale_total`), `:185` (`lenny_adapter_coordinator_hold`), `:190` (`lenny_coordinator_handoff_duration_seconds`), `:191` (`lenny_coordinator_fence_retry_total`), `:192` (`lenny_coordinator_fence_relinquished_total`), plus two rows that merely mention `coordination_generation` (`:199` supersede-on-write, `:208` derive-failure `fenced` outcome) and the `coordinator.handoff` trace span at `:366`. Every one describes the metric's meaning without fixing a unit for the fenced value or a baseline for the counter, so neither the per-session move nor the row baseline of 1 moves any row — EVIDENCE: spec/16_observability.md:183, :199, :208, :366
+FACT: `spec/16` carries NO structured-log-event field inventory. §16.6 is a CloudEvents operational-event catalog and lists no adapter log events; §16.4 lists correlation fields and retention policy only. So SPEC-1's rewrite of the `coordinator_connection_lost` field set has no §16 mirror to falsify — EVIDENCE: spec/16_observability.md:654-660, :377-384
+FACT: `coordinator_connection_lost` has exactly two carriers in `spec/`, `docs/`, `schemas/`, and `charts/`: `spec/10_gateway-internals.md:60` and `spec/29_communication-scenarios.md:1274`. Both are staged (SPEC-1 and SPEC-2 respectively). `last_generation` and `started_sessions` appear nowhere in those four trees, so the staged field set introduces no cross-file disagreement — EVIDENCE: spec/10_gateway-internals.md:60, spec/29_communication-scenarios.md:1274
+WATCHOUT: the one operational-lens lead that looks fileable and is not. `spec/16_observability.md:379` states "Correlation fields in every log line: `session_id`, `tenant_id`, `trace_id`, `span_id`", while SPEC-1's staged §10.1.4 Observability sentence makes `coordinator_connection_lost` pod-level, naming a started-session count and no session. It reads like a new contradiction but is not one this staging creates: the event's arming signal is the close of the pod's single CH-ADAPTEREVENTS stream, which names no session (D5), so the event is already session-less in the shipped tree, and the shipped sentence at `spec/10:60` names no session either. The staging changes which scalar the event carries, not whether it carries a session. Do not spend a round on it — EVIDENCE: spec/16_observability.md:379, spec/10_gateway-internals.md:60
+FACT: every proposal citation an operational reading depends on resolves verbatim: `spec/10:37` (step 1 CAS), `:38` (step 2 window), `:41` (step 3 equality gate), `:58` (hold timeout and local-disk post-mortem), `:60` (Observability bullet), `:183` (§10.1.8 step 1 closing sentence), `spec/28:330-331` (CH-FENCE Exclusivity window clause), `:333-334` (CH-FENCE Degradation gap clause), `:1807` (§28.8 CH-FENCE cell), `spec/29:1519-1543` (§29.10 "does not state" list, first bullet at `:1523`) — EVIDENCE: spec/28_communication-channels.md:329-340, spec/29_communication-scenarios.md:1519-1543
+
+
+### [spec.1.review-performance.1]
+
+DECISION: Returned an EMPTY findings list over the staged spec edits — BECAUSE the whole performance/scalability/failure-mode surface of this proposal is already derived in the review-log `### Settled` section and nothing in the staged text creates a new write, a new hot key, or a less reliable failure mode — ALTERNATIVES: filing the "D7 newly serialises N co-tenant quiescence waits inside one 90s BarrierAck deadline" angle, rejected because it sits inside an existing refutation body ("the streams, the op-lock serialisation, the MinIO burst, and the wall clock are identical before and after") and because quiescence is per-session on the pod under CODE-1's per-entry `barrierGate`, so it does not serialise.
+
+FACT: D7 is a net REDUCTION of drain-time data-plane work at the Tier 3 top capacity, and the arithmetic is worth carrying rather than re-deriving. `dispatchOne` starts the gateway-driven `Checkpoint` stream in a goroutine before `dispatch.Send` and waits on it after, whatever the barrier returns, so today an ordinary never-handed-off session (which is essentially the whole population, since nothing fences a normally-started session) gets its barrier-window capture AND, because the barrier was refused, the post-barrier eviction capture as well. After D7 the barrier acks and prestop skips the second capture. At 30 replicas x 400 `maxSessionsPerReplica` that halves the drain burst spec/10 sizes at up to 400 simultaneous MinIO uploads per draining replica. The one write D7 adds is the acked-barrier `barrier_id`/`checkpoint_ref`/`workspace_recovery_fraction` upsert, one Postgres row per drained session, against one removed workspace upload. — EVIDENCE: spec/10_gateway-internals.md:185 ("up to 400 simultaneous uploads", "single wall-clock deadline of `checkpointBarrierAckTimeoutSeconds` (default: 90s), not per-pod"), pkg/gateway/podlifecycle/prestop/prestop.go:394-397
+
+FACT: The staged spec text carries no capacity number, rate, or tier figure at all, so criterion (e) has no quantitative claim of its own to falsify in this loop. Every rate in the neighbourhood (400 uploads, the 90s shared deadline, the 2s barrier-target-set read deadline) is shipped `spec/10` §10.1.8 text the staging does not open. — EVIDENCE: spec/10_gateway-internals.md:183-185, :198
+
+FACT: §10.1.3 item 1 survives the staged unset arm and is not an edit site under criterion (d). It asserts that for a replica already holding a lease "the pod validates the generation stamp, which remains valid because no new coordinator can increment it while Postgres is down" — an assertion that the stamp stays valid, not that every RPC is gated, so a session the pod holds no value for does not falsify it. — EVIDENCE: spec/10_gateway-internals.md:47
+
+USEFUL [Standing context, "The barrier fan-out runs under one wall-clock deadline, and D7 adds no drain work"]: this saved the entire drain-budget re-derivation and pre-refuted the one regression this lens would otherwise have filed. The bullet's closing "Do not re-derive this" is correct; honour it.
+
+USEFUL [Standing context, "The `last fenced` surface ... `REG-COORDLEASE` is Redis with a stated Postgres fallback"]: this closes the §12.4 durable-fallback half of this lens in one line for the one register the staged §28.6 text leaves as sole exclusion guard.
+
+WATCHOUT: the second `awk` over the review log needs no `sed` window — `sed -n '200,520p'` truncated my read of `### Traps` and made the standing context look ~500 lines long when `### Settled` alone runs from :36 to :1094. Read the section headers first (`grep -n '^### '`) and window on those. — EVIDENCE: proposals/0076_fix_scope-the-coordination-generation-to-the-session/0076_fix_scope-the-coordination-generation-to-the-session.review-log.md:36, :1094, :1837, :2133
+
+
+### [spec.1.review-reliability.1]
+
+DECISION: Returned EMPTY. — BECAUSE the only staged text that moved since the last reliability pass (run 11 spec-r3,
+md5 12f416d5... -> live 3d3042c5...) is D6's binding-lifetime rewrite, its SPEC-1 mirror, the SCHEMA-1 "within its
+current binding" clause, D9, and the §28.4 claim-register paragraph, and none of the five reaches a recovery or retry
+mechanism in a way that makes it wrong. — ALTERNATIVES: I worked up and rejected (1) the unbind-reset as a fencing
+hole, (2) the staged step-3 unset arm as a fail-open that re-enables a path over stale state, (3) D9's guard-order
+chain, and (4) the migrate-Job hook-ordering claim. Grounds below.
+
+FACT: the run-11 -> run-12 spec-changes diff is exactly five hunks and is reproducible in one call:
+`diff scratchpad/cp-snap/0076-run11/spec-r3/*.spec-changes.md proposals/0076_*/*.spec-changes.md`.
+`0076-run12/spec-r1-start` is byte-identical to the live tree and is the WRONG baseline; `0076-run11/spec-r3` is the
+right one. — EVIDENCE: scratchpad/cp-snap/0076-run11/spec-r3/, scratchpad/cp-snap/0076-run12/spec-r1-start/
+
+FACT: D6's new sentence ("The pod holds that value for as long as the session is bound to it, and the value does not
+survive an unbind", spec-changes.md:33-34, mirrored at :166-167) is the APPLICATION of OD7's recommendation, and the
+standing `### Open` rider predicted exactly this consequence. The reset it makes normative is unreachable in
+specification terms: `spec/07_session-lifecycle.md:196` fixes `resuming -> running` as "re-attach succeeds on
+replacement pod", so a session cannot re-bind onto the pod that held its per-entry value. The code-side half (whether
+`pkg/gateway/sessionserver` placement can pick the same pod) stays OD7's open item and is not a spec-lane finding.
+— EVIDENCE: spec/07_session-lifecycle.md:196; proposals/0076_*/*.spec-changes.md:166-167
+
+FACT: the unbind-reset is an improvement rather than a leak under this lens. Shipped pod-wide `lastFenced` outlives
+every session that installed it; a per-entry value is collected with the slot entry `deregisterSlotLocked` removes, so
+the change adds no abandoned state and no reclaimer is owed. — EVIDENCE: pkg/adapter/coordination.go:25-39
+
+FACT: the staged step-3 unset arm is not an exploitable fail-open, and the ground is stronger than refuted class (b)'s.
+For two replicas to drive one session concurrently, the second must fence first (`spec/10_gateway-internals.md:38`
+makes the acknowledgement a hard precondition on the acquiring coordinator); a replica that wins the CAS and never
+completes its fence sends no operational RPC and relinquishes the lease after three attempts
+(`spec/10_gateway-internals.md:39`). So the unset state persists only while nobody else drives, and any replica that
+does drive has installed a value that fences the predecessor out. Do not re-derive this.
+— EVIDENCE: spec/10_gateway-internals.md:38, :39
+
+FACT: D9's guard-order chain checks out against the tree. `gen <= 0` -> `InvalidArgument` is at
+pkg/adapter/coordination.go:224-225 and the generation gate `!initialized || gen != fenced` at :236-238, in that order,
+after `checkSessionBound` at :216. The migrate-Job citations resolve too: `"helm.sh/hook": pre-install,pre-upgrade` and
+weight `-5` are at charts/lenny/templates/migrate-job.yaml:38-39, and the header comment SPEC-1 cites at :10-16 states
+the ordering against the gateway Deployment. — EVIDENCE: pkg/adapter/coordination.go:216, :224-225, :236-238;
+charts/lenny/templates/migrate-job.yaml:10-16, :38-39
+
+USEFUL [### Traps "the drain-path candidate the standing D7 refutation does NOT cover"]: it pre-adjudicated the one
+reliability candidate this staging naturally generates (an accepted barrier for a never-fenced session blocking to
+`barrierAckTimeout` because nothing links the gate) and named the three grounds that kill it. It saved a full work-up.
+
+USEFUL [### Traps "the rebind reset is not exploitable"]: it is the direct ancestor of D6's new sentence and made the
+unbind-reset question a ten-minute check instead of a pass.
+
+WATCHOUT: the reliability lens's own reopening conditions in `### Open` name "D7's acceptance arm, the retained
+`coordfence` floor's rolling-window behaviour, or §10.1.8's failure-arm claim". D6's binding-lifetime rewrite is NOT
+on that list and was still worth one pass, because it changes the lifetime of the fenced value, which is a
+state-survival question. A future compaction should add "D6's lifetime clause" to the list rather than treat the
+lens as retired on the old three.
+
+
+### [spec.1.review-security.1]
+
+DECISION: returned EMPTY on the staged spec edits — BECAUSE every security-lens surface this staging touches
+is already settled in `### Settled`/`### Traps` with evidence I re-verified against the tree, and the two
+candidate filings I built both land in explicitly refuted classes — ALTERNATIVES: (1) filing the staged §28.6
+second-opener addition ("A session for which the pod holds no fenced generation has no recorded value to
+match, so the pod rejects none of that session's RPCs on generation grounds") as removing the stamp half of
+the two-guard exclusivity control while `The constraint excludes a second replica` stands unchanged
+(`spec/28_communication-channels.md:1679-1686`); rejected because REG-COORDLEASE remains the stated guard and
+is Redis with an explicit Postgres `SELECT ... FOR UPDATE SKIP LOCKED` fallback (`spec/28:245-248`, `:329-332`),
+so the §12.4 durable-fallback bar is met and refuted class (f) covers it. (2) filing D7's acceptance arm as a
+fail-open on a store outage; rejected because the barrier's cache fallback seeds the generation at 0
+(`cmd/lenny-gateway/httpsurface.go:588-602`) and the adapter's non-positive `InvalidArgument` guard
+(`pkg/adapter/coordination.go:224-226`) refuses it, which is fail-closed.
+
+FACT: the staged §10.1.2 step 3 replacement deletes the shipped no-window claim ("there is no window in which
+both the old and new coordinator can simultaneously issue accepted RPCs to the pod", `spec/10_gateway-internals.md:41`).
+Under the staged unset arm that claim is genuinely false for a never-fenced session, so the deletion is a
+correction rather than a weakening, and it strands no mirror — EVIDENCE: spec/10_gateway-internals.md:41;
+review-log `### Settled` "no-window claim occurs once in spec/, docs/, schemas/".
+
+FACT: hold state closes the window the unset arm would otherwise open on a disconnected pod: while held, every
+inbound RPC other than `CoordinatorFence` is rejected `UNAVAILABLE` with `coordinator_hold`, so the unset arm
+never admits an operational RPC on a pod whose coordinator was lost — EVIDENCE: spec/10_gateway-internals.md:56;
+spec/28_communication-channels.md:1681-1683.
+
+USEFUL [Settled: "`CoordinatorFenceResponse.last_fenced_generation` is a pod self-report that reaches no gateway
+decision"]: saved the whole trust-boundary re-derivation for lens check (2); the credited round-5 security lens
+entry is still exact against the tree.
+
+USEFUL [Settled: "Tenant pinning makes co-tenancy same-tenant by construction"]: settles that every
+cross-session effect this proposal repairs is intra-tenant, which is why tier 9 is correctly absent from every
+tier list and why no isolation-boundary finding is available here.
