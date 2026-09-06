@@ -233,12 +233,15 @@ func (g *barrierGate) complete() {
 
 // CheckpointBarrier implements the §4.7 / §10.1 graceful-drain
 // barrier RPC as a quiesce-and-hold barrier. The adapter validates the
-// request's coordination generation against the last fenced value,
-// quiesces tool-call dispatch, and holds the quiesced state open while the
-// gateway drives the Checkpoint stream against the held pod. It returns
-// the ack only after that stream terminates, echoing the gateway-minted
-// checkpoint_id the stream carried and reporting the time-to-quiescence in
-// quiesced_ms. The ack is mirrored onto the §4.7 control stream.
+// request's coordination generation against the generation the pod holds
+// for the session the request names, and a barrier naming a bound session
+// for which the pod holds no fenced generation is accepted and records no
+// value. The adapter quiesces tool-call dispatch and holds the quiesced
+// state open while the gateway drives the Checkpoint stream against the
+// held pod. It returns the ack only after that stream terminates, echoing
+// the gateway-minted checkpoint_id the stream carried and reporting the
+// time-to-quiescence in quiesced_ms. The ack is mirrored onto the §4.7
+// control stream.
 //
 // spec: §4.7, §10.1.
 func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.CheckpointBarrierRequest) (*adapterv1.CheckpointBarrierResponse, error) {
