@@ -1,9 +1,13 @@
 # Proposal: Address a tracing frame by the stream that carries it
 
-- **Status:** **Applied to spec (2026-08-13).** Approved (2026-08-13) by jaf sign-off. Verified
+- **Status:** **Implemented (2026-08-20).** Approved (2026-08-13) by jaf sign-off. Verified
   (2026-08-13). Converged after 5
   adversarial review rounds (5 findings fixed) across two full-pool sweeps, the certifying sweep running
-  every lens complete with zero confirmed findings. §9 records each round.
+  every lens complete with zero confirmed findings. §9 records each round. The status was reconciled on
+  2026-09-06 against the git history, which carries every deliverable: SPEC-1 in `c1dd8eb47`, SPEC-2 in
+  `306fc0545`, SPEC-3 in `f5e7fd623`, SPEC-4 in `d75e183ec`, `eb4445fbb`, and `a7931626e`, and CODE-1 in
+  `08dd238fd`, `6e6b01669`, and `a1c33d9d3`. Proposal 0073 later rewrote parts of the same surface, so
+  some anchors this document cites no longer read as written.
 - **Date:** 2026-08-13
 - **Scope:** Supersedes proposal 0068. Keeps its specification move, which removes from `spec/15` §15.4.1
   the `CH-MSGSOCK` contract §28.5.3 owns, and replaces its frame-addressing design. 0068 taught the
