@@ -1149,7 +1149,9 @@ finalises the session's active partial-manifest intent row as `manifest_reason =
 carries committed chunks and otherwise falls back to the session's last successful periodic checkpoint
 ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1 `CH-BARRIER`). A barrier addressed to a
 session this replica no longer coordinates is rejected by the pod as a generation-stale RPC under the
-fencing rules ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Those outcomes are named here and
+fencing rules when the pod holds a generation for that session that the barrier does not carry, and, for a
+session bound to the pod, is accepted otherwise
+([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Those outcomes are named here and
 are not traced, and the acquisition of the drained replica's sessions by a peer replica is the coordinator
 handoff protocol ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) rather than part of this trace.
 The agent pod's own termination is a separate path, on which the pod signals its coordinating replica and
@@ -1258,9 +1260,8 @@ numbered and written in the form §29.1 fixes.
 
 **Preconditions.** `replica A` coordinates the session, holding the session's coordination lease
 `REG-COORDLEASE`, which admits one holder per tenant and session on a compare-and-set with a 60-second
-expiry, and the session's `coordination_generation` is the generation the pod last fenced
-([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). `replica B` is a peer replica that holds
-no binding for the session. Every gateway-to-pod RPC carries the coordinator's generation stamp, and the
+expiry ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). `replica B` is a peer replica
+that holds no binding for the session. Every gateway-to-pod RPC carries the coordinator's generation stamp, and the
 pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
 1. `replica A`, `internal`. The replica crashes or becomes network-partitioned and stops extending the
@@ -1271,7 +1272,8 @@ pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling
    coordinator the adapter enters hold state: it pauses runtime activity, leaves the runtime process
    running with no new instructions, rejects every inbound RPC other than `CoordinatorFence` with
    `UNAVAILABLE` and a `coordinator_hold` error detail, emits the `lenny_adapter_coordinator_hold` gauge at
-   1, and logs a `coordinator_connection_lost` event carrying the last known generation
+   1, and logs a `coordinator_connection_lost` event naming the number of started sessions the pod holds
+   and carrying no generation
    ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
    [§16.1](16_observability.md#161-metrics)).
 
@@ -1304,12 +1306,14 @@ pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling
    deadline (§28.5.1 `CH-FENCE`, [§10.1](10_gateway-internals.md#101-horizontal-scaling),
    [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
 
-7. `adapter`, `internal`. The adapter records the announced generation, from that point rejects any RPC
-   carrying an older one, and acknowledges the fence, which is the only exit from hold state. When the
-   announced generation exceeds `last_fenced_generation` by more than one, the adapter first cancels and
-   discards every in-flight RPC received after `last_fenced_generation`, resets the transient tool-call and
-   lifecycle state accumulated since that generation, and logs a `coordinator_generation_gap` event
-   recording both generations, then acknowledges normally (§28.5.1 `CH-FENCE`,
+7. `adapter`, `internal`. The adapter records the announced generation against the session the fence names,
+   from that point rejects any RPC carrying a generation older than the one it holds for that session, and
+   acknowledges the fence, which is the only exit from hold state. When the announced generation exceeds
+   that session's `last_fenced_generation` by more than one, the adapter first cancels and discards the
+   in-flight RPCs received for that session after that session's `last_fenced_generation`, resets the
+   transient tool-call and lifecycle state that session accumulated since that generation, and logs a
+   `coordinator_generation_gap` event recording that session's two generations, then acknowledges normally
+   (§28.5.1 `CH-FENCE`,
    [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
 8. When the fence fails or its deadline expires: `replica B` → `adapter`, `CH-FENCE`, `gateway-to-pod`. The
@@ -1322,7 +1326,7 @@ pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling
 9. When the fence has returned a successful acknowledgement: `replica B`, `internal`. The replica begins
    coordinating the session and stamps its local generation on every gateway-to-pod RPC it sends for the
    session. The acknowledgement is the hard precondition for this step, so no operational RPC reaches the
-   pod before the fence closes the window in which the prior coordinator's RPCs are still accepted
+   pod before the fence closes the window in which RPCs carrying the prior generation are still accepted
    ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1 `CH-FENCE`, §28.6).
 
 10. When the prior coordinator resumes and receives a generation-stale rejection for the session, from the
@@ -1465,8 +1469,10 @@ as independent in each of them.
   session (§28.3), and the exclusivity constraint on `CH-CHECKPOINT`, `CH-ATTACH`, `CH-FENCE`, and
   `CH-BARRIER` is one coordinating replica per session, guarded by that lease together with the
   generation stamp (§28.5.1, §28.6). Both units are the session, so each slot's session carries its own
-  lease and its own generation. Whether the sessions occupying two slots on one pod may be coordinated by
-  two different replicas is not stated, which the list of what the specification does not state records
+  lease and its own generation. The generation the pod records on a fence and validates every
+  gateway-to-pod RPC against is the fenced session's, so a fence for one slot's session neither fences nor
+  unfences another ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Whether the sessions
+  occupying two slots on one pod may be coordinated by two different replicas is not stated, which the list of what the specification does not state records
   below.
 
 **Shared by the whole pod.** The following carry the pod as their unit, so two slots on one pod are not
@@ -1515,24 +1521,27 @@ independent in them.
   and refuse the call unless that process has been given exactly one session and that session is the
   caller, because on any other pod the shared runtime has been given a session other than the caller
   ([§4.7](04_system-components.md#47-runtime-adapter), §28.5.3).
+- The coordinator-loss hold. Loss of the gateway-to-pod connection is a whole-pod failure. While the
+  adapter is in hold state every inbound RPC on the pod other than `CoordinatorFence` is rejected with
+  `UNAVAILABLE` and a `coordinator_hold` error detail, and the hold timeout terminates every session the
+  adapter has started on the pod. A successful fence for any one of those sessions exits the hold for the
+  pod, and the generation that fence records is the fenced session's alone
+  (§28.5.1, §28.6, [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
 **What the specification does not state.** Each of the following is a question a reader of the traces
 above reaches on a concurrent-session pod and the specification does not answer. None of them is answered
 here by inference from the partitioned or the shared list.
 
-- Whether the adapter's hold state is partitioned per slot. The specification states that while the
-  adapter is in hold state every inbound RPC other than `CoordinatorFence` is rejected with `UNAVAILABLE`
-  and a `coordinator_hold` error detail, and it states that of the adapter rather than of a slot
-  (§28.5.1, §28.6, [§10.1](10_gateway-internals.md#101-horizontal-scaling)). It does not state whether a
-  fence driven for one slot's session holds the RPCs of a sibling slot's session.
 - Whether the adapter's `Interrupt` RPC under the operation lock and the drain barrier are addressed to a
   slot. The specification qualifies checkpoint admission by the session identifier and states that the
   lock serializes `Interrupt` across the pod's slots
   ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). §7.2 does state the slot qualification for
   the `delivery: immediate` interrupt, which targets the specific slot's tool-call context
-  ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). The
-  specification states no slot qualification for the `Interrupt` RPC the operation lock admits or for the
-  drain barrier `CH-BARRIER` carries (§28.5.1).
+  ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). The generation a barrier carries is
+  validated against the fenced generation of the session the barrier names
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification states no slot qualification
+  for the `Interrupt` RPC the operation lock admits, and it states no unit for the quiescence a barrier
+  establishes (§28.5.1).
 - Which replica's connection carries an event on `CH-ADAPTEREVENTS` when more than one replica holds a
   connection to the pod. `CH-ADAPTEREVENTS` addresses its events to the session's coordinating replica
   while `LNK-POD-GRPC` states one connection per gateway replica per pod, and the specification does not
