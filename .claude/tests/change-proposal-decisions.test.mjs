@@ -376,6 +376,14 @@ t.section("D2c. the brief's rules on confidence, staging, and decision reference
 
   // What the proposal builds today is evidence about the answer.
   t.check("the brief asks what the proposal stages today", /put it in `whatIsStaged`/.test(b));
+  // Staging nothing is an answer where leaving the tree as it is was an option.
+  // Reading it as silence sent a reviewer a recommendation to make a change the
+  // proposal did not stage, with no scoped work behind it.
+  t.check("staging nothing is named as staging an answer", /STAGING NOTHING IS USUALLY STAGING AN ANSWER/.test(b));
+  t.check("and the option the absence selects must be named", /name the option the absence selects rather than\s+writing that nothing is staged/.test(b));
+  t.check("with the one case where it really is empty", /empty ONLY where every answer on offer would require\s+a change/.test(b));
+  t.check("the do-nothing answer binds the recommendation like any other", /That holds for the do-nothing answer exactly as it holds for a written one/.test(b));
+  t.check("and the reading states whether the staging agrees", /SET `stagedAnswerMatches`/.test(b));
   t.check(
     "and makes the staged answer the recommendation unless it is wrong",
     /IF THE PROPOSAL STAGES AN ANSWER, THAT IS YOUR RECOMMENDATION/.test(b),
@@ -598,13 +606,35 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
 
   // Moderate resolves when the proposal already stages that answer.
   const staged = await fire({}, three(
-    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", answer: "stays equality" },
-    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", answer: "stays equality" },
+    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", stagedAnswerMatches: true, answer: "stays equality" },
+    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", stagedAnswerMatches: true, answer: "stays equality" },
     { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
   ));
   const st = it0(staged.result);
   t.check("a moderate majority the staging agrees with resolves", st && st.disposition === "resolve", st && st.disposition);
   t.check("and records how it was carried", st && st.resolvedBy && st.resolvedBy.of === 2, JSON.stringify(st && st.resolvedBy));
+
+  // The gate is AGREEMENT, not the presence of a prose field. It used to test
+  // that `whatIsStaged` was non-empty, which is nearly always true once staging
+  // nothing counts as staging the status-quo answer, so a moderate majority
+  // whose staging says the opposite would have been settled here.
+  const disagrees = await fire({}, three(
+    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages the wider form", stagedAnswerMatches: false, answer: "stays equality" },
+    { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages the wider form", stagedAnswerMatches: false, answer: "stays equality" },
+    { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
+  ));
+  const dg = it0(disagrees.result);
+  t.check("a moderate majority the staging CONTRADICTS is the reviewer's", dg && dg.disposition === "human", dg && dg.disposition);
+
+  // Staging nothing is staging the status-quo answer, so a do-nothing
+  // recommendation is aligned and settles on the same terms as a written one.
+  const doNothing = await fire({}, three(
+    { answerKey: "successor-owns-it", confidence: "moderate", whatIsStaged: "no edit is staged, which is the successor-owns-it option", stagedAnswerMatches: true, answer: "a successor owns it" },
+    { answerKey: "successor-owns-it", confidence: "moderate", whatIsStaged: "no edit is staged, which is the successor-owns-it option", stagedAnswerMatches: true, answer: "a successor owns it" },
+    { answerKey: "lands-here", confidence: "low", answer: "it lands here" },
+  ));
+  const dn = it0(doNothing.result);
+  t.check("a do-nothing answer the proposal stages by omission resolves", dn && dn.disposition === "resolve", dn && dn.disposition);
 }
 
 // ==========================================================================

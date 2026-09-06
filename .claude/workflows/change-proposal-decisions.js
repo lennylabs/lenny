@@ -967,7 +967,7 @@ const DECISION_ENTRY = {
   required: [
     "id", "decision", "home", "deliverable", "marker", "groundQuotes", "questionsAsked",
     "caseFor", "caseAgainst", "whatWouldFlipIt", "counterfactual", "cascades", "disposition",
-    "recommendation", "whatIsStaged", "confidence", "summaryAction",
+    "recommendation", "whatIsStaged", "stagedAnswerMatches", "confidence", "summaryAction",
   ],
   properties: {
     id: { type: "string" },
@@ -991,12 +991,23 @@ const DECISION_ENTRY = {
     // resolve and resolved nothing.
     answerKey: { type: "string" },
     recommendation: { type: "string" },
-    // What the proposal STAGES on this question today, in its own words, or the
-    // empty string when it stages nothing either way. A proposal that already
-    // stages an answer has half-decided the question, and a recommendation
-    // pointing the other way means the staged text and the reviewer's brief
-    // disagree about what is being built.
+    // What the proposal STAGES on this question today, in its own words. A
+    // proposal that already stages an answer has half-decided the question, and
+    // a recommendation pointing the other way means the staged text and the
+    // reviewer's brief disagree about what is being built.
+    //
+    // Staging NOTHING is usually staging an answer: where leaving the tree as it
+    // is was one of the options, the absence of an edit selects it. This field
+    // names that option rather than reporting silence, and is empty only where
+    // every option needed a change and none was staged.
     whatIsStaged: { type: "string" },
+    // Whether the recommendation IS what the proposal stages. The join gates the
+    // moderate-confidence resolution on this, and it used to gate on
+    // `whatIsStaged` being non-empty, which tested that the reading had ANSWERED
+    // the question rather than that the staging agreed. Once staging nothing
+    // counts as staging the status-quo answer the field is almost never empty,
+    // so the old test would have passed nearly every moderate majority through.
+    stagedAnswerMatches: { type: "boolean" },
     // How sure the reading is of its recommendation. It gates how opinionated
     // the phase is allowed to be: see CONFIDENCE_RULE.
     confidence: { type: "string", enum: ["high", "moderate", "low"] },
@@ -1158,12 +1169,26 @@ const NO_DECISION_REFS_RULE =
 const STAGED_ALIGNMENT_RULE =
   "WHAT THE PROPOSAL ALREADY STAGES IS PART OF THE ANSWER. For every decision, read what the staged " +
   "spec and non-spec changes build TODAY on that question and put it in `whatIsStaged`, quoting the " +
-  "staged sentence, or the empty string when they stage nothing either way.\n" +
+  "staged sentence.\n" +
+  "STAGING NOTHING IS USUALLY STAGING AN ANSWER, and it is the one most often misread as silence. Where " +
+  "one of the answers on offer is to leave the tree as it is -- keep the current wording, let a successor " +
+  "own it, accept the residual, add nothing -- then a proposal that stages no edit HAS CHOSEN THAT " +
+  "ANSWER, and `whatIsStaged` says so in those terms: name the option the absence selects rather than " +
+  "writing that nothing is staged. `whatIsStaged` is empty ONLY where every answer on offer would require " +
+  "a change and the proposal stages none of them, which is a gap the proposal owes rather than an answer " +
+  "it has given, and you say that in `recommendation`.\n" +
+  "SET `stagedAnswerMatches` to whether your recommendation IS what the proposal stages, the do-nothing " +
+  "answer included. It is what lets a moderately-held answer be settled here rather than put to the " +
+  "reviewer, so a reading that sets it without checking spends the reviewer's attention on the strength " +
+  "of its own convenience.\n" +
   "IF THE PROPOSAL STAGES AN ANSWER, THAT IS YOUR RECOMMENDATION unless you can say why the staged text " +
-  "is wrong. A recommendation pointing away from what the proposal builds leaves the reviewer holding a " +
-  "brief that contradicts the deliverable, and whichever they pick something has to be rewritten that " +
-  "nobody has reviewed. When the staged answer IS wrong, say so in `recommendation` in those words, name " +
-  "the staged sentence, and treat the mismatch as the finding rather than the preference.";
+  "is wrong. That holds for the do-nothing answer exactly as it holds for a written one: recommending a " +
+  "change the proposal does not stage asks the reviewer to authorise work nobody has scoped, and the " +
+  "reviewer has to take your word that the change is small. A recommendation pointing away from what the " +
+  "proposal builds leaves them holding a brief that contradicts the deliverable, and whichever they pick " +
+  "something has to be rewritten that nobody has reviewed. When the staged answer IS wrong, say so in " +
+  "`recommendation` in those words, name the staged sentence or the absence, and treat the mismatch as " +
+  "the finding rather than the preference.";
 
 // How opinionated the phase is allowed to be. The operator's instruction: a
 // recommendation the reading is sure of is a decision the workflow can take.
@@ -1514,6 +1539,7 @@ function readingOf(agentIndex, entry) {
     answerKey: entry.answerKey || "",
     confidence: entry.confidence || "",
     whatIsStaged: entry.whatIsStaged || "",
+    stagedAnswerMatches: entry.stagedAnswerMatches === true,
     entry,
   };
 }
@@ -1590,8 +1616,12 @@ async function collectHumanDecisions() {
     // answer, the staging being the second reading that makes it sure. Anything
     // less is the human's.
     const sure = bloc.some((x) => x.confidence === "high");
+    // A moderate majority resolves only where the STAGING AGREES with the answer
+    // it reached, which the reading states rather than the script inferring from
+    // a prose field being non-empty.
     const stagedAgrees =
-      bloc.some((x) => x.confidence === "moderate") && bloc.some((x) => String(x.whatIsStaged || "").trim());
+      bloc.some((x) => x.confidence === "moderate") &&
+      bloc.some((x) => x.stagedAnswerMatches && String(x.whatIsStaged || "").trim());
     // THREE readings or nothing. A dead adjudicator leaves fewer, and two
     // readings that agree are not a majority of three: the redundancy this
     // sub-task buys is what makes a majority mean anything, so an item with a
