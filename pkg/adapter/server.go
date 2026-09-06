@@ -296,22 +296,10 @@ type Server struct {
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
 
-	// coord holds the §10.1 coordinator generation gate the
-	// CoordinatorFence RPC installs and the CheckpointBarrier RPC
-	// validates. See pkg/adapter/coordination.go.
-	coord coordinationState
-
 	// hold tracks the §10.1 coordinator-loss hold state the adapter
 	// enters when the gateway control stream drops while a session is
 	// live. See pkg/adapter/holdstate.go.
 	hold holdState
-
-	// barrier coordinates the §10.1 quiesce-and-hold CheckpointBarrier RPC
-	// with the gateway-driven Checkpoint stream: the barrier holds
-	// quiescence and blocks until the stream the gateway drives against
-	// the held pod terminates, echoing that stream's checkpoint_id. See
-	// pkg/adapter/coordination.go.
-	barrier barrierGate
 
 	// controlMu guards controlSink.
 	controlMu sync.Mutex

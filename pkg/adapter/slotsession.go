@@ -259,20 +259,48 @@ func (s *Server) mcpArmingHeldLocked() bool {
 	return held
 }
 
-// checkSessionBound validates an inbound session-scoped RPC against the
-// slot registry. Every session is bound to a slot on every pod, so this
-// is the one session check: it admits an entry bound to the named session
-// (started or not) and refuses one that is absent or registered but not
-// yet bound. spec: §5.2; §6.4.
-func (s *Server) checkSessionBound(sessionID string) error {
+// boundSlotState validates an inbound session-scoped RPC against the slot
+// registry and returns the entry it resolved. Every session is bound to a
+// slot on every pod, so this is the one session check: it admits an entry
+// bound to the named session (started or not) and refuses one that is
+// absent or registered but not yet bound.
+//
+// A handler that goes on to read or write the session's §10.1 coordination
+// state takes the entry from here and holds it for the life of the call,
+// rather than looking the session up a second time: the deregistration
+// paths delete the map key while returning the pointer with no field
+// zeroed, so a later lookup can find nothing for a call that is still
+// running. spec: §5.2; §6.4; §10.1.2.
+func (s *Server) boundSlotState(sessionID string) (*slotState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.slotStateLocked(sessionID)
 	if !ok || st.sessionID == "" {
-		return status.Errorf(codes.FailedPrecondition,
+		return nil, status.Errorf(codes.FailedPrecondition,
 			"session %s is not assigned to this pod", sessionID)
 	}
-	return nil
+	return st, nil
+}
+
+// checkSessionBound is boundSlotState for a handler that needs the guard
+// alone. spec: §5.2; §6.4.
+func (s *Server) checkSessionBound(sessionID string) error {
+	_, err := s.boundSlotState(sessionID)
+	return err
+}
+
+// slotStateForSession returns the registry entry for the named session, or
+// nil when the registry holds none. It admits a registered-but-unbound
+// entry, so a caller that needs the §5.2 binding guard uses boundSlotState
+// instead. spec: §6.4.
+func (s *Server) slotStateForSession(sessionID string) *slotState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(sessionID)
+	if !ok {
+		return nil
+	}
+	return st
 }
 
 // heldSession is one member of the set the §10.1 hold timeout terminates:

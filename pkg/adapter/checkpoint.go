@@ -91,7 +91,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// A session the registry holds no bound entry for is rejected with
 	// FailedPrecondition before the op lock is taken or any grant is
 	// minted.
-	roots, err := s.checkpointRootsForSession(sessionID)
+	roots, slot, err := s.checkpointRootsForSession(sessionID)
 	if err != nil {
 		return err
 	}
@@ -116,12 +116,17 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	}
 	defer release()
 
-	// Link a quiesce-and-hold barrier, if one is waiting, to this stream's
-	// checkpoint_id and signal it on stream termination so the barrier's
-	// CheckpointBarrierAck echoes the gateway-minted id (§10.1.8).
-	linked := s.barrier.link(start.GetCheckpointId())
+	// Link this session's quiesce-and-hold barrier, if one is waiting, to
+	// this stream's checkpoint_id and signal it on stream termination so
+	// the barrier's CheckpointBarrierAck echoes the gateway-minted id
+	// (§10.1.8). The gate is the one on the entry the guard above
+	// resolved: the op lock queues this stream behind a co-tenant
+	// session's whole upload, and either deregistration path can delete
+	// the map key inside that interval, so a second lookup here would
+	// leave the waiting barrier unlinked and its ack empty.
+	linked := slot.barrier.link(start.GetCheckpointId())
 	if linked {
-		defer s.barrier.complete()
+		defer slot.barrier.complete()
 	}
 
 	trigger := checkpoint.TriggerFromProto(start.GetTrigger())

@@ -670,12 +670,20 @@ func TestCoordinatorHoldTimeoutTerminatesEveryStartedSession_spec_10_1(t *testin
 // diagnosis: a failure means the coordinator-lost termination has gone
 // back to a single pod-scoped emission, so a co-tenant's session ends with
 // no terminal notification and the gateway waits out the 60s
-// orphan-session reconciler for it.
+// orphan-session reconciler for it. A wrong lastGeneration means the
+// records stamp one session's coordination generation on every session the
+// pod-scoped hold terminates.
 func TestCoordinatorHoldTimeoutDropsItsEmissionsWithNoSink_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
+	logBuf := &bytes.Buffer{}
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
 	rt := newSharedHoldRuntime()
 	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
-	// Record a fenced generation so the post-mortems carry it.
+	// Only sess-a is fenced. sess-b is a co-tenant no coordinator fenced on
+	// this pod, so its records report zero.
 	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
 		SessionId:              &adapterv1.SessionId{Value: "sess-a"},
 		CoordinationGeneration: 7,
@@ -697,10 +705,20 @@ func TestCoordinatorHoldTimeoutDropsItsEmissionsWithNoSink_spec_10_1(t *testing.
 		t.Errorf("AdapterTerminating drop delta = %v, want 2 (one per terminated session, no coordinator stream)", got)
 	}
 
-	for _, id := range []string{"sess-a", "sess-b"} {
-		data, err := os.ReadFile(filepath.Join(s.PostMortemDir, "coordinator_lost-"+id+".json"))
+	// Each terminated session's records carry its own last fenced
+	// generation: sess-a the 7 its coordinator fenced, sess-b zero because
+	// no coordinator fenced it on this pod. The pre-fix hold stamped the
+	// single pod-wide value on both.
+	for _, tc := range []struct {
+		session string
+		gen     int64
+	}{
+		{"sess-a", 7},
+		{"sess-b", 0},
+	} {
+		data, err := os.ReadFile(filepath.Join(s.PostMortemDir, "coordinator_lost-"+tc.session+".json"))
 		if err != nil {
-			t.Fatalf("post-mortem for %s not written: %v", id, err)
+			t.Fatalf("post-mortem for %s not written: %v", tc.session, err)
 		}
 		var rec struct {
 			SessionID      string `json:"sessionId"`
@@ -708,10 +726,32 @@ func TestCoordinatorHoldTimeoutDropsItsEmissionsWithNoSink_spec_10_1(t *testing.
 			LastGeneration int64  `json:"lastGeneration"`
 		}
 		if err := json.Unmarshal(data, &rec); err != nil {
-			t.Fatalf("decode post-mortem for %s: %v", id, err)
+			t.Fatalf("decode post-mortem for %s: %v", tc.session, err)
 		}
-		if rec.SessionID != id || rec.Reason != reasonCoordinatorLost || rec.LastGeneration != 7 {
-			t.Errorf("post-mortem for %s = %+v", id, rec)
+		if rec.SessionID != tc.session || rec.Reason != reasonCoordinatorLost || rec.LastGeneration != tc.gen {
+			t.Errorf("post-mortem for %s = %+v, want lastGeneration %d", tc.session, rec, tc.gen)
+		}
+		if !hasLogLine(logBuf.String(), reasonCoordinatorLost, tc.session, tc.gen) {
+			t.Errorf("no %s log line for %s carrying last_generation %d; got %s",
+				reasonCoordinatorLost, tc.session, tc.gen, logBuf.String())
+		}
+	}
+	// The pod-level arming line carries the started-session count and no
+	// generation: the pod records one per bound session, so no single value
+	// describes a pod-scoped event.
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec["msg"] != "coordinator_connection_lost" {
+			continue
+		}
+		if _, ok := rec["last_generation"]; ok {
+			t.Errorf("coordinator_connection_lost carries last_generation %v; the pod-level arming line carries none", rec["last_generation"])
+		}
+		if _, ok := rec["started_sessions"]; !ok {
+			t.Errorf("coordinator_connection_lost carries no started_sessions: %v", rec)
 		}
 	}
 	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
@@ -929,4 +969,24 @@ func TestCoordinatorHoldResolvedLineCarriesNoFields_spec_10_1(t *testing.T) {
 			t.Errorf("coordinator_hold_resolved carries structured field %q = %v; the line takes none", k, resolved[k])
 		}
 	}
+}
+
+// hasLogLine reports whether the captured JSON log carries a line whose
+// message is msg and which names the session with the given
+// last_generation value.
+func hasLogLine(out, msg, sessionID string, gen int64) bool {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec["msg"] != msg || rec["session_id"] != sessionID {
+			continue
+		}
+		g, ok := rec["last_generation"].(float64)
+		if ok && int64(g) == gen {
+			return true
+		}
+	}
+	return false
 }

@@ -2079,7 +2079,8 @@
         "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
         "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
-        "pkg/adapter/coordination_test.go"
+        "pkg/adapter/coordination_test.go",
+        "pkg/adapter/checkpoint_stream_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -2198,7 +2199,9 @@
         "pkg/gateway/coordination/barrier/wiring_test.go",
         "pkg/gateway/runtime/adapterclient/checkpointbarrier_test.go",
         "pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
-        "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go"
+        "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
+        "pkg/adapter/coordination_test.go",
+        "pkg/adapter/checkpoint_stream_test.go"
       ],
       "packages": [
         "pkg/gateway"

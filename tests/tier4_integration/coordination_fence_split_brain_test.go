@@ -80,7 +80,7 @@ func TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1(t *testing.T) {
 	// real Redis lease at that generation without bumping (a bound renew is not
 	// a handoff).
 	coordinator := coordfixture.NewReplica("replica-1", tenant, pod, sessions, leases, ttl, sessID)
-	if _, err := pod.Fence(ctx, 1); err != nil {
+	if _, err := pod.Fence(ctx, sessID, 1); err != nil {
 		t.Fatalf("replica-1 at-bind fence to generation 1: %v", err)
 	}
 	if _, err := coordinator.Sweeper.Sweep(ctx); err != nil {
@@ -106,8 +106,8 @@ func TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1(t *testing.T) {
 	if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-1" {
 		t.Fatalf("pre-handoff lease holder = %+v err=%v, want replica-1", lease, err)
 	}
-	if pod.LastFenced() != 1 {
-		t.Fatalf("pre-handoff pod fenced generation = %d, want 1", pod.LastFenced())
+	if pod.LastFenced(sessID) != 1 {
+		t.Fatalf("pre-handoff pod fenced generation = %d, want 1", pod.LastFenced(sessID))
 	}
 
 	// replica-1 crashes: it stops sweeping and its Redis lease is gone. The
@@ -141,14 +141,14 @@ func TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1(t *testing.T) {
 	}
 
 	// The pod is now fenced to the post-handoff generation.
-	if pod.LastFenced() != 2 {
-		t.Fatalf("post-handoff pod fenced generation = %d, want 2", pod.LastFenced())
+	if pod.LastFenced(sessID) != 2 {
+		t.Fatalf("post-handoff pod fenced generation = %d, want 2", pod.LastFenced(sessID))
 	}
 
 	// The split-brain fence: replica-1 is a stale coordinator, and its next
 	// session-mutating RPC carries the pre-handoff generation 1. The pod
 	// rejects it now that the generation advanced to 2.
-	if !pod.StaleRPCRejected(ctx, 1) {
+	if !pod.StaleRPCRejected(ctx, sessID, 1) {
 		t.Errorf("stale coordinator RPC at generation 1 was NOT rejected after the handoff advanced to 2 (split-brain)")
 	}
 

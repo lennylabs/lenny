@@ -918,3 +918,168 @@ func TestCheckpointStreamCoalescedAttemptIsAborted_spec_4_7(t *testing.T) {
 		t.Fatalf("coalesced checkpoint error = %v, want the op lock's coalescing refusal", err)
 	}
 }
+
+// spec: §10.1.8 (the barrier's ack echoes the checkpoint id its own
+// session's Checkpoint stream carried), §10.1.2 (each handler resolves the
+// session's registry entry once and holds it for the life of the call) —
+// a Checkpoint stream that passed the slot guard and then queued on the
+// pod-level op lock behind a co-tenant's checkpoint still links its
+// checkpoint id into the entry its own waiting CheckpointBarrier holds,
+// even when that session is deregistered while the stream is queued.
+//
+// The interval between the guard and the link is bounded by a co-tenant
+// session's whole upload, and both deregistration paths delete the
+// registry's map key inside it. A link site that looked the session up a
+// second time would find nothing, leave the waiting barrier unlinked, and
+// return an empty checkpoint_ref after blocking to the gateway's ack
+// deadline. This case pins the resolved pointer rather than the lookup, so
+// it fails against that reading of the handler rather than against the
+// pre-fix pod-wide gate, which was never absent.
+func TestCheckpointStreamLinksBarrierAfterDeregistration_spec_10_1_8(t *testing.T) {
+	transport := &recordingTransport{}
+	s := slotCheckpointServer(t, transport)
+	ctx := context.Background()
+	for _, id := range []string{"sess-a", "sess-b"} {
+		if _, err := s.StartSession(ctx, slotStartReq(id)); err != nil {
+			t.Fatalf("StartSession(%s): %v", id, err)
+		}
+		seedFile(t, filepath.Join(s.WorkspaceBase, "slots", id, "current", id+".txt"), "content-"+id)
+		if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+			SessionId: &adapterv1.SessionId{Value: id}, CoordinationGeneration: 4,
+		}); err != nil {
+			t.Fatalf("fence %s: %v", id, err)
+		}
+	}
+	client, _ := adapterClient(t, s)
+
+	// Both co-tenant sessions are drained together: each holds its own
+	// barrier open, quiesced, waiting for its own stream.
+	type barrierResult struct {
+		resp *adapterv1.CheckpointBarrierResponse
+		err  error
+	}
+	barriers := map[string]chan barrierResult{
+		"sess-a": make(chan barrierResult, 1),
+		"sess-b": make(chan barrierResult, 1),
+	}
+	bctx, cancelBarriers := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelBarriers()
+	for _, id := range []string{"sess-a", "sess-b"} {
+		go func(id string) {
+			resp, err := client.CheckpointBarrier(bctx, &adapterv1.CheckpointBarrierRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BarrierId: "b-" + id, CoordinationGeneration: 4,
+			})
+			barriers[id] <- barrierResult{resp, err}
+		}(id)
+	}
+	waitBarrierOpen(t, s, "sess-a")
+	waitBarrierOpen(t, s, "sess-b")
+
+	// Hold the pod-level op lock for sess-a so sess-b's stream passes the
+	// slot guard and then queues.
+	releaseOp, err := s.BeginCheckpointOpForTest(ctx, "sess-a")
+	if err != nil {
+		t.Fatalf("hold the op lock for sess-a: %v", err)
+	}
+
+	streamDone := make(chan struct{})
+	go func() {
+		defer close(streamDone)
+		stream, err := client.Checkpoint(ctx)
+		if err != nil {
+			return
+		}
+		if err := stream.Send(&adapterv1.CheckpointRequest{
+			Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+				CheckpointId:   "gw-ckpt-sess-b",
+				SessionId:      &adapterv1.SessionId{Value: "sess-b"},
+				Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION,
+				ChunkSizeBytes: 1 << 20,
+			}},
+		}); err != nil {
+			return
+		}
+		// The archive can fail once the slot tree is gone; the assertions
+		// are on the link, the ack, and the return.
+		_, _, _ = driveCheckpointConc(stream, "https://objectstore.example/sess-b")
+	}()
+	if !s.WaitPendingCheckpointForTest("sess-b", 5*time.Second) {
+		t.Fatal("sess-b's checkpoint never queued behind the co-tenant's op-lock hold")
+	}
+
+	// sess-b is deregistered while its stream is queued: the registry's map
+	// key is gone before the stream reaches the link site.
+	s.ReleaseSlotForTest("sess-b")
+
+	releaseOp()
+	<-streamDone
+
+	select {
+	case got := <-barriers["sess-b"]:
+		if got.err != nil {
+			t.Fatalf("sess-b barrier returned an error rather than an ack: %v", got.err)
+		}
+		if got.resp.GetCheckpointRef() != "gw-ckpt-sess-b" {
+			t.Fatalf("sess-b checkpoint_ref = %q, want the id its own queued stream carried",
+				got.resp.GetCheckpointRef())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("sess-b's barrier never returned; its queued stream did not link or complete its gate")
+	}
+
+	// The co-tenant's barrier is untouched by any of it: still open, and it
+	// returns its own stream's id when that stream terminates.
+	if !s.BarrierWaiting("sess-a") {
+		t.Fatal("sess-a's barrier gate closed when the co-tenant's session was deregistered")
+	}
+	driveSlotCheckpoint(t, client, ctx, "sess-a", "gw-ckpt-sess-a")
+	select {
+	case got := <-barriers["sess-a"]:
+		if got.err != nil {
+			t.Fatalf("sess-a barrier: %v", got.err)
+		}
+		if got.resp.GetCheckpointRef() != "gw-ckpt-sess-a" {
+			t.Fatalf("sess-a checkpoint_ref = %q, want gw-ckpt-sess-a", got.resp.GetCheckpointRef())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("sess-a's barrier never returned after its own stream terminated")
+	}
+}
+
+// waitBarrierOpen spins until the named session's CheckpointBarrier RPC
+// has opened that session's quiesce-and-hold gate.
+func waitBarrierOpen(t *testing.T, s *adapter.Server, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.BarrierWaiting(sessionID) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("CheckpointBarrier for %s never opened its quiesce-and-hold gate", sessionID)
+}
+
+// driveSlotCheckpoint runs one gateway-side Checkpoint stream for the
+// session to completion, so the session's waiting barrier is linked to
+// checkpointID and signalled when the stream terminates.
+func driveSlotCheckpoint(t *testing.T, client adapterv1.AdapterClient, ctx context.Context, sessionID, checkpointID string) {
+	t.Helper()
+	stream, err := client.Checkpoint(ctx)
+	if err != nil {
+		t.Fatalf("open Checkpoint stream for %s: %v", sessionID, err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   checkpointID,
+			SessionId:      &adapterv1.SessionId{Value: sessionID},
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send CheckpointStart for %s: %v", sessionID, err)
+	}
+	if _, _, err := driveCheckpointConc(stream, "https://objectstore.example/"+sessionID); err != nil {
+		t.Fatalf("drive Checkpoint stream for %s: %v", sessionID, err)
+	}
+}

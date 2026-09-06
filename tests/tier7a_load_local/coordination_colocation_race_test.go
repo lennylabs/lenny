@@ -166,7 +166,7 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	}
 
 	pod := coordfixture.StartPod(t, live)
-	if _, err := pod.Fence(ctx, 1); err != nil {
+	if _, err := pod.Fence(ctx, live, 1); err != nil {
 		t.Fatalf("initial fence: %v", err)
 	}
 
@@ -257,8 +257,8 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	if h, ok := leases.holder(tenant, live); !ok || h != "replica-2" {
 		t.Fatalf("post-handoff lease holder = %q ok=%v, want replica-2", h, ok)
 	}
-	if pod.LastFenced() != 2 {
-		t.Fatalf("pod fenced generation = %d, want 2 (fenced to the post-handoff generation)", pod.LastFenced())
+	if pod.LastFenced(live) != 2 {
+		t.Fatalf("pod fenced generation = %d, want 2 (fenced to the post-handoff generation)", pod.LastFenced(live))
 	}
 	got, _ := sessions.Get(ctx, tenant, live)
 	if got.CoordinationGeneration != 2 {

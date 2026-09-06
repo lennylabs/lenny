@@ -175,7 +175,9 @@ func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*
 	// `/sessions/{sessionId}`, resolved from the identifier the
 	// ResumeRequest names. Extracting into a pod-global root would
 	// discard the restore on every pod under the uniform layout.
-	roots, err := s.checkpointRootsForSession(sessionID)
+	// The resolved entry is discarded: the restore reads the roots alone
+	// and links no barrier gate.
+	roots, _, err := s.checkpointRootsForSession(sessionID)
 	if err != nil {
 		return 0, err
 	}

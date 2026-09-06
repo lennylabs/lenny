@@ -127,7 +127,7 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		// lapse in real Redis, so the survivor observes a genuinely lapsed lease
 		// left by a real peer coordinator.
 		coordinator := coordfixture.NewReplica("replica-1", tenant, pod, sessions, leases, time.Second, sessID)
-		if _, err := pod.Fence(ctx, 1); err != nil {
+		if _, err := pod.Fence(ctx, sessID, 1); err != nil {
 			t.Fatalf("replica-1 initial fence: %v", err)
 		}
 		if _, err := coordinator.Sweeper.Sweep(ctx); err != nil {
@@ -147,8 +147,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		if got.CoordinationGeneration != 2 {
 			t.Fatalf("coordination_generation = %d, want 2", got.CoordinationGeneration)
 		}
-		if pod.LastFenced() != 2 {
-			t.Fatalf("pod fenced generation = %d, want 2", pod.LastFenced())
+		if pod.LastFenced(sessID) != 2 {
+			t.Fatalf("pod fenced generation = %d, want 2", pod.LastFenced(sessID))
 		}
 		if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-2" {
 			t.Fatalf("lease holder = %+v err=%v, want replica-2", lease, err)
@@ -162,7 +162,7 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		}
 		// The stale prior coordinator's RPC at the pre-handoff generation 1 is
 		// rejected now that the generation advanced to 2.
-		if !pod.StaleRPCRejected(ctx, 1) {
+		if !pod.StaleRPCRejected(ctx, sessID, 1) {
 			t.Errorf("stale coordinator RPC at generation 1 was not fenced out after the takeover")
 		}
 	})
@@ -181,7 +181,7 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 			t.Fatalf("seed: %v", err)
 		}
 		pod := coordfixture.StartPod(t, sessID)
-		if _, err := pod.Fence(ctx, 1); err != nil {
+		if _, err := pod.Fence(ctx, sessID, 1); err != nil {
 			t.Fatalf("initial fence: %v", err)
 		}
 		bound := coordfixture.NewBindings()
@@ -192,8 +192,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		if _, err := sw.Sweep(ctx); err != nil {
 			t.Fatalf("first takeover Sweep: %v", err)
 		}
-		if !bound.Bound(sessID) || pod.LastFenced() != 2 {
-			t.Fatalf("first takeover incomplete: bound=%v fenced=%d", bound.Bound(sessID), pod.LastFenced())
+		if !bound.Bound(sessID) || pod.LastFenced(sessID) != 2 {
+			t.Fatalf("first takeover incomplete: bound=%v fenced=%d", bound.Bound(sessID), pod.LastFenced(sessID))
 		}
 
 		// The held gateway-to-pod channel dies.
@@ -220,8 +220,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		if !bound.Bound(sessID) {
 			t.Fatalf("dead-connection session was not re-adopted onto a fresh binding")
 		}
-		if pod.LastFenced() != 3 {
-			t.Fatalf("re-adopt pod fenced generation = %d, want 3 (re-fenced after the dead-connection eviction)", pod.LastFenced())
+		if pod.LastFenced(sessID) != 3 {
+			t.Fatalf("re-adopt pod fenced generation = %d, want 3 (re-fenced after the dead-connection eviction)", pod.LastFenced(sessID))
 		}
 		got, _ := sessions.Get(ctx, tenant, sessID)
 		if got.CoordinationGeneration != 3 {

@@ -50,6 +50,29 @@ type slotState struct {
 	// timers holds the slot's §4.9 direct-mode lease-expiry timers, keyed
 	// by provider, independent of sibling slots and the single-slot set.
 	timers map[string]*expiryTimer
+	// coord is this session's §10.1 coordination state: the generation the
+	// pod last accepted for it, whether any fence has landed within this
+	// binding, and whether a barrier is holding it quiesced. The unit is
+	// the session's binding on the pod rather than the pod's lifetime, so
+	// one session's fence neither rejects, gap-flags, nor mis-attributes
+	// anything belonging to a co-tenant session. spec: §10.1.2.
+	coord coordinationState
+	// barrier is this session's §10.1.8 quiesce-and-hold gate, carrying the
+	// gateway-minted checkpoint id its own Checkpoint stream links. Each
+	// co-tenant session drained together holds its own gate, so two
+	// concurrent barriers neither overwrite each other's channel nor
+	// cross-link each other's checkpoint id. It keeps its own leaf mutex,
+	// independent of coord.mu. spec: §10.1.8.
+	barrier barrierGate
+}
+
+// lastFencedGeneration returns the generation this session's binding on
+// the pod last accepted through CoordinatorFence, or zero when no
+// coordinator has fenced it within this binding. spec: §10.1.2.
+func (st *slotState) lastFencedGeneration() int64 {
+	st.coord.mu.Lock()
+	defer st.coord.mu.Unlock()
+	return st.coord.lastFenced
 }
 
 // concurrentRoots derives the §6.4 base directories the per-slot trees
@@ -142,15 +165,22 @@ func (s *Server) workspaceRootForSession(sessionID string) (string, error) {
 }
 
 // checkpointRootsForSession returns the §4.4 checkpoint bundle for the
-// named session: /workspace/slots/{sessionId}/current under
-// WorkspacePrefix and /sessions/{sessionId} under SessionsPrefix, because
-// the session tmpfs is itself per-session. A session with no registry
-// entry or no bound session is rejected with FailedPrecondition so a
-// checkpoint never captures an empty or nonexistent subtree for an
-// unassigned slot; the adapter fails closed on the slot gate. spec: §5.2
-// (per-slot checkpoint granularity), §6.4 (per-slot export target),
-// §4.4 (durability contract).
-func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedRoot, error) {
+// named session together with the registry entry it resolved:
+// /workspace/slots/{sessionId}/current under WorkspacePrefix and
+// /sessions/{sessionId} under SessionsPrefix, because the session tmpfs is
+// itself per-session. A session with no registry entry or no bound session
+// is rejected with FailedPrecondition so a checkpoint never captures an
+// empty or nonexistent subtree for an unassigned slot; the adapter fails
+// closed on the slot gate.
+//
+// The entry is returned so a caller that later links into that session's
+// barrier gate holds the pointer this guard validated. A second lookup by
+// session identifier would race the deregistration paths, which delete the
+// map key while a checkpoint queued behind a co-tenant's upload is still
+// running. spec: §5.2 (per-slot checkpoint granularity), §6.4 (per-slot
+// export target), §4.4 (durability contract), §10.1.8 (the barrier gate
+// the stream links into).
+func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedRoot, *slotState, error) {
 	s.mu.Lock()
 	st, ok := s.slotStateLocked(sessionID)
 	var current, sessions, sess string
@@ -161,7 +191,7 @@ func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedR
 	}
 	s.mu.Unlock()
 	if !ok || sess == "" {
-		return nil, status.Errorf(codes.FailedPrecondition,
+		return nil, nil, status.Errorf(codes.FailedPrecondition,
 			"session %s has no assigned slot on this pod", sessionID)
 	}
 	roots := []workspace.NamedRoot{
@@ -172,7 +202,7 @@ func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedR
 			Prefix: workspace.SessionsPrefix, Root: sessions,
 		})
 	}
-	return roots, nil
+	return roots, st, nil
 }
 
 // removeSlotTree removes the slot's per-slot directory tree on cleanup.

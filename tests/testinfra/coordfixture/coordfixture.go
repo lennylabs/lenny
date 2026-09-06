@@ -103,24 +103,31 @@ func StartPod(t testing.TB, sessionID string) *Pod {
 	return &Pod{Server: srv, Client: cl, SessionID: sessionID}
 }
 
-// Fence drives a real CoordinatorFence to gen and reports whether the pod
-// accepted it. The first fence on a pod is always accepted; a later fence
-// whose generation is not strictly greater is rejected with FailedPrecondition.
-func (p *Pod) Fence(ctx context.Context, gen int64) (bool, error) {
-	res, err := p.Client.CoordinatorFence(ctx, p.SessionID, gen)
+// Fence drives a real CoordinatorFence for the session to gen and reports
+// whether the pod accepted it. The first fence for a bound session on that pod
+// is always accepted; a later fence for the same session whose generation is
+// not strictly greater is rejected with FailedPrecondition. A co-tenant
+// session's own fence is recorded and compared against that session's value
+// alone.
+func (p *Pod) Fence(ctx context.Context, sessionID string, gen int64) (bool, error) {
+	res, err := p.Client.CoordinatorFence(ctx, sessionID, gen)
 	return res.Accepted, err
 }
 
-// LastFenced returns the generation the pod is currently fenced to.
-func (p *Pod) LastFenced() int64 { return p.Server.LastFencedGeneration() }
+// LastFenced returns the generation the pod is currently fenced to for the
+// session, or zero when no coordinator has fenced that session on this pod.
+func (p *Pod) LastFenced(sessionID string) int64 {
+	return p.Server.LastFencedGeneration(sessionID)
+}
 
 // StaleRPCRejected reports whether a session-mutating RPC (CheckpointBarrier)
-// carrying gen is rejected by the pod's §10.1 generation fence. It is the
-// split-brain probe: after a handoff advances the coordination generation, the
-// previous coordinator's RPC at the pre-handoff generation must be rejected.
+// for the session carrying gen is rejected by the pod's §10.1 generation
+// fence. It is the split-brain probe: after a handoff advances that session's
+// coordination generation, the previous coordinator's RPC at the pre-handoff
+// generation must be rejected.
 // spec: §10.1 (generation fence; a stale coordinator's RPC is rejected).
-func (p *Pod) StaleRPCRejected(ctx context.Context, gen int64) bool {
-	_, err := p.Client.CheckpointBarrier(ctx, p.SessionID, gen, "coordfixture-split-brain-probe")
+func (p *Pod) StaleRPCRejected(ctx context.Context, sessionID string, gen int64) bool {
+	_, err := p.Client.CheckpointBarrier(ctx, sessionID, gen, "coordfixture-split-brain-probe")
 	return status.Code(err) == codes.FailedPrecondition
 }
 
@@ -214,8 +221,8 @@ type FenceReadopter struct {
 	sessions []string
 }
 
-// ReadoptAndFence fences the pod to the post-handoff generation and returns a
-// publish callback the Sweeper invokes only after the fence acknowledges. On a
+// ReadoptAndFence fences the session it is adopting to the post-handoff
+// generation on the pod and returns a publish callback the Sweeper invokes only after the fence acknowledges. On a
 // Fail session it relinquishes the lease and returns an error.
 func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
 	r.mu.Lock()
@@ -228,7 +235,7 @@ func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionI
 		_ = r.Leases.Release(ctx, tenantID, sessionID, r.ReplicaID)
 		return nil, fmt.Errorf("coordfixture: fence relinquished for session %s", sessionID)
 	}
-	accepted, err := r.Pod.Fence(ctx, generation)
+	accepted, err := r.Pod.Fence(ctx, sessionID, generation)
 	if err != nil {
 		_ = r.Leases.Release(ctx, tenantID, sessionID, r.ReplicaID)
 		return nil, fmt.Errorf("coordfixture: fence session %s to generation %d: %w", sessionID, generation, err)

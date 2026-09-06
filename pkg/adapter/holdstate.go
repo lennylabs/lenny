@@ -40,7 +40,6 @@ type holdState struct {
 	mu     sync.Mutex
 	active bool
 	timer  TimerHandle
-	gen    int64
 }
 
 // coordinatorHoldAllowedMethods is the §10.1.4 allowlist: the only
@@ -100,10 +99,9 @@ func (s *Server) onCoordinatorChannelClosed() {
 }
 
 // enterHoldState arms the §10.1 hold: it raises the coordinator-hold
-// gauge, logs coordinator_connection_lost with the last known generation
-// and the number of sessions the pod has started, and starts the
-// hold-timeout timer. It is idempotent — a second close while already
-// held is a no-op.
+// gauge, logs coordinator_connection_lost with the number of sessions the
+// pod has started, and starts the hold-timeout timer. It is idempotent — a
+// second close while already held is a no-op.
 //
 // The hold names no session. Its unit is the pod, and the set it
 // terminates is read from the slot registry when the timeout fires rather
@@ -111,12 +109,15 @@ func (s *Server) onCoordinatorChannelClosed() {
 // the timeout starts after the read and would be missing from a recorded
 // set while still running when the timeout fires.
 //
+// The arming line carries no coordination generation. The pod records one
+// generation per bound session, so no single value describes a pod-scoped
+// event; each terminated session's own value is reported on its
+// coordinator_lost record instead. spec: §10.1.2; §10.1.4.
+//
 // spec: §10.1.
 func (s *Server) enterHoldState() {
-	// Read the generation and the started-session count through their
-	// accessors (which take coord.mu and s.mu) before locking hold.mu so
-	// no two locks are ever held together.
-	gen := s.LastFencedGeneration()
+	// Read the started-session count through its accessor (which takes
+	// s.mu) before locking hold.mu so no two locks are ever held together.
 	started := s.startedSessionCount()
 
 	s.hold.mu.Lock()
@@ -125,11 +126,9 @@ func (s *Server) enterHoldState() {
 		return
 	}
 	s.hold.active = true
-	s.hold.gen = gen
 	setCoordinatorHold(true)
 	slog.Warn("coordinator_connection_lost",
-		"started_sessions", started,
-		"last_generation", gen)
+		"started_sessions", started)
 	s.hold.timer = s.holdAfter(s.coordinatorHoldTimeout(), s.onHoldTimeout)
 }
 
@@ -152,8 +151,8 @@ func (s *Server) exitHoldState() {
 	}
 	setCoordinatorHold(false)
 	// The resolved line carries no structured fields: the hold names no
-	// session, and the generation it armed under is already on the
-	// coordinator_connection_lost line that opened this hold.
+	// session, and the pod records a coordination generation per bound
+	// session rather than one for the hold.
 	slog.Info("coordinator_hold_resolved")
 }
 
@@ -184,7 +183,6 @@ func (s *Server) onHoldTimeout() {
 	}
 	s.hold.active = false
 	s.hold.timer = nil
-	gen := s.hold.gen
 	setCoordinatorHold(false)
 	s.hold.mu.Unlock()
 
@@ -203,7 +201,7 @@ func (s *Server) onHoldTimeout() {
 	closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, m := range members {
-		s.terminateHeldSession(closeCtx, m, gen)
+		s.terminateHeldSession(closeCtx, m)
 	}
 }
 
@@ -221,8 +219,15 @@ func (s *Server) onHoldTimeout() {
 // coordinator exists; the scrub report is the record of a scrub a Shutdown
 // teardown performed, and this path performs none.
 //
+// The generation the records carry is the member's own last fenced value,
+// read off the registry entry pass 1 deregistered, and zero for a session
+// no coordinator fenced on this pod. A single value stamped for the whole
+// hold would report one session's generation on every session the hold
+// terminates. spec: §10.1.2.
+//
 // spec: §10.1.4; §4.7; §6.4.
-func (s *Server) terminateHeldSession(ctx context.Context, m heldSession, gen int64) {
+func (s *Server) terminateHeldSession(ctx context.Context, m heldSession) {
+	gen := m.state.lastFencedGeneration()
 	slog.Warn(reasonCoordinatorLost,
 		"session_id", m.sessionID,
 		"last_generation", gen)

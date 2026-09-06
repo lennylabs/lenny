@@ -153,14 +153,15 @@ func TestCheckpointBarrierMapsAck_spec_10_1(t *testing.T) {
 	}
 }
 
-// waitBarrierGateOpen spins until the adapter's CheckpointBarrier RPC has
-// opened its quiesce-and-hold gate, so the caller can drive the Checkpoint
-// stream and know the stream's CheckpointStart will link into the barrier.
+// waitBarrierGateOpen spins until the adapter's CheckpointBarrier RPC for
+// session s1 has opened that session's quiesce-and-hold gate, so the
+// caller can drive the Checkpoint stream and know the stream's
+// CheckpointStart will link into the barrier.
 func waitBarrierGateOpen(t *testing.T, srv *adapter.Server) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if srv.BarrierWaiting() {
+		if srv.BarrierWaiting("s1") {
 			return
 		}
 		time.Sleep(time.Millisecond)

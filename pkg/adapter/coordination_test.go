@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestCoordinatorFenceFirstFenceNeverGap(t *testing.T) {
 	if !resp.GetAccepted() || resp.GetGapDetected() {
 		t.Fatalf("first fence should be accepted without gap: %+v", resp)
 	}
-	if got := s.LastFencedGeneration(); got != 42 {
+	if got := s.LastFencedGeneration("s1"); got != 42 {
 		t.Fatalf("last fenced generation: got %d want 42", got)
 	}
 }
@@ -215,21 +216,30 @@ func TestCheckpointBarrierRejectsGenerationMismatch(t *testing.T) {
 	}
 }
 
-// waitBarrierWaiting spins until the CheckpointBarrier RPC under test has
-// opened its quiesce-and-hold gate, so the test can link a checkpoint id
-// into it exactly as the gateway-driven Checkpoint stream would.
-func waitBarrierWaiting(t *testing.T, s *Server) {
+// waitBarrierWaiting spins until the CheckpointBarrier RPC for the named
+// session has opened that session's quiesce-and-hold gate, so the test can
+// link a checkpoint id into it exactly as the gateway-driven Checkpoint
+// stream would.
+func waitBarrierWaiting(t *testing.T, s *Server, sessionID string) {
 	t.Helper()
 	for i := 0; i < 1000; i++ {
-		s.barrier.mu.Lock()
-		waiting := s.barrier.waiting
-		s.barrier.mu.Unlock()
-		if waiting {
+		if s.BarrierWaiting(sessionID) {
 			return
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("CheckpointBarrier never opened its quiesce-and-hold gate")
+	t.Fatalf("CheckpointBarrier for %s never opened its quiesce-and-hold gate", sessionID)
+}
+
+// sessionGate returns the named session's barrier gate so a test can link
+// and complete it the way that session's own Checkpoint stream does.
+func sessionGate(t *testing.T, s *Server, sessionID string) *barrierGate {
+	t.Helper()
+	st := s.slotStateForSession(sessionID)
+	if st == nil {
+		t.Fatalf("session %s holds no slot registry entry", sessionID)
+	}
+	return &st.barrier
 }
 
 // TestCheckpointBarrierAcksEchoedCheckpointID verifies the §10.1 quiesce-and-hold contract: fence sets generation N, the barrier
@@ -275,14 +285,15 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 
 	// The barrier holds quiescence; simulate the gateway-driven Checkpoint
 	// stream linking its minted id and terminating.
-	waitBarrierWaiting(t, s)
-	if !s.isQuiescedForBarrier() {
+	waitBarrierWaiting(t, s, "s1")
+	if !s.isQuiescedForBarrier("s1") {
 		t.Fatal("barrier must hold quiescence while it waits for the stream")
 	}
-	if !s.barrier.link("gw-ckpt-1") {
+	gate := sessionGate(t, s, "s1")
+	if !gate.link("gw-ckpt-1") {
 		t.Fatal("Checkpoint stream could not link into the open barrier gate")
 	}
-	s.barrier.complete()
+	gate.complete()
 
 	got := <-resultCh
 	if got.err != nil {
@@ -295,7 +306,7 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 		t.Fatalf("checkpoint_ref: got %q want the echoed gateway checkpoint_id gw-ckpt-1", got.resp.GetCheckpointRef())
 	}
 	// Quiescence is released only after the RPC returns.
-	if s.isQuiescedForBarrier() {
+	if s.isQuiescedForBarrier("s1") {
 		t.Fatal("quiescence must be released after the barrier returns")
 	}
 
@@ -348,13 +359,14 @@ func TestCheckpointBarrierQuiescedMsIsTimeToQuiescence(t *testing.T) {
 		resultCh <- resp
 	}()
 
-	waitBarrierWaiting(t, s)
+	waitBarrierWaiting(t, s, "s1")
 	// Hold the gateway-driven stream open well past any plausible
 	// time-to-quiescence before linking its id and completing it.
 	const hold = 200 * time.Millisecond
 	time.Sleep(hold)
-	s.barrier.link("gw-ckpt-1")
-	s.barrier.complete()
+	gate := sessionGate(t, s, "s1")
+	gate.link("gw-ckpt-1")
+	gate.complete()
 
 	resp := <-resultCh
 	if resp.GetQuiescedMs() >= hold.Milliseconds()/2 {
@@ -426,5 +438,240 @@ func TestExtractToolCallID(t *testing.T) {
 				t.Fatalf("extractToolCallID(%q): got %q want %q", tc.frame, got, tc.want)
 			}
 		})
+	}
+}
+
+// newCoTenantServer returns a Server with both sessions bound and started,
+// modelling a concurrency-enabled pod holding two co-tenant sessions. The
+// per-slot trees are rooted under the test's own temp dir so the two
+// entries own disjoint filesystem state.
+func newCoTenantServer(t *testing.T, sessions ...string) *Server {
+	t.Helper()
+	base := t.TempDir()
+	s := New("co-tenant")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	for _, id := range sessions {
+		if err := s.claimSessionForTest(id); err != nil {
+			t.Fatalf("claim %s: %v", id, err)
+		}
+	}
+	return s
+}
+
+// spec: §10.1.2 (the pod records and compares the coordination generation
+// per bound session), §10.1.8 (the barrier gate reads that session's
+// value) — a co-tenant session's fence at a generation below another
+// session's is accepted on its own entry, its barrier at that generation
+// is accepted, and the first session's recorded value is untouched.
+//
+// The pre-fix pod held one generation for the whole process, so the second
+// session's fence at 2 was refused as coordinator_handoff_stale against
+// the first session's 7 and its barrier at 2 was refused for not matching.
+func TestCoTenantFenceRecordsPerSessionGeneration_spec_10_1_2(t *testing.T) {
+	s := newCoTenantServer(t, "sess-a", "sess-b")
+	ctx := context.Background()
+
+	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-a"}, CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("fence sess-a to 7: %v", err)
+	}
+	resp, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-b"}, CoordinationGeneration: 2,
+	})
+	if err != nil {
+		t.Fatalf("fence sess-b to 2 (a co-tenant's lower generation is not stale): %v", err)
+	}
+	if !resp.GetAccepted() || resp.GetGapDetected() {
+		t.Fatalf("sess-b first fence = %+v, want accepted without a gap", resp)
+	}
+	if got := s.LastFencedGeneration("sess-b"); got != 2 {
+		t.Fatalf("sess-b last fenced generation = %d, want 2", got)
+	}
+	if got := s.LastFencedGeneration("sess-a"); got != 7 {
+		t.Fatalf("sess-a last fenced generation = %d, want 7 (a co-tenant's fence records nothing for it)", got)
+	}
+
+	// sess-b's barrier at its own generation is accepted. No Checkpoint
+	// stream is driven, so the barrier returns an empty ref on its window.
+	bctx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if _, err := s.CheckpointBarrier(bctx, &adapterv1.CheckpointBarrierRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-b"}, BarrierId: "b-b", CoordinationGeneration: 2,
+	}); err != nil {
+		t.Fatalf("barrier for sess-b at its own generation 2: %v", err)
+	}
+	if got := s.LastFencedGeneration("sess-a"); got != 7 {
+		t.Fatalf("sess-a last fenced generation after sess-b's barrier = %d, want 7", got)
+	}
+}
+
+// spec: §10.1.2 (the first fence within a session's binding on the pod is
+// exempt from gap detection), §10.1.8 — a co-tenant's first fence is not a
+// gap however far it sits above another session's recorded value, because
+// the exemption's unit is the session's binding rather than the pod's
+// lifetime.
+//
+// The pre-fix pod set one initialized flag for the whole process, so the
+// first fence anywhere on the pod made every later co-tenant's first fence
+// report a gap.
+func TestCoTenantFirstFenceIsNotAGap_spec_10_1_2(t *testing.T) {
+	logBuf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	s := newCoTenantServer(t, "sess-a", "sess-b")
+	ctx := context.Background()
+	if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-a"}, CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("fence sess-a to 7: %v", err)
+	}
+	resp, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-b"}, CoordinationGeneration: 9,
+	})
+	if err != nil {
+		t.Fatalf("fence sess-b to 9: %v", err)
+	}
+	if resp.GetGapDetected() {
+		t.Fatalf("sess-b's first fence reported a gap: %+v", resp)
+	}
+	if strings.Contains(logBuf.String(), "coordinator_generation_gap") {
+		t.Fatalf("sess-b's first fence logged coordinator_generation_gap: %s", logBuf.String())
+	}
+	// The gap predicate still holds inside one session's own lineage.
+	resp, err = s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-b"}, CoordinationGeneration: 12,
+	})
+	if err != nil {
+		t.Fatalf("second fence for sess-b: %v", err)
+	}
+	if !resp.GetGapDetected() {
+		t.Fatalf("a skip within sess-b's own lineage must report a gap: %+v", resp)
+	}
+}
+
+// spec: §10.1.8 (the barrier's session gate), §10.1.2 — a
+// CheckpointBarrier naming a session the pod holds no slot binding for is
+// refused with FailedPrecondition and the not-assigned detail, whatever
+// generation it carries. The session's registry entry exists (the §4.7
+// workspace-prep RPCs created it) but is unbound, so the bound-session
+// guard runs ahead of the barrier_id check, the positive-generation check,
+// and the generation gate.
+//
+// The guard is the barrier path's only refusal for a session the pod holds
+// no fenced generation for, so it fails closed for an unbound session.
+func TestCheckpointBarrierRefusesUnboundSession_spec_10_1_8(t *testing.T) {
+	s := newCoTenantServer(t, "sess-a")
+	if err := s.RegisterUnboundSlotForTest("sess-b"); err != nil {
+		t.Fatalf("register unbound slot: %v", err)
+	}
+	for _, gen := range []int64{0, 1, 7} {
+		_, err := s.CheckpointBarrier(context.Background(), &adapterv1.CheckpointBarrierRequest{
+			SessionId: &adapterv1.SessionId{Value: "sess-b"}, BarrierId: "b1", CoordinationGeneration: gen,
+		})
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("gen %d: expected FailedPrecondition for an unbound session, got %v", gen, err)
+		}
+		if !strings.Contains(err.Error(), "session sess-b is not assigned to this pod") {
+			t.Fatalf("gen %d: expected the not-assigned detail, got %v", gen, err)
+		}
+	}
+}
+
+// spec: §10.1.8 (each quiesced session's barrier echoes the checkpoint id
+// its own Checkpoint stream carried), §10.1.2 — two co-tenant sessions
+// drained together hold independent barrier gates: each link and complete
+// reaches only the barrier of the session whose stream carried it, a
+// session holding no open gate ignores the other session's link, and each
+// ack carries its own stream's id.
+//
+// Against the pre-fix pod-wide gate the second open() replaced the first
+// barrier's channel, checkpoint id, and signal, so the first barrier
+// blocked to its ack deadline and returned an empty or cross-linked ref.
+func TestCoTenantBarrierGatesAreIndependent_spec_10_1_8(t *testing.T) {
+	s := newCoTenantServer(t, "sess-a", "sess-b")
+	ctx := context.Background()
+	for _, id := range []string{"sess-a", "sess-b"} {
+		if _, err := s.CoordinatorFence(ctx, &adapterv1.CoordinatorFenceRequest{
+			SessionId: &adapterv1.SessionId{Value: id}, CoordinationGeneration: 4,
+		}); err != nil {
+			t.Fatalf("fence %s: %v", id, err)
+		}
+	}
+
+	type result struct {
+		resp *adapterv1.CheckpointBarrierResponse
+		err  error
+	}
+	results := map[string]chan result{
+		"sess-a": make(chan result, 1),
+		"sess-b": make(chan result, 1),
+	}
+	for _, id := range []string{"sess-a", "sess-b"} {
+		go func(id string) {
+			resp, err := s.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BarrierId: "b-" + id, CoordinationGeneration: 4,
+			})
+			results[id] <- result{resp, err}
+		}(id)
+	}
+	waitBarrierWaiting(t, s, "sess-a")
+	waitBarrierWaiting(t, s, "sess-b")
+
+	// A session that holds no open gate ignores a link.
+	if err := s.RegisterUnboundSlotForTest("sess-c"); err != nil {
+		t.Fatalf("register unbound slot: %v", err)
+	}
+	if sessionGate(t, s, "sess-c").link("gw-ckpt-c") {
+		t.Fatal("a session holding no open gate linked a checkpoint id")
+	}
+
+	// Each stream links and completes its own session's gate.
+	for _, id := range []string{"sess-a", "sess-b"} {
+		gate := sessionGate(t, s, id)
+		if !gate.link("gw-ckpt-" + id) {
+			t.Fatalf("%s: Checkpoint stream could not link into its own open gate", id)
+		}
+		gate.complete()
+	}
+	for _, id := range []string{"sess-a", "sess-b"} {
+		got := <-results[id]
+		if got.err != nil {
+			t.Fatalf("%s barrier: %v", id, got.err)
+		}
+		if want := "gw-ckpt-" + id; got.resp.GetCheckpointRef() != want {
+			t.Fatalf("%s checkpoint_ref = %q, want %q (its own stream's id)", id, got.resp.GetCheckpointRef(), want)
+		}
+		if got.resp.GetBarrierId() != "b-"+id {
+			t.Fatalf("%s barrier_id = %q", id, got.resp.GetBarrierId())
+		}
+	}
+}
+
+// spec: §10.1.2 (the pod holds a fenced generation per bound session, and
+// holds none for a session it has no recorded value for), §10.1.8 — the
+// per-session reads report zero and false for a session the registry does
+// not hold at all, so a caller reading a session that never bound to this
+// pod fails closed rather than inheriting a co-tenant's state.
+func TestPerSessionReadsAreEmptyForAnUnheldSession_spec_10_1_2(t *testing.T) {
+	s := newCoTenantServer(t, "sess-a")
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-a"}, CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("fence sess-a: %v", err)
+	}
+	if got := s.LastFencedGeneration("sess-unknown"); got != 0 {
+		t.Errorf("last fenced generation for a session the pod does not hold = %d, want 0", got)
+	}
+	if s.isQuiescedForBarrier("sess-unknown") {
+		t.Error("a session the pod does not hold reported as quiesced")
+	}
+	if s.BarrierWaiting("sess-unknown") {
+		t.Error("a session the pod does not hold reported a waiting barrier")
 	}
 }
