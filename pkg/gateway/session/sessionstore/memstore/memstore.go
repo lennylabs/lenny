@@ -59,6 +59,13 @@ func (s *Store) Create(_ context.Context, sess sessionstore.Session) error {
 	if sess.SchemaVersion == 0 {
 		sess.SchemaVersion = 1
 	}
+	// spec: §4.2 — a newly created session row carries
+	// coordination_generation = 1, so the value a replica holds for a
+	// session no coordinator has taken over is positive and §10.1.2
+	// step 1's first compare-and-swap mints 2 strictly above it.
+	if sess.CoordinationGeneration == 0 {
+		sess.CoordinationGeneration = 1
+	}
 	// spec: §8.9 — root_session_id identifies the
 	// delegation-tree apex on every row in the tree. When the caller
 	// did not stamp one, the store inherits the parent's

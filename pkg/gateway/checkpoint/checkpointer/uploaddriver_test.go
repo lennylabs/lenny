@@ -990,9 +990,9 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 // Against the pre-fix code the higher-generation row's reservation is
 // released and its prefix swept; the fix leaves both intact.
 func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
-	// The incoming attempt runs at the session's generation 0 (runningSession
-	// seeds generation 0), so it is stale against a prior active row at
-	// generation 1.
+	// The incoming attempt runs at the session's generation 1 (runningSession
+	// creates the row with the field unset and the store baselines it at 1),
+	// so it is stale against a prior active row at generation 2.
 	h, sid := newDriverHarness(t, &chunkedAdapter{
 		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
@@ -1004,7 +1004,7 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 		TenantID:               "acme",
 		CheckpointID:           "cp-higher",
 		SessionID:              sid,
-		CoordinationGeneration: 1, // a fenced newer writer
+		CoordinationGeneration: 2, // a fenced newer writer
 		ChunkObjectKeyPrefix:   higherPrefix,
 		ReservedBytes:          50,
 	}); err != nil {

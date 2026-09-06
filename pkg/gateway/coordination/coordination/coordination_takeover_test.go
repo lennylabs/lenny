@@ -91,14 +91,14 @@ func TestSweepCrashTakeoverFencesPublishesOncePerHandoff_spec_10_1(t *testing.T)
 		t.Fatalf("held = %d, want 1 (orphan adopted)", held)
 	}
 	got, _ := sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 1 {
-		t.Fatalf("generation = %d, want 1 (takeover bumped once)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 2 {
+		t.Fatalf("generation = %d, want 2 (takeover bumped once)", got.CoordinationGeneration)
 	}
 	if len(readopter.calls) != 1 {
 		t.Fatalf("ReadoptAndFence calls = %d, want 1", len(readopter.calls))
 	}
-	if readopter.calls[0].generation != 1 {
-		t.Errorf("fenced generation = %d, want 1 (the post-bump generation)", readopter.calls[0].generation)
+	if readopter.calls[0].generation != 2 {
+		t.Errorf("fenced generation = %d, want 2 (the post-bump generation)", readopter.calls[0].generation)
 	}
 	if !readopter.calls[0].published {
 		t.Errorf("binding was not published after the fence acknowledged")
@@ -117,8 +117,8 @@ func TestSweepCrashTakeoverFencesPublishesOncePerHandoff_spec_10_1(t *testing.T)
 		t.Fatalf("held = %d, want 1 (bound session renewed)", held)
 	}
 	got, _ = sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 1 {
-		t.Errorf("generation = %d, want 1 (no re-bump on the renew sweep)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 2 {
+		t.Errorf("generation = %d, want 2 (no re-bump on the renew sweep)", got.CoordinationGeneration)
 	}
 	if len(readopter.calls) != 1 {
 		t.Errorf("ReadoptAndFence calls = %d, want 1 (fence fires once per handoff)", len(readopter.calls))
@@ -166,8 +166,8 @@ func TestSweepCrashTakeoverTerminalFenceRelinquishesAndBacksOff_spec_10_1(t *tes
 		t.Fatalf("lease still held by %q after relinquish, want released", h)
 	}
 	got, _ := sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 1 {
-		t.Fatalf("generation = %d, want 1 (bump stays after relinquish)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 2 {
+		t.Fatalf("generation = %d, want 2 (bump stays after relinquish)", got.CoordinationGeneration)
 	}
 	if len(readopter.calls) != 1 {
 		t.Fatalf("ReadoptAndFence calls = %d, want 1", len(readopter.calls))
@@ -179,8 +179,8 @@ func TestSweepCrashTakeoverTerminalFenceRelinquishesAndBacksOff_spec_10_1(t *tes
 		t.Fatalf("second Sweep: %v", err)
 	}
 	got, _ = sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 1 {
-		t.Errorf("generation = %d, want 1 (no re-adopt inside the backoff window)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 2 {
+		t.Errorf("generation = %d, want 2 (no re-adopt inside the backoff window)", got.CoordinationGeneration)
 	}
 	if len(readopter.calls) != 1 {
 		t.Errorf("ReadoptAndFence calls = %d, want 1 (no re-fence inside the backoff window)", len(readopter.calls))
@@ -195,8 +195,8 @@ func TestSweepCrashTakeoverTerminalFenceRelinquishesAndBacksOff_spec_10_1(t *tes
 		t.Fatalf("third Sweep: %v", err)
 	}
 	got, _ = sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 2 {
-		t.Errorf("generation = %d, want 2 (re-adopted after the backoff elapsed)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 3 {
+		t.Errorf("generation = %d, want 3 (re-adopted after the backoff elapsed)", got.CoordinationGeneration)
 	}
 	if len(readopter.calls) != 2 {
 		t.Errorf("ReadoptAndFence calls = %d, want 2 (re-fenced after the backoff elapsed)", len(readopter.calls))
@@ -267,8 +267,8 @@ func TestSweepCrashTakeoverSkipsFenceWhenGenerationBumpFails_spec_10_1(t *testin
 		t.Fatalf("lease still held by %q after a failed bump, want released", h)
 	}
 	got, _ := sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 0 {
-		t.Fatalf("generation = %d, want 0 (the failed bump did not land)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 1 {
+		t.Fatalf("generation = %d, want 1 (the failed bump did not land)", got.CoordinationGeneration)
 	}
 
 	// Second sweep: the store has recovered, so the takeover re-runs from a
@@ -283,8 +283,8 @@ func TestSweepCrashTakeoverSkipsFenceWhenGenerationBumpFails_spec_10_1(t *testin
 	if len(readopter.calls) != 1 {
 		t.Fatalf("ReadoptAndFence calls = %d, want 1 (fence fires on the successful bump)", len(readopter.calls))
 	}
-	if readopter.calls[0].generation != 1 {
-		t.Errorf("fenced generation = %d, want 1 (the post-bump generation, never 0)", readopter.calls[0].generation)
+	if readopter.calls[0].generation != 2 {
+		t.Errorf("fenced generation = %d, want 2 (the post-bump generation, never the baseline)", readopter.calls[0].generation)
 	}
 	if !bindings.bound["orphan"] {
 		t.Errorf("binding not present after the recovered takeover published")
@@ -307,8 +307,8 @@ func TestSweepCrashTakeoverWithoutReadopterStillBumpsOnce_spec_10_1(t *testing.T
 		t.Fatalf("first Sweep: %v", err)
 	}
 	got, _ := sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 1 {
-		t.Fatalf("generation = %d, want 1 (takeover bumps even without a re-adopt seam)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 2 {
+		t.Fatalf("generation = %d, want 2 (takeover bumps even without a re-adopt seam)", got.CoordinationGeneration)
 	}
 	if h, ok := leases.held("acme", "orphan"); !ok || h != "rep-1" {
 		t.Fatalf("holder = %q ok=%v, want rep-1 held", h, ok)
@@ -319,7 +319,7 @@ func TestSweepCrashTakeoverWithoutReadopterStillBumpsOnce_spec_10_1(t *testing.T
 		t.Fatalf("second Sweep: %v", err)
 	}
 	got, _ = sessions.Get(ctx, "acme", "orphan")
-	if got.CoordinationGeneration != 1 {
-		t.Errorf("generation = %d, want 1 (self-renew does not re-bump)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 2 {
+		t.Errorf("generation = %d, want 2 (self-renew does not re-bump)", got.CoordinationGeneration)
 	}
 }

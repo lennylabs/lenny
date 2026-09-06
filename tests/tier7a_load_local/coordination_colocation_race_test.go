@@ -141,7 +141,7 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	// per-row terminal skip short-circuits before adoption is ever attempted.
 	if err := sessions.Create(ctx, sessionstore.Session{
 		ID: terminating, TenantID: tenant, State: session.StateRunning,
-		PodAssignment: "pod-" + terminating, CoordinationGeneration: 0, CreatedAt: time.Unix(1, 0).UTC(),
+		PodAssignment: "pod-" + terminating, CoordinationGeneration: 1, CreatedAt: time.Unix(1, 0).UTC(),
 	}); err != nil {
 		t.Fatalf("seed running session: %v", err)
 	}
@@ -284,8 +284,8 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	if gotTerm.State != session.StateCompleted {
 		t.Errorf("second session state = %q, want %q (the takeover transition should have landed)", gotTerm.State, session.StateCompleted)
 	}
-	if gotTerm.CoordinationGeneration != 0 {
-		t.Errorf("session coordination_generation = %d, want 0 (handoff bump refused after it went terminal)", gotTerm.CoordinationGeneration)
+	if gotTerm.CoordinationGeneration != 1 {
+		t.Errorf("session coordination_generation = %d, want 1, the §4.2 baseline (handoff bump refused after it went terminal)", gotTerm.CoordinationGeneration)
 	}
 	if _, ok := leases.holder(tenant, terminating); ok {
 		t.Errorf("session that went terminal during takeover still holds a coordination lease, want none (released after the refused bump)")

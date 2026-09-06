@@ -890,6 +890,62 @@ func TestSessionStoreContract(t *testing.T) {
 	})
 }
 
+// spec: 4.2 (a newly created session row carries
+// coordination_generation = 1), 10.1 (the first coordinator handoff's
+// compare-and-swap mints a generation strictly above the value a replica
+// already holds for the session)
+// diagnosis: pgstore.Create did not floor an unset CoordinationGeneration to
+//
+//	the §4.2 baseline. Create names coordination_generation in its insert
+//	column list, so the column default set by migration 0181 baselines nothing
+//	and this floor is the whole enforcement on the Postgres path. A row written
+//	at 0 is fenced on resume at the gateway's floor of 1 while its row still
+//	reads 0, so the first crash takeover's compare-and-swap mints 1 as well and
+//	the pod refuses that fence as coordinator_handoff_stale.
+func TestSessionStoreCreateBaselinesCoordinationGeneration_spec_4_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	unset := sessionstore.Session{
+		ID:         newUUID(t),
+		TenantID:   tenant,
+		State:      session.StateCreated,
+		RuntimeRef: "echo",
+	}
+	if err := store.Create(ctx, unset); err != nil {
+		t.Fatalf("Create with an unset CoordinationGeneration: %v", err)
+	}
+	got, err := store.Get(ctx, tenant, unset.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != 1 {
+		t.Errorf("CoordinationGeneration = %d, want 1 (the §4.2 baseline)", got.CoordinationGeneration)
+	}
+
+	// An explicit value above the baseline is written through unchanged, so
+	// the floor cannot lower a generation a caller already advanced.
+	explicit := sessionstore.Session{
+		ID:                     newUUID(t),
+		TenantID:               tenant,
+		State:                  session.StateCreated,
+		RuntimeRef:             "echo",
+		CoordinationGeneration: 5,
+	}
+	if err := store.Create(ctx, explicit); err != nil {
+		t.Fatalf("Create with an explicit CoordinationGeneration: %v", err)
+	}
+	gotExplicit, err := store.Get(ctx, tenant, explicit.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if gotExplicit.CoordinationGeneration != 5 {
+		t.Errorf("CoordinationGeneration = %d, want the explicit 5 preserved", gotExplicit.CoordinationGeneration)
+	}
+}
+
 // insertMessage writes one session_messages row under the tenant
 // context required by lenny_tenant_guard.
 func insertMessage(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, sessionID string) {

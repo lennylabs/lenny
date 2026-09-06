@@ -264,8 +264,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 			t.Fatalf("first Sweep: %v", err)
 		}
 		got, _ := sessions.Get(ctx, tenant, sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Fatalf("generation = %d, want 1 (bump stays after relinquish)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 2 {
+			t.Fatalf("generation = %d, want 2 (bump stays after relinquish)", got.CoordinationGeneration)
 		}
 		if _, err := leases.Get(ctx, tenant, sessID); !errors.Is(err, leasestore.ErrNotFound) {
 			t.Fatalf("lease still held after terminal fence relinquish (err=%v), want released", err)
@@ -280,8 +280,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 			t.Fatalf("in-window Sweep: %v", err)
 		}
 		got, _ = sessions.Get(ctx, tenant, sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Errorf("generation = %d inside backoff window, want 1 (no per-sweep climb)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("generation = %d inside backoff window, want 2 (no per-sweep climb)", got.CoordinationGeneration)
 		}
 		if readopter.Calls() != 1 {
 			t.Errorf("fence calls = %d inside backoff window, want 1", readopter.Calls())
@@ -293,8 +293,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 			t.Fatalf("post-window Sweep: %v", err)
 		}
 		got, _ = sessions.Get(ctx, tenant, sessID)
-		if got.CoordinationGeneration != 2 {
-			t.Errorf("generation = %d after the backoff elapsed, want 2 (re-adopted once)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 3 {
+			t.Errorf("generation = %d after the backoff elapsed, want 3 (re-adopted once)", got.CoordinationGeneration)
 		}
 		if readopter.Calls() != 2 {
 			t.Errorf("fence calls = %d after the backoff elapsed, want 2", readopter.Calls())

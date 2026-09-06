@@ -246,6 +246,15 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		// spec: §4.2 — v1 sessions are written at schema_version=1.
 		schemaVersion = 1
 	}
+	// spec: §4.2 — a newly created session row carries
+	// coordination_generation = 1, so the value a replica holds for a
+	// session no coordinator has taken over is positive and §10.1.2
+	// step 1's first compare-and-swap mints 2 strictly above it. The
+	// insert names the column, so the column default baselines nothing
+	// and this floor is the enforcement on this path.
+	if sess.CoordinationGeneration == 0 {
+		sess.CoordinationGeneration = 1
+	}
 	err := pgtenant.InTx(ctx, s.pool, sess.TenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, insertSQL,
 			sess.ID, sess.TenantID, sess.UserID, string(sess.State), sess.RuntimeRef,

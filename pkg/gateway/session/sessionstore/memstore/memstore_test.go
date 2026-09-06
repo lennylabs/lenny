@@ -305,9 +305,11 @@ func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §4.2 — newly created sessions are written at
-// schema_version=1 by default. Recovery and coordination generations
-// start at zero. Cwd and PodAssignment are empty.
+// spec: §4.2, §10.1 — newly created sessions are written at
+// schema_version=1 by default. The recovery generation starts at zero and the
+// coordination generation is baselined at 1, so the first coordinator handoff
+// mints 2 strictly above the value a replica already holds for the session.
+// Cwd and PodAssignment are empty.
 func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -321,8 +323,8 @@ func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	if got.RecoveryGeneration != 0 {
 		t.Errorf("RecoveryGeneration: want 0, got %d", got.RecoveryGeneration)
 	}
-	if got.CoordinationGeneration != 0 {
-		t.Errorf("CoordinationGeneration: want 0, got %d", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 1 {
+		t.Errorf("CoordinationGeneration: want 1, got %d", got.CoordinationGeneration)
 	}
 	if got.Cwd != "" {
 		t.Errorf("Cwd: want empty, got %q", got.Cwd)
@@ -427,8 +429,9 @@ func TestUpdateAdvancesGenerationCounters(t *testing.T) {
 	if updated.RecoveryGeneration != 1 {
 		t.Errorf("RecoveryGeneration: want 1, got %d", updated.RecoveryGeneration)
 	}
-	if updated.CoordinationGeneration != 2 {
-		t.Errorf("CoordinationGeneration: want 2, got %d", updated.CoordinationGeneration)
+	// The row starts at the §4.2 baseline of 1, so a bump of 2 leaves 3.
+	if updated.CoordinationGeneration != 3 {
+		t.Errorf("CoordinationGeneration: want 3, got %d", updated.CoordinationGeneration)
 	}
 	if updated.PodAssignment != "pod-xyz" {
 		t.Errorf("PodAssignment: want pod-xyz, got %q", updated.PodAssignment)
@@ -487,8 +490,10 @@ func TestUpdateConcurrentGenerationBumpsPreserveMonotonicity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != int64(n) {
-		t.Errorf("CoordinationGeneration: want %d, got %d", n, got.CoordinationGeneration)
+	// The row is created with the field unset, so it starts at the §4.2
+	// baseline of 1 and n bumps leave it at n+1.
+	if got.CoordinationGeneration != int64(n)+1 {
+		t.Errorf("CoordinationGeneration: want %d, got %d", n+1, got.CoordinationGeneration)
 	}
 }
 

@@ -270,18 +270,18 @@ func TestSweeperContract(t *testing.T) {
 		sessID := run + "-handoff"
 		seedSession(t, sessions, "acme", sessID, session.StateRunning)
 
-		// Confirm baseline counter is zero.
+		// Confirm the row starts at the §4.2 baseline of 1.
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 0 {
-			t.Fatalf("baseline CoordinationGeneration = %d, want 0", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 1 {
+			t.Fatalf("baseline CoordinationGeneration = %d, want 1", got.CoordinationGeneration)
 		}
 
 		sw := newSweeper(sessions, []string{"acme"}, "replica-B")
 		// One observed handoff bumps the counter by exactly one.
 		sw.RecordHandoff(ctx, "acme", sessID)
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Errorf("after one handoff, CoordinationGeneration = %d, want 1",
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("after one handoff, CoordinationGeneration = %d, want 2",
 				got.CoordinationGeneration)
 		}
 
@@ -289,8 +289,8 @@ func TestSweeperContract(t *testing.T) {
 		sw.RecordHandoff(ctx, "acme", sessID)
 		sw.RecordHandoff(ctx, "acme", sessID)
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 3 {
-			t.Errorf("after three handoffs, CoordinationGeneration = %d, want 3",
+		if got.CoordinationGeneration != 4 {
+			t.Errorf("after three handoffs, CoordinationGeneration = %d, want 4",
 				got.CoordinationGeneration)
 		}
 	})
@@ -322,8 +322,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Errorf("RecordHandoff on a terminal session returned generation %d, want 0 (bump refused)", gen)
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 0 {
-			t.Errorf("terminal session CoordinationGeneration = %d, want 0 (never bumped by a raced takeover)",
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("terminal session CoordinationGeneration = %d, want 1 (never bumped by a raced takeover)",
 				got.CoordinationGeneration)
 		}
 	})
@@ -348,8 +348,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("first Sweep: %v", err)
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Errorf("after takeover Sweep, CoordinationGeneration = %d, want 1",
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("after takeover Sweep, CoordinationGeneration = %d, want 2",
 				got.CoordinationGeneration)
 		}
 
@@ -359,8 +359,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("second Sweep (renew): %v", err)
 		}
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Errorf("after self-renew Sweep, CoordinationGeneration = %d, want 1 "+
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("after self-renew Sweep, CoordinationGeneration = %d, want 2 "+
 				"(handoff bumps once, not once per sweep)",
 				got.CoordinationGeneration)
 		}
@@ -387,8 +387,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("held-by-other Sweep: %v", err)
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 0 {
-			t.Errorf("after held-by-other Sweep, CoordinationGeneration = %d, want 0 "+
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("after held-by-other Sweep, CoordinationGeneration = %d, want 1 "+
 				"(Acquire returned ErrHeld; no handoff observed)",
 				got.CoordinationGeneration)
 		}
@@ -422,14 +422,14 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("first Sweep: %v", err)
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Fatalf("generation = %d, want 1 (takeover bumped once)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 2 {
+			t.Fatalf("generation = %d, want 2 (takeover bumped once)", got.CoordinationGeneration)
 		}
 		if readopter.callCount() != 1 {
 			t.Fatalf("ReadoptAndFence calls = %d, want 1", readopter.callCount())
 		}
-		if readopter.gens[0] != 1 {
-			t.Errorf("fenced generation = %d, want 1", readopter.gens[0])
+		if readopter.gens[0] != 2 {
+			t.Errorf("fenced generation = %d, want 2", readopter.gens[0])
 		}
 		if !bindings.Bound(sessID) {
 			t.Errorf("binding not published after the fence acknowledged")
@@ -443,8 +443,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("second Sweep: %v", err)
 		}
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Errorf("generation = %d, want 1 (no re-bump on the renew sweep)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("generation = %d, want 2 (no re-bump on the renew sweep)", got.CoordinationGeneration)
 		}
 		if readopter.callCount() != 1 {
 			t.Errorf("ReadoptAndFence calls = %d, want 1 (fence fires once per handoff)", readopter.callCount())
@@ -505,8 +505,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("lease still held after a failed generation bump, want released")
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 0 {
-			t.Fatalf("generation = %d, want 0 (the failed bump did not land)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 1 {
+			t.Fatalf("generation = %d, want 1 (the failed bump did not land)", got.CoordinationGeneration)
 		}
 
 		// Second sweep: the store has recovered, so the takeover re-runs from
@@ -521,8 +521,8 @@ func TestSweeperContract(t *testing.T) {
 		if readopter.callCount() != 1 {
 			t.Fatalf("ReadoptAndFence calls = %d, want 1 (fence fires on the successful bump)", readopter.callCount())
 		}
-		if readopter.gens[0] != 1 {
-			t.Errorf("fenced generation = %d, want 1 (the post-bump generation, never 0)", readopter.gens[0])
+		if readopter.gens[0] != 2 {
+			t.Errorf("fenced generation = %d, want 2 (the post-bump generation, never the baseline)", readopter.gens[0])
 		}
 		if !bindings.Bound(sessID) {
 			t.Errorf("binding not published after the recovered takeover")
@@ -561,8 +561,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("first Sweep: %v", err)
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Fatalf("generation = %d, want 1 (bump stays after relinquish)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 2 {
+			t.Fatalf("generation = %d, want 2 (bump stays after relinquish)", got.CoordinationGeneration)
 		}
 		if _, err := leases.Get(ctx, "acme", sessID); err == nil {
 			t.Fatalf("lease still held after terminal fence relinquish, want released")
@@ -574,8 +574,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("second Sweep: %v", err)
 		}
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 1 {
-			t.Errorf("generation = %d, want 1 (no re-adopt inside the backoff window)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("generation = %d, want 2 (no re-adopt inside the backoff window)", got.CoordinationGeneration)
 		}
 		if readopter.callCount() != 1 {
 			t.Errorf("ReadoptAndFence calls = %d, want 1 (no re-fence inside backoff)", readopter.callCount())
@@ -590,8 +590,8 @@ func TestSweeperContract(t *testing.T) {
 			t.Fatalf("third Sweep: %v", err)
 		}
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 2 {
-			t.Errorf("generation = %d, want 2 (re-adopted after the backoff elapsed)", got.CoordinationGeneration)
+		if got.CoordinationGeneration != 3 {
+			t.Errorf("generation = %d, want 3 (re-adopted after the backoff elapsed)", got.CoordinationGeneration)
 		}
 		if readopter.callCount() != 2 {
 			t.Errorf("ReadoptAndFence calls = %d, want 2 (re-fenced after the backoff elapsed)", readopter.callCount())
