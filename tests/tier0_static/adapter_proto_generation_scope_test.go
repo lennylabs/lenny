@@ -94,6 +94,12 @@ var generationScopeSites = []generationScopeSite{
 		anchor: "CheckpointBarrier dispatches a barrier signal",
 		want: []string{
 			"validates the request's `coordination_generation` against the generation the pod holds for the session the request names",
+			// The unset arm is the ordinary state of a session that has
+			// neither resumed nor been taken over, so the RPC comment states
+			// it alongside the match rule; a runtime author reading this
+			// carrier alone would otherwise fail closed on the drain barrier
+			// §10.1.2 step 3 accepts.
+			"a barrier naming a bound session for which the pod holds no fenced generation is accepted and records no value",
 		},
 		reject: []string{"against the last fenced generation"},
 	},

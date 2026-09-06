@@ -195,9 +195,11 @@ type AdapterClient interface {
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
 	// drain (§4.7, §10.1). The adapter validates the request's
 	// `coordination_generation` against the generation the pod holds for
-	// the session the request names, quiesces tool-call dispatch, and holds
-	// the quiesced state open while the
-	// gateway drives the Checkpoint stream against the held pod. The adapter
+	// the session the request names; a barrier naming a bound session for
+	// which the pod holds no fenced generation is accepted and records no
+	// value. The adapter then quiesces tool-call dispatch and holds the
+	// quiesced state open while the gateway drives the Checkpoint stream
+	// against the held pod. The adapter
 	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
 	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
@@ -652,9 +654,11 @@ type AdapterServer interface {
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
 	// drain (§4.7, §10.1). The adapter validates the request's
 	// `coordination_generation` against the generation the pod holds for
-	// the session the request names, quiesces tool-call dispatch, and holds
-	// the quiesced state open while the
-	// gateway drives the Checkpoint stream against the held pod. The adapter
+	// the session the request names; a barrier naming a bound session for
+	// which the pod holds no fenced generation is accepted and records no
+	// value. The adapter then quiesces tool-call dispatch and holds the
+	// quiesced state open while the gateway drives the Checkpoint stream
+	// against the held pod. The adapter
 	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
 	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
