@@ -83,3 +83,6 @@ tests/testinfra/kind/minio-ca.gen.crt
 # Python bytecode from the review tooling under scripts/.
 __pycache__/
 *.pyc
+
+# Spec write lease, created and released per implementation step
+proposals/.spec-lease.json

@@ -1,11 +1,11 @@
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. §10.1 states the counter's baseline of 1, §10.1.2 states the pod-side fenced
+- [x] **S1 · spec** — SPEC-1. §10.1 states the counter's baseline of 1, §10.1.2 states the pod-side fenced
       generation per bound session with its initial condition, its per-session gap reset, and step 3's
       acceptance rule, §10.1.8 step 1 applies that rule to the barrier, and §10.1.4 states what the
       pod-level arming event and each terminated session's records carry.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. The `spec/28` and `spec/29` mirrors of the record-and-reject rule, the gap
+- [x] **S2 · spec** — SPEC-2. The `spec/28` and `spec/29` mirrors of the record-and-reject rule, the gap
       reset, and the barrier's outcome take the wording SPEC-1 states, and §29.10's co-tenancy
       classification records the per-session generation and the pod-scoped hold as answered.
       Tiers 0, 11. Depends on: S1

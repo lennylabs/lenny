@@ -1261,8 +1261,8 @@ numbered and written in the form §29.1 fixes.
 **Preconditions.** `replica A` coordinates the session, holding the session's coordination lease
 `REG-COORDLEASE`, which admits one holder per tenant and session on a compare-and-set with a 60-second
 expiry ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). `replica B` is a peer replica
-that holds no binding for the session. Every gateway-to-pod RPC carries the coordinator's generation stamp, and the
-pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+that holds no binding for the session. Every gateway-to-pod RPC carries the coordinator's generation
+stamp, and the pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
 1. `replica A`, `internal`. The replica crashes or becomes network-partitioned and stops extending the
    session's coordination lease ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
@@ -1472,8 +1472,8 @@ as independent in each of them.
   lease and its own generation. The generation the pod records on a fence and validates every
   gateway-to-pod RPC against is the fenced session's, so a fence for one slot's session neither fences nor
   unfences another ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Whether the sessions
-  occupying two slots on one pod may be coordinated by two different replicas is not stated, which the list of what the specification does not state records
-  below.
+  occupying two slots on one pod may be coordinated by two different replicas is not stated, which the
+  list of what the specification does not state records below.
 
 **Shared by the whole pod.** The following carry the pod as their unit, so two slots on one pod are not
 independent in them.
