@@ -3,8 +3,7 @@
 The staged changes below target the schema, the adapter code, and the tests. The caveat that opens the
 proposal's "Proposed changes" section applies to them.
 
-**IMPLEMENTOR TO FILL THE BLANKS.** These are indicative targets; the text is written during convergence,
-against the post-0073 state of each file.
+The blocks below are the text to apply, written against the post-0073 state of each file.
 
 ### SCHEMA-1. Make the comments true
 

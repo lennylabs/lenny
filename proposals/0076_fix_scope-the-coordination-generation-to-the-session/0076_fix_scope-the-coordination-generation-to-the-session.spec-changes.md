@@ -134,8 +134,7 @@ carries none.
 
 ## 4. Detailed design
 
-**IMPLEMENTOR TO FILL THE BLANKS.** The per-entry move is straightforward and is not written out here. What
-must be derived during convergence:
+The per-entry move is straightforward and is not written out here. What the design turns on:
 
 - What a fence means for a session the pod holds no bound entry for. Today the guard rejects it. Under
   0073's registry model a released session's entry may be absent, and a fence arriving for it is either a
@@ -155,8 +154,7 @@ must be derived during convergence:
 
 ## 5. Proposed changes
 
-**IMPLEMENTOR TO FILL THE BLANKS.** These are indicative targets; the text is written during convergence,
-against the post-0073 state of each file.
+The blocks below are the text to apply, written against the post-0073 state of each file.
 
 ### SPEC-1. State the pod-side scope
 

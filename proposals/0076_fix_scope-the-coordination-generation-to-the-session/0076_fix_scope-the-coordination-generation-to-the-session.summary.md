@@ -169,13 +169,29 @@ are alive.
 - Repairing the defects listed under `## Defects in the shipped tree that this proposal does not stage`.
   None of them blocks sign-off.
 
-## Open decisions for human to make
+## Decisions the reviewer answered
 
-Every decision below is open and needs a reviewer's answer before this proposal moves to `Approved`.
-OD2 and OD3 were derived independently three times and then validated independently five more times
-against the working tree, with the validators instructed to falsify each recommendation rather than
-confirm it, and where one changed under that pass the entry says so. An entry that is withdrawn or
-replaced leaves this section, its record is kept in the review log, and its identifier is not reused.
+Every decision below has been answered, on 2026-09-06, and the answers are recorded in the table that
+follows. The entries themselves are kept as written, because each states the ground the answer rests on and
+the alternatives that were weighed. OD2 and OD3 were derived independently three times and then validated
+independently five more times against the working tree, with the validators instructed to falsify each
+recommendation rather than confirm it, and where one changed under that pass the entry says so. An entry
+that was withdrawn or replaced left this section, its record is kept in the review log, and its identifier
+is not reused.
+
+| Decision | Answer | Source |
+|:--|:--|:--|
+| OD2 | A successor owns the equal-case fence acceptance, and the staging here stands. Recorded as proposal 0080 §1.16. | The entry's recommendation |
+| OD3 Question A | Yes. `CoordinatorFenceRequest` is session-scoped after CODE-1. | The entry's recommendation |
+| OD3 Question B | A successor stages the `spec/04` §4.1 edit, and the staging here stands. Proposal 0075 is that successor; it retires the table those sites sit in, and has been rewritten to carry them. | The entry's recommendation |
+| OD9 | The `coordfence` floor is accepted for this release and no successor is commissioned to tighten the check. Because that leaves the floor's retirement owned by nothing, it is recorded as proposal 0080 §1.20. | Reviewer's call; the entry offers no recommendation |
+| OD12 | Accept it, and take the staged sentence. | The entry's recommendation |
+| OD14 | No run-time budget is added here and 0181's backfill stays unbatched, on the pre-deployment row counts and migration 0180's precedent. The budget is a forward-looking operational contract on the migrate Job, recorded as proposal 0080 §1.21. | Reviewer's call; the entry offers no recommendation |
+| OD15 | Accept the residual and record it. | The entry's recommendation |
+| OD16 | The three `IMPLEMENTOR TO FILL THE BLANKS` headers come out. The proposal is converged, so the staged text is text to apply as written, and leaving the headers would tell a maintainer the staging is unsettled when it is not. | Reviewer's call; the entry offers no recommendation |
+
+Three of the eight carried no recommendation, because the loop found no ground in the repository for one.
+Those three are marked above so a later reader can tell a reviewer's judgement from a derived one.
 
 **OD2. A fence carrying the generation the pod already recorded.** When a fence fails or times out,
 §10.1.2 step 2 orders the new coordinator to retry "with the same generation value"

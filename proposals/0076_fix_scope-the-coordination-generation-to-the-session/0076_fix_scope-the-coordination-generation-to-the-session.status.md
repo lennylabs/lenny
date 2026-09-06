@@ -2,13 +2,13 @@
 proposal: 0076_fix_scope-the-coordination-generation-to-the-session
 title: Scope the coordination generation to the session
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-08-19
 drafted-by: 
 reviewed-date: 2026-09-05
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-09-06
+approved-by: jaf@dubium.io
 implemented-date: 
 implemented-by: 
 ---
@@ -17,7 +17,7 @@ implemented-by:
 
 # Proposal: Scope the coordination generation to the session
 
-- **Status:** Reviewed.
+- **Status:** Approved.
 - **Date:** 2026-08-19
 - **Scope:** The specification scopes the coordination generation to the session and the adapter stores it
   per pod. On a pod running one session at a time the two are indistinguishable. On a pod running several,
