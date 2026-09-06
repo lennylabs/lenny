@@ -183,17 +183,49 @@ func TestCheckpointBarrierRequiresSession(t *testing.T) {
 	}
 }
 
-// TestCheckpointBarrierRejectsWithoutFence verifies that the barrier
-// path requires a prior CoordinatorFence; without one the gate is
-// closed. spec: §10.1.2 — fence is a precondition for any
-// subsequent operational RPC.
-func TestCheckpointBarrierRejectsWithoutFence(t *testing.T) {
+// TestCheckpointBarrierAcceptsBoundSessionWithNoFencedGeneration verifies
+// that the generation gate refuses the barrier only when the pod holds a
+// generation for the named session that the barrier does not carry. A
+// session bound to the pod that no coordinator has ever fenced there
+// carries no recorded value, so its drain barrier is accepted, quiesces
+// the session, and records no fenced generation. Against the pre-fix gate
+// the same call was refused with FailedPrecondition.
+//
+// spec: §10.1.2, §10.1.8.
+func TestCheckpointBarrierAcceptsBoundSessionWithNoFencedGeneration(t *testing.T) {
 	s := newFencedServer(t)
-	_, err := s.CheckpointBarrier(context.Background(), &adapterv1.CheckpointBarrierRequest{
-		SessionId: &adapterv1.SessionId{Value: "s1"}, BarrierId: "b1", CoordinationGeneration: 1,
-	})
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("expected FailedPrecondition without fence, got %v", err)
+	ctx := context.Background()
+
+	type barrierResult struct {
+		resp *adapterv1.CheckpointBarrierResponse
+		err  error
+	}
+	resultCh := make(chan barrierResult, 1)
+	go func() {
+		resp, err := s.CheckpointBarrier(ctx, &adapterv1.CheckpointBarrierRequest{
+			SessionId: &adapterv1.SessionId{Value: "s1"}, BarrierId: "b1", CoordinationGeneration: 1,
+		})
+		resultCh <- barrierResult{resp, err}
+	}()
+
+	// The barrier passed the gate and holds quiescence; drive it to
+	// completion the way the gateway-driven Checkpoint stream would.
+	waitBarrierWaiting(t, s, "s1")
+	gate := sessionGate(t, s, "s1")
+	if !gate.link("gw-ckpt-unfenced") {
+		t.Fatal("Checkpoint stream could not link into the open barrier gate")
+	}
+	gate.complete()
+
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("barrier for an unfenced bound session must be accepted, got %v", got.err)
+	}
+	if got.resp.GetBarrierId() != "b1" {
+		t.Fatalf("barrier_id: got %q want b1", got.resp.GetBarrierId())
+	}
+	if gen := s.LastFencedGeneration("s1"); gen != 0 {
+		t.Fatalf("an accepted barrier must record no fenced generation, got %d", gen)
 	}
 }
 

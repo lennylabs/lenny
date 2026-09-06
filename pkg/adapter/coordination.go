@@ -261,15 +261,20 @@ func (s *Server) CheckpointBarrier(ctx context.Context, req *adapterv1.Checkpoin
 		return nil, status.Error(codes.InvalidArgument, "CheckpointBarrier requires a positive coordination_generation")
 	}
 
-	// §10.1.2: the barrier shares the §10.1 generation gate the
-	// CoordinatorFence installs for this session. Reject when the
-	// gateway-supplied value does not match the generation the pod holds
-	// for the named session; the gateway re-issues after the next fence.
+	// spec: §10.1.2, §10.1.8 — the barrier shares the §10.1 generation
+	// gate the CoordinatorFence installs for this session. For a session
+	// bound to the pod, the barrier is rejected when the pod holds a
+	// generation for that session that the barrier does not carry, and is
+	// otherwise accepted; the gateway re-issues after the next fence. A
+	// bound session the pod holds no fenced generation for (never resumed
+	// and never taken over on this pod) passes the gate and records no
+	// value, so its drain barrier quiesces the session rather than being
+	// refused.
 	st.coord.mu.Lock()
 	fenced := st.coord.lastFenced
 	initialized := st.coord.initialized
 	st.coord.mu.Unlock()
-	if !initialized || gen != fenced {
+	if initialized && gen != fenced {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"coordinator_handoff_stale: barrier generation %d does not match last fenced %d", gen, fenced)
 	}
