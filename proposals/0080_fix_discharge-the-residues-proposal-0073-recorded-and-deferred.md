@@ -1,12 +1,14 @@
 # Proposal: Discharge the residues proposal 0073 recorded and deferred
 
 - **Status:** EARLY DRAFT, NOT CONVERGED. This document is an inventory rather than a design. It states
-  each gap and the evidence it was found from, and deliberately proposes no remedy for any of them. It is
-  expected to be split into per-concern proposals once the entries have been triaged, and no entry should
-  be implemented from this text.
+  each gap and the evidence it was found from, and derives no remedy of its own. §1.16 is the one entry
+  that states one, because another proposal's review derived it and left it without a home; it is
+  reproduced here rather than invented here. The document is expected to be split into per-concern
+  proposals once the entries have been triaged, and no entry should be implemented from this text.
 - **Date:** 2026-08-31
 - **Scope:** Collects the deferrals proposal 0073 recorded and left open, together with the register and
-  audit entries that record the same gaps elsewhere, and which no current draft covers. Proposals 0075,
+  audit entries that record the same gaps elsewhere, and which no current draft covers. It also holds a
+  residue another proposal's review derived and declined to stage, which is §1.16. Proposals 0075,
   0076, 0078, and 0079 already take four of 0073's residues and are out of scope here; §2 names them so a
   reader can tell what is claimed from what is not.
 
@@ -26,6 +28,8 @@ Each entry states the gap, then names the source that establishes it. The source
   `pending-implementation` is a heading with no implementation key, carrying the blocker that retires it.
 - **The skip register** (`tests/registers/skip-reasons.yaml`) and the `t.Skip` call sites it keys.
 - **`BUILD-GAPS.md`.** Findings filed against the tree.
+- **Another proposal's open decisions.** A decision a converged proposal put to a reviewer, recommended a
+  successor take, and left without one. The entry names the proposal and the decision.
 
 An entry that was verified against the tree while writing this document carries the file and symbol it was
 verified at. Where a citation names a line, the line was read on 2026-08-31 and will drift.
@@ -202,6 +206,61 @@ both fixtures until someone reads a pod log. This has now happened twice.
 
 **Source:** `BUILD-GAPS.md` finding F-4.7.23, filed 2026-08-26.
 
+### 1.16 The pod refuses the fence retry §10.1.2 orders
+
+When a fence fails or times out, §10.1.2 step 2 orders the new coordinator to retry "with the same
+generation value" (`spec/10_gateway-internals.md:39`). The shipped pod refuses that retry.
+`pkg/adapter/coordination.go:99` rejects `gen <= lastFenced` with `FailedPrecondition`, and the fence
+driver reads every `FailedPrecondition` as generation-stale, re-reads the row, finds no advance, and
+relinquishes the lease (`pkg/gateway/coordination/coordfence/coordfence.go:164-179`). The collision fires
+inside a single `Fence` call: attempt one lands, its acknowledgement is lost, the driver's transient arm
+retries at the same value, and attempt two is refused as stale. A handoff that succeeded costs its lease,
+a sweep cycle, and one increment each of `lenny_coordinator_handoff_stale_total` and
+`lenny_coordinator_fence_relinquished_total`, the second of which is a split-brain counter.
+
+Fixing the gateway alone does not reach the case. The adapter returns its `CoordinatorFenceResponse`
+alongside a non-OK status (`pkg/adapter/coordination.go:102-106`) and the client drops the body
+(`pkg/gateway/runtime/adapterclient/coordinatorfence.go:55-56`), so the driver cannot tell a re-fence at
+the recorded value from a genuinely stale one without parsing the detail string or changing what the
+adapter returns.
+
+**What needs to change.** The remedy is one comparison and the carriers that state it.
+
+- The pod accepts the equal case. `pkg/adapter/coordination.go:99` compares `gen < lastFenced` rather than
+  `gen <= lastFenced`, so a re-fence at the recorded generation is acknowledged rather than refused, and
+  the fence becomes idempotent at its own value as step 2's ordered retry requires.
+- The wire comment that states the acceptance predicate is restated. `CoordinatorFenceResponse`'s comment
+  says `accepted` is false when the supplied generation "is not greater than the last fenced generation"
+  (`schemas/lenny-adapter.proto:1455-1458`); it becomes false when the generation is strictly older.
+- The specification states that the pod honours the ordered retry. Step 2 orders the retry without saying
+  the pod must accept it, and the gap clause beside it governs only the higher case, so the equal case is
+  unstated on both sides of the contract. The §28.5.1, §28.6 `CH-FENCE`, §28.8, and §29.8 arms proposal
+  0076 stages enumerate the older and the higher case and are silent on the equal one, so each would gain
+  it.
+- A test case covers the lost acknowledgement: a fence lands, its acknowledgement is dropped, the driver
+  retries at the same value, and the pod accepts without incrementing either counter.
+
+Two things a remedy must take on rather than discover late. It reverses the strictly-monotonic handler
+that `BUILD-GAPS.md` records as finding F-4.7.2's resolution, so that record is corrected in the same
+change. And it accepts a permanent residual: for a session row an old binary minted at 0 during a rolling
+window, the resume path fences at the retained `coordfence` floor of 1
+(`pkg/gateway/coordination/coordfence/coordfence.go:147-153`) while a takeover's `RecordHandoff` bumps 0 to
+1 and fences at 1 as well, so two replicas carry the same generation for that row and accepting equality
+admits a genuine split-brain there.
+
+This entry sequences after proposal 0076, which rewrites the predicate at `:99` whichever way this is
+answered: its CODE-1 moves `lastFenced` and `initialized` off the pod-wide `Server.coord` onto the slot
+entry. Landing the comparison change before that rewrite would put it on a line 0076 replaces.
+
+The conflation this leaves standing is separate and larger. The driver reads three distinct adapter
+refusals through one status code, and §16.1's row for `lenny_coordinator_handoff_stale_total` states that
+it increments on a generation-stale rejection (`spec/16_observability.md:183`). Accepting the equal case
+removes one producer of false increments. Separating the remaining two means naming a new counter or label
+and changing what the adapter returns on a refusal, which is a wider surface than this entry opens.
+
+**Source:** proposal 0076's OD2, which derived the remedy, recommended that a successor own it, and left
+the successor unnamed; proposal 0076's record of the fence driver's conflation of three failure classes.
+
 ## 2. Already owned, and therefore out of scope here
 
 - **F-5.2.33 parts (a) and (b)**, the sidecar-transport runtime lifetime, are taken by proposals 0078 and
@@ -223,8 +282,9 @@ must be updated. That is a stated non-goal rather than an outstanding item.
 
 ## 4. Non-goals
 
-This document proposes no remedy, no spec text, and no code change for any entry above. It does not rank
-the entries, and it does not assert that every entry warrants a fix. Triage is the next step, and each
+This document stages no spec text and no code change, and it writes no text any file could take. §1.16
+states a direction because the proposal that derived it stated one; the direction is not staged edits and
+has been through no adversarial review here. It does not rank the entries, and it does not assert that every entry warrants a fix. Triage is the next step, and each
 entry that survives it should become its own proposal with its own adversarial review.
 
 ## 5. Files touched on application
