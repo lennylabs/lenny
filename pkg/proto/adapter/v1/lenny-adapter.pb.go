@@ -2864,9 +2864,9 @@ type SendMessageRequest struct {
 	EnvelopeJson []byte `protobuf:"bytes,3,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -2971,11 +2971,11 @@ type AttachRequest struct {
 	EnvelopeJson []byte `protobuf:"bytes,3,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1). It is carried on every frame of the
-	// stream rather than on the opening frame alone, for the same reason
-	// session_id is.
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1). It is carried on every frame
+	// of the stream rather than on the opening frame alone, for the same
+	// reason session_id is.
 	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -3183,9 +3183,9 @@ type RotateCredentialsRequest struct {
 	RotationTrigger string `protobuf:"bytes,3,opt,name=rotation_trigger,json=rotationTrigger,proto3" json:"rotation_trigger,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,5,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -3295,9 +3295,9 @@ type ExtendCredentialLeaseRequest struct {
 	ExpiresAtUnixMs int64 `protobuf:"varint,4,opt,name=expires_at_unix_ms,json=expiresAtUnixMs,proto3" json:"expires_at_unix_ms,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,6,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -3411,9 +3411,9 @@ type RevokeCredentialsRequest struct {
 	Reason    string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,5,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -3597,9 +3597,9 @@ type InterruptRequest struct {
 	DeadlineMs int32                  `protobuf:"varint,3,opt,name=deadline_ms,json=deadlineMs,proto3" json:"deadline_ms,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -3729,9 +3729,9 @@ type CheckpointRequest struct {
 	Msg isCheckpointRequest_Msg `protobuf_oneof:"msg"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1). It sits outside the `msg` oneof
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1). It sits outside the `msg` oneof
 	// because the fence applies to every frame the gateway sends on the
 	// stream rather than to the opening frame alone.
 	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
@@ -4491,9 +4491,9 @@ type SignalDeadlineRequest struct {
 	Trigger string `protobuf:"bytes,3,opt,name=trigger,proto3" json:"trigger,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,4,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -4668,9 +4668,9 @@ type ResumeRequest struct {
 	Chunks []*ChunkGrant `protobuf:"bytes,13,rep,name=chunks,proto3" json:"chunks,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,14,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -4954,9 +4954,10 @@ func (x *ResumeResponse) GetRecoveryGeneration() int64 {
 }
 
 // CoordinatorFenceRequest announces a new coordination generation to the
-// pod (§4.7 / §10.1). The pod records the new generation and
-// from this point rejects every RPC carrying a strictly older generation
-// with FailedPrecondition + a `coordinator_handoff_stale` detail string,
+// pod (§4.7 / §10.1). The pod records the generation against the session
+// the fence names, and from that point rejects every RPC carrying a
+// generation older than the one it holds for that session with
+// FailedPrecondition + a `coordinator_handoff_stale` detail string,
 // which the gateway counts on `lenny_coordinator_handoff_stale_total`.
 type CoordinatorFenceRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -5015,12 +5016,13 @@ func (x *CoordinatorFenceRequest) GetCoordinationGeneration() int64 {
 
 // CoordinatorFenceResponse acknowledges the new generation. accepted is
 // true when the pod records the generation; false when the supplied
-// generation is not greater than the last fenced generation (the
-// gateway should re-read Postgres and re-issue). gap_detected reports
-// that the new generation skips one or more values relative to the last
-// fenced generation; the adapter still acknowledges (the new coordinator
-// can proceed) but logged a `coordinator_generation_gap` event and
-// reset transient tool-call state per §10.1.
+// generation is not greater than the generation the pod holds for the
+// session the fence names (the gateway should re-read Postgres and
+// re-issue). gap_detected reports that the new generation skips one or
+// more values relative to the generation the pod holds for that session;
+// the adapter still acknowledges (the new coordinator can proceed) but
+// logged a `coordinator_generation_gap` event and reset the transient
+// tool-call state that session accumulated per §10.1.
 type CoordinatorFenceResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Accepted             bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
@@ -5084,15 +5086,18 @@ func (x *CoordinatorFenceResponse) GetGapDetected() bool {
 // CheckpointBarrierRequest dispatches a barrier during gateway graceful
 // drain (§4.7 / §10.1). barrier_id is the gateway's unique
 // identifier for this barrier (echoed in the ack). coordination_generation
-// must match the last fenced generation, or the adapter rejects with
-// FailedPrecondition; this is the same generation gate Coordinator
-// Fence installs.
+// must match the generation the pod holds for the session the request
+// names, or the adapter rejects with FailedPrecondition; a barrier naming
+// a bound session for which the pod holds no fenced generation is
+// accepted and records no value. This is the same generation gate
+// CoordinatorFence installs.
 type CheckpointBarrierRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation. The adapter rejects with FailedPrecondition
-	// when this is not strictly equal to the last fenced generation.
+	// when the pod holds a generation for the session the request names and
+	// this is not equal to it.
 	CoordinationGeneration int64 `protobuf:"varint,2,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	// barrier_id is the gateway's correlation id for this barrier. Echoed
 	// verbatim in the CheckpointBarrierAck.
@@ -5294,9 +5299,9 @@ type ExportPathsRequest struct {
 	Exports []*ExportSpec `protobuf:"bytes,2,rep,name=exports,proto3" json:"exports,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,3,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -5501,9 +5506,9 @@ type ReportUsageRequest struct {
 	Cumulative bool `protobuf:"varint,2,opt,name=cumulative,proto3" json:"cumulative,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot drive the pod (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,3,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
@@ -5635,9 +5640,9 @@ type ShutdownRequest struct {
 	Recycle *RecycleScrub `protobuf:"bytes,5,opt,name=recycle,proto3" json:"recycle,omitempty"`
 	// coordination_generation is the gateway's view of the active
 	// coordination generation for the session. A pod validates the
-	// generation on every gateway-to-pod RPC and rejects a stale
-	// coordinator's request, so a replica that has lost coordination
-	// cannot tear the session down (§10.1).
+	// generation on every gateway-to-pod RPC against the value it holds
+	// for the session the RPC names, and rejects a request whose
+	// generation does not match it (§10.1).
 	CoordinationGeneration int64 `protobuf:"varint,6,opt,name=coordination_generation,json=coordinationGeneration,proto3" json:"coordination_generation,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache

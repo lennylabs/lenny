@@ -178,20 +178,25 @@ type AdapterClient interface {
 	// counterpart of StartSession.
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
-	// on coordinator handoff (§4.7, §10.1). The pod records the new
-	// generation and from this point rejects any RPC carrying an older one.
-	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
-	// received generation skips one or more values relative to the last
-	// acknowledged fence, the adapter cancels and discards every in-flight
-	// RPC received under the missing generation(s), resets transient
-	// tool-call state, and logs a `coordinator_generation_gap` event before
-	// acknowledging the new generation. The first call on a pod's lifetime
-	// is never treated as a gap regardless of value.
+	// on coordinator handoff (§4.7, §10.1). The pod records the generation
+	// against the session the fence names, and from that point rejects any
+	// RPC carrying a generation older than the one it holds for that
+	// session. A fence for one session does not change the generation the
+	// pod holds for another. Deadline: 5 s (hard-coded, §11.3). Includes
+	// gap detection: if the received generation skips one or more values
+	// relative to that session's last acknowledged fence, the adapter
+	// cancels and discards every in-flight RPC received for that session
+	// under the missing generation(s), resets the transient tool-call state
+	// that session accumulated, and logs a `coordinator_generation_gap`
+	// event before acknowledging the new generation. The first fence for
+	// that session within its current binding on this pod is never treated
+	// as a gap regardless of value.
 	CoordinatorFence(ctx context.Context, in *CoordinatorFenceRequest, opts ...grpc.CallOption) (*CoordinatorFenceResponse, error)
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
 	// drain (§4.7, §10.1). The adapter validates the request's
-	// `coordination_generation` against the last fenced generation, quiesces
-	// tool-call dispatch, and holds the quiesced state open while the
+	// `coordination_generation` against the generation the pod holds for
+	// the session the request names, quiesces tool-call dispatch, and holds
+	// the quiesced state open while the
 	// gateway drives the Checkpoint stream against the held pod. The adapter
 	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
 	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
@@ -630,20 +635,25 @@ type AdapterServer interface {
 	// counterpart of StartSession.
 	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
-	// on coordinator handoff (§4.7, §10.1). The pod records the new
-	// generation and from this point rejects any RPC carrying an older one.
-	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
-	// received generation skips one or more values relative to the last
-	// acknowledged fence, the adapter cancels and discards every in-flight
-	// RPC received under the missing generation(s), resets transient
-	// tool-call state, and logs a `coordinator_generation_gap` event before
-	// acknowledging the new generation. The first call on a pod's lifetime
-	// is never treated as a gap regardless of value.
+	// on coordinator handoff (§4.7, §10.1). The pod records the generation
+	// against the session the fence names, and from that point rejects any
+	// RPC carrying a generation older than the one it holds for that
+	// session. A fence for one session does not change the generation the
+	// pod holds for another. Deadline: 5 s (hard-coded, §11.3). Includes
+	// gap detection: if the received generation skips one or more values
+	// relative to that session's last acknowledged fence, the adapter
+	// cancels and discards every in-flight RPC received for that session
+	// under the missing generation(s), resets the transient tool-call state
+	// that session accumulated, and logs a `coordinator_generation_gap`
+	// event before acknowledging the new generation. The first fence for
+	// that session within its current binding on this pod is never treated
+	// as a gap regardless of value.
 	CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error)
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
 	// drain (§4.7, §10.1). The adapter validates the request's
-	// `coordination_generation` against the last fenced generation, quiesces
-	// tool-call dispatch, and holds the quiesced state open while the
+	// `coordination_generation` against the generation the pod holds for
+	// the session the request names, quiesces tool-call dispatch, and holds
+	// the quiesced state open while the
 	// gateway drives the Checkpoint stream against the held pod. The adapter
 	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
 	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)

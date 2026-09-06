@@ -151,21 +151,26 @@ service Adapter {
   rpc Resume(ResumeRequest) returns (ResumeResponse) {}
 
   // CoordinatorFence announces a new `coordination_generation` to the pod
-  // on coordinator handoff (§4.7, §10.1). The pod records the new
-  // generation and from this point rejects any RPC carrying an older one.
-  // Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
-  // received generation skips one or more values relative to the last
-  // acknowledged fence, the adapter cancels and discards every in-flight
-  // RPC received under the missing generation(s), resets transient
-  // tool-call state, and logs a `coordinator_generation_gap` event before
-  // acknowledging the new generation. The first call on a pod's lifetime
-  // is never treated as a gap regardless of value.
+  // on coordinator handoff (§4.7, §10.1). The pod records the generation
+  // against the session the fence names, and from that point rejects any
+  // RPC carrying a generation older than the one it holds for that
+  // session. A fence for one session does not change the generation the
+  // pod holds for another. Deadline: 5 s (hard-coded, §11.3). Includes
+  // gap detection: if the received generation skips one or more values
+  // relative to that session's last acknowledged fence, the adapter
+  // cancels and discards every in-flight RPC received for that session
+  // under the missing generation(s), resets the transient tool-call state
+  // that session accumulated, and logs a `coordinator_generation_gap`
+  // event before acknowledging the new generation. The first fence for
+  // that session within its current binding on this pod is never treated
+  // as a gap regardless of value.
   rpc CoordinatorFence(CoordinatorFenceRequest) returns (CoordinatorFenceResponse) {}
 
   // CheckpointBarrier dispatches a barrier signal during gateway graceful
   // drain (§4.7, §10.1). The adapter validates the request's
-  // `coordination_generation` against the last fenced generation, quiesces
-  // tool-call dispatch, and holds the quiesced state open while the
+  // `coordination_generation` against the generation the pod holds for
+  // the session the request names, quiesces tool-call dispatch, and holds
+  // the quiesced state open while the
   // gateway drives the Checkpoint stream against the held pod. The adapter
   // acknowledges via `CheckpointBarrierAck` on the AdapterEvents
   // control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
@@ -968,9 +973,9 @@ message SendMessageRequest {
   bytes envelope_json = 3;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 4;
 }
 
@@ -994,11 +999,11 @@ message AttachRequest {
   bytes envelope_json = 3;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1). It is carried on every frame of the
-  // stream rather than on the opening frame alone, for the same reason
-  // session_id is.
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1). It is carried on every frame
+  // of the stream rather than on the opening frame alone, for the same
+  // reason session_id is.
   int64 coordination_generation = 4;
 }
 
@@ -1045,9 +1050,9 @@ message RotateCredentialsRequest {
   reserved "slot_id";
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 5;
 }
 
@@ -1069,9 +1074,9 @@ message ExtendCredentialLeaseRequest {
   reserved "slot_id";
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 6;
 }
 
@@ -1090,9 +1095,9 @@ message RevokeCredentialsRequest {
   reserved "slot_id";
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 5;
 }
 
@@ -1113,9 +1118,9 @@ message InterruptRequest {
   int32 deadline_ms = 3;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 4;
   // Field 5 held slot_id, a second address for the session this
   // message already names in session_id. Every session is bound to a
@@ -1171,9 +1176,9 @@ message CheckpointRequest {
   }
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1). It sits outside the `msg` oneof
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1). It sits outside the `msg` oneof
   // because the fence applies to every frame the gateway sends on the
   // stream rather than to the opening frame alone.
   int64 coordination_generation = 4;
@@ -1304,9 +1309,9 @@ message SignalDeadlineRequest {
   string trigger = 3;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 4;
   // Field 5 held slot_id, a second address for the session this
   // message already names in session_id. Every session is bound to a
@@ -1392,9 +1397,9 @@ message ResumeRequest {
   repeated ChunkGrant chunks = 13;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 14;
   // Field 15 held slot_id, a second address for the session this
   // message already names in session_id. Every session is bound to a
@@ -1440,9 +1445,10 @@ message ResumeResponse {
 }
 
 // CoordinatorFenceRequest announces a new coordination generation to the
-// pod (§4.7 / §10.1). The pod records the new generation and
-// from this point rejects every RPC carrying a strictly older generation
-// with FailedPrecondition + a `coordinator_handoff_stale` detail string,
+// pod (§4.7 / §10.1). The pod records the generation against the session
+// the fence names, and from that point rejects every RPC carrying a
+// generation older than the one it holds for that session with
+// FailedPrecondition + a `coordinator_handoff_stale` detail string,
 // which the gateway counts on `lenny_coordinator_handoff_stale_total`.
 message CoordinatorFenceRequest {
   SessionId session_id = 1;
@@ -1454,12 +1460,13 @@ message CoordinatorFenceRequest {
 
 // CoordinatorFenceResponse acknowledges the new generation. accepted is
 // true when the pod records the generation; false when the supplied
-// generation is not greater than the last fenced generation (the
-// gateway should re-read Postgres and re-issue). gap_detected reports
-// that the new generation skips one or more values relative to the last
-// fenced generation; the adapter still acknowledges (the new coordinator
-// can proceed) but logged a `coordinator_generation_gap` event and
-// reset transient tool-call state per §10.1.
+// generation is not greater than the generation the pod holds for the
+// session the fence names (the gateway should re-read Postgres and
+// re-issue). gap_detected reports that the new generation skips one or
+// more values relative to the generation the pod holds for that session;
+// the adapter still acknowledges (the new coordinator can proceed) but
+// logged a `coordinator_generation_gap` event and reset the transient
+// tool-call state that session accumulated per §10.1.
 message CoordinatorFenceResponse {
   bool accepted = 1;
   int64 last_fenced_generation = 2;
@@ -1469,14 +1476,17 @@ message CoordinatorFenceResponse {
 // CheckpointBarrierRequest dispatches a barrier during gateway graceful
 // drain (§4.7 / §10.1). barrier_id is the gateway's unique
 // identifier for this barrier (echoed in the ack). coordination_generation
-// must match the last fenced generation, or the adapter rejects with
-// FailedPrecondition; this is the same generation gate Coordinator
-// Fence installs.
+// must match the generation the pod holds for the session the request
+// names, or the adapter rejects with FailedPrecondition; a barrier naming
+// a bound session for which the pod holds no fenced generation is
+// accepted and records no value. This is the same generation gate
+// CoordinatorFence installs.
 message CheckpointBarrierRequest {
   SessionId session_id = 1;
   // coordination_generation is the gateway's view of the active
   // coordination generation. The adapter rejects with FailedPrecondition
-  // when this is not strictly equal to the last fenced generation.
+  // when the pod holds a generation for the session the request names and
+  // this is not equal to it.
   int64 coordination_generation = 2;
   // barrier_id is the gateway's correlation id for this barrier. Echoed
   // verbatim in the CheckpointBarrierAck.
@@ -1530,9 +1540,9 @@ message ExportPathsRequest {
   repeated ExportSpec exports = 2;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 3;
 }
 
@@ -1575,9 +1585,9 @@ message ReportUsageRequest {
   bool cumulative = 2;
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot drive the pod (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 3;
   // Field 4 held slot_id, a second address for the session this
   // message already names in session_id. Every session is bound to a
@@ -1617,9 +1627,9 @@ message ShutdownRequest {
 
   // coordination_generation is the gateway's view of the active
   // coordination generation for the session. A pod validates the
-  // generation on every gateway-to-pod RPC and rejects a stale
-  // coordinator's request, so a replica that has lost coordination
-  // cannot tear the session down (§10.1).
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
   int64 coordination_generation = 6;
 }
 
