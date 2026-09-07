@@ -28,3 +28,7 @@ implemented-by:
   0076's OD3 reclassifies that message as session-scoped, which leaves the rule without a counterexample,
   so retiring the table turns 32 rows and a gate into a rule the proto can be checked against. Sequences
   after 0073 and after 0076, and changes nothing 0073 states about how the adapter resolves a root.
+
+## Review history
+
+An adversarial review run evaluated the specification changes against the open questions on 2026-09-07. The run executed three rounds against the spec loop and did not converge. Two full-pool sweeps occurred across the three rounds. No findings were fixed. The specification review did not settle the open questions, which remain unresolved. The non-spec loop was not run.
