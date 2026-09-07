@@ -1956,6 +1956,732 @@ USEFUL [spec.3.review-security.1]: its WATCHOUT that a session-scoped fence exit
 
 USEFUL [spec.2.review-security.1]: its DECISION not to file the nested-address hole (a request declaring `Foo foo = 1` where `Foo` carries a conventional `SessionId session_id`) held on my own re-examination for the same reason. Do not re-open.
 
+### [f2.out-of-scope-defects]
+
+DECISION: The out-of-scope call on the equal-generation re-fence stands and its row under `## Defects in the shipped tree that this proposal does not stage` is kept, with one factual correction to its consequence sentence — BECAUSE nothing this proposal stages reads the fence's acceptance predicate (SPEC-1's staged §4.1 block states a field-set rule, a stream-envelope clause, and an addressing convention and is silent on acceptance; TEST-1's replacement gate parses `schemas/lenny-adapter.proto`; TEST-2's tier-3 suite resolves generated descriptors and invokes no handler), the one behavioral obligation the session-scoped reclassification imports is already met in the shipped handler, and proposal 0080 §1.16 states the remedy in full — ALTERNATIVES: staging the repair here (adds a handler comparison, a `CoordinatorFenceResponse` wire comment, and the §10.1.2, §28, and §29.8 refusal arms to a proposal whose staged surface is one spec block, one tier-0 gate, and one tier-3 map, contradicts its own non-goal at spec-changes.md:148-149, and duplicates 0080 §1.16); leaving the row exactly as found (it misstated the failure, and a later owner reading it as a full account would size the remedy wrongly).
+
+FACT: The shipped driver does not burn the whole retry budget on a lost acknowledgement. Attempt 1's deadline fault is taken by the transient arm and retried at the same value (`pkg/gateway/coordination/coordfence/coordfence.go:180-183`); attempt 2 is refused `FailedPrecondition` because the pod already recorded the generation, the stale arm re-reads and finds no advance, and it relinquishes there (`:171-179`), so the third attempt of `DefaultMaxAttempts = 3` (`:52`) is never made. The summary's row said "burns every retry and drives the coordinator to relinquish the lease"; it now states the second-attempt account with both driver citations — EVIDENCE: pkg/gateway/coordination/coordfence/coordfence.go:52, :159-184.
+
+FACT: Every citation the row carries re-verified against the tree. `spec/10_gateway-internals.md:39` is the "If `CoordinatorFence` fails or times out" bullet and orders the retry "with the same generation value (up to 3 attempts with 1-second backoff)". `pkg/adapter/coordination.go:127` tests `gen <= st.coord.lastFenced` and :130-134 returns `Accepted: false` with the `coordinator_handoff_stale` detail. The empty-identifier refusal `spec/05_runtime-registry-and-pool-model.md:515` requires is at `pkg/adapter/coordination.go:109-111`, ahead of the generation comparison — EVIDENCE: spec/10_gateway-internals.md:39; pkg/adapter/coordination.go:107-134; spec/05_runtime-registry-and-pool-model.md:515.
+
+FACT: No deliverable is added, removed, merged, split, or resequenced by this item, so the implementation checklist is untouched and needs no correction. The non-goals at summary.md:77 and spec-changes.md:148-149, which assign the acceptance predicate to proposal 0080 §1.16, are the only other sites naming this defect and both stay true.
+
+WATCHOUT: `tests/tier0_static/claim_register_proto_agreement_test.go:37-41` exempts `CoordinatorFenceRequest` from the unread-fence coverage half on the ground that `pkg/adapter/coordination.go` "compares it on arrival". The exemption turns on the handler comparing the field at all rather than on which comparison it makes, so the standing defect leaves that gate's premise intact even though TEST-1 moves this file's parse call sites. A successor that takes 0080 §1.16 does not disturb it either — EVIDENCE: tests/tier0_static/claim_register_proto_agreement_test.go:37-41.
+
+
+### [f2.other-proposals]
+
+DECISION: Kept the 0073 marker as a row under `## Impacts on other proposals` and widened the row, rather than opening a second human decision — BECAUSE 0073 is Implemented and verified, so this proposal edits the tree rather than that document, `.claude/rules/spec-driven-development.md` forbids amending a landed proposal to track a later reversal, and the retire-or-withdraw question is already OD1, so restating it in the impact table would put one decision in two places — ALTERNATIVES: leaving the row as found (it named the table and the tier-0 gate and stopped, so a reader did not learn that a landed tier-3 comment is deleted and three spec-map registrations are re-pointed); disposing of it as a human decision (duplicates OD1).
+FACT: The retired block's anchors hold line for line. `spec/04_system-components.md:151` is the paragraph introducing the declared table, `:153-186` is the table, `:188` grounds the fence's row on the declared classification, and `:190` is the `ShutdownRequest` paragraph SPEC-1 keeps — EVIDENCE: spec/04_system-components.md:149-190.
+FACT: The tier-3 membership comment spans `:37-43`, one line later than the item's account of it, and TEST-2 deletes the clauses at `:39-43` and restates membership rather than deleting the whole comment. The row is written to the staged text — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-43; the staged non-spec changes, TEST-2.
+FACT: The retiring gate's two case names carry three registrations, `tests/spec-map.json:156` and `:169` under section 4.1 and `:5670` under section 28.5.3. Only `:156` was entered by the gate's own landing commit (`fb2af5f9c`, 2026-08-21); `:169` and `:5670` were entered by the two later credit sweeps of the same body of work (`732d8fa7c` and `77b69eaa2`, 2026-08-26). The row says the registrations were made while 0073's work landed rather than attributing all three to 0073's own commit — EVIDENCE: git log -L on tests/spec-map.json:156, :169, :5670.
+FACT: The one property the replacement does not reproduce is 0073's §8 checkpoint that a request message added later fails tier 0 until it is classified. The coverage half carries over, because a classification computed from `schemas/lenny-adapter.proto` cannot omit a message — EVIDENCE: proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:4680-4681.
+FACT: The row's surviving-limit clause and SPEC-1's statement that 0073's recorded limit "goes with the gate TEST-1 replaces" are about different things and neither is wrong. The comment text at `tests/tier0_static/adapter_proto_message_scope_test.go:25-27` is deleted with the file's gate; the limitation it records persists, because the replacement gate also reads the protocol definition alone — EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:25-27.
+FACT: No deliverable is added, removed, merged, split, or resequenced by this item. The row is descriptive of what SPEC-1, TEST-1, and TEST-2 already stage, so the implementation checklist is untouched and needs no correction.
+WATCHOUT: `## Impacts on other proposals` is the only place this proposal asserts another proposal's continued validity. Nothing of that kind was found elsewhere in the summary to move here: the `Watch out for` paragraph's mention of 0073 states this proposal's own approach (D5) rather than a claim about 0073's validity.
+
+
+### [f2.cleanup]
+
+DECISION: The summary is left exactly as the adjudication and the write path left it, carrying the eight listed sections in the listed order and nothing else, and no text was moved, relocated, or removed by this pass — BECAUSE every heading, every labelled part under `## Summary`, and the position of `## Deliverable index` already matched the section list, and the three kinds of unlisted content this pass relocates are all absent from the file. — WHERE: `0075_fix_derive-message-scope-from-the-address-type.summary.md`.
+
+FACT: The file's headings are, in order, `# Summary: Derive message scope from the address type`, `## Summary`, `## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, and `## Deliverable index`. `## Summary` carries no prose of its own and holds `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, and `**Watch out for.**` in that order, so neither rename this pass performs (`**Fixed decisions.**`, `**What is fixed.**`) has a subject. The file contains no `###` heading of any kind, so no retired-decision block survives inside `## Open decisions for human to make`. — EVIDENCE: `grep -n "^#" 0075...summary.md` returns those eight lines and nothing else.
+
+FACT: Nothing unlisted was found to relocate. There is no meta-list of staged items with a proposed disposition, no lead paragraph above `## Summary` (the three that stood there left at [f1.cleanup]), no block of shipped-tree defects outside the section that holds them, no errata list in `**Watch out for.**`, and no prose about another proposal outside `## Impacts on other proposals`. The two remaining mentions of another proposal outside that table state this proposal's own approach and its dependency, which are D5 and D6, and the pointer in the defects entry to proposal 0080 §1.16 names where a remedy is stated rather than asserting that proposal's validity, as [f1.other-proposals] and [f2.other-proposals] both recorded.
+
+FACT: Both open decisions keep the identifier they were stamped with, verbatim and in place. OD1 is the human's and stands as firing 1 rewrote it, with its recommendation, its ground, two losing alternatives, the cost of a "no", and a moderate confidence. OD2 stays the human's: this firing adjudicated it for resolution, the gate refused the resolution, and no answer was applied, so nothing in the staged changes answers it. The staged spec changes §7 still carries "What the retired-field-number column holds" as its one open question, and the staged non-spec changes §4 still states that adding the fence to the map "requires deciding what that column holds". — EVIDENCE: 0075...spec-changes.md:153-155; 0075...non-spec-changes.md:3-8.
+
+FACT: Every section preamble reads true against the entries the section now carries, and no move of this pass could have falsified one, because this pass moved nothing. `## Open decisions for human to make` and `## Impacts on other proposals` carry no preamble. `## Defects in the shipped tree that this proposal does not stage` opens on a lead saying that nothing blocks sign-off, that both specification defects are staged as SPEC-1 and TEST-2, and that one further defect is left where it is; the section carries exactly that one entry, the two staged deliverables are in the staged change files, and the §4.1 ground the lead calls falsified is falsified in the tree, since `Server` carries no coordination field and the generation sits on the slot entry the fence resolves. — EVIDENCE: pkg/adapter/coordination.go:107-134; pkg/adapter/slot.go:59.
+
+FACT: The two edits the firing's write path landed hold against the tree. `spec/10_gateway-internals.md:39` orders the retry "with the same generation value (up to 3 attempts with 1-second backoff)"; `pkg/adapter/coordination.go:127` refuses `gen <= st.coord.lastFenced` and :130-134 returns the `coordinator_handoff_stale` detail; the driver's transient arm retries at the same value at `pkg/gateway/coordination/coordfence/coordfence.go:180-183` and the stale arm relinquishes at `:171-179` against `DefaultMaxAttempts = 3` at `:52`; the empty-identifier refusal is at `pkg/adapter/coordination.go:109-111`. The 0073 row's anchors also hold: `spec/04_system-components.md:151` introduces the declared table, `:175` is the fence's pod row, `:188` grounds it, and `:190` is the `ShutdownRequest` paragraph SPEC-1 keeps.
+
+FACT: `## Deliverable index` is preserved line for line in last position, and no line was added, removed, reworded, or reordered.
+
+WATCHOUT: OD2 carries the question and its ground but no recommendation, no losing alternatives, no cost of deciding otherwise, and no confidence, which is less than the section's contract asks of an entry. That absence is what the loop reached, as [f1.cleanup] recorded, and a format pass may not supply one. The firing that next adjudicates OD2 should either author those parts or record why the loop cannot.
+
+WATCHOUT: The staged TEST-2 restates the tier-3 map's membership as the derivation rule together with the message having carried the retired duplicate (`0075...non-spec-changes.md:39-42`). `CoordinatorFenceRequest` fails the second half of that conjunction, so the restated comment excludes the message TEST-2 adds. That conjunction is OD2's own subject rather than a separate defect, and whatever answers OD2 has to settle the comment as well as the column. Do not file it as an independent correction. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-43, :130-141; 0075...non-spec-changes.md:3-8, :39-42.
+
+
+### [non-spec-recheck.1.fix-G1.1]
+
+DECISION: §4 of non-spec-changes.md now grounds "the fence never carried the retired duplicate" on the message's own declaration plus the retirement commit, and cites `040323634` in place of `01d19af01` — BECAUSE no single commit can carry that premise: `SlotId slot_id` reached the message set across eight commits and the fence's own introduction commit added none of them, so a survey of one commit proves nothing about the fence, while the absence of a `reserved` pair inside the message is checkable in one file read and does not decay — ALTERNATIVES: keeping `01d19af01` with a corrected description (true but no longer bears on the sentence it sits under); swapping in `4f6e49dea` or `d353a8ef3` (same defect under a new hash); enumerating all eight `SlotId slot_id` commits (heavy, and stale on any history rewrite).
+FACT: `message CoordinatorFenceRequest` sits at schemas/lenny-adapter.proto:1455-1461, declares `SessionId session_id = 1` and `int64 coordination_generation = 2`, and carries no `reserved` statement of any kind. The retirement commit `040323634` added a `reserved N` / `reserved "slot_id"` pair to every message that had carried the duplicate and does not mention `CoordinatorFence` anywhere in its proto diff — EVIDENCE: schemas/lenny-adapter.proto:1455-1461; `git show 040323634 -- schemas/lenny-adapter.proto`
+FACT: `git log --all -S"SlotId slot_id" -- schemas/lenny-adapter.proto` returns, oldest first, 4f6e49dea, 3128fa712, 72880f767, c47b65522, 4003ee848, 3c69e3f35, 01d19af01, 040323634. `git log --all -S"message CoordinatorFenceRequest"` on the same file returns d353a8ef3 alone, and that commit adds no `SlotId slot_id`. Any sentence of the form "the commit that introduced the duplicate address" has no referent on this history — EVIDENCE: schemas/lenny-adapter.proto history
+MISTAKE: an earlier round attributed the retired duplicate address to the single commit `01d19af01`, which added the field to the five per-slot request messages and neither introduced the field nor introduced the fence. The wrong attribution was the only stated ground for the premise that the summary's OD2 and spec-changes §7 question 1 both rest on, so whoever settles that decision was reading a false citation as evidence. `01d19af01` no longer appears anywhere in the 0075 directory outside the review log.
+WATCHOUT: the same wrong attribution stands verbatim in proposal 0076 (`0076...summary.md:670` and its review log). 0076 is Implemented and immutable, so it is not an edit site; do not "propagate" this correction into it — EVIDENCE: proposals/0076_.../0076_...summary.md:670
+FACT: summary.md OD2 (:139-150) and spec-changes.md §7 question 1 (:149-155) both state the underlying fact without citing any commit, and both stay true after this fix. They are anchored on `tests/tier3_contract/adapter_session_address/session_address_wire_test.go:130-141` and `schemas/lenny-adapter.proto:1455-1461`, which both resolve. No cascade edit was needed — EVIDENCE: 0075...summary.md:139-150; 0075...spec-changes.md:149-155
+
+
+
+### [non-spec-recheck.1.fix-design-G1.1]
+DECISION: replace the whole `01d19af01` clause in non-spec-changes.md:5-6 with tree-state ground (the fence declares no `reserved` number and no `reserved "slot_id"`) plus the retirement commit `040323634` leaving the fence untouched — BECAUSE no single commit can establish "the fence never carried the duplicate": `SlotId slot_id` entered the proto across eight commits and the fence's own introduction commit added none of them — ALTERNATIVES: keeping `01d19af01` with a corrected description ("the commit that put the field on the five per-slot request messages") — rejected, it is then a citation that no longer bears on the claim it sits under; swapping the hash for `4f6e49dea` or `d353a8ef3` — rejected, same defect in a new hash.
+FACT: `SlotId slot_id` was added to schemas/lenny-adapter.proto by eight commits, oldest first 4f6e49dea, 3128fa712, 72880f767, c47b65522, 4003ee848, 3c69e3f35, 01d19af01, 040323634. None of them touches `CoordinatorFenceRequest` (`git show <c> -- schemas/lenny-adapter.proto | grep -c CoordinatorFence` returns 0 for each). The fence was introduced by d353a8ef3 (2026-05-27), which added no `SlotId slot_id` at all. EVIDENCE: schemas/lenny-adapter.proto:1455-1461
+FACT: the retirement commit 040323634 is what added the `reserved N; reserved "slot_id";` pairs, 44 `reserved` lines stand in the file today, and the fence has none. That absence, plus the retirement diff not naming CoordinatorFence, is the ground that actually establishes the premise section 7's open question and the summary's OD2 rest on. EVIDENCE: schemas/lenny-adapter.proto:464-465, 1455-1461
+WATCHOUT: the same false attribution stands verbatim in proposal 0076 (summary.md:670, review-log.md:3684). 0076 is Implemented and immutable; do not edit it, and do not list it as a touched file. EVIDENCE: proposals/0076_scope-the-coordination-generation-to-the-session/
+FACT: `01d19af01` occurs exactly once in the 0075 directory, at non-spec-changes.md:6. summary.md OD2 (:139-150) and spec-changes.md §7 (:149-155) restate the underlying fact without citing any commit, so they stay true and need no edit. EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.non-spec-changes.md:6
+
+
+### [non-spec-recheck.1.review-applicability.1]
+
+DECISION: Filed one finding, on `non-spec-changes.md:5-6`'s attribution of the retired duplicate address to commit `01d19af01` — BECAUSE that commit did not introduce `SlotId slot_id` (4f6e49dea did, on `SendMessageRequest`, and the field reached the other `sessionScopedMessages` members across at least six further commits), nor did it introduce `CoordinatorFenceRequest` (d353a8ef3 did), so under either reading of "the commit that introduced it" the sentence is false and the one-commit survey does not establish the premise it is offered for — ALTERNATIVES: leaving it as locator imprecision, rejected because the conclusion's only stated evidence is the false clause, and because a fixer needs the right ground (the fence declares no `reserved` block at all).
+
+FACT: `SlotId slot_id` entered `schemas/lenny-adapter.proto` in 4f6e49dea and was added message by message across 3128fa712, 72880f767, c47b65522, 4003ee848, 3c69e3f35, and 01d19af01, then retired wholesale in 040323634. `git log --all -S"SlotId slot_id" -- schemas/lenny-adapter.proto` is the one-line derivation. No revision of the file ever declared `slot_id` inside `CoordinatorFenceRequest`, which is why it carries no `reserved` block — EVIDENCE: schemas/lenny-adapter.proto:1455-1461.
+
+FACT (closes [spec.4 UNVERIFIED at review-log.md:1431]): OD2's claim holds. `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` iterates `sessionScopedMessages` and asserts BOTH `reservesNumber(md, num)` at :135-137 AND `reservesName(md, retiredFieldName)` at :138-140, with `retiredFieldName = "slot_id"` at :32. `CoordinatorFenceRequest` reserves neither, so adding it to that map turns tier 3 red whatever number the column holds. I did NOT file it: OD2 records exactly this as an open human decision, and the rubric puts open-decision sections outside the review — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:32, :130-141; schemas/lenny-adapter.proto:1455-1461.
+
+FACT: The replacement gate D1/D2 states PASSES on the proto as it stands, so S2 does not add a gate its own tree fails. Zero fields named `session_id` carry a type other than `SessionId` and zero `SessionId`-typed fields carry another name (26 occurrences, all `SessionId session_id`); `CheckpointRequest` and `CheckpointResponse` are the only messages declaring a `oneof` and only the first is an RPC request type; `CheckpointRequest` declares no top-level address (only `int64 coordination_generation = 4` outside the oneof) and exactly one of its three frames declares one — EVIDENCE: schemas/lenny-adapter.proto:1173-1187, :1217, :596.
+
+FACT: S1's deletion of ~37 lines from `spec/04_system-components.md` breaks no gate other than the one S2 replaces. `tests/registers/line-citations.yaml:15` and `line-citation-resolution.yaml` are both `files: []`, so no in-domain file carries a line citation to shift; the successor-pointer gate's domain is a NAMED list of three reducing sections (§4.7, §15.4, §29.10) and §4.1 is not in it, so retiring the table owes no successor pointer; no test reads §4.1 by heading (`grep '"### 4\.1\|"#### Request' tests/ scripts/ cmd/` is empty); the only registrations of the retiring gate's two case names anywhere in the tree are `tests/spec-map.json:156`, `:169`, `:5670`, all three already staged — EVIDENCE: tests/tier11_docs/successor_pointer_test.go:52-56; tests/registers/line-citations.yaml:15.
+
+FACT: `protoServiceRequests` (and `protoServiceOpen`, `protoRPC`) has exactly ONE caller in the tree, `messageScopeDisagreements` at `adapter_proto_message_scope_test.go:87`. If the replacement gate scopes its envelope clause to REQUEST messages, as D1's text does ("A request message that carries its frames in a `oneof`"), it keeps that caller alive. A gate written over all messages instead would strand the parse function and drag `CheckpointResponse` into the envelope clause — EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:68; tests/tier0_static/adapter_proto_message_scope_test.go:87.
+
+WATCHOUT: The CACHE key in this loop's prompt (`applicability-r1-$H.json`) COLLIDES with the spec-lane loop's key for the same three-file hash. The cached r1 answer at that path was written by the spec-recheck lane at 11:00 and its own coverage text says it deliberately did not verify the non-spec staging, which is this lane's whole scope, and an `applicability-r2` for the same hash exists, so it was not an interrupted run of this question. I did the review rather than returning it. A future agent hitting a cache line whose `coverage` disclaims its own scope should do the same — EVIDENCE: scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/applicability-r1-4e0efd1c4849.json.
+
+FACT: The checklist is clean under the CHECKLIST rules. Three deliverables, three steps, one lane each (S1 spec, S2 test, S3 test), spec step leading, no Depends-on naming a later or nonexistent step, no box ticked. S1's tier-0 redness between S1 and S2 IS disposed of on the step's own line, so it is not a class-4 gate-state finding. S3 omitting tier 0 is not a finding either: `go vet ./...` and the tier-0 `go test ./tests/tier0_static/...` do not compile `//go:build contract` files, and golangci-lint findings are non-fatal in this harness — EVIDENCE: cmd/lenny-test/cmd_run.go:598-615, :735-737.
+
+USEFUL [spec.1.fix-design-G2.1]: its enumeration of the spec-map registrations and of `slotAddressCaseFiles` naming the gate file BY PATH (`spec_map_slot_address_registration_test.go:336`) is exact and saved me the sweep; the replacement gate keeping that path is what keeps that register out of the blast radius.
+
+
+### [non-spec-recheck.1.review-citations.1]
+DECISION: Returned the cached citation-lens answer verbatim (empty findings) instead of re-reviewing — BECAUSE the cache probe at /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/citations-r1-4e0efd1c4849.json hit, and the harness instruction for a cache hit is explicit and first ("return exactly it and do no other work"). ALTERNATIVES: re-running the whole audit (rejected: same lens, same round, byte-identical staged text, so the answer is the same); partially re-auditing only the delta (rejected: "do no other work" admits no partial form).
+FACT: the cache key is `md5(spec-changes.md + non-spec-changes.md + implementation-checklist.md)`, with NO lane component in the filename (`citations-r1-$H.json`). So a spec-lane run and a non-spec-lane run of the citations lens at round 1 share a cache slot whenever those three files are unchanged. That is what happened here: the hit was written by the spec-recheck lane's run against snapshot `spec-recheck-r3`. — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/citations-r1-4e0efd1c4849.json
+WATCHOUT: `summary.md` is IN this lane's stated review scope but is NOT in the cache key. Its mtime (12:00) is later than spec-changes.md (10:18) and non-spec-changes.md (09:30), so summary.md is the only staged input that moved since the cached run, and the cached coverage note shows that run read summary.md only for 0076/0080 cross-references. A citation defect introduced into summary.md after 10:18 would be invisible to this cache hit. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/ mtimes: summary.md 12:00, spec-changes.md 10:18, non-spec-changes.md 09:30, implementation-checklist.md 09:29
+UNVERIFIED: no agent in this lane has citation-audited the post-10:18 edits to 0075's summary.md. If the loop wants that covered, it must either add summary.md to the cache key or run the citations lens with the cache bypassed. Whoever owns the harness config should decide.
+
+
+### [non-spec-recheck.1.review-client-surface.1]
+
+DECISION: Returned the cached client-surface answer (empty findings) rather than re-running the sweep — BECAUSE the cache key over spec-changes.md + non-spec-changes.md + implementation-checklist.md hashed to `4e0efd1c4849` and a completed answer for that exact hash was present at scratchpad/cp-cache/0075_.../client-surface-r1-4e0efd1c4849.json; I confirmed the answer was not truncated by finding its one derived DEFERRED already merged into the review log at line 1469 — ALTERNATIVES: re-running the full sweep (the three hashed files are byte-identical to the cached run's input, so it would re-derive the same census).
+
+FACT: The delta since the cached run touches only `review-log.md` and one row plus one paragraph in `summary.md`. Neither file carries an externally-consumed contract: the summary hunks are the 0073 impacts row (widened with tier-3 comment and spec-map citations) and a correction to the equal-generation re-fence consequence sentence, both proposal bookkeeping. The client-surface lens has no purchase on either. — EVIDENCE: diff of scratchpad/cp-snap/0075_.../spec-recheck-r3 against the proposal directory returns hunks only in those two files.
+
+USEFUL [spec.1.review-docs-alignment.1]: its FACT that `docs/` names RPCs and never request message types is the load-bearing reason this lens keeps returning empty; it is why no docs/, charts/, or schemas/*.json surface moves when §4.1's message-scope table retires. Confirmed again here through the cached run's own coverage note.
+
+WATCHOUT: The cache key does NOT include `summary.md` or `review-log.md`. A future firing whose only delta is in those two files will get a cache hit and skip the sweep. That is correct for this lens, because no client-facing contract lives in either, but a lens that owns proposal bookkeeping (citations, cleanup) must not treat a hit on this key as covering a summary rewrite. — EVIDENCE: the CACHE command in the firing prompt hashes only the spec-changes, non-spec-changes, and implementation-checklist files.
+
+
+### [non-spec-recheck.1.review-docs-alignment.1]
+DECISION: Returned the cached docs-alignment answer verbatim (empty findings) — BECAUSE the cache key `docs-alignment-r1-4e0efd1c4849.json` hit on the current staging triple, and the run directive says to return it and do no other work — ALTERNATIVES: re-running the lens, rejected because the hashed text (spec-changes + non-spec-changes + implementation-checklist) is byte-identical to what the cached run reviewed.
+FACT: the docs-alignment cache key is an md5 over spec-changes.md + non-spec-changes.md + implementation-checklist.md ONLY. summary.md and review-log.md are outside the key, so a round whose delta is summary-only will hit a cache written before that delta and no agent will have read the new summary text under this lens. — EVIDENCE: /home/ec2-user/lenny/proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md (mtime 12:00) vs non-spec-changes.md (09:30) and the cache file /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/docs-alignment-r1-4e0efd1c4849.json
+UNVERIFIED: the summary.md edits made at 12:00 (the open-decisions-and-impact-review phase's output) have not been read under the docs-alignment lens by any agent; a later round or the compaction pass should confirm the impacts rows and decision entries carry no false docs/ citation. — a docs-alignment reviewer on the next non-cached round should check it.
+
+
+
+### [non-spec-recheck.1.review-edit-sites.1]
+FACT: The edit-sites cache key (md5 of spec-changes + non-spec-changes + implementation-checklist) HIT on this run, so `non-spec-changes.md` and the checklist are byte-identical to the spec-recheck-r3 snapshot; the entire delta this loop was convened for lives in `summary.md`, which the cache key does not cover — EVIDENCE: scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/edit-sites-r1-4e0efd1c4849.json
+WATCHOUT: a future cache hit on this proposal is NOT proof the summary was reviewed. Diff `summary.md` against the snapshot before trusting an empty cached answer — EVIDENCE: scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/spec-recheck-r3/0075_fix_derive-message-scope-from-the-address-type.summary.md
+FACT: The summary delta is two blocks and both verify against the tree. (1) The refusal note's new coordfence account: the transient/default arm that retries at the unchanged generation is `pkg/gateway/coordination/coordfence/coordfence.go:180-183`, the stale arm that re-reads and relinquishes on no advance is `:171-179`, and `DefaultMaxAttempts = 3` at `:52`, so "gives up on the second of its three attempts" holds. (2) The rewritten 0073 impacts row's citations all resolve: `tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-43` is the `sessionScopedMessages` doc comment, whose table-keyed clause and pod-scoped `CoordinatorFenceRequest` naming run `:39-43`; `tests/spec-map.json:156` and `:169` are the two retiring gate case names under spec/04, `:5670` is the same gate under the 28.5.3 block; `tests/tier0_static/adapter_proto_message_scope_test.go:25-27` is the sentence recording that the gate reads spec and proto text alone — EVIDENCE: pkg/gateway/coordination/coordfence/coordfence.go:52,171-183
+DECISION: returned the cached empty findings list verbatim — BECAUSE the cache instruction is unconditional on a hit and my independent check of the uncovered summary delta surfaced nothing meeting the bar — ALTERNATIVES: re-running the full edit-site sweep over unchanged text, rejected as duplicated work the cache exists to prevent
+
+
+### [non-spec-recheck.1.review-mechanism.1]
+
+DECISION: Returned the cached mechanism-lens result unchanged (empty findings) — BECAUSE the cache probe printed JSON at scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/mechanism-r1-4e0efd1c4849.json, and the loop's cache rule is unconditional: a hit is returned verbatim with no other work — ALTERNATIVES: re-running the full trace, rejected because the hash over spec-changes + non-spec-changes + implementation-checklist is identical, so the text under this lens has not moved since that run.
+
+FACT: The mechanism lens has already traced this staging end to end and returned nothing. Its coverage record names the surfaces it verified: spec/04_system-components.md:149-190 plus :712/:725/:726, spec/10_gateway-internals.md:57-60, spec/05_runtime-registry-and-pool-model.md:515, spec/28_communication-channels.md:314-319 and :804-850, a full re-parse of both service blocks in schemas/lenny-adapter.proto, pkg/adapter/coordination.go:17-38 and :107-119, tests/tier0_static/adapter_proto_message_scope_test.go, tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:35-76, and docs/reference/adapter-contract.md:78-82 — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/mechanism-r1-4e0efd1c4849.json
+
+WATCHOUT: The cache key covers only spec-changes.md, non-spec-changes.md, and implementation-checklist.md. summary.md (mtime 12:00) is inside this loop's stated scope but outside the key, so a summary-only edit does NOT invalidate the cache and this lens will keep returning the hit. A reviewer who needs the summary re-read under this lens must bypass the cache deliberately — EVIDENCE: /home/ec2-user/lenny/proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md
+
+UNVERIFIED: Whether the replacement tier-0 gate's parse can be built from the shared parse helper in tests/tier0_static/adapter_proto_parse_test.go:10-70. The cached run recorded this as undecidable under the mechanism lens because the remedy is a test-file change this loop may not edit; the implementor should settle it when writing the gate.
+
+
+### [non-spec-recheck.1.review-operational.1]
+FACT: This run was a cache hit. The operational lens cache key hashes only spec-changes.md + non-spec-changes.md + implementation-checklist.md, and those three were byte-identical to the earlier interrupted run, so the stored answer (empty findings) was returned verbatim. EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/operational-r1-4e0efd1c4849.json
+WATCHOUT: the cache key excludes summary.md and review-log.md. The orchestrator for this recheck named summary.md as part of the changed staging, but a summary-only edit cannot change the key, so a lens whose finding would live in summary.md will be served a stale cache hit. Anyone who needs summary.md re-read under this lens must invalidate the cache file by hand. EVIDENCE: the cache command in the task prompt hashes exactly three files; /home/ec2-user/lenny/proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md (mtime 12:00) is newer than non-spec-changes.md (09:30).
+
+
+### [non-spec-recheck.1.review-performance.1]
+FACT: The performance lens has a live cache hit for this staging. Key `performance-r1-4e0efd1c4849.json` under scratchpad/cp-cache/0075_.../ was written by an earlier interrupted run over byte-identical spec-changes + non-spec-changes + checklist, and returned an empty findings list. — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/performance-r1-4e0efd1c4849.json
+FACT: The cached coverage records the substantive reason the lens is empty here and it still holds if a future round re-derives it: this proposal creates no control-plane or data-plane write at all. It retires a spec table, states a derivation rule, replaces one tier-0 static gate, and repairs one tier-3 suite. No CRD status write, no Postgres or Redis key, no informer or watch, no reconcile trigger, and no change to any RPC payload, frequency, or fan-out, so there is no write-rate arithmetic to run against the section 12 tier sizing or the etcd dedup ceiling. — EVIDENCE: /home/ec2-user/lenny/proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.non-spec-changes.md:1
+FACT: The only failure-mode surface the staging touches is coordinator handoff and hold state, and it does not move it. The classification the staging records (CoordinatorFenceRequest session-scoped) is already the tree's behavior, and the hold plus its gauge stay pod-scoped. — EVIDENCE: pkg/adapter/coordination.go:107-119 (resolves the bound slot entry by identifier, InvalidArgument on empty at :109-111); spec/10_gateway-internals.md:57 and :60
+WATCHOUT: The cache key is the md5 of the three staged files concatenated. Any edit to the checklist, the spec staging, or the non-spec staging invalidates it and the lens must actually re-run; do not assume a stale key means the answer changed materially, and do not hand-edit the cache. — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/
+
+
+### [non-spec-recheck.1.review-reliability.1]
+FACT: This run was a cache hit and returned a prior interrupted run's answer verbatim (empty findings). — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/reliability-r1-4e0efd1c4849.json
+WATCHOUT: The reliability cache key is md5 over spec-changes.md + non-spec-changes.md + implementation-checklist.md only; summary.md is NOT in the key. A round whose delta lands solely in summary.md will hit a stale cache entry and skip the review. — EVIDENCE: /home/ec2-user/lenny/proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md
+UNVERIFIED: whether summary.md changed since the cached run; a later reliability pass should diff summary.md against the r3 snapshot at /home/ec2-user/lenny/scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/spec-recheck-r3 before trusting an empty reliability list.
+
+
+### [non-spec-recheck.1.review-security.1]
+
+FACT: The security lens returned a cache hit on this staging and did no fresh work. The cache key is md5 of spec-changes.md + non-spec-changes.md + implementation-checklist.md concatenated, first 12 chars; it resolved to 4e0efd1c4849 and the stored answer was an empty findings list. EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/security-r1-4e0efd1c4849.json
+
+WATCHOUT: The cache key does NOT include the summary. If a round changes only the summary (as the non-spec-recheck delta partly did), the security lens will hit its cache and never read the new summary text. A summary-only defect under this lens is therefore invisible to a cached run. EVIDENCE: the orchestrator's cache command hashes exactly three files, and summary.md (modified 09-07 12:00) is not one of them.
+
+FACT: The cached security review verified and found clean, on the same text: CoordinatorFenceRequest's reclassification to session-scoped pulls it under the fail-closed empty-identifier refusal at spec/05_runtime-registry-and-pool-model.md:515, enforced at pkg/adapter/coordination.go:108-111, so the change is fail-closed at that site. The derivation's authoritative input is schemas/lenny-adapter.proto, a review-controlled repo artifact rather than an in-pod self-report, so no security bound is re-sourced. No RBAC, NetworkPolicy, webhook, ServiceAccount, tenant-pinning, or reuse-counter surface is touched. EVIDENCE: spec/05_runtime-registry-and-pool-model.md:515; pkg/adapter/coordination.go:108-111
+
+OPEN: Whether the pod-wide coordinator hold's release semantics on a multi-slot pod are owned by 0076 or by 0080. Outside the staged spec edits here; recorded rather than filed. EVIDENCE: spec/10_agent-runtime-contract.md:57, :60
+
+
+### [non-spec-recheck.1.review-test-coverage.1]
+
+DECISION: Returned an EMPTY findings list for the test-coverage lens on the non-spec staging — BECAUSE §8 now names four enumerated tier-0 negative cases (one per gate clause, including the zero/two boundary on the envelope-frame clause) plus the tier-3 constraint, the tiers the change reaches (0 and 3) are both listed, and every behavioral obligation the reclassification imports already has a landed test — ALTERNATIVES: filing the tier-11 entry as a marker with no constraint (rejected: no tier-11 gate reads §4.1's table or the `#### Request Message Scope` heading, so tier 11 is a regression run rather than a case obligation); filing "no test pins that the derivation reproduces the retired table's 32 rows" (rejected: that is OD1's own subject, settled outside review).
+
+FACT: The one behavioral obligation the pod↔session reclassification imports — refusal of a session-scoped request with an empty identifier (`spec/05_runtime-registry-and-pool-model.md:515`) — is both implemented and already pinned. Handler at `pkg/adapter/coordination.go:109-111`; test `TestCoordinatorFenceRejectsMissingSessionID` at `pkg/adapter/coordination_test.go:35-43`. 0076 also landed the per-session fence cases (`TestCoTenantFenceRecordsPerSessionGeneration_spec_10_1_2` at `:505`, `TestCoTenantFirstFenceIsNotAGap_spec_10_1_2` at `:553`, `TestPerSessionReadsAreEmptyForAnUnheldSession_spec_10_1_2` at `:693`). Do not file a missing-test finding for the reclassification. — EVIDENCE: pkg/adapter/coordination_test.go:35,505,553,693
+
+FACT: The replacement gate's positive case is satisfiable against the shipped proto. All 26 field declarations of type `SessionId` are spelled `SessionId session_id` and no field named `session_id` carries another type, so D2's two convention clauses are green on the tree today. — EVIDENCE: `grep -n "SessionId " schemas/lenny-adapter.proto` returns 26 field lines plus the message at :595 and one comment; the reverse grep for a `session_id` of another type returns nothing.
+
+FACT: `CheckpointResponse` (`schemas/lenny-adapter.proto:1249-1257`) carries a `oneof msg` whose five arms declare no address at all. If an implementor keys the envelope clause on "message declares a `oneof`" rather than on "request message declares a `oneof`", the gate goes red on the shipped proto immediately, so the mistake is self-catching and needs no separate listed case. §4 of the staged spec changes states that boundary (`spec-changes.md:84-87`). — EVIDENCE: schemas/lenny-adapter.proto:1249-1257
+
+FACT: `tests/tier0_static/spec_map_slot_address_registration_test.go` carries a hard-coded file inventory `slotAddressCaseFiles` that already lists `tests/tier0_static/adapter_proto_message_scope_test.go` (`:336`), `adapter_proto_parse_test.go` (`:337`), and the tier-3 suite (`:409`). `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` (`:970`) requires a spec-map credit for every section a case's own `// spec:` annotation names, and `creditsMissing` (`:953`) catches only MISSING credits, never extra ones. So TEST-1's "registered under the same sections" is satisfiable whichever way the annotation goes, and the inventory needs no edit as long as the replacement gate keeps the same file path. An implementor who moves the gate to a new file path must add that path at `:336`. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:336-337,409,953,970
+
+USEFUL [spec-recheck.2.review-feasibility.1 / review-log:780]: its DEFERRED that §8 required a single negative case against a four-clause gate was closed by the non-spec staging; `non-spec-changes.md:48-52` now enumerates one case per clause with the zero/two boundary. Nothing left to file there.
+
+WATCHOUT: `review-log:1538` deferred to this loop whether the replacement gate's cases can honestly annotate `// spec: 28.5.3`, since §28.5.3 is the Intra-pod boundary (`spec/28_communication-channels.md:499`) and the gate reads a gateway↔adapter gRPC convention. I did not file it: the retiring gate already carries that annotation (`tests/tier0_static/adapter_proto_message_scope_test.go:129`) and the credit gate never refuses a surplus credit, so nothing breaks either way. It is a registration-accuracy judgment for the implementor, not a coverage gap.
+
+WATCHOUT: adding `CoordinatorFenceRequest` to `sessionScopedMessages` drags it into THREE arms, not one, and the third (`TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4`, `:127-142`) asserts both `reservesNumber` and `reservesName("slot_id")`, neither of which the fence declares. That is OD2's subject and is settled outside review; do not file it as a testing gap. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:81,102,130-141; schemas/lenny-adapter.proto:1455-1461
+
+
+### [non-spec-recheck.2.review-applicability.1]
+
+DECISION: Returned an EMPTY findings list. — BECAUSE the only text that moved since the last applicability
+pass in this lane is one paragraph (non-spec-changes.md §4, TEST-2's ground for the fence's empty
+retired-field column), and every claim in it verifies exactly against the tree; the rest of the staging,
+the checklist, and the summary re-verified clean under classes 1-6 and the CHECKLIST rules. —
+ALTERNATIVES: filing the TEST-2-versus-OD2 contradiction (rejected, see below); filing the replacement
+gate's unstated test-function names as an underspecified target (rejected: both carriers, the Go file and
+`tests/spec-map.json`, are written inside the same step S2, so nothing cross-step depends on a name the
+proposal was responsible for fixing, and the lens bars reporting ordinary naming judgment).
+
+FACT: The whole delta since the last non-spec applicability review is `non-spec-changes.md:5-9`. `diff -u`
+against `scratchpad/cp-snap/.../non-spec-recheck-r1-prefix` shows one hunk; `summary.md`,
+`spec-changes.md`, `implementation-checklist.md`, `problem-statement.md`, and `status.md` are byte-identical
+to `non-spec-recheck-r1-start`. Snapshot `non-spec-recheck-r2` is identical to the live directory, so
+diffing against it shows nothing; use `non-spec-recheck-r1-prefix` or `-r1-start` to see the delta.
+
+FACT: The new §4 paragraph verifies in full. `CoordinatorFenceRequest` occupies exactly
+`schemas/lenny-adapter.proto:1455-1461` and declares `SessionId session_id = 1` (`:1456`) and
+`int64 coordination_generation = 2` (`:1460`) with no `reserved`. Commit `040323634` ("Address a session on
+the gRPC leg by its session identifier alone") added exactly 18 `reserved "slot_id"` lines, the file carries
+exactly 18 today, `git log -S'reserved "slot_id"' -- schemas/lenny-adapter.proto` returns that one commit,
+and `git show 040323634 -- schemas/lenny-adapter.proto | grep CoordinatorFence` is empty. The 18 match the
+18 members of `sessionScopedMessages`. — EVIDENCE: schemas/lenny-adapter.proto:1455-1461;
+tests/tier3_contract/adapter_session_address/session_address_wire_test.go:44-63
+
+WATCHOUT: The staged TEST-2 ("add `CoordinatorFenceRequest` to `sessionScopedMessages`, settling the
+retired-field-number column per §4") is unappliable as written: `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4`
+iterates that same map and asserts `reservesName(md, "slot_id")` at `:138-140`, which the fence fails for
+any column value, so S3 turns tier 3 red. This is NOT a fileable finding: it is summary OD2's own subject,
+recorded there as an open human decision with the two candidate resolutions, and at least three earlier
+agents reached it and declined to file for the same reason (review-log.md:920, :1290, :2030, :2133). Do not
+re-derive it a fifth time. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:32,130-141;
+proposals/0075_.../0075_....summary.md:139-150
+
+FACT: Every anchor SPEC-1 depends on resolves at HEAD, unchanged since the last pass:
+`#### Request Message Scope` at spec/04_system-components.md:149, the introducing paragraph at `:151`, the
+32-row table at `:153-186` (the fence's row at `:175`), the grounding paragraph at `:188`, and the
+`ShutdownRequest` paragraph at `:190`. §4.7.1's two per-message scope sentences are `:725` ("The request is
+session-scoped: it is addressed by the identifier of the released session and names no slot.") and `:726`
+("The request is pod-scoped."), both outside SPEC-1's block and both agreeing with the derivation.
+
+FACT: The replacement gate passes on the shipped proto, so S2 adds no gate its own tree fails. All 26
+`session_id` field declarations are `SessionId session_id`; no `SessionId`-typed field carries another
+name; the only two `oneof`s are `CheckpointRequest` (`:1174`) and `CheckpointResponse` (`:1250`), the second
+being no RPC's request type; `CheckpointRequest`'s only top-level field is `int64 coordination_generation = 4`
+(`:1186`) and exactly one of its three frames, `CheckpointStart`, declares `SessionId session_id = 7`
+(`:1217`), with `CheckpointGrant` and `CheckpointAbort` declaring none (`:1223`, `:1243-1245`).
+
+FACT: `TestDocumentConsistencyGatesCarryNoSpecSectionCredit` does NOT reach the replacement gate. Its
+subject register `documentConsistencyGates` is a two-entry hard-coded literal naming
+`tests/tier11_docs/test_gaps_test_reference_rename_drift_test.go` and this file itself; it is not derived
+from a predicate over "reads a document", so a gate that after TEST-1 reads only
+`schemas/lenny-adapter.proto` does not fall into it and keeps its spec-map credits. I checked this because
+it looked like a live class-4 gate-state hazard; it is not. — EVIDENCE:
+tests/tier0_static/spec_map_slot_address_registration_test.go:124-136
+
+FACT: `tests/registers/identifier-senses.yaml` carries eight positional entries keyed on
+`spec/04_system-components.md` by occurrence index, so a deletion inside that file could in principle shift
+them. It cannot here: none of CH-RUNTIMEOPS's retired spellings (`LifecycleChannel`, `lifecycleChannel`,
+`lifecycle-socket`, `@lenny-lifecycle`, `lifecycle-events`, `lifecyclechannel`, from
+spec/28_communication-channels.md:154-159) occurs anywhere in spec/04, so the block SPEC-1 deletes contains
+no site and the indices do not move. — EVIDENCE: tests/registers/identifier-senses.yaml:14-37;
+spec/28_communication-channels.md:154-159
+
+USEFUL [non-spec-recheck.1.review-applicability.1]: its FACTs on S1's blast radius (no line-citation
+register entry, no successor-pointer obligation, no test reading §4.1 by heading, the three spec-map
+registrations being the only ones anywhere) and on `protoServiceRequests` having exactly one caller are
+exact and saved the whole sweep. I re-derived the spec-map and caller halves independently and both hold.
+
+USEFUL [non-spec-recheck.1.review-test-coverage.1]: its note that `slotAddressCaseFiles` names the gate file
+BY PATH at `:336` is the reason TEST-1 owes that register no edit, and it is the one thing that would change
+if an implementor moved the replacement gate to a new file path. Worth carrying forward.
+
+
+### [non-spec-recheck.3.review-applicability.1]
+
+DECISION: Returned an EMPTY findings list. — BECAUSE the staged text did not move at all since the last
+applicability pass in this lane, and I re-derived the whole lens from the tree rather than trusting the
+prior pass: every anchor SPEC-1, TEST-1, and TEST-2 depend on resolves at HEAD, the created-artifact
+worklist has no property an implementor must invent that the proposal was responsible for stating, no
+sub-step references an artifact a later sub-step creates, no existing gate outside the one TEST-1 replaces
+reads the retired block, and the checklist is clean under the CHECKLIST rules (three deliverables, three
+steps, one lane each, spec step leading, no Depends-on naming a later or nonexistent step, no ticked box).
+— ALTERNATIVES: filing S3's tier list omitting tier 0 (rejected, see CORRECTS below: tier 0 does compile
+the contract-tagged file, but tier 3 — which S3 does list — compiles it too, so the omission has no
+consequence); filing TEST-2's restated membership rule as self-contradictory (rejected, see WATCHOUT).
+
+FACT: The proposal directory is byte-identical to the `non-spec-recheck-r3-start` snapshot, and identical
+to `non-spec-recheck-r2` except for `review-log.md`. The orchestrator's note that "this lane's staging
+changed after this lane's last review converged" is FALSE for this firing: `summary.md`,
+`non-spec-changes.md`, `spec-changes.md`, `implementation-checklist.md`, `problem-statement.md`,
+`status.md`, and `deviations.md` all match r2. Verify with
+`diff -rq scratchpad/cp-snap/0075_.../non-spec-recheck-r2 proposals/0075_...` before spending a pass
+hunting a delta that is not there. — EVIDENCE: `diff -rq` output, r2 vs live
+
+CORRECTS [non-spec-recheck.2.review-applicability.1, its FACT at review-log.md:2040]: that entry rules out
+S3-omits-tier-0 partly on "`go vet ./...` and the tier-0 `go test ./tests/tier0_static/...` do not compile
+`//go:build contract` files". Tier 0 DOES compile them: `runStaticTier` runs
+`go vet -tags=contract ./tests/tier3_contract/...` as its second check, commented "Verify contract-tagged
+tests compile without running them." The conclusion still stands, but on a different ground — tier 3, which
+S3 does list, compiles the same package — so do not reuse the stated rationale.
+— EVIDENCE: cmd/lenny-test/cmd_run.go:503-509
+
+WATCHOUT: TEST-2 instructs both "add `CoordinatorFenceRequest` to `sessionScopedMessages`" AND "restating
+membership as the derivation rule together with the message having carried the retired duplicate"
+(non-spec-changes.md:39-43), while the same file states the fence never carried that duplicate
+(non-spec-changes.md:5-9). The added member fails the restated membership rule. This is NOT filable: it is
+the same subject as summary OD2 ("How does `CoordinatorFenceRequest` enter the tier-3
+`sessionScopedMessages` map?", summary.md:139-150), whose two candidate resolutions would both rewrite
+TEST-2's map instruction, and the brief bars filing on how an open decision is framed. Five agents have now
+reached this and declined. Do not derive it a sixth time. — EVIDENCE:
+proposals/0075_.../0075_....non-spec-changes.md:5-9,39-43; summary.md:139-150
+
+FACT: Independently re-derived and confirms [non-spec-recheck.1/2] on the blast radius, so it can be
+trusted: `tests/change-graph.json` names none of the touched test files; `tests/spec-map-exceptions.yaml`
+and `tests/claim-map.json` carry neither retiring case name; `tests/registers/*.yaml` reference
+`spec/04_system-components.md` only in `identifier-senses.yaml` (eight CH-RUNTIMEOPS occurrence entries),
+and `sed -n '149,191p' spec/04_system-components.md | grep -i lifecycle` is empty, so the deleted block
+holds no retired spelling and the occurrence indices do not shift. `gate_integrity_test.go`'s hard-coded
+tier-0 gate roster does not name the message-scope gate, so replacing it trips no meta-gate.
+— EVIDENCE: tests/registers/identifier-senses.yaml:14-37; tests/tier0_static/gate_integrity_test.go:46-50
+
+FACT: The replacement gate passes on the shipped proto, re-derived today: `grep -c "SessionId session_id ="`
+returns 26 and `grep -c " session_id *="` also returns 26, so name and type agree in both directions with no
+exception; the only two `oneof`s are at `schemas/lenny-adapter.proto:1174` (`CheckpointRequest`) and `:1250`
+(`CheckpointResponse`, no RPC's request type). So S2 adds no gate its own tree fails.
+— EVIDENCE: schemas/lenny-adapter.proto:1174, :1250
+
+FACT: `runValidateMaps` really does carry a dangling-test-function check, so TEST-1's `validate-maps`
+sentence is not aspirational: `validateSpecMapTestFuncs` sits in the check list beside
+`validateSpecMapTestFiles` and `validateTestFilesMapped`. — EVIDENCE: cmd/lenny-test/cmd_validate.go:64-67
+
+
+### [non-spec-recheck.3.review-citations.1]
+
+DECISION: Returned an EMPTY findings list after a full, uncached audit of every citation in all five staged files — BECAUSE every file:line anchor, every quoted spec sentence, and every attributed behavior resolves at HEAD and says what the proposal claims; I re-derived the proto measurements with my own parser rather than trusting the review log — ALTERNATIVES: filing the two loose-attribution sites noted below (rejected: neither changes a conclusion, and the rubric refutes wording imprecision).
+
+FACT: The staged text is BYTE-IDENTICAL to snapshot `non-spec-recheck-r2` except for `review-log.md`; the only staging delta since `non-spec-recheck-r1-start` is one paragraph, `non-spec-changes.md:3-9` (TEST-2's ground for the fence's empty retired-field column). `diff -ru` against the `non-spec-recheck-r3` snapshot returns NOTHING, so use `-r1-start` or `-r1-prefix` to see any delta in this lane. — EVIDENCE: diff -rq of scratchpad/cp-snap/0075_.../non-spec-recheck-r2 against the proposal directory
+
+FACT: Every citation in the staging verified at HEAD. Full list, all confirmed: spec/04:149 (`#### Request Message Scope`), :151, :153-186 (32 rows: 26 session, 6 pod), :175, :188, :190, :725, :726; spec/05:515; spec/10:38, :39, :40, :57, :60; spec/28:314-317; schemas/lenny-adapter.proto:458, :499-503, :596, :1173, :1217, :1455-1461; pkg/adapter/server.go:302, slot.go:59, coordination.go:17-38/:107/:109-111/:116/:127-134, checkpoint.go:74-84; coordfence.go:52/:171-179/:180-183; tier0 gate :17-27/:25-27/:54/:75-81; adapter_proto_parse_test.go:10-15/:64-67; claim_register_proto_agreement_test.go:64; spec-map.json:156/:169 (section 4.1 opens :152) and :5670 (section 28.5.3 opens :5643); session_address_wire_test.go:37-43/:39-43/:40-43/:81/:102/:130/:130-141/:150-158; tier11 doc gate :43-76; docs/reference/adapter-contract.md:81; commit 040323634. NO citation in this proposal is stale as of 2026-09-07.
+
+FACT: `pkg/adapter/server.go:302` is exact in both directions. Commit `4c8e48134` ("Record the coordination generation and the barrier gate per bound session") removed `coord coordinationState`, and in its parent that field sat at LINE 302 while `hold holdState` sat at :307. §1.2's phrase "declares `hold holdState` where the pod-wide state stood" is literally true of the line number, not just of the file. — EVIDENCE: `git show 4c8e48134^:pkg/adapter/server.go | grep -n` → 302 coord, 307 hold; pkg/adapter/server.go:302 today
+
+FACT: The proto measurements re-derived independently (own Python parse of the two service blocks, not the review log's numbers): 31 RPC request types; 25 declare a top-level `session_id`; the 6 that do not are exactly `AdapterEventsRequest`, `CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`; ZERO fields named `session_id` not of type `SessionId` and ZERO `SessionId`-typed fields under another name, across every message including oneof arms; `CheckpointRequest` and `CheckpointResponse` are the only oneof-carrying messages and only the first is a request type. — EVIDENCE: schemas/lenny-adapter.proto
+
+FACT: `spec/04:726` ("The request is pod-scoped.") really is the only surviving per-message pod-scope statement after SPEC-1. A grep for "pod-scoped" over spec/ returns six hits; spec/10:60 is the hold gauge, spec/04:872 is credential rotation, spec/12:202 is Redis key prefixes, and the other two (:151, :188) are inside the block SPEC-1 retires. SPEC-1's sentence claiming :726 is left as the only such sentence is exact. — EVIDENCE: spec/04_system-components.md:726; spec/10_gateway-internals.md:60; spec/12_storage-architecture.md:202
+
+FACT: SPEC-1's attribution of `spec/10:60` to 0076's SPEC-1 under its D5 is correct. 0076's SPEC-1 block, not SPEC-2, stages the §10.1.4 Observability bullet and its closing clause "the hold itself and the `lenny_adapter_coordinator_hold` gauge remain pod-scoped under D5". — EVIDENCE: proposals/0076_.../0076_....spec-changes.md:304-321, :20-31 (D5)
+
+FACT: `protoFields` has exactly ONE caller outside its own file (`claim_register_proto_agreement_test.go:64`) and `protoServiceRequests` exactly one (`adapter_proto_message_scope_test.go:87`). The message-scope gate reads `protoServiceRequests`, NOT `protoFields`, so the caller that moves when the parse gains field types is the claim-register gate, which is what §9 and TEST-1 both say. — EVIDENCE: grep for `protoFields(`/`protoServiceRequests(` over tests/, pkg/, cmd/
+
+FACT: No tier-11 or other gate reads §4.1's `#### Request Message Scope` block as text. The only files matching "message scope"/"messageScope" outside spec/04 are the two tier-0 parse/gate files, `session_address_wire_test.go`, and two files where the string appears only inside a `// spec:` annotation (`tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, `tests/tier3_contract/rest_sessions/slot_address_absence_test.go`). Retiring the block breaks no reader beyond the gate TEST-1 replaces. — EVIDENCE: grep -rln over tests/, pkg/, cmd/, docs/, scripts/, spec/
+
+WATCHOUT: two loose attributions I examined and deliberately did NOT file, so a later round does not spend the same hour on them. (1) summary.md:114-116 calls the retired gate's four non-coverage refusals ones that "check the table against itself"; two of them (unknown message, wrong service) actually compare the table to `protoServiceRequests`. The load-bearing claim — that all four lose their subject with the table — is true either way, so the OD1 argument is unaffected. (2) summary.md:133-134 attributes "hold `last_fenced_generation` per bound session" to `spec/10:38` and `:40`; only :40 uses that phrase, while :38 says "records the new generation for that session". Both are wording, not conclusions. — EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:96-124; spec/10_gateway-internals.md:38, :40
+
+USEFUL [non-spec-recheck.1.review-citations.1]: its warning that `summary.md` is NOT in the cache key, and that the r1 citations answer was a cache hit written by the spec lane against an older summary, is why I audited the summary from scratch instead of trusting any prior empty result. That gap is now closed: the current summary text has been citation-audited end to end at this round's hash `7b1e01aac3c0`.
+
+USEFUL [f2.other-proposals]: its per-line verification of the retired block's anchors (:151, :153-186, :188, :190) and of which commits entered the three spec-map registrations saved re-deriving the git history behind the 0073 impacts row.
+
+CORRECTS [spec.1.fix-design-G1.1]: that entry gives `message SessionId` at `schemas/lenny-adapter.proto:595`. It is at :596, which is what the proposal itself cites in problem-statement §1.1. The proposal is right and that log entry is off by one; do not "correct" the proposal toward :595.
+
+
+### [non-spec-recheck.3.review-client-surface.1]
+
+DECISION: Returned an EMPTY findings list under the client-facing-surface lens — BECAUSE every externally-consumed representation this proposal could touch is either untouched or already agrees with the staged rule, and I re-derived that from the tree rather than from earlier shards — ALTERNATIVES: filing the tier-3 `sessionScopedMessages` conjunction (barred: it is summary OD2's own subject and four earlier agents already reached it); filing the spec-map 28.5.3 re-registration as a credit without an annotation (rejected: `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` checks one direction only, and the GatewayControl request messages the gate reads are the §28.5.3 MCP-forwarding leg, so a 28.5.3 annotation on the replacement gate is legitimate).
+
+FACT: The proposal's whole client-surface premise re-verifies mechanically. A brace-depth parse of `schemas/lenny-adapter.proto` returns 31 RPC request types, 25 with a top-level `SessionId session_id` and 6 without (`AdapterEventsRequest`, `CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`); ZERO name/type convention violations across every message including `oneof` arms; `CheckpointRequest` and `CheckpointResponse` are the only `oneof` carriers. The 25 are exactly the table's 24 non-envelope session rows plus `CoordinatorFenceRequest`. — EVIDENCE: spec/04_system-components.md:155-186 (32 rows: 26 session, 6 pod); schemas/lenny-adapter.proto:1173-1187, :1193-1218, :1249-1257, :1455-1461
+
+FACT: No client-facing parallel representation restates the §4.1 classification. `docs/reference/adapter-contract.md` carries no scope column (its `CoordinatorFence` row at `:69` states no class; its only scope sentence is the §4.7.1 `ReportSessionScrub` restatement at `:81`, which SPEC-1 explicitly keeps). `schemas/lenny-adapter.proto` and `schemas/lenny-adapter-jsonl.schema.json` cite §4.1 nowhere. No file under `sdks/` names `CoordinatorFence`. No CRD, OpenAPI, MCP tool schema, or error-code surface is reached. The summary's "No proto, generated code, handler, SDK, or reader-facing documentation file is touched" holds. — EVIDENCE: docs/reference/adapter-contract.md:69, :81; schemas/lenny-adapter-jsonl.schema.json:5, :61
+
+FACT: The two spec surfaces that could have contradicted the reclassification already agree with it and need no edit. `spec/28_communication-channels.md:314-317` (CH-FENCE **Messages**) states the pod records the generation against the session the fence names and that a fence for one session does not change another's; `spec/10_gateway-internals.md:40` states the pod holds `last_fenced_generation` per bound session; the proto's own doc comment says the same. So §28.5.1, §28.8, and §10.1 carry no pod-scoped statement about the fence to retire. — EVIDENCE: spec/28_communication-channels.md:314-317; spec/10_gateway-internals.md:38, :40; schemas/lenny-adapter.proto:1449-1454
+
+FACT: The only sites in the tree outside `spec/04` that key on the retiring §4.1 table are the three files the proposal already stages. A grep for "message-scope"/"classification table" over every `.go`, `.json`, `.yaml`, and `.proto` returns `tests/tier0_static/adapter_proto_message_scope_test.go`, `tests/tier0_static/adapter_proto_parse_test.go:13`, and `tests/tier3_contract/adapter_session_address/session_address_wire_test.go:40` and nothing else; the sibling `send_message_stamp_test.go` in the same tier-3 directory keys on §28.5.3 alone and needs no edit. `tests/claim-map.json` credits neither retiring gate function; `tests/spec-map.json:156`, `:169`, `:5670` are the only three registrations. — EVIDENCE: tests/tier3_contract/adapter_session_address/send_message_stamp_test.go:72-74; tests/spec-map.json:156, :169, :5670
+
+FACT: `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` asserts only annotation-implies-credit, never credit-implies-annotation, so a spec-map row is never refused for crediting a section the case does not annotate. Anyone reasoning about the TEST-1 re-registration should not assume the reverse check exists. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:968-988
+
+FACT: `tests/tier11_docs/successor_pointer_test.go` cannot fire on SPEC-1. Its domain `reducedSections` is a three-entry hard-coded literal (`spec/04` §4.7, `spec/15` §15.4, `spec/29` §29.10, all owned by §28.5) and §4.1 is not in it, so retiring the table carries no successor-pointer obligation. I checked this because a section giving up content is exactly what N8 gates. — EVIDENCE: tests/tier11_docs/successor_pointer_test.go:52-56
+
+FACT: The summary's shipped-tree defect entry re-verifies line for line after the f2 rewrite: `pkg/adapter/coordination.go:127-134` is the `gen <= st.coord.lastFenced` refusal returning `Accepted: false` plus the `coordinator_handoff_stale` `FailedPrecondition`; `:109-111` is the empty-identifier `InvalidArgument`; `pkg/gateway/coordination/coordfence/coordfence.go:180-183` is the `default` transient arm retrying at the same value; `:171-179` is the stale arm that re-reads and relinquishes when the generation has not advanced; `DefaultMaxAttempts = 3` at `:52`. — EVIDENCE: pkg/adapter/coordination.go:107-134; pkg/gateway/coordination/coordfence/coordfence.go:52, :155-188
+
+USEFUL [non-spec-recheck.2.review-applicability.1]: its FACT that the replacement gate passes on the shipped proto is exact; I re-derived the same measurement independently with a brace-depth parse and it matched item for item, including the zero convention violations across `oneof` arms.
+
+
+### [non-spec-recheck.3.review-docs-alignment.1]
+
+DECISION: Returned an EMPTY findings list, the fourth consecutive empty return for this lens — BECAUSE the whole staging (spec-changes, non-spec-changes, checklist, summary) is byte-identical to the `non-spec-recheck-r3` snapshot, the change alters no behavior any `docs/` page describes, it adds no metric, alert, error code, flag, endpoint, or operator-facing failure cause, and both residuals it accepts land in text (the gate's blind spot in D1's third paragraph) or are definitional under the staged rule — ALTERNATIVES: filing the missing "The request is pod-scoped." mirror on `docs/reference/adapter-contract.md:82` now that SPEC-1 makes `spec/04:726` the only pod-scope declaration left in `spec/` (rejected: the doc row is incomplete rather than wrong, the asymmetry predates this proposal, and nothing gates it); filing the deferred equal-generation re-fence refusal as an undocumented accepted failure mode (rejected under the lens's own guardrail — `spec/10_gateway-internals.md:39` already orders the retry the shipped code refuses, so the code is the defect and no doc edit is due).
+
+FACT: `diff -ru scratchpad/cp-snap/0075_.../non-spec-recheck-r3 proposals/0075_...` returns NOTHING, review log included. There is no delta this round. The orchestrator note's "the staging changed" did not hold for this firing; do not spend time hunting a delta before running the diff. — EVIDENCE: scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/non-spec-recheck-r3/
+
+FACT: The proposal's whole docs blast radius is two citations, both exact. `docs/reference/adapter-contract.md:81` is the `ReportSessionScrub` row carrying "The request is session-scoped: it is addressed by the identifier of the released session and names no slot."; `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go` declares `TestSessionScrubReportAddressingAgreesBetweenSpecAndContractDoc` at `:43` ending at `:76`, and it pins that exact sentence plus the shared opener on BOTH the spec §4.7 row and the doc row. SPEC-1 is right to leave `spec/04:725` alone: editing it turns that tier-11 gate red. — EVIDENCE: docs/reference/adapter-contract.md:81; tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:32,43-76; spec/04_system-components.md:725
+
+FACT: The two summary blocks the open-decisions phase wrote (the refusal note and the rewritten 0073 impacts row) verify line for line. `pkg/gateway/coordination/coordfence/coordfence.go:52` is `DefaultMaxAttempts = 3`, `:171-179` is the stale arm that re-reads the generation and relinquishes on no advance, `:180-183` is the transient/default arm that retries at the unchanged value; `pkg/adapter/coordination.go:109-111` is the empty-session-id `InvalidArgument` refusal and `:127-134` the `coordinator_handoff_stale` `FailedPrecondition`; `spec/10_gateway-internals.md:39` is the "If `CoordinatorFence` fails or times out" bullet ordering the same-value retry; `tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-43` is the membership comment with its table-keyed clauses at `:39-43` and 18 map members at `:44-63`; `tests/tier0_static/adapter_proto_message_scope_test.go:25-27` is the handler-conformance limit. — EVIDENCE: pkg/gateway/coordination/coordfence/coordfence.go:52,171-183; pkg/adapter/coordination.go:107-134
+
+FACT: No `docs/` page mirrors the §4.1 message-scope table, its class words, or any per-message gRPC scope other than `ReportSessionScrub`. `grep -rn "CoordinatorFence" docs/` returns exactly one row, `docs/reference/adapter-contract.md:69`, which states the RPC's purpose and no scope. `docs/getting-started/concepts.md:101` describes `coordination_generation` without claiming pod or session scope, so 0076's move of the value onto the slot entry did not falsify it either. — EVIDENCE: docs/reference/adapter-contract.md:69; docs/getting-started/concepts.md:101
+
+FACT: Retiring the §4.1 table orphans no other definition. The `lenny_adapter_unaddressed_frame_rejected_total` metric's "session-scoped frame" (docs/reference/metrics.md:180, spec/16_observability.md:189) is defined by §28.5.3's own enumeration of the six frame types at spec/28_communication-channels.md:834-835, which cites §4.1 nowhere. The JSONL-leg `sessionId` prose across `docs/runtime-author-guide/` is the same intra-pod surface and is untouched. — EVIDENCE: spec/28_communication-channels.md:833-845; docs/reference/metrics.md:180
+
+USEFUL [spec-recheck.2.review-docs-alignment.1]: its FACT that `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go` carries `// spec: 4.1 (request message scope)` on five cases while never opening `spec/04_system-components.md` saved a false lead — that file looks exactly like a §4.1 reader that SPEC-1 would break, and it is not one. I re-confirmed the only test in the tree reading the §4.1 heading is the tier-0 gate TEST-1 replaces.
+
+USEFUL [spec-recheck.2.review-docs-alignment.1]: its WATCHOUT against re-filing the "derived rather than declared" tension between the staged first sentence and the surviving per-message declarations at `spec/04:725`/`:726` is correct and I independently reached the same edge; SPEC-1 defends it explicitly at spec-changes.md:128-139. Do not file it.
+
+OPEN: whether the replacement gate's `// spec:` annotation can honestly name 28.5.3. The retiring gate claims `// spec: 4.1 ..., 28.5.3 (addressing)` at `tests/tier0_static/adapter_proto_message_scope_test.go:129`, and TEST-1 re-registers the replacement under the same two sections. §28.5.3 is the intra-pod boundary (CH-MSGSOCK / CH-RUNTIMEOPS frames), while the replacement gate reads gRPC request messages on LNK-POD-GRPC alone and no longer reads any spec text. The credit may be inherited looseness from 0073 rather than a defect this proposal creates, so I did not file it; a test-coverage or edit-sites reviewer with the register in hand should settle whether `tests/spec-map.json:5670` should follow the gate or be dropped. — EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:129; tests/spec-map.json:5670; spec/28_communication-channels.md:499
+
+
+### [non-spec-recheck.3.review-edit-sites.1]
+
+DECISION: Returned an EMPTY findings list after a full, uncached edit-site sweep — BECAUSE the cache probe MISSED (key `edit-sites-r3-7b1e01aac3c0.json`, the staging changed since `4e0efd1c4849`), so this is the first real edit-site sweep of this staging; nothing outside the proposal's own edit lists becomes wrong when SPEC-1, TEST-1, and TEST-2 apply — ALTERNATIVES: filing the one-line offset in SPEC-1's `schemas/lenny-adapter.proto:458` citation (the field is at `:457`, `:458` is the `slot_id` retirement comment) — rejected, it is a close variant of the already-refuted "proto anchors are stale by seven or eight lines" finding and clears no materiality bar; filing that TEST-2's deletion of the `:39-43` clause also removes the "covered by the session-address arm below alone" claim for `ExportPathsRequest` and `ConfigureWorkspaceRequest` — rejected, that claim is false of those two today, so deleting it removes a falsehood rather than creating one, and neither message gains or loses coverage.
+
+FACT: The snapshot at `scratchpad/cp-snap/.../non-spec-recheck-r3` is byte-identical to the live directory, so `diff -ru` against it shows nothing. The delta is recoverable from git instead: `git diff 1037a9172 -- proposals/0075_.../*.md`. Two hunks — `non-spec-changes.md:5-9` (TEST-2's ground rewritten off commit `01d19af01` onto the message's own declaration plus `040323634`) and `summary.md` (the coordfence second-attempt account, and the widened 0073 impacts row). — EVIDENCE: `git log --oneline -3 -- proposals/0075_fix_derive-message-scope-from-the-address-type/`
+
+FACT: Nothing in `spec/`, `docs/`, `schemas/`, or `charts/` outside the retired block declares a request message's scope class, so the retirement breaks no companion surface. A full grep for `session-scoped|pod-scoped` over those four trees returns, for per-message classification, only `spec/04_system-components.md:725` (`ReportSessionScrub`, session) and `:726` (`ReportPodScrub`, pod), both in §4.7.1 and both outside SPEC-1's block, plus the retired block itself. Every other hit is about a token, a lock, a Redis key, a JSONL frame, or the coordinator hold. — EVIDENCE: spec/04_system-components.md:725, :726
+
+FACT: `#### Request Message Scope` has zero inbound references anywhere in the tree — no link, no anchor, no `§4.1` cross-reference pointing at the table. `grep -rn "request-message-scope\|Request Message Scope"` over spec/ docs/ schemas/ charts/ tests/ pkg/ cmd/ returns exactly the heading itself. It is also a `####` heading with no `spec/README.md` index row (the index carries §4.1 only, at `spec/README.md:15`), so `heading_walker_test.go` never inspects it. — EVIDENCE: spec/README.md:15; spec/04_system-components.md:149
+
+FACT: The blast radius on the tier-0 parse is exactly two symbols and two callers, and nothing else in the tree touches them. `protoServiceRequests` has one caller (the retiring gate, `:87`); `protoFields` has one other caller (`claim_register_proto_agreement_test.go:64`); `braceDelta`, `protoMessageOpen`, `protoField`, `protoRPC`, `protoServiceOpen`, `messageScopeSpecPath`, `parseMessageScopeTable`, and `declaredScope` have no consumer outside those two files. The two tier-0 files 0076 landed (`adapter_proto_generation_scope_test.go`, `adapter_barrier_doc_comment_scope_test.go`) read comment text through their own parsers and touch neither the shared parse nor the §4.1 table. — EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:33-90; tests/tier0_static/claim_register_proto_agreement_test.go:64
+
+FACT: The retiring gate's function names are registered in exactly one place. `grep -rn TestAdapterProtoRequestMessagesAreClassifiedByScope` over the whole tree returns `tests/spec-map.json:156`, `:169`, `:5670` and the declarations themselves. The enclosing section keys are 4.1, 4.1, and 28.5.3, exactly as the summary's 0073 row states. `tests/claim-map.json` carries no row keyed on the table or the gate; `tests/registers/*.yaml` carry no `spec/04_system-components.md` line or anchor entry except the eight positional `identifier-senses` rows, whose sites are all CH-RUNTIMEOPS spellings absent from the deleted block. — EVIDENCE: tests/spec-map.json:156,:169,:5670; tests/registers/identifier-senses.yaml:14-37
+
+FACT: `gate_integrity_test.go`'s `tierZeroGates` register does NOT name the message-scope gate, so retiring its two functions costs no entry there. It names fifteen other tier-0 gates by function and file. Do not add it to the files-touched list. — EVIDENCE: tests/tier0_static/gate_integrity_test.go:63-88
+
+FACT: `successor_pointer_test.go` cannot fire on SPEC-1. Its `reducedSections` domain is a hard-coded three-row literal (`spec/04` §4.7, `spec/15` §15.4, `spec/29` §29.10, all owned by §28.5); §4.1 is absent, and SPEC-1 moves no content to another heading in any case. Same for `relocated_material_pointer_test.go`, whose `relocatedStatements` anchors are all CH-RUNTIMEOPS/CH-MCP sentences. — EVIDENCE: tests/tier11_docs/successor_pointer_test.go:52-56; tests/tier11_docs/relocated_material_pointer_test.go:50-56
+
+FACT: Every code anchor the current staging carries re-verifies exactly. `pkg/adapter/server.go:302` is `hold holdState`; `pkg/adapter/slot.go:59` is `coord coordinationState`; `pkg/adapter/coordination.go:17-38` is the per-session struct and its doc, `:107` the fence handler, `:116` the `boundSlotState` resolve; `pkg/adapter/checkpoint.go:74-84` is the `// spec: §4.1` comment plus the empty-address `InvalidArgument`; `coordfence.go:171-179` is the stale arm's re-read and relinquish and `:180-183` the transient arm, with `DefaultMaxAttempts = 3` at `:52`, so the summary's "gives up on the second of its three attempts" holds; `schemas/lenny-adapter.proto:499-503` is `ReportPodScrubRequest` exactly, `:1217` is `CheckpointStart`'s `SessionId session_id = 7`, `:1455-1461` is `CoordinatorFenceRequest` with no `reserved`. — EVIDENCE: pkg/adapter/coordination.go:107,116; pkg/gateway/coordination/coordfence/coordfence.go:52,171-183
+
+WATCHOUT: SPEC-1 cites `schemas/lenny-adapter.proto:458` for `ReportSessionScrubRequest`'s `SessionId session_id = 2`. The field is at `:457`; `:458` opens the `// Field 3 held slot_id` retirement comment. One line, same message, and the message-level claim is true, so it is below the bar — but do not re-derive it as a fresh finding, and re-anchor it if the block is edited for another reason. — EVIDENCE: schemas/lenny-adapter.proto:455-458; proposals/0075_.../0075_....spec-changes.md:131-132
+
+USEFUL [non-spec-recheck.1.review-test-coverage.1]: its note that `slotAddressCaseFiles` names the gate file by PATH at `:336` (and `adapter_proto_parse_test.go` at `:337`) is exactly right and is the reason TEST-1 owes that register no edit. I re-derived it and add the mechanism: `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` falls back to `citedSectionsInFile` for a file with no per-case credits, and `adapter_proto_parse_test.go` carries no `// spec:` annotation at all today, so it demands nothing. An implementor who adds a `// spec:` line to the extended parse acquires a spec-map credit obligation that does not exist now. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:336-337, :970-988
+
+OPEN: the proposal still does not state whether the replacement gate keeps the path `tests/tier0_static/adapter_proto_message_scope_test.go`. Every enumeration assumes it does, and that assumption is load-bearing for exactly one register (`slotAddressCaseFiles:336`). Restated from [spec.1.fix-design-G2.1] because it survived this round unchanged and is the single thing that would widen the files-touched list.
+
+
+### [non-spec-recheck.3.review-feasibility.1]
+
+DECISION: returned no findings — BECAUSE every actor this proposal assigns an action to can perform it against the tree as it stands today, and the one mechanism that provably cannot work (TEST-2's `sessionScopedMessages` membership) is already carried as OD2, which the rubric puts outside review — ALTERNATIVES: filing the TEST-2/OD2 contradiction (declined: [spec.3.review-feasibility.1] at review-log.md:920, [non-spec-recheck.1.review-*] at :2030 and :2133 each derived it independently and each declined on the same ground; a fourth filing would re-litigate a settled disposition)
+
+FACT: the replacement gate's four clauses are all green against the proto as it stands, so TEST-1 lands without a proto change. All 27 `SessionId`-typed field declarations in `schemas/lenny-adapter.proto` are spelled `SessionId session_id`, and no field named `session_id` carries another type. Only `CheckpointRequest` (:1174) and `CheckpointResponse` (:1250) declare a `oneof`; `CheckpointResponse` is the request type of no RPC; `CheckpointRequest` declares only `int64 coordination_generation = 4` outside its oneof, and exactly one of its three frames (`CheckpointStart`, :1217) declares the address — EVIDENCE: schemas/lenny-adapter.proto:1174, :1186, :1217, :1250
+
+FACT: the proto measurement in §1.1 reproduces exactly. A parse of the two service blocks returns 31 request messages, 25 with a top-level `session_id`, and the 6 without are `AdapterEventsRequest`, `CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`. With the fence moved to session and `CheckpointRequest` taken by the envelope clause, the derivation reproduces the retired table's 32 rows exactly — EVIDENCE: schemas/lenny-adapter.proto; spec/04_system-components.md:155-186
+
+FACT: the shared parse's two callers are `claim_register_proto_agreement_test.go:64` (`protoFields`, with lookup sites at `:72` and `:82`) and `adapter_proto_message_scope_test.go:87` (`protoServiceRequests`). Nothing else in `tests/` calls either, so TEST-1's "other caller" enumeration is complete — EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:36,68; tests/tier0_static/claim_register_proto_agreement_test.go:64,72,82
+
+FACT: the two tier-0 files 0076 landed beside the gate, `adapter_proto_generation_scope_test.go` and `adapter_barrier_doc_comment_scope_test.go`, read doc-comment text and call neither `protoFields` nor `protoServiceRequests`, so neither is an edit site of this proposal. §9's omission of them is correct — EVIDENCE: tests/tier0_static/adapter_proto_generation_scope_test.go:11-25, :41
+
+FACT: after SPEC-1 applies, `spec/04_system-components.md:726` ("The request is pod-scoped.") is the only sentence anywhere in `spec/` that classifies a request message pod-scoped. `spec/10:60` scopes the hold and its gauge, `spec/04:872` scopes a rotation ceiling, and `spec/12:202` scopes Redis keys; none classifies a request message. SPEC-1's claim to that effect at spec-changes.md:139 holds — EVIDENCE: spec/04_system-components.md:726; spec/10_gateway-internals.md:60; spec/04_system-components.md:872; spec/12_storage-architecture.md:202
+
+WATCHOUT: `tests/tier0_static/spec_map_slot_address_registration_test.go:336` names `adapter_proto_message_scope_test.go` by PATH in `slotAddressCaseFiles`, and `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` (`:970`) then demands a spec-map credit for every case in that file under every section the case's own `// spec:` annotation names. The replacement gate must therefore keep the file's path and register each new case under each section it annotates. TEST-1 states the constraint; an implementor who renames the file breaks a gate the proposal never mentions — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:336, :970-988
+
+FACT: the §4 delta this round introduced verifies. `CoordinatorFenceRequest` at schemas/lenny-adapter.proto:1455-1461 declares `SessionId session_id = 1` and `int64 coordination_generation = 2` and carries no `reserved` statement, and `git show 040323634 -- schemas/lenny-adapter.proto` adds `reserved N` / `reserved "slot_id"` pairs to eighteen messages without touching the fence — EVIDENCE: schemas/lenny-adapter.proto:1455-1461; git show 040323634
+
+USEFUL [non-spec-recheck.1.fix-G1.1]: its FACT block on `040323634` is exactly right and let me confirm the delta in two commands instead of reconstructing the `SlotId slot_id` history.
+
+
+### [non-spec-recheck.3.review-fresh.1]
+
+DECISION: Filed ONE finding — summary.md:127-129's "no other site in `spec/` declares a message's scope
+class" is false and contradicts the proposal's own SPEC-1 — BECAUSE `spec/04_system-components.md:726`
+("The request is pod-scoped.") and `:725` are exactly such sites, and spec-changes.md:128-130,:139 name
+them and state that retiring the table "leaves `:726` as the only sentence in `spec/` that classifies one
+request message pod-scoped". ALTERNATIVES: leaving it because it sits inside an open decision (rejected:
+the lens rules bar filing on how a decision is FRAMED, not on a false factual premise inside it, and the
+same fact was the ground on which an earlier finding about the gate's pod-scope clause was refuted).
+
+FACT: The whole staging delta since the last converged non-spec review is ONE paragraph,
+`non-spec-changes.md:3-9` (TEST-2's ground for the fence's empty retired-field column). `summary.md`,
+`spec-changes.md`, `implementation-checklist.md`, `problem-statement.md`, `status.md` are byte-identical to
+`scratchpad/cp-snap/.../non-spec-recheck-r1-start`. The `non-spec-recheck-r3` snapshot equals the live
+directory, so `diff` against it is empty; diff against `non-spec-recheck-r1-start` instead.
+
+FACT: That new paragraph verifies completely. `CoordinatorFenceRequest` occupies
+`schemas/lenny-adapter.proto:1455-1461` with `SessionId session_id = 1` (:1456) and
+`int64 coordination_generation = 2` (:1460) and no `reserved`; commit `040323634` added exactly 18
+`reserved "slot_id"` lines (the file carries exactly 18, and `git log -S` returns only that commit), and
+the fence ALREADY existed at `040323634^` with the same two fields and no `slot_id`, so "left the fence
+untouched" is literally true rather than an artifact of the message not existing yet.
+
+FACT: I re-derived the proto measurement with a real oneof-aware parser: 31 RPC request types, 25 with a
+top-level `SessionId session_id`, 6 without (`AdapterEventsRequest`, `CheckpointRequest`,
+`DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`,
+`ReportPodScrubRequest`). Zero `session_id` fields of another type and zero `SessionId` fields under
+another name across the whole file, so D2's replacement gate PASSES on the shipped proto on day one.
+— EVIDENCE: schemas/lenny-adapter.proto (26 `SessionId session_id` declarations); oneofs only at :1174,
+:1250.
+
+FACT: S1's "tier 0 goes red until S2" is exactly right, and I checked it the hard way: the retiring gate's
+row regex is applied to the WHOLE of `spec/04_system-components.md`, not to §4.1 alone, and the only 32
+lines in that file matching it are the table rows :155-186. Delete them and `parseMessageScopeTable`
+returns zero rows, so every one of the 32 in-scope messages reports "carries no row for it".
+— EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:43,:85-127
+
+FACT: The edit list is complete on the tree. The ONLY site outside spec/04 §4.1 that calls
+`CoordinatorFenceRequest` pod-scoped is the tier-3 comment TEST-2 stages
+(`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:40`); nothing under `docs/`,
+`sdks/`, `charts/`, or `schemas/` restates the §4.1 classification table; no tier-11 gate reads §4.1
+(`basic_level_echo_stamp_doc_reconciliation_test.go` never opens spec/04 despite its `// spec: 4.1`
+annotation); `relocated_material_pointer_test.go` and `successor_pointer_test.go` name §4.7, not §4.1;
+`protoFields` has exactly one other caller and `protoServiceRequests` exactly one.
+
+WATCHOUT: Do NOT re-file the TEST-2-vs-OD2 collision (adding `CoordinatorFenceRequest` to
+`sessionScopedMessages` turns `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` red because
+`reservesName(md,"slot_id")` fails for any column value). Five agents have now reached it; it is summary
+OD2's own subject and is settled outside review. — EVIDENCE:
+tests/tier3_contract/adapter_session_address/session_address_wire_test.go:130-141; summary.md:139-150
+
+WATCHOUT: A second, softer tension I deliberately did NOT file, so the next agent does not spend the round
+on it: spec-changes.md:124-126 says 0073's recorded gate limit "goes with the gate TEST-1 replaces" while
+summary.md:188's 0073 row lists it under "What stands" as surviving. They are reconcilable (the header
+COMMENT is deleted; the LIMITATION stays true of the replacement gate), so it is wording, not a defect.
+
+USEFUL [spec.1.fix-design-G1.1]: its FACT that nothing outside spec/04 declares a message's scope class was
+the seed for my finding — it is right about the §4.1 TABLE being the only such table, but §4.7.1:725/:726
+are per-message scope SENTENCES, and that distinction is the whole finding. Read the two together.
+
+
+### [non-spec-recheck.3.review-kubernetes.1]
+
+DECISION: Returned an EMPTY findings list. — BECAUSE this proposal's whole surface is a spec §4.1
+classification rule over `schemas/lenny-adapter.proto`, a tier-0 text gate, and a tier-3 descriptor test.
+It declares no CRD, writes no status subresource, adds no finalizer, touches no admission webhook, adds no
+watch or reconcile, and puts no controller on a synchronous request path, so the Kubernetes-idiom lens has
+no subject in it. — ALTERNATIVES: reading the summary's "Defects in the shipped tree" coordinator-lease
+paragraph as a leader-election idiom finding (rejected: it stages no repair, explicitly defers to 0080
+§1.16, and every citation in it verifies).
+
+FACT: The staged text is byte-identical between snapshots `non-spec-recheck-r2` and `non-spec-recheck-r3`
+for all seven non-log files; the only delta since `non-spec-recheck-r1-start` is `non-spec-changes.md:5-9`,
+TEST-2's ground for the fence's empty retired-field column. `diff -q` per file is the fast way to see this;
+diffing whole directories drowns in the review log.
+
+FACT: The summary's coordinator-lease paragraph verifies exactly, and it is the only Kubernetes-adjacent
+prose in the proposal. `spec/10_gateway-internals.md:39` is the "retry the fence RPC with the same
+generation value (up to 3 attempts with 1-second backoff)" bullet; `:38` and `:40` hold
+`last_fenced_generation` per bound session; `:57` states `CoordinatorFence` is "the only way to exit hold
+state"; `:60` states "The hold itself and the `lenny_adapter_coordinator_hold` gauge remain pod-scoped".
+On the code side `pkg/adapter/coordination.go:109-111` is the empty-session-id refusal and `:127-134` is the
+`coordinator_handoff_stale` FailedPrecondition, and `pkg/gateway/coordination/coordfence/coordfence.go:171-179`
+is the relinquish-on-no-advance arm with `:180-183` the transient retry arm. — EVIDENCE:
+spec/10_gateway-internals.md:38-40,57,60; pkg/adapter/coordination.go:109-111,127-134
+
+FACT: Nothing outside the retiring tier-0 gate reads the §4.1 Request Message Scope block. A grep of
+`tests/`, `docs/`, `pkg/`, `cmd/`, `schemas/` for "message scope" / "Request Message Scope" returns only
+`tests/tier0_static/adapter_proto_message_scope_test.go` (which pins the path at `:31`),
+`adapter_proto_parse_test.go` (comments at `:10-15` and `:64-67`), and three files where the string is a
+`// spec:` annotation and not a read of the table. A grep of `tests/` and `scripts/` for
+`04_system-components` finds no other consumer of §4.1. So SPEC-1's blast radius under tier 11 really is
+empty, and §9's file list is complete for that surface. — EVIDENCE:
+tests/tier0_static/adapter_proto_message_scope_test.go:31; tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go:26
+
+FACT: TEST-1's caller citation is right and is easy to misread. `claim_register_proto_agreement_test.go:64`
+is `fields := protoFields(protoBody)` — the other caller of `protoFields`, which is the function that would
+gain a field's type and `oneof` membership. `protoServiceRequests` (declared at
+`tests/tier0_static/adapter_proto_parse_test.go:68`) is a different function in the same file with a
+different caller set; do not conflate the two when checking the signature-change claim. — EVIDENCE:
+tests/tier0_static/claim_register_proto_agreement_test.go:64; tests/tier0_static/adapter_proto_parse_test.go:68
+
+USEFUL [non-spec-recheck.2.review-applicability.1]: its spec-map FACT saved the whole registration sweep.
+I re-verified all three anchors independently and they hold exactly: `tests/spec-map.json:156` and `:169`
+under section "4.1" (opening at `:152`) and `:5670` under 28.5.3.
+
+
+### [non-spec-recheck.3.review-mechanism.1]
+
+DECISION: Returned an EMPTY findings list — BECAUSE every mechanism the staging describes traces end to end against the tree: the derivation rule reproduces the post-OD3 table, the replacement gate's four refusal clauses are stated identically in D1's spec block, D2, the summary's "What changes", and non-spec §8, the gate passes on the shipped proto, and no surface outside the six files §9 names becomes wrong when SPEC-1 applies — ALTERNATIVES: filing the TEST-2-versus-OD2 unappliability (rejected: it is summary OD2's own recorded subject and five agents have now reached it); filing that non-spec §4 frames the open point as a column VALUE while summary OD2 states no value settles it (rejected: §7 and OD2 are open-decision sections whose framing this review is barred from filing on, and the underlying defect is the same one four agents declined).
+
+FACT: `diff -ru scratchpad/cp-snap/0075_.../non-spec-recheck-r3 proposals/0075_...` is EMPTY. The r3 snapshot is byte-identical to the live directory, so there is no delta to read from it. The last text that actually moved is `non-spec-changes.md:3-9` (the `040323634` correction, landed by [non-spec-recheck.1.fix-G1.1]) and the summary sections the f2 phase rewrote. To see a delta, diff against `non-spec-recheck-r1-prefix` or `-r1-start`, as [non-spec-recheck.2.review-applicability.1] recorded.
+
+FACT: SPEC-1's deletion is exactly 32 table rows and nothing else in spec/04 matches the retiring gate's row regexp. `grep -cE '^\| `\w+` \| `\w+` \| [^|]+ \| [^|]+ \|$' spec/04_system-components.md` returns 32, all at :155-186. So the checklist's S1 note — "deleting the table leaves `parseMessageScopeTable` with no rows" — is literally true, not an approximation, and tier 0 goes red for exactly the stated reason — EVIDENCE: spec/04_system-components.md:155-186; tests/tier0_static/adapter_proto_message_scope_test.go:43, :54
+
+FACT: after SPEC-1 applies, the only sentence anywhere in `spec/` that classifies one request message pod-scoped is `spec/04_system-components.md:726` ("The request is pod-scoped."), and the only two that classify one session-scoped are `:725` and the surviving `ShutdownRequest` paragraph at `:190`. A repo-wide grep for "pod-scoped" over spec/ and docs/ otherwise returns only the hold gauge (`spec/10:60`), the rotation ceiling (`spec/04:872`), Redis slot counters (`spec/12:202`), and one runbook line about a gateway-pod issue. SPEC-1's claim about `:726` holds as stated — EVIDENCE: spec/04_system-components.md:725, :726, :190
+
+FACT: the addressing convention the replacement gate checks already holds on the shipped proto in both directions and with room to spare. Zero fields named `session_id` carry a type other than `SessionId`; zero fields typed `SessionId` carry another name; there are 26 `SessionId session_id` declarations (25 top-level on request messages plus `CheckpointStart`). `CheckpointRequest`'s only top-level field is `int64 coordination_generation = 4` and exactly one of its three frames declares the address — EVIDENCE: schemas/lenny-adapter.proto:596, :1173-1187, :1217, :1455-1461
+
+FACT: no reader-facing page restates the classification, so problem-statement §1.4's "no reader-facing page changes" is exact. `docs/reference/adapter-contract.md:69` is the only `CoordinatorFence` mention under docs/ and it carries no scope word; `sdks/` mentions it nowhere. The one doc sentence carrying a per-message scope class is `docs/reference/adapter-contract.md:81` for `ReportSessionScrub`, which SPEC-1 leaves alone and a tier-11 gate holds against `spec/04:725` — EVIDENCE: docs/reference/adapter-contract.md:69, :81; tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76
+
+FACT: the two tier-0 files 0076 landed beside the gate — `adapter_proto_generation_scope_test.go` and `adapter_barrier_doc_comment_scope_test.go` — read doc-comment text on the proto and on `pkg/adapter/coordination.go`. Neither reads the §4.1 table or any scope class word, so neither is an edit site SPEC-1 misses. I checked this because the orchestrator note flags them as new since the proposal was written — EVIDENCE: tests/tier0_static/adapter_proto_generation_scope_test.go:11-25; tests/tier0_static/adapter_barrier_doc_comment_scope_test.go:18-24
+
+FACT: the reclassification imports one behavioral obligation (`spec/05:515`'s refusal of a session-scoped request with an empty identifier) and it is already both met AND pinned. The handler refuses at `pkg/adapter/coordination.go:109-111`, and `TestCoordinatorFenceRejectsMissingSessionID` at `pkg/adapter/coordination_test.go:35` is the case. So §8's omission of tier 1 is correct rather than a coverage gap. Note the case is annotated `// spec: §4.7` and is absent from `addressRuleCases` in `tests/tier0_static/address_rule_citation_test.go:29-47`; that inventory is a hard-coded list checked for CREDITS only, never derived from the session-scoped set, so nothing goes red — EVIDENCE: pkg/adapter/coordination_test.go:34-46; tests/tier0_static/address_rule_citation_test.go:29-47
+
+WATCHOUT: `parseMessageScopeTable` reads the WHOLE of `spec/04_system-components.md`, not the §4.1 section, so a future four-column table in that file whose first two cells are backticked identifiers would be parsed as scope rows. It happens that no such table exists today. Anyone reasoning about the retiring gate's failure mode should check that rather than assume section scoping — EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:43, :139-142
+
+WATCHOUT: after TEST-1 the replacement gate reads `schemas/lenny-adapter.proto` ALONE and no longer reads any spec file. That looked like it would pull the file into `documentConsistencyGates` (a gate whose subject is a repository document may carry no spec-section credit, which would collide with re-registering under 4.1 and 28.5.3). It does not: that register is a two-entry hard-coded literal naming only `test_gaps_test_reference_rename_drift_test.go` and `spec_map_slot_address_registration_test.go` itself. Confirms [non-spec-recheck.2.review-applicability.1] — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:124-136
+
+USEFUL [f2.out-of-scope-defects]: its five citations for the equal-generation re-fence entry are exact to the line — `spec/10_gateway-internals.md:39`, `pkg/adapter/coordination.go:127-134` and `:109-111`, and `coordfence.go:171-179` (stale arm) versus `:180-183` (transient arm). I re-derived all five independently and every one lands on the right statement. That whole summary entry needs no further verification.
+
+USEFUL [non-spec-recheck.2.review-applicability.1]: its FACT that the r3-style snapshot is identical to the live directory, and its identification of `documentConsistencyGates` as a hard-coded literal rather than a predicate, both saved a full sweep. Both re-confirmed.
+
+
+### [non-spec-recheck.3.review-operational.1]
+
+DECISION: Returned an EMPTY findings list — BECAUSE the operational surface this proposal touches is
+genuinely empty (no CRD condition, no metric, no alert, no runbook, no reader-facing page states a
+gateway-adapter request message's scope), and every inventory that could have gone stale after the table
+retirement re-verified clean against the tree — ALTERNATIVES: filing the tier-11 line in §8 Testing as a
+tier named with no concrete case (rejected: no tier-11 gate reads §4.1, so the change reaches nothing
+there and naming a case would be inventing coverage); filing the TEST-2-versus-`reservesName` conflict
+(barred: it is summary OD2's own subject and four earlier agents already declined it).
+
+CORRECTS [non-spec-recheck.1.review-operational.1]: that entry recorded a CACHE HIT, not a review. The
+operational lens had therefore never actually read this staging before this round. Its own WATCHOUT was
+right that the key excludes summary.md; the key changed on its own this round
+(4e0efd1c4849 -> 7b1e01aac3c0) when non-spec-changes.md §4 was rewritten, so the lens ran for real. Treat
+`operational-r1-*` and `operational-r2-*` as one interrupted run's answer replayed twice, not as two
+independent clean passes.
+
+FACT: The §4.1 message-scope table has exactly THREE consumers in the whole tree, and all three are already
+in §9. `grep -rn "Request Message Scope"` over tests/ and scripts/ returns nothing; the table is reached
+only by `parseMessageScopeTable` reading the whole spec/04 body with a generic four-cell row regex. No
+spec/, docs/, schemas/, or charts/ file cites the table, and no runbook or alert keys on message scope. —
+EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:43,54; tests/tier0_static/adapter_proto_parse_test.go:13,66;
+tests/tier3_contract/adapter_session_address/session_address_wire_test.go:40
+
+FACT: After SPEC-1, the only per-message scope sentences left anywhere in spec/ are
+`spec/04_system-components.md:725` (ReportSessionScrub session-scoped) and `:726` (ReportPodScrub
+pod-scoped). A full `grep -n "scoped" spec/04` plus a repo-wide `grep -rn "pod-scoped" spec/ docs/` returns
+otherwise only non-message uses: spec/10:60 (hold + `lenny_adapter_coordinator_hold` gauge), spec/04:872
+(rotation ceiling), spec/12:202 (Redis key prefixes), docs/runbooks/dual-store-unavailable.md:68. SPEC-1's
+claim that `:726` becomes the only pod-scoped per-message sentence is exact. — EVIDENCE:
+spec/04_system-components.md:725-726; spec/10_gateway-internals.md:60
+
+FACT: The reader-facing mirror carries NO scope classification for the gateway-to-adapter RPCs. The
+`CoordinatorFence` row is `docs/reference/adapter-contract.md:69` and states only what the RPC announces.
+The only doc sentence that states a message's scope is `:81` (ReportSessionScrub), pinned in both
+directions by `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76`, which
+reads §4.7 and never §4.1. SPEC-1's citation of that gate is accurate line for line, and the summary's
+"no reader-facing documentation file is touched" holds. — EVIDENCE: docs/reference/adapter-contract.md:69,81;
+tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:33,43-76
+
+FACT: An independent parse of the two service blocks (top-level fields only, oneof interiors excluded)
+returns 31 request messages, 25 declaring `SessionId session_id`, 6 not (`AdapterEventsRequest`,
+`CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`,
+`ReportPodScrubRequest`), ZERO name/type convention violations anywhere in the file, and exactly two
+oneof-carrying messages (`CheckpointRequest`, `CheckpointResponse`). So D1's rule reproduces the table's
+26 session / 6 pod rows once the fence moves, and D2's replacement gate is green on the shipped proto. —
+EVIDENCE: schemas/lenny-adapter.proto:1173,1249,1455-1456,1217,596
+
+WATCHOUT: `tests/tier0_static/spec_map_slot_address_registration_test.go::TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate`
+requires every section a file's `// spec:` annotations name to be credited in `tests/spec-map.json`, and
+`slotAddressCaseFiles` names ALL THREE tier-0 files TEST-1 touches, by path: `:336` (message scope),
+`:337` (the shared parse), `:342` (the claim-register gate). Today `adapter_proto_parse_test.go` carries no
+`// spec:` annotation and therefore owes no credit. An implementor who adds one while extending the parse
+for field types and oneof membership acquires a spec-map obligation the proposal does not mention. —
+EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:336-337,342,970-989
+
+WATCHOUT: `tests/tier0_static/address_rule_citation_test.go` requires the sentence "rejected at the adapter
+boundary with `InvalidArgument`" to occur in EXACTLY ONE spec section (today `spec/05` §5.2 at `:515`);
+`sectionStatingTheAddressRule` t.Fatals when the count is not 1. The block SPEC-1 stages must not restate
+that sentence in §4.1, or tier 0 goes red for a reason nothing in this proposal predicts. D1's staged text
+does not, as staged. — EVIDENCE: tests/tier0_static/address_rule_citation_test.go:22,54-89;
+spec/05_runtime-registry-and-pool-model.md:515
+
+FACT: Nothing else inventories the retiring gate. `gate_integrity_test.go`, `residual_gate_test.go`,
+`tests/claim-map.json`, spec-map's `4.1` (no `notes`) and `28.5.3` (`notes` about the JSONL contract only)
+all carry no reference to it, so the three spec-map rows at `:156`, `:169`, `:5670` are the complete
+registration surface TEST-1 must move. — EVIDENCE: tests/spec-map.json:156,169,5670
+
+USEFUL [f2.out-of-scope-defects]: its citation set for the equal-generation re-fence entry is exact and I
+re-verified every anchor independently (`spec/10_gateway-internals.md:39`;
+`pkg/adapter/coordination.go:109-111` empty-id refusal, `:127-134` stale refusal;
+`pkg/gateway/coordination/coordfence/coordfence.go:52` DefaultMaxAttempts, `:171-179` stale/relinquish,
+`:180-183` transient retry). That saved re-deriving the whole handoff path.
+
+
+### [non-spec-recheck.3.review-performance.1]
+
+DECISION: Empty findings list under the performance / scalability / failure-mode lens, on the FULL staging (spec + non-spec + checklist + summary), with no cache hit — BECAUSE the staging creates no control-plane or data-plane write of any kind: it retires a prose table, states a derivation predicate, replaces one tier-0 static gate that reads `schemas/lenny-adapter.proto`, extends the shared tier-0 proto parse plus its one other caller, re-points `tests/spec-map.json`, and amends one tier-3 suite. There is no per-task, per-request, or per-session write to multiply against any tier's object counts, the etcd status-write dedup ceiling, or the §12 store sizing. — ALTERNATIVES: I re-derived the fence-amplification argument at coordinator handoff a third time and it fails again for the same reason (see FACT below); I also looked for a scope-driven fan-out or dispatch in the gateway that the reclassification could move and found none.
+
+FACT: There was NO delta to review this round. `diff -rq` of the r3 snapshot against the live proposal directory is empty, and `diff -rq` against the r2 snapshot differs only in `review-log.md`. The staging text is byte-identical to what non-spec-recheck.2 read. The "read the changed sections hardest" reading order had nothing to point at. — EVIDENCE: scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/non-spec-recheck-r3 vs proposals/0075_fix_derive-message-scope-from-the-address-type
+
+FACT: The staging hash for the cache is `7b1e01aac3c0`. `performance-r3-7b1e01aac3c0.json` did not exist, but `applicability-r2-7b1e01aac3c0.json` and `kubernetes-r3-7b1e01aac3c0.json` do, so other lenses have already reviewed this exact text. A future performance run on unchanged text should hit `performance-r3-7b1e01aac3c0.json` and stop. — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/
+
+FACT: No fence-RPC amplification exists to find. The per-session fence is already the specification's own statement, independent of the §4.1 class word: handoff sends one `CoordinatorFence(session_id, new_generation)` per session and the pod holds `last_fenced_generation` per bound session. CH-FENCE says the same. — EVIDENCE: spec/10_gateway-internals.md:38, :40; spec/28_communication-channels.md:314-317
+
+FACT: I verified the four runtime citations in the summary's "Defects in the shipped tree" section rather than trusting them, because they are the only failure-mode assertions in the staging and a false one would be an (a) finding under this lens. All four hold. `pkg/adapter/coordination.go:127-134` is the stale rejection returning `FailedPrecondition` with `coordinator_handoff_stale`; `pkg/gateway/coordination/coordfence/coordfence.go:180-183` is the `default:` transient retry arm; `:171-179` is the stale arm that re-reads the authoritative generation, finds no advance, and relinquishes. The narrative (a landed fence whose ack is lost burns attempt 1 as transient, then is refused as stale on attempt 2, so the coordinator relinquishes on the second of three attempts) is exactly what that code does. — EVIDENCE: pkg/adapter/coordination.go:127-134; pkg/gateway/coordination/coordfence/coordfence.go:171-183
+
+FACT: The §1.2 tree anchors are all correct after 0076, so the earlier rounds' DEFERRED entries on them are closed. `pkg/adapter/server.go:302` is `hold holdState`; `pkg/adapter/slot.go:59` is `coord coordinationState`; `pkg/adapter/coordination.go:107` is the `CoordinatorFence` handler declaration and `:116` is `st, err := s.boundSlotState(sessionID)`. — EVIDENCE: pkg/adapter/server.go:302; pkg/adapter/slot.go:59; pkg/adapter/coordination.go:107, :116
+
+FACT: D2's replacement gate is green on the shipped proto, so S2 does not land tier 0 red for a reason the checklist does not already state. The file declares exactly two `oneof` blocks (`CheckpointRequest` and `CheckpointResponse`) and `grep -nE "^\s*(repeated\s+)?SessionId\s+[A-Za-z_]+\s*="` filtered against `SessionId session_id` returns nothing. — EVIDENCE: schemas/lenny-adapter.proto:1174, :1250
+
+USEFUL [spec.1.review-performance.1]: its WATCHOUT on the pod-in-hold-state-with-no-bound-entry case (spec/10:57 says a fence is the only exit from hold, and the handler now requires a bound slot entry) is the single most tempting failure-mode finding on this proposal, and it is 0076's landed behavior that 0076's OD3 weighed and rejected. Third lens run to reach it independently and stop on that entry. Do not spend a fourth round on it. — EVIDENCE: spec/10_gateway-internals.md:57; pkg/adapter/coordination.go:116
+
+USEFUL [spec.4.review-performance.1]: its FACT that retiring the table strands no failure-path statement (every `CoordinatorFence` site in spec/ and docs/ describes handoff, hold, or the RPC catalog and none cites the classification) held on independent re-check and saved a full grep sweep.
+
+WATCHOUT: `spec/10_gateway-internals.md:39` orders a retry "with the same generation value (up to 3 attempts with 1-second backoff)" and the driver loop at `pkg/gateway/coordination/coordfence/coordfence.go:155-184` has NO backoff sleep at all, on top of the equal-generation refusal the summary already records. The missing backoff is a second, separate divergence from :39 that the summary's defect entry does not name. Both are pre-existing, independent of the classification word, and out of this proposal's scope (§6 names the acceptance predicate a non-goal); the remedy is in spec/10 or proposal 0080 §1.16. Do not file either here. — EVIDENCE: spec/10_gateway-internals.md:39; pkg/gateway/coordination/coordfence/coordfence.go:155-184
+
+UNVERIFIED: whether proposal 0080's residue inventory carries the missing 1-second backoff in the coordfence retry loop as a distinct entry from the equal-generation refusal it already carries at §1.16. Whoever runs the residue register should check; it is a spec-vs-code gap nobody in this lane has filed.
+
+
+### [non-spec-recheck.3.review-reliability.1]
+
+DECISION: Returned an EMPTY findings list for the reliability lens, third consecutive empty on this proposal — BECAUSE the staging adds no runtime code path at all (one spec prose block, one static tier-0 gate, one shared text parse, one spec-map re-registration, one tier-3 descriptor suite), so there is no retry, lease, dedup, drain, checkpoint write, or store-failover behavior it introduces to trace through crash and restart; and the one recovery-adjacent consequence of the reclassification — the fence inheriting the spec/05:515 empty-identifier refusal — is already implemented and already pinned. ALTERNATIVES: filing the pod-wide-hold-with-no-bound-session dead end (rejected: it is landed 0076 behavior, SPEC-1 explicitly leaves spec/10_gateway-internals.md:57 and :60 alone, and 0076's OD3 weighed it); filing the same-generation re-fence refusal (rejected: pre-existing, owned by proposals/0080_...:216 §1.16, and the summary already records it as an unstaged shipped-tree defect with correct citations).
+
+FACT: The round delta is exactly two sentences and it is TRUE. non-spec-changes.md §4 (lines 3-9) now grounds the fence's empty retired-field column on the proto and the retirement commit rather than on the field-introduction commit. Verified both halves: `CoordinatorFenceRequest` declares `SessionId session_id = 1` and `int64 coordination_generation = 2` with no `reserved` of either kind, and `git show 040323634 -- schemas/lenny-adapter.proto` adds `reserved N; reserved "slot_id";` to sixteen messages and to CoordinatorFenceRequest in none of them. EVIDENCE: schemas/lenny-adapter.proto:1455-1461; commit 040323634 ("Address a session on the gRPC leg by its session identifier alone")
+
+FACT: The derived session class is a strict SUPERSET of the retired table's session class on today's proto, which is what makes the retirement reliability-neutral: every table session row declares a top-level `SessionId session_id`, so no message moves session→pod and no fail-closed refusal is lost. I re-derived this rather than trusting the earlier shards, spot-checking the two "never carried the duplicate" rows and all five GatewayControl rows. EVIDENCE: schemas/lenny-adapter.proto:1539 (ExportPathsRequest), :1674 (ConfigureWorkspaceRequest), :342, :365, :384, :404, :420 (the five GatewayControl request messages)
+
+FACT: spec/05_runtime-registry-and-pool-model.md:515 is the ONLY rule anywhere in spec/ keyed on a request's scope class ("a session-scoped request whose session identifier is empty is rejected at the adapter boundary with `InvalidArgument` before any root is resolved"). A repo-wide grep for "session-scoped request"/"pod-scoped request" over spec/*.md returns that line and nothing else normative. So the class word carries exactly one behavioral obligation, and the fence handler already discharges it before any resolution. Do not go looking for a second consumer of the class. EVIDENCE: spec/05_runtime-registry-and-pool-model.md:515; pkg/adapter/coordination.go:108-111
+
+FACT: The summary's out-of-scope reliability bullet (the pod refusing the same-generation fence retry §10.1.2 orders) is accurately cited in every part, which I checked line by line because a false citation inside it would have been a clean (a) finding: spec/10_gateway-internals.md:39 carries "with the same generation value (up to 3 attempts with 1-second backoff)"; the adapter's stale rejection is at pkg/adapter/coordination.go:127-135; coordfence.go:180-183 is the transient arm that retries without advancing `gen`; :171-179 is the stale arm that re-reads, finds no advance, and relinquishes. EVIDENCE: proposals/0075_.../0075_....summary.md:161-171
+
+FACT: Every test-surface anchor TEST-1 and §9 depend on resolves today. adapter_proto_message_scope_test.go: recorded-limit header :17-27, `parseMessageScopeTable` :54, `declaredScope` :75-81, `// spec: 4.1 ..., 28.5.3` :129. adapter_proto_parse_test.go: package doc :10-15, `protoServiceRequests` comment :64-67. claim_register_proto_agreement_test.go:64 is the only other caller of the shared parse (`protoFields`). tests/spec-map.json:156 and :169 under §4.1, :5670 under §28.5.3. EVIDENCE: the five files named
+
+FACT: No tier-0 file other than adapter_proto_message_scope_test.go itself references `parseMessageScopeTable`, `declaredScope`, or `messageScopeDisagreements`, and the two sibling tier-0 gates 0076 landed (adapter_proto_generation_scope_test.go, adapter_barrier_doc_comment_scope_test.go) read proto comment text alone and never open spec/04. Retiring the gate therefore breaks no sibling and §9's file list is complete on the tier-0 surface. EVIDENCE: `grep -rn 'parseMessageScopeTable|declaredScope|messageScopeDisagreements' tests/ --include=*.go` returns only that file plus two prose mentions; tests/tier0_static/adapter_proto_generation_scope_test.go:11-25
+
+WATCHOUT: The reliability cache key (md5 of spec-changes + non-spec-changes + implementation-checklist) does NOT include summary.md, and this round's summary carries OD2, which is where the whole `sessionScopedMessages` reservation problem is actually adjudicated. A round whose only delta is in the summary will hit a stale cache and never read it. I read the summary in full despite the cache miss being in the other three files. EVIDENCE: proposals/0075_.../0075_....summary.md:139-150
+
+CORRECTS [non-spec-recheck.1.review-test-coverage.1]: its closing WATCHOUT calls the three-arm problem "OD2's subject and settled outside review" without saying where OD2 lives. OD2 is in summary.md:139-150, NOT in spec-changes.md §7, which lists a single open decision framed narrowly as "what the retired-field-number column holds". The two documents state different things about the same decision: §7 presupposes a value exists, while OD2 says "no value settles it" because `reservesName(md, "slot_id")` fails for the fence whatever number is chosen, and offers two structural candidates instead. I chased the apparent contradiction between TEST-2 ("add `CoordinatorFenceRequest` to `sessionScopedMessages`, settling the retired-field-number column per §4") and OD2's finding, and declined to file: the rubric bars filing on how an open decision is framed, and two lenses have now declined the same ground. A future round that wants to file this must file it as the staging's own inconsistency (TEST-2 and non-spec §4 both direct an action OD2 has established cannot be completed as written), not as a testing gap. EVIDENCE: proposals/0075_.../0075_....spec-changes.md:154-155; summary.md:139-150; non-spec-changes.md:8-9, :39-43; tests/tier3_contract/adapter_session_address/session_address_wire_test.go:130-141
+
+USEFUL [spec.4.review-reliability.1]: its FACT that spec/28_communication-channels.md:314-318 already reads the fence per-session saved me from re-filing §28 as a missed edit site, and its UNVERIFIED on the same-generation retry is now owned in writing by summary.md's shipped-tree-defects section and by 0080 §1.16, so that thread is closed rather than open.
+
+USEFUL [non-spec-recheck.1.review-reliability.1]: its WATCHOUT about the cache key omitting summary.md is correct and is why I read the summary this round instead of trusting a three-file hash.
+
+
+### [non-spec-recheck.3.review-security.1]
+
+DECISION: Returned an empty findings list under the security lens — BECAUSE every established control the lens owns is untouched by this proposal, and the two residuals the derivation introduces are already the human's open decision (summary OD1) — ALTERNATIVES: filing the TEST-2/OD2 contradiction (see USEFUL below, already twice recorded as deliberately not filed); filing the "nested `SessionId` field derives pod-scoped" fail-open variant of OD1's residual (rejected: OD1 already puts the residual class to the human, and "how an open decision is framed" is outside this grant).
+
+FACT: the derivation reproduces the retired §4.1 table exactly. Re-parsed the two service blocks today: 31 distinct RPC request types, 25 declaring a top-level `SessionId session_id`, 6 not (`CheckpointRequest`, `DemoteSDKRequest`, `NegotiateVersionRequest`, `GetObservedIntegrationLevelRequest`, `AdapterEventsRequest`, `ReportPodScrubRequest`). The 25 map onto the table's 24 session rows plus `CoordinatorFenceRequest`; the 5 non-envelope misses map onto the pod rows. Every `SessionId` field in the whole file is spelled `SessionId session_id` and every `session_id` is of that type, and there are no nested messages, so D2's replacement gate passes on the tree as it stands and would have a real falsifier. — EVIDENCE: schemas/lenny-adapter.proto:342,365,384,404,420,458,596,683,707,847,909,965,990,1022,1036,1064,1088,1118,1217,1305,1339,1456,1487,1539,1577,1610,1674; spec/04_system-components.md:153-186
+
+FACT: the security consequence of reclassifying the fence is already met in the tree. The one behavioral obligation a session-scoped request carries — the empty-identifier refusal of `spec/05_runtime-registry-and-pool-model.md:515` — is enforced by the fence handler before any entry is resolved, and a unit case already pins it. — EVIDENCE: pkg/adapter/coordination.go:109-111; pkg/adapter/coordination_test.go:181-182
+
+FACT: no surface outside `spec/04_system-components.md` §4.1 classifies a gateway-adapter request message by scope class, so SPEC-1's retirement strands nothing. The only per-message survivors are the §4.7.1 rows at `spec/04_system-components.md:725` and `:726`, which SPEC-1 keeps and which agree with the derivation. `docs/` never restates the gRPC classification (its "session-scoped frame" language is the JSONL leg), and no register under `tests/registers/` and no `tests/claim-map.json` row keys on the table. — EVIDENCE: spec/04_system-components.md:726; docs/reference/adapter-contract.md:81
+
+FACT: the tier-0 blast radius of TEST-1 is wider than §9 lists but needs no extra edit. `tests/tier0_static/spec_map_slot_address_registration_test.go:336-337` carries both `adapter_proto_message_scope_test.go` and `adapter_proto_parse_test.go` in `slotAddressCaseFiles`, and `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` (:970-989) requires every case in those files to be credited under each section its own `// spec:` annotation names. The inventory is keyed by FILE, and both files survive the rewrite, so no edit to that gate is due — but an implementor who renames either file, or gives the replacement gate an annotation citing a section spec-map does not credit, turns tier 0 red there and not in `validate-maps`. The proposal's TEST-1 already states the per-case credit rule; this is where it is enforced. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:236,336-337,970-989
+
+FACT: `tests/tier0_static/address_rule_citation_test.go` is a second gate over TEST-2's file. It derives, from `spec/`, the single section stating "rejected at the adapter boundary with `InvalidArgument`" and requires `session_address_wire_test.go::TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1` to cite it. It fails if MORE THAN ONE spec section carries that sentence, so a staged §4.1 block that restated the empty-identifier refusal would break it. The block D1 stages does not, so it stays green — do not add that sentence to §4.1 during convergence. — EVIDENCE: tests/tier0_static/address_rule_citation_test.go:22,45-48,54-88; spec/05_runtime-registry-and-pool-model.md:515
+
+USEFUL [f1.cleanup at review-log.md:2030] and [review-log.md:2002]: both record that adding `CoordinatorFenceRequest` to `sessionScopedMessages`, which is what non-spec-changes.md:39-40 stages and the summary's deliverable index repeats, turns tier 3 red for any column value, and both deliberately did NOT file it because summary OD2 (:139-150) records exactly that as the human's open decision. I re-derived the same contradiction independently before reading them and would have filed it; those two entries saved a finding that would have been refuted. I verified the ground once more: `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` asserts `reservesName(md, "slot_id")` for every map member, and the fence reserves neither a number nor the name. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:32,130-141; schemas/lenny-adapter.proto:1455-1461
+
+FACT: the round-7 delta is one paragraph, `non-spec-changes.md:3-9`, and it verifies clean. The fence declares `SessionId session_id = 1` and `int64 coordination_generation = 2` with no `reserved` at `schemas/lenny-adapter.proto:1455-1461`, and `git show 040323634 -- schemas/lenny-adapter.proto` adds `reserved N; reserved "slot_id";` pairs to the messages that carried the duplicate and never names `CoordinatorFenceRequest`. — EVIDENCE: schemas/lenny-adapter.proto:1455-1461; commit 040323634
+
+WATCHOUT: the snapshot the orchestrator names for this round, `scratchpad/cp-snap/.../non-spec-recheck-r3`, is byte-identical to the current proposal, so `diff -ru` against it prints nothing and looks like a broken snapshot. The delta is recoverable against `non-spec-recheck-r1-prefix`, which is the only snapshot whose `non-spec-changes.md` differs. — EVIDENCE: scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/non-spec-recheck-r1-prefix/
+
+
+### [non-spec-recheck.3.review-test-coverage.1]
+
+DECISION: Returned an EMPTY findings list for the test-coverage lens, a second time on this lane — BECAUSE the only staging text that moved since [non-spec-recheck.1.review-test-coverage.1] is descriptive (non-spec-changes.md §4's ground for the fence's empty retired-field column, and two summary passages), none of it adds, removes, or reframes a deliverable, and §8's case list still covers one negative case per gate clause plus the tier-3 constraint — ALTERNATIVES: filing tier 11 as a named-but-uncased tier (rejected: no tier-11 gate reads §4.1's table or the `#### Request Message Scope` heading, so tier 11 is a regression run); filing the tier-3 reserved-number arm (rejected: it is OD2's subject, settled outside review, and [f2.cleanup] already recorded the same instruction).
+
+USEFUL [non-spec-recheck.1.review-test-coverage.1]: its four FACTs did the whole job of this pass. The reclassification's one imported obligation is already pinned (`pkg/adapter/coordination_test.go:35`), the credit gate never refuses a surplus credit, `slotAddressCaseFiles` needs no edit while the gate keeps its path, and `CheckpointResponse`'s address-free `oneof` makes the request-vs-message population mistake self-catching. Re-verified all four; all hold at HEAD cdcd7e9e.
+
+FACT: the shared parse has exactly two callers and both are already in §9. `grep -n "protoFields\|protoServiceRequests" tests/tier0_static/*.go` returns the two definitions plus `adapter_proto_message_scope_test.go:87` and `claim_register_proto_agreement_test.go:64` and nothing else. `coordinator_hold_allowlist_test.go` uses the same `map[string]map[string]bool` type but builds it itself from `servedMethodsByService`, so it is NOT a third caller and must not be added to a files-touched list. — EVIDENCE: tests/tier0_static/coordinator_hold_allowlist_test.go:96-97
+
+FACT: the delta's two new commit/line citations verify exactly. `message CoordinatorFenceRequest` spans schemas/lenny-adapter.proto:1455-1461 with `SessionId session_id = 1`, `int64 coordination_generation = 2`, and no `reserved` of any kind; `git show 040323634 -- schemas/lenny-adapter.proto` adds 18 `reserved "slot_id"` pairs and names `CoordinatorFence` nowhere. The summary's coordfence account also verifies: transient arm at `pkg/gateway/coordination/coordfence/coordfence.go:180-183`, stale arm re-read and relinquish at `:171-179`. — EVIDENCE: schemas/lenny-adapter.proto:1455-1461; pkg/gateway/coordination/coordfence/coordfence.go:171-183
+
+FACT: the three spec-map registrations the summary's 0073 row names are exact. `tests/spec-map.json:156` (`TestAdapterProtoRequestMessagesAreClassifiedByScope`) and `:169` (`TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage`) sit under `spec/04_system-components.md`; `:5670` re-credits the first under section 28.5.3. — EVIDENCE: tests/spec-map.json:154-170, :5670
+
+WATCHOUT: TEST-2's phrase "restating membership as the derivation rule together with the message having carried the retired duplicate" reads as a two-part membership conjunction that would exclude the fence TEST-2 adds. It is not: the existing comment already uses that exact construction for set-plus-column (`sessionScopedMessages is every request message §4.1 addresses to one session ... together with the number the duplicate address held on it`), so "together with" introduces the value column, not a second membership criterion. [f2.cleanup] reached the conjunction reading and correctly routed it to OD2 rather than filing it. Do not file it under either reading. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-38
+
+UNVERIFIED: after TEST-2 restates the map's membership as "session-scoped by the derivation rule", `ExportPathsRequest` and `ConfigureWorkspaceRequest` are session-scoped and still absent from the map, so the restated comment is false about the set unless the restatement keeps a carried-the-retired-duplicate criterion or the map is split. The summary records this at :146-150 and folds it into OD2's two candidates; nobody has checked that whichever answer settles the column also settles those two messages. The firing that adjudicates OD2 should.
+
 ## Retired
 
 ## Resolved in adversarial review

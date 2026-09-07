@@ -2,10 +2,11 @@
 
 TEST-2 has one open point of its own. `sessionScopedMessages` records each member's retired field number
 alongside its name, and `CoordinatorFenceRequest` never carried the duplicate address the retirement
-removed: the commit that introduced it put the field on `InterruptRequest`, `SignalDeadlineRequest`,
-`ResumeRequest`, `CheckpointBarrierRequest`, and `ReportUsageRequest` alone (`01d19af01`). Adding the fence
-to the map therefore requires deciding what that column holds for a message with no retired number, rather
-than copying a neighbouring row.
+removed: the message declares `SessionId session_id = 1` and `int64 coordination_generation = 2` with no
+`reserved` number and no `reserved "slot_id"` (`schemas/lenny-adapter.proto:1455-1461`), and the retirement
+commit that added those `reserved` pairs to every message that did carry the duplicate left the fence
+untouched (`040323634`). Adding the fence to the map therefore requires deciding what that column holds
+for a message with no retired number, rather than copying a neighbouring row.
 
 ## 5. Proposed changes
 
