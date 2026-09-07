@@ -14,6 +14,9 @@
       gate's cases under sections 4.1 and 28.5.3 inside this step rather than as a step of its own, because
       tier 0 is red between retiring the old function names and registering the new ones.
       Tiers 0. Depends on: S1
-- [ ] **S3 · test** — TEST-2. The tier-3 session-address suite covers `CoordinatorFenceRequest` and its
+- [ ] **S3 · test** — TEST-2. The tier-3 session-address suite separates the set of messages the
+      derivation rule addresses to a session from the table of retired duplicate-address field numbers, the
+      session set gains `CoordinatorFenceRequest` and the other session-addressed messages the old set
+      excluded, the reservation case keeps the closed set of messages that carried the duplicate, and the
       false coverage clause is removed.
       Tiers 3. Depends on: S1

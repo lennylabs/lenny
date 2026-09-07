@@ -76,8 +76,11 @@ that classifies a stream envelope through the frame that addresses it, and the c
 rests on. The tier-0 surface loses the gate that reconciled the table against the protocol definition and
 gains a gate over that constraint, which reads the protocol definition alone and checks that the session
 address is spelled one way in both directions and that a stream envelope carries exactly one addressing
-frame. One tier-3 suite gains a message and loses a false comment. No proto or handler changes, and
-0073's §4.2 value rule, which is what rejects an unaddressed session-scoped request, is untouched.
+frame. One tier-3 suite splits its single declaration into the set of messages the rule addresses to a
+session and a new `retiredDuplicateNumbers` table of retired duplicate-address field numbers, brings the
+session-addressed messages the old set excluded into its two address arms, and loses a false comment. No
+proto or handler changes, and 0073's §4.2 value rule, which is what rejects an unaddressed session-scoped
+request, is untouched.
 
 ## 4. Detailed design
 
@@ -151,8 +154,10 @@ Written against whatever 0076 leaves in §4.1.
 
 ## 7. Open decisions for review
 
-1. **What the retired-field-number column holds** for `CoordinatorFenceRequest` in TEST-2, which never
-   declared the field the column records.
+1. **The tier-3 session-address suite's covered population.** TEST-2 splits the table of retired
+   duplicate-address field numbers out of `sessionScopedMessages`, which makes the session set's membership
+   the derivation rule's and widens the population the suite's two address arms cover from the messages
+   that carried the retired duplicate to every message the rule addresses to a session.
 
 ## 9. Files touched on application
 
