@@ -25,19 +25,28 @@ The remaining 29 always agreed. Every other pod-scoped message declares no sessi
 `DemoteSDKRequest`, `NegotiateVersionRequest`, `GetObservedIntegrationLevelRequest`, and
 `AdapterEventsRequest` on `service Adapter`, and `ReportPodScrubRequest` on `service GatewayControl`.
 
-`CheckpointRequest` (`schemas/lenny-adapter.proto:1166`) is structural rather than a naming accident. It is
+`CheckpointRequest` (`schemas/lenny-adapter.proto:1173`) is structural rather than a naming accident. It is
 a stream envelope carrying a `oneof` of `CheckpointStart`, `CheckpointGrant`, and `CheckpointAbort`, with
 `coordination_generation` outside the oneof because the fence applies to every frame on the stream. Its
-scope is the scope of the `CheckpointStart` frame that opens it. 0073 handles it with a table row saying
-exactly that, and any scheme needs an equivalent clause.
+scope is the scope of the `CheckpointStart` frame that opens it, and that frame is where the stream is
+addressed: `CheckpointStart` declares `SessionId session_id = 7` (`:1217`) while the other two frames
+declare no address. 0073 handles the envelope with a table row saying exactly that and gives the frame a
+row of its own, because the frame is a `oneof` member rather than the request type of an RPC and the parse
+above does not reach it. Any scheme needs a clause that classifies both.
 
-After 0076's OD3, one clause covers everything the table covered. A table of 32 rows and a tier-0 gate
-remain in the specification with nothing left to accommodate.
+The field name and the type pick out the same messages. No field named `session_id` carries another type
+and no field of type `SessionId` (`schemas/lenny-adapter.proto:596`) carries another name, so a rule
+stated over both halves classifies exactly the messages the measurement above counts.
+
+After 0076's OD3, the derivation reproduces every classification the table carried, and the clause that
+classifies a stream envelope through the frame that addresses it covers `CheckpointRequest` and
+`CheckpointStart` together. No exception remains for the table to accommodate, and the table and its
+tier-0 gate stay in the specification with nothing left to do.
 
 ### 1.2 The ground the specification gives for the table has been removed
 
-`CoordinatorFenceRequest` (`schemas/lenny-adapter.proto:1447`) declares `SessionId session_id = 1` at
-`:1448`. Three sentences in §4.1 ground the declared classification on that message:
+`CoordinatorFenceRequest` (`schemas/lenny-adapter.proto:1455`) declares `SessionId session_id = 1` at
+`:1456`. Three sentences in §4.1 ground the declared classification on that message:
 
 - `spec/04_system-components.md:151` states that the classification is declared rather than derived
   "because `session_id` appears on messages of both classes".
@@ -45,20 +54,22 @@ remain in the specification with nothing left to accommodate.
 - `:188` states that the message "carries `session_id` and stays pod-scoped, which is why the
   classification is declared rather than derived".
 
-In the shipped tree that ground holds. The handler at `pkg/adapter/coordination.go:84` reads the
-identifier, verifies the pod is running that session, and then mutates `s.coord`
-(`pkg/adapter/server.go:302`), which is a single `coordinationState` for the whole adapter process. The
-write target is the pod, and the identifier selects nothing.
+That ground held until proposal 0076's CODE-1 landed, and 0076 is Implemented. `Server` declares no
+coordination state (`pkg/adapter/server.go:302` declares `hold holdState` where the pod-wide state
+stood). The `coordinationState` now lives on the session's slot registry entry
+(`pkg/adapter/slot.go:59`, documented at `pkg/adapter/coordination.go:17-38`), and the handler
+(`pkg/adapter/coordination.go:107`) reads the identifier and resolves that entry through `boundSlotState`
+(`:116`) before recording the generation. The identifier selects the entry the fence writes, which is what
+§4.1 treats as an address, and the reviewer's answer to 0076's OD3 reclassifies the row accordingly.
 
-Proposal 0076's CODE-1 deletes `Server.coord` and records `lastFenced` and `initialized` on the slot entry
-the identifier resolves. After it lands the identifier addresses that entry, which is what §4.1 treats as
-an address, and the reviewer's answer to 0076's OD3 reclassifies the row accordingly. `session_id` no
-longer appears on messages of both classes, so `:151`'s stated reason is false, `:175` is wrong, and
-`:188` grounds a classification that has changed. The precedent for classifying by what a request
-addresses rather than by how broad its handler's effect is already sits two lines below, at `:190`, where
-`ShutdownRequest` is session-scoped although its handler runs the whole-pod scrub.
+`session_id` therefore no longer appears on messages of both classes. `:151`'s stated reason is false,
+`:175` declares a scope the tree contradicts, and `:188` grounds a classification that has changed. Each
+is a live defect in the specification today rather than one this proposal's application creates. The
+precedent for classifying by what a request addresses rather than by how broad its handler's effect is
+already sits two lines below, at `:190`, where `ShutdownRequest` is session-scoped although its
+handler runs the whole-pod scrub.
 
-The identifier remains load-bearing and this proposal does not remove it. Pods are reused across recycle
+The identifier remains necessary and this proposal does not remove it. Pods are reused across recycle
 boundaries, so a coordinator that still believes it coordinates one session must be prevented from fencing
 a pod that has since been recycled onto another. That guard is what an address does on this contract: it
 resolves the entry the handler writes, and resolving nothing is the refusal.
@@ -83,4 +94,6 @@ therefore an edit site of this proposal rather than a separate defect, and TEST-
 `CoordinatorFence` is a gateway-to-adapter RPC. No file under `sdks/` references it, so this is not a
 runtime-author-facing contract change; runtime authors speak the JSONL leg. Nothing here renames a field,
 so no generated code, no handler, and no reader-facing page changes: the edits are confined to
-`spec/04_system-components.md`, the tier-0 gate file 0073 introduces, and one tier-3 suite.
+`spec/04_system-components.md`, the tier-0 gate file 0073 introduces together with the proto parse that
+gate shares and that parse's other caller, the `tests/spec-map.json` entries crediting the retiring gate's
+cases, and one tier-3 suite.

@@ -1,15 +1,50 @@
 ## 2. Decisions
 
-**D1. The derivation rule is stated once in the specification, with one clause for stream envelopes.** A
-request message is session-scoped exactly when it declares a field of the address type, and a stream
-envelope takes the scope of the frame that opens it. Two sentences replace 32 rows. No third clause is
-needed, because after 0076's OD3 no message declares the address type and is pod-scoped.
+**D1. The derivation rule is stated once in the specification, as a predicate over a request message's
+field set, a clause that classifies a stream envelope through the frame that addresses it, and the
+constraint the derivation rests on.** SPEC-1 stages these paragraphs in place of the classification table
+and the prose that grounds it:
 
-**D2. 0073's §4.1 table and its reconciliation gate are retired, and a smaller gate replaces them.** The
-new gate checks that the messages the specification names as stream envelopes are the ones the proto
-declares as such, and that no pod-scoped message declares a field of the address type. What the retired
-gate bought and whether this one buys the same thing is §7's first open question and the central risk of
-this proposal.
+> Each request message on the gateway-adapter protocol is either session-scoped or pod-scoped, and the
+> classification is derived from the message's field set rather than declared per message. A request
+> message either service declares that carries no `oneof` of frames is session-scoped exactly when it
+> declares a top-level `session_id` field of type `SessionId`, which is the only way a request on this
+> protocol addresses a session. One that declares no such field is pod-scoped. A request message that
+> does carry a `oneof` of frames is classified by the paragraph below instead.
+>
+> A request message that carries its frames in a `oneof` is a stream envelope. An envelope declares no
+> address of its own. Exactly one of its frames declares the address; that frame is session-scoped, it
+> opens the stream, and the envelope takes that frame's scope, so every frame that follows continues a
+> stream that is already addressed.
+>
+> The derivation is sound only while a request addresses a session in the one way stated above. A tier-0
+> gate refuses a protocol definition in which a field named `session_id` is not of type `SessionId`, a
+> field of type `SessionId` is not named `session_id`, a stream envelope declares an address of its own,
+> or a stream envelope's frames declare other than exactly one address. What the gate cannot see is a
+> session addressed under a name and a type that are both unconventional. A request message that does
+> that is non-conforming, and the first paragraph is what forbids it.
+
+The derivation reproduces every classification the retired table carried. Of the request messages either
+service declares, the ones other than the stream envelope that carry the address are exactly the table's
+session rows once `CoordinatorFenceRequest` moves under 0076's OD3, and the ones that carry none are
+exactly its pod rows. The envelope clause carries the remaining two rows, classifying `CheckpointRequest`
+together with the `CheckpointStart` frame that opens it and declares the address
+(`schemas/lenny-adapter.proto:1217`). The field-set predicate decides every request message but the
+envelope and the envelope clause decides that one, so no per-message exception clause is needed: after
+0076's OD3 no request message carries the address and is pod-scoped.
+
+**D2. 0073's §4.1 table and its reconciliation gate are retired, and a gate over what the rule rests on
+replaces them.** What the rule states needs no reconciliation, because it is computed from the protocol
+definition itself. What the rule rests on is an addressing convention that nothing checks today, so the
+convention is what the replacement gate checks: on every message the protocol declares, a field named
+`session_id` is of type `SessionId` and a field of type `SessionId` is named `session_id`, and a request
+message carrying its frames in a `oneof` declares no top-level address of its own and exactly one of its
+frames declares the address. The clause an earlier revision staged, that no pod-scoped message declares a
+field of the address type, is dropped. Under a derived classification a pod-scoped message is one that
+declares no address, so that clause reduces to a statement that a message without the field does not
+carry the field, and it can never fail. The gate's limit is stated with the rule: a session addressed
+under both an unconventional name and an unconventional type is invisible to it. Whether that residual is
+smaller than what the retired table cost is §7's first question and the central risk of this proposal.
 
 **D3. The message is session-scoped, and this proposal does not re-derive that.** Proposal 0076's OD3
 Question A settled it, on the ground that after CODE-1 the identifier selects the entry the fence writes
@@ -31,41 +66,60 @@ revision's central mechanism.
 **D5. 0073 is not reopened.** Every edit here applies to text 0073 introduces. This proposal is inert until
 0073 is applied.
 
-**D6. 0076 sequences first.** 0076 is further along, rewrites the state §1.2 describes, and carries the
-decision this proposal implements. Landing this proposal first would state a rule against a handler that
-is about to change and a classification whose answer had not yet been applied.
+**D6. 0076 sequences first.** 0076 is Implemented. Its CODE-1 rewrote the fence handler's state, which is
+what §1.2 records, and its OD3 answer carries the decision this proposal implements. Landing this proposal
+before it would have stated a rule against a handler that was about to change and a classification whose
+answer had not yet been applied.
 
 ## 3. Design overview
 
-The specification loses a table and gains a rule. The tier-0 surface loses one gate and gains a smaller
-one. One tier-3 suite gains a message and loses a false comment. No proto or handler changes, and 0073's
-§4.2 value rule, which is what rejects an unaddressed session-scoped request, is untouched.
+The specification loses a table and gains a rule: a predicate over a request message's field set, a clause
+that classifies a stream envelope through the frame that addresses it, and the constraint the derivation
+rests on. The tier-0 surface loses the gate that reconciled the table against the protocol definition and
+gains a gate over that constraint, which reads the protocol definition alone and checks that the session
+address is spelled one way in both directions and that a stream envelope carries exactly one addressing
+frame. One tier-3 suite gains a message and loses a false comment. No proto or handler changes, and
+0073's §4.2 value rule, which is what rejects an unaddressed session-scoped request, is untouched.
 
 ## 4. Detailed design
 
-**IMPLEMENTOR TO FILL THE BLANKS.** This draft states the direction and the constraints. The exact wording
-of the specification rule and the gate's parse strategy are not settled here and must be derived during
-convergence.
+The stream-envelope clause is a structural predicate rather than a named list, and the predicate is
+mechanically evaluable. `CheckpointRequest` and `CheckpointResponse` are the only messages in the protocol
+definition that declare a `oneof`, and `CheckpointResponse` is the request type of no RPC, so "a request
+message that carries its frames in a `oneof`" selects `CheckpointRequest` and nothing else.
 
-The derivation rule's stream-envelope clause must name which messages are envelopes in a way the gate can
-evaluate. The candidate predicate is that a message declaring a `oneof` whose members are themselves
-declared messages, and which is the request type of a streaming RPC, is an envelope. Confirm that this
-predicate selects `CheckpointRequest` and nothing else before relying on it. Whether it is mechanically
-evaluable at all, or must fall back to a named list that reintroduces a smaller table, is §7's second
-question.
+The clause keys on the single frame that declares the address rather than on the envelope's frames
+agreeing on a scope, because they do not agree. `CheckpointStart` declares `SessionId session_id = 7`
+(`schemas/lenny-adapter.proto:1217`) while `CheckpointGrant` and `CheckpointAbort` declare no address, so
+a clause requiring agreement would fail on the protocol definition as it stands. Deriving the envelope's
+scope from the frame that addresses it is also what classifies that frame. A clause that took the
+envelope's scope from an already-classified opening frame would leave the frame itself unclassified,
+because `CheckpointStart` is a `oneof` member rather than the request type of an RPC and the predicate's
+own population does not reach it. `spec/05_runtime-registry-and-pool-model.md:515` rejects a session-scoped
+request whose session identifier is empty, and `pkg/adapter/checkpoint.go:74-84` enforces that on the
+opening frame, so the frame's class carries a refusal and has to be stated rather than inferred.
+
+**IMPLEMENTOR'S CHOICE:** how the tier-0 gate reads field types and `oneof` membership out of the protocol
+definition. The parse must be the one the tier-0 gates already share, so that a change to the protocol's
+spelling moves every gate that reads it together
+(`tests/tier0_static/adapter_proto_parse_test.go:10-15`).
 
 ## 5. Proposed changes
 
-**IMPLEMENTOR TO FILL THE BLANKS.** The staged blocks below are indicative. They name the target and the
-change; the exact text is written during convergence, against the post-0073 and post-0076 state of each
-file.
-
 ### SPEC-1. State the rule, retire the table
 
-`spec/04` §4.1: replace the classification table 0073's SPEC-7 stages with the derivation rule of D1, and
-rewrite or remove the three grounding sentences of §1.2 with it. Retire 0073's recorded limit about the
-table-reconciliation gate and state the new gate's limit in its place. Written against whatever 0076
-leaves in §4.1.
+`spec/04_system-components.md`, under `#### Request Message Scope`: replace the whole block 0073's SPEC-7
+stages, which is the paragraph introducing the declared table (`:151`), the table itself (`:153-186`), and
+the paragraph grounding the fence's classification (`:188`), with the paragraphs D1 states. Replacing the
+block rather than the individual sentences named in §1.2 is what also removes the clause at `:151` that
+classifies `CheckpointRequest` for the scope of its `CheckpointStart` frame and gives that frame a row of
+its own, which the envelope clause restates without naming either message. The `ShutdownRequest` paragraph
+at `:190` stands unedited, because it explains a divergence between what a request addresses and what its
+handler touches that the rule does not state and D3 rests on. The block D1 states carries the constraint
+the derivation rests on together with what the gate cannot see, which is where the specification records
+the new gate's reach. `spec/` states no limit for the retired gate: 0073 records that limit in the gate
+file's header comment (`tests/tier0_static/adapter_proto_message_scope_test.go:17-27`), and it goes with
+the gate TEST-1 replaces. Written against whatever 0076 leaves in §4.1.
 
 ## 6. Non-goals
 
@@ -79,24 +133,36 @@ leaves in §4.1.
 
 ## 7. Open decisions for review
 
-1. **Whether the new gate closes the hole the table's gate closed.** Under a declared table, adding a new
-   message fails the gate until a human classifies it, which forces a conscious decision. Under the
-   derivation rule the classification is implicit in the type an author picks, and no gate catches a
-   pod-scoped message whose author gives its guard the address type in the belief that it is an address.
-   D2's clause that no pod-scoped message may declare the address type catches that only once the
-   specification says the message is pod-scoped, which is the statement the author has already got wrong.
-   Establish whether that residual is smaller than the table's cost. If it is not, this proposal should be
-   withdrawn.
-2. **Whether the stream-envelope predicate is mechanically evaluable** or must be a named list, which
-   would reintroduce a smaller table.
-3. **What the retired-field-number column holds** for `CoordinatorFenceRequest` in TEST-2, which never
+1. **Whether the new gate closes the hole the table's gate closed.** Under a declared table, adding a
+   request message fails the gate until a human classifies it, which forces a conscious decision. Under
+   the derivation the classification follows from the field an author declares, and the replacement gate
+   checks the convention the derivation rests on rather than the classification itself. Two residuals
+   remain and they run in opposite directions. A message whose author gives a pod-scoped guard the session
+   address derives session-scoped and inherits the §4.2 value rule's refusal of an empty identifier, which
+   is the fail-closed direction and costs a refusal the handler did not intend. A message whose author
+   addresses a session under some other name and some other type derives pod-scoped and carries no
+   obligation to refuse an unaddressed instance, which is the fail-open direction; the gate refuses either
+   half of that spelling on its own, so the case it cannot see is the one where both halves depart from
+   the convention at once. The table reached that case only when a human filled the row correctly, and its
+   gate checked neither the row against the handler nor the address against the spelling. Establish
+   whether the remaining residual is smaller than what the table cost. If it is not, this proposal should
+   be withdrawn, and the reclassification at `spec/04_system-components.md:175` and `:188` still has to
+   land on its own, because proposal 0076's CODE-1 has landed and both statements are already false,
+   whether or not the table survives.
+2. **What the retired-field-number column holds** for `CoordinatorFenceRequest` in TEST-2, which never
    declared the field the column records.
 
 ## 9. Files touched on application
 
 - `spec/04_system-components.md`
-- The tier-0 gate file 0073's §8 introduces
-- `tests/tier0_static/adapter_proto_message_scope_test.go`
+- `tests/tier0_static/adapter_proto_message_scope_test.go`, which is the tier-0 gate file 0073's §8
+  introduces and also carries the table-cell class reader that goes with the table
+- `tests/tier0_static/adapter_proto_parse_test.go`, the parse the tier-0 gates share, which carries
+  neither a field's type nor its `oneof` membership today
+- `tests/tier0_static/claim_register_proto_agreement_test.go`, the parse's other caller (`:64`), which
+  moves with any change to the signature it reads
+- `tests/spec-map.json`, which credits the retiring gate's cases and is re-pointed at the replacement
+  gate's cases in the same change
 - `tests/tier3_contract/adapter_session_address/session_address_wire_test.go`
 
 ## 10. Dependencies
