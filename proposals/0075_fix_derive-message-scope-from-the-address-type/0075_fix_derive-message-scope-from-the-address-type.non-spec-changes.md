@@ -43,9 +43,10 @@ restated as the addressing-convention gate in the same change.
 The replacement gate keeps the file path `tests/tier0_static/adapter_proto_message_scope_test.go`, and
 TEST-1 rewrites that file in place. The path is read outside the file. `slotAddressCaseFiles` names it as a
 literal string (`tests/tier0_static/spec_map_slot_address_registration_test.go:336`), five tier-0 cases
-range over that list (`:973`, `:1028`, `:1054`, `:1096`, `:1110`), and each resolves an entry through
-`repoFileLines` (`:699-706`), which fails the case on a file it cannot read. Keeping the path leaves that
-inventory correct and confines the change to the files §9 of the staged spec changes lists.
+range over that list (`:973`, `:1028`, `:1054`, `:1096`, `:1110`), and four of them resolve each entry
+through `repoFileLines` (`:699-706`), which fails the case on a file it cannot read. The fifth (`:1110`)
+reads no file and checks inventory membership alone. Keeping the path leaves that inventory correct and
+confines the change to the files §9 of the staged spec changes lists.
 
 `tests/spec-map.json` credits `TestAdapterProtoRequestMessagesAreClassifiedByScope` and
 `TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage` under section 4.1 (`:156`, `:169`) and the
