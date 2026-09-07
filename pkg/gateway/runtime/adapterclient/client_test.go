@@ -441,8 +441,23 @@ func TestSessionRoundTrip(t *testing.T) {
 	if err := cl.SendMessage(ctx, "sess-x", envelope); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if len(rt.envelopes) != 1 || string(rt.envelopes[0]) != string(envelope) {
-		t.Errorf("runtime received %v, want one copy of the envelope", rt.envelopes)
+	// The adapter stamps the session's address onto every session-scoped
+	// frame before forwarding it and re-encodes the object to do so, so the
+	// bytes the runtime receives are not the bytes sent and their key order
+	// is the encoder's. Decode before comparing.
+	// spec: §28.5.3 — inbound frames carry sessionId on every pod.
+	if len(rt.envelopes) != 1 {
+		t.Fatalf("runtime received %d envelopes, want 1", len(rt.envelopes))
+	}
+	var frame map[string]any
+	if err := json.Unmarshal(rt.envelopes[0], &frame); err != nil {
+		t.Fatalf("the envelope the adapter forwarded is not a JSON object: %v (%s)", err, rt.envelopes[0])
+	}
+	if frame["type"] != "user" || frame["content"] != "hello" {
+		t.Errorf("the forwarded envelope dropped the gateway's own fields: %s", rt.envelopes[0])
+	}
+	if frame["sessionId"] != "sess-x" {
+		t.Errorf("runtime received %s, want the session's address stamped on it", rt.envelopes[0])
 	}
 
 	clean, err := cl.Shutdown(ctx, "sess-x", "", 0)

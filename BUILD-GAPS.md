@@ -1924,7 +1924,7 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
 - **Suggested resolution:** Drive the assertion from the renderer rather than from a list: build an embedded-model pod spec through `podspec.Build` with every optional feature enabled, take the rendered args of the runtime container, and pass them to the fixture binary, so a newly injected flag fails the fixture test at tier 1 instead of a pool at tier 5. The declarations added here close the immediate breakage and are the fallback if a renderer-driven test proves too coupled to `Inputs`.
 - **Provenance:** Surfaced during the environment preflight before a proposal 0073 build run. The immediate breakage is fixed; this finding records the drift risk the fix does not remove.
 
-### - [ ] F-4.7.24 — `TestSessionRoundTrip` asserts an unstamped envelope and has been red since the stamping landed [Medium]
+### - [x] F-4.7.24 — `TestSessionRoundTrip` asserts an unstamped envelope and has been red since the stamping landed [Medium] — CLOSED
 
 - **Spec:** §28.5.3 and §6.4 make `sessionId` part of an outbound envelope on the intra-pod message
   socket, so the adapter stamps it onto every frame it forwards to the runtime. `stampSessionID`
@@ -1947,6 +1947,16 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
   it; the merge-base run establishes that. `pkg/gateway/runtime/adapterclient/client_test.go` was last
   rewritten wholesale by `040323634` (2026-08-20, "Address a session on the gRPC leg by its session
   identifier alone"), which is the neighbourhood the stale assertion survived.
+- **Resolution:** `TestSessionRoundTrip` now decodes the forwarded frame rather than comparing bytes,
+  asserting that the gateway's own fields survive and that the session's address is stamped on. Decoding
+  is what the case needs regardless of the stamp: `stampSessionID` re-encodes the object, so key order is
+  the encoder's and a byte comparison is brittle even when the expected string is right. The assertion is
+  modelled on `TestSendMessageForwardsStampedEnvelopeToRuntime`
+  (`pkg/adapter/session_test.go:322`), which already covers the stamping rule adapter-side, so this case
+  keeps its own subject, the round trip through the gRPC client. It carries the `// spec: §28.5.3`
+  annotation it previously lacked. Confirmed non-vacuous by removing the `obj["sessionId"] = id` write in
+  `pkg/adapter/slotframe.go` and re-running: the case fails with the unstamped frame and passes with it
+  restored. It was the only site in the tree carrying this assertion.
 
 
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
