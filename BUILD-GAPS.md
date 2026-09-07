@@ -1924,6 +1924,31 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
 - **Suggested resolution:** Drive the assertion from the renderer rather than from a list: build an embedded-model pod spec through `podspec.Build` with every optional feature enabled, take the rendered args of the runtime container, and pass them to the fixture binary, so a newly injected flag fails the fixture test at tier 1 instead of a pool at tier 5. The declarations added here close the immediate breakage and are the fallback if a renderer-driven test proves too coupled to `Inputs`.
 - **Provenance:** Surfaced during the environment preflight before a proposal 0073 build run. The immediate breakage is fixed; this finding records the drift risk the fix does not remove.
 
+### - [ ] F-4.7.24 — `TestSessionRoundTrip` asserts an unstamped envelope and has been red since the stamping landed [Medium]
+
+- **Spec:** §28.5.3 and §6.4 make `sessionId` part of an outbound envelope on the intra-pod message
+  socket, so the adapter stamps it onto every frame it forwards to the runtime. `stampSessionID`
+  (`pkg/adapter/slotframe.go:37`, called from `pkg/adapter/attach.go:261`) is that rule, and it is
+  correct.
+- **Evidence:** `TestSessionRoundTrip` (`pkg/gateway/runtime/adapterclient/client_test.go:425`) sends
+  `{"type":"user","content":"hello"}` and asserts byte equality against that same literal at `:445`. The
+  runtime receives `{"content":"hello","sessionId":"sess-x","type":"user"}`, so the case fails. It fails
+  identically at `a5476f93e`, before any of proposal 0076's code landed, and 0076 touches no file in that
+  package other than `checkpointbarrier_test.go`.
+- **Gap:** The assertion is stale rather than the behaviour wrong, and nothing records it. It is absent
+  from `BUILD-GAPS.md`, from `TEST-GAPS.md`, and from `tests/registers/skip-reasons.yaml`, so the package
+  has been red in tier 1 with no entry saying why. `test-coverage.md` names this the failure that teaches
+  a reader to ignore red.
+- **Suggested resolution:** Assert the stamped envelope rather than the literal sent, deriving the
+  expectation from `stampSessionID` rather than hand-writing the stamped bytes, so the case tracks the
+  rule instead of restating one encoding of it. Confirm no sibling case in the same file carries the same
+  stale assertion before closing.
+- **Provenance:** Surfaced while verifying proposal 0076's implementation against tier 1. Not caused by
+  it; the merge-base run establishes that. `pkg/gateway/runtime/adapterclient/client_test.go` was last
+  rewritten wholesale by `040323634` (2026-08-20, "Address a session on the gRPC leg by its session
+  identifier alone"), which is the neighbourhood the stale assertion survived.
+
+
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
 ### Summary
 
