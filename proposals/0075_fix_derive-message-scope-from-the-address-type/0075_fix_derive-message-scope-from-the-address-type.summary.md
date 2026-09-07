@@ -162,7 +162,46 @@ about them, and it adds a test function that the `addressRuleCases` inventory
 view to stay complete, in a file the files-touched list does not carry. `tests/spec-map.json` carries no
 such cost either way, because it credits the tier-3 file as a whole file (`:172`) rather than per case.
 What is left for the reviewer is whether the widening is accepted. Answering no takes that alternative
-instead, and the coverage clause is then deleted rather than made true.
+instead, and the coverage clause is then deleted rather than made true. The review loop recorded no
+recommendation and no confidence for this decision, and it recorded four times that supplying one is
+adjudication a format pass may not do.
+
+**OD3. Does the replacement tier-0 gate keep the path
+`tests/tier0_static/adapter_proto_message_scope_test.go`?** TEST-1 replaces the gate that file holds, and
+neither D2 nor TEST-1 states whether the replacement keeps the path or takes one named for its new subject.
+The path is load-bearing. `slotAddressCaseFiles`
+(`tests/tier0_static/spec_map_slot_address_registration_test.go:336`) names the file by path, so a gate that
+keeps the path owes that file no edit and the files-touched list stands as written. Renaming the file adds
+`tests/tier0_static/spec_map_slot_address_registration_test.go` to the blast radius, which the files-touched
+list does not carry. Answering "keep the path" leaves TEST-1 as staged. The review loop derived no
+recommendation; four lenses raised the question and each assumed the path was kept without stating it.
+
+**OD4. Does the section 28.5.3 registration follow the replacement gate, or is it dropped?**
+`tests/spec-map.json:5670` credits the retiring gate's case under section 28.5.3, and TEST-1 stages
+re-registering the replacement gate's cases "under the same sections", which includes that one. The
+retiring gate read `spec/04` §4.1 and cited 28.5.3 for addressing. The replacement gate reads
+`schemas/lenny-adapter.proto` alone and checks a gateway-to-adapter gRPC convention, while §28.5.3 is the
+intra-pod JSONL and MCP boundary (`spec/28_communication-channels.md:499`).
+`TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` credits from a case's own `// spec:` annotation,
+so whether the replacement case can honestly annotate 28.5.3 decides the register entry. Answering "follow
+the gate" leaves TEST-1 as staged. Answering "drop it" removes the `:5670` entry inside the same step. The
+review loop derived no recommendation; the question stood open across four lenses in both lanes.
+
+**OD5. Is the widened tier-3 session set accepted with nothing holding it complete?** After TEST-2,
+membership in `sessionScopedMessages` is the derivation rule's, and no gate checks that a request message
+added later and addressed to a session joins the list. The eight session-addressed messages TEST-2 adds sit
+outside the set today, which is what an unheld list drifts into. Answering yes accepts a hand-maintained list under a
+proto-derivable rule and leaves TEST-2 as staged. Answering no asks for a deliverable this proposal does not
+stage, which is a gate deriving the set from `schemas/lenny-adapter.proto`. The review loop derived no
+recommendation; it recorded the drift as a standing risk on two rounds.
+
+**OD6. May `spec/` name a test tier?** The staged constraint paragraph reads "A tier-0 gate refuses a
+protocol definition in which ...", and no file under `spec/` names a test tier in any spelling today. A
+review round checked the precedents an earlier entry claimed for it and found that none of them names a
+tier, so the staged sentence would be the first. Answering yes leaves SPEC-1 as staged. Answering no
+requires the paragraph to name the gate without its tier, which is a change to staged spec text that this
+pass does not make. The review loop judged the point below the bar for a finding and recorded that it was
+never decided, and it derived no recommendation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -220,5 +259,5 @@ applies. One further defect was confirmed in the working tree and is left where 
 - TEST-2 — `tests/tier3_contract/adapter_session_address/session_address_wire_test.go` — Separates the set
   of messages the derivation rule addresses to a session from the table of retired duplicate-address field
   numbers, brings `CoordinatorFenceRequest` and the other session-addressed messages the old set excluded
-  into the two address arms, and deletes the membership and coverage clauses that key on the retired
-  table.
+  into the two address arms, restates the declaration's comment on the derivation rule, and removes the
+  clause claiming a coverage the suite does not have.
