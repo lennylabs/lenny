@@ -576,6 +576,27 @@ USEFUL [non-spec-recheck.1.review-test-coverage.1]: its FACT that the reclassifi
 
 WATCHOUT: The tier-3 suite's four test functions and their loop sites are exactly as TEST-2 describes them, but the LINE numbers TEST-2 quotes for the loops are the `for` statements, not the function declarations: `:81` and `:102` are `for name := range sessionScopedMessages`, `:130` is the third loop, and `:150-158` is `TestTheRetiredAddressWrapperIsGone_spec_15_4`. A reader who expects function declarations at those lines will think the citations are stale. They are not. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:78,81,99,102,127,130,150
 
+### [f4.cleanup]
+
+DECISION: rewrote nothing in `summary.md` — BECAUSE the file already carried exactly the eight target headings in the target order (`# Summary: ...`, `## Summary` holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, `**Watch out for.**`, then `## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, `## Deliverable index`), with no lead paragraph above `## Summary`, no `### Retired` block or equivalent inside the open-decisions section, no meta-list of staged items, and no errata block owed to files this loop cannot edit — ALTERNATIVES: moving the `**Watch out for.**` sentences about 0073's immutability and the 0076 sequencing into `## Impacts on other proposals` under the prose-about-another-proposal rule; rejected because that part is a listed part of `## Summary` rather than unlisted content, the sentences are implementor warnings rather than assertions about another proposal's continued validity, and the impacts rows for 0073 and 0076 already carry the validity claims.
+
+FACT: every item this firing handled is accounted for in the file as it stands. OD1 and OD2 are the two entries under `## Open decisions for human to make`, both keeping their identifiers verbatim; the equal-generation re-fence (`marker:unscoped`) is the single entry under `## Defects in the shipped tree that this proposal does not stage`, verbatim as the earlier pass confirmed it; `marker:spec-1` (the retiring gate's declared-scope-versus-handler limit) is carried in the 0073 impacts row's "what stands" clause and again in the 0080 row; and 0073, 0076, and 0080 hold one impacts row each. Nothing was left unplaced and nothing was dropped.
+EVIDENCE: 0075_....summary.md:83-206
+
+FACT: no row was added for proposal 0036. The firing recorded `marker:0036` (0036's staged `ExtendCredentialLease` RPC would have been refused by the tier-0 gate this proposal retires) as gate-refuted and apply-refuted, and the summary carries no mention of 0036 anywhere. `grep -n 0036 summary.md` is empty.
+EVIDENCE: 0075_....summary.md
+
+FACT: both section preambles are true of the entries they now head, checked rather than assumed. `## Defects in the shipped tree that this proposal does not stage` opens by saying both specification defects are staged (SPEC-1 and TEST-2) and that one further defect was confirmed in the working tree and left where it is; exactly one entry follows it. `## Open decisions for human to make` and `## Impacts on other proposals` carry no preamble. This pass moved nothing, so it falsified no preamble and corrected none.
+EVIDENCE: 0075_....summary.md:167-174
+
+FACT: `## Deliverable index` is preserved byte for byte in last position, with its three lines (SPEC-1, TEST-1, TEST-2) in their existing order. The reconciliation pass owns it and this pass did not touch it.
+EVIDENCE: 0075_....summary.md:207-225
+
+OPEN: OD2 still carries its question, its ground, one losing alternative, and the cost of answering no, but no explicit recommendation and no confidence, which is less than `## Open decisions for human to make` asks of an entry. This is the fourth firing to observe it and leave it: supplying a recommendation is adjudication, which a format pass may not do. The standing-context `## Open` line joins on [f1.cleanup, f2.cleanup, f3.cleanup] and should now read [f1.cleanup, f2.cleanup, f3.cleanup, f4.cleanup].
+
+WATCHOUT: this review log carries `## Standing context`, `## Ledger`, `## Resolved in adversarial review`, and `## 11. What the 2026-09-06 rewrites changed`, and has no `## Retired` section at all. This block was therefore spliced at the end of `## Ledger`, immediately before `## Resolved in adversarial review`. A later pass that looks for `## Retired` to find the end of the ledger will not find one, and appending to the end of the file would bury an entry inside the `## 11` appendix that `status.md:22` already points at across files.
+EVIDENCE: 0075_....review-log.md — `## Standing context`, `## Ledger`, `## Resolved in adversarial review`, `## 11. What the 2026-09-06 rewrites changed`
+
 ## Resolved in adversarial review
 
 ### Pass 1 (2026-09-07, automated)
