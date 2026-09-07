@@ -27,9 +27,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/tests/testinfra/coordfixture"
 )
 
@@ -305,5 +307,167 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	}
 	if sv == 0 {
 		t.Errorf("no served observation recorded after the takeover published the binding")
+	}
+}
+
+// coTenantSessions are the two sessions the co-location cases below bind to one
+// pod. The identifiers are ordered so the pod-level op lock's lexicographic
+// promotion pick is deterministic, which keeps a failure readable; the cases
+// assert nothing about which barrier returns first.
+const (
+	coTenantA = "cotenant-a"
+	coTenantB = "cotenant-b"
+)
+
+// barrierAckDeadline stands in for the gateway's
+// checkpointBarrierAckTimeoutSeconds: the single wall-clock window a drain
+// barrier is bounded by. Each ack must land well inside it, so a barrier held
+// open by a co-tenant session's gate shows up as a case failure rather than as
+// a timeout the harness reports as a hang.
+const barrierAckDeadline = 30 * time.Second
+
+// spec: §10.1.2 (the pod records and compares a fenced coordination generation
+// per bound session), §4.7 (CoordinatorFence).
+//
+// diagnosis: a failure means two coordinators fencing two co-tenant sessions of
+// one pod at the same moment collided on one another's generation: a fence was
+// refused as coordinator_handoff_stale, reported a generation gap in a lineage
+// it does not belong to, or left the pod holding the neighbour's value. Under
+// -race a report here means the per-session fenced generation is not guarded by
+// the entry's own lock.
+func TestConcurrentCoTenantFencesRecordTheirOwnGeneration_spec_10_1_2(t *testing.T) {
+	ctx := context.Background()
+	pod := coordfixture.StartPod(t, coTenantA)
+	pod.StartSession(t, coTenantB)
+
+	// Two coordinators fence their own session on the shared pod at once, at
+	// generations far apart: the ordinary state when one session has been handed
+	// off repeatedly and its neighbour has not.
+	want := map[string]int64{coTenantA: 9, coTenantB: 2}
+	var wg sync.WaitGroup
+	for id, gen := range want {
+		wg.Add(1)
+		go func(id string, gen int64) {
+			defer wg.Done()
+			accepted, err := pod.Fence(ctx, id, gen)
+			if err != nil {
+				t.Errorf("fence %s to generation %d: %v", id, gen, err)
+				return
+			}
+			if !accepted {
+				t.Errorf("fence %s to generation %d was not accepted", id, gen)
+			}
+		}(id, gen)
+	}
+	wg.Wait()
+
+	for id, gen := range want {
+		if got := pod.LastFenced(id); got != gen {
+			t.Errorf("pod fenced generation for %s = %d, want %d (each session records its own)", id, got, gen)
+		}
+	}
+}
+
+// spec: §10.1.8 (the barrier holds quiescence open and echoes the
+// gateway-minted checkpoint id its own Checkpoint stream carried), §10.1.2 (the
+// per-session generation gate).
+//
+// diagnosis: a failure means two co-tenant sessions drained together shared one
+// barrier gate: an ack carried the neighbour's checkpoint id or no id at all,
+// or a barrier blocked to its wall-clock deadline because the co-tenant's gate
+// replaced its own. Under -race a report here means the gate on the slot
+// registry entry is not guarded by its own lock.
+func TestConcurrentCoTenantBarriersEchoTheirOwnCheckpointID_spec_10_1_8(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), barrierAckDeadline)
+	defer cancel()
+	pod := coordfixture.StartPod(t, coTenantA)
+	pod.StartSession(t, coTenantB)
+
+	gens := map[string]int64{coTenantA: 3, coTenantB: 5}
+	for id, gen := range gens {
+		if _, err := pod.Fence(ctx, id, gen); err != nil {
+			t.Fatalf("fence %s: %v", id, err)
+		}
+	}
+
+	type ack struct {
+		res     adapterclient.CheckpointBarrierResult
+		err     error
+		elapsed time.Duration
+	}
+	acks := map[string]chan ack{
+		coTenantA: make(chan ack, 1),
+		coTenantB: make(chan ack, 1),
+	}
+	for id, gen := range gens {
+		go func(id string, gen int64) {
+			started := time.Now()
+			res, err := pod.Client.CheckpointBarrier(ctx, id, gen, "barrier-"+id)
+			acks[id] <- ack{res, err, time.Since(started)}
+		}(id, gen)
+	}
+	pod.WaitBarrierWaiting(t, coTenantA)
+	pod.WaitBarrierWaiting(t, coTenantB)
+
+	// Both gateway-driven Checkpoint streams are opened against the held pod at
+	// once, each carrying its own session's checkpoint id. The pod-level op lock
+	// admits one checkpoint at a time and queues the co-tenant behind the running
+	// one, so the second stream links once the first releases the lock.
+	var wg sync.WaitGroup
+	for id := range gens {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			driveCheckpointStream(ctx, t, pod, id, "gw-ckpt-"+id)
+		}(id)
+	}
+	wg.Wait()
+
+	for id := range gens {
+		got := <-acks[id]
+		if got.err != nil {
+			t.Fatalf("%s barrier: %v", id, got.err)
+		}
+		if want := "gw-ckpt-" + id; got.res.CheckpointRef != want {
+			t.Errorf("%s checkpoint_ref = %q, want %q (its own stream's id, never empty and never the co-tenant's)",
+				id, got.res.CheckpointRef, want)
+		}
+		if got.res.BarrierID != "barrier-"+id {
+			t.Errorf("%s barrier_id = %q, want %q", id, got.res.BarrierID, "barrier-"+id)
+		}
+		if got.elapsed >= barrierAckDeadline/3 {
+			t.Errorf("%s barrier acked after %s, want well inside the %s ack window", id, got.elapsed, barrierAckDeadline)
+		}
+	}
+}
+
+// driveCheckpointStream opens the gateway-driven Checkpoint stream for the
+// session, sends the CheckpointStart carrying the gateway-minted checkpoint id
+// the session's waiting barrier links, waits for the adapter's first frame so
+// the link has landed, and ends the stream so the linked barrier is released.
+// It models what the gateway does against a quiesced pod without uploading a
+// chunk.
+func driveCheckpointStream(ctx context.Context, t *testing.T, pod *coordfixture.Pod, sessionID, checkpointID string) {
+	t.Helper()
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := pod.Client.Checkpoint(streamCtx)
+	if err != nil {
+		t.Errorf("open Checkpoint stream for %s: %v", sessionID, err)
+		return
+	}
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{
+			Start: &adapterv1.CheckpointStart{
+				SessionId:    &adapterv1.SessionId{Value: sessionID},
+				CheckpointId: checkpointID,
+			},
+		},
+	}); err != nil {
+		t.Errorf("send CheckpointStart for %s: %v", sessionID, err)
+		return
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Errorf("await the adapter's first stream frame for %s: %v", sessionID, err)
 	}
 }
