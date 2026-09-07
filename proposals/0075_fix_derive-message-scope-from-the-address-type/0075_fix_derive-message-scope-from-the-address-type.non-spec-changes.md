@@ -40,6 +40,13 @@ the signature it reads. That parse's own package doc (`:10-15`) and the comment 
 (`:64-67`) each describe their subject as the §4.1 classification table, which SPEC-1 retires, so both are
 restated as the addressing-convention gate in the same change.
 
+The replacement gate keeps the file path `tests/tier0_static/adapter_proto_message_scope_test.go`, and
+TEST-1 rewrites that file in place. The path is read outside the file. `slotAddressCaseFiles` names it as a
+literal string (`tests/tier0_static/spec_map_slot_address_registration_test.go:336`), five tier-0 cases
+range over that list (`:973`, `:1028`, `:1054`, `:1096`, `:1110`), and each resolves an entry through
+`repoFileLines` (`:699-706`), which fails the case on a file it cannot read. Keeping the path leaves that
+inventory correct and confines the change to the files §9 of the staged spec changes lists.
+
 `tests/spec-map.json` credits `TestAdapterProtoRequestMessagesAreClassifiedByScope` and
 `TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage` under section 4.1 (`:156`, `:169`) and the
 first again under section 28.5.3 (`:5670`). The replacement gate's cases are registered under the same
@@ -63,6 +70,16 @@ which is already a member, carries the address in its place.
 `retiredDuplicateNumbers`, a new `map[string]protoreflect.FieldNumber`, keeps today's name-to-number
 entries verbatim. Its members are the messages that declare `reserved "slot_id"` in the protocol
 definition, and the set is closed: the retirement landed with proposal 0073 and no later message joins it.
+
+The widened membership is what the split leaves. `retiredDuplicateNumbers` takes the population whose rule
+is that the message carried the retired duplicate, so the session set's rule is the derivation rule SPEC-1
+states, and the set holds every message that rule addresses to a session. Both address arms are green on
+the shipped protocol definition for each added member: `CallPlatformToolRequest`
+(`schemas/lenny-adapter.proto:364-368`), `ListPlatformToolsRequest` (`:341-343`),
+`ListSessionConnectorsRequest` (`:383-385`), `ListConnectorToolsRequest` (`:403-406`),
+`CallConnectorToolRequest` (`:419-424`), `CoordinatorFenceRequest` (`:1455-1461`), `ExportPathsRequest`
+(`:1538-1549`), and `ConfigureWorkspaceRequest` (`:1673-1684`) each declare `SessionId session_id = 1` at
+the top level, and none of them declares a field named `slot_id`.
 
 `TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1` and
 `TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1` iterate `sessionScopedMessages` (their loops

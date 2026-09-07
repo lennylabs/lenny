@@ -152,13 +152,6 @@ Written against whatever 0076 leaves in §4.1.
   proposal 0080 §1.16.
 - **0073's §4.2 value rule.** Unchanged.
 
-## 7. Open decisions for review
-
-1. **The tier-3 session-address suite's covered population.** TEST-2 splits the table of retired
-   duplicate-address field numbers out of `sessionScopedMessages`, which makes the session set's membership
-   the derivation rule's and widens the population the suite's two address arms cover from the messages
-   that carried the retired duplicate to every message the rule addresses to a session.
-
 ## 9. Files touched on application
 
 - `spec/04_system-components.md`

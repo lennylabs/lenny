@@ -139,43 +139,6 @@ that a fence for one session does not change the generation the pod holds for an
 OD3 Question B assigned that edit to this proposal, so a withdrawal has to name another owner for it, and
 the tier-3 coverage TEST-2 adds for the fence goes unowned with it.
 
-**OD2. Accept the tier-3 session-address suite's covered population widening to the derivation rule's?**
-`sessionScopedMessages` records each member's retired duplicate-address field number, and the fence never
-carried that duplicate, so the column has no value to copy from a neighbour. No value settles it either:
-`TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` iterates the same map and asserts both that the
-message reserves the number and that it reserves the name `slot_id`
-(`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:130-141`), and
-`CoordinatorFenceRequest` declares neither (`schemas/lenny-adapter.proto:1455-1461`), so the name half
-fails whatever number is chosen, and the only proto edit that would satisfy it would reserve a number and
-a name the fence never used. The map's working membership rule is "carried the retired duplicate" rather
-than "session-scoped": its members are exactly the messages that declare `reserved "slot_id"` in the
-protocol definition, while `ExportPathsRequest`,
-`ConfigureWorkspaceRequest`, and the `GatewayControl` tool requests declare the session address and are
-excluded from it.
-
-TEST-2 splits that declaration in two, and the session set's membership becomes the derivation rule's,
-which widens the population the suite's two address arms cover from the messages that carried the retired
-duplicate to every message the rule addresses to a session. The alternative loses: an arm naming the fence
-alone leaves the other session-addressed messages uncovered, so the comment's coverage clause stays false
-about them, and it adds a test function that the `addressRuleCases` inventory
-(`tests/tier0_static/address_rule_citation_test.go:45-47`) would have to name for the address-rule coverage
-view to stay complete, in a file the files-touched list does not carry. `tests/spec-map.json` carries no
-such cost either way, because it credits the tier-3 file as a whole file (`:172`) rather than per case.
-What is left for the reviewer is whether the widening is accepted. Answering no takes that alternative
-instead, and the coverage clause is then deleted rather than made true. The review loop recorded no
-recommendation and no confidence for this decision, and it recorded four times that supplying one is
-adjudication a format pass may not do.
-
-**OD3. Does the replacement tier-0 gate keep the path
-`tests/tier0_static/adapter_proto_message_scope_test.go`?** TEST-1 replaces the gate that file holds, and
-neither D2 nor TEST-1 states whether the replacement keeps the path or takes one named for its new subject.
-The path is load-bearing. `slotAddressCaseFiles`
-(`tests/tier0_static/spec_map_slot_address_registration_test.go:336`) names the file by path, so a gate that
-keeps the path owes that file no edit and the files-touched list stands as written. Renaming the file adds
-`tests/tier0_static/spec_map_slot_address_registration_test.go` to the blast radius, which the files-touched
-list does not carry. Answering "keep the path" leaves TEST-1 as staged. The review loop derived no
-recommendation; four lenses raised the question and each assumed the path was kept without stating it.
-
 **OD4. Does the section 28.5.3 registration follow the replacement gate, or is it dropped?**
 `tests/spec-map.json:5670` credits the retiring gate's case under section 28.5.3, and TEST-1 stages
 re-registering the replacement gate's cases "under the same sections", which includes that one. The
@@ -195,14 +158,6 @@ proto-derivable rule and leaves TEST-2 as staged. Answering no asks for a delive
 stage, which is a gate deriving the set from `schemas/lenny-adapter.proto`. The review loop derived no
 recommendation; it recorded the drift as a standing risk on two rounds.
 
-**OD6. May `spec/` name a test tier?** The staged constraint paragraph reads "A tier-0 gate refuses a
-protocol definition in which ...", and no file under `spec/` names a test tier in any spelling today. A
-review round checked the precedents an earlier entry claimed for it and found that none of them names a
-tier, so the staged sentence would be the first. Answering yes leaves SPEC-1 as staged. Answering no
-requires the paragraph to name the gate without its tier, which is a change to staged spec text that this
-pass does not make. The review loop judged the point below the bar for a finding and recorded that it was
-never decided, and it derived no recommendation.
-
 ## Defects in the shipped tree that this proposal does not stage
 
 None blocks sign-off. Both defects this proposal confirms in the specification are staged: the three §4.1
@@ -210,7 +165,7 @@ sentences that ground the declared classification on a counterexample that no lo
 the tier-3 comment stating a coverage the suite does not have (TEST-2). The §4.1 ground was falsified when
 proposal 0076's CODE-1 landed and moved the coordination generation onto the slot entry the identifier
 resolves, so both defects are live in the specification now rather than becoming defects when this proposal
-applies. One further defect was confirmed in the working tree and is left where it is.
+applies. The further defects confirmed in the working tree are listed below and left where they are.
 
 - **The pod refuses the equal-generation re-fence that §10.1.2 orders.** `spec/10_gateway-internals.md:39`
   tells a new coordinator whose `CoordinatorFence` fails or times out to retry "with the same generation
@@ -234,6 +189,64 @@ applies. One further defect was confirmed in the working tree and is left where 
   the reclassification carries, the refusal of a session-scoped request whose session identifier is empty
   (`spec/05_runtime-registry-and-pool-model.md:515`), the handler already meets at
   `pkg/adapter/coordination.go:109-111`.
+
+- **A published protocol page contradicts the shipped protocol definition.** `docs/api/internal.md:209-215`
+  publishes a protobuf excerpt for `CheckpointRequest` declaring `string session_id = 1`, `string
+  checkpoint_id = 2`, and `string consistency = 3`. The shipped message declares none of the three. It is a
+  `oneof msg` of `CheckpointStart`, `CheckpointGrant`, and `CheckpointAbort` plus `int64
+  coordination_generation = 4`, and it declares no address of its own
+  (`schemas/lenny-adapter.proto:1173-1187`). The same page is stale elsewhere for the same reason.
+  `docs/api/internal.md:272-274` publishes `message DemoteSDKRequest { string session_id = 1; }` while the
+  shipped message declares `string reason = 1` alone (`schemas/lenny-adapter.proto:1694-1698`), and
+  `docs/api/internal.md:94` publishes an `UploadFiles` RPC that neither service declares
+  (`schemas/lenny-adapter.proto:32`, `:261`; the identifier appears nowhere under `schemas/`).
+
+  This proposal records the staleness and stages no repair. The page is false about the protocol definition
+  today, before anything staged here applies, so SPEC-1 does not make it wrong. What SPEC-1 changes is the
+  severity: after it, a top-level `string session_id` on a request message is a spelling the specification
+  forbids and the replacement tier-0 gate refuses, so these excerpts illustrate a construction the
+  derivation rule rules out. Nothing this proposal applies reddens on account of the page. The replacement
+  gate's domain is `schemas/lenny-adapter.proto` alone; no tier-11 case parses a `protobuf` fence, because
+  the code-block walker dispatches on `json`, `yaml`, `go`, `bash`, and `sql`
+  (`tests/tier11_docs/code_blocks_test.go:103-113`); and the only tests naming the page,
+  `tests/tier0_static/fragment_link_test.go` and `tests/tier0_static/naming_lint_test.go`, read its anchor
+  identifiers rather than its code blocks. The remedy is the whole stale page rather than one excerpt, and
+  it belongs to whoever owns that page, which is the documentation loop or proposal 0080's residue
+  inventory. 0080 does not carry it today.
+
+- **The §4.7 RPC table describes the fence as a pod-wide announcement.** `spec/04_system-components.md:712`
+  gives `CoordinatorFence` the description "Announce new `coordination_generation` to the pod on coordinator
+  handoff", followed by "Precondition for any subsequent operational RPC", and names no session in either
+  clause. After proposal 0076's CODE-1 the recorded generation lives on the session's slot entry
+  (`pkg/adapter/slot.go:59`), and `spec/28_communication-channels.md:314-317` states the current behavior in
+  full: the fence announces the generation to the pod, the pod records it against the session the fence
+  names, and a fence for one session does not change the generation the pod holds for another. The row keeps
+  the first clause of that sentence and drops the two that qualify it, so a reader of §4.7 alone takes the
+  announcement to be pod-wide. The reader-facing mirror at `docs/reference/adapter-contract.md:69` carries
+  the same compression. The precondition clause beside it stands. The hold the fence clears is pod-scoped:
+  §10.1.4 rejects every other inbound RPC with `UNAVAILABLE` and a `coordinator_hold` detail until a new
+  coordinator successfully fences (`spec/10_gateway-internals.md:57`) and keeps the hold and its gauge
+  pod-scoped (`:60`), `spec/28_communication-channels.md:322` calls the fence the hard precondition for
+  every other operational RPC to the pod, and the shipped adapter enforces the hold with pod-level
+  interceptors (`pkg/adapter/holdstate.go:335`, `:348`) that a fence for any bound session clears
+  (`pkg/adapter/coordination.go:150-156`). Qualifying that clause per session is what the tree refutes, so
+  the imprecision recorded here is the announcement clause alone.
+
+  This proposal records the imprecision and stages no repair. It is a residue of proposal 0076's move to
+  per-session coordination rather than of the classification change, and it is already imprecise in the tree
+  before anything staged here applies. SPEC-1's edit is bounded to the `#### Request Message Scope` block,
+  which is `spec/04_system-components.md:151`, `:153-186`, and `:188`, so §4.7's RPC table is not opened, and
+  the replacement block names no RPC, no generation, and no hold. The row states no scope class, so the
+  derivation rule does not read onto it: the spec sentences classifying a request message pod-scoped are
+  `:188`, which SPEC-1 retires, and `:726` for `ReportPodScrub`, which SPEC-1 keeps and which agrees with the
+  derivation. Nothing this proposal applies reddens on account of the row. The one case over these rows,
+  `tests/tier11_docs/spec_47_rpc_row_naming_test.go`, reads the backticked RPC name in each row's first
+  column and never the description (`specTableRowNameRE`, `:35`), and no other test parses §4.7 prose for the
+  fence. Correcting the row would add a §4.7 table edit and, to keep the mirror honest, a
+  `docs/reference/adapter-contract.md` edit, which contradicts this proposal's statement that no
+  reader-facing documentation file is touched. The remedy is the row and its mirror together, and no proposal
+  owns it today: proposal 0080's inventory runs §1.1 through §1.21 and none of those entries names the §4.7
+  `CoordinatorFence` row.
 
 ## Impacts on other proposals
 

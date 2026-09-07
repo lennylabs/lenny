@@ -988,6 +988,876 @@ OPEN [0075_fix_derive-message-scope-from-the-address-type.spec-changes.md]: D2 c
 
 WATCHOUT: the deferred corrections above were all recorded before this pass and several were already recorded at [reconcile.1]. Every one names a file outside this pass's editable set, or needs a decision the loop routed to the human, so none was closed here. The next loop's first round should read them as work owed rather than as history.
 
+### [f1.open-decisions.OD2]
+
+DECISION: resolved OD2 as "accept the widening" and withdrew it from `## Open decisions for human to make`. The answer is now stated as a requirement in the staged non-spec changes (§5, TEST-2) with its ground, and `spec-changes.md` §7 is deleted, since the tier-3 population question was its only remaining item and the section is empty without it.
+EVIDENCE: 0075_....non-spec-changes.md §5 TEST-2; 0075_....spec-changes.md (§7 removed); 0075_....summary.md
+
+FACT: re-verified message by message rather than taken from the standing context. Each of TEST-2's eight additions declares `SessionId session_id = 1` at the top level and none declares a field named `slot_id` or any `reserved`: `ListPlatformToolsRequest` `:341-343`, `CallPlatformToolRequest` `:364-368`, `ListSessionConnectorsRequest` `:383-385`, `ListConnectorToolsRequest` `:403-406`, `CallConnectorToolRequest` `:419-424`, `CoordinatorFenceRequest` `:1455-1461`, `ExportPathsRequest` `:1538-1549`, `ConfigureWorkspaceRequest` `:1673-1684`. Both widened arms are green on the shipped proto on day one.
+EVIDENCE: schemas/lenny-adapter.proto
+
+FACT: the authority the staged answer rests on is the split itself rather than a preference. `retiredDuplicateNumbers` takes the "carried the retired duplicate" population verbatim, so the session set needs a membership rule that is not that one, and the derivation rule SPEC-1 states is the rule the set is named for. `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` (`:130-141`) asserts `reservesName(md, retiredFieldName)`, which the fence fails whatever number is chosen, which is what forces the split.
+EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:130-141
+
+FACT: the widening costs no register edit and no new test function. `tests/spec-map.json:172` credits the tier-3 file whole-file, and `addressRuleCases` (`tests/tier0_static/address_rule_citation_test.go:45-47`) names `TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1`, which TEST-2 neither renames nor adds to.
+EVIDENCE: tests/spec-map.json:172; tests/tier0_static/address_rule_citation_test.go:45-47
+
+WATCHOUT: the standing context's `## Open` bullet "OD2 carries its question and its ground but no recommendation, no losing alternatives, no cost of deciding otherwise, and no confidence" is now spent, because OD2 is withdrawn. A round-boundary curation pass should retire that bullet rather than act on it.
+
+WATCHOUT: no staged file names OD2, cites it, or makes a deliverable conditional on it. The staged text states the widened population as TEST-2's requirement in its own terms, so a later pass must not re-add a pointer to the summary's decisions section.
+
+
+### [f1.open-decisions.OD3]
+
+DECISION: resolved OD3 as "keep the path" and withdrew it from `## Open decisions for human to make`. The answer is stated as a requirement in the staged non-spec changes (§5, TEST-1), as a new paragraph after the one that retires the table readers: the replacement gate keeps `tests/tier0_static/adapter_proto_message_scope_test.go` and TEST-1 rewrites that file in place. No `### Retired` block replaces the entry, and OD1 and OD4 through OD6 keep their identifiers verbatim.
+EVIDENCE: 0075_....non-spec-changes.md §5 TEST-1; 0075_....summary.md
+
+FACT: the authority is the tier-0 registration gate rather than a preference. `slotAddressCaseFiles` names the gate file as a literal string at `tests/tier0_static/spec_map_slot_address_registration_test.go:336`, five cases range over that list (`:973`, `:1028`, `:1054`, `:1096`, `:1110`), and each entry resolves through `repoFileLines` (`:699-706`), which calls `t.Fatalf` on a file it cannot read. A rename is therefore a hard tier-0 failure in five cases rather than a surplus entry, and it adds that file to the blast radius.
+EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:236-409, :699-706, :970-989
+
+FACT: re-verified rather than taken from the standing context. `spec-changes.md` §9 lists six files (`spec/04_system-components.md`, the gate file, `adapter_proto_parse_test.go`, `claim_register_proto_agreement_test.go`, `tests/spec-map.json`, the tier-3 file) and does not carry `tests/tier0_static/spec_map_slot_address_registration_test.go`, so the staged blast radius already presupposes the path is kept. No staged text anywhere in the proposal names a replacement filename.
+EVIDENCE: 0075_....spec-changes.md:155-168
+
+FACT: the edit adds no deliverable and resequences none. TEST-1's target set, its step in the checklist, and the files-touched list are unchanged, so nothing is deferred to the implementation checklist.
+EVIDENCE: 0075_....implementation-checklist.md
+
+WATCHOUT: the standing context's `## Open` bullet "Whether the replacement gate keeps the path ... Never stated in D2, assumed by every enumeration" is now spent. A round-boundary curation pass should retire it rather than act on it. The answer landed in TEST-1 rather than in D2, because the path is a property of the test staging and `non-spec-changes.md` is where the test staging lives.
+
+WATCHOUT: no staged file names OD3, cites it, or makes a deliverable conditional on it. The staged paragraph states the kept path as TEST-1's requirement in its own terms, so a later pass must not re-add a pointer to the summary's decisions section.
+
+
+### [f1.open-decisions.OD6]
+
+DECISION: resolved OD6 as "yes, `spec/` may name a test tier" and withdrew it from `## Open decisions for human to make`. No staged text changes: `spec-changes.md:20-21` already stages the sentence "A tier-0 gate refuses a protocol definition in which a field named `session_id` is not of type `SessionId` ...", which is the answer stated as a requirement, so SPEC-1, TEST-1, and TEST-2 stand exactly as they were. No `### Retired` block replaces the entry, and OD1, OD4, and OD5 keep their identifiers verbatim.
+
+FACT: `spec/` already names the harness test tiers in normative exit criteria, so the staged sentence is not the first of its kind. `spec/18_build-sequence.md:85` states "Tier 0 (Static) and Tier 11 (Documentation) pass on the empty repository and `lenny-test validate-maps` passes against the empty spec map and change graph", `:98` "Tier 0 (Static) passes", `:244` "Tier 3 contract tests in `tests/tier3_contract/rest_sessions/` pass against the handler driven by `httptest`", `:349` "Tier 2 component tests for `llm_proxy` pass, Tier 3 contract tests against the Anthropic mock pass", and `:781` "Tier 11 documentation is fully exercised". These are the harness tiers rather than the capacity tiers: Tier 0 and Tier 11 have no capacity counterpart, and `:244` names the tier-3 directory outright. — EVIDENCE: spec/18_build-sequence.md:85, :98, :244, :349, :781
+
+FACT: the narrower question, whether a normative contract section may name test machinery, is settled inside the file SPEC-1 edits. `spec/04_system-components.md:438` states that the `lenny-sandboxclaim-guard` webhook "is deployed as part of the Helm chart under `templates/admission-policies/` and is covered by the admission policy integration test suite (`tests/integration/admission_policy_test.go`)", and `:304` states that "The Phase 2 startup benchmark harness ([Section 18]) must include a checkpoint duration benchmark". The same practice runs at `spec/05_runtime-registry-and-pool-model.md:445`, `spec/15_external-api-surface.md:1440`, `spec/17_deployment-topology.md:84`, and `spec/28_communication-channels.md:63-64`. The staged sentence composes two practices the specification already holds. — EVIDENCE: spec/04_system-components.md:304, :438
+
+FACT: no rule creates a countervailing obligation. `.claude/rules/test-coverage.md` states no `spec/` constraint, `spec-driven-development.md` governs the `// spec:` citation direction from code into spec, and the §28.4 claim register is scoped to §28 statements (`tests/tier0_static/claim_register_test.go:24-26`: "The claim register validator reads `tests/claim-map.json` and checks that it says what §28.4 requires a claim to say"), so a §4.1 sentence naming a gate owes no register row. — EVIDENCE: tests/tier0_static/claim_register_test.go:24-26
+
+WATCHOUT: the standing-context `## Open` line at `review-log.md:116` ("`spec/` gains its first mention of a test tier in the staged constraint paragraph. `spec/28:64` and `spec/18:85`, `:98` are the precedents") is now spent and its first clause is false; the `CORRECTS` at `:711` that denied the precedents is itself false, since `spec/18_build-sequence.md:85` and `:98` name Tier 0 and Tier 11. A round-boundary curation pass should retire the line rather than act on it. Standing context is not this firing's to edit.
+
+WATCHOUT: the precedents spell the tier as "Tier 0 (Static)" while the staged sentence spells it "a tier-0 gate", and no `spec/` file uses the lowercase hyphenated form for a harness tier (`spec/04:872`'s "tier-1 compromise-indicator signal" is a severity label, and `spec/04:80-85`, `:504-506` are capacity tiers). The difference is presentational, OD6 asked about "any spelling" by its own wording, and correcting it would be an unstaged edit to SPEC-1's replacement block. Recorded rather than acted on.
+
+WATCHOUT: no staged file names OD6, cites it, or makes a deliverable conditional on it. The staged constraint paragraph states the tier in its own terms, so a later pass must not add a pointer to the summary's decisions section.
+
+FACT: the edit adds, removes, merges, splits, and resequences no deliverable, so nothing is deferred to the implementation checklist. — EVIDENCE: 0075_....implementation-checklist.md
+
+### [f1.open-decisions.out-of-scope.docs-api-internal-md]
+
+DECISION: the disposition `out-of-scope-stands` was applied for the `docs/api/internal.md` staleness. Added one
+entry to `## Defects in the shipped tree that this proposal does not stage` in
+`0075_....summary.md`, placed after the equal-generation re-fence entry and immediately before
+`## Impacts on other proposals`. It names the defect, gives it as file:line, and states why this proposal
+stages no repair. No decision is opened and no fix is staged.
+
+FACT: the excerpt is false about the shipped protocol definition today. `docs/api/internal.md:210-213`
+declares `string session_id = 1`, `string checkpoint_id = 2`, `string consistency = 3`; the shipped
+`CheckpointRequest` is a `oneof msg` of `CheckpointStart`, `CheckpointGrant`, `CheckpointAbort` plus
+`int64 coordination_generation = 4` and contains no `session_id` at any depth. — EVIDENCE:
+docs/api/internal.md:209-215, schemas/lenny-adapter.proto:1173-1187
+
+FACT: the same staleness recurs twice more on the page, and the entry records both, because the remedy is
+page-wide. `docs/api/internal.md:272-274` publishes `message DemoteSDKRequest { string session_id = 1; }`
+while the shipped message declares `string reason = 1` alone; `docs/api/internal.md:94` publishes an
+`UploadFiles` RPC, and that identifier appears nowhere under `schemas/`, so neither `service Adapter`
+(`schemas/lenny-adapter.proto:32`) nor `service GatewayControl` (`:261`) declares it. — EVIDENCE:
+schemas/lenny-adapter.proto:1694-1698, grep -rn UploadFiles schemas/ returns nothing
+
+FACT: nothing this proposal applies reddens on account of the page. `tests/tier11_docs/code_blocks_test.go`
+dispatches fenced blocks on `json`, `yaml`/`yml`, `go`, `bash`/`sh`/`shell`, and `sql` at `:103-113`, with
+no `protobuf` arm, and the only files under `tests/`, `cmd/`, or `scripts/` naming the page are
+`tests/tier0_static/fragment_link_test.go` and `tests/tier0_static/naming_lint_test.go`, both of which read
+anchor identifiers. — EVIDENCE: tests/tier11_docs/code_blocks_test.go:103-113, grep -rln "api/internal.md"
+tests/ cmd/ scripts/
+
+FACT: adding the entry falsified the section preamble's claim that one further defect was confirmed in the
+working tree, so that sentence was rewritten to name the list rather than a count. No other sentence in the
+summary is falsified: `:36` states that no reader-facing documentation file is touched, and this entry
+stages no edit to one, so it stands. — EVIDENCE: 0075_....summary.md:168
+
+WATCHOUT: this entry is a record, not a deliverable. A later pass must not read it as staging a
+`docs/api/internal.md` edit, must not add that page to a files-touched list, and must not reopen the
+deferral as a finding. The log already carries the two earlier rounds that declined to file it
+(review-log.md:219, :396).
+
+FACT: the edit adds, removes, merges, splits, and resequences no deliverable, so nothing is deferred to the
+implementation checklist. — EVIDENCE: 0075_....implementation-checklist.md
+
+### [f1.open-decisions.out-of-scope.spec-04-712]
+
+DECISION: the disposition `out-of-scope-stands` was applied for the §4.7 `CoordinatorFence` row at
+`spec/04_system-components.md:712`. Added one entry to `## Defects in the shipped tree that this proposal
+does not stage` in `0075_....summary.md`, placed after the `docs/api/internal.md` entry and immediately
+before `## Impacts on other proposals`. It names the defect, gives it as file:line, and states why this
+proposal stages no repair. No decision is opened and no fix is staged.
+
+CORRECTS [standing context "Deferred", the `spec/04_system-components.md` bullet at review-log.md:124]: the
+bullet says `spec/28_communication-channels.md:314-317` "already contradicts" the row, and assigns the
+residue to 0080's inventory. Both halves are wrong and the summary entry states neither. §28:314-315 reads
+"announces the new `coordination_generation` to the pod on coordinator handoff. The pod records the
+generation against the session the fence names", so §28 carries the row's own words and adds the per-session
+clause after them; the row compresses §28's current post-0076 sentence rather than contradicting it. And
+0080's inventory runs §1.1 through §1.21 and none of those entries names the row, so the defect is unowned.
+The log entry itself stands as written, under the rule that a log entry records what was true when it was
+written.
+EVIDENCE: spec/28_communication-channels.md:314-317, proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:37-448
+
+FACT: the row's imprecision is a 0076 residue and predates anything staged here. Commit `284d7904c` ("Apply
+proposal 0076 SPEC-2 to spec/28 and spec/29", 2026-09-06) rewrote §28's passage after CODE-1 moved the
+recorded generation onto the session's slot entry, and kept "to the pod on coordinator handoff" while adding
+the per-session clause. §4.7's row was not rewritten alongside it. — EVIDENCE:
+pkg/adapter/slot.go:55-59, spec/28_communication-channels.md:314-317, spec/04_system-components.md:712
+
+FACT: nothing staged reaches the row. SPEC-1's edit is bounded to `spec/04_system-components.md:151`,
+`:153-186`, and `:188`, and the replacement block names no RPC, no generation, and no hold. The row states no
+scope class, so the derivation rule does not read onto it; the pod-scope classifications in `spec/` are
+`:188`, which SPEC-1 retires, and `:726`, which SPEC-1 keeps. — EVIDENCE:
+0075_....spec-changes.md:112-129, spec/04_system-components.md:712
+
+FACT: no gate reads the row's description. `tests/tier11_docs/spec_47_rpc_row_naming_test.go` captures the
+backticked identifier in each §4.7 row's first column (`specTableRowNameRE`, `:35`) and holds Go doc comments
+to that name set, and no other test under `tests/` parses §4.7 prose for the fence. — EVIDENCE:
+tests/tier11_docs/spec_47_rpc_row_naming_test.go:33-45
+
+WATCHOUT: correcting the row costs the proposal a claim it makes. `0075_....summary.md:36` states that no
+reader-facing documentation file is touched, and the row's mirror at `docs/reference/adapter-contract.md:69`
+carries the same compression, so a §4.7 edit pulls the mirror in with it. That is the reason the disposition
+is to leave the defect where it is. — EVIDENCE: 0075_....summary.md:36,
+docs/reference/adapter-contract.md:69
+
+WATCHOUT: this entry is a record, not a deliverable. A later pass must not read it as staging a `spec/04`
+or `docs/reference/adapter-contract.md` edit, must not add either file to a files-touched list, and must not
+reopen the deferral as a finding.
+
+FACT: the section preamble at `0075_....summary.md:168` names the list rather than a count, so this entry
+falsifies no sentence in the summary and none was rewritten. — EVIDENCE: 0075_....summary.md:168
+
+FACT: the edit adds, removes, merges, splits, and resequences no deliverable, so nothing is deferred to the
+implementation checklist. — EVIDENCE: 0075_....implementation-checklist.md
+
+### [f1.open-decisions.out-of-scope.adapter-contract-69-precondition]
+
+DECISION: the disposition `out-of-scope-stands` was applied for the `CoordinatorFence` precondition clause
+at `docs/reference/adapter-contract.md:69` and its source at `spec/04_system-components.md:712`. Both
+sentences stay in the tree unedited and this proposal stages no repair. No decision is opened and no fix is
+staged.
+
+FACT: the item's site already had an entry. The `[f1.open-decisions.out-of-scope.spec-04-712]` apply, which
+ran earlier in this firing, wrote the entry for the same §4.7 row in `## Defects in the shipped tree that
+this proposal does not stage`, gave both anchors as file:line, named the mirror at
+`docs/reference/adapter-contract.md:69`, and stated why no repair is staged. A second entry for the same
+row and the same mirror would duplicate it, so none was written. — EVIDENCE: 0075_....summary.md:217-249
+
+CORRECTS [the same entry's first paragraph]: it read "a reader of §4.7 alone takes the announcement and the
+precondition to be pod-wide", which sweeps the precondition clause into the recorded defect. The clause is
+correct as written. `spec/10_gateway-internals.md:57` rejects every other inbound RPC with `UNAVAILABLE` and
+a `coordinator_hold` detail until a new coordinator successfully fences, `:60` keeps the hold and the
+`lenny_adapter_coordinator_hold` gauge pod-scoped, and `spec/28_communication-channels.md:322` states that
+the fence is the hard precondition for every other operational RPC to the pod. The shipped adapter agrees:
+the hold is enforced by pod-level interceptors (`pkg/adapter/holdstate.go:335`, `:348`, registered at
+`pkg/adapter/transport.go:46-47`) and a fence for any bound session clears it
+(`pkg/adapter/coordination.go:150-156`). The entry now says the precondition clause stands, carries that
+ground, and confines the recorded imprecision to the announcement clause. That is the whole edit this item
+made. — EVIDENCE: 0075_....summary.md:224-233, spec/10_gateway-internals.md:57, :60,
+spec/28_communication-channels.md:322, pkg/adapter/holdstate.go:335, pkg/adapter/coordination.go:150-156
+
+WATCHOUT: the correction the item's reading proposed, that the fence is the precondition for subsequent
+operational RPCs naming the session it fenced, is false against the tree. What proposal 0076 made
+per-session is the generation the pod records, and the hold the fence clears stayed pod-scoped. A later pass
+that reopens this pair must keep the two halves apart: the announcement clause compresses
+`spec/28_communication-channels.md:314-317` and is imprecise, and the precondition clause is accurate and
+must not be qualified per session. — EVIDENCE: spec/28_communication-channels.md:314-317 against :320-324
+
+FACT: no gate reads either sentence. `tests/tier11_docs/spec_47_rpc_row_naming_test.go` captures the
+backticked identifier in each §4.7 row's first column and never the description, and the tier-11
+reconciliation gate that does hold a `spec/04`-to-`docs/reference/adapter-contract.md` pair holds the
+`ReportSessionScrub` addressing sentence on `spec/04:725` and `docs/reference/adapter-contract.md:81`
+instead. — EVIDENCE: tests/tier11_docs/spec_47_rpc_row_naming_test.go:33-45,
+tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76
+
+FACT: the edit adds, removes, merges, splits, and resequences no deliverable, so nothing is deferred to the
+implementation checklist, and it falsifies no other statement in the summary. The section preamble at
+`0075_....summary.md:168` names the list rather than a count, and the claim at `:36` that no reader-facing
+documentation file is touched is unaffected, because no file outside the proposal directory was edited. —
+EVIDENCE: 0075_....summary.md:36, :168
+
+### [f1.cleanup]
+
+DECISION: rewrote nothing in `summary.md` — BECAUSE the file already carried exactly the eight target headings in the target order (`# Summary: ...`, then `## Summary` holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, `**Watch out for.**`, then `## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, `## Deliverable index`), with no lead paragraph above `## Summary`, no heading below `##` anywhere in the file, no `### Retired` block or equivalent inside the open-decisions section, no meta-list of staged items with dispositions, and no errata block owed to files this loop cannot edit — ALTERNATIVES: moving the `**Watch out for.**` sentences about 0073's immutability and the 0076 sequencing, and D5 and D6 under `**Decisions.**`, into `## Impacts on other proposals` under the prose-about-another-proposal rule; rejected on the same ground [f4.cleanup] rejected it, that those parts are listed parts of `## Summary` rather than unlisted content, and the 0073 and 0076 rows already carry the validity claims, so a move would create the second copy that rule exists to prevent.
+
+FACT: every item this firing handled is accounted for, checked one at a time rather than taken from the firing list. The three items the write path resolved have left the summary and each is stated as a requirement in a staged change file: OD2's widened tier-3 population is `non-spec-changes.md` §5 TEST-2 (the eight named additions to `sessionScopedMessages`), OD3's kept gate path is `non-spec-changes.md:43`, and OD6's tier-naming answer is the staged constraint sentence at `spec-changes.md:20-21`. The three items still the human's are the three entries the section carries, with their identifiers verbatim: OD1 (retire the table and its gate, accepting the two residuals), OD4 (the section 28.5.3 registration), and OD5 (the unheld widened session set). The four `marker:unscoped` items are the three entries under `## Defects in the shipped tree that this proposal does not stage`, the fourth having been folded into the §4.7 row entry by the apply that ran before it. The three `marker:` proposal items are one impacts row each.
+EVIDENCE: 0075_....summary.md:83-159, :161-249, :251-257; 0075_....non-spec-changes.md:43, :56-70; 0075_....spec-changes.md:20-21
+
+FACT: the identifier set carries a gap and the gap is correct. `## Open decisions for human to make` runs OD1, OD4, OD5, because OD2, OD3, and OD6 were withdrawn by this firing's own applies. The gap is preserved rather than closed: successive firings join on the identifier string, and renumbering OD4 to OD2 would have the next adjudication treat both surviving entries as fresh.
+EVIDENCE: 0075_....review-log.md — `[f1.open-decisions.OD2]`, `[f1.open-decisions.OD3]`, `[f1.open-decisions.OD6]`
+
+FACT: both section preambles are true of the entries they now head, read against the entries rather than assumed. `## Defects in the shipped tree that this proposal does not stage` opens by stating that both specification defects are staged (SPEC-1 and TEST-2) and that the further defects confirmed in the working tree are listed below; it names the list rather than a count, so the two entries this firing's applies added did not falsify it. `## Open decisions for human to make` and `## Impacts on other proposals` carry no preamble. This pass moved no text, so it falsified no statement and corrected none.
+EVIDENCE: 0075_....summary.md:163-168
+
+FACT: `## Deliverable index` is preserved byte for byte in last position, with its three lines (SPEC-1, TEST-1, TEST-2) in their existing order and wording. The reconciliation pass owns it and this pass did not touch it.
+EVIDENCE: 0075_....summary.md:259-276
+
+FACT: the summary carries no dangling intra-document pointer. `grep -n "§7\|§11"` over the file is empty, so the retired `spec-changes.md` §7 and the review log's `## 11` appendix are referenced from nowhere in it. The `§11` pointer that survives is `status.md:22`, which is already carried as a deferred correction and is outside this pass's editable set.
+EVIDENCE: 0075_....summary.md; 0075_....status.md:22
+
+OPEN: OD4 and OD5 each carry the question, the ground, and what each answer leaves staged, and each says outright that the review loop derived no recommendation. Neither carries a recommendation, losing alternatives, the cost of deciding otherwise, or a confidence, which is less than `## Open decisions for human to make` asks of an entry. OD1 carries all of them. This is the same shortfall four earlier firings observed on the withdrawn OD2 and left; supplying the missing parts is adjudication, which a format pass may not do. The standing-context `## Open` line that tracked it names OD2 and is spent; the shortfall now sits on OD4 and OD5.
+
+WATCHOUT: this review log carries `## Standing context`, `## Ledger`, `## Resolved in adversarial review`, and `## 11. What the 2026-09-06 rewrites changed`, and has no `## Retired` section at all. This block is therefore spliced at the end of `## Ledger`, immediately before `## Resolved in adversarial review`, as [f4.cleanup] recorded. Appending to the end of the file would bury the entry inside the `## 11` appendix.
+
+
+### [spec-recheck.1.review-applicability.1]
+
+DECISION: returned an empty findings list for the applicability-and-sequencing lens over the spec staging — BECAUSE the delta this loop exists for is a deletion only (the whole `## 7. Open decisions for review` block left `spec-changes.md`), and a deletion cannot create a forward reference, an underspecified target, an unresolvable anchor, or a gate obligation; I re-simulated S1 against the tree anyway and every anchor, every property a later edit needs, and every gate disposition still resolves — ALTERNATIVES: filing the loss of the retired table's Service and Direction columns as class-3 content loss (rejected again: §4.7.1's two RPC tables at `spec/04_system-components.md:700-719` and `:723-726` carry service and direction for every RPC, and nothing in the tree reads the retired columns); filing the indefinite "a protocol definition" in the staged gate sentence as an underspecified target (rejected: paragraph 1's "the gateway-adapter protocol" is the antecedent and `adapterProtoPath` fixes it on the implementation side, and the standing context already records it as a watchout rather than a finding).
+
+FACT: the §7 deletion left no dangling pointer. The only cross-file references into the spec staging are `non-spec-changes.md:37` ("the constraint §4 of the staged spec changes states") and `:48` ("the files §9 of the staged spec changes lists"), both of which still resolve; no file in the proposal directory outside the review log cites a "§7" of the spec staging — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.non-spec-changes.md:37,48
+
+FACT: `#### Request Message Scope` sits under `### 4.1 Edge Gateway Replicas` (`spec/04_system-components.md:40`), with `#### Gateway Internal Subsystems` at `:99` between them, and the next `###` is `### 4.2 Session Manager` at `:192`. So the block SPEC-1 replaces is bounded by `:149` and `:192` and the proposal's "§4.1" label is exact — EVIDENCE: spec/04_system-components.md:40,99,149,192
+
+FACT: no gate anywhere reads the §4.1 block except the one TEST-1 replaces. `messageScopeSpecPath`, `parseMessageScopeTable`, and `declaredScope` have no reader outside `adapter_proto_message_scope_test.go`; the tier-11 gates that open `spec/04` all call `specSection(..., "### 4.7 ")`; a repo-wide grep for the heading text and for a `#request-message-scope` fragment returns only the heading's own line — EVIDENCE: tests/tier0_static/adapter_proto_message_scope_test.go:31,54,75; tests/tier11_docs/spec_47_rpc_row_naming_test.go:46; tests/tier11_docs/recycle_scrub_trigger_consistency_test.go:57,137; tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:47
+
+USEFUL [Standing context / Settled]: the anchor inventory (spec/04 `:149`/`:151`/`:153-186`/`:175`/`:188`/`:190`, spec/10 `:53`/`:57`/`:60`, the proto set, the gate header `:17-27`) was correct in every particular I re-checked, and spot-checking it instead of re-deriving it saved the whole pass. The one place the standing context is itself off: it says SPEC-1 cites `schemas/lenny-adapter.proto:458` for `ReportSessionScrubRequest`'s address "one line off"; `:458` is exactly `SessionId session_id = 2` and the citation is right.
+
+USEFUL [Traps / "Orchestrator briefs carry stale content"]: the brief for this round still describes "§7 question 1" as the existential question and still gives the pre-refresh proto anchors (`:589`, `:1166`, `:1447`). §7 no longer exists in the staging and the correct proto anchors are `:596`, `:1173`, `:1455`. Trusting the brief would have produced a finding against text that is not there.
+
+
+### [spec-recheck.1.review-citations.1]
+
+DECISION: returned an empty findings list — BECAUSE the delta this loop exists for is a pure
+deletion (spec-changes.md `## 7. Open decisions for review` removed; nothing else in the file
+changed), and I independently re-verified every concrete citation still standing in
+`spec-changes.md` against the tree at HEAD (`c134918ab`) rather than trusting the standing
+context — ALTERNATIVES: D1's "the ones that carry none are exactly its pod rows" reading as
+off-by-one (declined: the "other than the stream envelope" restrictor distributes and the next
+sentence assigns the two remaining rows to the envelope clause, so the 25+5+2=32 accounting is
+exact and complete); "0073's §4.2 value rule" reading as `spec/04` §4.2 (declined: 0073's own
+`### 4.2 The rule` at `proposals/0073_...md:964`, and 0073 uses the same self-referring shorthand
+for its own §4.1 at `:897`).
+
+FACT: the mechanical citation set of `spec-changes.md` is 18 backticked path forms plus the bare
+`:151 :153-186 :188 :190 :726 :60 :64` forms, and every one resolved today. Spot-checks worth
+keeping: `spec/04:149` heading / `:151` intro / `:153-186` table (32 rows) / `:175` fence row /
+`:188` grounding / `:190` ShutdownRequest / `:192` `### 4.2`; `spec/04:725` and `:726` are the
+only per-message scope sentences outside §4.1; `spec/10:57` hold-exit and `:60` pod-scoped hold;
+`spec/05:515`; proto `:458` (`SessionId session_id = 2`), `:499-503`, `:596`, `:1173`, `:1174`,
+`:1217` (`SessionId session_id = 7`), `:1250`, `:1455-1456`; `checkpoint.go:74-84`;
+`adapter_proto_message_scope_test.go:17-27` (header comment, exactly that span);
+`adapter_proto_parse_test.go:10-15` (package doc, exactly that span);
+`claim_register_proto_agreement_test.go:64` (`fields := protoFields(protoBody)`);
+`tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76`;
+`docs/reference/adapter-contract.md:81`; `spec-map.json:156 :169 :5670`.
+EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md
+
+FACT: re-derived independently, so the census is now confirmed once more by a different method
+(`grep -n "rpc "` over the two service blocks plus `grep -n "SessionId "`): 31 RPCs with 31
+distinct request types; 26 `SessionId session_id` declarations in the whole file and zero
+declarations of `session_id` under another type or of `SessionId` under another name, so both
+halves of the replacement gate's biconditional are green today; exactly two `oneof` blocks, at
+`:1174` and `:1250`.
+EVIDENCE: schemas/lenny-adapter.proto
+
+FACT: `spec-changes.md` §5's claim that `:726` becomes the only `spec/` sentence classifying a
+request message pod-scoped holds. `grep -rn "pod-scoped" spec/` outside the retired block returns
+`spec/10:60` (the hold and its gauge), `spec/04:872` (the rotation in-flight ceiling), and
+`spec/12:202` (Redis key prefixes); none classifies a request message.
+EVIDENCE: spec/04_system-components.md:726; spec/10_gateway-internals.md:60
+
+CORRECTS [Standing context → Settled → "Open decisions moved."]: that bullet says "§7's single
+surviving question is the tier-3 population question, which is summary OD2." Both halves are now
+stale. `spec-changes.md` has no `## 7` section at all (the fix round deleted it), and the summary
+carries OD1, OD4, and OD5 with no OD2. Nothing in any landing file references `§7` any more
+(`grep -n "§7\|## 7\."` over the six non-log files returns nothing), so the deletion left no
+dangling pointer.
+EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md:152-155
+
+CORRECTS [Standing context → Open, "OD2 carries its question and its ground but no
+recommendation"]: OD2 no longer exists. The successor entry with the same defect is OD5, which
+ends "The review loop derived no recommendation; it recorded the drift as a standing risk on two
+rounds." OD4 carries the same absence. Anyone acting on the old OD2 entry should retarget it.
+EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md:142-161
+
+USEFUL [Traps: orchestrator briefs carry stale content]: the r1 spec-recheck brief still gives the
+pre-refresh proto anchors (`:589 :1166 :1447 :1448`, each seven low), still says §1.2 asserts the
+pod-wide ground holds (§1.2 already reads post-0076, citing `server.go:302` as `hold holdState`),
+and still describes "§7 question 1" as the existential question after §7 was deleted. Four false
+findings were available to anyone who reviewed the brief instead of the proposal.
+
+USEFUL [Traps: long lines hide the sentences citations point at]: `spec/04:726` and `spec/10:60`
+both hide their cited clause at the end of a very long line; `sed -n '726p' spec/04... | tr '|' '\n'`
+recovers "The request is pod-scoped." that a truncated read drops.
+
+FACT: OD4's two new citations verify. `spec/28_communication-channels.md:499` is the
+`#### 28.5.3 Intra-pod` heading, and `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate`
+(`tests/tier0_static/spec_map_slot_address_registration_test.go:970-989`) does credit from each
+case's own `// spec:` annotation via `citedSectionsPerCase`. Their remedy is in `summary.md`, so
+they were out of this loop's scope either way.
+EVIDENCE: spec/28_communication-channels.md:499; tests/tier0_static/spec_map_slot_address_registration_test.go:970-989
+
+
+### [spec-recheck.1.review-client-surface.1]
+
+DECISION: returned an empty findings list on the staged spec edits — BECAUSE the round's whole delta inside `spec-changes.md` is the deletion of the former `## 7. Open decisions for review` block, which removed text rather than adding a claim, and every client-facing parallel representation of the gateway-adapter wire contract is either untouched by SPEC-1 or already recorded as an unstaged pre-existing defect — ALTERNATIVES: filing `docs/api/internal.md:209-215` and `:272-274` (protobuf excerpts publishing a top-level `string session_id`, which after SPEC-1 illustrate a spelling the replacement gate refuses) and `docs/reference/adapter-contract.md:69`; both rejected because each is already false about the shipped proto before SPEC-1 applies, so neither becomes wrong as a consequence of the edits, and both already sit in the summary's `## Defects in the shipped tree that this proposal does not stage`.
+
+FACT: the SDK trees carry no part of the gateway-adapter proto. `grep -rln "lenny.adapter.v1\|SessionId" sdks/` returns nothing across `sdks/client/{go,python,typescript}` and `sdks/runtime/{go,python,typescript}`, so a change to the §4.1 classification has no language-SDK parallel to mirror. This closes the largest branch of the client-surface lens in one command and is worth reusing rather than re-deriving. — EVIDENCE: `grep -rln "lenny.adapter.v1\|SessionId" sdks/` is empty
+
+FACT: `docs/api/internal.md` carries no scope statement at all. `grep -n "scope\|Scope" docs/api/internal.md` returns nothing over its 566 lines, so the page is not a parallel representation of the §4.1 classification and its staleness is a separate (already-recorded) defect rather than a missed edit site for this proposal. — EVIDENCE: docs/api/internal.md (566 lines, no `scope` match)
+
+FACT: `docs/reference/adapter-contract.md`'s gateway-to-adapter RPC table at `:59-75` lists 17 RPCs and omits `SendMessage`, `SignalDeadline`, `ExtendCredentialLease`, `RevokeCredentials`, `NegotiateVersion`, `GetObservedIntegrationLevel`, and `AdapterEvents`, all of which the two service blocks declare. That incompleteness is pre-existing, is not a scope statement, and no gate reads the table's membership, so SPEC-1 neither creates nor worsens it. Recorded so a later client-surface pass does not spend a round on it. — EVIDENCE: docs/reference/adapter-contract.md:57-75 against schemas/lenny-adapter.proto:32, :261
+
+FACT: `SessionId` as a proto type name appears nowhere in `spec/` or `docs/` today (`grep -rn "\`SessionId\`\|SessionId session_id\|of type \`SessionId\`" spec/ docs/` is empty), so SPEC-1's staged block is the first place the specification names that wire type. No register or gate holds spec-side proto type names (`tests/claim-map.json` carries no scope row and the claim-register agreement gate keys on `Surface` strings naming `schemas/lenny-adapter.proto`, which SPEC-1 adds none of), so the introduction owes no bookkeeping. — EVIDENCE: tests/tier0_static/claim_register_proto_agreement_test.go:64-70
+
+CORRECTS [Standing context, `### Settled` bullet at review-log.md:20]: it says "`ReportSessionScrubRequest` `:456` with its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)". That parenthetical is wrong in the current tree: `message ReportSessionScrubRequest {` is at `schemas/lenny-adapter.proto:456`, `string pod_id = 1;` at `:457`, and `SessionId session_id = 2;` at `:458`, which is exactly what SPEC-1 cites. `ReportPodScrubRequest`'s `:499-503` is also exact. A future round should not treat that citation as a known-tolerated inaccuracy. — EVIDENCE: schemas/lenny-adapter.proto:456-458, :499-503
+
+USEFUL [Standing context `### Traps` bullets at review-log.md:66, :73, :74, :82, :83, :95]: the proto-parser trap, the "only way a request addresses a session" tension, the nested-address hole, the `CheckpointStart`-is-not-an-RPC-request-type count trap, and the D1 off-by-one reading each matched something I reached independently. The D1 arithmetic in particular reads as off by one (25 addressed request types plus `CheckpointStart` against 27 session rows after the fence moves) until the "The envelope clause carries the remaining two rows" sentence closes it; without that trap entry I would have spent the round deriving it.
+
+
+### [spec-recheck.1.review-docs-alignment.1]
+
+DECISION: returned an empty findings list for the docs-alignment lens on the spec staging — BECAUSE the spec-lane delta since spec-r2 is only the deletion of `spec-changes.md` §7, and no surviving text in any landing file cites §7 (`grep -n "§7"` over the five landing files returns nothing), so the deletion strands no pointer; and independently re-derived, `docs/` carries no mirror of the §4.1 classification at all — ALTERNATIVES: filing `docs/api/internal.md:210` and `:272` as a missed edit site (rejected: both excerpts are already false about the shipped proto, the remedy is a docs edit outside this loop, and the summary records the page under `## Defects in the shipped tree that this proposal does not stage`); filing the pod-wide fence readings at `spec/04:712-713`, `spec/28:322-324`, and `docs/reference/adapter-contract.md:69` (rejected: pre-existing 0076 residues, already in the log's Deferred block, four lenses declined them).
+
+USEFUL [Standing context, "No docs mirror"]: the bullet is exactly right and saved a full sweep. Re-verified rather than taken: `grep -rn "pod-scoped\|session-scoped" docs/` returns only JSONL-frame uses plus `docs/reference/adapter-contract.md:81`, and a per-message-name sweep over all 32 table rows returns hits only in `docs/api/internal.md` (`:90`, `:210`, `:99`, `:272`). — EVIDENCE: docs/reference/adapter-contract.md:81, docs/api/internal.md:210,272
+
+FACT: the retirement strands no cross-reference and owes no anchor redirect. `grep -rn "Request Message Scope\|request-message-scope\|message scope\|message-scope" spec/ docs/ schemas/ charts/` returns one line, the heading itself. SPEC-1 keeps the heading. — EVIDENCE: spec/04_system-components.md:149
+
+FACT: the one accepted failure mode in the staging lands in staged spec prose rather than in reasoning alone. The gate's blind spot ("a session addressed under a name and a type that are both unconventional") is the third staged paragraph, so the absence of an `Edge cases and accepted failure modes` section costs nothing under this lens. — EVIDENCE: 0075_....spec-changes.md:20-25
+
+FACT: the tier-11 gate SPEC-1 cites really does hold identical wording on both carriers, and it reads `spec/04` §4.7 rather than §4.1, so the staged block cannot redden it. `TestSessionScrubReportAddressingAgreesBetweenSpecAndContractDoc` spans exactly `:43-76` and requires the literal opener "The request is session-scoped: it is " on both rows. — EVIDENCE: tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76, docs/reference/adapter-contract.md:81
+
+WATCHOUT: `grep -rn "adapter_proto_message_scope" --include=*.md --include=*.json .` is noisy because `scratchpad/cp-snap/0076-run*/` holds dozens of snapshot copies of proposal 0076's review log. Filter out `scratchpad/` and `proposals/` or the real answer (three `tests/spec-map.json` lines) is buried. — EVIDENCE: tests/spec-map.json:156,169,5670
+
+FACT: the cache key computed clean this run (`2d25f5f323c0`, no prior hit), so this shard is a real review rather than a replayed answer. The standing context's warning about cache collisions across lanes did not bite here.
+
+
+### [spec-recheck.1.review-edit-sites.1]
+
+DECISION: returned an empty findings list — BECAUSE the only delta in `spec-changes.md` since the `spec-r2` snapshot is the deletion of `## 7. Open decisions for review` (its single tier-3-population question having moved to the summary as an answered OD), and a full independent re-sweep of the edit-site lens over the whole staging found no spec/, docs/, schemas/, or charts/ surface that SPEC-1 leaves wrong and that §9 omits — ALTERNATIVES: filing the "which protocol definition does the gate read" ambiguity in the staged constraint paragraph (declined: the block's own antecedent is "the gateway-adapter protocol", and the standing context already records the trap), and filing the "only way a request addresses a session" tension against the envelope paragraph (declined: standing context records it as refused).
+
+FACT: re-derived the proto census from scratch with an independent parser rather than trusting the standing context, and it agrees exactly. 31 RPC request types across the two service blocks; 25 declare a top-level `SessionId session_id`; the 5 that declare no address are `AdapterEventsRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`; `CheckpointRequest` is the sole `oneof`-carrying request. Zero name/type violations across all 26 `SessionId session_id` declarations, at any depth. — EVIDENCE: schemas/lenny-adapter.proto:342,365,384,404,420,458,683,707,847,909,965,990,1022,1036,1064,1088,1118,1217,1305,1339,1456,1487,1539,1577,1610,1674
+
+CORRECTS [standing context, "Proto anchors, current and verified"]: the bullet says `ReportSessionScrubRequest` is at `:456` "with its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)". That is wrong on the current tree: `:457` is `string pod_id = 1;` and `:458` is `SessionId session_id = 2;`, so SPEC-1's `:458` is the correct anchor and nothing is off by one. A future agent should not "fix" SPEC-1's citation on the strength of that bullet.
+EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+FACT: the standing context's parser trap is real and cost me a pass. Two independent brace-counting parsers over `schemas/lenny-adapter.proto` returned 14 and 81 messages instead of 88, because `message SendMessageResponse {}` and `message ReportPodScrubResponse {}` open and close on one line. The parse that works is: anchor a block on `^message (\w+) \{\s*$` and close it on the next `^\}` at column zero, after stripping `//` comments. — EVIDENCE: schemas/lenny-adapter.proto:508, :984
+
+FACT: independently re-confirmed the four edit-site facts the lens turns on, each by grep over the whole tree rather than by reading the standing context. Nothing links `#request-message-scope` or the heading text; `docs/reference/adapter-contract.md` carries no mirror of the table (its only scope sentences are `:81`, which the tier-11 gate SPEC-1 names already holds, and `:158`, a JSONL frame statement); the adapter proto's own doc comments carry no scope classification, so `schemas/` owes no edit; and neither `BUILD-GAPS.md` nor `TEST-GAPS.md` carries a message-scope finding that SPEC-1 would strand. — EVIDENCE: docs/reference/adapter-contract.md:81, :158; grep -rn "pod-scoped\|session-scoped" schemas/lenny-adapter.proto returns nothing
+
+FACT: the two tier-0 files 0076 landed are clear of this blast radius, checked rather than assumed. `adapter_proto_generation_scope_test.go` and `adapter_barrier_doc_comment_scope_test.go` both read proto doc-comment text; neither reads `spec/04` §4.1 and neither calls `protoFields` or `protoServiceRequests`. — EVIDENCE: tests/tier0_static/adapter_proto_generation_scope_test.go:11-25
+
+FACT: `tests/tier0_static/address_rule_citation_test.go` is the one gate that could redden from a `spec/` edit this proposal makes, and the staged block is clean. `sectionStatingTheAddressRule` calls `t.Fatalf` unless exactly one numbered spec section carries the literal "rejected at the adapter boundary with `InvalidArgument`"; today that is `spec/05_runtime-registry-and-pool-model.md:515` alone, and the D1 block adds no second carrier. — EVIDENCE: tests/tier0_static/address_rule_citation_test.go:22, :54-89
+
+FACT: every file:line citation in `spec-changes.md` resolves and says what the proposal claims, re-verified one anchor at a time. `spec/10:57` (fence is the only exit from hold), `spec/10:60` (hold and gauge stay pod-scoped), both inside §10.1.4 which opens at `spec/10:53`; `spec/04:190` (`ShutdownRequest` precedent), `:725`/`:726` (§4.7.1, heading at `:692`); `spec/05:515`; `pkg/adapter/checkpoint.go:74-84`; `tests/tier0_static/adapter_proto_message_scope_test.go:17-27`; `adapter_proto_parse_test.go:10-15`; `claim_register_proto_agreement_test.go:64`; `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76`; `schemas/lenny-adapter.proto:458`, `:499-503`, `:1217`.
+
+WATCHOUT: the orchestrator brief for this firing is stale in three ways a reader will trip on. It cites the pre-refresh proto anchors (`:589`, `:1166`, `:1447`, `:1448`), each seven lines low; it says §1.2 still claims the pod-wide ground holds, when the problem statement has already been rewritten to the post-0076 text; and it calls "§7 question 1" the existential question, when §7 is deleted and its surviving question was the tier-3 population one. The standing context already records this and it is still true. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.problem-statement.md:57-63
+
+USEFUL [standing context, "Traps"]: the block pre-empted four candidate findings I had independently derived and would otherwise have filed — the "only way a request addresses a session" tension, the nested-address hole, the indefinite "a protocol definition", and the §4.7.1 "declared per message" tension. Each is recorded with the ground on which it was refused, and each cost an earlier round. This is the single highest-value section on the proposal for a lens like this one.
+
+
+
+### [spec-recheck.1.review-feasibility.1]
+
+DECISION: returned an empty findings list for the actor-action-feasibility lens over `spec-changes.md`. BECAUSE the only actor the staged spec block assigns an action to is "a tier-0 gate", and every one of its four refusals is mechanically evaluable from `schemas/lenny-adapter.proto` alone by the parse the tier-0 gates already share. ALTERNATIVES: considered filing the dangling "either service" referent (the two service names `Adapter` and `GatewayControl` survive in `spec/` only in the table rows SPEC-1 deletes, at `spec/04_system-components.md:180-186`, so the replacement block's "a request message either service declares" has no antecedent inside §4.1) — declined as documentation polish under the stated bar, since `GatewayControl` still appears at `spec/04:719`, `spec/05:459`, and `spec/28:1782` and "the gateway-adapter protocol" names both endpoints. A doc-content lens may reasonably see it differently.
+
+FACT: the derivation rule and D2's replacement gate were re-derived from the proto with an independent brace-depth parser today, and every number the proposal states is exact. 88 top-level messages, 0 nested messages (only 4 nested enums, at `schemas/lenny-adapter.proto:543`, `:554`, `:1134`, `:1144`), 31 RPC request types, 6 declaring no top-level `SessionId session_id` (`AdapterEventsRequest`, `CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`), ZERO convention violations in either direction over all 88 messages including `oneof` arms, and exactly two `oneof` blocks (`:1174` `CheckpointRequest`, `:1250` `CheckpointResponse`). The replacement gate is green on day one. EVIDENCE: schemas/lenny-adapter.proto:1174, :1250, :1217, :499-503
+
+FACT: the absence of nested messages is what makes the shared text parse sufficient for the new gate. `protoFields` walks top-level messages with a brace counter (`tests/tier0_static/adapter_proto_parse_test.go:36-62`) and would miss a nested message's fields; none exists, and nested enum value lines (`NAME = N;`) do not match `protoField`, which requires a type token before the name. A future nested message would silently escape the convention check. EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:24, schemas/lenny-adapter.proto:543
+
+WATCHOUT: `spec/04_system-components.md`'s §4.7.1 RPC tables do NOT carry every RPC. The Gateway→Adapter table omits `SendMessage`, `SignalDeadline`, `RevokeCredentials`, `NegotiateVersion`, `GetObservedIntegrationLevel`, and `AdapterEvents`; the Adapter→Gateway table carries only `ReportSessionScrub` and `ReportPodScrub`, omitting the five MCP-forwarding RPCs. So the standing context's line "direction survives in §4.7's two RPC tables" is only partly true: retiring the §4.1 table drops the service and direction columns for eleven request messages with no other spec carrier. This is information loss rather than an inconsistency, and OD1 already owns the retire-or-withdraw judgement, so it is not a finding — but do not repeat the standing-context claim as though it were complete. EVIDENCE: spec/04_system-components.md:698-726
+
+FACT: `sessionScopedMessages` has exactly the three readers the proposal names and no reader outside its own file. The sibling `tests/tier3_contract/adapter_session_address/send_message_stamp_test.go` does not touch it, so §9's omission of that file is correct rather than a gap. EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:81, :102, :130
+
+FACT: SPEC-1's citation `schemas/lenny-adapter.proto:458` for `ReportSessionScrubRequest`'s `SessionId session_id = 2` is EXACT. The standing context's "SPEC-1 cites :458, one line off" is wrong: `message ReportSessionScrubRequest {` opens at `:456`, `string pod_id = 1;` is `:457`, and the address is `:458`. EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+CORRECTS [standing context, "Proto anchors, current and verified"]: that bullet says `ReportSessionScrubRequest` sits at `:456` "with its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)". The address is at `:458` and SPEC-1 is right. A future round should not "fix" SPEC-1's anchor to `:457`.
+
+FACT: the delta this loop exists for is one deletion. `diff -ru` against `spec-r2` shows `spec-changes.md` lost only `## 7. Open decisions for review` and its single remaining question; no other line changed. `grep -n "§7"` over the proposal directory (excluding the review log) returns nothing, so the deletion left no dangling intra-document pointer.
+
+FACT: the one behavioural obligation the reclassification creates is already met and pinned, re-verified rather than taken from the log. `spec/05_runtime-registry-and-pool-model.md:515` refuses a session-scoped request with an empty identifier; `pkg/adapter/coordination.go:108-111` returns `InvalidArgument` before `boundSlotState`; `TestCoordinatorFenceRejectsMissingSessionID` at `pkg/adapter/coordination_test.go:35` asserts it. EVIDENCE: pkg/adapter/coordination.go:108-111
+
+FACT: nothing in `tests/tier0_static/gate_integrity_test.go`'s `tierZeroGates` (`:63-89`) names the retiring gate, and the two tier-0 files 0076 landed (`adapter_proto_generation_scope_test.go`, `adapter_barrier_doc_comment_scope_test.go`) contain no reference to §4.1, the table, or the shared parse. §9's file list is complete on the tier-0 side. EVIDENCE: tests/tier0_static/gate_integrity_test.go:63-89
+
+
+### [spec-recheck.1.review-fresh.1]
+
+DECISION: returned an EMPTY findings list on the staged spec edits — BECAUSE the only delta since `spec-r2` is the deletion of the whole `## 7. Open decisions for review` section from `spec-changes.md` (its single tier-3 population question, which summary OD5 still carries), and every remaining claim in §2-§10 re-verified clean against the tree — ALTERNATIVES: I weighed and dropped the "either service" antecedent point (see WATCHOUT below) and the two residual-hole variants the Traps list already declines.
+
+FACT: the deleted §7 leaves NO dangling reference anywhere in the proposal. `grep -n "§7\|section 7\|Open decisions" *.md` over the proposal folder, excluding the review log, returns only `summary.md:83` (`## Open decisions for human to make`), which is the summary's own section rather than a pointer into `spec-changes.md`. The staged file's headings are now 2, 3, 4, 5, 6, 9, 10 — a numbering gap, not a broken cross-reference. — EVIDENCE: proposals/0075_.../0075_....spec-changes.md:145,155
+
+CORRECTS [Standing context, review-log.md:20]: the "Proto anchors" bullet says SPEC-1's `ReportSessionScrubRequest` citation is "one line off" (claiming the address sits at `:457`). It is not off. `schemas/lenny-adapter.proto:457` is `string pod_id = 1;` and `:458` is `SessionId session_id = 2;`, which is exactly what SPEC-1 cites. Do not "fix" that citation to `:457`; that would introduce a false one. — EVIDENCE: schemas/lenny-adapter.proto:457-458 versus proposals/0075_.../0075_....spec-changes.md:136
+
+WATCHOUT: after SPEC-1 lands, the staged paragraph 1's phrase "A request message **either service** declares" has no antecedent left inside §4.1. The retired table's `Service` column (`spec/04_system-components.md:153-186`) was the only place §4.1 named `Adapter` and `GatewayControl`, and grep confirms those two names then survive in `spec/` only at `spec/04:719`, `spec/05:459`, and `spec/28:1782`. I judged this BELOW the bar as wording rather than a defect (the block's own "the gateway-adapter protocol" antecedent carries the domain, and the retired `:151` used the same phrase), and I am recording it so the next agent does not spend a round re-deriving it. Do not file it without a stronger argument than clarity. — EVIDENCE: proposals/0075_.../0075_....spec-changes.md:9; spec/04_system-components.md:153-186
+
+FACT: the envelope arm of the replacement gate IS buildable from the shared parse once TEST-1's stated extension lands, which closes review-log Open item at `:104`. `protoFields` folds `oneof` arms into the enclosing message's field set (`tests/tier0_static/adapter_proto_parse_test.go:36-62`), so with each field's type recorded, `CheckpointRequest`'s arm `start` carries type `CheckpointStart`, and `fields["CheckpointStart"]` is already in the same map because the adapter proto declares every message at the top level. No cross-file type resolution is needed. — EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:24,33-62; schemas/lenny-adapter.proto:1174-1178,1193-1218
+
+FACT: the addressing convention holds in both directions with zero counterexamples, re-derived by two independent greps today. `grep -n "session_id\s*=\s*[0-9]"` and `grep -n "SessionId \w* *="` over `schemas/lenny-adapter.proto` return the SAME 26 lines, so no field named `session_id` carries another type and no field of type `SessionId` carries another name. The replacement gate is green on the shipped proto. — EVIDENCE: schemas/lenny-adapter.proto:342,365,384,404,420,458,683,707,847,909,965,990,1022,1036,1064,1088,1118,1217,1305,1339,1456,1487,1539,1577,1610,1674
+
+USEFUL [Standing context Traps, review-log.md:66-98]: the thirty-item Traps list saved this round at least four separate derivations — the `AdapterEventsRequest` counterexample, the nested-address hole, the "only way a request addresses a session" tension, and the §4.7.1 declared-versus-derived tension were each reached independently and dropped on the recorded ground within a minute. Keep this section intact through compaction.
+
+UNVERIFIED: nobody has executed tier 0 or tier 3 against the staged design; every green/red claim on this proposal, mine included, is derived from reading files. The implementor should run `lenny-test --tier 0` immediately after S2 rather than after S3.
+
+
+### [spec-recheck.1.review-kubernetes.1]
+
+DECISION: returned an empty findings list — BECAUSE the staged spec block touches only the gateway-adapter gRPC request-message classification in `spec/04_system-components.md` §4.1 and names no CRD, no status subresource, no controller, no finalizer, no admission webhook, and no reconcile path, so every idiom this lens owns (single-writer field-manager status ownership, status-as-observed-state, finalizer safety, CRD-as-message-bus, webhook coherence, level-triggered watches, controller-on-hot-path) has no surface here — ALTERNATIVES: filing on the §4.7.1 rows SPEC-1 leaves standing (`:725` `ReportSessionScrub`, `:726` `ReportPodScrub`), which do describe gateway writes to `agent_pod_state` and to `SandboxClaim.status`; rejected because SPEC-1 edits neither, both agree with the derived rule, and neither describes a non-owner writing another component's status.
+
+FACT: the delta this recheck exists for is a deletion only. `diff -u` of `spec-changes.md` against the r2 snapshot shows one hunk: `## 7. Open decisions for review` and its single item (the tier-3 covered population) are removed, resolved into `non-spec-changes.md` §5 TEST-2. No staged spec sentence changed. — EVIDENCE: scratchpad/cp-snap/.../spec-r2/0075_....spec-changes.md vs proposals/0075_.../0075_....spec-changes.md
+
+FACT: the orchestrator brief's line "This proposal's §7 question 1 asks whether the replacement gate closes the hole the retired table's gate closed" is stale on two counts: §7 no longer exists, and while it existed its only item was the tier-3 population question, not a gate-coverage question. Do not go looking for a withdrawal trigger in §7. — EVIDENCE: proposals/0075_.../0075_....spec-changes.md (no `## 7`)
+
+FACT: the derivation rule is green on the shipped protocol definition, checked mechanically rather than read. A brace-depth parse of `schemas/lenny-adapter.proto` over both service blocks returns 31 distinct RPC request messages, 25 declaring a top-level `SessionId session_id` and 6 declaring none (`CheckpointRequest`, `DemoteSDKRequest`, `NegotiateVersionRequest`, `GetObservedIntegrationLevelRequest`, `AdapterEventsRequest`, `ReportPodScrubRequest`), and across every message in the file there is no field named `session_id` of another type and no field of type `SessionId` under another name. So the replacement tier-0 gate's four refusals all pass on day one. — EVIDENCE: schemas/lenny-adapter.proto
+
+FACT: 25 addressed request messages + `CheckpointRequest` + `CheckpointStart` reconciles exactly to the retired table's 32 rows once `CoordinatorFenceRequest` moves to session under 0076's OD3 (20 Adapter session rows including the envelope pair, 5 Adapter pod rows, 6 GatewayControl session rows, 1 GatewayControl pod row). D1's "reproduces every classification the retired table carried" checks out arithmetically. — EVIDENCE: spec/04_system-components.md:153-186
+
+FACT: `oneof` occurs at exactly two message-level sites in the protocol definition, `CheckpointRequest:1174` and `CheckpointResponse:1250`, so §4's claim that the envelope predicate selects `CheckpointRequest` and nothing else is verified rather than asserted. — EVIDENCE: schemas/lenny-adapter.proto:1174, :1250
+
+FACT: retiring the §4.1 table strands no cross-reference. `grep -rn "Request Message Scope\|message scope"` over `spec/`, `docs/`, `schemas/`, and `charts/` returns exactly one hit, the heading itself at `spec/04_system-components.md:149`. And after the retirement `:726` really is the only sentence in `spec/` classifying a request message pod-scoped: every other `pod-scoped` hit in `spec/` names a hold gauge, a rotation ceiling, or a Redis key rather than a request message. — EVIDENCE: spec/04_system-components.md:149, :726; spec/10_gateway-internals.md:60; spec/04_system-components.md:872; spec/12_storage-architecture.md:202
+
+FACT: every K8s-adjacent anchor SPEC-1 rests on resolves as claimed. `spec/10_gateway-internals.md:57` states `CoordinatorFence` is "the only way to exit hold state"; `:60` states "The hold itself and the `lenny_adapter_coordinator_hold` gauge remain pod-scoped"; `spec/05_runtime-registry-and-pool-model.md:515` carries the empty-identifier `InvalidArgument` refusal; `pkg/adapter/checkpoint.go:74-84` enforces it on the opening frame. — EVIDENCE: spec/10_gateway-internals.md:57, :60; spec/05_runtime-registry-and-pool-model.md:515; pkg/adapter/checkpoint.go:74-84
+
+WATCHOUT: the orchestrator brief's proto anchors are stale by 8 lines against this tree (`SessionId` at `:589`, `CoordinatorFenceRequest` at `:1447`/`:1448`). The tree has `message SessionId` at `:596`, `message CoordinatorFenceRequest` at `:1455`, and its `SessionId session_id = 1` at `:1456`, which is what the proposal cites. Trust the proposal's anchors over the brief's here. — EVIDENCE: schemas/lenny-adapter.proto:596, :1455-1456
+
+UNVERIFIED: nobody in this lane has run tier 0 or tier 3; my proto measurement is a Python parse of the `.proto` text, not the shared Go parse the gate will use (`tests/tier0_static/adapter_proto_parse_test.go`). A field type or `oneof` membership the Go parse resolves differently is still possible and belongs to the non-spec loop.
+
+
+### [spec-recheck.1.review-mechanism.1]
+
+DECISION: returned an empty findings list — BECAUSE the only delta in `spec-changes.md` since the `spec-r2` snapshot is the deletion of `## 7. Open decisions for review` (its retire-or-withdraw and tier-3-population questions now live as summary OD1 and OD5), and a full end-to-end mechanism trace of the staged block found no defect — ALTERNATIVES: filing the "the addressing frame opens the stream" clause as an unchecked assertion (rejected: the classification does not depend on which frame opens the stream, and frame ordering is a protocol semantic no proto-text gate could see, so it is hypothetical hardening); filing the ShutdownRequest paragraph's closing clause "neither operation is selected by a field's presence standing in for a scope" as drifting against a rule that now derives scope from field presence (rejected: its subject is the handler's operation selection, not the message's classification, and the §4.7.1 "declared per message" variant of this tension has been declined six times already).
+
+FACT: no dangling `§7` reference survives the deletion. `grep -n "§7"` over every proposal file except the review log returns nothing — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/ (all `*.md`)
+
+FACT: every gate refusal the staged block states can actually fire, and none is vacuous. (a) `session_id` under another type, (b) `SessionId` under another name, (c) an envelope with a top-level address, (d) an envelope whose frames declare zero or two addresses are each satisfiable by a legal proto edit, and all four are green on the shipped tree — EVIDENCE: schemas/lenny-adapter.proto — 26 `SessionId session_id` declarations and no other spelling of either half; the only two `oneof` blocks are `CheckpointRequest` :1174 and `CheckpointResponse` :1250.
+
+FACT: no runtime code keys on the message-scope classification, so the fence's pod→session move has no code-side write path that could bypass the derivation. `grep -rn "podScoped\|sessionScoped\|PodScoped\|SessionScoped" pkg/ cmd/` returns only erasure orderings, admission data-residency tests, and a sessionserver test helper — EVIDENCE: pkg/gateway/storage/erasure/erasure.go:58-60, pkg/admission/data_residency_validator/validator_test.go:167
+
+FACT: predicate agreement across the four carriers of the gate's clause set is exact — the staged spec block, D2, the summary's "What changes" bullet, and non-spec `## 8. Testing` state the same four refusals with the same conjuncts and no drift — EVIDENCE: 0075_...spec-changes.md:20-25 and :39-42, 0075_...summary.md:21-24, 0075_...non-spec-changes.md:103-107
+
+USEFUL [Standing context / Traps]: the trap list saved a full round. Five of the six candidates my lens surfaced independently (the "only way a request addresses a session" tension, the nested-address hole, the §4.7.1 declared-per-message tension, `AdapterEventsRequest` as a counterexample, and the session-scoped fence exiting a pod-wide hold) are each recorded there with the ground on which they were declined, three to six times each — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.review-log.md `## Standing context` → `### Traps`
+
+USEFUL [Standing context / "Orchestrator briefs carry stale content"]: confirmed again this round. The brief's proto anchors (`:589`, `:1166`, `:1447`, `:1448`) are each seven low; the tree has `message SessionId` at `schemas/lenny-adapter.proto:596`, `CheckpointRequest` at `:1173`, `CoordinatorFenceRequest` at `:1455` with its address at `:1456`. The brief also still describes "§7 question 1" as the existential question after §7 was deleted. The proposal's own anchors are the correct ones.
+
+
+### [spec-recheck.1.review-operational.1]
+
+DECISION: returned zero findings on the operational lens — BECAUSE the staged spec edits touch no condition writer, no metric, no alert, and no operator-facing page, and every operational citation SPEC-1 makes resolves — ALTERNATIVES: considered filing spec/04:712 (`CoordinatorFence` row, "Announce new `coordination_generation` to the pod") as newly contradicted once §4.1 derives the fence session-scoped; rejected because :712 states the handler's recipient rather than the request's address class, and `spec/04:190`'s `ShutdownRequest` paragraph is the standing precedent that the two may diverge. It is already false about the tree (0076 residue), so SPEC-1 does not make it wrong.
+
+FACT: the whole observability surface is clean for this proposal. `lenny_adapter_coordinator_hold` is inventoried at `spec/16_observability.md:185` and `docs/reference/metrics.md:309` with no scope word, `pkg/alerting/rules/rules.go` declares no alert on it, and `docs/runbooks/coordinator-handoff-slow.md` is the delegation handoff rather than the coordinator hold. No metric, alert, or runbook is keyed on request-message scope. — EVIDENCE: spec/16_observability.md:185, docs/reference/metrics.md:309, docs/runbooks/index.md:95
+
+FACT: no spec-side register owes a row for the staged rule. `tests/tier0_static/claim_register_test.go:23-27` scopes the §28.4 claim register to "every normative statement §28 makes about a mechanism", so a §4.1 rule stating a tier-0 gate needs no claim row; and `tierZeroGates` (`tests/tier0_static/gate_integrity_test.go:63-92`) is the migration's own fixed list and does not carry the retiring gate, so retiring it owes no edit there. Both were checked from scratch this round. — EVIDENCE: tests/tier0_static/claim_register_test.go:23, tests/tier0_static/gate_integrity_test.go:63
+
+CORRECTS [standing-context: Proto anchors bullet]: the standing context says `ReportSessionScrubRequest` is at `:456` "with its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)". That is wrong in the other direction: `schemas/lenny-adapter.proto:457` is `string pod_id = 1;` and `:458` is `SessionId session_id = 2;`. SPEC-1's `:458` citation is exact, and there is no off-by-one to carry forward. — EVIDENCE: schemas/lenny-adapter.proto:457-458
+
+USEFUL [standing-context: Traps]: the "Long lines hide the sentences citations point at" trap saved a wrong finding. `spec/04:725`, `:726`, `spec/10:60`, and `spec/05:515` are each one very long line whose cited clause is the last sentence; `sed -n Np | cut -c1-N` shows none of it. Piping a table row through `tr '|' '\n' | tail -3`, and prose through `fold -w 150`, is what made each citation verifiable.
+
+FACT: the tier-11 gate SPEC-1 cites is real and is what keeps §4.7.1's two surviving per-message scope statements out of the edit list. `TestSessionScrubReportAddressingAgreesBetweenSpecAndContractDoc` (`tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76`) requires both `spec/04:725` and `docs/reference/adapter-contract.md:81` to carry the identical opener "The request is session-scoped: it is " plus the shared rule constant. Any future round that proposes to reword `:725` must move the doc row and the gate constant in the same change. — EVIDENCE: tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76, docs/reference/adapter-contract.md:81
+
+FACT: after SPEC-1 retires `:151`, `:175`, and `:188`, a repo-wide grep for "pod-scoped" over `spec/ docs/ schemas/ charts/` leaves exactly one sentence classifying a request message pod-scoped (`spec/04:726`), one about the hold and its gauge (`spec/10:60`), and two unrelated hits (`spec/04:872` rotation ceiling, `spec/12:202` tenant prefix, plus `docs/runbooks/dual-store-unavailable.md:68` "gateway-pod-scoped"). SPEC-1's claim that `:726` becomes the only such sentence is exact. — EVIDENCE: spec/04_system-components.md:726, spec/10_gateway-internals.md:60
+
+WATCHOUT: the spec-lane delta this round is one deletion only — the old `## 7. Open decisions for review` block left `spec-changes.md`. Nothing else in that file changed. A reviewer who spends the round on the delta finds nothing; the value is in re-verifying SPEC-1's operational citations, which is what this entry records as done. — EVIDENCE: diff of scratchpad/cp-snap/.../spec-r2 against the live directory
+
+
+### [spec-recheck.1.review-performance.1]
+
+DECISION: returned an empty findings list — BECAUSE the staged spec edits create no store write, no key, no watch, and no reconcile trigger, so there is no capacity-tier arithmetic to state and no failure path that degrades. ALTERNATIVES: re-filing the spec/10:39 same-generation-retry item and the missing coordfence backoff, rejected because both are pre-existing, §6 assigns the fence's acceptance predicate to 0080 §1.16, and SPEC-1 touches neither spec/10 nor anything that makes them newly wrong.
+
+FACT: the spec-lane delta this round is one deletion. `diff -u` of the spec-r2 snapshot against the live `spec-changes.md` shows only the removal of `## 7. Open decisions for review` and its single tier-3-population question. D1-D6, §3, §4, SPEC-1, §6, §9, and §10 are byte-identical to the text the previous spec round converged on. — EVIDENCE: scratchpad/cp-snap/0075_.../spec-r2/0075_....spec-changes.md vs proposals/0075_.../0075_....spec-changes.md
+
+FACT: the performance lens has no subject on this proposal and this is now settled rather than a judgement call. The staged block states a classification predicate, an envelope clause, and a tier-0 gate constraint. Nothing in it names a store, a queue, a leader, or a rate. The classification's runtime consequence, the empty-identifier refusal at `spec/05_runtime-registry-and-pool-model.md:515`, is already executed before any resolve at `pkg/adapter/coordination.go:109-111`, so the derived class adds no per-request work. A future lens firing here should spend its budget on the tier-0/tier-3 lane rather than re-deriving this. — EVIDENCE: spec/05_runtime-registry-and-pool-model.md:515, pkg/adapter/coordination.go:109-111
+
+FACT: `spec/10` §10.1.4 already reads per-session post-0076 and needs nothing from SPEC-1. `:38` states the pod "records the new generation for that session", `:40` that "The pod accepts only RPCs whose generation matches the value it holds for the session the RPC names", and `:60` that the hold gauge event "carries no generation, because the fenced generation is held per bound session and no pod-level fenced generation remains". The pod-scoped hold at `:57` and the session-scoped fence coexist in the shipped text; the failure path SPEC-1 documents is the one already running. — EVIDENCE: spec/10_gateway-internals.md:38, :40, :57, :60
+
+USEFUL [standing context, Traps]: the "do not re-file the session-scoped fence exiting a pod-wide hold" trap and the "spec/10:39 / coordfence backoff" Open together cover the whole surface this lens would otherwise have re-derived from scratch. They saved a full pass over `pkg/gateway/coordination/coordfence`.
+
+WATCHOUT: the cache key still omits `summary.md`, so a summary-only edit between rounds is served this round's empty answer. The key for this text is `2d25f5f323c0`. If a later round changes only the summary and this lens returns empty in under a minute, it is a replay rather than a review. — EVIDENCE: scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/performance-r1-2d25f5f323c0.json
+
+
+### [spec-recheck.1.review-reliability.1]
+
+DECISION: returned zero findings on the spec staging — BECAUSE the only reliability surface the staged text touches is the fence reclassification, and every recovery-path consequence of it is either already stated per-session elsewhere in `spec/` or explicitly fenced off as another proposal's subject — ALTERNATIVES: filing the "session-scoped fence exits a pod-wide hold" tension (the standing context's Traps records four lenses reaching and declining it, and D3 plus §6 make re-deriving 0076's OD3 a non-goal); filing the fence-retry acceptance predicate (see FACT below); filing that the derived rule silently classifies a future session-scoped message as pod-scoped when its author omits the address (speculative future-authoring, no runtime mechanism breaks, and the retire-or-withdraw question that owns it is summary OD1).
+
+FACT: the reliability lens's one real hook into this proposal is the fence-retry acceptance predicate, and it is correctly owned elsewhere. `spec/10_gateway-internals.md:39` orders a retry "with the same generation value (up to 3 attempts)", while `CoordinatorFenceResponse`'s own comment says `accepted` is false "when the supplied generation is not greater than the generation the pod holds", so a fence whose ack is lost is refused on retry. `spec-changes.md:151-152` lists this as a non-goal and points at proposal 0080 §1.16, which resolves: the heading "### 1.16 The pod refuses the fence retry §10.1.2 orders" — EVIDENCE: proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:216
+
+FACT: `spec/28_communication-channels.md:314-317` already states the fence is per-session ("The pod records the generation against the session the fence names... A fence for one session does not change the generation the pod holds for another"), and `spec/10_gateway-internals.md:40` holds `last_fenced_generation` "per bound session". So SPEC-1's reclassification removes a contradiction from the recovery description rather than creating one; there is no §28 or §10 edit site owed on scope grounds — EVIDENCE: spec/28_communication-channels.md:314, spec/10_gateway-internals.md:40
+
+FACT: the delta this recheck exists for is a deletion only. `diff -u` of `spec-changes.md` against the `spec-r2` snapshot removes `## 7. Open decisions for review` and its single question and changes nothing else. No new spec text was written this round, so the fixer-introduced-error risk this lane warns about does not apply to this delta — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md:145-155
+
+USEFUL [standing context / Traps]: "Do not re-file the session-scoped fence exiting a pod-wide hold" and "Do not re-file `AdapterEventsRequest` as a counterexample" each saved a full derivation; both were the first two places this lens went. The Traps section is worth reading before any repository work on this proposal, not after.
+
+
+### [spec-recheck.1.review-security.2]
+
+DECISION: returned an EMPTY findings list, the sixth consecutive empty security pass on this proposal — BECAUSE the entire delta to the staged spec edits since `spec-r2` is the deletion of `## 7. Open decisions for review`, which removed no normative text and dangled no reference, and both lens checks re-derived clean from the tree — ALTERNATIVES: filing the retired table-reconciliation gate as a removed control (rejected: the removal is disclosed twice, once in normative staged spec text at spec-changes.md:20-25 and once in summary OD1 at summary.md:93-99); filing the fail-open unconventional-spelling residual (rejected: same disclosure, and OD1 prices it); filing the session-scoped fence exiting a pod-wide hold (rejected: standing-context trap, 0076 OD3 territory).
+
+FACT: the §7 deletion is inert. `grep -n "§7\|section 7\|Open decisions for review" *.md` over the non-log proposal files returns nothing, so no surviving sentence in the problem statement, the summary, the checklist, or the non-spec staging points at the deleted section. A future round need not re-check this. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md (no §7)
+
+FACT: no runtime control keys on the §4.1 scope class, re-derived rather than replayed. `coordinatorHoldAllowedMethods` is a map of five gRPC full-method strings (`pkg/adapter/holdstate.go:52-58`) read at `:336` (unary) and `:349` (stream), so retiring the declared table cannot widen or narrow the hold-state allowlist by one method. This is the single fact that closes the only plausible security regression on this proposal and it has now held on four independent derivations. — EVIDENCE: pkg/adapter/holdstate.go:52-58, :336, :349
+
+FACT: the scope column of the retired table, extracted mechanically rather than read, is 26 session rows and 6 pod rows, the pod six being AdapterEventsRequest, CoordinatorFenceRequest, DemoteSDKRequest, GetObservedIntegrationLevelRequest, NegotiateVersionRequest, ReportPodScrubRequest. Only the fence declares a top-level `SessionId session_id`, so the derived session class is a strict superset of the declared one with a delta of exactly one message, and the `spec/05:515` empty-identifier refusal can only be added. Command: `awk 'NR>=153 && NR<=186' spec/04_system-components.md | awk -F'|' 'NF>3 {gsub(/ /,"",$5); gsub(/`/,"",$2); print $5, $2}' | sort`. — EVIDENCE: spec/04_system-components.md:153-186; schemas/lenny-adapter.proto:1455-1456
+
+FACT: no adapter-leg RPC carries a session address in gRPC metadata. That matters because paragraph 1 of the staged block asserts a top-level `SessionId session_id` is "the only way a request on this protocol addresses a session"; a metadata-borne address would falsify it and leave an addressing path outside the derivation. A grep of `spec/04` and `spec/28` for metadata alongside session or gRPC returns only session-record metadata, interceptor inputs, and credential rotation mode. — EVIDENCE: spec/04_system-components.md:194, :1120-1122
+
+FACT: five `// spec: 4.1 (request message scope)` annotations sit in `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go` (`:26`, `:132`, `:408`, `:582`, `:747`) and one in `tests/tier3_contract/rest_sessions/slot_address_absence_test.go:99`. None reads the table; each cites the subsection, which SPEC-1 keeps by name and heading. They are NOT missed edit sites and none belongs in §9. A future edit-sites or security lens that greps for "message scope" hits them first. — EVIDENCE: tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go:26; tests/tier3_contract/rest_sessions/slot_address_absence_test.go:99
+
+WATCHOUT: `tests/tier0_static/adapter_proto_parse_test.go:13` describes the shared parse in its header comment as joining "the message-scope classification table to the request messages the two services declare". SPEC-1 falsifies that comment. It is not a missed edit site, because §9 already lists that file as touched, but an implementor who extends the parse without rewriting its header leaves a doc comment that names a table the specification no longer carries. — EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:13; proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md:160-161
+
+WATCHOUT: the cache key for this run is `2d25f5f323c0` and it still omits `summary.md`. The fail-open residual this lens must weigh is disclosed in TWO places, the staged spec block and summary OD1. A later pass that rewrites OD1 alone changes no cache input, so a security lens would be served this empty answer without re-reading the disclosure it rests on. Re-read summary.md:83-160 by hand before trusting a hit. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md:93-99
+
+USEFUL [non-spec.5.review-security.1]: its DECISION framing, that check (1) finds one control removed openly and check (2) finds no security bound anywhere in the staging, is the correct decomposition of this proposal for this lens and survived a full independent re-derivation. A seventh pass can spot-check the two FACTs above rather than rebuild the argument.
+
+USEFUL [spec.4.review-security.1]: the strict-superset fact remains the load-bearing one. It is what makes the whole retirement fail-closed-safe, and it is cheap to re-verify with the one-line awk above.
+
+OPEN: nothing new. The security lens has now returned empty on six consecutive rounds across both lanes. Re-run it only if a fix pass edits the third staged paragraph (the gate's clauses and its blind spot), summary OD1's residual statement, or any sentence tying a scope class to a refusal.
+
+
+
+### [spec-recheck.2.review-applicability.2]
+
+DECISION: returned an empty findings list for the applicability/sequencing lens over the staged spec edits — BECAUSE the delta this loop exists for is a single deletion (the whole `## 7. Open decisions for review` section left `spec-changes.md`; `diff -u scratchpad/cp-snap/.../spec-r2/...spec-changes.md` against the live file shows that hunk and nothing else), and it strands nothing: no surviving line in `spec-changes.md`, `non-spec-changes.md`, `implementation-checklist.md`, or `problem-statement.md` references a `§7`, and the two `§7` consumers named in the standing context (summary OD1, OD2) live in `summary.md`, outside this loop's editable set. Re-walked the whole staging anyway: SPEC-1's four anchors resolve uniquely and verbatim, the replacement text is quoted in full in D1 so nothing is left to author, no edit references an artifact a later sub-step creates, and no created spec artifact exists at all (SPEC-1 adds no heading, anchor, section number, identifier, or register key). ALTERNATIVES: considered filing the "either service" antecedent, which the block reuses from the retired `:151` even though the Service column that gave it force is deleted (rejected: text is quoted verbatim, so the edit is deterministic — an edit-sites/content question already declined at `[spec.1.review-edit-sites.1]`); and considered filing the staged block's reference to "A tier-0 gate" that only S2 builds as a class-1 forward reference (rejected: spec prose naming a gate does not make the S1 edit unappliable, S1's own line records the tier-0 red window, and `spec/28:64`/`spec/18:85` are precedents).
+
+FACT: `spec-changes.md`'s live section set is §2, §3, §4, §5, §6, §9, §10 — there is no §1, §7, §8, or §11 in that file. `§1.2` (cited three times, at `:52`, `:68`, `:115`) resolves into `problem-statement.md:46`, and `§8 Testing` lives in `non-spec-changes.md:99`. A lens that checks "the Testing section is absent" must look in `non-spec-changes.md`, not here. EVIDENCE: 0075_....spec-changes.md:52,68,115; 0075_....problem-statement.md:46; 0075_....non-spec-changes.md:99
+
+FACT: independently re-verified, one anchor at a time, the five citations SPEC-1 and §4 turn on that a stale brief could have moved: `spec/04_system-components.md:149` is `#### Request Message Scope`, `:151` the introducing paragraph, `:153-186` the 32-row table (6 pod rows: `:175`, `:176`, `:177`, `:178`, `:179`, `:186`), `:188` the grounding paragraph, `:190` the `ShutdownRequest` precedent, `### 4.2` at `:192`; `spec/10_gateway-internals.md:57` carries "which is the only way to exit hold state" and `:60` ends "The hold itself and the `lenny_adapter_coordinator_hold` gauge remain pod-scoped."; `schemas/lenny-adapter.proto:458` is `SessionId session_id = 2;` inside `ReportSessionScrubRequest` (opened `:456`), `:499-503` is the whole of `ReportPodScrubRequest`, and `:1217` is `SessionId session_id = 7;` inside `CheckpointStart`. Every one is exact. The standing context's parenthetical that SPEC-1's `:458` is "one line off" was already corrected at `[spec.1.review-applicability.1]`; this is a second independent confirmation that `:458` is right.
+
+FACT: the biconditional the staged gate paragraph states is green on the shipped proto by direct count, not by inheritance: `grep -c 'SessionId session_id *= *[0-9]' schemas/lenny-adapter.proto` returns 26, and both violation greps (a `session_id`-named field of another type, a `SessionId`-typed field under another name) return nothing. The only `oneof` blocks are `schemas/lenny-adapter.proto:1174` and `:1250`. EVIDENCE: schemas/lenny-adapter.proto:1174,1250
+
+FACT: the deleted `:149-191` block contains no occurrence of the word "channel", so `tests/registers/identifier-senses.yaml`'s eight `spec/04_system-components.md` rows — which key on the 1-based occurrence index of a retired channel spelling within the file — cannot shift when the block is removed. This is the one register in the tree whose keys are positional inside `spec/04`, so it was the only candidate for a silent renumbering break. EVIDENCE: tests/registers/identifier-senses.yaml:13-36
+
+FACT: `tests/tier0_static/adapter_proto_event_taxonomy_test.go` is the only tier-0 file besides the retiring gate that names `spec/04_system-components.md` (`:34`), and its subject is `§4.7.3` (`:37`) read out of proto doc comments. It never opens the spec file. Nothing in tier 0 or tier 11 reads the `#### Request Message Scope` block except the gate TEST-1 replaces. EVIDENCE: tests/tier0_static/adapter_proto_event_taxonomy_test.go:34,37
+
+USEFUL [Traps, "Snapshot diffs are routinely empty"]: `diff -ru` against `spec-recheck-r2` printed nothing, exactly as the trap predicts, and the trap named `spec-r2` as the snapshot to use instead. That saved a round of assuming a broken snapshot. The real delta was one deleted section.
+
+USEFUL [Traps, "Orchestrator briefs carry stale content"]: this run's brief again gave the pre-refresh proto anchors (`:589`, `:1447`, `:1448`, `:1166`) and again called "§7 question 1" the existential question, when §7 no longer exists in `spec-changes.md`. The proposal's own anchors were right in every case.
+
+
+### [spec-recheck.2.review-citations.1]
+
+FACT: every concrete citation in the staged spec file resolves correctly as of 2026-09-07. Re-verified all of: spec/04_system-components.md :149 heading, :151, :153-186, :175, :188, :190, :712, :725, :726; spec/10_gateway-internals.md :57, :60; spec/05_runtime-registry-and-pool-model.md :515; schemas/lenny-adapter.proto :133, :458, :499-503, :596, :1174, :1217, :1250, :1455-1456; pkg/adapter/checkpoint.go:74-84; pkg/adapter/server.go:302, slot.go:59, coordination.go:17-38/:107/:116; tests/tier0_static/adapter_proto_message_scope_test.go:17-27 and :75-81; tests/tier0_static/adapter_proto_parse_test.go:10-15; tests/tier0_static/claim_register_proto_agreement_test.go:64; tests/spec-map.json :156, :169, :5670; tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76; docs/reference/adapter-contract.md:81. EVIDENCE: spec/04_system-components.md:151
+
+CORRECTS [orchestrator brief]: two anchors in the orchestrator's own notes are drifted and the proposal's are right. `message SessionId` is at schemas/lenny-adapter.proto:596, not :589, and `CoordinatorFenceRequest` opens at :1455 with `SessionId session_id = 1` at :1456, not :1447/:1448. The proposal's problem-statement.md:38 and :48 already carry the correct numbers. Do not "fix" the proposal toward the brief. EVIDENCE: schemas/lenny-adapter.proto:596, schemas/lenny-adapter.proto:1455
+
+CORRECTS [orchestrator brief]: the brief says "This proposal's Section 7 question 1 asks whether the replacement gate closes the hole the retired table's gate closed". That section no longer exists. The only delta in spec-changes.md since the spec-r2 snapshot is the deletion of the whole `## 7. Open decisions for review` block; the question now lives in summary.md `## Open decisions for human to make` as OD1, which this review may not file on. EVIDENCE: proposals/0075_.../0075_....summary.md:83
+
+FACT: the proto census re-derives exactly as the proposal states, on an independent parse written from scratch. 31 RPC request types across the two service blocks, 25 declaring a top-level `session_id`, and the 6 that do not are AdapterEventsRequest, CheckpointRequest, DemoteSDKRequest, GetObservedIntegrationLevelRequest, NegotiateVersionRequest, ReportPodScrubRequest. The addressing convention holds in both directions: 26 `SessionId session_id` declarations, zero `SessionId` fields under another name, zero `session_id` fields of another type. D1's arithmetic (24 non-envelope session rows + the fence = 25; 5 pod rows + the envelope = 6) reconciles against the 32-row table. EVIDENCE: schemas/lenny-adapter.proto:596
+
+FACT: nothing in the tree outside the tier-0 gate reads the retired table's text, and nothing links to the `#### Request Message Scope` heading. `grep -rln "Request Message Scope|declared in the table below|appears on messages of both classes|carries \`session_id\` and stays pod-scoped" tests/ scripts/ pkg/ cmd/ docs/` returns tests/tier0_static/adapter_proto_message_scope_test.go alone, which Section 9 already lists. The two sibling tier-0 files 0076 landed do not read spec/04 Section 4.1: adapter_proto_generation_scope_test.go and adapter_barrier_doc_comment_scope_test.go carry no spec/04 anchor at all, and adapter_proto_event_taxonomy_test.go anchors on Section 4.7.3. So Section 9's file list is complete on the spec side; do not re-derive this. EVIDENCE: tests/tier0_static/adapter_proto_event_taxonomy_test.go:37
+
+FACT: after SPEC-1 lands, spec/04_system-components.md:726 really is the only sentence left in spec/ that classifies one request message pod-scoped. The other `pod-scoped` hits are spec/10:60 (the hold and its gauge), spec/04:872 (the rotation ceiling), and spec/12:202 (Redis key scoping), none of which classify a request message. SPEC-1's claim checks out. EVIDENCE: spec/04_system-components.md:726
+
+USEFUL [review-log standing context]: the Settled block's proto census, addressing-convention count, and "the only two oneof blocks" entries all held against a fresh derivation. Reading them first turned three separate derivations into one confirmation pass.
+
+DECISION: returned an empty findings list BECAUSE every citation in the staged spec file resolved to text saying what the proposal claims, and the two candidates I weighed did not clear the bar. ALTERNATIVES: (1) D1's sentence at spec-changes.md:27-29, "the ones other than the stream envelope that carry the address are exactly the table's session rows ... and the ones that carry none are exactly its pod rows" — read without carrying the "other than the stream envelope" restriction into the second clause, the second clause is false of CheckpointRequest, which carries no address and is a session row. Rejected because the very next sentence (:30-32) names the envelope clause as carrying CheckpointRequest and CheckpointStart, so the restriction is unambiguous in context, and this is rationale wording rather than staged spec text, which is the exact ground the material skeptic used to refute the D2 wording finding. (2) The staged third paragraph states one blind spot ("a session addressed under a name and a type that are both unconventional") while the gate also cannot check the envelope paragraph's "it opens the stream" clause. Rejected because the envelope's derived scope does not depend on which frame opens the stream, only on which frame declares the address, so the unchecked clause is descriptive and the derivation stays sound without it.
+
+WATCHOUT: `spec/04_system-components.md:725` and `:726` state per-message scope in prose and SPEC-1 deliberately leaves both standing, while the new Section 4.1 text says the classification is "derived from the message's field set rather than declared per message". This reads like a contradiction on a first pass and is not one: both sentences agree with the derivation, and :725's exact wording is held by a tier-11 gate on two carriers. SPEC-1 already reasons this through at spec-changes.md:131-142. Do not file it. EVIDENCE: tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:67
+
+
+### [spec-recheck.2.review-client-surface.1]
+
+DECISION: Returned zero findings under the client-facing-surface lens — BECAUSE the staged spec edit
+touches one internal classification block in `spec/04` §4.1 and no parallel client representation carries
+that classification: `docs/` names RPCs and never request message types (`docs/reference/adapter-contract.md:69`
+gives `CoordinatorFence` a purpose with no scope word), `grep -rn CoordinatorFence sdks/ charts/ schemas/*.json`
+returns nothing, no CRD, OpenAPI, MCP tool schema, JSONL schema, or SDK type file mentions message scope, and
+the only per-message scope statements outside the retired table are `spec/04:725`/`:726`, both of which agree
+with the derivation and are staged as survivors — ALTERNATIVES: filing `docs/api/internal.md:209-215` (its
+`CheckpointRequest` excerpt is false about the shipped proto) — rejected, it is already false before the edit
+and its fix lands in docs, which this loop may not edit; it is already on the standing-context Deferred list.
+
+FACT: the whole delta since the lane's last converged review is the deletion of `## 7. Open decisions for
+review` from `spec-changes.md`; the staged block (D1's quoted paragraphs, D2–D6, §3, §4, SPEC-1, §6, §9, §10)
+is byte-identical to `spec-r2`. `diff -u scratchpad/cp-snap/.../spec-r2/...spec-changes.md
+proposals/.../...spec-changes.md` shows exactly one hunk. The `spec-recheck-r2` snapshot is byte-identical to
+the live directory, so diffing against it prints nothing. — EVIDENCE: proposals/0075_.../0075_....spec-changes.md:145-155
+
+FACT: every citation in `spec-changes.md` re-verified today at HEAD: `spec/04_system-components.md:151`
+(introducing paragraph), `:153-186` (32-row table, header at `:153`), `:175` (fence row, scope `pod`), `:188`
+(grounding sentence), `:190` (`ShutdownRequest`), `:725`/`:726` (§4.7.1 spans `:692-727`, so the `§4.7.1`
+attribution is right), `schemas/lenny-adapter.proto:458` (`SessionId session_id = 2` in
+`ReportSessionScrubRequest`, whose `message` line is `:456`), `:499-503`, `:1217` (`SessionId session_id = 7`
+in `CheckpointStart`), `spec/05_runtime-registry-and-pool-model.md:515`, `spec/10_gateway-internals.md:57`
+and `:60`, `pkg/adapter/checkpoint.go:74-84`, `tests/tier0_static/adapter_proto_message_scope_test.go:17-27`,
+`tests/tier0_static/adapter_proto_parse_test.go:10-15`, `tests/tier0_static/claim_register_proto_agreement_test.go:64`,
+`tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76` (function opens at `:43`),
+`docs/reference/adapter-contract.md:81`. No citation is off. — EVIDENCE: spec/04_system-components.md:692,725,726
+
+CORRECTS [standing context, Settled bullet "Proto anchors, current and verified"]: it says
+"`ReportSessionScrubRequest` `:456` with its address at `:457` (SPEC-1 cites `:458`, one line off, below the
+bar)". That is wrong. `:456` is `message ReportSessionScrubRequest {`, `:457` is `string pod_id = 1;`, and
+`:458` is `SessionId session_id = 2;`. SPEC-1's `:458` is exact and no allowance is needed. Cost: one
+re-derivation. — EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+FACT: the addressing convention the rule rests on holds absolutely in `schemas/lenny-adapter.proto`, by a
+brace-tracked parse of every message including nested ones and `oneof` arms: zero fields named `session_id`
+carry another type and zero fields typed `SessionId` carry another name. `grep -n SessionId` minus comment
+lines minus `SessionId session_id` leaves only `message SessionId {` at `:596`. The two `oneof` blocks are
+`CheckpointRequest` and `CheckpointResponse`, and the RPC-request census is 31 types, 25 with a top-level
+address, the 6 without being `CheckpointRequest`, `DemoteSDKRequest`, `NegotiateVersionRequest`,
+`GetObservedIntegrationLevelRequest`, `AdapterEventsRequest`, `ReportPodScrubRequest`. Independently
+reproduced; do not re-derive again. — EVIDENCE: schemas/lenny-adapter.proto:596, :1174, :1250
+
+USEFUL [standing context, Traps]: "Do not re-file the §4.7.1 'declared per message' tension", "Do not
+re-file the nested-address hole", and the "a protocol definition is indefinite" WATCHOUT each named the
+exact three places my lens would otherwise have stopped on. Each is correctly judged below the bar and I
+reached the same place independently on the first two.
+
+FACT: the proto file itself carries no comment restating the §4.1 table or the fence's class.
+`CoordinatorFenceRequest`'s doc comment (`schemas/lenny-adapter.proto:1449-1454`) already reads per-session
+("records the generation against the session the fence names"), so the wire contract's own prose needs no
+edit when the table retires. The only `4.1` reference inside the proto is `:645`, which names the §4.1 Upload
+Handler subsystem and is unrelated. — EVIDENCE: schemas/lenny-adapter.proto:1449-1456
+
+
+### [spec-recheck.2.review-docs-alignment.1]
+
+DECISION: returned an empty findings list for the docs-alignment lens on the spec staging — BECAUSE the staged §4.1 block has no `docs/` mirror to fall out of step with, and every docs-side residue this lens would otherwise raise is already recorded under `## Deferred` in the review log and is out of this loop's scope (spec-staging fixes only) — ALTERNATIVES: filing `docs/api/internal.md:209-215` (the stale `CheckpointRequest { string session_id = 1; ... }` excerpt) as a docs edit site, rejected because its remedy is a docs edit and standing-context Deferred entry already assigns it to the docs loop or 0080.
+
+CORRECTS [Standing context, "Proto anchors, current and verified"]: the parenthetical "`ReportSessionScrubRequest` `:456` with its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)" is wrong. `schemas/lenny-adapter.proto:457` is `string pod_id = 1;` and `:458` is `SessionId session_id = 2;`. SPEC-1's `:458` citation is exact, and a future round should not "correct" it toward `:457`. EVIDENCE: schemas/lenny-adapter.proto:456-458.
+
+FACT: the whole docs-alignment surface of this proposal is empty and the check is cheap to redo: `grep -rn "pod-scoped" docs/` returns one unrelated hit (`docs/runbooks/dual-store-unavailable.md:68`, "gateway-pod-scoped"), no `docs/` page names a gRPC request message type except the already-stale `docs/api/internal.md`, and `grep -rn "CoordinatorFence" docs/` returns only `docs/reference/adapter-contract.md:69`, which carries no scope word. EVIDENCE: docs/reference/adapter-contract.md:69, docs/runbooks/dual-store-unavailable.md:68.
+
+FACT: the two spec-side sentences whose wording a tier-11 gate holds against `docs/` are `spec/04_system-components.md:725` (`ReportSessionScrub` … "The request is session-scoped: it is addressed by the identifier of the released session and names no slot.") and its twin at `docs/reference/adapter-contract.md:81`; the gate compares them literally, including the opener string. SPEC-1 leaves both alone, so the docs leg stays green. EVIDENCE: tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76.
+
+USEFUL [Standing context, Traps, "Long lines hide the sentences citations point at"]: `spec/04:725`, `:726`, `spec/10:60`, and `spec/05:515` are each one very long line and every citation into them looks wrong under a truncated read. Grepping the sentence rather than `sed | cut` verified four citations in one pass.
+
+USEFUL [Standing context, "No docs mirror" and "No inbound reference to the table"]: these two entries are correct and re-verified today; they collapse this lens's whole mirroring check to a handful of greps.
+
+
+### [spec-recheck.2.review-edit-sites.1]
+
+DECISION: Returned an empty findings list — BECAUSE the staged spec block adds, changes, and removes no identifier at all (no metric, alert, flag, Helm value, condition type, error string, yaml key, or field name; the only names it uses are `session_id`, `SessionId`, and `oneof`, all pre-existing), so the edit-site inventory this lens builds is structurally empty, and the concept it removes (the declared classification table) has exactly one carrier in the tree. ALTERNATIVES: considered filing on `spec/04:712`'s stale `CoordinatorFence` row, on `docs/api/internal.md:209-215`'s false `CheckpointRequest` excerpt, and on `spec/04:1047`'s `string session_id` interceptor excerpt; all three are already false or already out of domain before SPEC-1 applies, so none becomes wrong *after* the edit, which is what (d) requires.
+
+FACT: The delta this loop exists for is one hunk: §7 "Open decisions for review" was deleted from spec-changes.md and nothing else in that file changed. `diff -u scratchpad/cp-snap/0075_.../spec-recheck-2-r1-start/...spec-changes.md` against the live file is 7 removed lines and nothing else. No other proposal file changed either except summary/review-log. — EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/spec-recheck-2-r1-start/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md:152-160
+
+FACT: `#### Request Message Scope` is the ONLY occurrence of that string anywhere in `spec/`, `docs/`, `schemas/`, `charts/`, `tests/`, `scripts/`, `pkg/`, and `cmd/`, and no `(#41-...)` anchor reference in the tree reaches the block (every one of the ~25 `04_system-components.md#41-edge-gateway-replicas` links is about HPA metric roles, subsystem extraction thresholds, or `maxSessionsPerReplica` calibration). The retired block therefore has no inbound cross-reference to repair. — EVIDENCE: spec/04_system-components.md:149; spec/README.md:15; spec/17_deployment-topology.md:1292
+
+FACT: `schemas/lenny-adapter.proto` carries NO scope classification in any doc comment. Grepping it for `pod-scoped`, `session-scoped`, and `§4.1` returns three hits, all unrelated (`:605` schema version, `:645` Upload Handler, `:810` WorkspacePlan). The `CoordinatorFenceRequest` doc comment at `:1449-1454` and the `CoordinatorFenceResponse` comment at `:1464-1471` describe the per-session generation and never call the message pod-scoped, so the reclassification needs no proto comment edit. — EVIDENCE: schemas/lenny-adapter.proto:1449-1454
+
+FACT: `tests/claim-map.json` names no §4.1 claim and no message-scope claim at all (grep for `message_scope|MessageScope|4\.1` returns nothing), and `tests/change-graph.json` names none of the four touched test files. The §28.4 claim register is therefore outside this proposal's blast radius, which is worth knowing because §28.4 requires a register row for every normative §28 statement and a reviewer reaches for it. — EVIDENCE: spec/28_communication-channels.md:161-169; tests/claim-map.json
+
+FACT: `tests/spec-map.json` credits the retiring gate at exactly three sites, two under section `4.1` and one under `28.5.3`, which is exactly what the checklist S2 says it re-registers. Walk the JSON rather than grepping line numbers: `sections.4.1.tests` carries `TestAdapterProtoRequestMessagesAreClassifiedByScope` and `TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage`, and `sections.28.5.3.tests` carries the first of those. — EVIDENCE: tests/spec-map.json:156, :169, :5670
+
+CORRECTS [standing-context Settled bullet "Proto anchors, current and verified"]: that bullet says `ReportSessionScrubRequest` `:456` "with its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)". SPEC-1 is right and the bullet is wrong: `:457` is `string pod_id = 1;` and `:458` is `SessionId session_id = 2;`. Confirmed by a comment-stripped brace-counting parse and by a direct `sed -n '450,465p'`. Nobody should "correct" `:458` to `:457`. — EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+USEFUL [standing-context Traps, "Naive proto parsers derail on this file"]: saved a round directly. My first two parse attempts both produced `line=0` for two thirds of the request types, exactly the symptom the trap describes. The working recipe: collect message starts with `^message (\w+) \{$` at column 0, take the body to the next bare `}` line, strip `//` before field matching, and skip fields inside a `oneof` block when you want top-level fields only. With that, the census reproduces: 31 request types, 25 with a top-level `SessionId session_id`, 6 without; `CheckpointRequest` and `CheckpointResponse` the only `oneof` blocks; `CheckpointStart` the only addressed envelope frame; and zero violations of the addressing convention in either direction over every field in the file including `oneof` arms.
+
+USEFUL [standing-context Traps, "Long lines hide the sentences citations point at"]: `spec/04:725`, `:726`, `spec/10:57`, `:60`, and `spec/05:515` are each one very long line and every cited clause is the last sentence on it. `sed -n Np | cut -c1-200` shows none of them and makes correct citations read as false. Grep the sentence.
+
+FACT: `tests/tier0_static/address_rule_citation_test.go` requires exactly one numbered spec section to carry the literal `rejected at the adapter boundary with \`InvalidArgument\``, and today that is §5.2 (`spec/05_runtime-registry-and-pool-model.md:515`). It also names `TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1` by function name in `addressRuleCases` and demands that case cite §5.2. SPEC-1 neither moves the sentence nor renames the case, so this gate is untouched — but it is the gate that fires if a fixer folds the value rule's wording into the §4.1 block, and it fires with a message about citations rather than about §4.1. — EVIDENCE: tests/tier0_static/address_rule_citation_test.go:22, :45-47, :85-87
+
+FACT: `0073's §4.2 value rule`, cited in this proposal's §3 and §6, is proposal 0073's OWN section 4.2 ("The rule", at `proposals/0073_...md:964-985`), not spec §4.2 (Session Manager). Reading it as a spec citation makes it look false, because the value rule actually lands at `spec/05:515`. Likewise `0073's §8` in §9 is 0073's Testing section at `:4678`, which does introduce the tier-0 gate (it says "The gate is a new tier-0 file rather than an added check inside `tests/tier0_static/claim_register_proto_agreement_test.go`") without naming the file, and `0073's SPEC-7` is "Declare message scope and state the addressing rule" at `:2823`. All three attributions in the staged text are correct. — EVIDENCE: proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:964, :2823, :4678, :4690-4691
+
+WATCHOUT: the orchestrator brief handed to this round is stale in three ways and each one wastes time. Its proto anchors (`:589`, `:1166`, `:1447`, `:1448`) are all seven lines short of the tree (`SessionId` is at `:596`, `CheckpointRequest` at `:1173`, `CoordinatorFenceRequest` at `:1455` with its address at `:1456`); it says the snapshot for this lane is `spec-recheck-r2` when the byte-identical one is `spec-recheck-2-r1-start`; and it still describes "§7 question 1" as the existential question when §7 is exactly what this round's delta deleted. The proposal's own anchors are the correct ones. — EVIDENCE: schemas/lenny-adapter.proto:596, :1173, :1455
+
+
+
+### [spec-recheck.2.review-feasibility.1]
+
+DECISION: Returned an empty findings list for the actor-action feasibility lens on the spec staging — BECAUSE every actor the staged text assigns an action to (the tier-0 gate reading the proto, the adapter refusing an unaddressed session-scoped request) can perform it with data it can see, and every citation in `0075...spec-changes.md` resolves — ALTERNATIVES: filing the D1 sentence "the ones that carry none are exactly its pod rows" (which is false unless "other than the stream envelope" distributes across both clauses, since `CheckpointRequest` carries no address and is a session row); rejected because it is Decisions-section rationale, the next sentence explicitly assigns `CheckpointRequest` to the envelope clause, and the staged spec block quote is unaffected — the same material test that refuted the earlier D2 finding.
+
+FACT: The delta this loop exists for is a pure deletion. `diff -u scratchpad/cp-snap/.../spec-recheck-2-r1-start/...spec-changes.md proposals/.../...spec-changes.md` shows exactly one hunk: `## 7. Open decisions for review` (the tier-3 covered-population question) was removed. `spec-recheck-r2` is byte-identical to the current proposal, so the `spec-recheck-r2` snapshot path in the prompt yields an empty diff — use `spec-recheck-2-r1-start` instead — EVIDENCE: scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/spec-recheck-2-r1-start/
+
+FACT: Re-parsed the two service blocks today. 31 distinct RPC request messages; 25 declare a top-level `SessionId session_id`; 6 do not (`AdapterEventsRequest`, `CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`). The addressing convention holds in BOTH directions across the whole file: 26 field declarations named `session_id`, all typed `SessionId`, and no `SessionId`-typed field carries another name — so the replacement gate is green against the tree as it stands — EVIDENCE: schemas/lenny-adapter.proto:596 (`message SessionId`), :1456 (`CoordinatorFenceRequest.session_id`), :1217 (`CheckpointStart.session_id = 7`)
+
+FACT: Only two messages in the whole proto declare a `oneof`: `CheckpointRequest` (:1174) and `CheckpointResponse` (:1250), and `CheckpointResponse` is the request type of no RPC (`rpc Checkpoint(stream CheckpointRequest) returns (stream CheckpointResponse)` at :133). §4's claim that the envelope predicate mechanically selects `CheckpointRequest` alone is exact — EVIDENCE: schemas/lenny-adapter.proto:133, :1174, :1250
+
+FACT: The reclassification is already consistent with the handler. `CoordinatorFence` rejects an empty `session_id` with `InvalidArgument` before resolving anything, which is what 0073's §4.2 value rule (landed at spec/05_runtime-registry-and-pool-model.md:515) requires of a session-scoped request. No code change is implied by making the fence session-scoped — EVIDENCE: pkg/adapter/coordination.go:108-111
+
+FACT: Nothing outside `spec/04` §4.1 depends on the retired table. `#request-message-scope` has no inbound anchor anywhere in the tree; §28.5.1's CH-FENCE card already describes the fence per-session ("records the generation against the session the fence names ... A fence for one session does not change the generation the pod holds for another"); tests/claim-map.json carries no §4.1 row; no tier-11 gate reads §4.1 (the `specSection` calls into spec/04 reach only §4.4, §4.6.1, §4.6.3, and §4.7). After the edit, spec/04:726 is genuinely the only remaining sentence in `spec/` classifying a request message pod-scoped — EVIDENCE: spec/28_communication-channels.md:314, spec/04_system-components.md:726
+
+FACT: The two tier-0 files 0076 landed beside the gate — `adapter_proto_generation_scope_test.go` and `adapter_barrier_doc_comment_scope_test.go` — read Go and proto doc COMMENTS, not the §4.1 table, so retiring the table does not reach them and their absence from §9 is correct — EVIDENCE: tests/tier0_static/adapter_proto_generation_scope_test.go:11-25, tests/tier0_static/adapter_barrier_doc_comment_scope_test.go:18-25
+
+WATCHOUT: `tests/tier0_static/spec_map_slot_address_registration_test.go:336` hardcodes `tests/tier0_static/adapter_proto_message_scope_test.go` in the `slotAddressCaseFiles` inventory, and the gate requires every file there to be credited in `tests/spec-map.json` under every section its `// spec:` annotation names. TEST-1 keeps the same file path, so the entry still resolves — but a fixer or implementor who RENAMES the gate file breaks that gate, and the rename would not be listed in §9 — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:236-336
+
+WATCHOUT: The orchestrator's standing anchors for the proto are off by 7-8 lines (it says `SessionId` at :589 and `CoordinatorFenceRequest` at :1447/:1448). `grep` gives :596 and :1455/:1456, which is what the proposal itself cites. Trust the proposal's numbers here, not the orchestrator note — EVIDENCE: schemas/lenny-adapter.proto:596, :1455
+
+FACT: Every code/test/spec citation in `...spec-changes.md` was re-verified line by line and all resolve: spec/04:151, :153-186, :188, :190, :725, :726; spec/10:57, :60 (the :60 sentence landed under 0076 SPEC-1, commit cf20a0646); spec/05:515; schemas/lenny-adapter.proto:458, :499-503, :1217; pkg/adapter/checkpoint.go:74-84; tests/tier0_static/adapter_proto_message_scope_test.go:17-27; tests/tier0_static/adapter_proto_parse_test.go:10-15; tests/tier0_static/claim_register_proto_agreement_test.go:64; tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76; docs/reference/adapter-contract.md:81; tests/tier3_contract/adapter_session_address/session_address_wire_test.go:40-43, :81, :102, :130, :150-158.
+
+UNVERIFIED: The staged block asserts the addressing frame "opens the stream", and the gate's four refusals do not check that the addressing frame is the FIRST frame — while the same paragraph says "What the gate cannot see is a session addressed under a name and a type that are both unconventional", phrased as the sole limit. I judged this below the bar because classification soundness does not depend on which frame opens the stream, only on which frame addresses it. A later reviewer who disagrees should say why the ordering claim is load-bearing before filing it.
+
+
+### [spec-recheck.2.review-fresh.1]
+
+DECISION: returned an empty findings list — BECAUSE the only delta in `spec-changes.md` since the `spec-r2` snapshot is the deletion of the whole `## 7. Open decisions for review` section (the tier-3 population question, now summary OD5), and an independent re-derivation of the census, the table arithmetic, the addressing convention, the citation set, and the deleted block's blast radius found nothing that makes the applied spec wrong — ALTERNATIVES: filing the dangling "either service" antecedent (see WATCHOUT below), rejected because the block's own opening sentence establishes the domain; filing D1's set-equality looseness, already in Standing context as examined and dropped.
+
+FACT: the `spec-recheck-r2` snapshot is byte-identical to the live directory; the real delta for this round is `diff spec-r2 <live>` and it is one hunk, the removal of `## 7`. Nothing else in `spec-changes.md` moved. — EVIDENCE: scratchpad/cp-snap/0075_fix_derive-message-scope-from-the-address-type/spec-r2/0075_...spec-changes.md:152-161
+
+FACT: re-derived the whole reproduction claim mechanically and it is exact. The §4.1 table rows 155-186 are 32; their message set minus the proto's 31 RPC request types is exactly `{CheckpointStart}` and the reverse difference is empty; 26 session rows and 6 pod rows. The proto gives 25 request types with a top-level `SessionId session_id` and 6 without (`AdapterEventsRequest`, `CheckpointRequest`, `DemoteSDKRequest`, `GetObservedIntegrationLevelRequest`, `NegotiateVersionRequest`, `ReportPodScrubRequest`). After the fence moves and the envelope clause classifies `CheckpointRequest`, the derived split is 27 session rows and 5 pod rows, which is the table's split row for row. — EVIDENCE: spec/04_system-components.md:155-186, schemas/lenny-adapter.proto:32, :261
+
+FACT: the name/type biconditional holds with zero violations across all 88 messages including `oneof` arms, checked two ways: a brace-tracking parse, and `grep -n SessionId schemas/lenny-adapter.proto | grep -v session_id` (returns only the `message SessionId` declaration and its doc comment) plus `grep -n session_id | grep -v "SessionId session_id"` (returns only comment lines). Cheaper than the parse and it is a complete check. — EVIDENCE: schemas/lenny-adapter.proto:595-596
+
+FACT: the `identifier-senses.yaml` ordinal question is safely closed rather than merely dismissed. Its eight `spec/04` rows all key on `CH-RUNTIMEOPS` sites, which sit at `spec/04_system-components.md:290-292`, well after the block SPEC-1 deletes (`:151`, `:153-186`, `:188`). Deleting lines before a site does not change that site's position in source order among retired-spelling sites, so no ordinal shifts. — EVIDENCE: tests/registers/identifier-senses.yaml:14-36, spec/04_system-components.md:290
+
+FACT: the line-shift blast radius is genuinely empty. `grep -rn "04_system-components\.md:[0-9]"` over the whole tree, excluding `proposals/`, `scratchpad/`, and `.git/`, returns citations in exactly four files: `BUILD-GAPS.md`, `TEST-GAPS.md`, `gateway-runtime-comms.md`, and `gateway-runtime-comms-remediation.md`. All four are literal members of `readExcludedFiles`. No `docs/`, `schemas/`, `charts/`, `tests/`, or `spec/` file carries a `spec/04:NNN` citation at all. — EVIDENCE: scripts/specshift/scope/scope.go:88-95
+
+FACT: `protoFields` has exactly one caller outside the parse file (`tests/tier0_static/claim_register_proto_agreement_test.go:64`) and `protoServiceRequests` exactly one (`tests/tier0_static/adapter_proto_message_scope_test.go:87`). The two tier-0 files 0076 landed, `adapter_proto_generation_scope_test.go` and `adapter_barrier_doc_comment_scope_test.go`, call neither and read no `spec/04` path, so §9's file list is complete. A single `grep -n "parseMessageScopeTable\|declaredScope\|protoServiceRequests\|protoFields\|messageScopeSpecPath" tests/tier0_static/*.go` settles this in one call. — EVIDENCE: tests/tier0_static/adapter_proto_parse_test.go:36, :68
+
+WATCHOUT: after SPEC-1 the phrase "A request message either service declares" in the staged paragraph 1 loses the only text that named the two services, because the retired table's `Service` column was it. Nothing else in §4.1 names `Adapter` or `GatewayControl`; the nearest surviving mention in the file is `spec/04_system-components.md:719`, inside §4.7. I examined this as a candidate finding and declined it: the block's own first sentence fixes the domain as "the gateway-adapter protocol", the protocol declares exactly two services, and the restrictor is redundant rather than load-bearing. A later round that re-derives it should reach the same answer rather than filing. — EVIDENCE: spec/04_system-components.md:151, schemas/lenny-adapter.proto:32, :261
+
+USEFUL [Standing context / Traps]: the trap list saved this round at least four hours. Four candidates I reached independently were already recorded as declined with their grounds ("only way a request addresses a session", the nested-address hole, the §4.7.1 declared-versus-derived tension, and the session-scoped fence exiting a pod-wide hold), and the naive-proto-parser warning meant I wrote a brace-tracking parse first rather than debugging a wrong census.
+
+
+### [spec-recheck.2.review-kubernetes.1]
+
+DECISION: returned an empty findings list — BECAUSE the staged spec edit is confined to `spec/04_system-components.md` `#### Request Message Scope` (`:151`, `:153-186`, `:188`), which classifies gateway-adapter gRPC request messages by field set. It names no CRD, no status subresource, no field manager, no finalizer, no admission webhook, no reconcile loop, and no controller. §9's touched-file list is `spec/04` plus five test files and `tests/spec-map.json`, with no `charts/`, no `pkg/apis/`, and no `pkg/controller/`. There is no surface for the Kubernetes-idiom lens to bite on. — ALTERNATIVES: I looked for a `spec/04` §4.6.3 ownership interaction, a §10.3 zero-RBAC agent-pod interaction, and an admission-purity interaction, and found the staged block touches none of them.
+
+FACT: SPEC-1's proto anchors re-verified today and all correct. `ReportSessionScrubRequest` opens at `schemas/lenny-adapter.proto:456` with `SessionId session_id = 2;` at `:458` (so SPEC-1's `:458` is right); `ReportPodScrubRequest` is `:499-503` with `pod_id`/`outcome`/`detail` and no address; `CheckpointStart`'s `SessionId session_id = 7;` is `:1217`. — EVIDENCE: schemas/lenny-adapter.proto:456-458, :499-503, :1217
+
+CORRECTS [standing-context Settled "Proto anchors, current and verified"]: that bullet says `ReportSessionScrubRequest`'s address is at `:457` and that "SPEC-1 cites `:458`, one line off". The tree disagrees: `:456` is `message ReportSessionScrubRequest {`, `:457` is `string pod_id = 1;`, `:458` is `SessionId session_id = 2;`. SPEC-1's citation is exact and the standing-context bullet is the off-by-one. Do not "fix" `spec-changes.md:135` to `:457`.
+
+FACT: no inbound reference to the retiring table exists anywhere in `spec/`, `docs/`, `schemas/`, `charts/`, or `tests/`. A grep for `request-message-scope`, `Request Message Scope`, `scope table`, and `classification table` across those trees returns only the heading itself (`spec/04_system-components.md:149`) and unrelated tables in `spec/06`, `spec/12`, `spec/16`, and `spec/25`. Retiring the block owes no anchor redirect and no cross-reference repair. — EVIDENCE: spec/04_system-components.md:149
+
+FACT: this round's spec-lane delta is one deletion. `diff` of the live directory against `scratchpad/cp-snap/.../spec-r2` shows the only change to `spec-changes.md` is the removal of `## 7. Open decisions for review` and its single question (the tier-3 covered-population question), which moved to the summary as OD5. The `spec-recheck-r2` snapshot is byte-identical to the live directory, as the standing context's snapshot trap predicts. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md:145-156
+
+USEFUL [standing-context Traps, "Snapshot diffs are routinely empty"]: saved me from treating the empty `spec-recheck-r2` diff as a broken snapshot; diffing against `spec-r2` produced the real delta immediately.
+
+USEFUL [standing-context Traps, "Long lines hide the sentences citations point at"]: `spec/04:188` and `:190` are single long lines; piping through `cut -c1-500` was needed to see the grounding sentence and the `ShutdownRequest` precedent that D3 rests on.
+
+
+### [spec-recheck.2.review-mechanism.1]
+
+DECISION: returned an empty findings list — BECAUSE `spec-changes.md`, `non-spec-changes.md`, and the
+implementation checklist are byte-identical to the `spec-recheck-r1-start` snapshot, so this lens is
+reviewing text it already cleared, and an independent re-derivation of the whole mechanism (proto census,
+row arithmetic, gate refusal satisfiability, every citation in the staged file, the meta-gate blast radius)
+reproduced the same result — ALTERNATIVES: filing §3's three-of-four gate refusals (rejected: overview
+prose inside the proposal; the D1 block that lands carries all four, as do D2, §5, and non-spec §8);
+filing D2's "it can never fail" (rejected: rationale, not staged spec text, refuted precedent on the same
+paragraph); filing the `ShutdownRequest` "field's presence standing in for a scope" clause (rejected:
+subject is handler dispatch, not classification).
+
+CORRECTS [Standing context / "Proto anchors, current and verified"]: the entry says
+`ReportSessionScrubRequest`'s address is at `schemas/lenny-adapter.proto:457` and that "SPEC-1 cites
+`:458`, one line off, below the bar". That is backwards. `:457` is `string pod_id = 1;` and `:458` is
+`SessionId session_id = 2;`. SPEC-1's citation is exact and no correction is owed — EVIDENCE:
+schemas/lenny-adapter.proto:456-458.
+
+FACT: `gate_integrity_test.go`'s meta-gate is one-directional in the direction that matters here.
+`unregisteredGates(declared, tierZeroGates)` iterates `tierZeroGates` and reports only entries the tree does
+not carry, so TEST-1 adding a new gate function name trips nothing; the entries it could trip are
+`TestClaimRegisterAgreesWithTheAdapterProto` in `claim_register_proto_agreement_test.go`, which TEST-1 must
+not rename or move — EVIDENCE: tests/tier0_static/gate_integrity_test.go:70, :180-198.
+
+FACT: the staged §4.1 sentence "A tier-0 gate refuses a protocol definition in which..." owes no §28.4
+claim-register row. §28.4's domain is "Every normative statement **this section** makes about a mechanism",
+which is §28 alone — EVIDENCE: spec/28_communication-channels.md:163.
+
+FACT: no tier-11 test reads spec/04 §4.1. Every `specSection` caller against `04_system-components.md` names
+§4.4, §4.6.1, §4.6.3, or §4.7 — EVIDENCE: tests/tier11_docs/*.go (grep `specSection.*04_system-components`).
+
+USEFUL [Standing context / Traps]: five of the ten candidates my lens raised are recorded there with the
+ground on which they were declined, several of them three to six times. Reading Traps before deriving saved
+the whole round — EVIDENCE: 0075_..._.review-log.md `## Standing context` → `### Traps`.
+
+USEFUL [Standing context / "Cache keys omit summary.md and review-log.md"]: relevant this round. The cache
+key `2d25f5f323c0` already had a `mechanism-r1-...json` entry from 19:39 with an empty findings list over
+this exact text. I did the review independently rather than replaying it, and reached the same answer, but a
+future agent should know that an r1/r2 pair on one hash means the lane text did not move between rounds —
+EVIDENCE: scratchpad/cp-cache/0075_.../mechanism-r1-2d25f5f323c0.json.
+
+
+### [spec-recheck.2.review-operational.1]
+
+DECISION: returned an EMPTY findings list for the operational-consistency lens on the staged spec edits — BECAUSE the staged block touches no metric, no alert, no CRD condition, and no runbook, and every observability surface adjacent to the reclassified message was re-derived from the tree and found untouched by SPEC-1 — ALTERNATIVES: filing `docs/reference/adapter-contract.md:69` ("precondition for any subsequent operational RPC", pod-wide reading falsified by 0076) — rejected because its remedy is a docs edit outside this loop and it is already DEFERRED in the Standing context.
+
+CORRECTS [Standing context / "Proto anchors, current and verified"]: the entry says `ReportSessionScrubRequest`'s address is at `schemas/lenny-adapter.proto:457` and that "SPEC-1 cites `:458`, one line off, below the bar". That is wrong in the proposal's favour. `:456` is `message ReportSessionScrubRequest {`, `:457` is `string pod_id = 1;`, `:458` is `SessionId session_id = 2;`. SPEC-1's citation is EXACT and no correction is owed. A future round that "fixes" the citation to `:457` would introduce a false citation. — EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+FACT: no alert, runbook, or metric anywhere in the tree turns on a gRPC request message's scope class, and none turns on the fence at all. `grep -rn -i fence docs/runbooks/` returns nothing; the three coordinator metrics (`lenny_coordinator_handoff_duration_seconds`, `lenny_coordinator_fence_retry_total`, `lenny_coordinator_fence_relinquished_total`) are gateway-side and labeled by `pool` only; the one alert that reads them, `CoordinatorHandoffSlow`, names no scope. The only adapter-side coordination metric, `lenny_adapter_coordinator_hold`, is an unlabeled gauge and its pod-scope statement sits at `spec/10_gateway-internals.md:60`, which SPEC-1 leaves standing and cites correctly. Reclassifying `CoordinatorFenceRequest` session-scoped therefore misleads no operator about any emitted signal. This is the third independent confirmation of review-log.md:799; treat it as settled and do not re-derive. — EVIDENCE: spec/16_observability.md:185,190-192,552; docs/reference/metrics.md:309-312; pkg/alerting/rules/rules.go:1587; spec/10_gateway-internals.md:57,60
+
+FACT: §28.4's claim register is scoped to "Every normative statement **this section** makes", i.e. §28 alone (`spec/28_communication-channels.md:161-165`). SPEC-1's new §4.1 sentence asserting a tier-0 gate that does not exist until S2 therefore owes NO `tests/claim-map.json` row, and the S1→S2 red window is the whole of its exposure. A lens that reads channel-naming.md N4 ("add the claim-register row for any part of the contract that does not yet hold in code") in isolation will reach for this; the register's own scope sentence closes it. — EVIDENCE: spec/28_communication-channels.md:161-165
+
+FACT: the addressing biconditional SPEC-1's gate paragraph rests on is green on the shipped proto with zero exceptions, verified mechanically rather than from the standing context: `grep -n "^\s*\(repeated \)\?[A-Za-z0-9_.]* session_id\s*=" schemas/lenny-adapter.proto | grep -v "SessionId session_id"` returns nothing, and the reverse grep for a `SessionId`-typed field under another name returns nothing. The replacement gate cannot be red on day one. — EVIDENCE: schemas/lenny-adapter.proto
+
+FACT: every file:line citation in `spec-changes.md` was re-verified in this pass and all are exact: `spec/04_system-components.md:149,151,153-186,175,188,190,725,726`; `spec/10_gateway-internals.md:57,60`; `spec/05_runtime-registry-and-pool-model.md:515`; `schemas/lenny-adapter.proto:458,499-503,1217`; `pkg/adapter/checkpoint.go:74-84`; `tests/tier0_static/adapter_proto_message_scope_test.go:17-27`; `tests/tier0_static/adapter_proto_parse_test.go:10-15`; `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76`; `docs/reference/adapter-contract.md:81`. `:725`/`:726` do sit inside `#### 4.7.1 Role and Gateway RPC Contract` (`spec/04_system-components.md:692`, next heading `:728`), so SPEC-1's "§4.7.1" label is exact too. A future citation lens can spot-check rather than re-walk all of them.
+
+USEFUL [Standing context / Traps / "Cache keys omit summary.md and review-log.md"]: this shard is a real run, not a cache replay. The cache slot `operational-r2-2d25f5f323c0.json` was empty on entry and the review was done from the tree. The two earlier "clean operational passes" the trap entry flags as possibly one cache hit are now backed by an independent third pass.
+
+
+### [spec-recheck.2.review-performance.1]
+
+DECISION: returned an empty findings list, the fourth consecutive empty pass by this lens on this
+proposal — BECAUSE the staged spec text names no store, key, watch, informer, queue, lease, leader, or
+emission site, so the top-tier write arithmetic my lens owes has a numerator of zero, and the one
+runtime obligation the reclassification adds is already executed in the shipped handler.
+ALTERNATIVES: the session-scoped fence exiting a pod-wide hold (standing-context Trap, declined by five
+lenses now, 0076 OD3 territory); the `spec/10:39` same-generation retry and the missing coordfence
+backoff (both pre-existing, §6 assigns them to 0080 §1.16); tier-0/tier-3 test cost (down or flat).
+
+FACT: the staged spec text is byte-identical to what `spec-recheck.1.review-performance.1` reviewed.
+The cache key is the same `2d25f5f323c0` that entry recorded, `diff -ru` against the `spec-recheck-r2`
+snapshot is empty, and `diff -u` against `spec-r2` shows only the `## 7. Open decisions for review`
+deletion. My `performance-r2-<H>` slot missed only because the round number is part of the filename,
+so a future lens whose slot misses should still check the sibling `performance-r1-<same H>` file before
+spending a full pass. EVIDENCE: scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/performance-r1-2d25f5f323c0.json
+
+CORRECTS [standing-context Settled, "Proto anchors, current and verified"]: it says SPEC-1's citation
+`schemas/lenny-adapter.proto:458` for `ReportSessionScrubRequest`'s address is "one line off, below the
+bar". It is not off. `message ReportSessionScrubRequest {` is at `:456`, `string pod_id = 1;` at `:457`,
+and `SessionId session_id = 2;` at `:458`, which is exactly what SPEC-1 cites. The `:457` in the log is
+the `pod_id` line. Nobody should spend a pass re-checking this or file a citation finding against it.
+EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+FACT: I re-derived §1.2's post-0076 claims against the tree rather than trusting the orchestrator brief,
+which still asserts §1.2 says the pod-wide ground holds. It does not: §1.2 already records that
+`Server` declares `hold holdState` where the pod-wide state stood (`pkg/adapter/server.go:301`, one line
+off from the proposal's `:302` and below the bar) and that `coordinationState` now lives on the slot
+entry (`pkg/adapter/slot.go:59`). SPEC-1's "all three sites named in §1.2" resolves: §1.2 names `:151`,
+`:175`, `:188`, and SPEC-1 deletes `:151`, `:153-186` (which contains `:175`), and `:188`.
+EVIDENCE: pkg/adapter/server.go:301, pkg/adapter/slot.go:59
+
+FACT: no metric, alert, or chart surface keys on the §4.1 classification, so retiring the table has no
+observability blast radius. The only "session-scoped" hits under `spec/16`, `docs/reference/metrics.md`,
+and `charts/` are `lenny_adapter_unaddressed_frame_rejected_total`, whose subject is the §28.5.3
+intra-pod JSONL frame rather than a gateway-adapter request message, and which SPEC-1 does not touch.
+This closes the one edit-site question my lens could have raised and nobody had recorded.
+EVIDENCE: spec/16_observability.md:189, docs/reference/metrics.md:180
+
+USEFUL [standing-context Traps]: "Do not re-file the session-scoped fence exiting a pod-wide hold" and
+"Long lines hide the sentences citations point at" were both load-bearing. The second is why
+`spec/10:57`, `:60`, `spec/05:515`, and `spec/04:725`/`:726` verify only under `sed -n Np | tr '.' '\n'`;
+a plain `cut -c1-160` shows none of the cited clause and makes a correct citation look false.
+
+UNVERIFIED: unchanged across four rounds of this lens — nobody has run tier 0 or tier 3 on this branch.
+The replacement gate passing on the shipped proto and `validate-maps` staying green across S2's single
+commit are the two claims a run would settle and reading cannot. Whoever implements settles both first.
+
+
+### [spec-recheck.2.review-reliability.1]
+
+DECISION: returned an empty findings list, the fourth consecutive empty reliability pass on this proposal — BECAUSE the staged spec text is byte-identical to what `spec-recheck.1.review-reliability.1` cleared (the only delta since `spec-r2` is the deletion of `## 7. Open decisions for review`, which removes no normative text), and an independent re-derivation from the tree, rather than a replay of the log, found every reliability-bearing citation in the staging exact — ALTERNATIVES: re-filing the coordfence same-generation retry the adapter refuses and the missing 1-second backoff (both pre-existing, both named non-goals at `spec-changes.md:151-152`, owner 0080 §1.16); re-filing the session-scoped fence as the only exit from a pod-wide hold (standing-context Trap, declined by five lenses now); re-filing the unconventional-spelling fail-open as a lost coverage guarantee (disclosed in the staged block itself and priced in summary OD1, and the security lens owns fail-closed anyway).
+
+FACT: `schemas/lenny-adapter.proto:458` is `SessionId session_id = 2;` inside `message ReportSessionScrubRequest` at `:456`. The standing context's Settled entry at review-log.md:20 says "its address at `:457` (SPEC-1 cites `:458`, one line off, below the bar)". That parenthetical is wrong: `:457` is `string pod_id = 1;` and SPEC-1's `:458` is exact. Nothing is owed, but a future round should not "correct" SPEC-1 to `:457` on the strength of that entry. — EVIDENCE: schemas/lenny-adapter.proto:456-458
+
+FACT: the gateway never issues an unaddressed fence, so the reclassification cannot strand a pod in hold behind the `spec/05:515` empty-identifier refusal. `FenceClient.CoordinatorFence(ctx, sessionID string, coordinationGeneration int64)` takes a session identifier as a required parameter and there is no pod-level fence entry point; `spec/10_gateway-internals.md:38` orders `CoordinatorFence(session_id, new_generation)` per session. The only stall case is a pod in hold with no bound entry, which is the Trap already declined and 0076's landed behavior. — EVIDENCE: pkg/gateway/coordination/coordfence/coordfence.go:62-63, spec/10_gateway-internals.md:38
+
+FACT: the addressing convention holds over the WHOLE proto, re-derived mechanically today rather than over the request types alone: 26 lines match `^\s*SessionId session_id = [0-9]+;`, `grep -nE '^\s*(repeated )?SessionId [a-z_]+ = ' | grep -v 'session_id ='` returns nothing, and `grep -nE '^\s*[A-Za-z0-9_.]+ session_id = ' | grep -v '^[0-9]*:\s*SessionId session_id'` returns nothing. The replacement gate's two biconditional clauses are green on the shipped proto without a proto edit, so S2 introduces no red window of its own beyond the one S1 records. — EVIDENCE: schemas/lenny-adapter.proto:1022, :458, :1217
+
+FACT: `pkg/adapter/checkpoint.go:74-84` is exactly the enforcement §4 cites, and its own `// spec: §4.1` comment reads "Checkpoint is session-scoped, so the opening frame's session identifier is the address the whole stream is served under". SPEC-1's envelope clause restates that comment's model, so the code comment survives the retirement unedited. A reviewer looking for a missed code-comment edit site will find this one and should not file it. — EVIDENCE: pkg/adapter/checkpoint.go:74-84
+
+WATCHOUT: the cache key `2d25f5f323c0` still omits `summary.md` and `review-log.md`, and `spec-changes.md` has not changed since the previous round, so this lens's cache slot and the previous round's differ only because `non-spec-changes.md` moved. A summary-only or log-only edit would serve this empty answer unread. — EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.spec-changes.md (unchanged since the 17:39 `spec-r2` snapshot apart from the §7 deletion)
+
+USEFUL [spec-recheck.1.review-reliability.1]: its two FACTs (the fence-retry predicate is owned by 0080 §1.16, and `spec/28:314-317` plus `spec/10:40` already state the fence per-session so SPEC-1 removes a contradiction rather than creating one) were the two places this lens went first and both re-verified unchanged. A fifth pass can spot-check them instead of rebuilding the argument.
+
+USEFUL [standing context, Traps]: "Long lines hide the sentences citations point at" saved the round again — `spec/05:515`, `spec/10:38`, `:39`, `:40`, `:57`, `:60` are each one very long line and `sed -n Np | tr '.' '\n'` is what makes the cited clause visible.
+
+OPEN: nothing new. The reliability lens has now returned empty on four rounds across both lanes. Re-run it only if a fix pass edits the staged envelope clause, the constraint paragraph's gate refusals, or any sentence tying a scope class to a refusal or to the coordinator hold.
+
+
+### [spec-recheck.2.review-security.1]
+
+DECISION: returned an empty findings list for the security lens on the staged spec edits — BECAUSE the only delta since the `spec-r2` snapshot is the deletion of `spec-changes.md` §7 (Open decisions), which carries no security content, and the two security checks both come back clean on the surviving text: the retired block carries no control, and the reclassification only widens the class the fail-closed refusal at `spec/05:515` applies to — ALTERNATIVES: filing the loss of the table's Service and Direction columns as a lost trust-boundary record (rejected: §4.7.1's two RPC tables and the §28.3 registers carry direction, and no applied text becomes wrong); filing the nested-address hole and the session-scoped-fence-versus-pod-wide-hold tension (both already declined multiple times, traps 72 and 74).
+
+FACT: the derived session class is a strict superset of the retired table's on the shipped proto, which is the whole security argument. A brace-aware parse (strip `//` comments, count braces per line, handle same-line `{}`) returns 88 messages and 31 RPC request types; 25 declare a top-level `SessionId session_id`; the 6 that do not are AdapterEventsRequest, CheckpointRequest, DemoteSDKRequest, GetObservedIntegrationLevelRequest, NegotiateVersionRequest, ReportPodScrubRequest. Nothing moves session-to-pod, so `spec/05_runtime-registry-and-pool-model.md:515`'s "a session-scoped request whose session identifier is empty is rejected at the adapter boundary with `InvalidArgument` before any root is resolved" can only gain a message, never lose one.
+EVIDENCE: schemas/lenny-adapter.proto; spec/05_runtime-registry-and-pool-model.md:515
+
+FACT: the one behavioral obligation the reclassification creates is already met in the tree — `pkg/adapter/coordination.go:108-111` reads `req.GetSessionId().GetValue()` and returns `InvalidArgument` on empty before `boundSlotState` resolves anything at `:116`. So SPEC-1 does not create an unimplemented fail-closed requirement.
+EVIDENCE: pkg/adapter/coordination.go:107-119
+
+FACT: no spec, docs, chart, or test surface reads the §4.1 classification table or its heading. `grep -rn "request-message-scope\|Request Message Scope" spec/ docs/ schemas/ tests/ pkg/ charts/` returns only `spec/04_system-components.md:149`, and a sweep of every file mentioning `04_system-components` for a reader of the `### 4.1` / `#### Request Message Scope` section returns nothing beyond the retiring tier-0 gate. The tier-11 file `basic_level_echo_stamp_doc_reconciliation_test.go` and `tests/tier3_contract/rest_sessions/slot_address_absence_test.go:99` cite §4.1 in `// spec:` annotations only and read no §4.1 text; those annotations stay true because §4.1 still classifies after SPEC-1. So the retirement removes no enforcement and owes no unstaged edit site.
+EVIDENCE: spec/04_system-components.md:149; tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go:26,132,284
+
+FACT: `pkg/adapter/checkpoint.go:74-84` cites "§4.1 — Checkpoint is session-scoped" in a code comment and enforces the empty-address refusal plus `slotlayout.ValidateSlotID` on the opening frame before the op lock. The envelope clause keeps that citation true after the table goes, so no code comment is falsified by SPEC-1.
+EVIDENCE: pkg/adapter/checkpoint.go:74-87
+
+USEFUL [Standing context / Traps 64, 92]: the brace-aware-parser warning and the "spot-check, do not re-derive" instruction between them saved most of a round. The parser recipe in trap 64 reproduces 88/31/25/6 first try; a naive `}`-terminated parser does not.
+
 ## Resolved in adversarial review
 
 ### Pass 1 (2026-09-07, automated)
