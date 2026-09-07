@@ -43,8 +43,7 @@ frames declares the address. The clause an earlier revision staged, that no pod-
 field of the address type, is dropped. Under a derived classification a pod-scoped message is one that
 declares no address, so that clause reduces to a statement that a message without the field does not
 carry the field, and it can never fail. The gate's limit is stated with the rule: a session addressed
-under both an unconventional name and an unconventional type is invisible to it. Whether that residual is
-smaller than what the retired table cost is §7's first question and the central risk of this proposal.
+under both an unconventional name and an unconventional type is invisible to it.
 
 **D3. The message is session-scoped, and this proposal does not re-derive that.** Proposal 0076's OD3
 Question A settled it, on the ground that after CODE-1 the identifier selects the entry the fence writes
@@ -58,10 +57,9 @@ rather than reopened here.
 `CoordinatorFenceRequest`'s identifier its own wrapper message so that the surviving exception would be
 carried by a type rather than by a table row. With the exception gone, that deliverable has no subject:
 the field is an address, and giving an address a guard type would state the opposite of what OD3 decided.
-The argument the wrapper was meant to serve, that a future author could name a pod-scoped guard
-`session_id` and be silently misclassified, survives as §7's first question, and the wrapper was never a
-complete answer to it. This is recorded rather than dropped silently because the wrapper was the earlier
-revision's central mechanism.
+The argument the wrapper was meant to serve is that a future author could name a pod-scoped guard
+`session_id` and be silently misclassified, and the wrapper was never a complete answer to it. This is
+recorded rather than dropped silently because the wrapper was the earlier revision's central mechanism.
 
 **D5. 0073 is not reopened.** Every edit here applies to text 0073 introduces. This proposal is inert until
 0073 is applied.
@@ -115,11 +113,31 @@ block rather than the individual sentences named in §1.2 is what also removes t
 classifies `CheckpointRequest` for the scope of its `CheckpointStart` frame and gives that frame a row of
 its own, which the envelope clause restates without naming either message. The `ShutdownRequest` paragraph
 at `:190` stands unedited, because it explains a divergence between what a request addresses and what its
-handler touches that the rule does not state and D3 rests on. The block D1 states carries the constraint
-the derivation rests on together with what the gate cannot see, which is where the specification records
+handler touches that the rule does not state and D3 rests on. The replacement block names no request
+message and states nothing about the coordinator hold. That a `CoordinatorFence` is the only way out of
+hold state is stated at `spec/10_gateway-internals.md:57`, and that the hold and its gauge stay pod-scoped
+at `:60`, which proposal 0076's SPEC-1 landed under its D5. Both sentences sit in §10.1.4, the section
+that owns hold state, so §4.1 restates neither. The sentence at `:188` that could have hosted a
+restatement is retired with the table, and a paragraph naming one message's pod-wide side effect would
+put back the per-message prose the rule replaces. The block D1 states carries the constraint the
+derivation rests on together with what the gate cannot see, which is where the specification records
 the new gate's reach. `spec/` states no limit for the retired gate: 0073 records that limit in the gate
 file's header comment (`tests/tier0_static/adapter_proto_message_scope_test.go:17-27`), and it goes with
-the gate TEST-1 replaces. Written against whatever 0076 leaves in §4.1.
+the gate TEST-1 replaces.
+
+The two per-message scope statements in §4.7.1 stand unedited. `spec/04_system-components.md:725` states
+that `ReportSessionScrub`'s request is session-scoped and is addressed by the identifier of the released
+session, and `:726` states that `ReportPodScrub`'s request is pod-scoped. Both agree with the derivation
+D1 states: `ReportSessionScrubRequest` declares `SessionId session_id = 2`
+(`schemas/lenny-adapter.proto:458`), and `ReportPodScrubRequest` declares `string pod_id`,
+`PodScrubOutcome outcome`, and `string detail`, with no field of the address type
+(`schemas/lenny-adapter.proto:499-503`). The first sentence also states what the request addresses, which
+the class word alone does not carry, and a tier-11 gate holds its wording on both the specification and
+`docs/reference/adapter-contract.md:81`
+(`tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go:43-76`), so editing it
+would move a reader-facing document and a gate that this proposal otherwise leaves alone. Retiring the
+table also leaves `:726` as the only sentence in `spec/` that classifies one request message pod-scoped.
+Written against whatever 0076 leaves in §4.1.
 
 ## 6. Non-goals
 
@@ -133,23 +151,7 @@ the gate TEST-1 replaces. Written against whatever 0076 leaves in §4.1.
 
 ## 7. Open decisions for review
 
-1. **Whether the new gate closes the hole the table's gate closed.** Under a declared table, adding a
-   request message fails the gate until a human classifies it, which forces a conscious decision. Under
-   the derivation the classification follows from the field an author declares, and the replacement gate
-   checks the convention the derivation rests on rather than the classification itself. Two residuals
-   remain and they run in opposite directions. A message whose author gives a pod-scoped guard the session
-   address derives session-scoped and inherits the §4.2 value rule's refusal of an empty identifier, which
-   is the fail-closed direction and costs a refusal the handler did not intend. A message whose author
-   addresses a session under some other name and some other type derives pod-scoped and carries no
-   obligation to refuse an unaddressed instance, which is the fail-open direction; the gate refuses either
-   half of that spelling on its own, so the case it cannot see is the one where both halves depart from
-   the convention at once. The table reached that case only when a human filled the row correctly, and its
-   gate checked neither the row against the handler nor the address against the spelling. Establish
-   whether the remaining residual is smaller than what the table cost. If it is not, this proposal should
-   be withdrawn, and the reclassification at `spec/04_system-components.md:175` and `:188` still has to
-   land on its own, because proposal 0076's CODE-1 has landed and both statements are already false,
-   whether or not the table survives.
-2. **What the retired-field-number column holds** for `CoordinatorFenceRequest` in TEST-2, which never
+1. **What the retired-field-number column holds** for `CoordinatorFenceRequest` in TEST-2, which never
    declared the field the column records.
 
 ## 9. Files touched on application

@@ -1,19 +1,5 @@
 # Summary: Derive message scope from the address type
 
-This document stages the proposed specification and test changes. It does not modify any spec, code, or
-doc file. Apply the changes in the "Proposed changes" section after sign-off.
-
-**This draft has not been through adversarial review.** It records a direction and the measurements behind
-it. The staged edits are indicative rather than final, and the open questions in §7 are open. Run the
-change-proposal convergence loop on it before sign-off.
-
-**Proposal 0076's OD3 has been answered, and this proposal is the successor it names.** The reviewer
-answered Question A yes: `CoordinatorFenceRequest` is session-scoped once 0076's CODE-1 records the
-generation on the slot entry its identifier resolves. Question B leaves the `spec/04` §4.1 edit to a
-successor rather than staging it in 0076, and this proposal is that successor, because SPEC-1 retires the
-table those edits would have touched. The answer removes the rule's only counterexample, so the schema,
-code, and documentation deliverables an earlier revision carried are dropped; §11 records that.
-
 ## Summary
 
 **Problem statement.** The specification declares each gateway-to-adapter request message's scope in a
@@ -93,18 +79,62 @@ row cannot be copied from a neighbour.
 
 ## Open decisions for human to make
 
-**OD1. Is the residual the replacement gate leaves smaller than the one the retired table left?** Under the
-declared table, adding a request message failed the tier-0 gate until a human classified it, which forced a
-conscious decision. Under the derivation the classification follows from the field the author declares, and
-the replacement gate checks the addressing convention the derivation rests on rather than the
-classification itself, so the case it cannot see is a session addressed under both an unconventional field
-name and an unconventional field type. The review loop derived the argument for answering yes and did not
-close the question: the table's gate caught a missing row, which a total derivation cannot have, and it
-never caught a wrong row, because proposal 0073 recorded that the gate cannot check a declared scope
-against the handler. The staged changes still carry a withdrawal branch for a no. A withdrawal has to name
-an owner for the §4.1 reclassification on its own, because `spec/04_system-components.md:175` and `:188`
-are false about the tree today and contradict `spec/10_gateway-internals.md:38-40` and
-`spec/28_communication-channels.md:314-317`, whether or not the table survives.
+**OD1. Retire the §4.1 declared-scope table and its tier-0 reconciliation gate, or withdraw this
+proposal?** `spec/04_system-components.md:153-186` declares each gateway-to-adapter request message's
+scope in a table with one row per message, and a tier-0 gate reconciles that table against
+`schemas/lenny-adapter.proto` (`tests/tier0_static/adapter_proto_message_scope_test.go`). This proposal
+retires both. In their place the specification states a rule, that a request message is session-scoped
+exactly when it declares a top-level `session_id` field of type `SessionId` and that a stream envelope
+takes the scope of the one frame that declares the address, and a replacement gate checks the addressing
+convention the rule rests on rather than any classification. One case is then invisible to the gate: a
+message that addresses a session under a field name other than `session_id` and a field type other than
+`SessionId`, both departures at once. Such a message derives pod-scoped and carries no obligation to
+refuse an instance that names no session, which is the fail-open direction. A second residual runs the
+other way: a message whose author gives a pod-scoped guard the session address derives session-scoped and
+inherits the refusal of a session-scoped request with an empty identifier
+(`spec/05_runtime-registry-and-pool-model.md:515`), which costs a refusal its handler did not intend.
+Answering yes accepts both residuals and keeps the proposal as staged. Answering no withdraws the
+proposal, and the §4.1 reclassification of `CoordinatorFenceRequest` then has to be re-homed with another
+owner.
+
+**Recommendation: yes, accept the residuals and keep the retirement. Confidence: moderate.** The
+specification's own reason for declaring rather than deriving is spent. `spec/04_system-components.md:151`
+gives that reason as "`session_id` appears on messages of both classes". Every declaration of that field
+in the protocol definition is a `SessionId session_id` field, and the only one on a message the table
+calls pod-scoped is `CoordinatorFenceRequest` (`schemas/lenny-adapter.proto:1456`), which proposal 0076's
+OD3 reclassified to session scope. The remaining pod rows declare no session field at all;
+`ReportPodScrubRequest` declares `string pod_id` (`schemas/lenny-adapter.proto:499-503`).
+
+What the retired gate enforces is coverage alone. Its header comment states that whether a handler
+enforces the scope a row declares is a tier-1 and tier-3 question
+(`tests/tier0_static/adapter_proto_message_scope_test.go:25-27`), and `declaredScope` (`:75-81`) accepts
+any cell whose first word is `session` or `pod` without comparing it to anything, so a row a human filled
+in wrongly passes. A classification computed from the protocol definition cannot have a coverage gap, so
+that half of the table's value is reproduced rather than lost. The gate's other refusals (a row naming a
+message neither service declares, a row naming the wrong service, a row declaring neither class, and a
+message classified twice) check the table against itself and have no subject once the table is gone. The
+case that survives the replacement gate is narrower than the case the table left open, because the gate
+refuses each half of an unconventional spelling on its own, and the table reached the same case only when
+a human filled the row correctly.
+
+Confidence is moderate because one side of the comparison is derivable from no file. The declared table
+forced a human to classify each new request message before tier 0 went green, and whether losing that
+checkpoint matters is a prediction about how future authors behave.
+
+Two alternatives to the recommendation lose. Keeping the table beside the rule preserves that human
+checkpoint, and it also keeps two statements of one classification and the gate that reconciles them,
+which is the arrangement this proposal exists to remove, while the declared half still cannot be checked
+against a handler. Keeping a shorter table naming the pod-scoped messages, which the replacement gate
+could read as an independent input, carries the same drift in smaller form, and no other site in `spec/`
+declares a message's scope class for such a table to be reconciled against.
+
+A "no" costs the whole proposal, because SPEC-1, TEST-1, and TEST-2 all go with it.
+`spec/04_system-components.md:175` and `:188` are false about the tree today whether or not the table
+survives, and they contradict `spec/10_gateway-internals.md:38` and `:40`, which hold
+`last_fenced_generation` per bound session, and `spec/28_communication-channels.md:314-317`, which states
+that a fence for one session does not change the generation the pod holds for another. Proposal 0076's
+OD3 Question B assigned that edit to this proposal, so a withdrawal has to name another owner for it, and
+the tier-3 coverage TEST-2 adds for the fence goes unowned with it.
 
 **OD2. How does `CoordinatorFenceRequest` enter the tier-3 `sessionScopedMessages` map?** The map records
 each member's retired duplicate-address field number, and the fence never carried that duplicate, so the
@@ -119,37 +149,42 @@ excluded from it while being session-scoped. The loop derived two candidates and
 map into a session-scoped set and a carried-the-retired-duplicate set, or add the fence to a different arm
 of the suite.
 
-**OD3. Must the rewritten §4.1 name the pod-scoped hold exit?** Proposal 0076's OD3 Question A
-recommendation, which the reviewer accepted verbatim, reads "yes, reclassify the row to session scope and
-rewrite the declaring sentence, naming the pod-scoped hold exit as the one pod-wide effect that remains".
-SPEC-1 carries the reclassification and says nothing about the hold exit. Decide whether the hold-exit
-clause is a required half of the answer this proposal implements or a separate statement the rewritten
-block may omit. The loop recorded the gap without a recommendation.
-
-**OD4. Do the two per-message scope declarations in §4.7.1 stay?** After SPEC-1, §4.1 states that the
-classification is derived from the message's field set rather than declared per message, while
-`spec/04_system-components.md:725` and `:726` still declare `ReportSessionScrub`'s request session-scoped
-and `ReportPodScrub`'s request pod-scoped, per message, in the §4.7.1 RPC table. Both declarations agree
-with the derivation, so nothing becomes false, but the applied specification then asserts a method it does
-not follow in one of its own tables. Decide whether the two clauses come out or stand as agreeing
-restatements. Two review lenses reached this site and neither filed it, so the loop left it without a
-recommendation.
-
 ## Defects in the shipped tree that this proposal does not stage
 
-None. Both defects this proposal confirms are staged: the three §4.1 sentences that ground the declared
-classification on a counterexample that no longer exists (SPEC-1), and the tier-3 comment stating a
-coverage the suite does not have (TEST-2). The §4.1 ground was falsified when proposal 0076's CODE-1
-landed and moved the coordination generation onto the slot entry the identifier resolves, so both defects
-are live in the specification now rather than becoming defects when this proposal applies.
+None blocks sign-off. Both defects this proposal confirms in the specification are staged: the three §4.1
+sentences that ground the declared classification on a counterexample that no longer exists (SPEC-1), and
+the tier-3 comment stating a coverage the suite does not have (TEST-2). The §4.1 ground was falsified when
+proposal 0076's CODE-1 landed and moved the coordination generation onto the slot entry the identifier
+resolves, so both defects are live in the specification now rather than becoming defects when this proposal
+applies. One further defect was confirmed in the working tree and is left where it is.
+
+- **The pod refuses the equal-generation re-fence that §10.1.2 orders.** `spec/10_gateway-internals.md:39`
+  tells a new coordinator whose `CoordinatorFence` fails or times out to retry "with the same generation
+  value (up to 3 attempts with 1-second backoff)", and the shipped adapter refuses that retry.
+  `CoordinatorFence` rejects a generation at or below the value it holds for the session, returning
+  `FailedPrecondition` with a `coordinator_handoff_stale` detail (`pkg/adapter/coordination.go:127-134`, on
+  the per-session entry proposal 0076's CODE-1 introduced). A fence that lands but whose acknowledgement is
+  lost at the 5-second deadline therefore burns every retry and drives the coordinator to relinquish the
+  lease.
+
+  This proposal records the refusal and stages no repair. The remedy is the handler's comparison together
+  with the `CoordinatorFenceResponse` wire comment and the §10.1.2, §28, and §29.8 arms that enumerate the
+  refusal cases, none of which is a message-scope classification. Proposal 0080 §1.16 states that remedy in
+  full and records proposal 0076's OD2 as its source. Nothing this proposal stages depends on the
+  acceptance predicate: the §4.1 block SPEC-1 stages carries the field-set rule, the stream-envelope clause,
+  and the addressing convention, and says nothing about acceptance; TEST-1's replacement gate reads
+  `schemas/lenny-adapter.proto`; and TEST-2 pins the message's address field. The one behavioral obligation
+  the reclassification carries, the refusal of a session-scoped request whose session identifier is empty
+  (`spec/05_runtime-registry-and-pool-model.md:515`), the handler already meets at
+  `pkg/adapter/coordination.go:109-111`.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0073 | Implemented | Retires the §4.1 classification table its SPEC-7 staged and the reconciliation gate its §8 added, replacing both with the derivation rule and a gate over the addressing convention that rule rests on. Its §4.2 value rule and everything it states about how the adapter resolves a root stand. | Nothing. A landed proposal keeps the words it was written with, and every edit here lands in `spec/` and in the tests rather than in that document. |
-| 0076 | Implemented | Implements the answer to its OD3. This proposal is the successor Question B names, and SPEC-1 carries the `spec/04` §4.1 edit 0076 left unstaged. | Nothing. 0076 is landed and is not edited. |
-| 0080 | Draft | Leaves §1.16 standing. This change moves the classification and retires the table; §1.16 changes the fence's acceptance predicate and touches neither, so the two are independent in either order. §2 of 0080 already records this proposal as taking one of 0073's residues. | Nothing while 0080 remains an inventory. A successor that takes §1.16 states the acceptance predicate and does not restate the classification. |
+| 0073 | Implemented (2026-08-31) | Retires the §4.1 classification table its SPEC-7 staged and the reconciliation gate its §8 added, replacing both with the derivation rule and a gate over the addressing convention that rule rests on. The rest of that block stands. The `ShutdownRequest` paragraph SPEC-7 staged beside the table (`spec/04_system-components.md:190`) is kept unedited, because it records a divergence between what a request addresses and what its handler touches that the derivation rule does not state. Its §4.2 value rule and everything it states about how the adapter resolves a root stand. The limit 0073 recorded against the retiring gate also survives: the replacement gate reads `schemas/lenny-adapter.proto` alone, so it can no more check a message's scope against what its handler does than the table's gate could. | Nothing. A landed proposal keeps the words it was written with, and every edit here lands in `spec/` and in the tests rather than in that document. |
+| 0076 | Implemented | Implements the answer to its OD3. Question A was answered yes: `CoordinatorFenceRequest` is session-scoped once 0076's CODE-1 records the generation on the slot entry its identifier resolves. Question B left the `spec/04` §4.1 edit to a successor rather than staging it in 0076, and this proposal is that successor, because SPEC-1 retires the table those edits would have touched. That answer removes the derivation rule's only counterexample, so the schema, code, and documentation deliverables an earlier revision of this proposal carried are dropped. | Nothing. 0076 is landed and is not edited. |
+| 0080 | Draft (2026-09-06, the date of its last commit; the document carries no status file and heads itself `EARLY DRAFT, NOT CONVERGED`) | Leaves §1.16 standing. This change moves the classification and retires the table; §1.16 changes the fence's acceptance predicate and touches neither, so the two are independent in either order. Of the two entries §2 assigns to this proposal, one is taken in full and one is taken in part. The false tier-3 coverage clause for `CoordinatorFenceRequest` is taken: TEST-2 deletes it. The bullet pairing D6's declared message-scope table with the §4.1 `ShutdownRequest` classification limit is taken only for the table, which SPEC-1 and TEST-1 retire together with its gate. The `ShutdownRequest` limit stays as 0073 recorded it, because SPEC-1 keeps the paragraph at `spec/04_system-components.md:190` unedited and the replacement gate reads `schemas/lenny-adapter.proto` alone, so it can no more relate a declared scope to what a handler does than the retired gate could. | Split that §2 bullet when 0080 converges. The declared table and its gate belong on the owned side, and the §4.1 `ShutdownRequest` classification limit returns to the inventory as a gap no proposal takes. §1.16 needs nothing while 0080 remains an inventory. A successor that takes §1.16 states the acceptance predicate and does not restate the classification. |
 
 ## Deliverable index
 
