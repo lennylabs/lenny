@@ -321,13 +321,21 @@ const (
 
 // barrierAckDeadline stands in for the gateway's
 // checkpointBarrierAckTimeoutSeconds: the single wall-clock window a drain
-// barrier is bounded by. Each ack must land well inside it, so a barrier held
-// open by a co-tenant session's gate shows up as a case failure rather than as
-// a timeout the harness reports as a hang.
-const barrierAckDeadline = 30 * time.Second
+// barrier is bounded by, at the default §10.1.8 fixes for it. Each ack must
+// land well inside it, so a barrier held open by a co-tenant session's gate
+// shows up as a case failure rather than as a timeout the harness reports as a
+// hang.
+const barrierAckDeadline = 90 * time.Second
+
+// barrierAckWellInside is the budget an ack that is not blocked on a co-tenant
+// session's gate lands within. A barrier whose gate was replaced by its
+// neighbour's blocks until the deadline above expires, so a budget a third of
+// that window catches it while leaving a loaded host ample headroom.
+const barrierAckWellInside = barrierAckDeadline / 3
 
 // spec: §10.1.2 (the pod records and compares a fenced coordination generation
-// per bound session), §4.7 (CoordinatorFence).
+// per bound session), §10.1.8 (the drain barrier's gate shares that per-session
+// value), §4.7 (CoordinatorFence).
 //
 // diagnosis: a failure means two coordinators fencing two co-tenant sessions of
 // one pod at the same moment collided on one another's generation: a fence was
@@ -435,8 +443,9 @@ func TestConcurrentCoTenantBarriersEchoTheirOwnCheckpointID_spec_10_1_8(t *testi
 		if got.res.BarrierID != "barrier-"+id {
 			t.Errorf("%s barrier_id = %q, want %q", id, got.res.BarrierID, "barrier-"+id)
 		}
-		if got.elapsed >= barrierAckDeadline/3 {
-			t.Errorf("%s barrier acked after %s, want well inside the %s ack window", id, got.elapsed, barrierAckDeadline)
+		if got.elapsed >= barrierAckWellInside {
+			t.Errorf("%s barrier acked after %s, want inside %s, well inside the %s ack window",
+				id, got.elapsed, barrierAckWellInside, barrierAckDeadline)
 		}
 	}
 }
