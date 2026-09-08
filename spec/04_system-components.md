@@ -148,44 +148,11 @@ Until those triggers are hit, a single binary with internal boundaries is prefer
 
 #### Request Message Scope
 
-Each request message on the gateway-adapter protocol is either session-scoped or pod-scoped. The classification is declared in the table below rather than derived from a message's field set, because `session_id` appears on messages of both classes. The unit of the table is a request message the protocol declares, spelled exactly as the protocol spells it, so the classification and the protocol definition can be reconciled without a naming convention of its own. Every request message either service declares is a row, and no row names a message neither service declares. `CheckpointRequest` is the stream envelope rather than an addressed request, and it is classified for the scope of the `CheckpointStart` frame that opens the stream, with `CheckpointStart` carrying its own row.
+Each request message on the gateway-adapter protocol is either session-scoped or pod-scoped, and the classification is derived from the message's field set rather than declared per message. A request message either service declares that carries no `oneof` of frames is session-scoped exactly when it declares a top-level `session_id` field of type `SessionId`, which is the only way a request on this protocol addresses a session. One that declares no such field is pod-scoped. A request message that does carry a `oneof` of frames is classified by the paragraph below instead.
 
-| Request message | Service | Direction | Scope |
-|:--|:--|:--|:--|
-| `PrepareWorkspaceRequest` | `Adapter` | gateway → adapter | session |
-| `FinalizeWorkspaceRequest` | `Adapter` | gateway → adapter | session |
-| `RunSetupRequest` | `Adapter` | gateway → adapter | session |
-| `StartSessionRequest` | `Adapter` | gateway → adapter | session |
-| `ConfigureWorkspaceRequest` | `Adapter` | gateway → adapter | session |
-| `SendMessageRequest` | `Adapter` | gateway → adapter | session |
-| `AttachRequest` | `Adapter` | gateway → adapter | session |
-| `AssignCredentialsRequest` | `Adapter` | gateway → adapter | session |
-| `RotateCredentialsRequest` | `Adapter` | gateway → adapter | session |
-| `ExtendCredentialLeaseRequest` | `Adapter` | gateway → adapter | session |
-| `RevokeCredentialsRequest` | `Adapter` | gateway → adapter | session |
-| `InterruptRequest` | `Adapter` | gateway → adapter | session |
-| `CheckpointRequest` | `Adapter` | gateway → adapter | session (stream envelope; scope of its `CheckpointStart`) |
-| `CheckpointStart` | `Adapter` | gateway → adapter | session |
-| `SignalDeadlineRequest` | `Adapter` | gateway → adapter | session |
-| `ResumeRequest` | `Adapter` | gateway → adapter | session |
-| `CheckpointBarrierRequest` | `Adapter` | gateway → adapter | session |
-| `ExportPathsRequest` | `Adapter` | gateway → adapter | session |
-| `ReportUsageRequest` | `Adapter` | gateway → adapter | session |
-| `ShutdownRequest` | `Adapter` | gateway → adapter | session |
-| `CoordinatorFenceRequest` | `Adapter` | gateway → adapter | pod |
-| `DemoteSDKRequest` | `Adapter` | gateway → adapter | pod |
-| `NegotiateVersionRequest` | `Adapter` | gateway → adapter | pod |
-| `GetObservedIntegrationLevelRequest` | `Adapter` | gateway → adapter | pod |
-| `AdapterEventsRequest` | `Adapter` | gateway → adapter | pod |
-| `ListPlatformToolsRequest` | `GatewayControl` | adapter → gateway | session |
-| `CallPlatformToolRequest` | `GatewayControl` | adapter → gateway | session |
-| `ListSessionConnectorsRequest` | `GatewayControl` | adapter → gateway | session |
-| `ListConnectorToolsRequest` | `GatewayControl` | adapter → gateway | session |
-| `CallConnectorToolRequest` | `GatewayControl` | adapter → gateway | session |
-| `ReportSessionScrubRequest` | `GatewayControl` | adapter → gateway | session |
-| `ReportPodScrubRequest` | `GatewayControl` | adapter → gateway | pod |
+A request message that carries its frames in a `oneof` is a stream envelope. An envelope declares no address of its own. Exactly one of its frames declares the address; that frame is session-scoped, it opens the stream, and the envelope takes that frame's scope, so every frame that follows continues a stream that is already addressed.
 
-`CoordinatorFenceRequest` carries `session_id` and stays pod-scoped, which is why the classification is declared rather than derived. `DemoteSDKRequest`, `NegotiateVersionRequest`, `GetObservedIntegrationLevelRequest`, and `AdapterEventsRequest` carry no session field at all and address the pod's adapter process.
+The derivation is sound only while a request addresses a session in the one way stated above. A tier-0 gate refuses a protocol definition in which a field named `session_id` is not of type `SessionId`, a field of type `SessionId` is not named `session_id`, a stream envelope declares an address of its own, or a stream envelope's frames declare other than exactly one address. What the gate cannot see is a session addressed under a name and a type that are both unconventional. A request message that does that is non-conforming, and the first paragraph is what forbids it.
 
 `ShutdownRequest` is session-scoped and carries one address. The per-slot teardown and the whole-pod teardown are the same operation on the same address, and what remains is the recycle disposition the request carries beside it. The handler runs the per-session teardown when the adapter holds a bound entry for the named session and runs the whole-pod scrub when the recycle disposition is set, so neither operation is selected by a field's presence standing in for a scope.
 
