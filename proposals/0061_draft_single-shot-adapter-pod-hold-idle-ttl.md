@@ -1,7 +1,7 @@
 # Proposal: Hold the single-shot adapter pod for an idle TTL instead of releasing it per request
 
 - **Status:** Draft (design capture, not converged). This document records the problem and design space for a follow-up to proposals 0057 (single-shot pod-binding) and 0059 (Open Responses `previous_response_id` continuation). It has NOT been run through the `change-proposal` convergence loop and stages no changes for sign-off. It exists so the gap is not lost; converge it after 0056 lands.
-- **Date:** 2026-07-25.
+- **Date:** 2026-07-25. Re-verified against the tree on 2026-09-08: the problem stands unchanged. No sticky-pod or idle-TTL mechanism exists on any path, so the single-shot adapters still pay a full pod-claim and teardown per request. Proposals 0055 and 0059, which this follows, both have their spec applied.
 - **Scope:** The built-in OpenAI-dialect adapters (`OpenAICompletionsAdapter` at `/v1/chat/completions`, `OpenResponsesAdapter` at `/v1/responses`) claim and release a warm pod on every HTTP request under the single-shot compute model. For a multi-turn conversation this re-pays the full pod-claim cost per message and, for Open Responses, the 0056 transcript rehydration per message. A held pod with an idle TTL would avoid both on the warm path. This draft records the problem, the design space, and the open questions.
 
 ## 1. Problem
