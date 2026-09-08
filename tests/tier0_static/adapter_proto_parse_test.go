@@ -82,12 +82,15 @@ func protoFields(body string) map[string]map[string]protoFieldDecl {
 	return fields
 }
 
-// protoServiceRequests returns, per request message name, the service whose
-// method declares it. The parse is service-aware because the message name
-// alone does not say which service carries it, and the scope gate reports a
-// disagreement against the service that declares the message.
-func protoServiceRequests(body string) map[string]string {
-	requests := map[string]string{}
+// protoServiceRequests returns the set of message names either service
+// declares as the request type of an RPC. The addressing-convention gate reads
+// it to select the messages its stream-envelope clause applies to, because
+// §4.1 states that clause over a request message: a message the proto declares
+// only as a frame or as a response can carry a oneof without being an envelope
+// the derivation classifies. The declaring service is not part of the result,
+// because no gate reads which service carries a message.
+func protoServiceRequests(body string) map[string]bool {
+	requests := map[string]bool{}
 	var current string
 	depth := 0
 	for _, line := range strings.Split(body, "\n") {
@@ -101,7 +104,7 @@ func protoServiceRequests(body string) map[string]string {
 		}
 		depth += braceDelta(line)
 		if m := protoRPC.FindStringSubmatch(line); m != nil {
-			requests[m[1]] = current
+			requests[m[1]] = true
 		}
 		if depth <= 0 {
 			current = ""

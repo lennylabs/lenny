@@ -180,8 +180,28 @@ message CheckpointGrant {
 message ReportPodScrubRequest {
   string pod_id = 1;
 }
+
+message CheckpointResponse {
+  oneof msg {
+    CheckpointAck ack = 1;
+    CheckpointDeny deny = 2;
+  }
+}
+
+message CheckpointAck {
+  string checkpoint_id = 1;
+}
+
+message CheckpointDeny {
+  string reason = 1;
+}
 `
 
+	// The fixture carries a response envelope whose frames address nothing, so
+	// a green run here also pins the population the envelope clause reads: §4.1
+	// states that clause over a request message, and a message the proto
+	// declares as a response carries a oneof without being an envelope the
+	// derivation classifies.
 	if got := addressingConventionDisagreements(proto); len(got) != 0 {
 		t.Fatalf("the gate refused a protocol definition that keeps the addressing convention: %v", got)
 	}
