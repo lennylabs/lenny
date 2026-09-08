@@ -1600,4 +1600,65 @@ t.section("D-rowText. a moved line anchor is not a new claim about another propo
   );
 }
 
+t.section("D-collect. the reversal check and the three collectors run as one wave");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/change-proposal-decisions.js"), "utf8");
+  const from = src.indexOf('phase("Collect")');
+  const block = src.slice(from, src.indexOf("// ---- Dedup", from));
+  t.check("the collect block exists", from > 0 && block.length > 0, String(from));
+  // They were awaited one after another. Measured over one run's four firings
+  // that cost 6776s against 2745s of work on the longest path, because
+  // sub-task 4 sweeps `proposals/` and the rest finishes inside its shadow.
+  t.check(
+    "collection is one parallel wave rather than a chain of awaits",
+    /await parallel\(\[/.test(block),
+    block.slice(0, 200),
+  );
+  for (const [what, re] of [
+    ["the reversal check", /\(\)\s*=>\s*checkReversals\(\)/],
+    ["sub-task 1", /\(\)\s*=>\s*collectHumanDecisions\(\)/],
+    ["sub-task 3", /key:\s*"out-of-scope-defects"/],
+    ["sub-task 4", /key:\s*"other-proposals"/],
+  ]) {
+    t.check(what + " is in the wave", re.test(block), what + " is not inside the parallel call");
+  }
+  t.check(
+    "no collector is awaited on its own before the wave",
+    !/await\s+(checkReversals|collectHumanDecisions|collectSingle|corpusInventory)\(/.test(block),
+    "a collector is still awaited outside the parallel call",
+  );
+  // Sub-task 4 needs the corpus, which is gathered once and carried on the
+  // phase state. Chaining it behind the corpus rather than behind the whole
+  // wave is what lets it start immediately on every later firing.
+  t.check(
+    "sub-task 4 chains behind the corpus, not behind the wave",
+    /corpusInventory\(\)\.then\(/.test(block),
+    "sub-task 4 does not chain off corpusInventory",
+  );
+  // The order the populations are pushed in is what kept them sequential.
+  const push = block.match(/items\.push\([^;]*\);/);
+  t.check("the populations are pushed in the documented order", !!push &&
+    push[0].indexOf("humanItems") < push[0].indexOf("oosItems") &&
+    push[0].indexOf("oosItems") < push[0].indexOf("otherItems"),
+    push ? push[0] : "no items.push found");
+  // parallel resolves a throwing thunk to null, so every destructured result
+  // has to tolerate one.
+  t.check(
+    "a dead collector cannot throw on the push",
+    /\.\.\.\(humanItems \|\| \[\]\)/.test(block) &&
+      /\.\.\.\(oosItems \|\| \[\]\)/.test(block) &&
+      /\.\.\.\(otherItems \|\| \[\]\)/.test(block),
+    push ? push[0] : "",
+  );
+  // The corpus size is read by the result object long after the wave.
+  t.check(
+    "the corpus binding still reaches its two readers",
+    /let corpus = \[\];/.test(src) && (src.match(/corpus\.length/g) || []).length >= 2,
+    "corpusSize would throw on an undefined binding",
+  );
+}
+
 t.done();

@@ -3209,30 +3209,55 @@ phase("Collect");
 // Before anything is adjudicated: each item an earlier firing applied is
 // checked against the tree, and one whose text is gone is marked CONTESTED
 // rather than argued again.
-await checkReversals();
-const corpus = await corpusInventory();
-// Sequential rather than parallel: sub-task 1 already fans out three agents of
-// its own, and the four populations are collected in the order the phase reads
-// them so a log of one firing reads as one pass over the proposal.
-items.push(...(await collectHumanDecisions()));
-items.push(
-  ...(await collectSingle({
-    key: "out-of-scope-defects",
-    title: "Sub-task 3 (out-of-scope defect declarations)",
-    prompt: outOfScopeDefectsBrief(),
-    allowed: ["out-of-scope-stands", "out-of-scope-wrong"],
-    fallback: "out-of-scope-stands",
-  })),
-);
-items.push(
-  ...(await collectSingle({
-    key: "other-proposals",
-    title: "Sub-task 4 (impacts on other proposals)",
-    prompt: otherProposalsBrief(corpus),
-    allowed: ["impact-row"],
-    fallback: "impact-row",
-  })),
-);
+let corpus = [];
+// The reversal check and the three collectors run as one wave. They are
+// read-only over the proposal and over different populations, so nothing
+// orders them: the reversal check reads the tree for text earlier firings
+// wrote, and each collector reads its own population. They were sequential,
+// on the ground that sub-task 1 already fans out three agents of its own and
+// that collecting in a fixed order keeps a firing's log readable as one pass.
+// Neither holds. Sub-task 1's fan-out says nothing about whether 3 and 4 may
+// run beside it, and the order is preserved below by pushing the results in
+// it rather than by awaiting them in it. Measured over one run's four
+// firings, the phase spent 6776s here against 2745s of work on its longest
+// path, because sub-task 4 sweeps `proposals/` and everything else finishes
+// inside its shadow: 67 minutes, a fifth of that run's wall clock.
+//
+// `keyFor` mutates the shared marker record and is reached from two of these
+// collectors, which is safe because it is synchronous: it runs to completion
+// without an await, so two collectors cannot interleave inside it.
+//
+// Sub-task 4 chains behind the corpus rather than behind the whole wave. The
+// corpus is gathered once at the first firing and carried on the phase state,
+// so on every later firing that thunk starts its agent immediately.
+const [, humanItems, oosItems, otherItems] = await parallel([
+  () => checkReversals(),
+  () => collectHumanDecisions(),
+  () =>
+    collectSingle({
+      key: "out-of-scope-defects",
+      title: "Sub-task 3 (out-of-scope defect declarations)",
+      prompt: outOfScopeDefectsBrief(),
+      allowed: ["out-of-scope-stands", "out-of-scope-wrong"],
+      fallback: "out-of-scope-stands",
+    }),
+  () =>
+    corpusInventory().then((rows) => {
+      // Held for the result object, which reports how many proposals the sweep
+      // was working from.
+      corpus = rows;
+      return collectSingle({
+        key: "other-proposals",
+        title: "Sub-task 4 (impacts on other proposals)",
+        prompt: otherProposalsBrief(rows),
+        allowed: ["impact-row"],
+        fallback: "impact-row",
+      });
+    }),
+]);
+// Pushed in the order the phase reads the populations, which is what kept them
+// sequential before.
+items.push(...(humanItems || []), ...(oosItems || []), ...(otherItems || []));
 // ---- Dedup, across every sub-task rather than within one ------------------
 //
 // Sub-task 1's join already dedupes its own three readings of one home. Nothing

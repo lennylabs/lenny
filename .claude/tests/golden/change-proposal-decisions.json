@@ -7,6 +7,17 @@
     "blocks": []
   },
   {
+    "label": "f2:out-of-scope-defects",
+    "phase": "Collect",
+    "model": "opus",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
     "label": "f2:corpus",
     "phase": "Collect",
     "model": "haiku",
@@ -39,17 +50,6 @@
   },
   {
     "label": "f2:human-decisions:3",
-    "phase": "Collect",
-    "model": "opus",
-    "schema": "coverage+decisions",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence"
-    ]
-  },
-  {
-    "label": "f2:out-of-scope-defects",
     "phase": "Collect",
     "model": "opus",
     "schema": "coverage+decisions",
