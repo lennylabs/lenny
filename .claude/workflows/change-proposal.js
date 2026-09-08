@@ -115,6 +115,14 @@ let lockSpecChanges = !!input.lockSpecChanges;
 let maxFixGroups = input.maxFixGroups || 7;
 // Namespaces the log shards, the snapshots, and the run state, so two runs
 // against one proposal do not read each other's.
+// Names the lens cache this run may read and write. Empty, the default, means
+// no cache: a lens reviews rather than replaying an answer. Set it to resume an
+// interrupted run's review, passing the SAME string the interrupted run used;
+// two runs sharing a scope share answers, which is the point and the hazard.
+// Dots are stripped along with everything else outside the class: a scope of
+// ".." would otherwise resolve to the parent directory, where another scope's
+// answers live.
+const cacheScope = String(input.cacheScope || "").replace(/[^A-Za-z0-9_-]/g, "");
 const runTag =
   (typeof input.runTag === "string" && input.runTag.trim()) ||
   String(input.proposalPath || input.nextNumber || "cp")
@@ -433,6 +441,7 @@ const ARG_CLASS = {
   maxFixGroups: "forward",
   fixDesignDepth: "forward",
   compactAtLines: "forward",
+  cacheScope: "launch",
   firstCompactionAtLines: "forward",
   compactGrowthLines: "forward",
   standingContextTarget: "forward",
@@ -2227,13 +2236,38 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap) {
 // (lens, round) alone and needed the round's cache deleted in a specific window
 // between the fix landing and the state write, which a crash in the wrong place
 // defeats; this has no window to get wrong.
+// The lens cache, which serves a lens its own earlier answer instead of making
+// it review again. OFF unless the caller names a scope, and the reason is
+// measured rather than theoretical.
+//
+// It used to live at `cp-cache/<runTag>/`, on the stated ground that "runTag
+// defaults to the proposal stem and is a caller argument, so two runs against
+// the same proposal stay apart". The default does the opposite: it is the same
+// string for every run of one proposal, and `scratchpad/` is never swept, so a
+// LATER run's lens computed the same key and replayed an earlier run's answer.
+// Measured on two runs of 0075: the spec loop's lenses returned in a 25-second
+// median against 363 seconds for the same lenses over the same staging a run
+// earlier, and one lens that missed its key took 413 seconds on text the round
+// boundary reports as unchanged. Twelve of thirteen lenses did not review.
+//
+// The hash covers the two change files and the checklist, so it also does not
+// notice the things that differ MOST between runs: the tree the lens verifies
+// against, the model and effort it runs at, and the lens prompt itself. The
+// model and effort are in the key below; the tree and the prompt are why this
+// is opt-in rather than merely scoped.
+//
+// A scope is a caller-chosen string rather than a per-run nonce because the
+// prompt must stay byte-stable: `resumeFromRunId` replays an agent only when
+// its prompt is unchanged, so a nonce would bust the harness's own cache and
+// re-run live everything the resume exists to skip.
 function cacheBlock(key, round) {
-  const dir = repo + "/scratchpad/cp-cache/" + runTag;
+  if (!cacheScope) return "";
+  const dir = repo + "/scratchpad/cp-cache/" + runTag + "/" + cacheScope;
   return (
     "\n\nCACHE. Before anything else, run:\n" +
     "  mkdir -p " + dir + " && H=$(cat " + P.spec + " " + P.nonSpec + " " + P.checklist +
     " 2>/dev/null | md5sum | cut -c1-12) && cat " + dir + "/" + key + "-r" + round +
-    "-$H.json 2>/dev/null\n" +
+    "-" + baseModel + "-" + baseEffort + "-$H.json 2>/dev/null\n" +
     "If that printed JSON, return exactly it as your structured output and do no other work: it is your " +
     "own answer to this same question over this same text, from a run that was interrupted.\n" +
     "Otherwise do the review, and immediately before you return, write your findings JSON to that same " +

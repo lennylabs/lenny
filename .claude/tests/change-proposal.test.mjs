@@ -1517,15 +1517,17 @@ t.section("B29. mid-run overrides apply forward, and anchored keys are refused")
 
 // ---- Phase 6: the lens cache, argument classes, and resume ---------------
 
-t.section("B18. every lens carries the cache instruction, keyed on content");
+t.section("B18. under a named scope every lens carries the cache instruction, keyed on content");
 {
-  const { calls } = await runWorkflow(WF, REVIEW_ARGS, logStubs());
+  // The cache is off unless the caller names a scope; B35 covers that. This
+  // section covers what the instruction says once it is on.
+  const { calls } = await runWorkflow(WF, { ...REVIEW_ARGS, cacheScope: "b18" }, logStubs());
   const lenses = calls.filter(isLens);
   t.check("every lens carries it", lenses.every((c) => /CACHE\. Before anything else/.test(c.prompt)));
-  t.check("the key is lens, round and a content hash", lenses.every((c) => {
+  t.check("the key is lens, round, tier and a content hash", lenses.every((c) => {
     const round = c.label.match(/^r(\d+):/)[1];
     const lens = c.label.split(":")[2];
-    return /md5sum \| cut -c1-12/.test(c.prompt) && c.prompt.includes(lens + "-r" + round + "-$H.json");
+    return /md5sum \| cut -c1-12/.test(c.prompt) && c.prompt.includes(lens + "-r" + round + "-opus-medium-$H.json");
   }));
   t.check("the hash covers the files a fix would change", lenses.every((c) => /spec-changes\.md .*non-spec-changes\.md .*implementation-checklist\.md/.test(c.prompt)));
   t.check("a hit returns without reviewing", lenses.every((c) => /return exactly it as your structured output and do no other work/.test(c.prompt)));
@@ -4332,6 +4334,47 @@ t.section("B34. a boundary that cannot be parsed reports what the agent said");
     /\.slice\(0,\s*\d+\)/.test(block),
     "no slice on the logged reply",
   );
+}
+
+t.section("B35. the lens cache is off unless the caller names a scope, and is scoped to it");
+{
+  // It lived at `cp-cache/<runTag>/` on the stated ground that runTag "defaults
+  // to the proposal stem and is a caller argument, so two runs against the same
+  // proposal stay apart". The default does the opposite. Measured on two runs
+  // of 0075: the spec lenses returned in a 25s median against 363s for the same
+  // lenses over the same staging a run earlier, and the one lens that missed
+  // its key took 413s on text the round boundary reports as unchanged.
+  const off = await runWorkflow(WF, REVIEW_ARGS, loopStubs());
+  const lensOff = matching(off.calls, "r1:review:citations")[0];
+  t.check("no cache instruction by default", !/CACHE\. Before anything else/.test(lensOff.prompt), lensOff.prompt.slice(0, 120));
+  t.check("and no cp-cache path is named", !/cp-cache/.test(lensOff.prompt), "a cache path reached a lens with no scope");
+
+  const on = await runWorkflow(WF, { ...REVIEW_ARGS, cacheScope: "run-a" }, loopStubs());
+  const lensOn = matching(on.calls, "r1:review:citations")[0];
+  t.check("a named scope turns it on", /CACHE\. Before anything else/.test(lensOn.prompt));
+  t.check("under a directory the scope names", /cp-cache\/[^\s]*\/run-a/.test(lensOn.prompt), lensOn.prompt.slice(lensOn.prompt.indexOf("cp-cache") - 20, lensOn.prompt.indexOf("cp-cache") + 60));
+  // A cached answer replayed at a different tier is an answer to a different
+  // question, and the content hash covers only the two change files and the
+  // checklist.
+  t.check("the key carries the model and the effort", /-opus-medium-\$H\.json/.test(lensOn.prompt) || /-\$\{?baseModel/.test(lensOn.prompt), "the key does not separate tiers");
+
+  const other = await runWorkflow(WF, { ...REVIEW_ARGS, cacheScope: "run-b" }, loopStubs());
+  const lensOther = matching(other.calls, "r1:review:citations")[0];
+  t.check(
+    "two scopes cannot read each other",
+    /cp-cache\/[^\s]*\/run-b/.test(lensOther.prompt) && !/\/run-a\//.test(lensOther.prompt),
+    "run-b reached run-a's directory",
+  );
+  // The scope is a caller string rather than a per-run nonce because the prompt
+  // must stay byte-stable: resumeFromRunId replays an agent only when its
+  // prompt is unchanged.
+  const again = await runWorkflow(WF, { ...REVIEW_ARGS, cacheScope: "run-a" }, loopStubs());
+  t.check(
+    "the same scope produces a byte-identical prompt",
+    matching(again.calls, "r1:review:citations")[0].prompt === lensOn.prompt,
+    "the cache block is not deterministic across runs",
+  );
+  t.check("a scope cannot escape its directory", !/\.\./.test(String((await runWorkflow(WF, { ...REVIEW_ARGS, cacheScope: "../../etc" }, loopStubs())).calls.find((c) => c.label === "r1:review:citations").prompt.match(/cp-cache[^\s]*/) || "")), "a traversal survived the scope filter");
 }
 
 t.done();

@@ -370,12 +370,41 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `churnWindow`, `churnMinFindings`, `churnStrikes` | forward | 6, 5, 3 | the churn detector's thresholds |
 | `maxRedesigns`, `redesignReviewRounds` | forward | 2, 2 | the redesign budget |
 | `maxPrunes` | forward | 2 | the prune budget; a section the run already pruned is not pruned again |
+| `cacheScope` | launch | none | names the lens cache this run may read and write; empty means no cache and every lens reviews. Two runs sharing a scope share answers |
 | `runTag` | anchored | the stem | namespaces the log shards, snapshots, cache, and state |
 | `resumeState` | launch | false | continue a loop at its recorded round with its retired set |
 
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. `introspect` reaches only the gate by prefix fallback; the introspection pass itself takes no injected text. To add text to every review lens use `lensPrompt`, which is a standalone argument rather than a `prompts` key. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
 Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
+
+### The lens cache
+
+A lens can be served its own earlier answer instead of reviewing again, keyed on
+the lens, the round, the base tier, and a hash of the two change files and the
+checklist. It is **off unless `cacheScope` names one**, and the default is off
+because the failure it caused is worse than the cost it saves.
+
+It used to live at `cp-cache/<runTag>/`, on the ground that `runTag` "defaults to
+the proposal stem and is a caller argument, so two runs against the same proposal
+stay apart". The default does the opposite: it is one string for every run of a
+proposal, and `scratchpad/` is never swept, so a later run's lens computed the
+same key and replayed an earlier run's answer. Measured across two runs of one
+proposal, the spec loop's lenses returned in a 25-second median against 363
+seconds for the same lenses over the same staging a run earlier, and the single
+lens that missed its key spent 413 seconds on text the round boundary reports as
+unchanged. Twelve of thirteen lenses did not review, and the loop reported
+convergence.
+
+The hash also does not cover what differs most between runs: the tree the lens
+verifies against, and the lens prompt. The base model and effort are in the key;
+the other two are why this is opt-in rather than merely scoped per run.
+
+Set it to resume an interrupted run's review, passing the same string that run
+used. It is a caller-chosen string rather than a per-run nonce on purpose:
+`resumeFromRunId` replays an agent only when its prompt is byte-identical, so a
+nonce would bust the harness's own cache and re-run live everything the resume
+exists to skip.
 
 ### Starting partway through
 
