@@ -150,14 +150,6 @@ that a fence for one session does not change the generation the pod holds for an
 OD3 Question B assigned that edit to this proposal, so a withdrawal has to name another owner for it, and
 the tier-3 coverage TEST-2 adds for the fence goes unowned with it.
 
-**OD5. Is the widened tier-3 session set accepted with nothing holding it complete?** After TEST-2,
-membership in `sessionScopedMessages` is the derivation rule's, and no gate checks that a request message
-added later and addressed to a session joins the list. The eight session-addressed messages TEST-2 adds sit
-outside the set today, which is what an unheld list drifts into. Answering yes accepts a hand-maintained list under a
-proto-derivable rule and leaves TEST-2 as staged. Answering no asks for a deliverable this proposal does not
-stage, which is a gate deriving the set from `schemas/lenny-adapter.proto`. The review loop derived no
-recommendation; it recorded the drift as a standing risk on two rounds.
-
 ## Defects in the shipped tree that this proposal does not stage
 
 None blocks sign-off. Both defects this proposal confirms in the specification are staged: the three §4.1

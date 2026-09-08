@@ -92,6 +92,21 @@ the shipped protocol definition for each added member: `CallPlatformToolRequest`
 (`:1538-1549`), and `ConfigureWorkspaceRequest` (`:1673-1684`) each declare `SessionId session_id = 1` at
 the top level, and none of them declares a field named `slot_id`.
 
+The session set stays hand-entered. No deliverable derives its membership from
+`schemas/lenny-adapter.proto`, and no gate refuses a session-addressed request message added later and left
+out of it. What such an omission costs is bounded by the gate D2 of the staged spec changes states, which
+holds the addressing convention on every message the protocol declares: the type comparison in
+`TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1`
+(`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:112-114`) is then enforced over
+the whole protocol definition whatever the set holds, and its presence check (`:107-111`) is definitional
+under the derivation rule, because a request message declaring no top-level `SessionId session_id` is
+pod-scoped. The one arm an omission escapes is `TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1`
+(`:78-92`), which tests for a field named `slot_id` alone (`:32`), and the wrapper type that name carried is
+barred from the protocol definition outright by `TestTheRetiredAddressWrapperIsGone_spec_15_4` (`:150-158`).
+A derived rule beside a hand-entered remainder is the arrangement tier 0 already records for its own
+inventory: "Neither rule reconstructs the whole inventory, and a case file outside both is still entered by
+hand" (`tests/tier0_static/spec_map_slot_address_registration_test.go:1209-1211`).
+
 `TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1` and
 `TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1` iterate `sessionScopedMessages` (their loops
 at `:81` and `:102`). `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` iterates
