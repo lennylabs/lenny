@@ -201,9 +201,11 @@ applies. The further defects confirmed in the working tree are listed below and 
   coordination_generation = 4`, and it declares no address of its own
   (`schemas/lenny-adapter.proto:1173-1187`). The same page is stale elsewhere for the same reason.
   `docs/api/internal.md:272-274` publishes `message DemoteSDKRequest { string session_id = 1; }` while the
-  shipped message declares `string reason = 1` alone (`schemas/lenny-adapter.proto:1694-1698`), and
-  `docs/api/internal.md:94` publishes an `UploadFiles` RPC that neither service declares
-  (`schemas/lenny-adapter.proto:32`, `:261`; the identifier appears nowhere under `schemas/`).
+  shipped message declares `string reason = 1` alone (`schemas/lenny-adapter.proto:1694-1698`),
+  `docs/api/internal.md:111`, `:147`, and `:245` publish a top-level `string session_id` on
+  `StartSessionRequest`, `StopSessionRequest`, and `UploadChunk`, and `docs/api/internal.md:94` publishes
+  an `UploadFiles` RPC that neither service declares (`schemas/lenny-adapter.proto:32`, `:261`; the
+  identifier appears nowhere under `schemas/`).
 
   This proposal records the staleness and stages no repair. The page is false about the protocol definition
   today, before anything staged here applies, so SPEC-1 does not make it wrong. What SPEC-1 changes is the

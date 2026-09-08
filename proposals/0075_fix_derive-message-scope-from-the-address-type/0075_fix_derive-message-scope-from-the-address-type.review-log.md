@@ -536,3 +536,110 @@ identifiers and one entry under the defects section, where the identifiers now s
 the defects section carries three). The archive also holds two `### [f1.cleanup]`, two `### [f2.cleanup]`,
 and two `### [f3.cleanup]` blocks for the same reason. A join on the heading alone returns both, and ledger
 position is not chronology.
+
+
+### [spec.1.review-security.1]
+DECISION: Returned the cached security-lens answer verbatim (empty findings) — BECAUSE /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/security-r1-b32f3475fbae.json is this same lens's own completed answer over byte-identical staging (spec-changes + non-spec-changes + checklist hash b32f3475fbae), and the cache protocol says return it and do no other work — ALTERNATIVES: re-deriving the census, the §4.1 anchors and the slotAddressCaseFiles blast radius, rejected because the cached coverage note already records each verification with file:line and none had drifted at write time.
+FACT: The staging hash has not moved since the non-spec-recheck lane ran, so a cache key written under one lane is legitimately served to the next — the cached entry states it covers both substrates. EVIDENCE: /home/ec2-user/lenny/scratchpad/cp-cache/0075_fix_derive-message-scope-from-the-address-type/security-r1-b32f3475fbae.json:1
+
+
+### [spec.2.review-edit-sites.1]
+
+DECISION: Returned an EMPTY findings list for the edit-site-completeness lens over the staged spec edits — BECAUSE every identifier SPEC-1 removes or introduces (`session_id`, `SessionId`, `session-scoped`/`pod-scoped` as request-message classes, "stream envelope", the `Adapter`/`GatewayControl` service names, the `#### Request Message Scope` heading, the 32 request-message type names) was grepped across `spec/`, `docs/`, `schemas/`, `charts/`, `spec/README.md`, `tests/registers/`, `tests/change-graph.json`, and `tests/spec-anchor-moves.json`, and no surface outside `spec/04` §4.1 becomes wrong or internally inconsistent once `:151`, `:153-186`, and `:188` are replaced — ALTERNATIVES: the "either service" antecedent loss (declined; see USEFUL below), `spec/04:712` (declined; see WATCHOUT below), `docs/api/internal.md` (pre-existing, already twice deferred, remedy is a docs edit outside this loop).
+
+DECISION: Declined the cache hit at `scratchpad/cp-cache/.../edit-sites-r2-b32f3475fbae.json` and did the review — BECAUSE its own `coverage` prose opens "Non-spec recheck round 2, edit-site lens" and describes a sweep of the non-spec staging, which is a different scope from this loop's (staged spec edits only). ALTERNATIVES: returning it verbatim as the brief's cache rule literally directs; rejected because the cache key omits the lane, so the slot is shared between lanes. My own (also empty) result now overwrites it at the same path, which is harmless only because both are empty.
+
+FACT: The four §4.1 anchors SPEC-1 names are exact at HEAD. `spec/04_system-components.md:149` is `#### Request Message Scope`, `:151` the introducing paragraph, `:153-186` the table (header `:153`, separator `:154`, 32 rows `:155-186`), `:188` the fence-grounding paragraph, `:190` the `ShutdownRequest` paragraph, `:192` `### 4.2`. — EVIDENCE: spec/04_system-components.md:149,151,153,186,188,190,192
+
+FACT: `tests/registers/identifier-senses.yaml` carries eight `spec/04_system-components.md` rows keyed by *positional* occurrence among that file's retired-spelling sites, which is the one register shape a block deletion could shift. It cannot fire here: none of the §28.3 retired spellings (`LifecycleChannel`, `controlchannel`, `lifecycleChannel`, `lifecycle-socket`, `@lenny-lifecycle`, `lifecycle-events`, `lifecyclechannel`) occurs anywhere in `spec/04_system-components.md`, so the deleted block contains none and the numbering does not move. Every other register (`pinned-spec-literals`, `anchor-senses`, `line-citations`, `line-citation-resolution`, `citation-document-senses`, `reserved-phrase-senses`, `change-graph-coverage`, `residual-anchors`) contains zero `04_system-components` references. — EVIDENCE: tests/registers/identifier-senses.yaml:5-8,14-35; spec/28_communication-channels.md:151-158
+
+FACT: `tests/change-graph.json`'s `globs` maps `spec/` to `{"static": ["tests/tier0_static/spec_link_check_test.go"], "docs": ["tests/tier11_docs/..."]}` and names no §4.1-specific companion, and `tests/spec-anchor-moves.json` is `"moves": []`. So a `spec/04` edit owes no change-graph or anchor-move register row; it owes only the link check and tier 11 at run time. — EVIDENCE: tests/change-graph.json (globs["spec/"]); tests/spec-anchor-moves.json:4
+
+FACT: The only spec sites that classify `CoordinatorFenceRequest` are `spec/04:175` (table row) and `:188` (grounding paragraph), both inside SPEC-1's deletion. `spec/28:120`'s §28.3 `CH-FENCE` register row has no scope column, `spec/11:216` records only the 5s timeout, and `spec/18:238` names the RPC without a class. No docs, schema, or chart surface classifies it. — EVIDENCE: spec/04_system-components.md:175,188; spec/28_communication-channels.md:120; spec/11_policy-and-controls.md:216
+
+WATCHOUT: `spec/04_system-components.md:712` (the §4.7 `CoordinatorFence` row, "Announce new `coordination_generation` to the pod on coordinator handoff") is the most tempting edit-site finding on this proposal, because before SPEC-1 it agrees with the deleted `:175`/`:188` and after SPEC-1 the derivation classifies the fence session-scoped. It is NOT a finding: the row states an announcement destination, not a scope class, so the derivation rule does not read onto it; it is a 0076 residue that is already imprecise in the tree; and `summary.md:220-244` records it under `## Defects in the shipped tree that this proposal does not stage` with its full ground and its 0080 inventory candidacy. — EVIDENCE: spec/04_system-components.md:712; proposals/0075_.../0075_....summary.md:220-244
+
+USEFUL [spec.1.review-edit-sites.1, spec.4.review-*]: the standing-context and archive entries closing the "`either service` has no antecedent after the Service column is deleted" question are correct and saved a full derivation. Confirmed independently this round: the staged block's own opening names "the gateway-adapter protocol", `schemas/lenny-adapter.proto` declares exactly two services at `:32` and `:261`, and the retired `:151` used the identical phrase. Six prior entries reach the same answer. Do not re-open.
+
+USEFUL [Traps: "Do not lean on 'direction survives in §4.7.1's two RPC tables'"]: this is the second thing an edit-sites lens reaches for. The entry's own conclusion is right — retiring the table drops Service and Direction for about eleven messages with no other spec carrier, but nothing in the tree reads those columns, no applied text becomes wrong, and OD1 owns the judgement. Do not file it as a missing edit site.
+
+FACT: Every `§4.1` / `41-edge-gateway-replicas` inbound reference in `spec/`, `docs/`, `schemas/`, and `charts/` points at the Edge Gateway Replicas capacity, HPA/SCL-026, or subsystem-extraction content. None cites the message-scope block. `spec/README.md:15` links the `### 4.1` heading only; there is no README entry, TOC entry, or fragment link for the bare `#### Request Message Scope` heading. — EVIDENCE: spec/README.md:15; spec/13_security-model.md:736; spec/18_build-sequence.md:138,637,640; spec/10_gateway-internals.md:77
+
+
+### [reconcile.4]
+
+DECISION: the deliverable index and the implementation checklist were reconciled against the converged
+staging and needed no change — BECAUSE the staging's live deliverable set is SPEC-1 (`spec-changes.md` §5),
+TEST-1, and TEST-2 (`non-spec-changes.md` §5), the index carries exactly those three once each with the
+file lists §9 of the staged spec changes gives, and the checklist already leads with the single spec-lane
+step S1 (SPEC-1) followed by S2 (TEST-1) and S3 (TEST-2), each one lane, each depending on S1. No
+deliverable was added, removed, merged, split, renumbered, or resequenced by this pass, and no staged
+wording was touched.
+
+CORRECTS [standing-context Deferred, "DEFERRED [0075_....summary.md]"]: closed. The `docs/api/internal.md`
+entry under `## Defects in the shipped tree that this proposal does not stage` now names the three further
+top-level `string session_id` sites the deferral reported, at `docs/api/internal.md:111`, `:147`, and
+`:245`, on `StartSessionRequest`, `StopSessionRequest`, and `UploadChunk`, alongside the two excerpt sites
+and the `UploadFiles` RPC it already carried. The entry's conclusion is unchanged: the whole page is stale,
+it is stale before anything staged here applies, and nothing this proposal applies reddens on account of
+it. EVIDENCE:
+proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md:197-208
+
+CORRECTS [standing-context Deferred, "DEFERRED [0075_....implementation-checklist.md]"]: already closed by
+`[non-spec-recheck.2.review-edit-sites.1]` and re-confirmed by this pass. The S2 step reads
+"`tests/spec-map.json` re-points the retiring gate's two section 4.1 entries at the replacement gate's case
+names and deletes its section 28.5.3 entry, inside this step". No further edit is owed. EVIDENCE:
+proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.implementation-checklist.md:13-16
+
+OPEN: `DEFERRED [spec/04_system-components.md]` is carried forward unclosed. The §4.7 `CoordinatorFence`
+row at `:712` reads "Announce new `coordination_generation` to the pod on coordinator handoff", which
+proposal 0076 falsified by moving the recorded generation onto the session's slot entry
+(`pkg/adapter/slot.go:59`); what is true instead is that the fence announces the generation for the session
+it names. The remedy lands in `spec/04_system-components.md`, and in its reader-facing mirror
+`docs/reference/adapter-contract.md:69`, neither of which this pass may edit, and neither of which any
+deliverable of this proposal stages. The defect is recorded in the summary; the edit is unowned.
+
+OPEN: `DEFERRED [docs/api/internal.md]` is carried forward unclosed. The page is a pre-0073 snapshot: it
+publishes a service `RuntimeAdapter` (`:74`) that no proto declares, RPCs `StopSession` (`:81`) and
+`UploadFiles` (`:89`, `:94`) that neither `service Adapter` nor `service GatewayControl` declares, and five
+request messages carrying a top-level `string session_id` (`:111`, `:147`, `:211`, `:245`, `:273`), a
+spelling SPEC-1's constraint paragraph forbids. The remedy lands in `docs/api/internal.md`, which this pass
+may not edit and which no deliverable of this proposal stages. The summary's inventory of the page is now
+complete; the edit belongs to the documentation loop or to proposal 0080's residue inventory.
+
+OPEN: `DEFERRED [proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md]` is
+carried forward unclosed. 0080's §2 bullet at `:453-454` must split: the declared message-scope table and
+its reconciliation gate stay on the side this proposal owns, and the §4.1 `ShutdownRequest` classification
+limit returns to 0080's §1 inventory as a gap no proposal takes. The remedy lands in another proposal's
+file, which this pass may not edit. The requirement is stated in this proposal's 0080 impacts row.
+
+OPEN: `DEFERRED [0075_....status.md]` is carried forward unclosed. The status file's `**Date:**` line cites
+a "§11" that survives only inside this review log, so the pointer resolves across files rather than within
+the document a reader is holding. The remedy is to name the review log or drop the reference, and it lands
+in
+`proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.status.md`,
+which this pass may not edit.
+
+OPEN: `DEFERRED [0075_....spec-changes.md]` is carried forward unclosed. D2 calls the addressing convention
+"an addressing convention that nothing checks today", which overstates it:
+`TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1` already asserts one direction of it, that
+`session_id` exists and is of type `lenny.adapter.v1.SessionId`, over the hand-maintained
+`sessionScopedMessages` subset (`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:99-116`).
+What is true instead is that no gate checks the convention in both directions over every message the
+protocol declares. The remedy lands in the staged spec changes, which this pass may not edit and may not
+reword.
+
+FACT: the `DEFERRED [docs/reference/adapter-contract.md]` entry at the tail of this log's ledger, asking
+that `:69`'s fence precondition be restated per session, is not carried forward. Compaction pass 2 deleted
+it from the standing context because the tree refutes it: the hold is enforced by pod-level interceptors on
+`s.inHoldState()` alone and `s.exitHoldState()` runs after a successful fence for any bound session, so the
+precondition is pod-wide. The standing context's Traps section holds the refutation. EVIDENCE:
+pkg/adapter/holdstate.go:335,348; pkg/adapter/coordination.go:150-156
+
+FACT: both live open decisions already stand in the summary under `## Open decisions for human to make`, so
+this pass promoted nothing. OD1 is retire-or-withdraw, with its recommendation, losing alternatives, and
+confidence. OD5 is the unheld widened tier-3 session set, and its entry states in its own words that the
+review loop derived no recommendation, which is the record the open-decisions-and-impact-review phase
+supplies. No other unclosed `OPEN` in this log is a decision routed to the human: the remainder are
+verification questions marked UNVERIFIED, records of unowned pre-existing defects, and format questions
+routed to a pass with authority over the summary's claims.
