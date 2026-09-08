@@ -34,14 +34,48 @@ const retiredFieldName = "slot_id"
 // retiredWrapperName is the message type every duplicate address carried.
 const retiredWrapperName = protoreflect.FullName("lenny.adapter.v1.SlotId")
 
-// sessionScopedMessages is every request message §4.1 addresses to one
-// session, in both directions, together with the number the duplicate
-// address held on it. A message is in this set when the specification's
-// message-scope table gives it session scope; a pod-scoped message
-// (`CoordinatorFenceRequest`) and a message that never carried the
-// duplicate (`ExportPathsRequest`, `ConfigureWorkspaceRequest`) are out of
-// it and are covered by the session-address arm below alone.
-var sessionScopedMessages = map[string]protoreflect.FieldNumber{
+// sessionScopedMessages names every request message the §4.1 derivation
+// rule addresses to one session directly, in both directions: a request
+// message is session-scoped exactly when it declares a top-level
+// `session_id` field of type `SessionId`. `CheckpointRequest` is the one
+// session-scoped message outside this set, because the stream envelope
+// declares no address of its own and `CheckpointStart`, which is a member,
+// carries the address in its place.
+var sessionScopedMessages = []string{
+	"PrepareWorkspaceRequest",
+	"FinalizeWorkspaceRequest",
+	"RunSetupRequest",
+	"StartSessionRequest",
+	"SendMessageRequest",
+	"AttachRequest",
+	"AssignCredentialsRequest",
+	"RotateCredentialsRequest",
+	"ExtendCredentialLeaseRequest",
+	"RevokeCredentialsRequest",
+	"InterruptRequest",
+	"SignalDeadlineRequest",
+	"ResumeRequest",
+	"CheckpointBarrierRequest",
+	"ReportUsageRequest",
+	"ShutdownRequest",
+	"CheckpointStart",
+	"ReportSessionScrubRequest",
+	"CoordinatorFenceRequest",
+	"ExportPathsRequest",
+	"ConfigureWorkspaceRequest",
+	"CallConnectorToolRequest",
+	"CallPlatformToolRequest",
+	"ListConnectorToolsRequest",
+	"ListPlatformToolsRequest",
+	"ListSessionConnectorsRequest",
+}
+
+// retiredDuplicateNumbers maps each message that carried the duplicate
+// `slot_id` address to the field number that address held on it. A message
+// is a member when it declares `reserved "slot_id"` in the protocol
+// definition. The set is closed: the duplicate was retired in one change
+// and no later message joins it.
+var retiredDuplicateNumbers = map[string]protoreflect.FieldNumber{
 	"PrepareWorkspaceRequest":      4,
 	"FinalizeWorkspaceRequest":     5,
 	"RunSetupRequest":              4,
@@ -78,7 +112,7 @@ func messageDescriptors(t *testing.T) protoreflect.MessageDescriptors {
 func TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
-	for name := range sessionScopedMessages {
+	for _, name := range sessionScopedMessages {
 		md := msgs.ByName(protoreflect.Name(name))
 		if md == nil {
 			t.Errorf("%s is not declared in the adapter proto", name)
@@ -99,7 +133,7 @@ func TestSessionScopedRequestsDeclareNoSecondAddress_spec_4_1(t *testing.T) {
 func TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
-	for name := range sessionScopedMessages {
+	for _, name := range sessionScopedMessages {
 		md := msgs.ByName(protoreflect.Name(name))
 		if md == nil {
 			continue
@@ -127,7 +161,7 @@ func TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1(t *testing.T) {
 func TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4(t *testing.T) {
 	t.Parallel()
 	msgs := messageDescriptors(t)
-	for name, num := range sessionScopedMessages {
+	for name, num := range retiredDuplicateNumbers {
 		md := msgs.ByName(protoreflect.Name(name))
 		if md == nil {
 			continue
