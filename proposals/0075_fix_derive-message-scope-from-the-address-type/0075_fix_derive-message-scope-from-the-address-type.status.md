@@ -2,15 +2,15 @@
 proposal: 0075_fix_derive-message-scope-from-the-address-type
 title: Derive message scope from the address type
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-08-19
 drafted-by: 
 reviewed-date: 2026-09-08
 reviewed-by: change-proposal
 approved-date: 2026-09-08
 approved-by: jaf@dubium.io
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-09-08
+implemented-by: implement-proposal
 ---
 
 # Proposal: Derive message scope from the address type
