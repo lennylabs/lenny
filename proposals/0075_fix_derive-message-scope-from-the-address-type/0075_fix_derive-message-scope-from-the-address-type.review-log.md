@@ -442,3 +442,97 @@ reading cannot: whether `validate-maps` stays green across S2's single commit gi
 gate's case names, whether the replacement gate passes on the shipped proto, and whether the widened
 tier-3 arms pass. The implementor should run both tiers rather than trust the file-reading verdicts in
 this log, including mine.
+
+### [f4.cleanup]
+
+DECISION: rewrote nothing in `summary.md` — BECAUSE the file already carried exactly the eight target
+headings in the target order and nothing else. `grep -n '^#'` returns `# Summary: Derive message scope from
+the address type` (`:1`), `## Summary` (`:3`), `## Goals` (`:66`), `## Non-goals` (`:75`), `## Open
+decisions for human to make` (`:83`), `## Defects in the shipped tree that this proposal does not stage`
+(`:161`), `## Impacts on other proposals` (`:255`), and `## Deliverable index` (`:263`), with no heading
+below `##` anywhere in the file. Line 2 is blank, so no lead paragraph sits above `## Summary`, and line 4
+is blank, so `## Summary` carries no prose of its own before its first labelled part. The four labelled
+parts open at `:5`, `:16`, `:38`, and `:51` in the listed order, already under the names `**Problem
+statement.**` and `**Decisions.**`, so neither rename was owed. There is no `### Retired` block or
+equivalent inside the open-decisions section, no meta-list of staged items with dispositions, and no block
+of corrections owed to files this loop cannot edit. ALTERNATIVES: moving the `**Watch out for.**` sentences
+about 0073's immutability and the 0076 sequencing, and D5 and D6 under `**Decisions.**`, into `## Impacts on
+other proposals` under the prose-about-another-proposal rule; rejected on the same ground [f1.cleanup],
+both `[f3.cleanup]` blocks, and the archived `[f4.cleanup]` recorded, that those parts are listed parts of
+`## Summary` rather than unlisted content and the 0073 and 0076 rows already carry the validity claims, so
+the move would create the second copy that rule exists to prevent. The two statements were read against each
+other again and do not disagree: `summary.md:48-49` and `:51-54` say 0073 is not reopened and that this
+proposal sequences after 0076, and the rows at `:259` and `:260` say the same.
+
+FACT: every item this firing carried is accounted for in the file as it stands, and nothing had to be
+relocated. `id:OD1` (`:85-151`) and `id:OD5` (`:153-159`) are the two entries under `## Open decisions for
+human to make`, both still the human's: OD1 was routed to the human and applied, and OD5's proposed
+resolution was refuted at the gate and never attempted, which leaves the question where it was. The three
+`marker:unscoped` items are the three entries under `## Defects in the shipped tree that this proposal does
+not stage`, in the order the firing listed them: the equal-generation re-fence (`:170-195`), the stale
+`docs/api/internal.md` excerpts (`:197-219`), and the §4.7 `CoordinatorFence` announcement row (`:221-253`).
+`marker:0073` is the 0073 impacts row (`:259`), `marker:0076` the 0076 row (`:260`), and `marker:0080` the
+0080 row (`:261`).
+
+FACT: the open-decision identifiers were preserved verbatim and none was renumbered. `grep -no 'OD[0-9]'`
+returns eight matches, of which `:85` and `:153` are this proposal's two entry identifiers; the other six
+(`:52`, `:72`, `:108`, `:150`, `:188`, `:260`) name proposal 0076's OD2 and OD3, which is the standing-context
+trap about a bare `OD<n>` match. The gap where OD2, OD3, OD4, and OD6 stood is intact and no withdrawn
+identifier was reused.
+
+FACT: `## Deliverable index` is preserved byte for byte in last position with its three lines, SPEC-1,
+TEST-1, and TEST-2, in their existing order. The reconciliation pass owns it and this pass did not open it.
+
+FACT: no section preamble was falsified, because this firing moved nothing. `## Open decisions for human to
+make` and `## Impacts on other proposals` carry no preamble. The preamble of `## Defects in the shipped tree
+that this proposal does not stage` (`:162-168`) closes with "The further defects confirmed in the working
+tree are listed below and left where they are", which is true of the three entries the section carries.
+
+DECISION: the `marker:0076` and `marker:0080` items, which this firing marked `human` after applying an edit
+at firing 1 and reversing it since, stay where the four earlier cleanup firings placed them, in the 0076 and
+0080 impacts rows, and were not lifted into `## Open decisions for human to make` — BECAUSE that section's
+contract asks each entry for a stable identifier, and both items are keyed by marker text in another
+proposal's file rather than by an identifier this proposal stamped, so promoting them would mint identifiers
+and supply the recommendation, losing alternatives, cost, and confidence the entries do not carry, which is
+adjudication a format pass may not do. The impacts table is also the only place this proposal may assert
+anything about another proposal, so a second carrier for the same two questions is the drift that rule
+exists to prevent. Both rows already state what each proposal must do: "Nothing. 0076 is landed and is not
+edited" at `:260`, and "Split that §2 bullet when 0080 converges" at `:261`, whose correction is also held
+as a standing `DEFERRED [proposals/0080_...md]` in this log.
+
+OPEN: whether the `human` routing of `marker:0076` and `marker:0080` asks for an entry under `## Open
+decisions for human to make` rather than an impacts row. Five cleanup firings have now placed them in the
+rows, and the two dispositions disagree in the brief this firing was given (`human` against the `impact-row`
+disposition the earlier firings carried for the same markers). A pass with authority to stamp an identifier
+should settle it, and if it stamps one, the numbering gap left by OD2, OD3, OD4, and OD6 is not available to
+reuse. [f1.cleanup, f2.cleanup, f3.cleanup, f4.cleanup]
+
+OPEN: the defects preamble still mis-scopes TEST-2. `summary.md:162` reads "Both defects this proposal
+confirms in the specification are staged" and then names TEST-2, whose subject is the `sessionScopedMessages`
+doc comment in `tests/tier3_contract/adapter_session_address/session_address_wire_test.go` rather than a
+sentence in `spec/`, and `:165-166` repeats the mis-scope as "both defects are live in the specification
+now". This is the fourth cleanup firing to leave it. No move of this pass falsified it, because the
+falsehood is about the two staged defects rather than about the entries the section heads, and the pass's
+limit is to correct a statement its own move falsified. A pass with authority over the summary's claims
+should drop the two "in the specification" scopings. [f2.cleanup, f3.cleanup, f4.cleanup,
+non-spec-recheck.1.review-citations.1]
+
+OPEN: OD5's entry remains under-specified against the section's contract. It states its question, its
+ground, and both branches, and carries no recommendation, no losing alternative, no cost of deciding
+otherwise, and no confidence, where OD1 carries all four. This is the eighth format firing to observe it and
+leave it, because supplying them is adjudication. [f1.cleanup, f2.cleanup, f3.cleanup, f4.cleanup]
+
+WATCHOUT: this review log now carries `## Standing context` (`:3`) and `## Ledger` (`:173`) and nothing else
+at `##` level, because the round boundary archived the previous ledger. There is no `## Retired` section, so
+this block was appended at the end of the file, which is the end of `## Ledger`. That is a third structure
+for this file: the archived `[f4.cleanup]` records `## Standing context`, `## Ledger`, `## Resolved in
+adversarial review`, and `## 11`, and the later `[f3.cleanup]` records `## Standing context`, `## Ledger`,
+and `## Retired`. Read the splice instructions in all three blocks as describing the structure the log had
+at the time rather than as instructions for where to splice now.
+
+WATCHOUT: this block's heading collides with the `### [f4.cleanup]` already in the archive, which is a
+different firing describing a different state of the summary (it reports OD1 and OD2 as the standing
+identifiers and one entry under the defects section, where the identifiers now standing are OD1 and OD5 and
+the defects section carries three). The archive also holds two `### [f1.cleanup]`, two `### [f2.cleanup]`,
+and two `### [f3.cleanup]` blocks for the same reason. A join on the heading alone returns both, and ledger
+position is not chronology.

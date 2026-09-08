@@ -31,4 +31,4 @@ implemented-by:
 
 ## Review history
 
-An adversarial review run evaluated the specification changes against the open questions on 2026-09-07. The run executed three rounds against the spec loop and did not converge. Two full-pool sweeps occurred across the three rounds. No findings were fixed. The specification review did not settle the open questions, which remain unresolved. The non-spec loop was not run.
+An adversarial review run evaluated the proposal on 2026-09-07. The specification loop ran two rounds and converged, with one full-pool sweep. The non-specification loop ran two rounds and did not converge, with no full-pool sweeps. Two findings were fixed across both loops. Because the non-specification loop did not converge, the overall run did not converge, and open questions remain.
