@@ -128,6 +128,9 @@ const runTag =
 // `## Standing context` and nothing else. Triggering on ledger size fired an
 // expensive pass to protect against a cost that does not exist.
 let compactAtLines = input.compactAtLines || 2000;
+// The ledger length at which the FIRST compaction pass runs, while the standing
+// context is still empty and therefore cannot trigger one of its own.
+let firstCompactionAtLines = input.firstCompactionAtLines || 400;
 let compactGrowthLines = input.compactGrowthLines || 400;
 // The compaction target and the trigger are separate numbers. They were one,
 // and a run that could not reach it paid for a pass every round for the rest
@@ -426,6 +429,7 @@ const ARG_CLASS = {
   maxFixGroups: "forward",
   fixDesignDepth: "forward",
   compactAtLines: "forward",
+  firstCompactionAtLines: "forward",
   compactGrowthLines: "forward",
   standingContextTarget: "forward",
   standingContextTrigger: "forward",
@@ -485,6 +489,22 @@ function DEVIATIONS_BLOCK() {
 // around each embedded quote. The loop's resume state travels to the round
 // boundary this way, and an anchored argument value with an apostrophe in it
 // would otherwise end the quoting and change the command.
+// A stable, short stand-in for an anchored argument's value, for the resume
+// state's change-detection. Long values are reduced to a length and a hash so
+// the state stays small and the boundary command stays short; a short value is
+// kept verbatim because reading it is more useful than hashing it.
+const ARG_DIGEST_MAX = 120;
+function digestArg(v) {
+  if (typeof v === "object" && v !== null) return "(set)";
+  const t = String(v);
+  if (t.length <= ARG_DIGEST_MAX) return t;
+  // djb2. Not cryptographic and does not need to be: this only has to change
+  // when the text changes.
+  let h = 5381;
+  for (let i = 0; i < t.length; i++) h = (((h << 5) + h) ^ t.charCodeAt(i)) >>> 0;
+  return "(" + t.length + " chars, h" + h.toString(16) + ")";
+}
+
 function shellQuote(s) {
   return "'" + String(s).replace(/'/g, "'\\''") + "'";
 }
@@ -4415,6 +4435,7 @@ const OVERRIDABLE = {
   standingContextTarget: (v) => { standingContextTarget = Number(v) || standingContextTarget; },
   standingContextTrigger: (v) => { standingContextTrigger = Number(v) || standingContextTrigger; },
   compactAtLines: (v) => { compactAtLines = Number(v) || compactAtLines; },
+  firstCompactionAtLines: (v) => { firstCompactionAtLines = Number(v) || firstCompactionAtLines; },
   compactGrowthLines: (v) => { compactGrowthLines = Number(v) || compactGrowthLines; },
   introspectEvery: (v) => { introspectEvery = Number(v) || introspectEvery; },
 };
@@ -4688,10 +4709,16 @@ async function runReviewLoop(cfg) {
       retired: [...retired],
       converged,
       fixedTitles: fixedTitles.length,
+      // Anchored arguments are recorded so a later launch can notice one
+      // changed. A DIGEST serves that better than the value, and the value can
+      // be arbitrarily large: `context` is operator prose, and one measured run
+      // put 5,285 characters of it into this object, which is then shell-quoted
+      // onto ONE line of the boundary command. The old guard excluded objects
+      // and let any string through, however long.
       args: Object.fromEntries(
         Object.keys(ARG_CLASS)
           .filter((k) => input[k] !== undefined && ARG_CLASS[k] === "anchored")
-          .map((k) => [k, typeof input[k] === "object" ? "(set)" : input[k]]),
+          .map((k) => [k, digestArg(input[k])]),
       ),
     });
     const raw = await robustAgent(
@@ -4712,6 +4739,7 @@ async function runReviewLoop(cfg) {
         " --round " + rnd +
         " --repo '" + repo + "'" +
         " --compact-at " + compactAtLines +
+        " --first-pass-at " + firstCompactionAtLines +
         " --standing-target " + standingContextTarget +
         " --standing-trigger " + standingContextTrigger +
         " --compact-growth " + compactGrowthLines +
@@ -4738,10 +4766,17 @@ async function runReviewLoop(cfg) {
       // audit did not run, and the next round has no snapshot to diff against.
       // A round that could not close is not a round that can certify.
       boundaryFailStreak++;
+      // The reply is the only evidence of WHY, and discarding it made this
+      // failure unfalsifiable: four occurrences across two measured runs left
+      // nothing to diagnose from. The prompt asks the agent for the script's
+      // stderr on a non-zero exit, so print what came back rather than only
+      // that nothing parsed.
       log(
         "Round " + rnd + ": the round-boundary script did not complete; round INCONCLUSIVE " +
           "(the log is unmerged and the next round has no snapshot)" +
-          (boundaryFailStreak > 1 ? " — " + boundaryFailStreak + " in a row" : ""),
+          (boundaryFailStreak > 1 ? " — " + boundaryFailStreak + " in a row" : "") +
+          " — the agent replied: " +
+          JSON.stringify(String(raw === null || raw === undefined ? "(nothing)" : raw).slice(0, 500)),
       );
       return false;
     }

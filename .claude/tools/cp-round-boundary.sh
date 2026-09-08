@@ -43,6 +43,7 @@
 set -uo pipefail
 
 DIR=""; TAG=""; LOOP=""; ROUND=""; REPO=""; COMPACT_AT=2000; COMPACT_GROWTH=400
+FIRST_PASS_AT=400
 STATE_JSON=""
 # The trigger and the target are SEPARATE numbers, and that is the whole point.
 # They used to be one: compaction became due at 80 lines and the pass was told to
@@ -71,6 +72,7 @@ while [ $# -gt 0 ]; do
     --round) ROUND="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
     --compact-at) COMPACT_AT="$2"; shift 2 ;;
+    --first-pass-at) FIRST_PASS_AT="$2"; shift 2 ;;
     --standing-target) STANDING_TARGET="$2"; shift 2 ;;
     --standing-trigger) STANDING_TRIGGER="$2"; shift 2 ;;
     --compact-growth) COMPACT_GROWTH="$2"; shift 2 ;;
@@ -146,6 +148,7 @@ json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 # is not even asked to get under, so it fires every round forever.
 case "$STANDING_TARGET" in ''|*[!0-9]*) echo "cp-round-boundary: --standing-target must be a non-negative integer" >&2; exit 2 ;; esac
 case "$STANDING_TRIGGER" in ''|*[!0-9]*) echo "cp-round-boundary: --standing-trigger must be a non-negative integer" >&2; exit 2 ;; esac
+case "$FIRST_PASS_AT" in ''|*[!0-9]*) echo "cp-round-boundary: --first-pass-at must be a non-negative integer" >&2; exit 2 ;; esac
 if [ "$STANDING_TRIGGER" -le "$STANDING_TARGET" ]; then
   echo "cp-round-boundary: --standing-trigger ($STANDING_TRIGGER) must exceed --standing-target ($STANDING_TARGET); using $((STANDING_TARGET + TRIGGER_HEADROOM))" >&2
   STANDING_TRIGGER=$((STANDING_TARGET + TRIGGER_HEADROOM))
@@ -456,6 +459,18 @@ pending_write=""
 if [ "$standing_lines" -ge "$trigger" ]; then
   compaction_due=true
   pending_write="standing $standing_lines"
+elif [ "$standing_lines" -eq 0 ] && [ "$ledger_lines" -ge "$FIRST_PASS_AT" ]; then
+  # The FIRST pass has no standing context to trigger on. Until one exists,
+  # `standing_lines` is 0 and cannot reach a trigger of a few hundred, so the
+  # only reachable threshold is the ledger backstop -- and reaching 2000 lines
+  # takes most of a run. One measured run left the standing context empty for
+  # 10 of its 12 round boundaries: every agent through the whole spec loop and
+  # both rechecks started from nothing and re-derived the same census and the
+  # same three test files, 8 to 16 times each. The section that exists to stop
+  # re-derivation cannot stop it until it exists, so seed it early and let the
+  # standing trigger take over from there.
+  compaction_due=true
+  pending_write="first $ledger_lines"
 elif [ "$ledger_lines" -ge "$COMPACT_AT" ]; then
   compaction_due=true
   pending_write="ledger $ledger_lines"

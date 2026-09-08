@@ -1560,4 +1560,44 @@ t.section("D13. the parts the deleted lens carried, in the homes this phase give
   t.check("with the fallback naming the tool to read a status with", p4.includes("proposal-status.mjs <proposal> --json"));
 }
 
+t.section("D-rowText. a moved line anchor is not a new claim about another proposal");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/change-proposal-decisions.js"), "utf8");
+  const m = src.match(/function rowText\(item\)[\s\S]*?\n}\n/);
+  t.check("rowText is defined", !!m, String(!!m));
+  // eslint-disable-next-line no-eval
+  const rowText = eval("(" + m[0].replace(/^function rowText/, "function") + ")");
+  const row = (t2) => ({ readings: [{ recommendation: t2 }] });
+  // The row an agent derives cites the summary by line, and those lines move at
+  // every firing as decisions resolve and their entries leave. One measured run
+  // spent 27 of its 60 falsifiers on the 0073 and 0076 rows, every one of which
+  // answered that the row stands as written, and cited the same row as
+  // `summary.md:255` in one firing and `:259` in the next.
+  t.check(
+    "a row whose only difference is a moved anchor compares equal",
+    rowText(row("the 0073 row at `summary.md:255` stands as written")) ===
+      rowText(row("the 0073 row at `summary.md:259` stands as written")),
+    rowText(row("the 0073 row at `summary.md:255` stands as written")),
+  );
+  t.check(
+    "a row whose substance changed still compares different",
+    rowText(row("the 0073 row at `summary.md:259` stands as written")) !==
+      rowText(row("the 0073 row at `summary.md:259` needs correction")),
+    "a real change was swallowed by the normalisation",
+  );
+  t.check(
+    "a line range is normalised too",
+    rowText(row("x at :40-43 y")) === rowText(row("x at :99-101 y")),
+    rowText(row("x at :40-43 y")),
+  );
+  t.check(
+    "and the carry-forward test is the one that uses it",
+    /rowText\(item\)\s*!==\s*\(rec\.rowText/.test(src),
+    "rowText is no longer the impact-row carry-forward comparison",
+  );
+}
+
 t.done();

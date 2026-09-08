@@ -698,7 +698,19 @@ async function checkReversals() {
 // the row itself as it should stand under `## Impacts on other proposals`.
 function rowText(item) {
   const r = ((item.readings || [])[0] || {}).recommendation || "";
-  return String(r).replace(/\s+/g, " ").trim();
+  return String(r)
+    .replace(/\s+/g, " ")
+    // Line citations are normalised away before the comparison. The row an
+    // agent derives cites the summary by line, and the summary's line numbers
+    // move at every firing as decisions resolve and their entries leave. So a
+    // row whose substance is unchanged still compares unequal, is marked fresh,
+    // and pays a gate and a falsifier again. One measured run spent 27 of its
+    // 60 falsifiers on the 0073 and 0076 rows, every one of which answered that
+    // the row stands as written, and the same row was cited as `summary.md:255`
+    // in one firing and `:259` in the next. Prose still has to match; a moved
+    // anchor no longer counts as a new claim.
+    .replace(/:\d+(?:-\d+)?\b/g, ":N")
+    .trim();
 }
 
 function matchToRecords(list) {

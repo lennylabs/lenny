@@ -4285,4 +4285,53 @@ t.section("R70. the unclosed OPEN and DEFERRED counts are read, and a count nobo
   );
 }
 
+t.section("B33. the resume state keeps a digest of a long anchored argument, not its text");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/change-proposal.js"), "utf8");
+  const m = src.match(/const ARG_DIGEST_MAX[\s\S]*?\n}\n/);
+  t.check("digestArg is defined", !!m, String(!!m));
+  // eslint-disable-next-line no-eval
+  const digestArg = eval(m[0] + "digestArg");
+  t.check("a short value is kept verbatim", digestArg("2026-09-07") === "2026-09-07", digestArg("2026-09-07"));
+  t.check("an object is still (set)", digestArg({ a: 1 }) === "(set)", digestArg({ a: 1 }));
+  // `context` is operator prose and one measured run put 5,285 characters of it
+  // into this object, which is shell-quoted onto ONE line of the boundary
+  // command handed to a small model. The old guard excluded objects only.
+  const long = "VERIFIED AGAINST THE TREE. ".repeat(200);
+  const d = digestArg(long);
+  t.check("a long value is reduced", d.length < 40 && /^\(\d+ chars, h[0-9a-f]+\)$/.test(d), d);
+  t.check("and the reduction still changes when the text does", digestArg(long) !== digestArg(long + "x"), d + " vs " + digestArg(long + "x"));
+  t.check(
+    "the state payload serialises every anchored argument through it",
+    /args: Object\.fromEntries\([\s\S]{0,400}?digestArg\(input\[k\]\)/.test(src),
+    "digestArg is not wired into the stateJson args map",
+  );
+}
+
+t.section("B34. a boundary that cannot be parsed reports what the agent said");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/change-proposal.js"), "utf8");
+  const from = src.indexOf("boundaryFailStreak++");
+  const block = src.slice(from, from + 900);
+  // Discarding the reply made this failure unfalsifiable: four occurrences
+  // across two measured runs left nothing to diagnose from, while the prompt
+  // asks the agent for the script's stderr on a non-zero exit.
+  t.check(
+    "the INCONCLUSIVE log line carries the raw reply",
+    /the agent replied/.test(block) && /\braw\b/.test(block),
+    block.slice(0, 200),
+  );
+  t.check(
+    "and it is bounded rather than pasting an unbounded reply into the log",
+    /\.slice\(0,\s*\d+\)/.test(block),
+    "no slice on the logged reply",
+  );
+}
+
 t.done();

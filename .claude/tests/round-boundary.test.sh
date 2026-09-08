@@ -376,6 +376,42 @@ OUT="$(run spec 14 2>/dev/null)"
 contains "a JSON array override file is ignored, not spliced" "$OUT" '"overrides":{}'
 rm -f "$REPO/scratchpad/cp-args/$TAG.json"
 
+echo; echo "T13. the first compaction pass has a trigger of its own"
+# The standing context starts empty and can never reach a trigger of a few
+# hundred, so before this arm existed the only reachable threshold on a fresh
+# run was the 2000-line ledger backstop. One measured run left the section
+# empty for 10 of its 12 boundaries, and every agent in that window re-derived
+# the same facts from scratch.
+T13="$T/t13"; mkdir -p "$T13"
+LOG13="$T13/t13.review-log.md"   # the script derives the log name from the directory stem
+mk13() {  # $1 = standing lines, $2 = ledger lines
+  { printf '# Review log\n\n## Standing context\n'
+    i=0; while [ "$i" -lt "$1" ]; do printf -- '- **e%d.** x\n' "$i"; i=$((i+1)); done
+    printf '\n## Ledger\n'
+    i=0; while [ "$i" -lt "$2" ]; do printf '### [e%d]\n' "$i"; i=$((i+1)); done
+  } > "$LOG13"
+}
+due13() {  # prints true/false; $1.. extra args
+  rm -rf "$REPO/scratchpad/cp-state/t13" "$REPO/scratchpad/cp-snap/t13"
+  bash "$SH" --dir "$T13" --tag t13 --loop spec --round 1 --repo "$REPO" "$@" 2>/dev/null \
+    | tail -1 \
+    | sed -n 's/.*"compactionDue":\([a-z]*\).*/\1/p'
+}
+mk13 0 450
+check "an empty standing context and a ledger past the first-pass mark is due" "true" "$(due13)"
+check "the first-pass mark is overridable" "false" "$(due13 --first-pass-at 9999)"
+mk13 0 100
+check "a short ledger is not due" "false" "$(due13)"
+mk13 117 450
+check "once a standing context exists the first-pass arm stops firing" "false" "$(due13)"
+mk13 0 450
+OUT13="$(rm -rf "$REPO/scratchpad/cp-state/t13" "$REPO/scratchpad/cp-snap/t13"; bash "$SH" --dir "$T13" --tag t13 --loop spec --round 1 --repo "$REPO" 2>/dev/null)"
+check "a first pass does not raise the standing target, which only a standing-triggered pass may do" \
+  "200" "$(printf '%s' "$OUT13" | tail -1 | sed -n 's/.*"standingTarget":\([0-9]*\).*/\1/p')"
+bash "$SH" --dir "$T13" --tag t13 --loop spec --round 1 --repo "$REPO" --first-pass-at x >/dev/null 2>&1
+check "a non-numeric first-pass mark exits 2" 2 "$?"
+rm -rf "$REPO/scratchpad/cp-state/t13" "$REPO/scratchpad/cp-snap/t13" "$REPO/scratchpad/cp-log/t13"
+
 echo; echo "T12. it fails rather than proceeding on unknown state"
 bash "$SH" --dir "$T/nope" --tag "$TAG" --loop spec --round 1 --repo "$REPO" >/dev/null 2>&1
 check "a missing proposal directory exits non-zero" 1 "$?"
