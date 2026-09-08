@@ -80,7 +80,36 @@ thereby a member of the other.
 - The fence's acceptance predicate, meaning whether the pod accepts a re-fence at the recorded generation.
 - The §4.2 value rule that rejects an unaddressed session-scoped request, which is unchanged.
 
-## Open decisions for human to make
+## Decisions the reviewer answered
+
+OD1 was answered on 2026-09-08, taking the entry's recommendation: yes, retire the table and its gate,
+and accept both residuals. The entry is kept as written below, because it states the ground the answer
+rests on, the two residuals the answer accepts, and the 0073 reversal that holds its confidence to
+moderate. OD2, OD3, OD4 and OD5 were resolved by the open-decisions-and-impact-review phase across this
+proposal's review runs and left this section as they were answered; their records are in the review log.
+
+| Decision | Answer | Source |
+|:--|:--|:--|
+| OD1 | Yes. Retire the §4.1 declared-scope table and the tier-0 gate that reconciles it, state the derivation rule and the addressing-convention gate in their place, and accept the two residuals the entry names. | The entry's recommendation |
+
+The answer turns on the specification's own reason for declaring rather than deriving being spent.
+`spec/04_system-components.md:151` gives that reason as "`session_id` appears on messages of both
+classes", and the one pod-scoped message carrying the field was `CoordinatorFenceRequest`, which
+proposal 0076's OD3 reclassified to session scope. What the retired gate enforced was coverage alone,
+and a classification computed from the protocol definition cannot have a coverage gap.
+
+Two things the answer accepts, recorded so a later reader does not mistake them for oversights. The
+fail-open residual: a message that departs from the convention in BOTH the field's name and its type
+derives pod-scoped and carries no obligation to refuse an instance naming no session. The fail-closed
+residual: a pod-scoped message whose author gives its guard the session address derives session-scoped
+and inherits the empty-identifier refusal of `spec/05_runtime-registry-and-pool-model.md:515`.
+
+It also reverses a call proposal 0073 made deliberately, which is why the entry's confidence is moderate
+rather than high. 0073 rejected a machine-derivable rule because it "would rest on every future message
+author choosing the name correctly, which is the same hand-maintained agreement moved into the field
+name". That argument still has force; what changed is its premise, since the counterexample it protected
+against no longer exists.
+
 
 **OD1. Retire the §4.1 declared-scope table and its tier-0 reconciliation gate, or withdraw this
 proposal?** `spec/04_system-components.md:153-186` declares each gateway-to-adapter request message's
