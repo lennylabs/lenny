@@ -45,14 +45,24 @@ TEST-1 rewrites that file in place. The path is read outside the file. `slotAddr
 literal string (`tests/tier0_static/spec_map_slot_address_registration_test.go:336`), five tier-0 cases
 range over that list (`:973`, `:1028`, `:1054`, `:1096`, `:1110`), and four of them resolve each entry
 through `repoFileLines` (`:699-706`), which fails the case on a file it cannot read. The fifth (`:1110`)
-reads no file and checks inventory membership alone. Keeping the path leaves that inventory correct and
-confines the change to the files §9 of the staged spec changes lists.
+resolves no listed path through `repoFileLines`; it derives the expected inventory from the tree
+(`derivedInventoryCaseFiles`, `:1212`) and reports any derived file the list omits. Keeping the path leaves
+that inventory correct and confines the change to the files §9 of the staged spec changes lists.
 
 `tests/spec-map.json` credits `TestAdapterProtoRequestMessagesAreClassifiedByScope` and
 `TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage` under section 4.1 (`:156`, `:169`) and the
-first again under section 28.5.3 (`:5670`). The replacement gate's cases are registered under the same
-sections in the same change, so `validate-maps` finds no dangling `path::Test` entry and every case in the
-file stays credited to each section its own `// spec:` annotation names.
+first again under section 28.5.3 (`:5670`). The replacement gate's cases carry `// spec: 4.1` alone and
+are registered under section 4.1 alone, so the same change re-points the `:156` and `:169` entries at the
+replacement gate's case names and deletes the `:5670` entry rather than re-pointing it. Section 4.1 is
+where SPEC-1 states the addressing convention the gate holds. Section 28.5.3 is the boundary "between the
+runtime adapter and the runtime binary inside one agent pod"
+(`spec/28_communication-channels.md:501`) and its addressing content is JSON Lines frame equality
+(`:840-841`), so no regression in it could break a gate reading `schemas/lenny-adapter.proto`, and the
+credit doctrine the tier-0 register gates state refuses that credit: a registration under a section the
+case does not exercise "credits that section with coverage no regression in it would break"
+(`tests/tier0_static/spec_map_slot_address_registration_test.go:89-93`). After the change
+`validate-maps` finds no dangling `path::Test` entry and every case in the file stays credited to each
+section its own `// spec:` annotation names.
 
 ### TEST-2. Separate the two populations in the tier-3 session-address suite
 

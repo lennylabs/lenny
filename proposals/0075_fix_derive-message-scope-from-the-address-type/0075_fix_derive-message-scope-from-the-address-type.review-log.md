@@ -3173,6 +3173,286 @@ remedies land outside this proposal, and the summary already carries the ones th
 record.
 — EVIDENCE: 0075_....summary.md `## Open decisions for human to make`
 
+### [f1.open-decisions.OD1]
+
+DECISION: kept OD1 in `summary.md` `## Open decisions for human to make` with its identifier, its question,
+its "yes, accept the residuals and keep the retirement" recommendation, and its moderate confidence
+unchanged, and edited its confidence paragraph alone — BECAUSE the entry already stated the question, both
+branches, both residuals, the alternatives, and the cost of a "no", and the disposition is the human's;
+what it did not state is the ground the falsifier surfaced, and a reviewer asked to retire a landed tier-0
+control needs it to answer. No `## Open decisions for review` section survives in either staged change
+file, so nothing was migrated.
+
+FACT: proposal 0073 weighed this trade the other way and rejected a machine-derivable rule, at
+`proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:6653-6655`: "the rule would then
+rest on every future message author choosing the name correctly, which is the same hand-maintained
+agreement moved into the field name". Its recorded limit at `:6686` prices the declared form in the other
+direction: "D6 replaces a machine-derivable classification with a declared one". The standing context
+carried `:6686-6689` and not `:6653-6655`, so the rejected-alternative half was absent from the entry.
+
+FACT: the entry's claim that one side of the comparison is derivable from no file was overstated as
+written. What no file prices is the human classification checkpoint alone. The rewritten paragraph says
+that, and adds the observed instance: `spec/04_system-components.md:175` classifies
+`CoordinatorFenceRequest` pod-scoped, a human wrote that cell, and the gate accepted it, because
+`declaredScope` (`tests/tier0_static/adapter_proto_message_scope_test.go:75-81`) reads the cell's first
+word and compares it to nothing.
+
+FACT: every citation the entry carries was re-verified against the tree in this firing.
+`spec/04_system-components.md:151` carries the "because `session_id` appears on messages of both classes"
+sentence, `:153-186` the table, `:175` the fence's pod row, `:188` the grounding paragraph;
+`schemas/lenny-adapter.proto:1455-1456` declares `CoordinatorFenceRequest` with `SessionId session_id = 1`
+and `:499-503` declares `ReportPodScrubRequest` with `string pod_id = 1`;
+`tests/tier0_static/adapter_proto_message_scope_test.go:25-27` and `:75-81` read as quoted;
+`spec/05_runtime-registry-and-pool-model.md:515` ends with the empty-identifier refusal;
+`spec/10_gateway-internals.md:38` and `:40` hold the generation per session; and
+`spec/28_communication-channels.md:314-317` states that a fence for one session does not change the
+generation the pod holds for another. Nothing had drifted.
+
+FACT: no deliverable was added, removed, merged, split, or resequenced, so nothing is owed to the
+implementation checklist for this item.
+
+### [f1.open-decisions.OD4]
+
+DECISION: OD4 is answered "drop the credit" and the answer is staged. `non-spec-changes.md` §5 TEST-1 now
+requires the replacement gate's cases to carry `// spec: 4.1` alone, to be registered under section 4.1
+alone, and the `tests/spec-map.json:5670` entry to be deleted in the same change rather than re-pointed.
+`summary.md`'s deliverable bullet now reads "under section 4.1, and the section 28.5.3 entry that credited
+the retiring gate is deleted", and the OD4 entry was removed from `## Open decisions for human to make`
+with no replacement block.
+
+FACT: the ground is that section 4.1 is where SPEC-1 states the addressing convention the gate holds
+(`spec-changes.md:20-23`), while §28.5.3 is the boundary "between the runtime adapter and the runtime
+binary inside one agent pod" (`spec/28_communication-channels.md:501`) whose addressing content is JSON
+Lines frame equality (`:840-841`). `grep -n "session_id\|SessionId" spec/28_communication-channels.md`
+returns blob URI components, a Redis stream key, a checkpoint object key, and prose message field lists,
+and no protobuf name or type convention anywhere in the file. The credit doctrine at
+`tests/tier0_static/spec_map_slot_address_registration_test.go:89-93` refuses a registration under a
+section the case does not exercise.
+
+FACT: the counter-evidence at `spec/28_communication-channels.md:1782` does not survive its own register.
+§28.7's preamble states that "Every claim a row makes derives from a specification section or from the
+artifact itself, and the row cites the source" (`:1775-1776`), so the `(§28.3, §28.5.3)` parenthetical is
+the cited source for the channel claim rather than a coverage attribution.
+
+FACT: the tree already carries the precedent on the same assertion over the same artifact.
+`TestSessionScopedRequestsDeclareTheSessionAddress_spec_4_1`
+(`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:94-116`) annotates
+`// spec: 5.2 ..., 4.1` with no 28.5.3, and its file is credited under 4.1, 4.7, 5.2, 6.4, and 15.4 and
+never under 28.5.3.
+
+FACT: neither answer reddens a gate. `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate`
+(`tests/tier0_static/spec_map_slot_address_registration_test.go:970-989`) reports missing credits alone
+and never surplus ones, so the annotation and the map entry must move together or a surplus credit stands
+uncaught.
+
+FACT: every citation this firing wrote was re-verified against the tree. `spec/28_communication-channels.md`
+carries the intra-pod heading at `:499`, the boundary sentence at `:501`, and address equality at
+`:840-841`; `tests/spec-map.json` carries the two case names at `:156` and `:169` under section 4.1 and
+the first again at `:5670` under section 28.5.3; and
+`tests/tier0_static/adapter_proto_message_scope_test.go:129` carries the retiring gate's
+`// spec: 4.1 ..., 28.5.3 (addressing)` annotation.
+
+FACT: reconciled one statement this edit falsified. The `## Impacts on other proposals` row for 0073 said
+the two registrations "are re-pointed at the replacement gate's cases by TEST-1"; it now says the section
+4.1 entries are re-pointed and the section 28.5.3 entry is deleted.
+
+DEFERRED [0075_fix_derive-message-scope-from-the-address-type.implementation-checklist.md]: the TEST-1 step
+at `:13-14` says `tests/spec-map.json` "re-registers the replacement gate's cases under sections 4.1 and
+28.5.3 inside this step". What is true instead is that the step re-registers them under section 4.1 and
+deletes the section 28.5.3 entry (`tests/spec-map.json:5670`). No deliverable was added, removed, merged,
+split, or resequenced; the correction is to that step's wording alone.
+
+### [f1.open-decisions.out-of-scope.spec-10-39-fence-retry]
+
+DECISION: the equal-generation re-fence stays unstaged. The disposition is `out-of-scope-stands` and the
+entry under `## Defects in the shipped tree that this proposal does not stage` (`summary.md:170-195`) was
+already present and already correct on the refusal half, so this firing wrote no new entry and reopened
+nothing. The only edit is the narrowing the reading recommended, so the entry does not over-claim its
+owner's reach.
+
+FACT: the entry quoted §10.1.2 step 2's full clause, "up to 3 attempts with 1-second backoff", and then
+handed the whole of it to proposal 0080 §1.16, which takes the refusal alone. Two sentences were added.
+The first records that the backoff half is unmet as well: `pkg/gateway/coordination/coordfence/`
+contains one non-test file and its retry loop (`coordfence.go:155-188`) issues the attempts back to back
+with no timer, sleep, or delay of any kind, which `grep -n 'time\.'` over that file confirms by returning
+nothing. The second narrows the ownership claim to "the remedy for the refusal" and records that 0080
+§1.16 does not take the backoff and that no proposal owns that half today.
+
+FACT: every citation in the entry was re-verified against the tree and all of them hold.
+`spec/10_gateway-internals.md:39` carries the retry clause; `pkg/adapter/coordination.go:127-134` is the
+`gen <= st.coord.lastFenced` refusal with the `coordinator_handoff_stale` detail;
+`pkg/gateway/coordination/coordfence/coordfence.go:180-183` is the transient arm that retries at the same
+generation and `:171-179` the stale arm that re-reads, finds no advance, and relinquishes;
+`spec/05_runtime-registry-and-pool-model.md:515` carries the empty-identifier refusal and
+`pkg/adapter/coordination.go:109-111` meets it ahead of the `boundSlotState` resolve. Proposal 0080's
+§1.16 heading is at `proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:216`
+and its `**Source:** proposal 0076's OD2` line at `:268`; its "What needs to change" list names the
+handler comparison, the `CoordinatorFenceResponse` wire comment, the spec arms, and a test case, and names
+no backoff.
+
+FACT: no other statement in the files this firing may edit is falsified by the edit. The §6 non-goal at
+`spec-changes.md:151` and its summary mirror at `summary.md:80` scope themselves to the acceptance
+predicate, which the edit does not touch, and the 0080 impacts row at `summary.md:261` describes §1.16 as
+changing the acceptance predicate, which stays true. No deliverable was added, removed, merged, split, or
+resequenced, so no checklist correction is owed.
+
+OPEN: the missing one-second backoff has no owner. `grep -rl '1-second backoff\|one-second backoff'` over
+`proposals/`, `BUILD-GAPS.md`, and `TEST-GAPS.md` returns this proposal's own files alone. The standing
+context's Open entry recording it as "possibly an uninventoried residue" is now settled as uninventoried,
+and the summary entry says so.
+
+### [f1.open-decisions.impact-0073]
+
+DECISION: kept the 0073 impacts row and added one survival to its "What stands" clause. `summary.md:259`
+now records that 0073's duplicate-address retirement survives TEST-2's split whole, because
+`retiredDuplicateNumbers` keeps the eighteen name-to-number entries verbatim and
+`TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` iterates that map alone, so the population the
+reservation case asserts over is unchanged and no `reserved` pair is opened. Withdrawing the row was
+rejected: the retirement of three landed 0073 artifacts is what this proposal does to 0073, and this row
+is the only place it says so.
+
+FACT: the eighteen entries are verified against the tree. `sessionScopedMessages` declares 18 keys
+(`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:44-63`, the entries themselves at
+`:45-62`),
+`schemas/lenny-adapter.proto` carries exactly 18 `reserved "slot_id"` declarations, and
+`TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` opens at `:127` with its loop over that
+declaration at `:130`. `non-spec-changes.md` TEST-2 keeps the entries verbatim and re-points that loop.
+
+FACT: the item's other half was already discharged by the OD4 apply earlier in this firing. The row's
+spec-map sentence now reads that the two section-4.1 registrations are re-pointed and the section-28.5.3
+entry at `tests/spec-map.json:5670` is deleted, and OD4 is no longer an open decision, so the row asserts
+a settled disposition rather than contradicting one. No further edit was owed there.
+
+FACT: no statement of the same kind sits elsewhere in the summary. The other `0073` mentions are the
+non-goal at `:48`, the watch-out at `:51-54`, and OD1's confidence paragraph at `:123-131`, none of which
+asserts anything about 0073's continued validity.
+
+DEFERRED [0075_fix_derive-message-scope-from-the-address-type.implementation-checklist.md]: nothing. This
+edit added, removed, merged, split, and resequenced no staged deliverable.
+
+### [f1.open-decisions.impact-0076]
+
+DECISION: the 0076 row stands as staged on every claim it makes, and gains one clause naming the survival
+it was silent on. 0076's OD3 Question B named this proposal the successor for the `spec/04` §4.1 edit, and
+SPEC-1 retires the block those three sites sit in, so the discharge the row asserts is what the staging
+does.
+
+FACT: 0076's status file records `status: Implemented`, `approved-date: 2026-09-06`, and
+`implemented-date: 2026-09-07`, which is what the row's parenthetical states. Its OD3 answers are at
+`0076_...summary.md:185` (Question A, "Yes. `CoordinatorFenceRequest` is session-scoped after CODE-1.") and
+`:186` (Question B, "Proposal 0075 is that successor").
+
+FACT: TEST-1's change to the shared proto parse reaches no file 0076 landed. The two tier-0 files 0076
+added are `tests/tier0_static/adapter_barrier_doc_comment_scope_test.go` (commit `be55de6c9`) and
+`tests/tier0_static/adapter_proto_generation_scope_test.go` (commit `0d4fdc2a0`), and neither names
+`protoFields` or `protoServiceRequests`. Grepping `tests/tier0_static/` for the two symbols returns the
+parse's own file plus `adapter_proto_message_scope_test.go:87` and
+`claim_register_proto_agreement_test.go:64`, both already listed under TEST-1.
+
+FACT: no statement of the same kind sits elsewhere in the summary. The other `0076` mentions are the
+sequencing dependency at `:49` and `:52-54`, the goal at `:72`, the classification grounds at `:107` and
+`:166`, and the out-of-scope entries at `:149`, `:175`, `:188`, `:224`, and `:239`, none of which asserts
+anything about 0076's continued validity.
+
+DEFERRED [0075_fix_derive-message-scope-from-the-address-type.implementation-checklist.md]: nothing. This
+edit added, removed, merged, split, and resequenced no staged deliverable.
+
+### [f1.open-decisions.impact-0080]
+
+DECISION: kept the 0080 row's Proposal, Status, and "What this change does to it" columns verbatim and
+appended one sentence to its "What it must do" column — BECAUSE the row's three factual assertions each
+verify against the tree and against 0080's own text, and the only thing missing was the pair of inventory
+candidates this change records that 0080's §1 does not carry. Appended text: "When the inventory is next
+triaged, weigh two further sites for §1 that this proposal records and that §1.1 through §1.21 do not
+carry, neither of which §3 excludes by design: the §4.7 `CoordinatorFence` announcement row
+(`spec/04_system-components.md:712`) with its reader-facing mirror at `docs/reference/adapter-contract.md:69`,
+which is a residue of proposal 0076's move to per-session coordination rather than a classification defect;
+and the stale protobuf excerpts at `docs/api/internal.md:209-215` and `:272-274`, whose severity SPEC-1
+raises by making a top-level `string session_id` on a request message a spelling the specification forbids,
+although nothing this proposal applies reddens on account of the page." — ALTERNATIVES: leaving the column
+as staged, on the ground that 0080 stages nothing and may be invalidated freely; rejected because §2 exists
+so a triager can tell what is claimed from what is not, and a candidate this change sharpens belongs in the
+column that tells 0080 what to do.
+
+FACT: verified against the tree at this commit. `spec/04_system-components.md:712` is the `CoordinatorFence`
+row of the §4.7 RPC table and reads "Announce new `coordination_generation` to the pod on coordinator
+handoff"; `docs/reference/adapter-contract.md:69` is its reader-facing mirror; `docs/api/internal.md:209-215`
+is the `CheckpointRequest` protobuf fence and `:272-274` is the `DemoteSDKRequest` message body.
+
+FACT: 0080's inventory is §1.1 through §1.21 (`proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:39-448`)
+and no entry names `docs/api/internal.md` or the §4.7 `CoordinatorFence` row; grepping the whole file for
+`internal.md`, `adapter-contract`, and `§4.7` returns only `:92` and `:152`, neither of which is either site.
+§3's deliberate exclusions (`:463-471`) name neither site either, which is why the appended sentence says so
+rather than leaving a reader to wonder whether the omission was a decision.
+
+FACT: the three columns left verbatim were re-checked rather than trusted. §2's two 0075 bullets are at
+`:453-454` and `:458-460`; SPEC-1 leaves `spec/04_system-components.md:190` unedited
+(`spec-changes.md:117`), so the `ShutdownRequest` classification limit is untaken; §1.16's remedy
+(`0080:216-260`) is the acceptance predicate at `pkg/adapter/coordination.go:99` and touches neither the
+table nor the classification.
+
+FACT: no statement about 0080's continued validity sits elsewhere in the summary. The other 0080 mentions
+are ownership statements inside `## Defects in the shipped tree that this proposal does not stage` — that
+0080 §1.16 owns the fence-retry remedy, that 0080 does not carry `docs/api/internal.md` today, and that no
+0080 entry names the §4.7 row — which say who could take a defect rather than whether 0080 still holds, so
+none of them moves.
+
+DEFERRED [0075_fix_derive-message-scope-from-the-address-type.implementation-checklist.md]: nothing. This
+edit added, removed, merged, split, and resequenced no staged deliverable.
+
+OPEN: the standing-context Deferred entry "DEFERRED [docs/reference/adapter-contract.md]" cites the §4.7
+source row as `spec/04_system-components.md:713` while the tree puts the `CoordinatorFence` row at `:712`,
+which is what the summary and this block cite. A log entry records what was true when written and is not
+corrected in place; a later reader taking `:713` from that entry gets the `ExportPaths` row.
+
+### [f1.cleanup]
+
+FACT: `0075_fix_derive-message-scope-from-the-address-type.summary.md` already carried exactly the eight
+listed headings in the listed order, with `## Deliverable index` last and unmodified. No section was added,
+removed, renamed, reordered, or split, and no content was relocated. `## Summary` carries no prose of its
+own and holds `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, and `**Watch out for.**` in
+that order, so no `**Fixed decisions.**` or `**What is fixed.**` label survived for this pass to rename.
+EVIDENCE: proposals/0075_fix_derive-message-scope-from-the-address-type/0075_fix_derive-message-scope-from-the-address-type.summary.md:1,3,5,16,38,51,66,75,83,161,255,263
+
+FACT: this firing's dispositions were already reflected in the file. OD1 stands under `## Open decisions for
+human to make` with its identifier verbatim. OD5 stands there as well, its resolution having been refuted at
+both the gate and the apply step. OD4 is absent, its answer staged as a SPEC-1 paragraph, which agrees with
+the standing-context decision that §4.7.1's two per-message clauses stand. The three out-of-scope items sit
+under `## Defects in the shipped tree that this proposal does not stage` as written: the equal-generation
+re-fence (`spec/10_gateway-internals.md:39`), the stale protobuf excerpts (`docs/api/internal.md:209-215`),
+and the §4.7 `CoordinatorFence` announcement row (`spec/04_system-components.md:712`). The 0073, 0076, and
+0080 impact rows each occupy one row of `## Impacts on other proposals`, and no second site in the file
+asserts another proposal's continued validity.
+
+FACT: no `### Retired` block or equivalent existed inside `## Open decisions for human to make`, no meta-list
+of staged items with per-item dispositions existed anywhere in the file, and the `**Watch out for.**` part
+carried no errata list owing corrections to files this loop cannot edit. Nothing was relocated and no new
+`DEFERRED` entry is owed by this pass.
+
+FACT: the preamble of `## Defects in the shipped tree that this proposal does not stage` reads true against
+the three entries it now introduces. It states no count, and it names the two staged specification defects,
+SPEC-1's three §4.1 sentences and TEST-2's tier-3 coverage comment, correctly. `## Open decisions for human
+to make` carries no preamble. This pass falsified no statement in the file and therefore corrected none.
+
+WATCHOUT: the open-decision identifiers this file carries are `OD1` and `OD5`. The string `OD2` occurs once
+more, in the fence-retry defect entry, where it names proposal 0076's OD2, and `OD3` occurs five times, each
+time naming 0076's OD3. A later firing that joins on a bare `OD<n>` match will pick up a neighbouring
+proposal's decision as this proposal's.
+
+OPEN: the standing-context `## Open` entry beginning "OD2 carries its question and its ground but no
+recommendation" describes the entry this file now carries as OD5, which was renumbered after that entry was
+written. The shortfall it records still holds. OD5 states its question, its ground, and both branches, and it
+states no recommendation, no losing alternative, no cost of deciding otherwise, and no confidence, on the
+record that the review loop derived none. A format pass may not supply them.
+
+WATCHOUT: this is the second block in the ledger headed `### [f1.cleanup]`. The earlier one sits above the
+`spec-recheck` rounds and records an earlier run of this same firing against a summary whose open-decision
+identifiers were a different set. This block is the later of the two, and a join on the heading alone returns
+both.
+
+DEFERRED [0075_fix_derive-message-scope-from-the-address-type.summary.md]: nothing. The file was already
+conforming and this pass wrote no byte to it.
+
 ## Retired
 
 ### Resolved in adversarial review

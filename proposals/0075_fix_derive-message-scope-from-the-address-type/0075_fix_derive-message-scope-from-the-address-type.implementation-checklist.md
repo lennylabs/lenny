@@ -10,9 +10,10 @@
       for every declared request message. Depends on: —
 - [ ] **S2 · test** — TEST-1. The tier-0 table-reconciliation gate is replaced by the rule gate over the
       addressing convention, the shared proto parse carries each field's type and its `oneof` membership,
-      its other caller moves with that signature, and `tests/spec-map.json` re-registers the replacement
-      gate's cases under sections 4.1 and 28.5.3 inside this step rather than as a step of its own, because
-      tier 0 is red between retiring the old function names and registering the new ones.
+      its other caller moves with that signature, and `tests/spec-map.json` re-points the retiring gate's
+      two section 4.1 entries at the replacement gate's case names and deletes its section 28.5.3 entry,
+      inside this step rather than as a step of its own, because tier 0 is red between retiring the old
+      function names and registering the new ones.
       Tiers 0. Depends on: S1
 - [ ] **S3 · test** — TEST-2. The tier-3 session-address suite separates the set of messages the
       derivation rule addresses to a session from the table of retired duplicate-address field numbers, the

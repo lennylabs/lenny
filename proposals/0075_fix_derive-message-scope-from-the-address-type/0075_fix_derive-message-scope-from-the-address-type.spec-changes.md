@@ -161,8 +161,9 @@ Written against whatever 0076 leaves in §4.1.
   neither a field's type nor its `oneof` membership today
 - `tests/tier0_static/claim_register_proto_agreement_test.go`, the parse's other caller (`:64`), which
   moves with any change to the signature it reads
-- `tests/spec-map.json`, which credits the retiring gate's cases and is re-pointed at the replacement
-  gate's cases in the same change
+- `tests/spec-map.json`, which credits the retiring gate's cases under sections 4.1 and 28.5.3, and whose
+  section 4.1 entries are re-pointed at the replacement gate's cases while its section 28.5.3 entry is
+  deleted in the same change
 - `tests/tier3_contract/adapter_session_address/session_address_wire_test.go`
 
 ## 10. Dependencies

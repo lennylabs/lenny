@@ -28,7 +28,7 @@ change.
   type and its `oneof` membership, which the rule gate reads and the parse does not carry today, and the
   parse's other caller moves with any change to the signature it reads.
 - `tests/spec-map.json` swaps the retiring gate's registered case names for the replacement gate's under
-  sections 4.1 and 28.5.3.
+  section 4.1, and the section 28.5.3 entry that credited the retiring gate is deleted.
 - `tests/tier3_contract/adapter_session_address/session_address_wire_test.go` separates the set of
   messages the rule addresses to a session from the table of retired duplicate-address field numbers, the
   session set gains `CoordinatorFenceRequest` and the other session-addressed messages the old set
@@ -120,9 +120,20 @@ case that survives the replacement gate is narrower than the case the table left
 refuses each half of an unconventional spelling on its own, and the table reached the same case only when
 a human filled the row correctly.
 
-Confidence is moderate because one side of the comparison is derivable from no file. The declared table
-forced a human to classify each new request message before tier 0 went green, and whether losing that
-checkpoint matters is a prediction about how future authors behave.
+Confidence is moderate for two reasons. The first is that this answer reverses a decision proposal 0073
+took the other way. 0073 considered restoring a machine-derivable rule and rejected it, on the ground that
+"the rule would then rest on every future message author choosing the name correctly, which is the same
+hand-maintained agreement moved into the field name"
+(`proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:6653-6655`), and it recorded the
+declared form's own cost beside that, "D6 replaces a machine-derivable classification with a declared one"
+(`:6686`). Two premises behind that decision have since changed: the counterexample the declared form
+accommodated is gone, and the replacement gate refuses each half of an unconventional spelling on its own,
+where 0073 took the convention to rest on author discipline alone. The second reason is that one side of
+the comparison is derivable from no file. The declared table forced a human to classify each new request
+message before tier 0 went green, and whether losing that checkpoint matters is a prediction about how
+future authors behave. The row the table existed to accommodate is wrong in the tree today: a human
+classified `CoordinatorFenceRequest` pod-scoped (`spec/04_system-components.md:175`) and the gate accepted
+the cell.
 
 Two alternatives to the recommendation lose. Keeping the table beside the rule preserves that human
 checkpoint, and it also keeps two statements of one classification and the gate that reconciles them,
@@ -138,17 +149,6 @@ survives, and they contradict `spec/10_gateway-internals.md:38` and `:40`, which
 that a fence for one session does not change the generation the pod holds for another. Proposal 0076's
 OD3 Question B assigned that edit to this proposal, so a withdrawal has to name another owner for it, and
 the tier-3 coverage TEST-2 adds for the fence goes unowned with it.
-
-**OD4. Does the section 28.5.3 registration follow the replacement gate, or is it dropped?**
-`tests/spec-map.json:5670` credits the retiring gate's case under section 28.5.3, and TEST-1 stages
-re-registering the replacement gate's cases "under the same sections", which includes that one. The
-retiring gate read `spec/04` §4.1 and cited 28.5.3 for addressing. The replacement gate reads
-`schemas/lenny-adapter.proto` alone and checks a gateway-to-adapter gRPC convention, while §28.5.3 is the
-intra-pod JSONL and MCP boundary (`spec/28_communication-channels.md:499`).
-`TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` credits from a case's own `// spec:` annotation,
-so whether the replacement case can honestly annotate 28.5.3 decides the register entry. Answering "follow
-the gate" leaves TEST-1 as staged. Answering "drop it" removes the `:5670` entry inside the same step. The
-review loop derived no recommendation; the question stood open across four lenses in both lanes.
 
 **OD5. Is the widened tier-3 session set accepted with nothing holding it complete?** After TEST-2,
 membership in `sessionScopedMessages` is the derivation rule's, and no gate checks that a request message
@@ -177,12 +177,16 @@ applies. The further defects confirmed in the working tree are listed below and 
   (`pkg/gateway/coordination/coordfence/coordfence.go:180-183`) and refused as stale on the second attempt.
   The stale arm re-reads the authoritative generation, finds no advance, and relinquishes the lease
   (`pkg/gateway/coordination/coordfence/coordfence.go:171-179`), so the coordinator gives up on the second
-  of its three attempts rather than exhausting the budget.
+  of its three attempts rather than exhausting the budget. A second half of the same clause is unmet as
+  well: the driver applies no delay between attempts, so the three attempts issue back to back rather than
+  at the one-second spacing the clause orders. `pkg/gateway/coordination/coordfence/coordfence.go` is the
+  package's only non-test file and it carries no timer, sleep, or backoff of any kind.
 
-  This proposal records the refusal and stages no repair. The remedy is the handler's comparison together
-  with the `CoordinatorFenceResponse` wire comment and the §10.1.2, §28, and §29.8 arms that enumerate the
-  refusal cases, none of which is a message-scope classification. Proposal 0080 §1.16 states that remedy in
-  full and records proposal 0076's OD2 as its source. Nothing this proposal stages depends on the
+  This proposal records both and stages no repair. The remedy for the refusal is the handler's comparison
+  together with the `CoordinatorFenceResponse` wire comment and the §10.1.2, §28, and §29.8 arms that
+  enumerate the refusal cases, none of which is a message-scope classification. Proposal 0080 §1.16 states
+  that remedy in full and records proposal 0076's OD2 as its source. It does not take the missing backoff,
+  which is a gateway retry policy that no proposal owns today. Nothing this proposal stages depends on the
   acceptance predicate: the §4.1 block SPEC-1 stages carries the field-set rule, the stream-envelope clause,
   and the addressing convention, and says nothing about acceptance; TEST-1's replacement gate reads
   `schemas/lenny-adapter.proto`; and TEST-2 pins the message's address field. The one behavioral obligation
@@ -252,9 +256,9 @@ applies. The further defects confirmed in the working tree are listed below and 
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0073 | Implemented (2026-08-31, its own status line) | Retires the §4.1 classification table its SPEC-7 staged (`spec/04_system-components.md:153-186`), the paragraph at `:151` that introduces it, the paragraph at `:188` that grounds the fence's row, and the tier-0 reconciliation gate its §8 added, replacing them with the derivation rule and a gate over the addressing convention that rule rests on. Two further landed artifacts lose their subject with the table. The tier-3 membership comment at `tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-43` keys `sessionScopedMessages` on that table and names `CoordinatorFenceRequest` pod-scoped; TEST-2 deletes its clauses at `:39-43` and restates membership on the derivation rule. The retiring gate's two case names, registered under section 4.1 (`tests/spec-map.json:156`, `:169`) and section 28.5.3 (`:5670`) while 0073's work landed, are re-pointed at the replacement gate's cases by TEST-1. One property 0073's §8 states is not reproduced: that a request message added later fails the gate until it is classified. A classification computed from the protocol definition cannot omit a message, so the coverage half of that gate carries over and the human classification step does not. What stands: the `ShutdownRequest` paragraph SPEC-7 staged beside the table (`spec/04_system-components.md:190`) is kept unedited, because it records a divergence between what a request addresses and what its handler touches that the derivation rule does not state; the §4.7 RPC-table row and the §5.2 restatement SPEC-7 carried are untouched, as is its §4.2 value rule and everything it states about how the adapter resolves a root; and the limit 0073 recorded against the retiring gate survives, because the replacement gate reads `schemas/lenny-adapter.proto` alone and can no more check a message's scope against what its handler does than the table's gate could (`tests/tier0_static/adapter_proto_message_scope_test.go:25-27`). | Nothing. A landed proposal keeps the words it was written with, and every edit here lands in `spec/` and in the tests rather than in that document. |
-| 0076 | Implemented (2026-09-07, its status file's `implemented-date`; approved 2026-09-06) | Implements the answer to its OD3. Question A was answered yes: `CoordinatorFenceRequest` is session-scoped, because 0076's CODE-1 moved the coordination generation onto the slot entry its identifier resolves (`pkg/adapter/slot.go:59`). Question B left the `spec/04` §4.1 edit to a successor rather than staging it in 0076, and this proposal is that successor, because SPEC-1 retires the table those edits would have touched. That answer removes the derivation rule's only counterexample, so the schema, code, and documentation deliverables an earlier revision of this proposal carried are dropped (D4). | Nothing. 0076 is landed and is not edited. |
-| 0080 | Draft (2026-09-06, the date of its last commit; the document carries no status file and heads itself `EARLY DRAFT, NOT CONVERGED`) | Leaves §1.16 standing. This change moves the classification and retires the table; §1.16 changes the fence's acceptance predicate and touches neither, so the two are independent in either order. Of the two entries §2 assigns to this proposal, one is taken in full and one is taken in part. The false tier-3 coverage clause for `CoordinatorFenceRequest` is taken: TEST-2 deletes it. The bullet pairing D6's declared message-scope table with the §4.1 `ShutdownRequest` classification limit is taken only for the table, which SPEC-1 and TEST-1 retire together with its gate. The `ShutdownRequest` limit stays as 0073 recorded it, because SPEC-1 keeps the paragraph at `spec/04_system-components.md:190` unedited and the replacement gate reads `schemas/lenny-adapter.proto` alone, so it can no more relate a declared scope to what a handler does than the retired gate could. | Split that §2 bullet when 0080 converges. The declared table and its gate belong on the owned side, and the §4.1 `ShutdownRequest` classification limit returns to the inventory as a gap no proposal takes. §1.16 needs nothing while 0080 remains an inventory. A successor that takes §1.16 states the acceptance predicate and does not restate the classification. |
+| 0073 | Implemented (2026-08-31, its own status line) | Retires the §4.1 classification table its SPEC-7 staged (`spec/04_system-components.md:153-186`), the paragraph at `:151` that introduces it, the paragraph at `:188` that grounds the fence's row, and the tier-0 reconciliation gate its §8 added, replacing them with the derivation rule and a gate over the addressing convention that rule rests on. Two further landed artifacts lose their subject with the table. The tier-3 membership comment at `tests/tier3_contract/adapter_session_address/session_address_wire_test.go:37-43` keys `sessionScopedMessages` on that table and names `CoordinatorFenceRequest` pod-scoped; TEST-2 deletes its clauses at `:39-43` and restates membership on the derivation rule. The retiring gate's two case names, registered under section 4.1 (`tests/spec-map.json:156`, `:169`) and section 28.5.3 (`:5670`) while 0073's work landed, are re-pointed at the replacement gate's cases by TEST-1 under section 4.1, and the section 28.5.3 entry is deleted rather than re-pointed. One property 0073's §8 states is not reproduced: that a request message added later fails the gate until it is classified. A classification computed from the protocol definition cannot omit a message, so the coverage half of that gate carries over and the human classification step does not. What stands: the `ShutdownRequest` paragraph SPEC-7 staged beside the table (`spec/04_system-components.md:190`) is kept unedited, because it records a divergence between what a request addresses and what its handler touches that the derivation rule does not state; the §4.7 RPC-table row and the §5.2 restatement SPEC-7 carried are untouched, as is its §4.2 value rule and everything it states about how the adapter resolves a root; 0073's duplicate-address retirement survives the tier-3 split whole, because TEST-2's new `retiredDuplicateNumbers` keeps the eighteen name-to-number entries of the declaration it splits verbatim and `TestRemovedAddressNumbersAndNamesStayReserved_spec_15_4` iterates that map alone (`tests/tier3_contract/adapter_session_address/session_address_wire_test.go:130`), so the population the reservation case asserts over is the same after the split as before it and no `reserved` pair is opened; and the limit 0073 recorded against the retiring gate survives, because the replacement gate reads `schemas/lenny-adapter.proto` alone and can no more check a message's scope against what its handler does than the table's gate could (`tests/tier0_static/adapter_proto_message_scope_test.go:25-27`). | Nothing. A landed proposal keeps the words it was written with, and every edit here lands in `spec/` and in the tests rather than in that document. |
+| 0076 | Implemented (2026-09-07, its status file's `implemented-date`; approved 2026-09-06) | Implements the answer to its OD3. Question A was answered yes: `CoordinatorFenceRequest` is session-scoped, because 0076's CODE-1 moved the coordination generation onto the slot entry its identifier resolves (`pkg/adapter/slot.go:59`). Question B left the `spec/04` §4.1 edit to a successor rather than staging it in 0076, and this proposal is that successor, because SPEC-1 retires the table those edits would have touched. That answer removes the derivation rule's only counterexample, so the schema, code, and documentation deliverables an earlier revision of this proposal carried are dropped (D4). Nothing 0076 landed is opened: TEST-1 changes the signature of the proto parse the tier-0 gates share, and the two tier-0 files 0076 added, `tests/tier0_static/adapter_barrier_doc_comment_scope_test.go` and `tests/tier0_static/adapter_proto_generation_scope_test.go`, read doc comments and call neither `protoServiceRequests`, whose one caller is the retiring gate (`tests/tier0_static/adapter_proto_message_scope_test.go:87`), nor `protoFields`, whose other caller is `tests/tier0_static/claim_register_proto_agreement_test.go:64` and is already listed under TEST-1. | Nothing. 0076 is landed and is not edited. |
+| 0080 | Draft (2026-09-06, the date of its last commit; the document carries no status file and heads itself `EARLY DRAFT, NOT CONVERGED`) | Leaves §1.16 standing. This change moves the classification and retires the table; §1.16 changes the fence's acceptance predicate and touches neither, so the two are independent in either order. Of the two entries §2 assigns to this proposal, one is taken in full and one is taken in part. The false tier-3 coverage clause for `CoordinatorFenceRequest` is taken: TEST-2 deletes it. The bullet pairing D6's declared message-scope table with the §4.1 `ShutdownRequest` classification limit is taken only for the table, which SPEC-1 and TEST-1 retire together with its gate. The `ShutdownRequest` limit stays as 0073 recorded it, because SPEC-1 keeps the paragraph at `spec/04_system-components.md:190` unedited and the replacement gate reads `schemas/lenny-adapter.proto` alone, so it can no more relate a declared scope to what a handler does than the retired gate could. | Split that §2 bullet when 0080 converges. The declared table and its gate belong on the owned side, and the §4.1 `ShutdownRequest` classification limit returns to the inventory as a gap no proposal takes. §1.16 needs nothing while 0080 remains an inventory. A successor that takes §1.16 states the acceptance predicate and does not restate the classification. When the inventory is next triaged, weigh two further sites for §1 that this proposal records and that §1.1 through §1.21 do not carry, neither of which §3 excludes by design: the §4.7 `CoordinatorFence` announcement row (`spec/04_system-components.md:712`) with its reader-facing mirror at `docs/reference/adapter-contract.md:69`, which is a residue of proposal 0076's move to per-session coordination rather than a classification defect; and the stale protobuf excerpts at `docs/api/internal.md:209-215` and `:272-274`, whose severity SPEC-1 raises by making a top-level `string session_id` on a request message a spelling the specification forbids, although nothing this proposal applies reddens on account of the page. |
 
 ## Deliverable index
 
@@ -267,8 +271,8 @@ applies. The further defects confirmed in the working tree are listed below and 
   `tests/tier0_static/claim_register_proto_agreement_test.go`, and `tests/spec-map.json` — Replaces the
   table-reconciliation gate with the rule gate over the addressing convention, retires the two table
   readers that lose their subject with the table, carries a field's type and its `oneof` membership through
-  the shared parse and its other caller, and re-registers the replacement gate's cases under the sections
-  the retiring gate's cases held.
+  the shared parse and its other caller, and registers the replacement gate's cases under section 4.1
+  alone, deleting the section 28.5.3 credit the retiring gate's case held.
 - TEST-2 — `tests/tier3_contract/adapter_session_address/session_address_wire_test.go` — Separates the set
   of messages the derivation rule addresses to a session from the table of retired duplicate-address field
   numbers, brings `CoordinatorFenceRequest` and the other session-addressed messages the old set excluded
