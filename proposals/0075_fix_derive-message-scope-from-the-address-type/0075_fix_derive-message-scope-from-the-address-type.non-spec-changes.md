@@ -22,9 +22,7 @@ the fence enters the suite through the set the reservation case does not iterate
 
 ## 5. Proposed changes
 
-**IMPLEMENTOR TO FILL THE BLANKS.** The staged blocks below are indicative. They name the target and the
-change; the exact text is written during convergence, against the post-0073 and post-0076 state of each
-file.
+The blocks below are the change to apply, written against the post-0073 and post-0076 state of each file.
 
 ### TEST-1. Replace the tier-0 gate
 
@@ -124,9 +122,9 @@ because the two address arms now reach them.
 
 ## 8. Testing
 
-**IMPLEMENTOR TO FILL THE BLANKS.** The tiers reached are 0 (the new gate, build, vet), 3 (the
+The tiers reached are 0 (the new gate, build, vet), 3 (the
 session-address suite TEST-2 amends), and 11 (the specification and any reader-facing page that restates
-the classification). The specific cases are written during convergence; the tier-0 gate must be shown
+the classification). The tier-0 gate must be shown
 to fail once for each clause it carries, on a field named `session_id` that is not of type `SessionId`, on
 a field of type `SessionId` under another name, on a stream envelope declaring a top-level address of its
 own, and on a stream envelope whose frames declare zero addresses or two, and the tier-3 case must pin the
