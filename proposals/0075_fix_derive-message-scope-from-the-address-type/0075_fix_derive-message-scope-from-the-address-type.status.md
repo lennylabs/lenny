@@ -2,11 +2,11 @@
 proposal: 0075_fix_derive-message-scope-from-the-address-type
 title: Derive message scope from the address type
 kind: fix
-status: Draft
+status: Reviewed
 drafted-date: 2026-08-19
 drafted-by: 
-reviewed-date: 
-reviewed-by: 
+reviewed-date: 2026-09-08
+reviewed-by: change-proposal
 approved-date: 
 approved-by: 
 implemented-date: 
@@ -17,7 +17,7 @@ implemented-by:
 
 ## Status, date, and scope as the original recorded them
 
-- **Status:** Draft for review.
+- **Status:** Reviewed and converged.
 - **Date:** 2026-08-19. Rewritten 2026-09-06 against proposal 0076, which removes the ground this proposal
   originally gave for its central exception, and again once 0076's OD3 was answered. §11 records what the
   rewrites changed.
@@ -31,4 +31,4 @@ implemented-by:
 
 ## Review history
 
-An adversarial review run evaluated the proposal on 2026-09-07. The specification loop ran two rounds and converged, with one full-pool sweep. The non-specification loop ran two rounds and did not converge, with no full-pool sweeps. Two findings were fixed across both loops. Because the non-specification loop did not converge, the overall run did not converge, and open questions remain.
+An adversarial review run evaluated the proposal on 2026-09-08. The specification loop ran two rounds and converged, with one full-pool sweep. The non-specification loop ran two rounds and converged, with one full-pool sweep. No findings were fixed. The overall run converged.
