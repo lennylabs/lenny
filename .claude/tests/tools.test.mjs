@@ -81,6 +81,30 @@ t.section("T2b. the legacy prose reader covers every spelling in the tree");
     t.check(want + " <- " + line.slice(0, 44), got && got.status === want, got && got.status);
   }
   t.check("Retired is not writable: it is not one of the four", !["Draft", "Reviewed", "Approved", "Implemented"].includes("Retired"));
+
+  // Whether the spec edits landed is reported beside the status rather than as
+  // one, because it is progress rather than state. It is reported at all
+  // because a legacy proposal has no implementation checklist to carry the
+  // per-deliverable record: of 43 proposals reading Approved in this tree, 40
+  // say "Applied to spec" and their spec landed months ago, so a consumer
+  // reading the status alone treats settled work as live.
+  const applied = [
+    ["- **Status:** **Applied to spec (2026-08-03).** Approved (2026-08-02).", true],
+    ["- **Status:** Applied to spec (2026-07-17). Code not yet implemented.", true],
+    ["- **Status:** Approved for implementation as written (2026-08-14).", false],
+    ["- **Status:** Draft for review.", false],
+    ["- **Status:** Implemented green (2026-08-16), independently verified.", true],
+  ];
+  for (const [line, want] of applied) {
+    const got = legacyStatus("# P\n\n" + line + "\n");
+    t.check("specApplied " + want + " <- " + line.slice(14, 52), got && got.specApplied === want, got && String(got.specApplied));
+  }
+  // The flag says nothing about the CODE. "Applied to spec ... signed off by
+  // the user for implementation" is approval to implement rather than evidence
+  // of it, and three proposals in that set say outright that their code is not
+  // yet written, so this must never be read as Implemented.
+  const pending = legacyStatus("# P\n\n- **Status:** Applied to spec (2026-07-17). Code not yet implemented.\n");
+  t.check("a spec-applied proposal whose code is pending is still Approved", pending.status === "Approved", pending.status);
 }
 
 t.section("T2c. every proposal in the real tree parses");

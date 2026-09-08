@@ -102,12 +102,25 @@ export function legacyStatus(text) {
   // states describe a proposal moving toward implementation, and these are not
   // moving. Every consumer that gates on a state gates on Approved, so a
   // Retired proposal is refused by all of them, which is the correct outcome.
-  if (/^superseded|^withdrawn/.test(low)) return { status: "Retired", raw };
-  if (/^implemented/.test(low)) return { status: "Implemented", raw };
-  if (/^applied to spec|^approved/.test(low)) return { status: "Approved", raw };
-  if (/^verified/.test(low)) return { status: "Reviewed", raw };
-  if (/^draft|^early draft/.test(low)) return { status: "Draft", raw };
-  return { status: null, raw };
+  // Whether this proposal's SPEC edits are in `spec/`. It is reported beside
+  // the status rather than as one, for the reason above: it is progress rather
+  // than state. It is reported at all because on a legacy proposal there is no
+  // implementation checklist to carry the per-deliverable record, and the
+  // consequence was measured: of 43 proposals reading `Approved`, 40 say
+  // "Applied to spec" and their spec landed months ago, so every consumer
+  // reading the status alone treats settled work as live.
+  //
+  // It says nothing about the CODE. `Applied to spec … signed off by the user
+  // for implementation` is approval to implement rather than evidence of it,
+  // and three proposals in that set say outright that their code is not yet
+  // written.
+  const specApplied = /applied to spec/.test(low);
+  if (/^superseded|^withdrawn/.test(low)) return { status: "Retired", raw, specApplied };
+  if (/^implemented/.test(low)) return { status: "Implemented", raw, specApplied: true };
+  if (/^applied to spec|^approved/.test(low)) return { status: "Approved", raw, specApplied };
+  if (/^verified/.test(low)) return { status: "Reviewed", raw, specApplied };
+  if (/^draft|^early draft/.test(low)) return { status: "Draft", raw, specApplied };
+  return { status: null, raw, specApplied };
 }
 
 export function readStatus(ref) {
@@ -118,14 +131,18 @@ export function readStatus(ref) {
     const l = legacyStatus(text);
     if (!l) return { error: "legacy proposal has no Status bullet: " + r.statusFile };
     if (!l.status) return { error: "unrecognised legacy status: " + l.raw };
-    return { layout: "legacy", stem: r.stem, status: l.status, raw: l.raw, file: r.statusFile };
+    return { layout: "legacy", stem: r.stem, status: l.status, specApplied: l.specApplied, raw: l.raw, file: r.statusFile };
   }
   const fm = parseFrontmatter(text);
   if (!fm) return { error: "no frontmatter in " + r.statusFile };
   if (!STATES.includes(fm.status)) {
     return { error: "status must be one of " + STATES.join(", ") + "; found " + JSON.stringify(fm.status) };
   }
-  return { layout: "folder", stem: r.stem, ...fm, file: r.statusFile };
+  // A folder proposal carries its per-deliverable record in the implementation
+  // checklist, which is where the spec-lane steps are ticked, so the flag is
+  // derived from the state alone rather than from prose: Implemented is the
+  // only state whose spec edits have certainly landed.
+  return { layout: "folder", stem: r.stem, specApplied: fm.status === "Implemented", ...fm, file: r.statusFile };
 }
 
 export function writeStatus(ref, updates) {
