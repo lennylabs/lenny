@@ -400,8 +400,33 @@ The hash also does not cover what differs most between runs: the tree the lens
 verifies against, and the lens prompt. The base model and effort are in the key;
 the other two are why this is opt-in rather than merely scoped per run.
 
-Set it to resume an interrupted run's review, passing the same string that run
-used. It is a caller-chosen string rather than a per-run nonce on purpose:
+**When to set it.** One case: a run that died PART-WAY THROUGH A ROUND, being
+relaunched to finish that round. Pass the string the dead run used, and the
+lenses that already answered return their answers instead of repeating them.
+
+That case is narrower than it sounds, so check it is the one you are in.
+`resumeFromRunId` already replays completed agents through the harness journal,
+and `resumeState` continues at the recorded round without re-running the rounds
+before it, so neither needs this. What is left is the partial round: half its
+lenses finished, the boundary never closed, and the relaunch re-runs all of them.
+
+**When NOT to set it**, which is every other launch:
+
+- A fresh review of a proposal that has been reviewed before. This is the case
+  that produced the failure above. The staging can be byte-identical and the
+  answers still wrong, because the tree the lenses verify against has moved.
+- After anything that changes what a lens is being asked. Editing a lens's text,
+  `lensPrompt`, or `context` changes the question; the hash covers none of them.
+  The base model and effort are in the key, so those are safe.
+- After the tree moved under the proposal: another proposal implemented, a
+  rebase, a dependency landed. The hash covers the proposal, never the tree.
+
+**Choosing the string.** Anything outside letters, digits, underscore and dash is
+stripped, so a scope of `..` cannot resolve to the directory holding the other
+scopes. Name it for the run rather than the proposal, since a name that repeats
+across runs is the defect this replaced.
+
+It is a caller-chosen string rather than a per-run nonce on purpose:
 `resumeFromRunId` replays an agent only when its prompt is byte-identical, so a
 nonce would bust the harness's own cache and re-run live everything the resume
 exists to skip.
@@ -467,10 +492,11 @@ same tier recorded none.
 | Run died, nothing changed | Relaunch with `{scriptPath, resumeFromRunId}` |
 | Run died, only `forward` arguments changed | Relaunch with `{scriptPath, resumeFromRunId}` and the new arguments |
 | Run died, any `anchored` argument changed | Relaunch fresh with `resumeState: true` and the new arguments |
+| Run died PART-WAY THROUGH A ROUND and you are relaunching to finish it | Add `cacheScope`, set to the string the dead run used, so the lenses that already answered do not repeat the work. Set it in no other situation: see **The lens cache** |
 
 A wrong choice costs tokens, never correctness. `resumeFromRunId` after an anchored change busts the journal cache and re-does that work under the new argument. `resumeState` after only a forward change relaunches fresh and continues from the recorded round. An anchored key written into the override file is rejected by the whitelist and logged. The script compares the recorded arguments at startup and names any anchored one that changed, so a caller who changed one by accident finds out.
 
-Report the `runTag` and the override path when you launch, so the user has the affordance without asking.
+Report the `runTag` and the override path when you launch, so the user has the affordance without asking. Report the `cacheScope` too when you set one, because a later run reusing it by accident is the failure **The lens cache** describes.
 
 ## Procedure
 
