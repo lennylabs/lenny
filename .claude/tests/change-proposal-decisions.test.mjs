@@ -163,7 +163,7 @@ t.section("D1. every firing runs the collectors, each under its own brief");
   const POP = [
     ["f1:human-decisions:1", "Your population is EVERY DECISION THIS PROPOSAL LEAVES TO A HUMAN"],
     ["f1:out-of-scope-defects", "Your population is EVERY DEFECT THIS PROPOSAL EXPLICITLY CALLS OUT AS OUT OF SCOPE"],
-    ["f1:other-proposals", "Your population is EVERY OTHER PROPOSAL ON DISK THIS ONE BEARS ON"],
+    ["f1:other-proposals", "Your population is THE PROPOSALS LISTED BELOW"],
   ];
   for (const [label, sentence] of POP) {
     t.check(label + " states its own population", promptOf(calls, label).includes(sentence));
@@ -1147,8 +1147,11 @@ t.section("D8. the corpus is gathered once per run; sub-task 4 re-runs at every 
 {
   const CORPUS = {
     proposals: [
-      { proposal: "0050_earlier", status: "Approved", date: "2026-08-20", dateSource: "approved" },
-      { proposal: "0051_other", status: "Draft", date: "2026-08-29", dateSource: "commit" },
+      // The fixture proposal is 0099, so these two sit inside the default
+      // window of 15 and the third does not.
+      { proposal: "0090_earlier", status: "Approved", date: "2026-08-20", dateSource: "approved" },
+      { proposal: "0091_other", status: "Draft", date: "2026-08-29", dateSource: "commit" },
+      { proposal: "0050_distant", status: "Approved", date: "2026-08-25", dateSource: "approved" },
     ],
   };
   const ROW_ONE = entry({
@@ -1168,15 +1171,21 @@ t.section("D8. the corpus is gathered once per run; sub-task 4 re-runs at every 
 
   const one = await fire({ firing: 1 }, { "f1:corpus": CORPUS, "f1:other-proposals": found(ROW_ONE) });
   t.check("firing 1 gathers the inventory", matching(one.calls, "f1:corpus").length === 1);
-  t.check("and hands it to sub-task 4", promptOf(one.calls, "f1:other-proposals").includes("0050_earlier — status Approved — 2026-08-20 (approved)"));
-  t.check("it is carried on the phase state", (one.result.phaseState.corpus || []).length === 2, String((one.result.phaseState.corpus || []).length));
+  t.check("and hands it to sub-task 4", promptOf(one.calls, "f1:other-proposals").includes("0090_earlier — status Approved — 2026-08-20 (approved)"));
+  // The window is applied to the inventory before the agent sees it, so a
+  // proposal 49 numbers away is not in the brief at all.
+  t.check("but withholds a proposal outside the number window", !promptOf(one.calls, "f1:other-proposals").includes("0050_distant"), "a distant proposal reached sub-task 4");
+  // The phase state carries the WHOLE corpus; the window narrows only what
+  // sub-task 4's brief is handed, so a later firing can widen it without
+  // re-gathering.
+  t.check("it is carried on the phase state whole", (one.result.phaseState.corpus || []).length === 3, String((one.result.phaseState.corpus || []).length));
 
   const two = await runWorkflow(WF, ARGS({ firing: 2, phaseState: JSON.parse(JSON.stringify(one.result.phaseState)) }), {
     ...base(),
     "f2:other-proposals": found(ROW_TWO),
   });
   t.check("firing 2 gathers no inventory of its own", never(two.calls, "f2:corpus"), "the corpus agent ran again");
-  t.check("and says it is reusing the run's", two.logs.some((l) => /Corpus inventory: reusing 2 row\(s\) gathered earlier in this run/.test(l)));
+  t.check("and says it is reusing the run's", two.logs.some((l) => /Corpus inventory: reusing 3 row\(s\) gathered earlier in this run/.test(l)));
   t.check("while the assessment itself re-runs", matching(two.calls, "f2:other-proposals").length === 1);
   t.check(
     "against the staging as it stands at this firing",
@@ -1549,9 +1558,13 @@ t.section("D13. the parts the deleted lens carried, in the homes this phase give
   // gate that decides whether a row is even a question. How the corpus is
   // gathered and handed over is D8's subject and is not repeated here.
   const p4 = promptOf(calls, "f1:other-proposals");
-  t.check("an implemented proposal is not affected", p4.includes("An `Implemented` proposal is already in the tree and is not affected"));
+  t.check("an implemented proposal cannot be invalidated", /`Implemented` proposal is in the tree and cannot be\s+invalidated/.test(p4));
   t.check("a draft may be invalidated freely", /`Draft` may be invalidated\s+freely/.test(p4));
-  t.check("and a recently reviewed one warrants care", /last reviewed within fourteen\s+days warrants care/.test(p4));
+  // The recency arm is retired: on the measured tree not one Approved proposal
+  // fell inside fourteen days, so it never fired. The number window is the
+  // recency test now, applied before the agent sees the list.
+  t.check("a reviewed or approved one warrants care", /`Reviewed` or `Approved` proposal is\s+the case that warrants care/.test(p4));
+  t.check("and recency is no longer asked as a date question", !/last reviewed within fourteen/.test(p4), "the retired recency arm survives");
   t.check("a row is a question only where the choice changes it", /whether choosing differently would change\s+that effect/.test(p4));
   t.check("otherwise it is a row", /a row rather than a question for a human/.test(p4));
   t.check("and a commit date is declared as one", /rather than when it was\s+reviewed/.test(p4));
@@ -1659,6 +1672,54 @@ t.section("D-collect. the reversal check and the three collectors run as one wav
     /let corpus = \[\];/.test(src) && (src.match(/corpus\.length/g) || []).length >= 2,
     "corpusSize would throw on an undefined binding",
   );
+}
+
+t.section("D-window. sub-task 4 sweeps a window of proposal numbers, not the whole corpus");
+{
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/change-proposal-decisions.js"), "utf8");
+  const m = src.match(/function inWindow\(corpusRows\)[\s\S]*?\n}\n/);
+  t.check("inWindow is defined", !!m, String(!!m));
+  const rowsOf = (ps) => ps.map((x) => ({ proposal: x }));
+  const run = (self, win, ps) => {
+    // eslint-disable-next-line no-eval
+    const f = eval("(function(selfNumber, impactWindow){ return (" + m[0].replace(/^function inWindow/, "function") + "); })")(self, win);
+    return f(rowsOf(ps)).map((r) => r.proposal);
+  };
+  const corpus = ["0036_a", "0045_b", "0060_c", "0073_d", "0075_e", "0076_f", "0080_g", "0091_h"];
+  // Measured on two runs: a window of 15 held every row those proposals
+  // actually carried and excluded both rows a falsifier went on to refute.
+  // 0075's real rows were 0073, 0076 and 0080; its refuted ones were 0036 and 0045.
+  const at75 = run(75, 15, corpus);
+  t.check("0075's three real rows survive", ["0073_d", "0076_f", "0080_g"].every((x) => at75.includes(x)), at75.join(" "));
+  t.check("the two rows a falsifier refuted are excluded", !at75.includes("0036_a") && !at75.includes("0045_b"), at75.join(" "));
+  t.check("its own entry is dropped rather than left for the agent to skip", !at75.includes("0075_e"), at75.join(" "));
+  t.check("a proposal one past the window is excluded", !run(76, 15, corpus).includes("0060_c"), run(76, 15, corpus).join(" "));
+  // An unnumbered entry is never filtered out: the window is a narrowing of a
+  // known population, and an entry it cannot place is not evidence of absence.
+  t.check("an unnumbered entry is kept", run(75, 15, ["notanumber"]).includes("notanumber"), "an unnumbered entry was dropped");
+  // The escape hatch restores the behaviour that predates the window.
+  t.check("a window of 0 sweeps everything", run(75, 0, corpus).length === corpus.length, String(run(75, 0, corpus).length));
+  t.check(
+    "and a proposal whose stem carries no number sweeps everything",
+    run(null, 15, corpus).length === corpus.length,
+    String(run(null, 15, corpus).length),
+  );
+
+  // The brief must state the window as the population rather than leaving the
+  // agent to infer it from a shortened list, and the recency arm it replaces
+  // must be gone: on the measured tree not one Approved proposal fell inside
+  // fourteen days, so that arm never fired.
+  const brief = src.slice(src.indexOf("function otherProposalsBrief"), src.indexOf("function otherProposalsBrief") + 6000);
+  t.check("the brief names the window as the population", /within \" \+ impactWindow \+/.test(brief) || /impactWindow/.test(brief), "the window is not named in the brief");
+  t.check(
+    "the brief no longer asks whether a proposal was reviewed within fourteen days",
+    !/last reviewed within fourteen days warrants care/.test(src),
+    "the retired recency arm is still in the brief",
+  );
+  t.check("impactWindow is an argument with a default of 15", /input\.impactWindow[\s\S]{0,80}: 15;/.test(src), "impactWindow is not defaulted to 15");
 }
 
 t.done();

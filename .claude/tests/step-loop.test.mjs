@@ -280,6 +280,53 @@ t.section("C10. an unresolvable verdict writes an accepted deviation");
   t.check("the run reports where the file is", !!result.deviationsFile && /deviations\.md$/.test(result.deviationsFile));
 }
 
+t.section("C10b. a departure the step reports about itself is written down too");
+{
+  // It was reaching the result object and nowhere else, and the result object
+  // is a task return nobody keeps: on two measured runs the deviations file
+  // said there were none while the run had returned several, so the one
+  // artifact a human reads to decide whether the proposal or the code was
+  // wrong was the one that lost them.
+  const DEV = {
+    proposalSays: "TEST-1(a) says the comment is restated and says nothing about the signature",
+    implementedInstead: "the return type was narrowed from map[string]string to map[string]bool",
+    why: "the declaring service was read only by the gate this step retires",
+  };
+  const { calls, logs } = await runWorkflow(WF, ARGS(), base({
+    "build:*": { implemented: true, testsPassed: true, tiersRun: ["unit"], commit: "c1", filesChanged: ["pkg/a.go"], testsAddedOrModified: [], deviations: [DEV] },
+  }));
+  const dev = calls.find((c) => c.label.startsWith("deviation:proposed:"));
+  t.check("a writer runs for it", !!dev, calls.map((c) => c.label).join(","));
+  t.check("it may edit only the deviations file", /only file you may edit is .*deviations\.md/.test(dev.prompt));
+  t.check("it carries what the step reported", /narrowed from map\[string\]string/.test(dev.prompt));
+  // `proposed` rather than `accepted`: nobody adjudicated this, and the
+  // vocabulary already distinguishes them.
+  t.check("it writes a proposed entry", /\*\*Status:\*\* proposed/.test(dev.prompt) || /Status:\*\* proposed/.test(dev.prompt));
+  t.check("and is told not to write accepted", /Do not write `accepted`/.test(dev.prompt));
+  t.check("it appends rather than rewriting", /Append only; never rewrite or remove an entry/.test(dev.prompt));
+  t.check("the run says it recorded them", logs.some((l) => /recorded 1 proposed deviation\(s\)/.test(l)), logs.filter((l) => /deviation/.test(l)).join(" | "));
+}
+{
+  // A step that reported none must not spend an agent saying so.
+  const { calls } = await runWorkflow(WF, ARGS(), base());
+  t.check("a step with no departures writes nothing", !calls.some((c) => c.label.startsWith("deviation:proposed:")), "a writer ran for an empty list");
+}
+{
+  // Writing here must not buy the step's own claim immunity from the next
+  // round's review: the reviewers' suppression list is built from the stuck
+  // judges' verdicts in memory, never by reading this file.
+  const { readFileSync } = await import("fs");
+  const { resolve } = await import("path");
+  const { REPO: R } = await import("./harness.mjs");
+  const src = readFileSync(resolve(R, ".claude/workflows/implement-proposal-build.js"), "utf8");
+  const from = src.indexOf("const adjudicated = stuckFindings");
+  t.check(
+    "the immunity list is built from the judges rather than from the file",
+    from > 0 && !/readFile|P\.deviations/.test(src.slice(from, from + 300)),
+    src.slice(from, from + 160),
+  );
+}
+
 t.section("C11. reviewers are told about accepted deviations, and leaks are dropped");
 {
   const { calls } = await runWorkflow(WF, ARGS(), base());

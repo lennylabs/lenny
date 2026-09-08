@@ -1152,6 +1152,29 @@ const DEVIATIONS_BLOCK =
 // Writing one. Only the stuck judges reach this, and only on a unanimous
 // `unresolvable`: the code is right, the proposal is wrong, and the proposal is
 // read-only to this phase, so no legal change closes the finding.
+// Departures a build step reported about its own work. Distinct from the
+// accepted kind below in who decided and in what it buys: nobody adjudicated
+// these, and they are fair game for the next round's reviewers.
+async function recordProposedDeviations(step, list) {
+  const entries = (Array.isArray(list) ? list : []).filter((d) => d && typeof d === "object");
+  if (entries.length === 0) return;
+  await agentTry(
+    "Append proposed deviation(s) to a proposal's deviations file.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.deviations + ". Create it if it is absent, " +
+      "with an `# Deviations: <proposal title>` heading. Append only; never rewrite or remove an entry " +
+      "that is already there, and never edit any other file.\n\n" +
+      "Append one section per entry below, under a `## Proposed: <short title>` heading, each stating " +
+      "**Status:** proposed, then what the proposal says, what landed instead, why, and what a later " +
+      "reader would otherwise get wrong. `proposed` means nobody has adjudicated it: it is a report from " +
+      "the step that made the departure, not a decision. Do not write `accepted` and do not argue for or " +
+      "against the departure.\n\n" +
+      "Step " + step.id + " (" + step.title + ") reported:\n\n" +
+      JSON.stringify(entries, null, 1),
+    { label: "deviation:proposed:" + step.id, phase: "Build" },
+  );
+  log("Step " + step.id + ": recorded " + entries.length + " proposed deviation(s) in " + P.deviations);
+}
+
 async function recordDeviation(step, rec) {
   await agentTry(
     "Record an accepted deviation in a proposal's deviations file.\n\n" +
@@ -2258,6 +2281,18 @@ for (let i = 0; i < plan.steps.length; i++) {
     findings: stepReviewClean ? [] : stepFindings,
     ...(res || { implemented: false, testsPassed: false, tiersRun: [], notes: "agent failed" }),
   });
+  // A departure the step itself reported goes into the deviations file, as
+  // `proposed`. It was reaching the result object and nowhere else, and the
+  // result object is a task return nobody keeps: on two measured runs the file
+  // said there were no deviations while the run had returned several, so the
+  // one artifact a human reads to decide whether the proposal or the code was
+  // wrong was the one that lost them.
+  //
+  // `proposed` rather than `accepted` because nothing has adjudicated these.
+  // Only the stuck judges accept one, and the reviewers' immunity list is built
+  // from those in memory rather than by reading this file, so writing here
+  // grants a step's own claim no immunity from the next round's review.
+  await recordProposedDeviations(step, (res && res.deviations) || []);
   // Abort the sequence if the step did not reach green-and-conformant within
   // maxStepAttempts: its dependents would build on a broken or divergent
   // foundation. Stop here; the spec and the completed steps are already

@@ -111,6 +111,15 @@ if (trigger === "periodic") {
 // is the parent's, and this reports the stop so it is visible in the log and in
 // the result rather than only in the parent's control flow.
 const maxPeriodicFirings = input.maxPeriodicFirings || 5;
+// How far from this proposal's own number sub-task 4 sweeps, in proposal
+// numbers. Proposals are worked roughly in order, so the number is a proxy for
+// recency and it is the one field in this corpus that is never wrong: of 43
+// proposals reading `Approved` on the tree this was measured against, 40 had
+// their spec applied months earlier and no status said so, and not one fell
+// inside the fourteen days the brief used to ask about. Measured on two runs, a
+// window of 15 held every row those proposals actually carried and excluded
+// both rows a falsifier went on to refute.
+const impactWindow = Number.isFinite(input.impactWindow) ? Number(input.impactWindow) : 15;
 const periodicBudgetSpent = (phaseState.periodicFirings || 0) >= maxPeriodicFirings;
 
 // The run-wide refuted list the parent accumulates across both loops. An item an
@@ -182,6 +191,13 @@ function roleRef(P, role, sectionName) {
 }
 
 const P = proposalFiles(input.proposalPath, repo);
+// The leading NNNN of this proposal's own directory or file name. Null when the
+// stem does not carry one, in which case the window cannot be applied and the
+// whole corpus is swept, which is the behaviour that predates it.
+const selfNumber = (() => {
+  const m = /^(\d{4})_/.exec(String(P.stem || ""));
+  return m ? Number(m[1]) : null;
+})();
 // The one pathspec this phase stages, commits, and diffs under. It is the scope
 // the skill's report step already enforces on a run: everything this phase
 // writes is inside the proposal, and anything outside it belongs to another
@@ -227,6 +243,7 @@ const ARG_CLASS = {
   baseModel: "launch",
   baseEffort: "launch",
   maxPeriodicFirings: "forward",
+  impactWindow: "forward",
 };
 
 // ---- Agent plumbing -------------------------------------------------------
@@ -1398,7 +1415,24 @@ function outOfScopeDefectsBrief() {
 // proposal does to each other proposal is a function of the staging as it
 // stands now, and this phase and the review loops both change that between
 // firings.
-function otherProposalsBrief(corpusRows) {
+// The corpus rows sub-task 4 sweeps, narrowed to a window of proposal numbers
+// around this proposal's own. Its own row is dropped here rather than left for
+// the agent to skip.
+function inWindow(corpusRows) {
+  if (selfNumber === null || !(impactWindow > 0)) return corpusRows;
+  const kept = [];
+  for (const r of corpusRows) {
+    const m = /^(\d{4})_/.exec(String(r && r.proposal ? r.proposal : ""));
+    if (!m) { kept.push(r); continue; }  // an unnumbered entry is never filtered out
+    const n = Number(m[1]);
+    if (n === selfNumber) continue;
+    if (Math.abs(n - selfNumber) <= impactWindow) kept.push(r);
+  }
+  return kept;
+}
+
+function otherProposalsBrief(allRows) {
+  const corpusRows = inWindow(allRows);
   const inventory =
     corpusRows.length > 0
       ? corpusRows
@@ -1411,8 +1445,12 @@ function otherProposalsBrief(corpusRows) {
       : "(the inventory could not be gathered on this run; read the statuses yourself with " +
         "`.claude/tools/proposal-status.mjs <proposal> --json` and say in `coverage` that you did)";
   return briefFrame(
-    "Your population is EVERY OTHER PROPOSAL ON DISK THIS ONE BEARS ON. No reviewer in this run reads " +
-      "`proposals/`, so this sweep is the only place the effect is established.",
+    "Your population is THE PROPOSALS LISTED BELOW, which are the ones within " + impactWindow +
+      " of this proposal's own number, and it is every proposal you may consider. No reviewer in this " +
+      "run reads `proposals/`, so this sweep is the only place the effect is established. Do not read " +
+      "or report on a proposal outside the list, and do not ask for the window to be widened: " +
+      "proposals are worked roughly in order, so a distant one is settled work rather than work this " +
+      "staging can still collide with.",
     "THE CORPUS, with each proposal's status and the date that status was reached. A row marked `commit` " +
       "carries a LAST COMMIT date, which is when someone last touched the file rather than when it was " +
       "reviewed; say so wherever you rest on one, because nearly every proposal on disk is a legacy " +
@@ -1427,12 +1465,18 @@ function otherProposalsBrief(corpusRows) {
       "identically, the effect is already settled by a deliverable nobody is questioning, and your output " +
       "is a row rather than a question for a human. Set `changesWithChoice` to record which case you are " +
       "in.\n\n" +
-      "THEN THE STATUS AND RECENCY DECIDE HOW THE ROW READS. An `Implemented` proposal is already in the " +
-      "tree and is not affected. A `Draft` may be invalidated freely: record it and move on. A `Reviewed` " +
-      "or `Approved` proposal last reviewed within fourteen days warrants care, because convergence and " +
-      "human attention were recently spent on it and this change spends them again: say in the row that " +
-      "proceeding is the human's call and state the question. An older one is recorded with the note that " +
-      "it may have drifted regardless.\n\n" +
+      "THEN THE STATUS DECIDES HOW THE ROW READS. An `Implemented` proposal is in the tree and cannot be " +
+      "invalidated, so the only question it raises is whether this staging retires or contradicts " +
+      "something it landed; a row saying so is worth writing, and one saying it is unaffected is not. A " +
+      "`Draft` may be invalidated freely: record it and move on. A `Reviewed` or `Approved` proposal is " +
+      "the case that warrants care, because convergence and human attention were spent on it and this " +
+      "change spends them again: say in the row that proceeding is the human's call and state the " +
+      "question.\n\n" +
+      "RECENCY IS NOT A TEST YOU CAN APPLY, AND THE WINDOW IS WHY YOU DO NOT NEED ONE. The dates in the " +
+      "inventory do not say what they appear to: on the tree this brief was measured against, 40 of the " +
+      "43 proposals reading `Approved` had their spec applied months before, no status recorded it, and " +
+      "not one of them fell inside fourteen days. The number window above is the recency test, applied " +
+      "before you see the list.\n\n" +
       "NAMING THE EFFECT IS NOT OPTIONAL. Recording it as a rebase for whichever lands second is not " +
       "enough: say which of the other proposal's deliverables lose their subject and which survive.\n\n" +
       "YOUR WRITE PATH. One entry per affected proposal, `home`: other-proposal, `disposition`: " +

@@ -36,6 +36,7 @@ const ARGS = {
   baseModel: "sonnet",
   baseEffort: "high",
   maxPeriodicFirings: 7,
+  impactWindow: 9,
 };
 
 // The refuted premise the run-wide list carries. `rejected` is the one argument
@@ -115,6 +116,7 @@ const EXPECTED = {
   baseModel: "sonnet",
   baseEffort: "high",
   maxPeriodicFirings: 7,
+  impactWindow: 9,
 };
 
 for (const [key, value] of Object.entries(EXPECTED)) {

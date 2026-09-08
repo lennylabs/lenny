@@ -91,6 +91,9 @@ const decisionsFirst = !!input.decisionsFirst;
 const skipBootstrap = !!input.skipBootstrap;
 const periodEvery = input.periodEvery || 3;
 const maxPeriodicFirings = input.maxPeriodicFirings || 5;
+// How far from this proposal's own number the decisions phase's impacts sweep
+// reaches, in proposal numbers. Forwarded to the subworkflow, which owns it.
+const impactWindow = Number.isFinite(input.impactWindow) ? Number(input.impactWindow) : 15;
 // How many times a spec/non-spec recheck pair may alternate, and how many times
 // the lone non-spec recheck may run. A firing that changes a lane's staging
 // leaves that lane stale, and these bound the re-review that follows.
@@ -418,6 +421,7 @@ const ARG_CLASS = {
   skipBootstrap: "launch",
   periodEvery: "forward",
   maxPeriodicFirings: "forward",
+  impactWindow: "forward",
   maxRecheckPairs: "forward",
   maxNonSpecRechecks: "forward",
   maxRecheckRounds: "forward",
@@ -4077,6 +4081,7 @@ async function fireDecisionsPhase(trigger) {
         baseModel,
         baseEffort,
         maxPeriodicFirings,
+        impactWindow,
       },
     );
   } catch (e) {
