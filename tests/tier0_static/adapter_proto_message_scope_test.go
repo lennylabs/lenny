@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -14,111 +13,107 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// This gate joins the §4.1 message-scope classification table to the request
-// messages the gateway-adapter protocol declares. §4.1 declares each request
-// message's scope in the table rather than deriving it from the message's
-// field set, because `session_id` appears on messages of both classes. A
-// declared classification is only as good as its coverage: a message the
-// protocol declares and the table omits carries no scope at all, and a row
-// naming a message neither service declares classifies nothing.
+// This gate holds the addressing convention §4.1 derives a request message's
+// scope from. §4.1 classifies a request message session-scoped exactly when it
+// declares a top-level `session_id` field of type `SessionId`, and classifies a
+// stream envelope through the one frame that declares that address. The
+// derivation is sound only while the protocol spells the address one way in
+// both directions and an envelope carries exactly one addressing frame, so this
+// gate refuses a protocol definition in which a field named `session_id` is not
+// of type `SessionId`, a field of type `SessionId` is not named `session_id`, a
+// stream envelope declares an address of its own, or an envelope's frames
+// declare other than exactly one address.
 //
-// The gate reads the specification text and the proto text alone. Whether a
-// handler enforces the scope a row declares is a runtime question the tier-1
-// and tier-3 suites own.
+// The gate reads the proto text alone. What a handler does with the address is
+// a runtime question the tier-1 and tier-3 suites own, and a session addressed
+// under both an unconventional name and an unconventional type is outside what
+// any reading of the proto text can see.
 
-// messageScopeSpecPath is the repo-relative path of the section carrying the
-// classification table.
-const messageScopeSpecPath = "spec/04_system-components.md"
+// sessionAddressField is the one field name a request on this protocol
+// addresses a session with.
+const sessionAddressField = "session_id"
 
-// checkpointStartMessage is the stream-opening frame §4.1 classifies in its
-// own right. It is not an RPC's request type, so the RPC parse does not reach
-// it, and §4.1 states its row explicitly.
-const checkpointStartMessage = "CheckpointStart"
+// sessionAddressType is the type that field carries.
+const sessionAddressType = "SessionId"
 
-// checkpointStartService is the service whose stream the frame opens.
-const checkpointStartService = "Adapter"
-
-// messageScopeRow matches one row of the classification table: the request
-// message, the service, the direction, and the scope.
-var messageScopeRow = regexp.MustCompile("^\\| `(\\w+)` \\| `(\\w+)` \\| ([^|]+) \\| ([^|]+) \\|$")
-
-// scopeRow is one row of the §4.1 table.
-type scopeRow struct {
-	service string
-	scope   string
-}
-
-// parseMessageScopeTable returns the table's rows keyed by request message,
-// and the messages it names more than once. A message classified twice is a
-// table that states two scopes for one address.
-func parseMessageScopeTable(body string) (map[string]scopeRow, []string) {
-	rows := map[string]scopeRow{}
-	var duplicates []string
-	for _, line := range strings.Split(body, "\n") {
-		m := messageScopeRow.FindStringSubmatch(line)
-		if m == nil {
-			continue
+// declaresTheAddress reports whether a message declares the session address at
+// its own top level. The type is what makes a field the address, so the check
+// reads the declared type rather than the field name; holding the two spellings
+// together is the job of the convention arms below.
+func declaresTheAddress(fields map[string]protoFieldDecl) bool {
+	for _, decl := range fields {
+		if decl.OneOf == "" && decl.Type == sessionAddressType {
+			return true
 		}
-		if _, seen := rows[m[1]]; seen {
-			duplicates = append(duplicates, m[1])
-			continue
-		}
-		rows[m[1]] = scopeRow{service: m[2], scope: strings.TrimSpace(m[4])}
-	}
-	sort.Strings(duplicates)
-	return rows, duplicates
-}
-
-// declaredScope reports whether a scope cell declares one of the two classes.
-// The cell may qualify the class, as the stream envelope's row does, so the
-// class is read from the cell's first word.
-func declaredScope(cell string) bool {
-	switch strings.Fields(cell)[0] {
-	case "session", "pod":
-		return true
 	}
 	return false
 }
 
-// messageScopeDisagreements returns the findings the classification table and
-// the proto support together.
-func messageScopeDisagreements(specBody, protoBody string) []string {
-	rows, duplicates := parseMessageScopeTable(specBody)
-	inScope := protoServiceRequests(protoBody)
-	inScope[checkpointStartMessage] = checkpointStartService
+// frameTypes returns the message types a stream envelope carries in its oneof,
+// in declaration-name order, and reports whether the message carries a oneof at
+// all. A message that carries one is a stream envelope.
+func frameTypes(fields map[string]protoFieldDecl) ([]string, bool) {
+	names := make([]string, 0, len(fields))
+	for name, decl := range fields {
+		if decl.OneOf != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil, false
+	}
+	sort.Strings(names)
+	types := make([]string, 0, len(names))
+	for _, name := range names {
+		types = append(types, fields[name].Type)
+	}
+	return types, true
+}
+
+// addressingConventionDisagreements returns the findings the proto's own text
+// supports against the addressing convention the scope derivation rests on.
+func addressingConventionDisagreements(protoBody string) []string {
+	fields := protoFields(protoBody)
 
 	var findings []string
-	for _, msg := range duplicates {
-		findings = append(findings, fmt.Sprintf(
-			"the table classifies %s more than once, so it declares two scopes for one request message", msg,
-		))
+	for msg, declared := range fields {
+		for name, decl := range declared {
+			if name == sessionAddressField && decl.Type != sessionAddressType {
+				findings = append(findings, fmt.Sprintf(
+					"%s.%s is named %s and is of type %s, and a field named %s is of type %s",
+					msg, name, sessionAddressField, decl.Type, sessionAddressField, sessionAddressType,
+				))
+			}
+			if decl.Type == sessionAddressType && name != sessionAddressField {
+				findings = append(findings, fmt.Sprintf(
+					"%s.%s is of type %s and is named %s, and a field of type %s is named %s",
+					msg, name, sessionAddressType, name, sessionAddressType, sessionAddressField,
+				))
+			}
+		}
 	}
-	for msg, service := range inScope {
-		row, ok := rows[msg]
-		if !ok {
-			findings = append(findings, fmt.Sprintf(
-				"%s is the request type of a %s method and the table carries no row for it",
-				msg, service,
-			))
+
+	for msg := range protoServiceRequests(protoBody) {
+		frames, envelope := frameTypes(fields[msg])
+		if !envelope {
 			continue
 		}
-		if row.service != service {
+		if declaresTheAddress(fields[msg]) {
 			findings = append(findings, fmt.Sprintf(
-				"the table names %s as a %s request message and %s declares it",
-				msg, row.service, service,
+				"%s carries its frames in a oneof and declares an address of its own, and a stream envelope takes the scope of the frame that addresses it",
+				msg,
 			))
 		}
-		if !declaredScope(row.scope) {
-			findings = append(findings, fmt.Sprintf(
-				"the table's %s row declares the scope %q, which is neither session nor pod",
-				msg, row.scope,
-			))
+		addressed := 0
+		for _, frame := range frames {
+			if declaresTheAddress(fields[frame]) {
+				addressed++
+			}
 		}
-	}
-	for msg := range rows {
-		if _, ok := inScope[msg]; !ok {
+		if addressed != 1 {
 			findings = append(findings, fmt.Sprintf(
-				"the table carries a row for %s, which neither service declares as a request message", msg,
+				"the frames of the stream envelope %s declare %d addresses, and exactly one frame declares the address that opens the stream",
+				msg, addressed,
 			))
 		}
 	}
@@ -126,34 +121,31 @@ func messageScopeDisagreements(specBody, protoBody string) []string {
 	return findings
 }
 
-// spec: 4.1 (message-scope classification and one address per request), 28.5.3 (addressing)
-// diagnosis: the §4.1 classification table and the adapter proto disagree.
-// Either a request message one of the two services declares carries no row, a
-// row names a message neither service declares, a row names the wrong service,
-// or a row declares a scope that is neither session nor pod. A request message
-// with no declared scope is addressed by convention rather than by the
-// specification, which is the state the table exists to prevent.
-func TestAdapterProtoRequestMessagesAreClassifiedByScope(t *testing.T) {
+// spec: 4.1
+// diagnosis: the gateway-adapter protocol departs from the addressing
+// convention a request message's scope is derived from. Either a field named
+// session_id is not of type SessionId, a field of type SessionId is not named
+// session_id, a stream envelope declares an address of its own, or an
+// envelope's frames declare other than exactly one address. A message that
+// departs carries a scope the derivation does not compute, so the class it is
+// handled under and the class the specification states are no longer the same.
+func TestAdapterProtoAddressesASessionOneWay(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
-	specBody, err := os.ReadFile(filepath.Join(root, messageScopeSpecPath))
-	if err != nil {
-		t.Fatalf("%s: %v", messageScopeSpecPath, err)
-	}
 	protoBody, err := os.ReadFile(filepath.Join(root, adapterProtoPath))
 	if err != nil {
 		t.Fatalf("%s: %v", adapterProtoPath, err)
 	}
-	for _, f := range messageScopeDisagreements(string(specBody), string(protoBody)) {
-		t.Errorf("%s vs %s: %s", messageScopeSpecPath, adapterProtoPath, f)
+	for _, f := range addressingConventionDisagreements(string(protoBody)) {
+		t.Errorf("%s: %s", adapterProtoPath, f)
 	}
 }
 
-// spec: 4.1 (message-scope classification)
-// diagnosis: the classification gate's own predicate is broken. It accepted a
-// table and a proto it must refuse, or refused a pair it must accept, so a
-// green run of the gate above says nothing about the tree.
-func TestMessageScopeGateRefusesAnUnclassifiedOrUnknownMessage(t *testing.T) {
+// spec: 4.1
+// diagnosis: the addressing-convention gate's own predicate is broken. It
+// accepted a protocol definition it must refuse, or refused one it must
+// accept, so a green run of the gate above says nothing about the tree.
+func TestAddressingConventionGateRefusesAnUnconventionalAddress(t *testing.T) {
 	t.Parallel()
 	const proto = `
 service Adapter {
@@ -163,53 +155,72 @@ service Adapter {
 service GatewayControl {
   rpc ReportPodScrub(ReportPodScrubRequest) returns (ReportPodScrubResponse) {}
 }
-`
-	const table = "| Request message | Service | Direction | Scope |\n" +
-		"|:--|:--|:--|:--|\n" +
-		"| `InterruptRequest` | `Adapter` | gateway → adapter | session |\n" +
-		"| `CheckpointRequest` | `Adapter` | gateway → adapter | session (stream envelope) |\n" +
-		"| `CheckpointStart` | `Adapter` | gateway → adapter | session |\n" +
-		"| `ReportPodScrubRequest` | `GatewayControl` | adapter → gateway | pod |\n"
 
-	if got := messageScopeDisagreements(table, proto); len(got) != 0 {
-		t.Fatalf("the gate refused a table that classifies every declared request message: %v", got)
+message InterruptRequest {
+  SessionId session_id = 1;
+}
+
+message CheckpointRequest {
+  oneof msg {
+    CheckpointStart start = 1;
+    CheckpointGrant grant = 2;
+  }
+  int64 coordination_generation = 4;
+}
+
+message CheckpointStart {
+  string checkpoint_id = 1;
+  SessionId session_id = 7;
+}
+
+message CheckpointGrant {
+  uint32 index = 1;
+}
+
+message ReportPodScrubRequest {
+  string pod_id = 1;
+}
+`
+
+	if got := addressingConventionDisagreements(proto); len(got) != 0 {
+		t.Fatalf("the gate refused a protocol definition that keeps the addressing convention: %v", got)
 	}
 
 	cases := map[string]struct {
-		table string
+		proto string
 		want  string
 	}{
-		"a declared request message the table omits": {
-			table: strings.Replace(table, "| `InterruptRequest` | `Adapter` | gateway → adapter | session |\n", "", 1),
-			want:  "InterruptRequest is the request type of a Adapter method and the table carries no row for it",
+		"a field named session_id under another type": {
+			proto: strings.Replace(proto, "  SessionId session_id = 1;", "  string session_id = 1;", 1),
+			want:  "InterruptRequest.session_id is named session_id and is of type string, and a field named session_id is of type SessionId",
 		},
-		"a row naming a message neither service declares": {
-			table: table + "| `ShutdownRequest` | `Adapter` | gateway → adapter | session |\n",
-			want:  "the table carries a row for ShutdownRequest, which neither service declares as a request message",
+		"a field of the address type under another name": {
+			proto: strings.Replace(proto, "  SessionId session_id = 1;", "  SessionId interrupted_session = 1;", 1),
+			want:  "InterruptRequest.interrupted_session is of type SessionId and is named interrupted_session, and a field of type SessionId is named session_id",
 		},
-		"a row naming the wrong service": {
-			table: strings.Replace(table, "| `ReportPodScrubRequest` | `GatewayControl` |", "| `ReportPodScrubRequest` | `Adapter` |", 1),
-			want:  "the table names ReportPodScrubRequest as a Adapter request message and GatewayControl declares it",
+		"a stream envelope declaring an address of its own": {
+			proto: strings.Replace(proto, "  int64 coordination_generation = 4;", "  int64 coordination_generation = 4;\n  SessionId session_id = 5;", 1),
+			want:  "CheckpointRequest carries its frames in a oneof and declares an address of its own, and a stream envelope takes the scope of the frame that addresses it",
 		},
-		"a row declaring neither class": {
-			table: strings.Replace(table, "| `InterruptRequest` | `Adapter` | gateway → adapter | session |", "| `InterruptRequest` | `Adapter` | gateway → adapter | slot |", 1),
-			want:  `the table's InterruptRequest row declares the scope "slot", which is neither session nor pod`,
+		"a stream envelope whose frames declare no address": {
+			proto: strings.Replace(proto, "  SessionId session_id = 7;", "  string checkpoint_ref = 7;", 1),
+			want:  "the frames of the stream envelope CheckpointRequest declare 0 addresses, and exactly one frame declares the address that opens the stream",
 		},
-		"a message classified twice": {
-			table: table + "| `InterruptRequest` | `Adapter` | gateway → adapter | pod |\n",
-			want:  "the table classifies InterruptRequest more than once, so it declares two scopes for one request message",
+		"a stream envelope whose frames declare two addresses": {
+			proto: strings.Replace(proto, "  uint32 index = 1;", "  uint32 index = 1;\n  SessionId session_id = 2;", 1),
+			want:  "the frames of the stream envelope CheckpointRequest declare 2 addresses, and exactly one frame declares the address that opens the stream",
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got := messageScopeDisagreements(tc.table, proto)
+			got := addressingConventionDisagreements(tc.proto)
 			for _, f := range got {
 				if f == tc.want {
 					return
 				}
 			}
-			t.Errorf("the gate accepted a table it must refuse; findings=%v, want %q", got, tc.want)
+			t.Errorf("the gate accepted a protocol definition it must refuse; findings=%v, want %q", got, tc.want)
 		})
 	}
 }

@@ -69,7 +69,7 @@ func registerProtoDisagreements(registerBody []byte, protoBody string) []string 
 		if strings.Contains(c.Surface, adapterProtoPath) {
 			if msg, field, ok := namedField(c.Claim); ok {
 				tracked[msg+"."+field] = true
-				if !fields[msg][field] {
+				if _, declared := fields[msg][field]; !declared {
 					findings = append(findings, fmt.Sprintf(
 						"%q names %s as the surface for %s.%s, which the proto does not declare",
 						c.Claim, adapterProtoPath, msg, field,
@@ -79,7 +79,7 @@ func registerProtoDisagreements(registerBody []byte, protoBody string) []string 
 		}
 		for _, text := range []string{c.Surface, c.Note} {
 			for _, m := range absenceAssertion.FindAllStringSubmatch(text, -1) {
-				if fields[m[2]][m[1]] {
+				if _, declared := fields[m[2]][m[1]]; declared {
 					findings = append(findings, fmt.Sprintf(
 						"%q says there is no %s on %s, which the proto declares",
 						c.Claim, m[1], m[2],
@@ -90,7 +90,7 @@ func registerProtoDisagreements(registerBody []byte, protoBody string) []string 
 	}
 
 	for msg, declared := range fields {
-		if !declared[generationFenceField] || fenceReadersExempt[msg] {
+		if _, carries := declared[generationFenceField]; !carries || fenceReadersExempt[msg] {
 			continue
 		}
 		if !tracked[msg+"."+generationFenceField] {
