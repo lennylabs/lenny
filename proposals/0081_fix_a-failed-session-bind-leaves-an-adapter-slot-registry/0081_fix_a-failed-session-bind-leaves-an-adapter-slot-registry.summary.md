@@ -38,8 +38,9 @@ the current defect as the contract by gating the whole teardown on the binding.
   cleanup-outcome report only for a session the pod's shared runtime process was given
   (`pkg/adapter/session.go`).
 - A start confirms its slot survived before recording the runtime as holding the session, so
-  a reclaim that lands after the start's claim is caught and the start rolls back
-  (`pkg/adapter/runtimegeneration.go`, `pkg/adapter/session.go`).
+  a reclaim that lands after the start's claim is caught and the start rolls back, on both
+  RPCs whose admitted start the gateway's compensation can race
+  (`pkg/adapter/runtimegeneration.go`, `pkg/adapter/session.go`, `pkg/adapter/resume.go`).
 - The gateway sends the compensating `Shutdown` at each post-connection bind failure and at
   a failed resume, on the connection the failed stage still holds, and carries the outcome
   as a `leaked` disposition into the reservation release
@@ -54,8 +55,8 @@ the current defect as the contract by gating the whole teardown on the binding.
 
 - The remedy is the `Shutdown` RPC the gateway already has, sent on the connection it
   already holds at the failure site. No new RPC, no proto edit, no timer, no new persisted or
-  pod-side state, and no new metric. The one new field is `ExcludePod` on the in-process bind
-  request structs, which carries §5.2's placement constraint for a pod holding an
+  pod-side state, and no new metric. The one new field is `ExcludePods` on the in-process bind
+  request structs, which carries §5.2's placement constraint for the pods holding an
   unacknowledged reclaim into placement and reaches no wire format.
 - `schemas/lenny-adapter.proto` is never opened. The gateway-runtime-comms remediation
   programme's rule S-2 reserves the single proto edit to step R1b.
@@ -124,8 +125,8 @@ the current defect as the contract by gating the whole teardown on the binding.
 - `SlotID == SessionID` on every path, and §5.2 placement prefers a pod already hosting the
   tenant's slots. A retry therefore re-uses the identifier and can land on the pod whose
   reclaim may still be running `os.RemoveAll` outside `s.mu`. CODE-5 closes that window by
-  carrying `ExcludePod` on the retry, so the attempt keeps its §5.2 retry and only the
-  reclaiming pod is disqualified from it.
+  carrying `ExcludePods` on the retry, so the attempt keeps its §5.2 retry and only the
+  reclaiming pods are disqualified from it.
 
 ## Goals
 
@@ -209,7 +210,8 @@ the current defect as the contract by gating the whole teardown on the binding.
   deregister a live bind's entry, because a pod in `recycling` at counter zero remains a
   placement candidate, and it would never call `noteRuntimeClosed`, leaving `runtimeLive`
   permanently non-empty for the started residue it swept. The one real hole it named, a lost
-  `Resume` response, is closed by extending CODE-4 to `Binder.Resume` instead.
+  `Resume` response, is closed by extending CODE-4 to `Binder.Resume` and CODE-2's start
+  confirmation to the adapter's `Resume` instead.
 - **Widening the §5.2 whole-pod scrub to enumerate the registry as its source.** Its on-disk
   enumeration is deliberate and its own comment gives the reason: the residue it must reach
   belongs to a leaked slot whose registry entry is already gone.
@@ -237,37 +239,9 @@ the current defect as the contract by gating the whole teardown on the binding.
 ## Open decisions for human to make
 
 The spec review loop routed these to a human. Each states the question and the ground the loop
-derived. Entries 7 and 9 carry a recommendation with its alternatives and a confidence, entry 12
-records the position the loop reached, and entry 11 states no recommendation.
+derived. Entry 9 carries a recommendation with its alternatives and a confidence, and entry 11
+states no recommendation.
 
-7. **Where does the Redis rehydration hole get fixed?** After a Redis restart the pod's slot counter
-   is rehydrated from active session rows, and a failed bind never has one, so a leaked slot's held
-   occupancy is lost and the gateway can over-assign into unreclaimed resources. §5.2's
-   "Post-recovery rehydration atomicity" names a single source for the rebuilt counter,
-   `SessionStore.GetActiveSlotsByPod`, and fixes that query's predicate in the same paragraph as the
-   index `sessions(pod_assignment) WHERE state = 'active'`. §12's Redis key table repeats it as the
-   only post-restart path and reads the same query again for the Redis-unavailable fallback, so the
-   hole is on both reads. §7.1's session-creation atomicity paragraph states that a failed creation
-   does not persist the session row at all, and §6.2 already names the pod's Redis slot-counter
-   occupancy as the leaked slot's persistent count, so those two statements disagree for the shipped
-   leaked class independent of this proposal. The remedy is derived and is not what is being asked:
-   widen §5.2's "Post-recovery rehydration atomicity" paragraph, and do not widen §7.1. The decision
-   is whether that widening lands in this proposal or its own.
-   **Recommendation: its own proposal, with low confidence.** The hole predates this change, the
-   paragraph that carries its fix is one this proposal does not open, and the project's proposal
-   triage treats a related site that is already wrong for a reason of its own as a separate finding
-   rather than an unreviewed extension of the edit in hand.
-   **The alternative, landing it here,** rests on the population rather than on the defect. CODE-4
-   carries a failed bind's outcome as the `leaked` disposition, so failed binds join the leaked class
-   for the first time (today `ReleaseSlotReservation` releases them as non-leaked), and a failed-bind
-   leak has no adapter-side count to re-derive from, because the adapter never learns the slot is
-   leaked. It loses on scope: it adds a fourth §5.2 anchor and a durable-substrate obligation to a
-   proposal whose deliverable is the reclaim.
-   **Deciding otherwise costs** a widened class of leaked slots whose held occupancy a Redis restart
-   silently frees, which undercuts this proposal's own bound that an unacknowledged reclaim's
-   occupancy is held and counts persistently toward the §5.2 whole-pod replacement trigger.
-   The confidence is low because the ground is verified and the remedy is settled while the ranking
-   of the two goods is a scope judgement the loop cannot make.
 9. **Is the create-time-reserved retry's unbounded exposure accepted?** On a concurrent-workspace
    pool a session that reserved its slot at creation keeps that pod on its row, so when the §15.1
    start fails the row stays ready and the client's retry reconnects to the same pod under the same
@@ -311,10 +285,6 @@ records the position the loop reached, and entry 11 states no recommendation.
     route a client-cancelled re-attach through the same obligation. Abandonment here means the
     gateway abandoned the bind by failing it; client abandonment is out of scope by the problem
     statement. The decision is whether §7.1's trigger widens to match the other three sites.
-12. **Should SPEC-4's prose state once that a reclaim can find a slot in `running`?** The proposition
-    follows from §7.1's "the adapter may have started the session", SPEC-4's `running → slot_cleanup`
-    sentence, and §5.2's complement clause, and no section states it directly. The loop's position is
-    that a reader who wants it said once should put it in SPEC-4's prose and never in §7.1.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -347,14 +317,24 @@ records the position the loop reached, and entry 11 states no recommendation.
   production selection (`cmd/lenny-adapter/main.go:350-359`). The ordinary session-end path
   reaches the same state through the same call, because `Binder.ReleaseSlot` sends the adapter
   `Shutdown` for the last started session
-  (`pkg/gateway/podlifecycle/podsession/slotbinder.go:528-545`, the call at `:542`), so this
-  proposal's compensating reclaim neither creates the condition nor widens it. Whether the
-  bricked pod leaves inventory depends on occupancy rather than on the close: the per-pod claim
-  is deleted at occupancy zero and retained while a sibling slot still counts
-  (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:845-847`, the delete at `:885`). No fix is
-  staged because correcting it reopens the `Start` and `Close` contract of the shared runtime
-  transport for every pod that uses it, which carries its own §5.2 conformance question and
-  wants a problem statement of its own.
+  (`pkg/gateway/podlifecycle/podsession/slotbinder.go:528-545`, the call at `:542`) while a
+  co-tenant whose bind is still in flight is absent from the runtime's active set, which records
+  a session only at `Start` (`pkg/adapter/socketruntime.go:184` and `:220`). This proposal's
+  compensating reclaim therefore adds a trigger for a state the shipped release path already
+  produces under the same precondition, rather than a state class of its own. Whether the
+  bricked pod leaves inventory depends on the release's disposition rather than on the close,
+  and there are three of them. The per-pod claim is retained while a sibling slot still counts
+  (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:845-847`), and at occupancy zero on a
+  non-recycling pool it is deleted, which retires the pod (`:881-885`). On a recycling pool the
+  occupancy-zero edge takes neither: it patches the claim `bound → recycling`, arms the
+  missing-report timeout and signals the whole-pod recycle `Shutdown` (`:850-878`), and a clean
+  `ReportPodScrub` then drives the reuse disposition that returns the pod to inventory
+  (`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go:98-110`). That is
+  the disposition in which a bricked pod is handed to the next session, and it is broken for
+  socket runtimes independently of any failed bind. No fix is staged because correcting it
+  reopens the `Start` and `Close` contract of the shared runtime transport for every pod that
+  uses it, which carries its own §5.2 conformance question and wants a problem statement of its
+  own.
 - **§6.2 has no terminal for a bind abandoned at the connect stage.** The per-slot fence for a
   pod of either concurrency carries a single edge out of `slot_assigned`, into
   `receiving_uploads` (`spec/06_warm-pod-model.md:150-155`, the edge at `:151`), so a slot
@@ -364,9 +344,26 @@ records the position the loop reached, and entry 11 states no recommendation.
   any workspace RPC (`pkg/gateway/podlifecycle/podsession/slotbinder.go:230-254` and the
   reservation-bearing failures at `:449-473`), so the adapter holds no entry and this
   proposal's compensation does not run there. SPEC-4 adds the `receiving_uploads →
-  slot_cleanup` edge alone, because that is the state the staged reclaim acts on. The hole
-  predates this proposal and no staged sentence reaches it, so it wants its own problem
-  statement rather than a widened fence here.
+  slot_cleanup` edge alone, because that is the state the staged reclaim acts on. The missing
+  edge produces no runtime error, because the gateway never drives a slot through the
+  validating path: `Registry.Assign` and `Registry.Transition` have no production caller, and
+  `MarkLeaked` writes the terminal state without consulting the edge list
+  (`pkg/sandbox/slotstate/registry.go:99-116`, the write at `:106`). The transition the fence
+  fails to model is already produced in the shipped tree, because `applySlotRetryPolicy` marks
+  a connect-stage failure's slot leaked when its reservation release errors
+  (`pkg/gateway/sessionserver/start.go:2834-2848`). This proposal adds one more producer of
+  the same transition, on the create-time-reserved path. `BindReservedSlot` today logs its own
+  reservation-release error and returns
+  (`pkg/gateway/podlifecycle/podsession/slotbinder.go:210-224`, the swallow at `:217-220`);
+  CODE-4 retires that swallow and folds the error into `sbe.Leaked`, and CODE-5's
+  reserved-branch caller passes that discriminator to `accountSlotFailure`. A connect-stage
+  failure whose own reservation release also fails therefore reaches `MarkLeaked` on a slot in
+  `slot_assigned` rather than the windowed `RecordFailure`. The scope call stands on the
+  remaining ground: the hole predates this proposal and is widened rather than created here,
+  the widened transition raises no runtime error for the reason above, and closing it means an
+  edge out of `slot_assigned` that SPEC-4 deliberately does not add, on a residue class this
+  proposal does not act on. It wants its own problem statement rather than a widened fence
+  here.
 - **The exclusive path leaves the same residue by a different trigger.** `Binder.Prepare`
   runs the §4.7 setup chain through `assignCredentials` and closes its connection before it
   returns (`pkg/gateway/podlifecycle/podsession/binder.go:843-965`, the doc comment at `:841`
@@ -404,16 +401,48 @@ records the position the loop reached, and entry 11 states no recommendation.
   R12 builds, and that step records the same fact and the same reason
   (`gateway-runtime-comms-remediation.md:1268-1274`). The hold-timeout reclaim of unstarted
   slots and its §10.1.4 statement are left to R12 under Non-goals for the same reason.
+- **A leaked slot's held occupancy has no durable backing, so a Redis restart frees it.**
+  §6.2's **`leaked` slot semantics** makes the pod's Redis slot-counter occupancy the
+  persistent count for a leaked slot, and `SlotClaimer.ReleaseSlot` implements that by
+  returning before the decrement
+  (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:830-836`). §5.2's **Post-recovery
+  rehydration atomicity** paragraph rebuilds the counter from one source,
+  `SessionStore.GetActiveSlotsByPod`, which counts the non-terminal session rows bound to
+  the pod (`pkg/gateway/session/sessionstore/pgstore/pgstore.go:732-744`), so a leaked slot
+  whose session row is terminal is not counted and a Redis restart frees occupancy the pod
+  still holds. The hole is live for the class the tree already ships, on the ordinary
+  session-end path and on a healthy Redis: `Binder.ReleaseSlot` computes the disposition
+  from the adapter `Shutdown` on every session end
+  (`pkg/gateway/podlifecycle/podsession/slotbinder.go:542-543`), and the shipped failed-bind
+  path already marks the slot leaked when the reservation release errors
+  (`pkg/gateway/sessionserver/start.go:2834-2848`). CODE-4's compensating `Shutdown` adds
+  instances of that existing producer rather than a new dependence. Re-deriving the
+  occupancy from the adapter is unavailable for any leaked slot, because the per-slot
+  registry carries a leaked count and no pod-wide occupancy count
+  (`pkg/sandbox/slotstate/registry.go:8-12`), so the gap is not distinctive to a failed
+  bind. No fix is staged here because the remedy is wider than one clause. The single
+  rebuild source is restated at four sites: §5.2's **Post-recovery rehydration atomicity**
+  paragraph, §12.4's Redis key table row for `lenny:pod:{pod_id}:active_slots`, §12.4's
+  Redis-unavailable Postgres fallback for the same key, and §10.1.4's whole-pod
+  connection-loss counter reset. That paragraph is also already wrong about its own index
+  predicate, which it gives as `sessions(pod_assignment) WHERE state = 'active'` while
+  `migrations/0080_sessions_active_by_pod_index.up.sql:19-25` cites that sentence and then
+  creates the index `ON sessions (pod_assignment) WHERE pod_assignment <> '' AND state NOT
+  IN ('completed', 'failed', 'cancelled', 'expired')`, matching the shipped query.
+  Correcting that fidelity defect and giving leaked occupancy a durable backing across the
+  four sites wants a problem statement of its own, and this proposal opens none of those
+  sites.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0080 (inventory) §1.2 | Draft, stages no changes | This proposal is the promotion of §1.2 to its own proposal and discharges it. | Record §1.2 as discharged here. No edit to 0080's staged content, because it stages none. |
-| 0080 §1.19 (three fence-refusal classes, one status code) | Draft | `boundSlotState` and `checkSessionBound` are untouched. The membership of the sets they read changes in three ways. A fence for a session whose bind failed and whose reclaim completed meets the absent-entry refusal rather than the unbound-entry refusal. Where a racing start's own claim re-created the entry after the reclaim, the entry is present and its `sessionID` is set, so the fence meets neither refusal and an abandoned session answers as a bound one. After a reclaim the adapter did not acknowledge on a create-time-reserved slot, a surviving entry is present-and-unbound (workspace-preparation residue) or present-and-bound (credential-assignment residue) for a session the gateway has abandoned, so a fence in that window meets the unbound-entry refusal or neither refusal, for a session 0080 would classify as gone. The placement constraint also narrows one class: with `ExcludePod` set after an unacknowledged reclaim, a retry the §5.2 slot retry policy places issues no fence to a pod that may still hold the prior attempt's entry, which does not reach a §15.1 start onto a create-time-reserved slot. | Re-derive §1.19's class inventory against all three cases and the narrowed class. |
-| 0080 §1.1, §1.3, §1.4, §1.5, §1.16, §1.20 | Draft | No conflict. The adapter edits are placed in `session.go` and `runtimegeneration.go`; `slotsession.go` takes doc comments only and `slot.go` is untouched, so the later position's rewrite of those two files is not forced to re-land this work. | Nothing. |
-| 0073 (give every session a slot) | Implemented | 0073 recorded this gap in its recorded limits and declined to discharge it. This proposal discharges it. | Nothing. A landed proposal is not edited. |
-| 0078, 0079 (pods surviving across sessions) | Draft for review | Both widen the exposure, because a pod that serves more sessions carries the residue to more of them. This proposal is sequenced ahead of them and depends on neither. | Land after this one. |
+| 0080 §1.19 (three fence-refusal classes, one status code) | Draft | `boundSlotState` and `checkSessionBound` are untouched. The membership of the sets they read changes in three ways. A fence for a session whose bind failed and whose reclaim completed meets the absent-entry refusal rather than the unbound-entry refusal, and so does a fence for a session whose `StartSession` or `Resume` rolled back because the reclaim landed after its claim, since the reclaim removed the entry and the rollback removes nothing further. Where a racing start's own claim re-created the entry after the reclaim, the entry is present and its `sessionID` is set, so the fence meets neither refusal and an abandoned session answers as a bound one. After a reclaim the adapter did not acknowledge on a create-time-reserved slot, a surviving entry is present-and-unbound (workspace-preparation residue) or present-and-bound (credential-assignment residue) for a session the gateway has abandoned, so a fence in that window meets the unbound-entry refusal or neither refusal, for a session 0080 would classify as gone. The placement constraint also narrows one class: with a pod appended to `ExcludePods` after an unacknowledged reclaim, a retry the §5.2 slot retry policy places issues no fence to a pod that may still hold the prior attempt's entry, which does not reach a §15.1 start onto a create-time-reserved slot. | Re-derive §1.19's class inventory against all three cases and the narrowed class. |
+| 0080 §1.1, §1.3, §1.4, §1.5, §1.16, §1.20 | Draft | No conflict. The adapter edits are placed in `session.go`, `runtimegeneration.go`, `resume.go` and `sdkwarm.go`; `slotsession.go` takes doc comments only and `slot.go` is untouched, so the later position's rewrite of those two files is not forced to re-land this work. | Nothing. |
+| 0073 (give every session a slot) | Implemented (2026-08-31 per its own status line; spec applied 2026-08-19) | This change touches 0073 in two ways. 0073 recorded this gap in its §9 recorded limits and declined to discharge it, and this proposal discharges it. SPEC-1 also retires the third sentence of §4.1's `ShutdownRequest` paragraph, which 0073's SPEC-7 authored and which reached `spec/04_system-components.md:157` in commit `f37e867b8`. That sentence states one per-session teardown gated on a bound entry; after the split there are two teardowns with two preconditions, and the slot release is gated on the entry being present. The paragraph's first two sentences, its session-scoped classification, and its closing rule are preserved. SPEC-4 and CODE-3 extend 0073's per-slot sub-state fence (`spec/06_warm-pod-model.md:150-155`) and its `pkg/sandbox/slotstate` edge list with one new edge, which adds to that list rather than retracting from it. | Nothing. A landed proposal is not edited, so this row is the record of what this proposal takes back from 0073. |
+| 0075 (derive message scope from the address type) | Implemented (2026-09-08 per its status file's `implemented-date`) | 0075's SPEC-1 replaced the §4.1 block around the `ShutdownRequest` paragraph and reserved the paragraph itself, stating that it "stands unedited" because it explains a divergence between what a request addresses and what its handler touches that 0075's D3 rests on. SPEC-1 here rewrites that paragraph's third sentence. The ground D3 rests on survives: the first two sentences carry the session-scoped classification and the single address unchanged, and the replacement keeps the whole-pod-scrub clause and the closing rule that no operation is selected by a field's presence standing in for a scope. Nothing 0075 landed is opened, including the derivation rule at `spec/04_system-components.md:151-155`, its tier-0 addressing gate, its tier-3 session-address suite, and its `tests/spec-map.json` entries. | Nothing. |
+| 0078 (pods surviving across sessions) | Draft for review (2026-08-25 per its own status line) | It widens the exposure, because a pod that serves more sessions carries the residue to more of them. This proposal is sequenced ahead of it and does not depend on it. 0079 was grouped in this row and is dropped from it. 0079 retires a sidecar pod at each occupancy-zero recycle boundary with the reason `no_successor_runtime`, and its fixed decisions forbid a runtime outliving that boundary, so it shortens the sessions a sidecar pod serves and changes nothing on an embedded pool. It also shares no anchor, code file, or test file with this proposal: the two open `spec/04_system-components.md`, `spec/05_runtime-registry-and-pool-model.md` and `spec/06_warm-pod-model.md` at disjoint anchors, and 0079's staged code and test files are listed in its own §13 and name none of the files this proposal opens. | Land after this one. |
 | gateway-runtime-comms remediation, step R1b | Programme step | No impact. This proposal opens no schema file, so rule S-2's reservation of the single proto edit is preserved. | Nothing. |
 | gateway-runtime-comms remediation, step R12 | Programme step | The hold-timeout reclaim of unstarted slots and its §10.1.4 statement are left to R12, which builds the control-stream consumer that arms the hold and owns the gateway-side whole-pod-loss response. | Take both halves when it builds the consumer, together with an in-flight-upload guard. |
 
@@ -424,11 +453,11 @@ records the position the loop reached, and entry 11 states no recommendation.
 - SPEC-3 — spec/05_runtime-registry-and-pool-model.md — §5.2's slot-cleanup action list names the slot's credential directory and the §4.9 timer cancellation, and its scrub model covers the cleanup of a bind abandoned or failed after its slot enters `receiving_uploads` and before it reaches `running`, states that the cleanup reports no outcome, and states one cleanup-outcome report per session release.
 - SPEC-4 — spec/06_warm-pod-model.md — §6.2's per-slot sub-state machine gains the `receiving_uploads → slot_cleanup` edge and the pre-`running` cleanup paragraph.
 - CODE-1 — pkg/adapter/session.go, pkg/adapter/runtimegeneration.go — `Shutdown` releases the slot for any entry the call removed, runs the runtime teardown only for a session whose start the adapter has admitted, and files a cleanup-outcome report only for a session the shared runtime process was given.
-- CODE-2 — pkg/adapter/runtimegeneration.go, pkg/adapter/session.go — `noteRuntimeStarted` confirms the slot survived and reports whether it did; `StartSession` rolls back when the reclaim landed after its claim.
+- CODE-2 — pkg/adapter/runtimegeneration.go, pkg/adapter/session.go, pkg/adapter/resume.go — `noteRuntimeStarted` confirms the slot survived and reports whether it did; `StartSession` and `Resume`, the RPCs whose admitted start the gateway's compensation can race, roll back when the reclaim landed after their claim.
 - CODE-3 — pkg/sandbox/slotstate/slotstate.go — the per-slot edge list and its doc comment gain the `receiving_uploads → slot_cleanup` edge.
-- CODE-4 — pkg/gateway/podlifecycle/podsession/slotbinder.go, binder.go, slotfailure.go — the gateway sends the compensating `Shutdown` at every post-connection bind failure and at a failed `Resume`, releases the session's credential leases, and carries the outcome as the `leaked` disposition.
-- CODE-5 — pkg/gateway/sessionserver/start.go, pkg/gateway/podlifecycle/podclaim/slotclaimer.go — one account-classify-drain helper serves every bind path the §7.1 obligation binds, so the create-time reserved path and the §7.3 re-attach reach the §5.2 threshold, and the retry after an unacknowledged reclaim carries `ExcludePod` so `ClaimSlot` places it on a different pod.
+- CODE-4 — pkg/gateway/podlifecycle/podsession/slotbinder.go, binder.go, slotfailure.go — the gateway sends the compensating `Shutdown` at every post-connection bind failure and at a failed `Resume`, releases the session's credential leases on the bind paths, and carries the outcome as the `leaked` disposition.
+- CODE-5 — pkg/gateway/sessionserver/start.go, pkg/gateway/podlifecycle/podclaim/slotclaimer.go — one account-classify-drain helper serves every bind path the §7.1 obligation binds, so the create-time reserved path and the §7.3 re-attach reach the §5.2 threshold, and the retry after an unacknowledged reclaim carries `ExcludePods` so `ClaimSlot` places it on a different pod.
 - DOCS-1 — docs/reference/state-machines.md — the per-slot sub-state table gains the row matching the §6.2 edge.
 
-Tests are not separate deliverables. Each code step carries the tests for the tiers it
-reaches, specified per deliverable under `## Testing` in the non-spec changes file.
+Tests are not separate deliverables. Each implementation step carries the tests for the tiers
+it reaches, specified per deliverable under `## Testing` in the non-spec changes file.

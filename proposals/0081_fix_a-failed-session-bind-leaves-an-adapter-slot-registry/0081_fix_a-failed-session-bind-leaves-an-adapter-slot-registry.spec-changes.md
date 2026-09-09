@@ -144,8 +144,8 @@ terminals and the existing `leaked` semantics paragraph stay authoritative for t
   a cleanup outcome, because the slot never reached `running`.
 - **A bind abandoned at the connect stage.** The slot is reserved before any workspace RPC,
   so the adapter holds nothing and no reclaim is owed. §6.2 still has no terminal out of
-  `slot_assigned`; that hole is pre-existing and is recorded in the summary rather than
-  closed here.
+  `slot_assigned`; that hole is pre-existing, and the summary records it, the widening this
+  change brings on the create-time-reserved path, and why neither is closed here.
 - **The graceful-shutdown signal on a co-tenanted pod.** A bound-but-unstarted co-tenant is a
   bind about to issue `StartSession` against the shared runtime, so the signal stays gated on
   the binding rather than on `started`. A pod that keeps a bound co-tenant sends no signal for
@@ -502,7 +502,10 @@ after the `receiving_uploads ──→ running` entry:
 
 No edge is added out of `slot_assigned`. The connect stage reserves the slot before any
 workspace RPC and the adapter holds nothing there, so it is not one of this proposal's
-residue classes; that terminal is a pre-existing hole recorded in the summary.
+residue classes. The gateway can still mark such a slot `leaked` when the reservation
+release fails, on the shipped retry path and, once CODE-4 folds `BindReservedSlot`'s own
+release error into the disposition, on the create-time-reserved path as well. That terminal
+is a pre-existing hole this proposal widens rather than closes, recorded in the summary.
 
 ### SPEC-4 · spec/06_warm-pod-model.md § 6.2 (prose after the fence)
 
