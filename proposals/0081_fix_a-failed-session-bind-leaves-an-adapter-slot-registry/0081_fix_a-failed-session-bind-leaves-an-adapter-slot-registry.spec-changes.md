@@ -98,8 +98,10 @@ terminals and the existing `leaked` semantics paragraph stay authoritative for t
 - **A compensation for a session the adapter holds nothing for.** `stageWorkspace` sends
   `PrepareWorkspace` only when the plan carries uploads, so a workspace-preparation failure
   on an upload-free plan leaves no adapter entry. The new no-op sentence in the §4.7
-  `Shutdown` row makes this a clean-exit response, so the failure is accounted transient and
-  a blob-store outage does not retire healthy pods.
+  `Shutdown` row makes this a clean-exit response, so the failure is accounted transient
+  rather than leaked and adds nothing to the pod's persistent leak count. The windowed
+  failure counter still records it, and at `maxConcurrentSessions: 2` a single windowed
+  failure already reaches the §5.2 whole-pod replacement threshold.
 - **A reclaim the adapter does not acknowledge on a pod serving concurrent sessions.** The
   slot is `leaked`. Its occupancy is held, it counts persistently toward the §5.2 threshold,
   and the pod retires through the shipped trigger. This is §6.2's own disposition applied
@@ -168,10 +170,18 @@ Replace it with:
 The handler runs the slot release when the adapter holds an entry for the named session, runs the runtime teardown under the narrower precondition [Section 4.7](#47-runtime-adapter) states, and runs the whole-pod scrub when the recycle disposition is set, so no operation is selected by a field's presence standing in for a scope.
 ```
 
-The paragraph's first two sentences are untouched. The second sentence ("The per-slot
-teardown and the whole-pod teardown are the same operation on the same address, and what
-remains is the recycle disposition the request carries beside it.") stays true under the
-split, because it is about addressing rather than about the teardown's internal structure.
+The paragraph's first two sentences are untouched and this edit retires no vocabulary. The
+second sentence ("The per-slot teardown and the whole-pod teardown are the same operation on
+the same address, and what remains is the recycle disposition the request carries beside it.")
+states where the work is addressed. That is what the subsection needs from it, because the
+subsection derives a message's scope from its field set
+(`spec/04_system-components.md:151`) and the paragraph's closing clause concludes that no
+operation is selected by a field's presence standing in for a scope. The split gives each
+operation its own precondition and leaves the address-sharing claim true. The second
+sentence's two names already disagree with the shipped third sentence's "per-session
+teardown" and "whole-pod scrub" before this edit applies
+(`spec/04_system-components.md:157`), so that mismatch belongs to the shipped paragraph and
+the implementor changes neither sentence here.
 
 ### SPEC-1 · spec/04_system-components.md § 4.7 (Gateway → Adapter RPC table, `Shutdown` row)
 
@@ -206,9 +216,20 @@ The frame is pod-global and names no session, so on a pod serving concurrent ses
 Nothing else in the step changes. The operative clause reuses §4.7's own wording verbatim so
 the two statements cannot drift into two paraphrases. Step 13 already carries an inline
 exception for the Basic-level and Standard-level integration levels, so a second exception in
-the same body follows the step's own form. Step 12 is untouched: it states that the adapter
-closes the session runtime, which runs for every bound entry the call removed and carries no
-co-tenancy condition.
+the same body follows the step's own form.
+
+Step 12 needs no condition of its own and is untouched. §29.4's `**Preconditions.**` paragraph
+scopes the whole trace, the interrupt path and the session-end path alike, to a session that has
+completed the §29.2 startup sequence, "so the runtime is running"
+(`spec/29_communication-scenarios.md:586-588`), and the sentence after it introduces the interrupt
+path's further requirement as an addition to that base (`:589-591`). Every session the trace
+carries into step 12 therefore has a start the adapter has admitted, so the step's "the adapter
+closes the session runtime" (`:697`) stays true under the narrower runtime-teardown precondition
+the §4.7 row states. Step 10's clause that `POST /v1/sessions/{id}/terminate` "is valid in any
+non-terminal state" is a restatement of §15.1's endpoint precondition table, cited as such
+(`:669-674`), and it fixes what the endpoint admits rather than what this trace covers, so it does
+not widen the trace past its own preconditions. The authority for leaving step 12 alone is §29.4's
+own preconditions paragraph.
 
 ### SPEC-2 · spec/07_session-lifecycle.md § 7.1 (Normal Flow)
 
@@ -441,7 +462,7 @@ reads, verbatim:
 Append to that paragraph:
 
 ```
-That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a pod of either concurrency. It also runs when a bind is abandoned or fails after its slot enters `receiving_uploads` and before it reaches `running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), and a cleanup on that path reports no outcome, because `ReportSessionScrub` advances the pod's served-session count and that count records the sessions the pod's shared runtime process has been given. A cleanup that reclaims a slot the pod's shared runtime process was given is a session release like any other and reports its outcome. A session release produces at most one cleanup-outcome report, filed by the cleanup that reclaims the slot.
+That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a pod of either concurrency. It also runs when a bind is abandoned or fails after its slot enters `receiving_uploads` and before it reaches `running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), and a cleanup on that path reports no outcome, because `ReportSessionScrub` advances the pod's served-session count and that count records the sessions the pod's shared runtime process has been given. A cleanup on that path that does not complete is still accounted: the adapter's `Shutdown` response for that reclaim does not report a clean exit. On a pod serving concurrent sessions the slot is then `leaked` under [Section 6.2](06_warm-pod-model.md#62-pod-state-machine), so it holds its occupancy, counts toward the whole-pod replacement trigger stated below, and is surfaced on the `lenny_adapter_leaked_slots` gauge. On a pod serving one session the disposition is the one [Section 7.1](07_session-lifecycle.md#71-normal-flow) states: the failed attempt releases the pod's claim and the pod retires, so the reclaim's residue does not outlive the pod. A cleanup that reclaims a slot the pod's shared runtime process was given is a session release like any other and reports its outcome. A session release produces at most one cleanup-outcome report, filed by the cleanup that reclaims the slot.
 ```
 
 The withheld-report rule and the one-report rule land in the scrub-model paragraph rather than
@@ -453,6 +474,19 @@ list across the concurrency boundary, so the appended pointer clause discharges 
 question for both anchors without stating a second action list. Nothing else in the bullet
 changes: its trigger, the `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` formula, the
 CRD validation rule, and the leaked outcome all stand as written.
+
+The clause on a cleanup that does not complete states §6.2's existing disposition on the pod
+class that offers it rather than adding a second one. §7.1's reclaim reads the adapter's answer
+to its `Shutdown`, and an answer that does not report a clean exit leaves the slot `leaked` on a
+pod serving concurrent sessions, which §6.2's leaked-slot semantics and §5.2's own whole-pod
+replacement trigger already account for. On a pod serving one session §6.2 offers no `leaked`
+sub-state and §5.2 states no replacement trigger, so the clause points at §7.1's disposition for
+that class instead of restating it, matching what §7.1 and the edge-case list already say. The
+clause sits here because §5.2 is where the report is withheld, and a reader of the withholding
+rule alone would otherwise read the leak accounting as withheld with it. The accounting the
+clause names reaches every bind path §7.1 binds: the gateway's slot-failure accounting covers
+the retry-placed bind path today, and the code lane extends the same helper to the create-time
+reserved path and to the §7.3 re-attach, so the clause holds on all three.
 
 ### SPEC-4 · spec/06_warm-pod-model.md § 6.2 (per-slot sub-state fence)
 

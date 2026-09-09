@@ -76,8 +76,11 @@ alone. It adds consequences the other two do not have: `runtimeIdleLocked` is fa
 `pkg/adapter/slotsession.go:238-247`); `soleSessionLocked` returns empty as soon as one further session
 starts, which refuses every intra-pod MCP `tools/list` and `tools/call` on the pod under the exactly-one-
 session rule (`pkg/adapter/runtimegeneration.go:76-88`; spec/15_external-api-surface.md:1734;
-spec/04_system-components.md:962); and `hasStartedSession` returns true, so the §10.1 coordinator hold arms
-on a pod the gateway believes holds nothing.
+spec/04_system-components.md:962); and `hasStartedSession` returns true, so the §10.1 coordinator hold would
+arm on a pod the gateway believes holds nothing. That last consequence is latent rather than live. The hold
+arms only from the close of the `AdapterEvents` stream (`pkg/adapter/holdstate.go:89-99`;
+`pkg/adapter/adapterevents.go:100-108`), and no gateway code opens that stream today, so it waits on the
+control-stream consumer remediation step R12 builds.
 
 THE EXPOSURE IS NARROWER THAN A FAILED BIND AND WIDER THAN A SINGLE OCCUPANCY EPISODE. The exclusive path is
 outside the problem: `failPhase` reclaims through a claim DELETE and the pod retires, so the residue dies
@@ -262,7 +265,9 @@ session's output rather than a degraded start.
 THE POD'S INTRA-POD MCP SURFACE NEVER ARMS AGAIN. No later session on that pod gets a platform MCP server or
 a connector server, and the third residue class additionally drives `soleSession` empty as soon as one
 further session starts, which refuses every `tools/list` and `tools/call` on the pod under the
-exactly-one-session rule.
+exactly-one-session rule. A remedy that removes the residue restores the arming only for a session that
+claims while it holds the pod alone; wherever two binds overlap, the entry-count guard named out of scope
+above refuses it with no residue involved.
 
 THE §15.4.2 DRAIN IS SUPPRESSED for every later Shutdown on that pod, because a bound residue entry keeps
 `boundRemains` true. A Full-level runtime is then hard-closed with no DRAINING signal.
@@ -276,8 +281,8 @@ expiry path.
 
 A RUNTIME RUNS FOR AN ABANDONED SESSION, in the third class. The gateway has re-placed the session
 elsewhere while the adapter's shared runtime process still holds it, `runtimeIdleLocked` is false forever so
-no MCP surface can ever be torn down, and the §10.1 coordinator hold arms on a pod the gateway believes holds
-nothing.
+no MCP surface can ever be torn down, and the §10.1 coordinator hold would arm on a pod the gateway believes
+holds nothing once remediation step R12 opens the `AdapterEvents` stream whose close arms it.
 
 THE RESIDUE CROSSES THE RECYCLE BOUNDARY on a recycling pool, so a pod returns to inventory carrying an entry
 whose paths point at directories the whole-pod scrub has removed, and later tenants inherit it after the

@@ -151,15 +151,25 @@ one-report rule is an adapter-side invariant rather than something the gateway c
 and the response becomes:
 
 ```go
-return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil && (started || treeErr == nil)}, nil
+return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil && (live || treeErr == nil)}, nil
 ```
 
-The two meanings of `exited_cleanly` are deliberate and must be stated in the doc comment.
-The started path keeps discarding the tree-removal error, because making it fail there would
-reclassify existing session-end slots as leaked under `Binder.ReleaseSlot`'s
-`err != nil || !cleanly` rule, which is a §6.2 accounting change this proposal does not make.
-The unstarted path surfaces it, because CODE-4 has no other signal that the reclaim did not
-complete.
+`exited_cleanly` carries one rule, keyed on the same §6.2 `running` boundary the rest of this
+change installs: the response reports a clean exit when the runtime close succeeded and, for a
+slot the pod's shared runtime process was never given, when the slot release also completed.
+The gate is `live` rather than `st.started` because `st.started` is set inside
+`claimSessionSlotUnderLock` before `Runtime.Start` runs, so a start still in flight is
+`started` and pre-`running`, and gating on `started` would discard the tree-removal error for
+exactly the reclaim §7.1 sends on a cancelled context. Reading `live` leaves the session-end
+classification untouched: every path that admits a start reaches `noteRuntimeStarted`
+unconditionally on success (`pkg/adapter/session.go:163`, `resume.go:144`, `sdkwarm.go:261` on
+the freshness arm), and the two `noteRuntimeClosed` callers outside `Shutdown`
+(`pkg/adapter/holdstate.go:251`, `sdkwarm.go:297`) each remove the registry entry in the same
+pass, so a session the runtime was given and that reaches an ordinary session end is in
+`runtimeLive` when its `Shutdown` arrives and answers on `closeErr` alone as it does today. A
+reclaim of a slot the runtime was never given, whether the start was never admitted or is still
+in flight, surfaces the tree-removal error, because CODE-4 has no other signal that the reclaim
+did not complete.
 
 Doc-comment work on `Shutdown`:
 
@@ -169,14 +179,18 @@ Doc-comment work on `Shutdown`:
 - State the cleanup-outcome report's own gate beside them, because it is neither teardown's:
   §5.2 gives a session release at most one report and gives it to the cleanup that reclaimed
   the slot, and only a slot that reached `running` is owed one, so the report reads
-  `runtimeLive` membership while the teardown reads `st.started`.
+  `runtimeLive` membership while the teardown reads `st.started`. State the response's own
+  predicate in the same place: it is `runtimeLive` membership too, so the handler holds three
+  predicates and the report and the response share one of them. Say why the response cannot
+  share the teardown's: `st.started` is true for a start still in flight, which is the reclaim
+  whose incomplete slot release the gateway has no other way to observe.
 - Record why the runtime teardown must not run for an unstarted session, in the form the tree
   supports rather than the form that is easy to write. `Close` is not uniformly session-scoped
   across the implementations: `InProcessRuntime.Close` (`pkg/adapter/embedded.go:188-204`) and
   `MCPRuntime.Close` (`pkg/adapter/mcpruntime.go:266-291`) ignore the session identifier and
   tear the runtime down on any call, and `SocketRuntimeProcess.Close` tears down the shared
   connection, the spawned child, and the never-rebound listener whenever the active set empties
-  (`pkg/adapter/socketruntime.go:441-467`, listener bound once at `:155-161`). The socket
+  (`pkg/adapter/socketruntime.go:435-467`, listener bound once at `:156-161`). The socket
   implementation's early return at `:441-446` makes it harmless while a co-tenant is genuinely
   active; the state it is not harmless in is produced by `Interrupt` of the last active
   session, which clears neither `connected` nor `conn` (`:398-417`).
@@ -280,7 +294,9 @@ Targets:
   `ReleaseSlotReservation` takes the disposition; `BindReservedSlot` and `ClaimSlot`'s
   connect-stage release pass it.
 - `binder.go` — `Binder.Resume`'s adapter-RPC failure branch compensates before `cl.Close()`,
-  and `releaseResumeSlot` takes the disposition.
+  `releaseResumeSlot` takes the disposition and returns its release error, and the branch
+  returns its error with a `SlotBindError` in the chain so the §7.3 re-attach's disposition
+  reaches CODE-5's accounting.
 
 The budget:
 
@@ -327,6 +343,19 @@ func (b *Binder) compensateFailedSlotBind(ctx context.Context, cl *adapterclient
 }
 ```
 
+The reclaim's reason string is `"slot_bind_failed"`, and where the reclaim reaches a session
+whose start the adapter admitted, the intra-pod `terminate` frame carries `session_complete`.
+`drainReason` maps a §4.7 `ShutdownRequest.reason` onto the closed four-value `terminate` enum and
+returns `session_complete` for every value outside it (`pkg/adapter/session.go:309-321`), so the
+compensation mints no wire value and the enum stands as `spec/28_communication-channels.md:1082`
+and `schemas/runtime-ops-events.schema.json:181` state it. The shipped §11.4 full-revoke path
+already takes that same default with `"USER_REVOKED"` (`cmd/lenny-gateway/user_revocation.go:45`,
+`:129`). The frame's stated obligation is that the runtime exits within `deadlineMs`, and no code
+under `pkg/`, `cmd/`, or `sdks/` reads the reason value, so the value carries no precondition this
+reclaim would have to signal differently. The authority is the shipped normaliser and §28.5.3's
+frame row; neither the enum nor its schema is opened here. A reclaim of a bound-but-unstarted
+session sends no frame at all, because the drain sits inside CODE-1's `started` block.
+
 `materializeSlot` becomes a wrapper so no stage can be added later without the compensation.
 The current body moves to an unexported `materializeSlotStages` with its five `cl.Close()`
 calls removed, and the wrapper owns the close:
@@ -372,14 +401,26 @@ Call sites for the new parameter:
 |:--|:--|
 | `slotbinder.go` `ClaimSlot`'s connect-stage release | `false` — reserved before any workspace RPC, so the adapter holds nothing |
 | `slotbinder.go` `BindReservedSlot` | `sbe.Leaked`, and the method sets `sbe.Leaked = true` on the error it is about to return when its own release fails |
-| `binder.go` `releaseResumeSlot` | the disposition its caller computed |
+| `binder.go` `releaseResumeSlot` | the disposition its caller computed, and the function returns its `ReleaseSlotReservation` error to that caller rather than only logging it |
 | `start.go` `slotBinder` interface declaration | signature only |
 | `start.go` `applySlotRetryPolicy` | `sbe.Leaked` |
 | `start.go` `rollbackClaim` | `false` — no workspace RPC runs at create |
 
 `Binder.Resume` takes the same compensation. Its adapter-RPC failure branch currently calls
 `cl.Close()` and then `releaseResumeSlot`; it becomes a compensation on the still-open
-connection, then the close, then the release carrying the outcome. The adapter's `Resume`
+connection, then the close, then the release carrying the outcome. `releaseResumeSlot` returns
+that release's error rather than only logging it, so the branch can read the release outcome
+as the other two release sites do. The branch also returns its error with a `*SlotBindError`
+in the chain, carrying the pod, the reserved slot id, the stage `"resume"`, and a `Leaked` set
+to the same `compensation leaked || relErr != nil` discriminator `applySlotRetryPolicy` and
+`BindReservedSlot` use, wrapped inside the message the branch
+returns today (`fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, …)`). That is
+what carries the disposition to the accounting in CODE-5; `SlotBindError.Unwrap` returns the
+cause, so `isTransientPodClaimError`'s `errors.As` and `errors.Is` classification of a resume
+failure is unchanged (`pkg/gateway/podlifecycle/podsession/slotfailure.go:74`;
+`pkg/gateway/sessionserver/start.go:3648-3682`). On an exclusive pool `reserveResumeSlot`
+returns an empty slot id, so the error carries one too and the accounting does not run. The
+adapter's `Resume`
 claims the session's slot before it can fail, so a lost or refused `Resume` leaves the
 identical residue, and this is the site the recycle-boundary sweep alternative was reaching
 for. Its spec basis is the same §7.1 obligation, which names the §7.3 re-attach onto a
@@ -387,12 +428,13 @@ replacement pod as one of the bind attempts it binds; §7.3's resume flow and §
 mid-resume cancel edge point at that paragraph, so the `// spec: §7.1` citation resolves on
 the resume path as it does on the creation path.
 
-### CODE-5 · pkg/gateway/sessionserver/start.go, pkg/gateway/podlifecycle/podclaim — one accounting helper serves both concurrent bind paths, and a retry skips the pod whose reclaim went unacknowledged
+### CODE-5 · pkg/gateway/sessionserver/start.go, pkg/gateway/podlifecycle/podclaim — one accounting helper serves every bind path the reclaim obligation binds, and a retry skips the pod whose reclaim went unacknowledged
 
 Targets: the classify/record/threshold tail of `applySlotRetryPolicy`, `bindConcurrentSlot`'s
-`BindReservedSlot` branch, the `slotBinder` interface, and the placement exclusion the §7.1
-reclaim obligation requires (`podsession.SlotBindRequest`, `podclaim.SlotRequest`, and
-`SlotClaimer.ClaimSlot`'s two candidate passes).
+`BindReservedSlot` branch, `resumeOnPod`'s `podBinder.Resume` failure branch, the `slotBinder`
+interface, and the placement exclusion the §7.1 reclaim obligation requires
+(`podsession.SlotBindRequest`, `podclaim.SlotRequest`, and `SlotClaimer.ClaimSlot`'s two
+candidate passes).
 
 Extract the tail only. The release stays with each caller, which already knows its own
 disposition:
@@ -400,16 +442,25 @@ disposition:
 ```go
 // accountSlotFailure records one failed or leaked slot against the pod's §5.2
 // health ledger and retires the pod when the combined windowed-failure plus
-// persistent-leak count crosses the unhealthy threshold. Both concurrent bind
-// paths call it, so the create-time reserved path reaches the threshold §5.2
-// obliges it to reach.
+// persistent-leak count crosses the unhealthy threshold. Every bind path §7.1
+// binds calls it — both concurrent bind paths and the §7.3 re-attach — so the
+// create-time reserved path and the checkpoint restore reach the threshold
+// §5.2 obliges them to reach, which the trigger states with no carve-out by
+// code path.
 //
 // spec: §5.2 (whole-pod replacement trigger); §6.2 (`leaked` slot semantics).
 func accountSlotFailure(ctx context.Context, binder slotBinder, health *slothealth.Tracker,
     slots *slotstate.Registry, replacement func(pool string),
     leakGauge func(pod, pool string, leaked int),
-    req podsession.SlotBindRequest, sbe *podsession.SlotBindError, leaked bool)
+    pool string, maxConcurrentSessions int32,
+    sbe *podsession.SlotBindError, leaked bool)
 ```
+
+The two request-derived parameters are the pool name and the concurrency bound rather than a
+whole `podsession.SlotBindRequest`, because the body reads only `req.Pool` and
+`req.MaxConcurrentSessions` off one today, and the resume caller below holds a
+`podsession.ResumeRequest` rather than a bind request. Both existing callers pass `req.Pool`
+and `req.MaxConcurrentSessions`.
 
 The body is today's `MarkLeaked` plus leak gauge plus `RecordLeak` arm, today's
 `RecordFailure` arm, and the unchanged `Unhealthy → DrainSandbox → replacement → Forget →
@@ -419,16 +470,35 @@ inline. `binder` is still needed, for `DrainSandbox`.
 Callers:
 
 - `applySlotRetryPolicy` keeps its own `ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked)`
-  call and passes `sbe.Leaked || relErr != nil`. Its retry iteration then carries
+  call and passes `req.Pool`, `req.MaxConcurrentSessions` and
+  `sbe.Leaked || relErr != nil`. Its retry iteration then carries
   `ExcludePod = sbe.Pod` when that discriminator was true, so the retry re-claims on a
   different pod under the §7.1 rule that a pod whose reclaim went unacknowledged carries no
   further attempt at the same session. `req` is the function's own value copy, so the
   exclusion lives for the remaining iterations of this request and reaches no other request.
   The loop's exit condition is unchanged and the non-retryable set stays §5.2's three
   reasons, so a clean release retries on the same pod exactly as it does today.
-- `bindConcurrentSlot`'s reserved branch calls `accountSlotFailure(..., sbe, sbe.Leaked)`
-  before `classifySlotBindFailure`, using the same collaborators `bindSlotWithRetry` already
-  passes. `BindReservedSlot` keeps its own release.
+- `bindConcurrentSlot`'s reserved branch calls `accountSlotFailure(..., slotReq.Pool,
+  slotReq.MaxConcurrentSessions, sbe, sbe.Leaked)` before `classifySlotBindFailure`, using the
+  same collaborators `bindSlotWithRetry` already passes. `BindReservedSlot` keeps its own
+  release.
+- `resumeOnPod`'s `podBinder.Resume` failure branch (`pkg/gateway/sessionserver/start.go:4041`)
+  accounts the §7.3 re-attach's disposition. It runs `errors.As(err, &sbe)` on the error
+  `Binder.Resume` now returns and, when the error carries a `*podsession.SlotBindError` whose
+  `SlotID` is non-empty, calls `accountSlotFailure(ctx, s.podBinder, s.slotHealth,
+  s.slotStates, s.slotReplacement, s.slotLeakGauge, match.Pool,
+  maxConcurrentSessions(match.MaxConcurrentSessions), sbe, sbe.Leaked)` before returning the
+  error unchanged. The non-empty-slot-id guard is exactly the concurrent pool:
+  `reserveResumeSlot` returns an empty slot id when `MaxConcurrentSessions <= 1`
+  (`pkg/gateway/podlifecycle/podsession/binder.go`, `releaseResumeSlot`'s own no-op guard), so
+  an exclusive pool reserved nothing and has nothing to account. The `Leaked` that
+  `Binder.Resume` sets already folds that branch's release outcome in under CODE-4, so this
+  caller reads the same discriminator as the other two: a resume whose compensation was
+  acknowledged but whose reservation release failed holds the replacement pod's occupancy with
+  nothing holding it, and it is accounted persistently rather than in the five-minute window.
+  Without this caller the re-attach is the one bind path §7.1 binds whose `leaked` slot holds occupancy permanently
+  while the pod is never counted unhealthy, never drained through the
+  `ceil(maxConcurrentSessions / 2)` trigger, and never surfaced on the gauge.
 
 `applySlotRetryPolicy`'s comment that "a clean release makes the failure transient, and a
 failed release leaks the slot permanently" is widened rather than corrected: it is true today
@@ -439,9 +509,13 @@ The trade this deliverable ships, stated here rather than left open: a `leaked` 
 withholds the counter decrement for the life of the pod, and `UnhealthyThreshold` is
 `(maxConcurrent+1)/2`, so at `maxConcurrentSessions: 2` one unacknowledged reclaim both burns
 a slot and drains the pod. This is §6.2's semantics applied consistently, and it is the
-mechanism that makes a best-effort compensation's failure bounded. It changes behaviour only
-at `maxConcurrentSessions >= 3`: at 2 the threshold is already 1, so a single cleanly released
-bind failure drains the pod today.
+mechanism that makes a best-effort compensation's failure bounded. On the retry path the
+disposition changes behaviour only at `maxConcurrentSessions >= 3`, because at 2 the threshold
+is already 1 and a single cleanly released bind failure drains the pod today. The reserved
+branch is the other case, and it changes at every concurrency: it reaches no tracker today
+(`pkg/gateway/sessionserver/start.go:2594-2605`), so at `maxConcurrentSessions: 2` its first
+accounted bind failure of either kind drains a pod that nothing drains today. That is the
+conformance gap closing rather than a threshold change, and the threshold itself is untouched.
 
 The placement exclusion, stated whole because it is the deliverable's one new field:
 
@@ -531,8 +605,11 @@ Cases, each `// spec: §4.7; §5.2`:
   tree removal, and the cleanup-outcome report all still run, in that order.
 - **Claimed but not yet recorded.** A reclaim of a session whose `st.started` is true and
   which `runtimeLive` does not hold runs the runtime teardown, removes the entry and the tree,
-  and files no cleanup-outcome report. This is the case that pins the two predicates apart,
-  and it fails if the report is regated on `st.started`.
+  and files no cleanup-outcome report. This is the start still in flight, it is the case that
+  pins the two predicates apart, and it fails if the report is regated on `st.started`. It
+  takes the same response arm as the never-admitted start, so its `exited_cleanly` answer is
+  the one that also carries the slot release's outcome; the failing half of that arm is the
+  assertion excluded below.
 - **Co-tenancy hazard.** Drive `SocketRuntimeProcess` into `connected == true` with an empty
   active set through `Interrupt` of the last active session, then assert that `Shutdown` of a
   bound-but-unstarted entry leaves the connection, the spawned child, and the listener intact.
@@ -551,8 +628,10 @@ drives `Shutdown` for an unbound or unstarted entry, so CODE-1 breaks no shipped
 test's own path is unaffected, because its ending session is started and `boundRemains` is
 still false after the deregistration. It must keep passing unchanged.
 
-Excluded deliberately: an assertion that a not-started reclaim whose tree removal fails
-reports `exited_cleanly: false`. `removeSlotTree` calls `slotlayout.RemoveTree` directly with
+Excluded deliberately: an assertion that a reclaim of a slot the pod's shared runtime process
+was never given, whose tree removal fails, reports `exited_cleanly: false`. The exclusion
+covers the never-admitted start and the start still in flight alike, because both take that
+arm of the response. `removeSlotTree` calls `slotlayout.RemoveTree` directly with
 no injectable ops, and the repository's own precedent records that forcing that error from a
 non-root unit test is not portable. Restoring it needs a removal seam on the pattern of the
 whole-pod scrub's `Ops`, which no deliverable here stages.
@@ -592,16 +671,25 @@ Cases, each `// spec: §7.1; §5.2; §6.2`:
   through the drain.
 - **One `maxConcurrentSessions: 2` case**, pinning that a single failure of either kind drains,
   labelled as the shipped threshold's behaviour rather than as evidence of the new disposition.
-- **Both bind paths reach the accounting.** `bindConcurrentSlot`'s reserved branch reaches
-  `accountSlotFailure` with `sbe.Leaked`, and `BindReservedSlot` still performed its own
-  release.
+- **The reserved bind path reaches the accounting.** `bindConcurrentSlot`'s reserved branch
+  reaches `accountSlotFailure` with `sbe.Leaked`, and `BindReservedSlot` still performed its
+  own release. The re-attach path's own case is the resume one below.
 - **The retry moves pods after an unacknowledged reclaim.** At `maxConcurrentSessions: 4`,
   `applySlotRetryPolicy` still makes its second `BindSlot` call when `sbe.Leaked` is true, and
   that call carries `ExcludePod` equal to the failed attempt's pod; after a clean release the
   second call carries an empty `ExcludePod`. The non-retryable reasons still return the §5.2
   `SlotFailedError` on the first attempt in both cases.
 - **The resume path.** A failed `Resume` sends the compensation on the still-open connection
-  and releases the resume slot with the outcome.
+  and releases the resume slot with the outcome. At `maxConcurrentSessions: 4`, a failed
+  `Resume` whose reclaim went unacknowledged reaches `MarkLeaked`, the leak gauge and
+  `RecordLeak` through `resumeOnPod`'s accounting call and releases the resume slot with
+  `leaked=true`; a cleanly reclaimed one takes the windowed `RecordFailure` with
+  `leaked=false`; and a third case where the compensation was acknowledged but
+  `ReleaseSlotReservation` returns an error takes `MarkLeaked`, the leak gauge and
+  `RecordLeak` as well, pinning the release arm of the discriminator on this path.
+  On an exclusive pool the resume reserved no slot, so neither arm runs.
+  Assert the discriminator directly rather than through the drain, matching the sibling
+  accounting case above.
 
 ### Placement-filter tests for CODE-5, tier 2
 
@@ -666,8 +754,11 @@ CODE-4 and CODE-5 that no fake-backed tier-1 test reaches.
 exactly once. Assert the report as an invariant over the interleavings rather than as a fixed
 count: the session yields at most one `ReportSessionScrub`, none when the reclaim lands before
 `noteRuntimeStarted` records and one when it lands after. Run it on a pod with no co-tenant as
-well as a co-tenanted one, because only the no-co-tenant pod exercises the branch where the
-rollback close is the last close.
+well as a co-tenanted one, because only a pod whose shared runtime holds no other started
+session exercises the branch where the rollback close is the last close. The co-tenanted
+variant keeps its co-tenant started for that reason: a co-tenant registered and not yet
+started is absent from the runtime's active set, so the rollback close is a last close there
+too.
 
 `tests/tier7a_load_local/shutdown_drain_gate_race_test.go`'s
 `TestConcurrentShutdownsSendOneDrainSignal_spec_6_4` and
@@ -693,28 +784,37 @@ before treating a failure as this change's.
   already running. When that pod is the pool's only candidate the retry meets the shipped
   `WARM_POOL_EXHAUSTED` outcome with `details.reason: "concurrent_slots_exhausted"`, so the
   narrowed placement mints no new error code and no new client-visible category.
-- **`exited_cleanly` carries two meanings.** The started path discards the tree-removal error,
-  preserving today's classification of session-end slots; the unstarted path surfaces it,
-  because it is the only signal the gateway has that the reclaim did not complete. Both are
-  documented in `Shutdown`'s doc comment.
 - **A pod bricked by a rolled-back start.** In the class-three interleaving on a pod holding no
   co-tenant, CODE-2's rollback `Runtime.Close` is the last close, and on the socket runtime the
   last close ends the shared connection, the spawned child, and the listener bound once at
-  adapter start (`pkg/adapter/socketruntime.go:435-467`, the listener bound at `:156-161`). An
-  ordinary session end reaches the same state through the same call, so this path is not
-  distinguished from a normal last close and this proposal stages no retirement trigger for it.
-  Whether a pod whose runtime process has been closed is reusable is a pre-existing question of
-  the shipped recycle disposition, and it is not answered through the cleanup-outcome
-  accounting channel.
+  adapter start (`pkg/adapter/socketruntime.go:435-467`, the listener bound at `:156-161`). The
+  close is the last close on a co-tenanted pod as well, whenever the reclaimed session is the
+  only one the shared runtime holds: the active set records a session at `Start` and at no
+  earlier point (`:184`, `:220`, `:373-378`), so a co-tenant that is registered but still
+  mid-bind is not in it. There the co-tenant's slot keeps the pod's occupancy above zero, so
+  the per-pod claim is not deleted and the bricked pod stays in inventory
+  (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:845-847`). An ordinary session end reaches
+  the same state through the same call in both cases, because `Binder.ReleaseSlot` sends the
+  adapter `Shutdown` for the last started session while a co-tenant's bind is in flight
+  (`pkg/gateway/podlifecycle/podsession/slotbinder.go:542`), so this path is not distinguished
+  from a normal last close and this proposal stages no retirement trigger for it. Whether a pod
+  whose runtime process has been closed is reusable is a pre-existing question of the shipped
+  recycle disposition, and it is not answered through the cleanup-outcome accounting channel.
 - **Faster pod churn at `maxConcurrentSessions >= 3`.** The `leaked` disposition withholds the
   counter decrement and counts persistently, so an unacknowledged reclaim moves a pod toward
   retirement sooner than a clean release would. Accepted as §6.2's semantics applied
-  consistently. At `maxConcurrentSessions: 2` nothing changes, because the threshold is already
-  1.
+  consistently. At `maxConcurrentSessions: 2` the disposition changes nothing on the retry path,
+  because the threshold there is already 1. The reserved branch's own change at that
+  concurrency comes from reaching the accounting at all rather than from the disposition, and
+  is stated with CODE-5's caller list. The §7.3 re-attach is the third such path and changes at
+  every concurrency for the same reason: it reaches the accounting at all for the first time,
+  so at `maxConcurrentSessions: 2` its first accounted failure of either kind drains a
+  replacement pod that nothing drains today.
 - **A compensation sent to a pod in coordinator-hold state is refused.** The hold-state
   allowlist admits only the fence, version negotiation, the event stream, and the health probes,
-  so the reclaim returns an error and the slot is correctly classified `leaked`, which §6.2 then
-  routes to the §5.2 threshold. No special case is written for it.
+  so the reclaim returns an error and the slot is correctly classified `leaked`, which on a pod
+  serving concurrent sessions §6.2 then routes to the §5.2 threshold. No special case is
+  written for it.
 - **The connect stage compensates nothing.** The slot is reserved before any workspace RPC, so
   the adapter holds no entry and `Leaked` stays false there. §6.2 still has no terminal out of
   `slot_assigned`; that hole is recorded in the summary rather than closed here.
@@ -741,7 +841,7 @@ before treating a failure as this change's.
   `releaseResumeSlot`.
 - `pkg/gateway/sessionserver/start.go` — the `slotBinder` interface, `accountSlotFailure`,
   `applySlotRetryPolicy` (including the retry iteration's `ExcludePod`), `bindConcurrentSlot`,
-  `rollbackClaim`.
+  `resumeOnPod`, `rollbackClaim`.
 - `pkg/gateway/podlifecycle/podclaim/slotclaimer.go` — `SlotRequest.ExcludePod` and the skip
   in `ClaimSlot`'s two candidate passes.
 - `docs/reference/state-machines.md` — the per-slot sub-state table.
