@@ -260,8 +260,12 @@ if !s.noteRuntimeStarted(sessionID) {
         _ = s.Runtime.Close(ctx, sessionID)
     }
     s.cancelPodMCPIfRuntimeIdle()
-    return nil, status.Errorf(codes.FailedPrecondition,
+    // §16.3: a lost race is the TRANSIENT category. A further attempt
+    // succeeds once the reclaim's residue is gone.
+    rollbackErr := status.Errorf(codes.Aborted,
         "session %s slot was reclaimed while the start was in flight", sessionID)
+    spanErr = tracing.CategorizeError(rollbackErr, tracing.CategoryTransient)
+    return nil, rollbackErr
 }
 ```
 
@@ -282,6 +286,30 @@ safe against a successor: the cancellation is gated on `mcpArmingHeldLocked`, wh
 `s.slots[s.mcpSession]`, so a surface a surviving claimant holds is not cancelled
 (`pkg/adapter/slotsession.go:238-260`).
 
+The rollback answers `codes.Aborted`, and the choice of code is deliberate. The
+gateway derives the §5.2 failure category from the gRPC code the failing stage returned:
+`SlotBindError.Reason()` maps a `FailedPrecondition` outside the workspace stages to
+`policy_rejection` (`pkg/gateway/podlifecycle/podsession/slotfailure.go:91-99`), which
+`NonRetryable()` reports true for (`:41-48`), and the start stage this rollback fails is minted
+as `slotFailureSessionStart` (`pkg/gateway/podlifecycle/podsession/slotbinder.go:322-324`,
+`binder.go:293`). Answering `FailedPrecondition` here would therefore end the attempt at a 422
+`SLOT_FAILED` carrying `retryable: false` and no `Retry-After`, with the §5.2 retry budget
+unconsumed, for a failure a further attempt clears. `Aborted` takes the classifier's
+transient default (`slotfailure.go:100-101`), so `applySlotRetryPolicy` still places its retry
+and `classifySlotBindFailure` passes the error through with the retryable `STARTING_FAILED`
+envelope intact on the create-time-reserved path (`pkg/gateway/sessionserver/start.go:2766-2779`,
+`:2873-2879`). No change is staged to that switch. `Aborted` is also the adapter's established
+word for a concurrency abort the caller retries at a higher level, which is what this failure
+is: `Server.Checkpoint` answers it for a coalesced or busy operation lock
+(`pkg/adapter/checkpoint.go:115`, `pkg/adapter/oplock.go:36-40,:82`). It is unused on the
+`StartSession` and `Resume` handlers, where `FailedPrecondition` already refuses an
+unconfigured runtime (`pkg/adapter/session.go:104`) and an unconfigured workspace base or
+checkpoint transport (`pkg/adapter/resume.go:33,:42`), and it is unused across the wider
+adapter session surface, where the same code refuses an unbound session
+(`pkg/adapter/slotsession.go:274-283`) and a stale coordination generation
+(`pkg/adapter/coordination.go:133,:281`). The rollback therefore adds no further meaning to a
+code the adapter has already overloaded.
+
 Scope of the call-site change:
 
 - The compensation can race any RPC that admits a start on a slot the gateway may reclaim, and
@@ -292,9 +320,11 @@ Scope of the call-site change:
   record sequence: it claims the slot at `pkg/adapter/resume.go:50`, calls `Runtime.Start` at
   `:140`, and records at `:144`. The resume rollback is the same three steps in the same order,
   on the inbound `ctx` as the `StartSession` one is: close the runtime for that session, run
-  `cancelPodMCPIfRuntimeIdle`, and answer `codes.FailedPrecondition`. It leaves the registry
-  alone and reports no cleanup outcome either, for the reasons the `StartSession` rollback
-  gives.
+  `cancelPodMCPIfRuntimeIdle`, and answer `codes.Aborted`, for the classification reason the
+  `StartSession` rollback records above. It takes no span-error categorization, because
+  `Server.Resume` opens no span at all (`pkg/adapter/resume.go:25-35`) and so has no `spanErr`
+  to set. It leaves the registry alone and reports no cleanup outcome either, for the reasons
+  the `StartSession` rollback gives.
 - `pkg/adapter/sdkwarm.go:261` becomes `_ = s.noteRuntimeStarted(...)` with no rollback, because
   no compensation races it: its only gateway caller is `Binder.Launch`
   (`pkg/gateway/podlifecycle/podsession/binder.go:1009`), the exclusive path CODE-4 does not
@@ -350,9 +380,10 @@ The budget:
 // slotCleanupBudget is the §5.2 per-slot cleanup timeout,
 // max(cleanupTimeoutSeconds / maxConcurrentSessions, 5) seconds. §5.2 assigns
 // that figure to the adapter's own cleanup enforcement; the gateway reuses it
-// as the deadline for the compensating Shutdown rather than inventing a
-// constant. cleanupTimeoutSeconds is optional, so an unset pool yields the 5s
-// floor. spec: §5.2 (slot cleanup); §7.1 (the reclaim obligation).
+// as its own give-up bound on the compensating Shutdown, and pins half of it
+// as the adapter's graceful window, rather than inventing a constant.
+// cleanupTimeoutSeconds is optional, so an unset pool yields the 5s floor.
+// spec: §5.2 (slot cleanup); §7.1 (the reclaim obligation).
 func slotCleanupBudget(cleanupTimeoutSeconds int, maxConcurrentSessions int32) time.Duration
 ```
 
@@ -371,16 +402,21 @@ The compensation:
 // issued on that context would fail in the one case that leaves a runtime
 // running for an abandoned session.
 //
-// deadlineMs is zero, so the adapter falls through to the inbound RPC context
-// and the budget above is the only bound.
+// The call carries two bounds and they differ deliberately. The fourth
+// argument is the graceful window the adapter spends on the runtime close,
+// and the RPC deadline is the budget above, which outlasts it so the gateway
+// observes the reclaim's real outcome instead of recording a completed
+// cleanup as leaked. The shipped §11.4 revoke fan-out holds the same
+// relation, with userTerminateRPCTimeout bounding the call and the shorter
+// userTerminateDeadline sent as the graceful window.
 //
 // spec: §7.1 (the reclaim obligation and its leaked disposition); §4.7
 // (Shutdown's two teardowns and its no-op answer); §5.2 (the budget).
 func (b *Binder) compensateFailedSlotBind(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest, sandboxName, slotID string) bool {
-    rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx),
-        slotCleanupBudget(req.CleanupTimeoutSeconds, req.MaxConcurrentSessions))
+    budget := slotCleanupBudget(req.CleanupTimeoutSeconds, req.MaxConcurrentSessions)
+    rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
     defer cancel()
-    cleanly, err := cl.Shutdown(rctx, req.SessionID, "slot_bind_failed", 0)
+    cleanly, err := cl.Shutdown(rctx, req.SessionID, "slot_bind_failed", budget/2)
     if err != nil || !cleanly {
         log.Printf("podsession: reclaim slot %s on pod %s after failed bind for session %s: cleanly=%v err=%v",
             slotID, sandboxName, req.SessionID, cleanly, err)
@@ -397,11 +433,27 @@ returns `session_complete` for every value outside it (`pkg/adapter/session.go:3
 compensation mints no wire value and the enum stands as `spec/28_communication-channels.md:1082`
 and `schemas/runtime-ops-events.schema.json:181` state it. The shipped §11.4 full-revoke path
 already takes that same default with `"USER_REVOKED"` (`cmd/lenny-gateway/user_revocation.go:45`,
-`:129`). The frame's stated obligation is that the runtime exits within `deadlineMs`, and no code
-under `pkg/`, `cmd/`, or `sdks/` reads the reason value, so the value carries no precondition this
-reclaim would have to signal differently. The authority is the shipped normaliser and §28.5.3's
-frame row; neither the enum nor its schema is opened here. A reclaim of a bound-but-unstarted
-session sends no frame at all, because the drain sits inside CODE-1's `started` block.
+`:129`). The frame's stated obligation is that the runtime exits within `deadlineMs`, and the
+adapter passes the §4.7 `ShutdownRequest.deadline_ms` straight into the frame
+(`pkg/adapter/session.go:260`), so the graceful window this call pins is what the frame carries.
+The frame's schema requires `deadlineMs` and fixes its minimum at 100
+(`schemas/runtime-ops-events.schema.json:180-183`), and the budget's five-second floor puts half
+the budget at 2500ms or above, so the value this call sends satisfies that minimum on every pool
+configuration. No code under `pkg/`, `cmd/`, or `sdks/` reads the reason value, so the value
+carries no precondition this reclaim would have to signal differently. The authority is the
+shipped normaliser and §28.5.3's frame row; neither the enum nor its schema is opened here. A
+reclaim of a bound-but-unstarted session sends no frame at all, because the drain sits inside
+CODE-1's `started` block.
+
+The split takes the adapter's graceful window out of the budget rather than widening the RPC
+deadline, so the gateway's worst-case wait on this path is exactly what it was before the split.
+That direction matters because on an exclusive pool reached through `Binder.Resume` the budget
+already degenerates to the whole pool `cleanupTimeoutSeconds`, and doubling that inside a path
+that holds the client's request would cost more than the misreported disposition it fixes.
+`ShutdownRequest.deadline_ms` is a caller-pinned window, and the shipped §11.4 revoke fan-out
+pins ten seconds irrespective of the pool's configuration, so pinning less than the pool's own
+cleanup figure on a compensating reclaim contradicts nothing. The reclaim is tearing down a
+session with no user work to quiesce.
 
 `materializeSlot` becomes a wrapper so no stage can be added later without the compensation.
 The current body moves to an unexported `materializeSlotStages` with its five `cl.Close()`
@@ -618,9 +670,21 @@ The placement exclusion, stated whole because it is the deliverable's one new fi
   scan of claimed pods and one in the pass-2 idle-pod scan, placed beside the `expiredByUptime` skip
   and documented the same way. The `slotBinder` interface is unchanged and `BindSlot` still
   takes the request by value (`binder.BindSlot(ctx, *req)`), so every implementing type and
-  every test fake compiles as it stands; the pointer stops at those internal helpers, and
-  `slotretry_test.go`'s `req` helper returns one, so their existing call sites are unchanged
-  too.
+  both test fakes compile as they stand. The pointer stops at those two internal helpers, and
+  rewiring their test call sites is part of this deliverable rather than an assumption:
+  `slotretry_test.go`'s `req(pool, maxConcurrentSessions)` helper keeps its by-value return
+  (`pkg/gateway/sessionserver/slotretry_test.go:69`), and every `applySlotRetryPolicy` call
+  site in `pkg/gateway/sessionserver/slotretry_test.go` and
+  `pkg/gateway/sessionserver/slotretry_load_test.go` binds its result to a local and passes the
+  address (`r := req("pool-x", 4); applySlotRetryPolicy(ctx, binder, health, …, &r)`), taken
+  inside the load test's goroutine body so each goroutine still owns its own request
+  (`pkg/gateway/sessionserver/slotretry_load_test.go:84-87`). `classifySlotBindFailure` keeps
+  its by-value signature (`pkg/gateway/sessionserver/start.go:2761`), so the
+  `classifySlotBindFailure(in, req(…))` sites in `slotretry_test.go` are untouched, as are its
+  two production callers: `claimAtCreate`'s create-time reservation arm
+  (`pkg/gateway/sessionserver/start.go:2172`), which passes that function's own `slotReq` local
+  built at `:2140`, and `bindConcurrentSlot`'s reserved-bind arm (`:2602`), which passes its
+  by-value `slotReq` parameter. `bindSlotWithRetry` has no test caller.
 - **When it does not fire.** The discriminator is false when the adapter acknowledged the
   reclaim and the reservation release succeeded, and the retry then re-claims on the same pod.
   The reclaim itself is finished there: the `Shutdown` handler completes `removeSlotTree`
@@ -720,7 +784,7 @@ Cases, each `// spec: §4.7; §5.2`:
 - **Start-versus-reclaim rollback, deterministic form.** `noteRuntimeStarted` returns false for
   a session whose entry was removed, and the `StartSession` rollback closes the runtime,
   cancels a pod MCP surface no surviving session holds, leaves the registry untouched, and
-  answers `FailedPrecondition`. Neither the rollback nor the reclaim
+  answers `Aborted`. Neither the rollback nor the reclaim
   files a `ReportSessionScrub` for that session. The concurrent form is the tier-7a case below.
 - **The rollback destroys no successor.** Drive the reclaim so the entry and its tree are gone,
   then put a successor under the same slot identifier before releasing the parked start, in two
@@ -774,7 +838,9 @@ table.
 Cases, each `// spec: §7.1; §5.2; §6.2`:
 
 - **Per-stage compensation table.** For the finalize, setup, credential-assignment, and
-  session-start stages: exactly one `Shutdown` naming the session, with `deadlineMs` zero, and
+  session-start stages: exactly one `Shutdown` naming the session, carrying a positive
+  `deadlineMs` equal to half the budget the case's pool configuration produces and strictly less
+  than the RPC deadline that same configuration produces, and
   the gateway-side credential leases released. The "received before the connection closes"
   clause is dropped: with the compensation inside `materializeSlot` ahead of `cl.Close()`, a
   recorded `Shutdown` already implies it.
@@ -836,6 +902,16 @@ Cases, each `// spec: §7.1; §5.2; §6.2`:
   On an exclusive pool the resume reserved no slot, so neither arm runs.
   Assert the discriminator directly rather than through the drain, matching the sibling
   accounting case above.
+- **The rollback's status code classifies transient.** Rows added to the tables
+  `pkg/gateway/sessionserver/slotretry_test.go` already carries. In
+  `TestSlotBindErrorReason_spec_5_2` (`:383-407`), `{"session_start", codes.Aborted,
+  podsession.SlotReasonTransient}`, placed beside the existing `{"session_start",
+  codes.PermissionDenied, podsession.SlotReasonPolicyRejection}` row so the two classifications
+  sit side by side. In `TestClassifySlotBindFailurePassesTransientThrough_spec_5_2` (`:468-492`),
+  a `session_start`-stage `codes.Aborted` passing through unclassified, which keeps the
+  retryable `STARTING_FAILED` envelope on the create-time-reserved path. The subject is the
+  coupling between CODE-2's rollback code and the shipped classifier: a later change to either
+  side turns one of these rows red. No new fixture and no new file.
 
 ### Placement-filter tests for CODE-5, tier 2
 
@@ -877,9 +953,15 @@ already stands up a real `adapter.Server`, a real `SocketRuntimeProcess`, and th
 abandoned at the session-start stage, the stage that produces the third residue class and the
 one no lower tier reaches against a real shared runtime. After the compensation: the pod's
 registry holds only alice; an unaddressed session-scoped frame on alice's Attach stream
-relays again, where it is rejected before the compensation; the shared runtime's connection
-and listener survive, demonstrated by a later session carol binding and starting on the same
-pod; and alice's later `Shutdown` still emits the §15.4.2 signal. No MCP-arming assertion:
+relays again, where it is rejected before the compensation; and the shared runtime's
+connection and listener survive, demonstrated by a later session carol binding and starting on
+the same pod. No §15.4.2 assertion is made here: this fixture wires no CH-RUNTIMEOPS, and it
+needs none. The residue's drain-suppression harm is the residue itself, which the registry
+assertion above states directly, and `boundRemains`, the gate that turns registry contents into
+a drain decision, is untouched by this change and is pinned on both arms by the shipped
+`TestConcurrentShutdownsSendOneDrainSignal_spec_6_4`
+(`tests/tier7a_load_local/shutdown_drain_gate_race_test.go:232-304`), whose two bound co-tenants
+end at once and produce exactly one frame. No MCP-arming assertion:
 `claimPodMCPStartLocked` refuses on `len(s.slots) != 1` and the claimant's own entry is
 inserted above it, so carol beside a live alice arms nothing, with or without this change.
 `// diagnosis:` states that a failure means the reclaim left the pod's registry, its
@@ -915,7 +997,7 @@ identifier and no chunks, because a conversation-only resume restores nothing
 request that carries chunks (`pkg/adapter/resume.go:42`), so the arm needs no
 checkpoint-transport fixture. Under that ordering the outcomes are the tier-1
 "Start-versus-reclaim rollback, deterministic form" case's outcomes reached from two
-goroutines: on both arms and both variants the RPC returns `FailedPrecondition`, `runtimeLive`
+goroutines: on both arms and both variants the RPC returns `Aborted`, `runtimeLive`
 does not hold the raced session, and neither the reclaim nor the rollback files a
 `ReportSessionScrub` for it. The report count is fixed rather than interleaving-dependent,
 because the rendezvous admits one interleaving. The at-most-one rule across every interleaving
