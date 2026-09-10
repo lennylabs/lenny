@@ -117,8 +117,10 @@ The `Shutdown` RPC already deregisters an entry whether or not it is bound (`rem
 entry; `bound` gates only the teardown), it is documented as deliberately idempotent, and the gateway
 already has `Client.Shutdown` (`pkg/adapter/session.go:214-241`;
 `pkg/gateway/runtime/adapterclient/client.go:807-809`). Sending it on the still-open connection before
-`cl.Close()` at the four stages needs no new RPC and does not open `schemas/lenny-adapter.proto`. It is not a
-drop-in, and the proposal must say so: on a bound-but-unstarted entry `Shutdown` runs the full teardown, the
+`cl.Close()` at the four stages needs no new RPC. It does need one additive edit to
+`schemas/lenny-adapter.proto`, because a reclaim dispatched after the gateway stopped waiting can reach the
+adapter after the client's retry has taken the slot, and nothing on the wire today states which bind attempt
+a reclaim is compensating. It is not a drop-in for two further reasons, and the proposal must say so: on a bound-but-unstarted entry `Shutdown` runs the full teardown, the
 final usage flush, the §15.4.2 drain frame, `Runtime.Close`, and a `reportSessionScrub` that advances the
 pod's sessions_served, for a session that never ran; and on a registered-but-unbound entry it skips
 `removeSlotTree`, so the on-disk tree survives the registry removal (`pkg/adapter/session.go:243-282`).
@@ -217,9 +219,15 @@ per-session fence state. Proposals 0078 and 0079 are "Draft for review" and are 
 this must not depend on them. Proposal 0080 is an unconverged inventory that stages no changes; its §1.2 is
 this problem — verified from each proposal's own status text.
 
-PROGRAMME CONSTRAINTS. `gateway-runtime-comms-remediation.md:1883` states rule S-2: "Exactly one step (R1b)
-edits `schemas/lenny-adapter.proto` and runs `make generate-proto`." This proposal must not open that file. A
-remedy built on the existing `Shutdown` RPC does not need to — verified.
+PROGRAMME CONSTRAINTS. Rule S-2 in `gateway-runtime-comms-remediation.md` states that exactly one step
+(R1b) edits `schemas/lenny-adapter.proto` and runs `make generate-proto`. The original reading of that rule,
+that this proposal must not open the file at all, is refuted by the rest of the rule: S-2 reserves the FIRST
+window to R1b and states that "a later step needing a field the plan did not enumerate opens a second narrow
+window, and that window requires every in-flight `pkg/adapter` handler edit to have merged first". R1b's end
+state is in the tree and the file has already been reopened once, for proposal 0076's comment-only edit, so
+the second window is available — verified against the rule's own text. The precondition binds this proposal's
+step ordering rather than its scope, because it opens three of S-2's covered handler files (`session.go`,
+`slotcreds.go`, `sdkwarm.go`): the schema step and its regenerated stubs land before those handler steps.
 
 TESTING SURFACE. `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` exercises the drain gate this
 residue suppresses, and `pkg/adapter/slotsession_test.go:308`
@@ -319,7 +327,7 @@ that discharging it is an obligation it does not take. The gateway-runtime-comms
 list carries no step touching the adapter slot registry's failed-bind compensation; its only slot mention is
 per-slot hold state in R12.
 
-THE ADAPTER-SIDE REMOVAL MECHANISM ALREADY EXISTS AND IS REACHABLE FROM THE GATEWAY WITH NO PROTO CHANGE.
+THE ADAPTER-SIDE REMOVAL MECHANISM ALREADY EXISTS AND IS REACHABLE FROM THE GATEWAY.
 `Shutdown`'s clause two runs `deregisterSlotLocked(sessionID)` unconditionally and gates only the teardown on
 `bound := removed && st.sessionID != ""`, and its own doc comment states that the conditional structure is
 what makes the handler idempotent, because the §11.4 full revoke and the occupancy-zero edge each send a
@@ -327,7 +335,9 @@ second request for an already-released session (`pkg/adapter/session.go:214-241`
 session identifier, so `Shutdown(sessionID)` removes a registered-but-unbound entry as well as a bound one.
 `Client.Shutdown` already exists (`pkg/gateway/runtime/adapterclient/client.go:807-809`) and the gateway
 already calls it from `Binder.ReleaseSlot`; `ReleaseSlotReservation` is the deliberate variant that skips it.
-This defuses the programme's S-2 constraint by construction: no new RPC and no schema edit.
+No new RPC is needed, so `Shutdown` clause two stays the single removal entry point. What the existing RPC
+does not carry is any statement of which bind attempt a reclaim compensates, and that is what the proposal
+adds as an additive field on the same message.
 
 REUSING `Shutdown` UNMODIFIED IS NOT A DROP-IN. On a bound-but-unstarted entry it takes the full teardown
 branch, the final usage flush, the §15.4.2 drain frame when no bound entry remains, `Runtime.Close`, and a
@@ -430,8 +440,10 @@ not re-derive it.
 
 - No proposal, landed or drafted, stages a remedy. 0080 stages no changes, 0073 recorded the gap and declined
   to discharge it, and the remediation programme's step list contains no step for it.
-- The adapter-side removal mechanism already exists and is reachable with no proto change, through the
-  existing idempotent `Shutdown` RPC.
+- The adapter-side removal mechanism already exists and is reachable through the existing idempotent
+  `Shutdown` RPC, so no new RPC is needed. REFUTED in its original form, which read "with no proto change":
+  the RPC carries no per-attempt identity, so an additive field on `ShutdownRequest` is needed to fence a
+  reclaim that arrives after a retry took the slot.
 - Reusing `Shutdown` unmodified is not a drop-in: full teardown on a bound-but-unstarted entry, and no
   `removeSlotTree` on an unbound one.
 - §5.2's "Slot cleanup" already states the compensation rule for completion or failure; §6.2's per-slot
@@ -494,7 +506,9 @@ not re-derive it.
   surface, with no failed bind anywhere, and nothing re-arms it afterwards. Load-bearing, and named out of
   scope here.
 - The gateway-side compensation already exists as a shipped idempotent RPC, so the remedy needs no new
-  mechanism and no proto edit. Load-bearing.
+  mechanism. Load-bearing. REFUTED in its original form, which read "and no proto edit": the shipped RPC
+  carries no per-attempt identity, so the remedy takes one additive field on `ShutdownRequest` and one on
+  each response that creates or resolves a slot entry.
 - The consequence that decides between remedy classes is the surviving credential file and its armed expiry
   timers, which no predicate change can fix. Load-bearing.
 - The tree has already made the bound-to-started refinement twice, so "finish that refinement" is a third
