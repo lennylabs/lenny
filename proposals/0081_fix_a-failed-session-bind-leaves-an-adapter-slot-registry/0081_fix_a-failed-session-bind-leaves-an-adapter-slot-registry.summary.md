@@ -334,11 +334,25 @@ reclaim hold close the released-entry ordering, and the shared-entry ordering is
 recorded in the staged spec changes under `## Edge cases and accepted failure modes` together
 with what closing it would cost. Entry 17 re-puts entry 9's question against the text the spec
 loop converged on, which states a worse residue than the text entry 9 was answered against.
-Entries 12, 13 and 14 have also left it: the spec the proposal stages
+Entries 12, 13, 14 and 15 have also left it: the spec the proposal stages
 already answers each, and the residue entries 13 and 14 named is recorded under
-`## Defects in the shipped tree that this proposal does not stage`. Resolved entries are deleted
+`## Defects in the shipped tree that this proposal does not stage`. Entry 15 asked whether
+§7.1's exclusive-pod clause needs a mid-resume carve-out, and it does not. §6.2's `resuming`
+failure-transitions subsection is the authoritative enumeration of every edge out of that state
+(`spec/06_warm-pod-model.md:229`) and it already states the outcome for exactly that pod, "the
+half-claimed replacement pod is released to the pool" (`spec/06_warm-pod-model.md:234`), so the
+disposition is owned elsewhere and settled. §7.1 as staged asserts no competing outcome: it
+closes "The pre-attached disposition governs the pod; this reclaim governs the slot state on a
+pod that is released or reused rather than terminated", which names the released-or-reused case,
+and SPEC-2's §7.2 step 3 states no pod outcome by design. The residue on the released pod is
+disposed of in both configurations by shipped text: a claim deleted on a pod with
+`recycle.enabled: false` projects `draining` and then `terminated`
+(`spec/06_warm-pod-model.md:80`), and on a recycling pod "a whole-pod scrub runs whenever
+occupancy reaches zero on a recycling pod before the pod is reused"
+(`spec/05_runtime-registry-and-pool-model.md:453`), a trigger the release path already implements
+(`pkg/gateway/podlifecycle/podsession/binder.go:498-501`). Resolved entries are deleted
 and the survivors keep their original numbers, so the numbering below does not start at 1 and
-skips the numbers the resolved entries held; entries 15 through 18 were carried out of the
+skips the numbers the resolved entries held; entries 16 through 18 were carried out of the
 review log by the index-and-checklist reconciliation pass.
 
 11. **Does §7.1's trigger read "fails" or "abandoned or fails"?** §7.1's staged paragraph opens with
@@ -346,18 +360,6 @@ review log by the index-and-checklist reconciliation pass.
     route a client-cancelled re-attach through the same obligation. Abandonment here means the
     gateway abandoned the bind by failing it; client abandonment is out of scope by the problem
     statement. The decision is whether §7.1's trigger widens to match the other three sites.
-
-15. **Does §7.1's exclusive-pod clause need a mid-resume carve-out?** §7.1's staged paragraph
-    ends with the exclusive-pod case: on a pod serving one session the failed attempt releases
-    the pod's claim and the pod retires under §6.2's pre-attached failure disposition, so the
-    reclaim's residue does not outlive the pod. SPEC-2 also routes §7.2's mid-resume
-    snapshot-close sequence through the same §7.1 obligation, and on that path the pod being
-    reclaimed is the replacement pod the resume was binding rather than a pod the session was
-    attached to. Both readings of the exclusive-pod clause survive the evidence the loop
-    gathered: it either covers the mid-resume path unchanged, or it needs a carve-out saying
-    what disposition the mid-resume exclusive pod takes. The decision is which. The spec review
-    loop derived the question and states that only a human can adjudicate it; it recommends
-    neither reading.
 
 16. **Does the exclusive-pool resume budget want an upper clamp?** The compensating `Shutdown`
     budget is §5.2's per-slot cleanup timeout, `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)`
