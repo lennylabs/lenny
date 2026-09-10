@@ -187,8 +187,10 @@ Neither closes the other's case.
   removed under a session that is serving, and the gateway records the reclaim as a clean
   `reclaimed`. That ordering is the shared-entry residue the accepted failure modes record
   below, where what closing it would cost is stated.
-- **A retry that meets the reclaim hold spends an attempt on it.** The refusal is transient,
-  so the attempt keeps its §5.2 retryability. The retry the §5.2 policy places does not meet
+- **A retry that meets the reclaim hold spends an attempt on it.** The refusal carries the
+  `ABORTED` status §15.4 publishes as the transient classification, so the attempt keeps its
+  §5.2 retryability. On the §7.3 resume the gateway classifier the non-spec changes amend is
+  what holds the row in `awaiting_client_action` for the client's retry. The retry the §5.2 policy places does not meet
   the hold: the retry after an unacknowledged reclaim excludes that pod, and an acknowledged
   reclaim is answered only after its cleanup finished. What can meet it is a §7.4 mid-session
   upload still in flight when the session's own teardown opens the hold, a client-driven §7.3
