@@ -328,9 +328,11 @@ The spec review loop routed these to a human. Each states the question and the g
 derived. None of them carries a recommendation. Entry 9, the create-time-reserved retry's
 unbounded exposure, has left this section: the bind epoch and the reclaim hold close the
 released-entry ordering, and the shared-entry ordering is accepted, recorded under
-`## Decisions` together with what closing it would cost. Resolved entries are deleted and the
-survivors keep their original numbers, so the numbering below is not contiguous; entries 12
-through 14 were added after the spec loop converged.
+`## Decisions` together with what closing it would cost. Entries 13 and 14 have also left it:
+the spec the proposal stages already answers both, and the residue each named is recorded under
+`## Defects in the shipped tree that this proposal does not stage`. Resolved entries are deleted
+and the survivors keep their original numbers, so the numbering below does not start at 1; entry
+12 was added after the spec loop converged.
 
 11. **Does §7.1's trigger read "fails" or "abandoned or fails"?** §7.1's staged paragraph opens with
     a bind attempt that fails, while SPEC-3 and SPEC-4 say "abandoned or fails", and §7.2 and §6.2
@@ -348,25 +350,6 @@ through 14 were added after the spec loop converged.
     should say so, or whether the hold ends when the cleanup gives up and the slot becomes
     bindable again while a leaked residue stands. The spec review loop derived the question and
     stated one option, that the hold is permanent on a leaked slot, without recommending it.
-
-13. **Should the applied spec state what a `superseded` successor inherits?** After a `superseded`
-    reclaim, the successor attempt is running on the predecessor attempt's workspace tree and
-    staged uploads, because the adapter resolves the surviving entry and returns it with its
-    paths, credentials and on-disk tree intact. §5.2's **Fresh workspace guarantee** is written
-    against a distinct slot and does not reach that case. The decision is whether the applied
-    spec states the inheritance where a reader of the fresh-workspace guarantee will meet it, or
-    whether it is left as the same-session, same-tenant retry semantics the create-time-reserved
-    path already has. The loop derived no recommendation.
-
-14. **Is the compensating `Shutdown` exempt from the §10.1 coordination-generation fence?**
-    §10.1 obliges a pod to validate the coordination generation on every gateway-to-pod RPC,
-    `ShutdownRequest` carries that field, and SPEC-5 states that on `Shutdown` the generation and
-    the bind epoch are each checked on their own terms. A compensation issued by a replica whose
-    lease has lapsed is therefore refusable, and the §7.1 reclaim obligation cannot then be
-    discharged. The shipped adapter does not enforce the fence, so nothing breaks today, and the
-    rule predates this proposal. The decision is whether the compensating `Shutdown` is exempt,
-    and whether that exemption is stated here or in a §10.1-scoped proposal. The loop derived no
-    recommendation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -400,6 +383,26 @@ through 14 were added after the spec loop converged.
   its compensation. It is recorded here rather than as a claim-register
   deferral, because a non-`WIRED` row must name a step the remediation plan declares and no
   declared step owns this fence.
+- **§10.1's per-RPC coordination-generation fence is not enforced by the shipped adapter.**
+  `spec/10_gateway-internals.md:30` states that pods validate the generation on every
+  gateway-to-pod RPC and reject a stale one, and `ShutdownRequest` carries the field
+  (`schemas/lenny-adapter.proto:1630-1635`). The adapter reads it on two RPCs only,
+  `CoordinatorFence` and `CheckpointBarrier`
+  (`pkg/adapter/coordination.go:120`, `:262`), and on no other handler, so the divergence
+  spans the whole gateway-to-pod surface and predates this proposal. It is recorded here
+  because SPEC-5's staged §4.7.1 block states that where the generation and the bind epoch
+  appear on one message, as on `Shutdown`, each is checked on its own terms, which makes the
+  compensating `Shutdown` subject to the fence rather than exempt from it. Nothing this
+  proposal stages depends on the fence being unenforced. A generation-stale rejection is a
+  reclaim the adapter did not answer, which SPEC-2's §7.1 paragraph already dispositions:
+  the slot is `leaked` on a pod serving concurrent sessions and the pod retires under §6.2's
+  pre-attached failure disposition on a pod serving one, so the §7.1 obligation is to send
+  the reclaim rather than to have it accepted. Carving the compensation out of the fence
+  would also contradict §10.1's stale-replica rule, which tells a replica that receives a
+  generation-stale rejection to cancel its in-flight RPCs for the session and not retry
+  (`spec/10_gateway-internals.md:66-68`). No fix is staged because closing the divergence
+  means implementing §10.1's fence across every adapter handler, which is a §10.1-scoped
+  change on a rule this proposal neither wrote nor widened.
 - **`BindReservedSlot` never re-reserves while `ReleaseSlotReservation` decrements.** On the
   create-time-reserved path the reservation is taken at session creation and released on a
   failed bind, and the bind is then retried against the same row without re-taking it, so the
@@ -531,6 +534,20 @@ through 14 were added after the spec loop converged.
   R12 builds, and that step records the same fact and the same reason
   (`gateway-runtime-comms-remediation.md:1268-1274`). The hold-timeout reclaim of unstarted
   slots and its §10.1.4 statement are left to R12 under Non-goals for the same reason.
+- **§5.2's Fresh workspace guarantee does not reach a retry that adopts a surviving registry
+  entry.** The guarantee sits in §5.2's slot retry policy list
+  (`spec/05_runtime-registry-and-pool-model.md:553`), whose first bullet fixes the domain to a
+  retry the policy assigns to a new slot (`:555`), and the guarantee then promises that such a
+  slot inherits nothing from the failed slot's workspace (`:556`). A same-session attempt on the
+  create-time-reserved path, which that policy does not place, resolves the surviving entry
+  instead: `ensureSlotStateLocked` returns the existing `*slotState` with its paths, credentials
+  and on-disk tree, and `slotlayout.EnsureTree` runs only on the create branch
+  (`pkg/adapter/slot.go:105-124`). With the slot identifier equal to the session identifier the
+  adopted tree is the predecessor's. The behaviour is shipped and unchanged by anything staged
+  here: the staged admission rules narrow which attempts reach that pod and create no adoption
+  path the adapter did not already have. It is recorded rather than staged because closing it
+  means deciding whether §5.2's guarantee is rewritten against a slot identifier that is the
+  session identifier, which reopens the retry policy's placement wording.
 - **A leaked slot's held occupancy has no durable backing, so a Redis restart frees it.**
   §6.2's **`leaked` slot semantics** makes the pod's Redis slot-counter occupancy the
   persistent count for a leaked slot, and `SlotClaimer.ReleaseSlot` implements that by
@@ -568,7 +585,7 @@ through 14 were added after the spec loop converged.
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
 | 0080 (inventory) §1.2 | Draft, stages no changes | This proposal is the promotion of §1.2 to its own proposal and discharges it. | Record §1.2 as discharged here. No edit to 0080's staged content, because it stages none. |
-| 0080 §1.19 (three fence-refusal classes, one status code) | Draft | `boundSlotState` and `checkSessionBound` are untouched. The membership of the sets they read changes in three ways. A fence for a session whose bind failed and whose reclaim completed meets the absent-entry refusal rather than the unbound-entry refusal, and so does a fence for a session whose `StartSession` or `Resume` rolled back because the reclaim landed after its claim, since the reclaim removed the entry and the rollback removes nothing further. Where a racing start's own claim re-created the entry after the reclaim, the entry is present and its `sessionID` is set, so the fence meets neither refusal and an abandoned session answers as a bound one. After a reclaim the adapter did not acknowledge on a create-time-reserved slot, a surviving entry is present-and-unbound (workspace-preparation residue) or present-and-bound (credential-assignment residue) for a session the gateway has abandoned, so a fence in that window meets the unbound-entry refusal or neither refusal, for a session 0080 would classify as gone. The placement constraint also narrows one class: with a pod appended to `ExcludePods` after an unacknowledged reclaim, a retry the §5.2 slot retry policy places issues no fence to a pod that may still hold the prior attempt's entry, which does not reach a §15.1 start onto a create-time-reserved slot. The rollbacks CODE-2 adds answer `codes.Aborted` rather than `codes.FailedPrecondition`, so they put no further meaning on the status code §1.19 is disambiguating. The ABA class narrows rather than closing. Where a successor's claim creates the entry at a fresh bind epoch, the abandoned attempt's own start confirmation refuses its start against the epoch its claim observed, so that entry does not stand for an abandoned session and the third case leaves the inventory §1.19 has to classify. Where no successor exists and the abandoned attempt's own claim re-created the entry after the reclaim, the confirmation compares equal and admits, so the case this row states three clauses above stands unchanged. No bind-sequence RPC gains a refusal, so the class inventory grows by the reclaim hold's `ABORTED` refusal alone. | Re-derive §1.19's class inventory against the remaining cases and the narrowed class. |
+| 0080 §1.19 (three fence-refusal classes, one status code) | Draft | `boundSlotState` and `checkSessionBound` are untouched. The membership of the sets they read changes in three ways. A fence for a session whose bind failed and whose reclaim completed meets the absent-entry refusal rather than the unbound-entry refusal, and so does a fence for a session whose `StartSession` or `Resume` rolled back because the reclaim landed after its claim, since the reclaim removed the entry and the rollback removes nothing further. Where a racing start's own claim re-created the entry after the reclaim, the entry is present and its `sessionID` is set, so the fence meets neither refusal and an abandoned session answers as a bound one. After a reclaim the adapter did not acknowledge on a create-time-reserved slot, a surviving entry is present-and-unbound (workspace-preparation residue) or present-and-bound (credential-assignment residue) for a session the gateway has abandoned, so a fence in that window meets the unbound-entry refusal or neither refusal, for a session 0080 would classify as gone. The placement constraint also narrows one class: with a pod appended to `ExcludePods` after an unacknowledged reclaim, a retry the §5.2 slot retry policy places issues no fence to a pod that may still hold the prior attempt's entry, which does not reach a §15.1 start onto a create-time-reserved slot. The rollbacks CODE-2 adds answer `codes.Aborted` rather than `codes.FailedPrecondition`, so they put no further meaning on the status code §1.19 is disambiguating. The ABA class narrows rather than closing. Where a successor's claim creates the entry at a fresh bind epoch, the abandoned attempt's own start confirmation refuses its start against the epoch its claim observed, so that entry does not stand for an abandoned session and the third case leaves the inventory §1.19 has to classify. Where no successor exists and the abandoned attempt's own claim re-created the entry after the reclaim, the confirmation compares equal and admits, so the case this row states three clauses above stands unchanged. The reclaim hold adds one more producer of an arm §1.19 already enumerates rather than a class of its own: a fence naming a session whose slot identifier is held carries no registry entry, and `boundSlotState` answers the absent entry and the unbound entry alike with one `codes.FailedPrecondition` (`pkg/adapter/slotsession.go:274-283`). The hold's own refusal is outside §1.19's inventory, because it is `errSlotReclaimInProgress`, a `codes.Aborted` raised at the top of `ensureSlotStateLocked`, which serves the bind-sequence and workspace RPCs and is never reached from `CoordinatorFence` (`pkg/adapter/coordination.go:116`). It carries neither the status code nor the RPC §1.19 is scoped to. The class set is therefore unchanged and only the membership of its classes moves. | Re-derive the membership of §1.19's three refusal classes against the remaining cases and the narrowed ABA class. The class set itself is unchanged. |
 | 0080 §1.7 (the `leaked` slot state is scoped to concurrent pods in the specification and not in the tree) | Draft (2026-08-31 per its own `Date` line; the document heads itself as an unconverged inventory) | §1.7 keeps its subject and both of the closures 0073 named, and the tree side of the divergence is untouched. `slothealth.UnhealthyThreshold`'s clamp of a sub-1 denominator to 1 and `drainLedger.RecordLeak` are unmodified, and no staged code produces a `leaked` disposition on an exclusive pod: the §7.3 re-attach accounting is gated on a non-empty slot id, which an exclusive pool never reserves, and the other two accounting callers sit behind `maxConcurrentSessions > 1`. The spec side grows from the two sites §1.7 names. SPEC-2's §7.1 paragraph and SPEC-3's §5.2 scrub-model append each restate that the `leaked` sub-state and the whole-pod replacement trigger are stated for concurrent occupancy, and each states pod retirement under §6.2's pre-attached failure disposition as the exclusive-pod alternative. | Re-derive §1.7 against four spec sites rather than the two §6.2 and §5.2 sites it names. |
 | 0080 §1.1, §1.3, §1.4, §1.5, §1.16, §1.20 | Draft | No conflict of subject. The adapter edits are placed in `session.go`, `runtimegeneration.go`, `resume.go`, `sdkwarm.go` and the new `bindepoch.go`. `slot.go` and `slotsession.go` are now opened as well, which the earlier reading of this row said they would not be: `ensureSlotStateLocked` mints the epoch and refuses the hold, `claimSessionSlot` and `claimSessionSlotUnderLock` report the epoch their critical section captured, and `slotState` gains an `epoch` field. Each edit is small and localised, so the later position's rewrite of those two files re-lands a mint, a refusal, a returned value and a struct field rather than a mechanism. | Re-land the epoch mint, the hold refusal, the claim functions' epoch return and the `slotState.epoch` field when the rewrite of `slot.go` and `slotsession.go` happens. |
 | 0073 (give every session a slot) | Implemented (2026-08-31 per its own status line; spec applied 2026-08-19) | This change touches 0073 in two ways. 0073 recorded this gap in its §9 recorded limits and declined to discharge it, and this proposal discharges it. SPEC-1 also retires the third sentence of §4.1's `ShutdownRequest` paragraph, which 0073's SPEC-7 authored and which reached `spec/04_system-components.md:157` in commit `f37e867b8`. That sentence states one per-session teardown gated on a bound entry; after the split there are two teardowns with two preconditions, and the slot release is gated on the entry being present. The paragraph's first two sentences, its session-scoped classification, and its closing rule are preserved. SPEC-4 and CODE-3 extend 0073's per-slot sub-state fence (`spec/06_warm-pod-model.md:150-155`) and its `pkg/sandbox/slotstate` edge list with one new edge, which adds to that list rather than retracting from it. | Nothing. A landed proposal is not edited, so this row is the record of what this proposal takes back from 0073. |

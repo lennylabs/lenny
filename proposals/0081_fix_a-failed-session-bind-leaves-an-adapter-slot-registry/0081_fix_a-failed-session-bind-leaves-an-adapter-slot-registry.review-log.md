@@ -3830,6 +3830,41 @@ WATCHOUT: "released back to the pool" in the staged §7.2 step 3 reads as return
 
 OPEN: `spec/10_gateway-internals.md:30` says pods validate `coordination_generation` "on every gateway→pod RPC", while the review-log Standing context records that the shipped adapter validates it only in `CoordinatorFence` and `CheckpointBarrier`. The staged §4.7.1 sentence ("is validated on the RPCs that carry it") sides with the spec, so it is not a defect of this proposal, but the spec/code divergence is real and unowned. Somebody should file it separately rather than inside 0081.
 
+### [f1.open-decisions.13]
+
+DECISION: resolved open decision 13 (should the applied spec state what a `superseded` successor inherits) as staged, and deleted it from the summary's `## Open decisions for human to make`. No staged spec or non-spec text changed, because spec-changes.md:534-536 already states the answer affirmatively ("the **Fresh workspace guarantee** ... stand[s] as written") and spec-changes.md:540-541 already scopes §5.2's retry policy to "the retries this policy places and no others".
+
+FACT: the question's `superseded` premise is false. spec-changes.md:390 defines `superseded` as an entry created after the failed attempt's entry was released, and a release runs the per-slot cleanup that removes the tree (`releaseSessionSlot` calls `deregisterSlot` then `removeSlotTree`), so the successor's workspace is materialized fresh. — EVIDENCE: pkg/adapter/slotsession.go:214-219
+
+FACT: the case where the tree genuinely is inherited is adoption of a surviving entry on the create-time-reserved path, which §5.2's slot retry policy does not place. `ensureSlotStateLocked` returns the existing `*slotState` before `slotlayout.EnsureTree` is reached, so the tree is created on the create branch alone; the guarantee's domain is fixed by the list it sits in. — EVIDENCE: pkg/adapter/slot.go:109,:116; spec/05_runtime-registry-and-pool-model.md:553,:555,:556
+
+DECISION: recorded the residual, that §5.2's Fresh workspace guarantee does not reach a retry adopting a surviving entry, as a row in the summary's `## Defects in the shipped tree that this proposal does not stage`, per both readings behind the item. The behaviour is shipped and the staged admission rules only narrow which attempts reach the pod, so nothing is staged against it.
+
+
+### [f1.open-decisions.14]
+
+DECISION: resolved open decision 14 (is the compensating `Shutdown` exempt from §10.1's coordination-generation fence) as staged — not exempt — and deleted entry 14 from the summary's `## Open decisions for human to make`. No staged spec or non-spec text changed: spec-changes.md:678 already states the answer affirmatively ("Where both appear on one message, as on `Shutdown`, each is checked on its own terms"), and staging an exemption would contradict it.
+
+FACT: the consequence the entry feared is already dispositioned by the proposal's own §7.1 paragraph. A generation-stale rejection is a reclaim the adapter did not answer, and spec-changes.md:390 assigns that arm the `leaked` sub-state on a pod serving concurrent sessions and pod retirement under §6.2's pre-attached failure disposition on a pod serving one, so §7.1's obligation is to send the reclaim rather than to have it accepted.
+
+FACT: §10.1's stale-replica rule tells a replica that receives a generation-stale rejection to cancel its in-flight RPCs for the session and not retry, which is the outcome the staged did-not-complete arm accounts for. An exemption would let a stale replica keep driving the pod, against that rule. — EVIDENCE: spec/10_gateway-internals.md:66-68
+
+DECISION: recorded the residual, that §10.1's per-RPC generation fence is unenforced across the whole adapter surface, as a row in the summary's `## Defects in the shipped tree that this proposal does not stage`, naming spec/10_gateway-internals.md:30 against pkg/adapter/coordination.go:120,:262 as the only non-test reads of the field. The divergence predates this proposal and is neither created nor widened here, so it belongs to a §10.1-scoped proposal.
+
+FACT: the summary's open-decisions preamble said "entries 12 and 14 were added after the spec loop converged"; with 14 deleted it now reads "entry 12 was added after the spec loop converged".
+
+### [f1.cleanup]
+
+FACT: the summary already carried exactly the required sections, in the required order, and nothing else. `# Summary: ...`, `## Summary` holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**` and `**Watch out for.**` in that order and carrying no prose of its own, then `## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, and `## Deliverable index` last. No `### Retired` block, no meta-list of staged items, and no deferrable correction block was present, so nothing was relocated and no content was dropped.
+
+FACT: `## Open decisions for human to make` carries entries 11 and 12 and only those, each keeping its original number. Entries 13 and 14 were deleted by this firing's write path and their answers verified as already staged: spec-changes.md:535-541 keeps §5.2's **Fresh workspace guarantee** as written and scopes the retry policy to "the retries this policy places and no others" (13), and spec-changes.md:678 states "Where both appear on one message, as on `Shutdown`, each is checked on its own terms", so the compensating `Shutdown` is not exempt (14). Each residue is carried as a row of `## Defects in the shipped tree that this proposal does not stage`.
+
+DECISION: corrected the `## Open decisions for human to make` preamble, which the firing's deletions had falsified twice. It claimed "the numbering below is not contiguous" of a list that now reads 11 then 12, so the clause became "the numbering below does not start at 1"; and it accounted only for entry 9 leaving the section, so it now also records that entries 13 and 14 left, where their answers are staged and where their residues are recorded. Nothing else in the preamble changed: the entries still carry no recommendation, so that sentence stands.
+
+WATCHOUT: `**Decisions.**` names two other proposals for reasons of its own and neither was moved to `## Impacts on other proposals`. The 0076 mention ("the file has already been reopened once, for proposal 0076's comment-only edit") is the ground of SCHEMA-1's second proto window and is word-for-word the same claim the R1b impacts row makes, so the two agree and merging would delete the rationale from the argument that uses it. The 0080 mention ("a later position covering proposal 0080 rewrites both files") is the ground of the file-collision discipline and agrees with the `0080 §1.1, §1.3, §1.4, §1.5, §1.16, §1.20` row. Neither asserts anything about the other proposal's continued validity, which is what that section owns. A later pass that decides otherwise should merge into the existing row rather than add one.
+
+FACT: `## Deliverable index` was not touched. It stands last, line for line as the reconciliation pass left it, with its fourteen deliverable lines and its closing paragraph on tests and CONF-1.
+
 ## Index and checklist reconciliation (post-spec-loop)
 
 This pass rebuilt the summary's deliverable index from the staged spec and non-spec changes,
@@ -4170,3 +4205,18 @@ they stay here.
 
 No staged deliverable is added, removed, merged, split or resequenced by this pass, and every
 checklist box stays unticked.
+
+### [f1.open-decisions.threshold-retune]
+
+DECISION: retuning the `ceil(maxConcurrentSessions/2)` unhealthy threshold stays out of scope, and I wrote nothing, because the proposal already carries the item exactly as adjudicated. The Non-goals bullet at `0081_....summary.md:312-313` stands verbatim and `## Defects in the shipped tree that this proposal does not stage` carries no threshold row, which is the recommended state. An earlier firing reached and recorded the same call (`0081_....review-log-archive.md:3734`).
+FACT: the threshold's formula and denominator are untouched by every staged deliverable. `UnhealthyThreshold` is `(maxConcurrent+1)/2` clamped to 1 (`pkg/gateway/runtime/slothealth/slothealth.go:215-220`) and the sole production trigger is `health.Unhealthy(sbe.Pod, req.MaxConcurrentSessions)` at `pkg/gateway/sessionserver/start.go:2857`, whose drain block is unchanged at `:2858-2870`. CODE-5 adds callers that reach that trigger; it does not move it.
+FACT: the threshold is not asserted as a defect anywhere in the proposal, so a row in the not-staged defects section would state something the proposal does not hold. The behavioural cost of new paths reaching the trigger is carried by the "Faster pod churn at `maxConcurrentSessions >= 3`" bullet under "Watch out for" at `0081_....non-spec-changes.md:1764-1773`, whose last sentence already states that the §7.3 re-attach reaches the accounting for the first time and so drains a replacement pod at `maxConcurrentSessions: 2`.
+WATCHOUT: the Non-goals bullet's justification half "adds accounting where there is none" is not the whole of CODE-5. On `applySlotRetryPolicy` the accounting already exists and its discriminator today is `relErr != nil` alone (`pkg/gateway/sessionserver/start.go:2834-2854`); CODE-5 widens it to `sbe.Leaked || relErr != nil`, so an unacknowledged reclaim on that path moves from the windowed arm to the persistent-leak arm. The bullet's operative claim, that no threshold changes, is exactly true, and the retry-path disposition change is stated correctly elsewhere in the proposal, so the falsifier let the bullet stand. A later pass that rewrites this bullet should not restate the "where there is none" half.
+
+### [f1.open-decisions.0080-1.19]
+
+DECISION: updated the `0080 §1.19` row in `## Impacts on other proposals` (`0081_....summary.md:586`) rather than adding one. The membership analysis the row already carried stands and is untouched; I replaced only its closing sentence and its "What it must do" cell. The new closing text states that the reclaim hold adds one more producer of an arm §1.19 already enumerates, because a held slot identifier carries no registry entry and `boundSlotState` answers the absent entry and the unbound entry alike with one `codes.FailedPrecondition`, and that the hold's own refusal sits outside §1.19's inventory. The action cell now reads "Re-derive the membership of §1.19's three refusal classes against the remaining cases and the narrowed ABA class. The class set itself is unchanged."
+FACT: the retired sentence, "No bind-sequence RPC gains a refusal, so the class inventory grows by the reclaim hold's `ABORTED` refusal alone", was wrong on both halves. The staged sentinel `errSlotReclaimInProgress` is a `codes.Aborted` raised at the top of `ensureSlotStateLocked` (`0081_....non-spec-changes.md:946-967`), which is reached from `claimSessionSlotUnderLock`, `assignCredentialsSlot` and `ensureSlotPaths`, so the bind-sequence and workspace RPCs are exactly where it lands.
+FACT: `CoordinatorFence` resolves its entry through `boundSlotState` at `pkg/adapter/coordination.go:116`, and `boundSlotState` returns one `codes.FailedPrecondition` with one message for both `!ok` and `st.sessionID == ""` (`pkg/adapter/slotsession.go:274-283`). No staged deliverable opens either that function or `checkSessionBound`, so §1.19's class set is unchanged and only membership moves.
+FACT: 0080 is unlanded and still owns the section. Its §1.19 heading is at `proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md:350` and its ground sentence at `:352` scopes the defect to the three `FailedPrecondition` refusals the adapter returns on the fence path, which is what the row assumes. The row's `Draft` status column is accurate; it carries no date and none was added.
+FACT: the problem statement's own §1.19 paragraph (`0081_....problem-statement.md:312-315`) states only that this change alters the membership of the sets `boundSlotState` and `checkSessionBound` read. That is consistent with the corrected row, so no correction to the problem statement was needed.
