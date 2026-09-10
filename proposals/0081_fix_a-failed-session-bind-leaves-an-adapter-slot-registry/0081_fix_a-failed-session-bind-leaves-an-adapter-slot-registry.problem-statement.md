@@ -105,9 +105,11 @@ the rolling-window failures plus persistent leaks reach `ceil(maxConcurrentSessi
 low-concurrency pool retire the pod. The mainline create-time path carries no such accounting:
 `BindReservedSlot` releases the reservation, records nothing on the tracker, never evaluates the threshold,
 and returns terminally (`slotbinder.go:210-224`; `pkg/gateway/sessionserver/start.go:2594-2605`). Proposal
-0078 exists to make pods survive across sessions, which widens exactly this exposure, so this is sequenced
-ahead of it. Proposal 0079 does not widen it, because it retires a sidecar pod at each occupancy-zero recycle
-boundary.
+0078 keeps the pod's runtime listener bound across a session teardown, and it does not widen this
+exposure: its own scope note states that after it lands a recycling sidecar pod still serves one session
+and fails at the accept timeout. It is sequenced after this one for the test-file reason the summary's
+impacts row records. Proposal 0079 does not widen it, because it retires a sidecar pod at each
+occupancy-zero recycle boundary.
 
 THE MISSING COMPENSATION IS ON THE GATEWAY SIDE, so this is not an adapter-only change, and it is the change
 most able to break a working bind path. The remedy is closer to hand than the original statement assumed.
