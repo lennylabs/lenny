@@ -205,8 +205,11 @@ the current defect as the contract by gating the whole teardown on the binding.
   leaks. At `maxConcurrentSessions: 2` a single cleanly released bind failure already drains
   the pod today, so a test that uses that concurrency cannot distinguish the leaked arm from
   the failed arm. The gateway accounting cases use `maxConcurrentSessions: 4`.
-- `TestValidTransitions_spec_6_2` asserts an exact edge count and fatals on a length
-  mismatch. The §6.2 edit and the `slotstate` edit must land together.
+- `TestValidTransitions_spec_6_2` compares a `want` list in
+  `pkg/sandbox/slotstate/slotstate_test.go` against `ValidTransitions()` and fatals on a
+  length mismatch. CODE-3 changes both, so the two must move in the same step. Nothing
+  compares either against `spec/06_warm-pod-model.md`, so the §6.2 edit is not what the test
+  gates.
 - `SlotID == SessionID` on every path, and §5.2 placement prefers a pod already hosting the
   tenant's slots. A retry therefore re-uses the identifier and can land on the pod whose
   reclaim may still be running `os.RemoveAll` outside `s.mu`. CODE-5 closes that window by
@@ -328,11 +331,15 @@ The spec review loop routed these to a human. Each states the question and the g
 derived. None of them carries a recommendation. Entry 9, the create-time-reserved retry's
 unbounded exposure, has left this section: the bind epoch and the reclaim hold close the
 released-entry ordering, and the shared-entry ordering is accepted, recorded under
-`## Decisions` together with what closing it would cost. Entries 13 and 14 have also left it:
+`## Decisions` together with what closing it would cost. Entry 17 re-puts entry 9's question
+against the text the spec loop converged on, which states a worse residue than the text entry 9
+was answered against. Entries 13 and 14 have also left it:
 the spec the proposal stages already answers both, and the residue each named is recorded under
 `## Defects in the shipped tree that this proposal does not stage`. Resolved entries are deleted
-and the survivors keep their original numbers, so the numbering below does not start at 1; entry
-12 was added after the spec loop converged.
+and the survivors keep their original numbers, so the numbering below does not start at 1 and
+skips the numbers the resolved entries held; entry 12 was added after the spec loop converged,
+and entries 15 through 18 were carried out of the review log by the index-and-checklist
+reconciliation pass.
 
 11. **Does §7.1's trigger read "fails" or "abandoned or fails"?** §7.1's staged paragraph opens with
     a bind attempt that fails, while SPEC-3 and SPEC-4 say "abandoned or fails", and §7.2 and §6.2
@@ -350,6 +357,54 @@ and the survivors keep their original numbers, so the numbering below does not s
     should say so, or whether the hold ends when the cleanup gives up and the slot becomes
     bindable again while a leaked residue stands. The spec review loop derived the question and
     stated one option, that the hold is permanent on a leaked slot, without recommending it.
+
+15. **Does §7.1's exclusive-pod clause need a mid-resume carve-out?** §7.1's staged paragraph
+    ends with the exclusive-pod case: on a pod serving one session the failed attempt releases
+    the pod's claim and the pod retires under §6.2's pre-attached failure disposition, so the
+    reclaim's residue does not outlive the pod. SPEC-2 also routes §7.2's mid-resume
+    snapshot-close sequence through the same §7.1 obligation, and on that path the pod being
+    reclaimed is the replacement pod the resume was binding rather than a pod the session was
+    attached to. Both readings of the exclusive-pod clause survive the evidence the loop
+    gathered: it either covers the mid-resume path unchanged, or it needs a carve-out saying
+    what disposition the mid-resume exclusive pod takes. The decision is which. The spec review
+    loop derived the question and states that only a human can adjudicate it; it recommends
+    neither reading.
+
+16. **Does the exclusive-pool resume budget want an upper clamp?** The compensating `Shutdown`
+    budget is §5.2's per-slot cleanup timeout, `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)`
+    seconds. On an exclusive pool the divisor is 1, so the budget is the whole
+    `cleanupTimeoutSeconds`, which §5.2's own example puts at 60 seconds. That is the longest
+    hold on the path with the least parallelism, taken on a request goroutine
+    `context.WithoutCancel` has detached from the client, and on an exclusive pool nothing is
+    accounted and nothing is released while it runs. The decision is whether the budget takes
+    an upper clamp on an exclusive pool. Three lenses recorded the exposure and none filed it,
+    because no stated budget is breached and the proposal argues the direction explicitly, so
+    the loop derived no recommendation.
+
+17. **Is the create-time-reserved retry's exposure acceptable as the corrected text now states
+    it?** This is the question entry 9 asked, re-put against the text the spec loop converged
+    on. Entry 9 left this section because the bind epoch and the reclaim hold close the
+    released-entry ordering. The shared-entry ordering is accepted, and what the staged edge
+    cases now say about it is worse than what entry 9 was answered against: a compensation
+    still on the wire when a retry adopts the surviving entry is not separated by the epoch,
+    and where the teardown lands after that retry has answered its client, it tears a serving
+    session down. §5.2-placed retries are kept off the reclaiming pod by the placement
+    constraint; a create-time-reserved retry is not, because `applySlotRetryPolicy` does not
+    place it. The decision is whether that residue is accepted as recorded under `## Decisions`,
+    or whether this proposal must close it, which means either placing the retried attempt off
+    the reclaiming pod without `applySlotRetryPolicy` and without a durable per-row exclusion,
+    or persisting the exclusion on the session row. The loop derived the question and the two
+    closure paths, and recommends neither.
+
+18. **Should a retry refused by a reclaim hold that never clears get a distinct client-visible
+    outcome?** When a reclaim for a session whose start the adapter admitted is never answered,
+    the hold on that slot identifier never reaches its stated terminal, so every further attempt
+    at the same session on that pod is refused as a transient condition until the pod
+    terminates. On a create-time-reserved slot §5.2's placement constraint does not move the
+    retry elsewhere, so the attempts retry against the same refusal. The residue is recorded in
+    the accepted failure modes and the refusal is `codes.Aborted`, which the client sees as a
+    transient failure rather than as a stuck session. The decision is whether that path warrants
+    a distinct client-visible outcome. The loop derived the question and recommends nothing.
 
 ## Defects in the shipped tree that this proposal does not stage
 
