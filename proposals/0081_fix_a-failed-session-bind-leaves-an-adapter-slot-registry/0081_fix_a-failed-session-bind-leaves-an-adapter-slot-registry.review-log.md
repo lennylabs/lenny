@@ -3740,6 +3740,26 @@ the `fakeSlotBinder`-needs-a-recorded-requests-field entry (Traps) between them 
 candidates before I spent a verifier pair on any of them. The Settled entry on directory-based tiers
 (Settled 182) is what stopped me filing a `// diagnosis:` gap against the `pkg/`-resident cases.
 
+### [f6.cleanup]
+
+FACT: the summary already carried exactly the required sections, in the required order, and nothing else. `# Summary: A failed session bind leaves a stale adapter slot registry entry`, then `## Summary` holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**` and `**Watch out for.**` in that order and carrying no prose of its own, then `## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other proposals`, and `## Deliverable index` last. No block was relocated, none was deleted, and the file is byte-identical to what firing 5 left. This is the second consecutive cleanup firing that found nothing misplaced.
+
+FACT: no rename was owed. The two labelled parts that earlier layouts spelled `**What is fixed.**` and `**Fixed decisions.**` already stand under their current names, so neither the problem-statement part nor the decisions part was touched.
+
+FACT: no `### Retired` block or equivalent stands inside `## Open decisions for human to make`. The section opens with its preamble and carries entries 9 and 11 and nothing between or after them.
+
+FACT: every item of this firing's disposition list is accounted for in one of the three permitted places. id:9 (human, gate stands, apply no-edit-needed) and id:11 (resolve, gate refuted, apply not-attempted) both stand as entries of `## Open decisions for human to make` under the identifiers 9 and 11, unrenumbered; id:11 stays the human's because the gate refuted its resolution and no answer was staged. The eight `out-of-scope-stands` markers map one-to-one onto the eight entries of `## Defects in the shipped tree that this proposal does not stage`, in the order the list gives them, and each stands verbatim. The seven impact-row markers (0080 §1.2, §1.19, §1.7, §1.1; 0073; 0075; 0078) map onto their own rows of `## Impacts on other proposals`, which carries nine rows in total, the other two being the R1b and R12 programme steps. The two markers whose gate refuted (0080 §1.7 and 0080 §1.1, and the 0073 row) produced no applied edit, so those rows stand as firing 5 left them.
+
+FACT: `## Open decisions for human to make`'s preamble is true against the entries the section now carries, so no correction was owed. Both entries reached the human through the spec review loop, entry 9 carries a recommendation, its two priced alternatives and a low confidence, and entry 11 states no recommendation. Nothing this firing did could falsify it, because nothing moved.
+
+FACT: `## Deliverable index` is preserved line for line in last position, SPEC-1 through SPEC-4, CODE-1 through CODE-5 and DOCS-1, with its closing paragraph stating that tests are not separate deliverables.
+
+FACT: the references to another proposal that sit outside `## Impacts on other proposals` are each a restatement of the row that owns the subject rather than a second assertion about that proposal's validity, so no merge was owed. `**Decisions.**` and Non-goals cite rule S-2's reservation of the single proto edit to step R1b and the deferral of the hold-timeout reclaim to step R12; the file-collision decision cites the later position covering 0080; the bricked-pod defect entry attributes the two halves of BUILD-GAPS finding F-5.2.33 to proposals 0078 and 0079. This re-derives `f5.cleanup`'s reading of the same four sites and agrees with it.
+
+OPEN: the file-collision decision and the 0080 §1.1 impacts row still disagree on the adapter file list, and this firing did not close it. `**Decisions.**` names `session.go` and `runtimegeneration.go`; the §1.1 row names `session.go`, `runtimegeneration.go`, `resume.go` and `sdkwarm.go`, which `non-spec-changes.md`'s "Files touched on application" confirms is the staged set, with `slotsession.go` taking a doc comment only and `slot.go` untouched. The load-bearing half, which two files the later 0080 position may rewrite without re-landing this work, agrees at both sites. This is the standing Open in the standing context, restated from the cleanup side so a compaction pass merges it rather than filing a third instance; a format pass may not correct it, because the correction is a content edit no move of this pass falsified.
+
+WATCHOUT: a cleanup firing that finds the file already conforming must still read the preamble of `## Open decisions for human to make` against the entries beneath it. Two firings have now reported "nothing relocated", and the temptation on the third is to skip the preamble check on the ground that nothing moved. The preamble is falsified by the adjudication that answers or withdraws an entry, which happens upstream of this pass, so "nothing moved" is not evidence that it is still true.
+
 ## Index and checklist reconciliation (post-spec-loop)
 
 This pass rebuilt the summary's deliverable index from the staged spec and non-spec changes,
