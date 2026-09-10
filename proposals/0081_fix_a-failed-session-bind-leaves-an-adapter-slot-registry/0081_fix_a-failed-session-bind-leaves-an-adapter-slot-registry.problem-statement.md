@@ -508,7 +508,7 @@ not re-derive it.
 - The gateway-side compensation already exists as a shipped idempotent RPC, so the remedy needs no new
   mechanism. Load-bearing. REFUTED in its original form, which read "and no proto edit": the shipped RPC
   carries no per-attempt identity, so the remedy takes one additive field on `ShutdownRequest` and one on
-  each response that creates or resolves a slot entry.
+  each request and each response of the bind sequence.
 - The consequence that decides between remedy classes is the surviving credential file and its armed expiry
   timers, which no predicate change can fix. Load-bearing.
 - The tree has already made the bound-to-started refinement twice, so "finish that refinement" is a third
