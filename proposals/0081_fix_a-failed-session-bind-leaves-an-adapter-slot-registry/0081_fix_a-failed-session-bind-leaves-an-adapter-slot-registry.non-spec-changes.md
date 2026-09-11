@@ -214,10 +214,12 @@ if started {
 // spec: §4.7 — the slot release runs for any entry the call removed,
 // bound or not. It follows the drain and the close so the agent process is
 // not reading a credential file the teardown has already removed inside the
-// §15.4.2 grace window. removeSlotTree reaches the slot's credential
-// directory, so widening it to `removed` is what reclaims
-// /run/lenny/slots/{sessionId}/credentials.json for a registered-but-unbound
-// entry; deregisterSlotLocked already cancelled the §4.9 expiry timers.
+// §15.4.2 grace window. Widening the gate from `bound` to `removed` newly
+// reclaims the slot tree ensureSlotStateLocked created, the workspace and
+// the empty credential directory, for a registered-but-unbound entry. A
+// bound entry's credentials.json was already reclaimed inside the shipped
+// `bound` gate, and the armed §4.9 expiry timers are cancelled outside it,
+// by deregisterSlotLocked, for every entry it removes.
 treeErr := error(nil)
 if removed {
     treeErr = removeSlotTree(st)
@@ -485,8 +487,10 @@ above it gains the matching line:
 //	receiving_uploads → slot_cleanup    (bind abandoned before the runtime is given the session)
 ```
 
-The edge list is the authoritative transcription of §6.2's fence, so this lands in the same
-step as the §6.2 edit. `IsValid(SlotAssigned, Running)` stays illegal.
+`ValidTransitions()` and `TestValidTransitions_spec_6_2`'s `want` list are one statement of
+the edge set, so CODE-3 moves both in its own step. Nothing compares either against
+`spec/06_warm-pod-model.md`, so SPEC-4 at S5 and CODE-3 at S7 are separate steps.
+`IsValid(SlotAssigned, Running)` stays illegal.
 
 ### CODE-4 · pkg/gateway/podlifecycle/podsession — the gateway compensates every post-connection bind failure and every failed resume, carrying the bind epoch and mapping the outcome first
 
@@ -1877,18 +1881,23 @@ and which `slotAddressCaseFiles` in
 `tests/tier0_static/spec_map_slot_address_registration_test.go` gains in its sorted position in
 that same step, because that gate derives inventory membership from a `slot*_test.go` file name
 and fails tier 0 for any such file the inventory omits. This tier owns the
-cases because CODE-1 widens the tree-removal gate from `bound` to `removed`, which brings
-`/run/lenny/slots/{sessionId}/credentials.json` into scope for a registered-but-unbound
-entry, and because the epoch is what decides whose credential material a reclaim reaches.
+cases because the epoch is what decides whose credential material a reclaim reaches, and
+because CODE-1 widens the tree-removal gate from `bound` to `removed`, which brings a
+registered-but-unbound entry's slot tree and its empty credential directory into scope. The
+credential file belongs to a bound entry and the shipped `bound` gate already reclaimed it;
+the armed §4.9 expiry timers, which only a bound entry carries, are cancelled by
+deregisterSlotLocked on every removal.
 Two arms that fail in opposite directions, each carrying `// spec: §4.7; §4.9; §5.2` and the
 `// diagnosis:` comment tier 9 requires:
 
 - A superseded reclaim leaves the successor's `credentials.json`, its credential directory,
   and its armed §4.9 expiry timers intact. A regression here lets a teardown belonging to an
   abandoned attempt reach a live session's credential material.
-- A matching reclaim leaves no credential material behind, for a registered-but-unbound
-  entry as well as for a bound one. A regression here leaves a written credential file and
-  armed timers on a pod that will serve a later session.
+- A matching reclaim leaves nothing of its attempt behind on either class: for a
+  bound-but-unstarted entry, no `credentials.json` and no armed §4.9 expiry timer; for a
+  registered-but-unbound entry, no slot directory and no credential directory. A regression
+  here leaves a written credential file and armed timers, or an orphaned slot tree, on a pod
+  that will serve a later session.
 
 ### Conformance battery for CONF-1, tier 10
 

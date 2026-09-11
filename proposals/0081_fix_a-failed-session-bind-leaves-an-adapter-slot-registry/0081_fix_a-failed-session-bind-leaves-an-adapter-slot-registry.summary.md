@@ -331,12 +331,11 @@ the current defect as the contract by gating the whole teardown on the binding.
 
 ## Open decisions for human to make
 
-The spec review loop routed entries 11 and 16 through 18 to a human, and this phase's own
-adjudication routed entry 19. Each states the question and the ground the loop
-derived, and carries a recommendation where the review derived one. Entry 9, the
-create-time-reserved retry's unbounded exposure, has left this section: the bind epoch and the
-reclaim hold close the released-entry ordering, and the shared-entry ordering is accepted,
-recorded in the staged spec changes under `## Edge cases and accepted failure modes` together
+The spec review loop routed entries 11 and 16 through 18 to a human. Each states the question
+and the ground the loop derived, and carries a recommendation where the review derived one.
+Entry 9, the create-time-reserved retry's unbounded exposure, has left this section: the bind
+epoch and the reclaim hold close the released-entry ordering, and the shared-entry ordering is
+accepted, recorded in the staged spec changes under `## Edge cases and accepted failure modes` together
 with what closing it would cost. Entry 17 re-puts entry 9's question against the text the spec
 loop converged on, which states a worse residue than the text entry 9 was answered against.
 Entries 12, 13, 14 and 15 have also left it: the spec the proposal stages
@@ -358,9 +357,7 @@ occupancy reaches zero on a recycling pod before the pod is reused"
 (`pkg/gateway/podlifecycle/podsession/binder.go:498-501`). Resolved entries are deleted
 and the survivors keep their original numbers, so the numbering below does not start at 1 and
 skips the numbers the resolved entries held; entries 16 through 18 were carried out of the
-review log by the index-and-checklist reconciliation pass. Entry 19 is newer than the rest:
-this phase's adjudication of the 0080 row in `## Impacts on other proposals` routed it to a
-human after two attempts at that row's assessment disagreed and neither survived the gate.
+review log by the index-and-checklist reconciliation pass.
 
 11. **Does §7.1's trigger read "fails" or "abandoned or fails"?** §7.1's staged paragraph opens with
     a bind attempt that fails, while SPEC-3 and SPEC-4 say "abandoned or fails", and §7.2 and §6.2
@@ -400,9 +397,12 @@ human after two attempts at that row's assessment disagreed and neither survived
     compensation still on the wire when a retry adopts the surviving entry is not fenced").
     Ground: the residue reaches only a create-time-reserved slot, because a slot the §5.2
     retry policy places is kept off the reclaiming pod by the staged placement constraint,
-    while a row carrying a `PodAssignment` goes through `BindReservedSlot` and never enters
-    `applySlotRetryPolicy` (`pkg/gateway/sessionserver/start.go:2594-2604`). The recommendation
-    is low-confidence because the harm is a silent correctness violation on a live session and
+    while a row carrying a `PodAssignment` in a non-recovery state goes through
+    `BindReservedSlot` and never enters `applySlotRetryPolicy`
+    (`pkg/gateway/sessionserver/start.go:2595`). A recovery-state row carrying one (the §7.3
+    resume-rebuild) falls to `bindSlotWithRetry` and is covered by the placement exclusion
+    like any other policy-placed retry (`pkg/gateway/sessionserver/start.go:2606-2609`).
+    The recommendation is low-confidence because the harm is a silent correctness violation on a live session and
     the review found no metric, alert, or runbook that would surface it.
 
     *Alternatives considered.* Placing the retried attempt off the reclaiming pod without
@@ -429,22 +429,6 @@ human after two attempts at that row's assessment disagreed and neither survived
     the accepted failure modes and the refusal is `codes.Aborted`, which the client sees as a
     transient failure rather than as a stuck session. The decision is whether that path warrants
     a distinct client-visible outcome. The loop derived the question and recommends nothing.
-
-19. **Does the 0080 impact row still state correctly what this staging does to 0080's
-    inventory?** (Stable identifier:
-    `marker:0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred:### 1.2 a bind
-    that fails after prepareworkspace leaves an entry nothing removes`.) The 0080 row under
-    `## Impacts on other proposals` asserts, entry by entry, which of 0080's recorded residues
-    lose their subject to this staging, which keep it, and by how much the claim-register
-    arithmetic 0080 §1.12 and §1.18 quote moves. A rewrite of that assessment was applied at
-    firing 5 of this phase and reversed afterwards, and its re-application was contested rather
-    than settled, so the row stands as it was written at firing 4. The decision for a human is
-    whether the row as it stands is the assessment this proposal publishes about 0080, or
-    whether it is re-derived before this proposal lands. The loop derived no recommendation, no
-    alternatives and no confidence, because its two attempts at the assessment disagreed and
-    neither survived the gate. Deciding that the row stands ships it as written. Deciding that
-    it is re-derived adds a pass over 0080's entries and a further review round before this
-    proposal can land.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -663,9 +647,10 @@ human after two attempts at that row's assessment disagreed and neither survived
   path already marks the slot leaked when the reservation release errors
   (`pkg/gateway/sessionserver/start.go:2834-2848`). CODE-4's compensating `Shutdown` adds
   instances of that existing producer rather than a new dependence. Re-deriving the
-  occupancy from the adapter is unavailable for any leaked slot, because the per-slot
-  registry carries a leaked count and no pod-wide occupancy count
-  (`pkg/sandbox/slotstate/registry.go:8-12`), so the gap is not distinctive to a failed
+  occupancy from the adapter is unavailable for any leaked slot, because the adapter's
+  only pod-wide entry count is the unexported `slotCount` that the §28.5.3 output
+  demultiplexer reads (`pkg/adapter/slotsession.go:398-407`), and no gateway-to-adapter
+  RPC returns a pod-wide occupancy count, so the gap is not distinctive to a failed
   bind. No fix is staged here because the remedy is wider than one clause. The single
   rebuild source is restated at four sites: §5.2's **Post-recovery rehydration atomicity**
   paragraph, §12.4's Redis key table row for `lenny:pod:{pod_id}:active_slots`, §12.4's
