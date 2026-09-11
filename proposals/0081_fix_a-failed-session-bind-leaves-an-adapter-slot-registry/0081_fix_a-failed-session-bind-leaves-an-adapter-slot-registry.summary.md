@@ -568,8 +568,12 @@ review log by the index-and-checklist reconciliation pass.
   create-time-reserved path reaches it in the shipped tree, because `BindReservedSlot`
   reconnects the retry to the same pod under the same slot identifier
   (`pkg/gateway/podlifecycle/podsession/slotbinder.go:210-224`). The producer here is the
-  abandoned attempt's own shipped rollback, which is a different mechanism from the
-  compensating `Shutdown` the bind epoch and the reclaim hold fence. No fix is staged because
+  abandoned attempt's own shipped rollback. CODE-6 routes it through `reclaimSlotLocked`, so it
+  does take the reclaim hold, and a retry that has not yet staged its tree meets that hold and
+  spends an attempt rather than losing a tree. The deletion survives in the ordering where the
+  rollback runs after the retry staged, which neither the epoch nor the hold separates: the
+  deregistration reads no epoch, and the tree paths derive from the identifier both attempts
+  share. No fix is staged because
   separating the two attempts needs a per-attempt identity on the adapter's slot entry
   that the platform does not carry, which is the same gap the accepted failure modes record
   for a compensation still on the wire when a retry adopts the surviving entry. This proposal
