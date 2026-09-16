@@ -105,39 +105,47 @@ has stopped waiting for the attempt that failed, so the reclaim can reach the ad
 the client's own retry has already bound the slot and started its session. The slot
 identifier is the session identifier, so the retry's registry entry is indistinguishable
 from the abandoned attempt's on identity alone, and an unfenced reclaim tears down a session
-that is serving its client. §4.7.1 states the **bind epoch** for that reason. The epoch names the registry entry the adapter holds for a slot identifier. It is a positive
-integer and zero is not one, so a request whose bind epoch is zero carries none. The adapter
-mints it when it creates a registry entry for a slot identifier it holds none for, and the
-entry carries it unchanged until it is released, so an entry created after a reclaim was
-dispatched carries a different one and the lagging reclaim compares unequal.
-Every bind-sequence response reports the epoch of the entry the call resolved. No
-bind-sequence request carries an epoch and none is refused on one, so a
-[§7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload, which reuses
-`PrepareWorkspace` and `FinalizeWorkspace` on the binding the session already holds, is
-answered at the entry's epoch under the same rule as any other resolving request. A caller
-holds the most recent epoch a response on its own connection reported, and holds none once
-it has itself issued an RPC on that connection that removes the entry the epoch names, so a
-caller that holds none sends the epochless form.
+that is serving its client. §4.7.1 states the **bind attempt token** for that reason. The
+gateway mints the token once per bind attempt, from a cryptographically secure random source,
+before that attempt issues its first pod-side RPC, and carries that one value on the requests
+§4.7.1 enumerates and on the compensating `Shutdown`. The adapter treats the token as opaque:
+it compares it for equality and derives no order, no age, and no identity from its bytes. The
+empty string is not a token.
 
-A `Shutdown` that names an epoch performs the slot release and the runtime teardown only when
-the entry the adapter holds for the named session carries that epoch, and performs neither
-when it does not. It is answered `superseded` when a different attempt owns the identifier
-and `absent` when the adapter holds no entry for the session, and both are completed reclaims
-that leave the slot unleaked. On `absent` the adapter holds nothing for the session. On
-`superseded` a later attempt owns the slot identifier and whatever the naming attempt created under it, and the entry the adapter now holds was created
-after the naming attempt's entry was released, so the naming attempt owns nothing the reclaim
-could release. A `Shutdown` that
-names no epoch is the unconditional teardown, which is what every caller other than a fenced
-compensation sends, including a compensation for an attempt that observed no epoch. The epoch
-is a bare scalar precondition on the request, carried as the `coordination_generation` fence
-on the same message already is, so §4.1's rule about a field's presence standing in for a
-scope is not engaged and §4.1 states nothing about the epoch. The refusal the reclaim hold produces is transient, so nothing about an attempt's
-retryability changes.
+**The adapter stamps the token on the entry it creates and never on one it resolves.** The
+adapter writes the request's token onto the registry entry at the moment it creates that entry,
+and it never writes the field again, in either direction. An entry therefore names the attempt
+that created it for as long as the entry lives, so the first attempt to create an entry owns it
+until the entry is removed and no later request takes that ownership away. The resolve, the
+stamp, and the comparison are one indivisible step under the lock that guards the registry.
+Without that clause first-writer-wins is not implementable from the prose: an adapter that
+resolved an entry, released its lock, and then stamped would satisfy each act separately and
+still admit two attempts onto one entry.
 
-**The epoch names the registry entry, and the adapter holds the slot identifier while its
-cleanup runs.**
-The bind epoch names the registry entry a reclaim is addressed to, so a reclaim addressed to
-an entry that was already released performs nothing. The epoch says
+**Admission reads the token and the stage the entry has reached.** A request whose non-empty
+token differs from the non-empty token the entry carries is refused as a transient condition. A
+request that is not a mid-session upload and that resolves an entry whose session has already
+started is refused as a permanent condition. A mid-session upload asserts no attempt identity,
+never creates an entry, and is refused on the precondition when the adapter holds no entry for
+the session. §15.1 carries a row for each of the two refusals, and the token field is non-empty
+exactly when the mid-session marker is false.
+
+**The `Shutdown` says which teardown it is asking for.** A `Shutdown` either names the bind
+attempt it compensates or asks for the unconditional teardown, and it carries exactly one of the
+two. A request that carries neither, and one that carries both, is an invalid argument and the
+adapter performs nothing. A `Shutdown` naming an attempt performs the slot release and the
+runtime teardown only when the entry the adapter holds for the named session carries that
+attempt's token, and performs neither when the entry carries a different token, when the entry
+carries none, and when the adapter holds no entry at all. The unconditional teardown is what
+every caller other than a compensating reclaim sends, and it removes whatever entry the adapter
+holds for the session. Stating the two forms as two fields rather than as the presence and the
+absence of one makes the destructive form the one a caller has to ask for by name, so a caller
+that forgets the token is answered with an error rather than a destroyed session.
+
+**The token names the bind attempt an entry belongs to, and the adapter holds the slot
+identifier while its cleanup runs.**
+An entry belongs to the attempt whose token it carries, so a reclaim naming an attempt
+whose entry was already released performs nothing. The token says
 nothing about a reclaim that is admitted and then races a successor while it tears state
 down, because the destructive steps read no registry state: the workspace directory, the
 credential directory, and the process group are each named from the slot identifier,
@@ -147,8 +155,10 @@ registry entry until the cleanup that reclaims it has finished, the hold outlast
 deregistration, and while the identifier is held the adapter admits no bind onto it and
 refuses one as a transient condition. §6.2's `slot_cleanup` sub-state begins when the
 gateway observes the failure, earlier than the deregistration the hold starts at, so
-§6.2 points at the hold rather than restating its window. The epoch closes the late reclaim and the hold closes the bind that arrives mid-cleanup.
-Neither closes the other's case.
+§6.2 points at the hold rather than restating its window. The token closes the late reclaim, the
+admission rules close the bind that a foreign attempt would otherwise make onto a live entry,
+and the hold closes the bind that arrives mid-cleanup. Each closes a case the others leave
+open.
 
 ## Edge cases and accepted failure modes
 
@@ -169,32 +179,29 @@ Neither closes the other's case.
 - **A client retry of the §15.1 start after a failed bind on a create-time-reserved slot.**
   The row keeps its §4.6 pod binding, so the retried start reconnects to the same pod under
   the same slot identifier, and the §5.2 retry policy does not place this attempt, so its
-  placement constraint does not reach it. The epoch and the reclaim hold are what govern this
-  path instead, and three orderings arise. A retry that arrives while the first attempt's
-  cleanup is still running is refused on the reclaim hold, as a transient condition,
-  and binds on a further attempt. A retry that arrives before the lagging reclaim does meets the abandoned attempt's surviving
-  entry. Its workspace, setup and credential RPCs resolve that entry at the epoch the entry
-  already carries, whether or not its session has started, because the adapter refuses nothing
-  on an epoch. A retried `StartSession` onto an entry whose session has already started is
-  refused on the started-session condition, which is not an epoch rule and is not deleted here,
-  and that transient refusal consumes one of the client's own retries. A retry that arrives after the cleanup
-  finished materializes the slot afresh and owns it at a fresh epoch. Where the retry created a fresh entry, the previous attempt's reclaim names an epoch the
-  adapter no longer holds, so it is answered `superseded` or `absent` and performs neither
-  teardown, and neither the tree that retry staged nor the session it started can be taken down
-  by the previous attempt's reclaim. Where the retry adopted the surviving entry, it holds that
-  entry's own epoch, so the reclaim compares equal and removes it, and what that costs turns on
-  the ordering. A reclaim whose critical section runs while the retry is still mid-sequence
-  makes the retry fail its stage and retry again. A reclaim whose critical section runs after
-  the retry started its session and the gateway answered its client tears that session down:
-  the entry compares equal, so the runtime session is closed and the slot's directories are
-  removed under a session that is serving, and the gateway records the reclaim as a clean
-  `reclaimed`. That ordering is the shared-entry residue the accepted failure modes record
-  below, where what closing it would cost is stated.
+  placement constraint does not reach it. The attempt token and the reclaim hold are what govern
+  this path instead, and the orderings differ in what they cost. A retry that arrives while the
+  first attempt's cleanup is still running is refused on the reclaim hold, as a transient
+  condition, and binds on a further attempt. A retry that arrives before the lagging reclaim
+  does meets the abandoned attempt's surviving entry, and its first entry-resolving RPC carries
+  its own freshly minted token, which differs from the token the entry carries, so the adapter
+  refuses it as a transient condition before it touches workspace, setup, credential, or
+  registry state. That refusal consumes one of the client's own retries. The lagging reclaim
+  then names the token the entry does carry, compares equal, and removes the entry, so the
+  attempt after it creates a fresh entry and owns it under its own token. A retry that arrives
+  after the cleanup finished materializes the slot afresh and owns it the same way. In every
+  ordering the abandoned attempt's reclaim can only remove the entry its own attempt created:
+  where the retry created a fresh entry the reclaim is answered `superseded` or `absent` and
+  performs neither teardown, and where the retry was refused the entry the reclaim removes is
+  the one its own attempt left behind. Neither the tree a retry staged nor the session a retry
+  started can be taken down by a previous attempt's reclaim, which a fence scoped to the
+  registry entry could not guarantee and which is why the fence is minted per attempt by the
+  caller.
 - **A retry that meets the reclaim hold spends an attempt on it.** The refusal carries the
   `ABORTED` status §15.4 publishes as the transient classification, so the attempt keeps its
   §5.2 retryability. On the §7.3 resume the gateway classifier the non-spec changes amend is
-  what holds the row in `awaiting_client_action` for the client's retry. Three callers reach the
-  hold: a §7.4 mid-session upload still in flight when the session's own teardown opens it, a
+  what holds the row in `awaiting_client_action` for the client's retry. The callers that reach the
+  hold are a §7.4 mid-session upload still in flight when the session's own teardown opens it, a
   client-driven §7.3 resume, which carries no pod exclusion, and a retry the §5.2 policy places,
   when the hold it meets is one no reclaim opened. The §5.2 placement constraint covers a pod
   whose reclaim for this session did not complete, so it does not reach the hold a start-path
@@ -209,57 +216,48 @@ Neither closes the other's case.
   deadline when it carried none, plus the removal of the slot's directories. This is accepted
   rather than closed: a gateway-side wait-and-retry inside the bind path holds the client's
   request open for the same window and adds a second place where the timeout is stated.
-- **A bind that fails inside its first entry-creating RPC reclaims unfenced.** An attempt
-  whose first entry-touching RPC fails may have created the registry entry and still received
-  no response carrying its epoch, so it holds none and sends the unconditional form. The
-  window is one RPC wide and it precedes any successor, because the attempt has not yet
-  released the slot identifier to anything else, but a reclaim sent in it is not fenced. The
-  fence for that window would have to travel on the failing RPC's error rather than on its
-  response, which is a wider change to the gateway-adapter error surface than this proposal
-  stages.
+- **A bind that fails inside its first entry-creating RPC is fenced.** This was a residue while
+  the fence travelled on a response: an attempt whose first entry-touching RPC failed could have
+  created the registry entry and still have received no response carrying the fence, so it held
+  none and had to send the unconditional form. The attempt token is minted before the attempt's
+  first pod-side RPC and is held by the gateway rather than latched off a response, so an
+  attempt holds its token throughout that window and its compensation names it. The window is
+  closed rather than accepted, and closing it needs no change to the gateway-adapter error
+  surface.
 - **A reclaim the adapter does not acknowledge on a pod serving one session.** The failed
   attempt releases the pod's claim and the pod retires under §6.2's pre-attached failure
   disposition, so the residue dies with the pod. §6.2 states the `leaked` sub-state and §5.2
   the whole-pod replacement trigger under concurrent occupancy alone, so the disposition is
   not stated for an exclusive pod and is not needed there.
-- **A start that races the reclaim.** Three orderings arise. When the adapter admitted the
-  start before the reclaim removed the entry, the start finds its entry gone at the point it
-  would record the runtime as holding the session, takes the session back off the shared
-  runtime process, and refuses; the slot never reached `running` and no cleanup outcome is
-  reported. When the reclaim's answer precedes the start, the cleanup has finished and the
-  hold is released, so the start's own claim creates a fresh entry and mints a fresh epoch.
-  The confirmation compares the epoch that same claim observed against the entry that carries
-  it, so it compares equal and the start is recorded: the slot reaches `running` and the pod
-  is left holding an entry and a runtime session no gateway attempt owns. Nothing refuses that
-  ordering, and it is recorded among the accepted failure modes rather than closed. When a
-  successor has already taken the identifier, the abandoned attempt's claim resolves the
-  successor's entry rather than one of its own; a successor whose session has started refuses
-  it on the started-session condition, and a successor whose session has not started shares
-  one entry and one epoch with it, which is the shared-entry residue the accepted failure
-  modes record. The confirmation covers the window between the start's claim and the record of
-  the runtime holding the session, and what it refuses there is a start whose claimed entry
-  has been replaced by another attempt's.
-- **A compensation still on the wire when a retry adopts the surviving entry is not fenced.**
-  The epoch separates a reclaim addressed to a released entry from one addressed to the entry
-  that replaced it. It does not separate two attempts sharing one surviving entry: when a
-  compensation errors at the gateway while the adapter is still processing it, and a retry
-  reaches the same pod and the same slot identifier before the teardown removes the entry, the
-  retry resolves that entry at the epoch the entry already carries and the teardown compares
-  equal. Which interleaving follows decides the cost. A teardown whose critical section runs
-  while the retry is still mid-sequence makes the retry fail its stage and retry again, and
-  nothing leaks. A teardown whose critical section runs after the retry completed its whole
-  sequence tears down a session that has already answered its client: the start confirmation
-  spans only the window between the start's claim and the runtime record, so it admits a start
-  made on the shared entry, and the teardown then closes the runtime session and removes the
-  slot's directories while the gateway records the reclaim as a clean `reclaimed`. Closing
-  this needs a per-attempt discriminator, because the epoch does not tell two attempts apart
-  while they share one entry: a retry that adopts a surviving entry inherits that entry's
-  epoch. Such a discriminator would have to be carried on every request that can create or
-  resolve an entry, which this proposal does not stage.
+- **A start that races the reclaim.** The orderings differ in what they leave behind. When the
+  adapter admitted the start before the reclaim removed the entry, the start finds its entry
+  gone at the point it would record the runtime as holding the session, takes the session back
+  off the shared runtime process, and refuses; the slot never reached `running` and no cleanup
+  outcome is reported. When the reclaim's answer precedes the start, the cleanup has finished
+  and the hold is released, so the start's own claim creates a fresh entry and stamps the
+  attempt's token on it. The confirmation compares the token that same claim observed against
+  the entry that carries it, so it compares equal and the start is recorded: the slot reaches
+  `running` and the pod is left holding an entry and a runtime session no gateway attempt owns.
+  Nothing refuses that ordering, and it is recorded among the accepted failure modes rather than
+  closed. When a successor has already taken the identifier, the abandoned attempt's claim meets
+  the successor's entry, which carries the successor's token, so the claim is refused before it
+  can resolve the entry or record a start against it. That refusal is what removes the
+  shared-entry residue an entry-scoped fence left open: two attempts never share one entry,
+  because the entry belongs to the attempt that created it until it is removed.
+- **A compensation still on the wire when a retry reaches the same slot is fenced.** An
+  entry-scoped fence separated a reclaim addressed to a released entry from one addressed to the
+  entry that replaced it, and did not separate two attempts sharing one surviving entry: a retry
+  that resolved the surviving entry inherited that entry's fence value, so a teardown running
+  after the retry had answered its client compared equal and tore down a serving session. The
+  attempt token is the per-attempt discriminator that case needed. A retry never inherits the
+  surviving entry's token, because the token is minted by the caller per attempt and the adapter
+  writes it only on the entry it creates, so a retry that meets a surviving entry is refused and
+  the lagging teardown removes only what its own attempt left. The residue is closed rather than
+  accepted.
 - **An abandoned attempt's start whose claim runs after the reclaim completed re-creates the
-  entry.** The cleanup has finished and the hold is released, so the late `StartSession`
-  creates a fresh entry, mints a fresh epoch, and starts the session, and the start
-  confirmation compares the epoch that same claim observed against the entry that claim
+  entry.** The cleanup has finished and the hold is released, so the late `StartSession` claim
+  creates a fresh entry stamped with its own attempt's token and starts the session, and the
+  start confirmation compares the token that same claim observed against the entry that claim
   created, so it admits. The pod is left holding an entry and a runtime session no gateway
   attempt owns, which is residue class one reached by a second route. Closing it would need
   the adapter to hold the slot identifier until the gateway's reclaim has been answered, which
@@ -268,6 +266,28 @@ Neither closes the other's case.
   `StartSession` to reach the adapter after its own compensation completed, which the
   gateway's sequential bind stages make rare rather than impossible. The tier-1 hold suite
   pins it as a residue.
+- **An attempt that recreates its own entry after an unconditional teardown removed it.** A
+  token fences one attempt against another and cannot fence an attempt against itself. When an
+  unconditional `Shutdown`, such as a `/terminate` or a §11.4 revoke, removes the entry while one
+  of that attempt's own later requests is in flight, and that request is one that may
+  legitimately be an attempt's first entry-creating RPC, the request recreates the entry under
+  the same attempt's token and materializes from a staging tree the teardown emptied. The
+  session can then reach `running` on an empty workspace. Closing it needs either a generation
+  on the slot's on-disk tree or a bind-scoped lock spanning the whole attempt, each of which is
+  a wider change than this proposal stages. It is recorded here and carried as a deferred item
+  rather than closed.
+- **A compensation lost to a gateway crash leaves an entry no attempt can use.** The reclaim is
+  sent once, from the process that abandoned the attempt, so a gateway that dies between
+  abandoning the attempt and sending the reclaim leaves a registry entry stamped with a token
+  no live attempt holds. Every later attempt at that session on that pod is refused as
+  superseded, so the session is unstartable on that pod until the pod is replaced. This is
+  strictly worse than what an entry-scoped fence left, which let a later attempt adopt the
+  entry, and it is the cost of refusing adoption. Two recoveries are named and neither is in
+  this proposal: a durable record of the pending reclaim, written beside the session row before
+  the compensating `Shutdown` is sent and re-driven from a startup sweep until the adapter
+  answers, and a reaper for a registry entry no attempt owns, whose recovery primitive is the
+  unconditional teardown this proposal adds. Each goes out as its own finding against the
+  section that owns it.
 - **A bind abandoned at the connect stage.** The slot is reserved before any workspace RPC,
   so the adapter holds nothing and no reclaim is owed. §6.2 still has no terminal out of
   `slot_assigned`; that hole is pre-existing, and the summary records it, the widening this
@@ -296,13 +316,18 @@ Replace it with:
 The handler runs the slot release and the runtime teardown under the preconditions [Section 4.7](#47-runtime-adapter) states, and runs the whole-pod scrub when the recycle disposition is set, so no operation is selected by a field's presence standing in for a scope.
 ```
 
-No sentence about the bind epoch is added here. `expected_bind_epoch` is a bare `int64`
-and is therefore present on every `ShutdownRequest`, exactly as the `coordination_generation`
-fence the same message already carries is (`schemas/lenny-adapter.proto:1630-1635`). This
-subsection's closing rule forbids an operation selected by a field's presence standing in for
-a scope, and a field that has no wire presence cannot engage it, which is why the paragraph
-states nothing about `coordination_generation` either. The replacement sentence therefore
-delegates both teardown preconditions to §4.7, which owns them, and states no epoch rule.
+No sentence about the bind attempt token is added here. `bind_attempt` is a bare `string`
+carried beside the address on `PrepareWorkspaceRequest`, `FinalizeWorkspaceRequest`,
+`RunSetupRequest`, `AssignCredentialsRequest`, `ResumeRequest`, and `ShutdownRequest`, and
+`unconditional_teardown` is a bare `bool` carried beside the address on `ShutdownRequest`.
+Neither is declared `optional`, so neither has wire presence, and neither selects an operation
+or a scope: each is a precondition the handler reads on a request whose scope its own address
+already fixes. The precedent sits on this same message. The shipped comment on
+`ShutdownRequest.recycle` says the field "carries the occupancy-zero recycle disposition beside
+the named session's teardown rather than selecting a scope"
+(`schemas/lenny-adapter.proto:1621-1627`), and both new fields sit beside the address in that
+way. The replacement sentence therefore delegates both teardown preconditions to §4.7, which
+owns them, and states no rule about either field.
 
 The paragraph's first two sentences are untouched and this edit retires no vocabulary. The
 second sentence ("The per-slot teardown and the whole-pod teardown are the same operation on
@@ -330,13 +355,16 @@ Replace that opening with the text below, leaving the remainder of the row (from
 default disposition the pod is replaced." to the end) unchanged:
 
 ```
-| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. The **slot release** is the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot cleanup for that slot, and it runs whenever the adapter holds an entry for the named session, whether or not `AssignCredentials` has bound that entry. The **runtime teardown** runs only for a session whose start the adapter has admitted. Which RPC in this table starts a session depends on the pod's session mode and on whether the session is new or resumed; the precondition is the adapter's admission of that RPC, taken at the moment of admission rather than at the moment the session reaches the runtime, so a start still in flight is torn down rather than skipped. It flushes the session's final usage report and then closes the runtime. The [Section 15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine) graceful-shutdown signal precedes that close and carries a condition of its own, because the signal is pod-global and names no session: it goes out only when the deregistration leaves the adapter holding no bound entry, since sending it while a co-tenant is still bound would signal the shared runtime to terminate while it is serving that session. A request naming a session the adapter holds no entry for removes nothing, runs neither teardown, and answers with a clean-exit response. The request may carry the bind epoch [Section 4.7.1](#471-role-and-gateway-rpc-contract) states, which is a precondition on the whole request: when the request carries one, the adapter performs the slot release and the runtime teardown only if the entry it holds for the named session carries that epoch, and performs neither when it does not. The response reports which of the three outcomes [Section 4.7.1](#471-role-and-gateway-rpc-contract) states the reclaim took. A superseded reclaim is neither a failed reclaim nor a leaked slot: the entry the adapter now holds was created after the naming attempt's entry was released, so the naming attempt owns nothing the reclaim could release, and the reclaim correctly performed nothing. A request carrying no epoch is the unconditional teardown, which is what every caller other than a fenced compensation sends, including a compensation for an attempt that observed no epoch, and its response reports `reclaimed` for an entry it removed and `absent` for a session it holds none for. The request carries the recycle disposition beside that teardown rather than selecting a scope.
+| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. The **slot release** is the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot cleanup for that slot, and it runs whenever the adapter holds an entry for the named session, whether or not `AssignCredentials` has bound that entry. The **runtime teardown** runs only for a session whose start the adapter has admitted. Which RPC in this table starts a session depends on the pod's session mode and on whether the session is new or resumed; the precondition is the adapter's admission of that RPC, taken at the moment of admission rather than at the moment the session reaches the runtime, so a start still in flight is torn down rather than skipped. It flushes the session's final usage report and then closes the runtime. The [Section 15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine) graceful-shutdown signal precedes that close and carries a condition of its own, because the signal is pod-global and names no session: it goes out only when the deregistration leaves the adapter holding no bound entry, since sending it while a co-tenant is still bound would signal the shared runtime to terminate while it is serving that session. A request naming a session the adapter holds no entry for removes nothing, runs neither teardown, and answers with a clean-exit response. Every request states which teardown it asks for. It carries either a non-empty `bind_attempt`, naming the bind attempt it compensates ([Section 4.7.1](#471-role-and-gateway-rpc-contract)), or `unconditional_teardown`, and it carries exactly one of the two. A request carrying neither, and a request carrying both, is answered `INVALID_ARGUMENT`: the adapter performs neither teardown, removes no entry, and changes nothing. A request naming a bind attempt performs both teardowns, under their own preconditions above, only when the entry the adapter holds for the named session carries that attempt's token. It performs neither, and removes nothing, when that entry carries a different token, when that entry carries no token, and when the adapter holds no entry for the session. A request asking for the unconditional teardown performs both teardowns, under their own preconditions above, on whatever entry the adapter holds, and it is what every caller other than a compensating reclaim sends. The response reports the outcome the reclaim took, which is `reclaimed` for an entry the request removed, `superseded` for an entry a different bind attempt owns, and `absent` for a session the adapter holds no entry for, as [Section 4.7.1](#471-role-and-gateway-rpc-contract) defines them. A superseded reclaim is neither a failed reclaim nor a leaked slot: the entry the adapter holds was created by a different bind attempt, so the naming attempt owns nothing the reclaim could release, and the reclaim correctly performed nothing. The request carries the recycle disposition beside that teardown rather than selecting a scope.
 ```
 
-The last of the added sentences is what keeps every existing caller defined: the §11.4
-revoke fan-out, the occupancy-zero recycle edge, and `Binder.ReleaseSlot` all send the
-unfenced form, and without that sentence the row would state an outcome only for a request
-that carries an epoch.
+The two-field rule is what keeps every existing caller defined: the §11.4 revoke fan-out, the
+occupancy-zero recycle edge, and `Binder.ReleaseSlot` all ask for the unconditional teardown by
+setting `unconditional_teardown`, and only a compensating reclaim names a bind attempt. Stating
+the unconditional form as its own field rather than as the absence of a token is what makes the
+destructive form the one a caller has to ask for by name: a caller that omits the token is
+answered `INVALID_ARGUMENT` rather than served a teardown it did not ask for, and an adapter
+that refuses a `Shutdown` naming nothing stays conforming.
 
 The row does not enumerate the slot release's actions; §5.2 owns that list. It does not name
 `ReportSessionScrub` either, because §5.2 states both the report and the pre-`running` exception
@@ -398,17 +426,18 @@ in the same place, directly below it and before the line resuming `(executionMod
 isolationProfile, scrubPolicy summary)`:
 
 ```
-**Pod-side reclaim on a failed bind.** A gateway bind attempt that fails after the gateway has issued its first pod-side RPC for the session (the creation finalize block, the [§15.1](15_external-api-surface.md#151-rest-api) start transition, or a [§7.3](#73-retry-and-resume) re-attach onto a replacement pod) also reclaims the state that attempt created on the pod: the gateway sends `Shutdown` for the session on the connection the failed stage still holds, before that connection closes, and releases the slot reservation afterwards. The obligation begins with an attempt's first such RPC and ends when that attempt succeeds. The gateway sends the reclaim even when the failing RPC's own context is already cancelled or past its deadline, because that is the case in which the adapter may have started the session. The reclaim runs on the connection the failed attempt already holds and never dials a new one, because the epoch the attempt holds is latched off the responses that connection reported to it, so a reclaim that dialled a fresh connection would hold none and would send the unconditional teardown at a pod that may already hold a successor's slot. The reclaim names the registry entry it compensates by carrying the bind epoch the attempt observed on that connection ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), and it may name no other. An attempt that holds none, because no response carried it one or because it removed the entry the epoch named, sends the unconditional form. A reclaim naming an attempt that no longer holds the slot is answered `superseded`, and one for a session the adapter holds no entry for is answered `absent`; both are completed reclaims and leave the slot unleaked. On `absent` the adapter holds nothing for the session. On `superseded` the entry the adapter now holds was created after the failed attempt's entry was released, so the failed attempt owns nothing the reclaim could release. A reclaim the adapter does not answer, and one answered `reclaimed` without reporting a clean exit, are the reclaims that did not complete. On a pod serving concurrent sessions a reclaim that did not complete leaves the slot `leaked` under the [§6.2](06_warm-pod-model.md#62-pod-state-machine) disposition, which holds the slot's occupancy and counts it toward the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) whole-pod replacement trigger. The slot identifier is the session identifier, and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states that the adapter holds that identifier from the deregistration of its registry entry until the cleanup that reclaims it has finished, so a further attempt at the same session on that pod meets that hold while the reclaim runs and is refused as a transient condition. [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) keeps the retries its slot retry policy places off a pod whose reclaim for this session did not complete. A hold that no reclaim opened is outside that constraint, so an attempt the policy places can still meet one. Nothing about the attempt's retryability changes. On a pod serving one session the failed attempt releases the pod's claim and the pod retires under the [§6.2](06_warm-pod-model.md#62-pod-state-machine) pre-attached failure disposition, so the reclaim's residue does not outlive the pod; the `leaked` sub-state and the whole-pod replacement trigger are stated for concurrent occupancy and do not apply there. The pre-attached disposition governs the pod; this reclaim governs the slot state on a pod that is released or reused rather than terminated.
+**Pod-side reclaim on a failed bind.** A gateway bind attempt that fails after the gateway has issued its first pod-side RPC for the session (the creation finalize block, the [§15.1](15_external-api-surface.md#151-rest-api) start transition, or a [§7.3](#73-retry-and-resume) re-attach onto a replacement pod) also reclaims the state that attempt created on the pod: the gateway sends `Shutdown` for the session on the connection the failed stage still holds, before that connection closes, and releases the slot reservation afterwards. The obligation begins with an attempt's first such RPC and ends when that attempt succeeds. The gateway sends the reclaim even when the failing RPC's own context is already cancelled or past its deadline, because that is the case in which the adapter may have started the session. The reclaim is sent on the connection the failed attempt already holds when that connection is still open, because reusing it costs nothing; the fence does not depend on the connection, and a reclaim sent on a fresh connection is fenced exactly as one sent on the original. The reclaim names the bind attempt it compensates by carrying that attempt's token ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), and it may name no other. The gateway mints that token before the attempt's first pod-side RPC and holds it independently of any response, so every attempt holds its own token for the whole of the obligation and a compensation always names one. A reclaim naming an attempt that no longer holds the slot is answered `superseded`, and one for a session the adapter holds no entry for is answered `absent`; both are completed reclaims and leave the slot unleaked. On `absent` the adapter holds nothing for the session. On `superseded` the entry the adapter holds was created by a different bind attempt, so the failed attempt owns nothing the reclaim could release. A reclaim the adapter does not answer, and one answered `reclaimed` without reporting a clean exit, are the reclaims that did not complete. On a pod serving concurrent sessions a reclaim that did not complete leaves the slot `leaked` under the [§6.2](06_warm-pod-model.md#62-pod-state-machine) disposition, which holds the slot's occupancy and counts it toward the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) whole-pod replacement trigger. The slot identifier is the session identifier, and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states that the adapter holds that identifier from the deregistration of its registry entry until the cleanup that reclaims it has finished, so a further attempt at the same session on that pod meets that hold while the reclaim runs and is refused as a transient condition. [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) keeps the retries its slot retry policy places off a pod whose reclaim for this session did not complete. A hold that no reclaim opened is outside that constraint, so an attempt the policy places can still meet one. Nothing about the attempt's retryability changes. On a pod serving one session the failed attempt releases the pod's claim and the pod retires under the [§6.2](06_warm-pod-model.md#62-pod-state-machine) pre-attached failure disposition, so the reclaim's residue does not outlive the pod; the `leaked` sub-state and the whole-pod replacement trigger are stated for concurrent occupancy and do not apply there. The pre-attached disposition governs the pod; this reclaim governs the slot state on a pod that is released or reused rather than terminated.
 ```
 
 The paragraph states no deadline for the reclaim. §5.2's per-slot cleanup timeout is the
 figure the gateway reuses, cited from the code rather than restated here.
 
-The no-re-dial rule is stated in the paragraph rather than left to the code because the
-epoch fence depends on it. An epoch is minted for a registry entry inside one adapter
-process, and a caller latches it off the responses one connection reported to it, so a
-compensation that dialled a fresh connection would hold none on that connection and would
-send the unconditional teardown at a pod a successor may already hold.
+The paragraph states the connection preference and no correctness rule about it. A caller holds
+its own attempt token from before its first pod-side RPC, independently of any connection and of
+any response, so a compensation sent on a fresh connection carries the same token and is fenced
+the same way. Reusing the open connection is the cheaper path rather than the correct one, which
+is what makes a durable re-drive of the compensation, after the connection or the process that
+sent it has gone, buildable as its own change.
 
 ### SPEC-2 · spec/07_session-lifecycle.md § 7.2 (Mid-resume terminal transitions — snapshot-close semantics)
 
@@ -609,7 +638,7 @@ Append to that paragraph:
 ```
 That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a pod of either concurrency. It also runs when a bind is abandoned or fails after its slot enters `receiving_uploads` and before it reaches `running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), and a cleanup on that path reports no outcome, because `ReportSessionScrub` advances the pod's served-session count and that count records the sessions the pod's shared runtime process has been given. A cleanup on that path that a reclaiming `Shutdown` performs and that does not complete is accounted on that request's response, which does not report a clean exit. On a pod serving concurrent sessions the slot is then `leaked` under [Section 6.2](06_warm-pod-model.md#62-pod-state-machine), so it holds its occupancy, counts toward the whole-pod replacement trigger stated below, and is surfaced on the `lenny_adapter_leaked_slots` gauge. On a pod serving one session the disposition is the one [Section 7.1](07_session-lifecycle.md#71-normal-flow) states: the failed attempt releases the pod's claim and the pod retires, so the reclaim's residue does not outlive the pod. A cleanup the adapter runs inside the failed start's own handler reports nothing and no response carries its outcome, so its residue is accounted at the whole-pod boundary instead: on a recycling pod the occupancy-zero whole-pod scrub stated below removes every per-slot workspace tree and every per-slot credential file the pod still holds and verifies their absence, and a verification that fails is handled under the pool's `onScrubFailure` policy stated below; a pod that does not recycle retires at that boundary and the residue does not outlive it. A cleanup that reclaims a slot the pod's shared runtime process was given is a session release like any other and reports its outcome. A session release produces at most one cleanup-outcome report, filed by the cleanup that reclaims the slot.
 
-**Slot-identifier reclaim hold.** The adapter holds a slot's identifier from the critical section that deregisters the slot's registry entry until the cleanup that reclaims the slot has finished. The hold outlasts the deregistration because the cleanup's remaining acts are addressed by the slot identifier rather than by the entry: the removal of the slot's workspace directory, the removal of its credential directory, the kill of its process group, and the close of the session on the pod's shared runtime process are each resolved from the identifier, and every attempt at the same session names the same identifier. The hold is a property of the identifier rather than of an entry, because the entry is what a later attempt would re-create and because the adapter's other rules read the entry set as the pod's live occupancy. While the identifier is held the adapter admits no request that would create or resolve a registry entry under it, and refuses one as a transient condition so the caller retries. A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure. The hold lasts as long as the cleanup it covers. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming request carries when the request carries one, by that request's own deadline when it carries none, and, for a hold taken outside any request, by the termination window of the pass that runs the cleanup. The cleanup's removal of the slot's directories runs after that close under no deadline, so the hold outlasts the window by the time that removal takes. The `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` figure the **Slot cleanup:** bullet states is the deployer's budget for that cleanup and is not a second bound on the hold. A release that runs its cleanup inside the RPC that requested it ends the hold before that RPC answers, so the pod-warm bind sequence that follows an SDK demotion does not meet it. [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind epoch the adapter reports for a slot's registry entry and the reclaim that names it.
+**Slot-identifier reclaim hold.** The adapter holds a slot's identifier from the critical section that deregisters the slot's registry entry until the cleanup that reclaims the slot has finished. The hold outlasts the deregistration because the cleanup's remaining acts are addressed by the slot identifier rather than by the entry: the removal of the slot's workspace directory, the removal of its credential directory, the kill of its process group, and the close of the session on the pod's shared runtime process are each resolved from the identifier, and every attempt at the same session names the same identifier. The hold is a property of the identifier rather than of an entry, because the entry is what a later attempt would re-create and because the adapter's other rules read the entry set as the pod's live occupancy. While the identifier is held the adapter admits no request that would create or resolve a registry entry under it, and refuses one as a transient condition so the caller retries. A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure. The hold lasts as long as the cleanup it covers. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming request carries when the request carries one, by that request's own deadline when it carries none, and, for a hold taken outside any request, by the termination window of the pass that runs the cleanup. The cleanup's removal of the slot's directories runs after that close under no deadline, so the hold outlasts the window by the time that removal takes. The `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` figure the **Slot cleanup:** bullet states is the deployer's budget for that cleanup and is not a second bound on the hold. A release that runs its cleanup inside the RPC that requested it ends the hold before that RPC answers, so the pod-warm bind sequence that follows an SDK demotion does not meet it. [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token the adapter stamps on a slot's registry entry and the reclaim that names it.
 ```
 
 The reclaim-hold paragraph is what makes the reclaim exclusive while it runs. The entry
@@ -679,24 +708,65 @@ slot anything else may bind, and §6.2 does not become a third statement of a wi
 
 Insert the block below immediately after the `*Adapter → Gateway RPCs:*` table closes and
 before the `#### 4.7.2 Checkpoint and Interrupt Mutual Exclusion` heading. The block states
-the bind epoch once, on the section that owns the gateway-adapter RPC contract, so the §4.7
-`Shutdown` row and §7.1 each point at one statement rather than carrying two. §4.1 states
-nothing about the epoch, because the field has no wire presence and the rule that paragraph
-closes with is about a field's presence standing in for a scope:
+the bind attempt token once, on the section that owns the gateway-adapter RPC contract, so the
+§4.7 `Shutdown` row and §7.1 each point at one statement rather than carrying two. §4.1 states
+nothing about either new field, for the reason the SPEC-1 commentary above gives:
 
 ```
-**Bind epoch.** The adapter mints a **bind epoch** when it creates a registry entry for a slot identifier it holds none for. The epoch belongs to that entry and does not change while the entry lives; it is released with the entry. The epoch is a positive integer, so zero is not an epoch: a request whose bind epoch is zero carries none, and a response reporting zero reports none. The epoch is unique and strictly increasing within one adapter process, pod-local, and never persisted: it survives neither a pod restart nor a re-attach onto a replacement pod. It is never derived from the session identifier, from the slot identifier, or from a `coordination_generation`. It is not a coordination generation and carries none of that field's semantics. The two answer different questions: the generation names the gateway replica that speaks for the session ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and is validated on the RPCs that carry it, while the epoch names the registry entry a reclaim is addressed to and is validated on `Shutdown` alone. Where both appear on one message, as on `Shutdown`, each is checked on its own terms.
+**Bind attempt token.** A **bind attempt** is one gateway attempt to bind a session onto a pod, running from that attempt's first pod-side RPC for the session until the attempt succeeds or is abandoned. The gateway mints a **bind attempt token** for each attempt: one opaque string value, drawn from a cryptographically secure random source, minted once, before the attempt issues its first pod-side RPC. The adapter compares the token for equality and does nothing else with it. It parses no structure out of it, derives no order and no age from it, and never mints one of its own. The empty string is not a token, so a request whose `bind_attempt` is empty names no attempt. A token belongs to an attempt rather than to a session, so two attempts at one session hold different tokens, and it is never derived from the session identifier, from the slot identifier, or from a `coordination_generation`. It is not a coordination generation and carries none of that field's semantics. The two answer different questions: the generation names the gateway replica that speaks for the session ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and is validated on the RPCs that carry it, while the token names the bind attempt a registry entry belongs to. Where both appear on one message, as on `Shutdown`, each is checked on its own terms.
 
-The bind-sequence RPCs are `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials`, `StartSession`, `ConfigureWorkspace`, and `Resume`. Each of them reports the entry's current epoch on its response, and none of them carries one on its request. A bind-sequence RPC that creates the entry reports the epoch it minted; one that resolves an entry the adapter already holds reports that entry's epoch and mints nothing. `PrepareWorkspace` is client-streaming: the adapter resolves the entry once, at the frame from which it first resolves the slot identifier, and the call's single response reports that entry's epoch. A [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload reuses `PrepareWorkspace` and `FinalizeWorkspace` on the entry the session already holds, so it reports that entry's epoch under the same rule and needs no rule of its own. `Shutdown` is the one request that carries a bind epoch, as a precondition on the whole request, and reports none on its response. Its response reports which of three outcomes the reclaim took: `reclaimed` when the adapter held the entry the request named and released the slot, `superseded` when it holds an entry for the session at a different epoch, and `absent` when it holds no entry for the session. All three are successful outcomes and are answered on a successful RPC. Every other RPC on this contract neither carries nor reports a bind epoch. No epoch precondition applies to any request other than `Shutdown`; this block states no refusal onto a slot identifier, and the refusal a cleanup in progress imposes is stated by the reclaim hold in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
+The requests that carry `bind_attempt` are `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials`, `Resume`, and the compensating `Shutdown`. Those are the requests through which a bind attempt creates or resolves a registry entry before its session starts, together with the reclaim that compensates the attempt. `StartSession` and `ConfigureWorkspace` carry none. A start may be issued by a later stage of the same binding than the stage that created the entry, so comparing a token on either of them would refuse a start against an entry the same binding legitimately created; the started-session rule below is what governs those two requests instead. No response reports a token. Nothing a caller must hold travels on a response, so a caller that received no response at all still holds the token it minted, and a caller on a fresh connection holds it exactly as the caller on the original connection did.
 
-The caller rules follow from that. A caller holds the most recent epoch a response reported to it on one adapter connection, and holds none on a connection that has received no such response. It holds none once it has itself issued an RPC on that connection that removes the entry the epoch names: `DemoteSDK` returns the pod to its pod-warm state ([Section 4.7](#47-runtime-adapter)) and removes the entry, and a `Shutdown` answering `reclaimed` removes it. A `Shutdown` carries an epoch only when it compensates a bind attempt the caller abandoned; such a compensation names the epoch the caller holds for that session and names no other. Every other `Shutdown`, and a compensation by a caller that holds none, carries no epoch and is the unconditional teardown, which is what every caller other than a fenced compensation sends. A caller sends a compensation on the connection its own attempt already holds and never dials a new one for it, because the epoch it holds is latched off the responses that connection reported to it, so a caller that dialled a fresh connection would hold none on it and would send the unconditional teardown at a pod that may already hold a successor's slot. A bind attempt whose stages span two connections, as the [Section 4.7.9](#479-startup-sequence-for-type-agent-runtimes) step-5 bind sequence does when the gateway splits it across a prepare and a launch, holds one epoch per connection and each connection's compensation names what that connection observed; both connections resolve one entry, so both observe one epoch.
+**The adapter stamps once, on the entry it creates.** When the adapter creates a registry entry for a slot identifier it holds none for, it writes the requesting attempt's token onto that entry. It never writes that field again, in either direction: an entry's token does not change while the entry lives, and a request that resolves an entry the adapter already holds writes nothing. The first attempt to create an entry therefore owns it until the entry is removed, and no later request takes that ownership away. The adapter resolves or creates the entry, stamps the token on an entry it creates, and performs the comparisons stated below as one indivisible step, under the same lock that guards the registry. Performing them as separable steps does not conform even when each step is correct on its own, because an adapter that resolved an entry, released its lock, and then stamped admits a second attempt onto that entry in the window between the two.
+
+**Admission.** The adapter applies the rules below to every request that would create or resolve a registry entry other than `Shutdown`, whose own rule is stated further below, and it applies them inside that same step, before it creates anything, stamps anything, or returns. A request marked `mid_session` that resolves no entry is answered `FAILED_PRECONDITION` and creates nothing. A request that is not marked `mid_session` and that resolves no entry creates the entry and stamps its token on it. A request whose non-empty `bind_attempt` differs from the non-empty token the resolved entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, which [Section 15.1](15_external-api-surface.md#151-rest-api) classifies as transient and a caller retries on. A request that is not marked `mid_session` and that resolves an entry whose session has already started is refused with `SLOT_BIND_ALREADY_STARTED`, which [Section 15.1](15_external-api-surface.md#151-rest-api) classifies as permanent. Any other request is admitted, and an admitted request that resolved an entry leaves that entry's token as it found it, whether the request carried a token or not.
+
+On those requests, `bind_attempt` is non-empty exactly when `mid_session` is false. A request that is not marked `mid_session` and carries an empty `bind_attempt`, and a request that is marked `mid_session` and carries a non-empty one, are each answered `INVALID_ARGUMENT`, and the adapter creates, resolves, and changes nothing. A [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload is the marked form: it reuses `PrepareWorkspace` and `FinalizeWorkspace` on the entry the session already holds, asserts no attempt identity, cannot create an entry, and is exempt from the started-session rule, because the session a mid-session upload runs against has started by definition. Because such a request asserts no attempt identity, the gateway issues one only for a session the issuing replica holds a live binding for. That admission is what keeps a request asserting no identity away from an entry its sender does not own.
+
+`PrepareWorkspace` is client-streaming. The adapter resolves the slot identifier once, from the first frame that carries one, and reads `bind_attempt` and `mid_session` from that same frame. A later frame of the same call whose `bind_attempt` is non-empty and differs from the first frame's, or whose `mid_session` differs from the first frame's, is refused, and the call resolves nothing further. A later frame that repeats the first frame's values, and one that carries an empty `bind_attempt` where the first frame carried one, are not disagreements.
+
+**`Shutdown` states which teardown it asks for.** A `Shutdown` carries either a non-empty `bind_attempt`, naming the bind attempt it compensates, or `unconditional_teardown`, and it carries exactly one of the two. A request carrying neither, and a request carrying both, is answered `INVALID_ARGUMENT`: the adapter performs neither teardown, removes no entry, and changes nothing. The comparison runs inside the same critical section as the deregistration and precedes it, so an entry the adapter refuses to release is never removed and restored.
+
+A `Shutdown` asking for the unconditional teardown removes whatever entry the adapter holds for the named session, and answers `reclaimed` when it held one and `absent` when it held none. A `Shutdown` naming a bind attempt removes the entry and answers `reclaimed` only when that entry carries the named attempt's token. It removes nothing and answers `superseded` when the entry carries a different token and when the entry carries no token, and it removes nothing and answers `absent` when the adapter holds no entry for the session. The entry-carries-no-token case answers `superseded` so that the rule fails closed. Every bind attempt mints its token before its first pod-side RPC and a request marked `mid_session` cannot create an entry, so no compensated path produces an entry carrying no token, and a caller that produces one is refused rather than served.
+
+`reclaimed`, `superseded`, and `absent` are the outcomes a `Shutdown` response reports, and each has one meaning. `reclaimed` means the adapter held the entry the request was addressed to and released the slot. `superseded` means the adapter holds an entry for the session that the request is not addressed to, so a different bind attempt owns the slot identifier and the reclaim released nothing. `absent` means the adapter holds no entry for the session. All of them are successful outcomes and are answered on a successful RPC: a `Shutdown` is never refused for naming an attempt that does not own the entry, because `superseded` is its answer for that case. Every other RPC on this contract neither carries nor reports a bind attempt token. This block states no refusal onto a slot identifier; the refusal a cleanup in progress imposes is stated by the reclaim hold in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes).
 ```
 
 The block sits in §4.7.1 rather than in §4.7.9 because §4.7.9 is a `type: agent`
-orientation list and the epoch binds every session mode the RPC tables serve. The
-comparison the adapter performs and the outcomes it answers are stated in the §4.7
-`Shutdown` row, which is where a reader of that RPC looks; this block states what the value
-is, which responses report it, which request carries it, and who may name it.
+orientation list and the token binds every session mode the RPC tables serve. The
+comparison the adapter performs on a `Shutdown` and the outcomes it answers are restated in the
+§4.7 `Shutdown` row, which is where a reader of that RPC looks; this block states what the value
+is, which requests carry it, when the adapter stamps it, which requests it refuses, and who may
+name it.
+
+Two things the block states are obligations this proposal takes on rather than shipped
+behaviour it records. The atomicity clause makes first-writer-wins implementable from the prose,
+which it is not while the resolve, the stamp and the comparison read as three acts. And the
+sentence on the gateway's own admission of a mid-session upload is the whole safety argument for
+a request that asserts no attempt identity, so the implementation confirms that the shipped
+mid-session admission guard reads what it appears to read before the mid-session conditioning
+lands, and records what it found.
+
+### SPEC-5 · spec/15_external-api-surface.md § 15.1 (error catalog)
+
+Add two rows to the §15.1 error catalog table, in the block that carries the adapter-originated
+codes, beside `WORKSPACE_PLAN_SCHEMA_UNSUPPORTED` and `SETUP_COMMAND_FAILED`. The adapter's
+`ErrorCode` enum states that the catalog mirrors this section, so a code the adapter can emit
+that has no row here is a defect in the catalog. Both codes are emitted by the adapter as a
+gRPC status detail; the gateway translates each to a Go typed error and surfaces it under the
+category the row states.
+
+```
+| `SLOT_BIND_ATTEMPT_SUPERSEDED` | `TRANSIENT` | 503  | A bind-sequence request resolved a slot registry entry that a different bind attempt owns, or that carries no attempt token. The request performed nothing. Surfaced with `Retry-After` at whichever endpoint issued the bind sequence; the client's retry mints a new attempt. See [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract). |
+| `SLOT_BIND_ALREADY_STARTED` | `PERMANENT` | 409  | A bind-sequence request that is not a mid-session upload resolved a slot registry entry whose session has already started on that pod. The request performed nothing and the running session is untouched. Surfaced at whichever endpoint issued the bind sequence. See [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract). |
+```
+
+The HTTP status for `SLOT_BIND_ALREADY_STARTED` follows the `INVALID_STATE_TRANSITION` and
+`RESOURCE_ALREADY_EXISTS` precedent for a request refused because the resource is already in
+the state the request would produce. The endpoint precondition tables in this section keep a
+client retry of `POST /v1/sessions/{id}/start` off a `running` row, so the row is reached only
+through a session row that stayed `ready` after its launch published a live binding, which the
+gateway-side finding recorded in the proposal's summary names.
 
 ### SPEC-5 · spec/15_external-api-surface.md § 15.4 (after the SDK-warm demotion contract)
 
@@ -707,15 +777,27 @@ the statement here is written to be implementable without reading any Go and sta
 non-conformance case for each part:
 
 ```
-**Bind epoch contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind epoch: what an adapter mints it for, which responses report it, which request carries it, and which epoch a caller may name. That statement is normative for a third-party adapter and is not restated here. The clauses below state what non-conformance looks like against it.
+**Bind attempt token contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token: what it is, which requests carry it, when the adapter stamps it, which requests it refuses, and how a `Shutdown` states which teardown it asks for. That statement is normative for a third-party adapter and is not restated here. The clauses below state what non-conformance looks like against it.
 
-An adapter does not conform when it reuses an epoch across two entries, derives one from the session identifier, mints a fresh epoch for a bind-sequence request that resolves an entry it already holds, changes a live entry's epoch, reports zero on a bind-sequence response, mints more than one epoch for one `PrepareWorkspace` call, or resolves the slot identifier more than once within one `PrepareWorkspace` call.
+An adapter does not conform when it admits a request that is not marked `mid_session` and that resolves an entry whose session has already started, instead of refusing it with `SLOT_BIND_ALREADY_STARTED`.
 
-An adapter does not conform when it refuses a bind-sequence request on a bind epoch, because no bind-sequence request carries one. The refusal an adapter must exhibit while a slot's cleanup is running is stated by the reclaim-hold contract below.
+An adapter does not conform when it admits a request whose non-empty bind attempt token differs from the non-empty token the resolved entry carries, instead of refusing it with `SLOT_BIND_ATTEMPT_SUPERSEDED`.
 
-An adapter does not conform when, on a `Shutdown` whose bind epoch is non-zero and differs from the epoch of the entry it holds for the named session, it releases the slot, closes the runtime, or signals the shared runtime process. It does not conform when it compares a zero bind epoch against the entry it holds, or answers `superseded` for a request whose bind epoch is zero.
+An adapter does not conform when it writes a bind attempt token onto an entry it resolved rather than created, in either direction. It does not conform when it performs the resolve, the stamp and the comparison as separable steps rather than as one indivisible step under the lock that guards the registry, because two attempts can then be admitted onto one entry.
 
-The `Shutdown` response reports the comparison's outcome and each outcome has one meaning. `reclaimed` means the adapter held the named entry and released the slot. `superseded` means the adapter holds an entry for the session at a different epoch, so a later entry owns the slot identifier and the reclaim removed nothing. `absent` means the adapter holds no entry for the session. All three are successful outcomes and are answered on a successful RPC. An adapter that answers a gRPC error for a superseded or an absent reclaim does not conform.
+An adapter does not conform when it admits a request that is not marked `mid_session` and carries an empty bind attempt token, or a request that is marked `mid_session` and carries a non-empty one, instead of answering `INVALID_ARGUMENT`.
+
+An adapter does not conform when it creates a registry entry for a request that is marked `mid_session` and resolves none, instead of answering `FAILED_PRECONDITION`.
+
+An adapter does not conform when it resolves the slot identifier more than once within one `PrepareWorkspace` call, or when it admits a later frame of that call whose non-empty bind attempt token or whose mid-session marker disagrees with the first frame's.
+
+An adapter does not conform when it creates a registry entry for a `Resume` without stamping that request's bind attempt token on the entry it creates.
+
+An adapter does not conform when it performs the slot release or the runtime teardown for a `Shutdown` whose non-empty bind attempt token differs from the token the resolved entry carries, or for one whose resolved entry carries no token, instead of answering `superseded` and performing neither.
+
+An adapter does not conform when it treats a `Shutdown` carrying an empty bind attempt token as a reclaim conditioned on that token. It does not conform when it performs either teardown for a `Shutdown` that carries neither a non-empty bind attempt token nor `unconditional_teardown`, or for one that carries both, instead of answering `INVALID_ARGUMENT` and performing nothing. It does not conform when it performs neither teardown for a `Shutdown` that asks for the unconditional teardown.
+
+The `Shutdown` response reports the reclaim's outcome and each outcome has one meaning. `reclaimed` means the adapter held the entry the request was addressed to and released the slot. `superseded` means the adapter holds an entry for the session that the request is not addressed to, so a different bind attempt owns the slot identifier and the reclaim released nothing. `absent` means the adapter holds no entry for the session. Each of them is a successful outcome and is answered on a successful RPC. An adapter that answers a gRPC error for a superseded or an absent reclaim does not conform.
 ```
 
 ```
@@ -724,47 +806,78 @@ The `Shutdown` response reports the comparison's outcome and each outcome has on
 
 Both blocks state the contract and neither states a Go type, a field number, or a package
 name. The wire form is `schemas/lenny-adapter.proto`, which §15.4 already names as the
-published artifact. The epoch appears on the response side of the bind sequence and on the `Shutdown` request, so
-the wire edit that lands them adds a reporting field to each of the seven bind-sequence
-responses and the fence and its outcome to `Shutdown`. No bind-sequence request carries an
-epoch. The [§7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload therefore needs
-no wire field of its own: it resolves the entry the session already holds and is answered at
-that entry's epoch.
+published artifact. The token travels on the request side alone, so the wire edit that lands it
+adds one string field to each of the six requests §4.7.1 names, the mid-session marker to
+`PrepareWorkspace`, the unconditional-teardown flag and the outcome to `Shutdown`, and a value
+to the error enum for each of the two refusals. No response reports a token.
+
+The clauses are normative for a third-party adapter, and the project has no harness that can run
+one: the conformance battery drives a runtime binary over JSONL against a fake adapter and speaks
+no gRPC. The wire-level enforcement is therefore the tier-3 contract suite, which drives this
+adapter over a real gRPC channel and can exercise every clause above, alongside a descriptor gate
+pinning the field numbers and types. The in-process battery at tier 10 drives the same adapter
+without the wire. The absence of a third-party harness is recorded as a §28.4 claim-register row
+with status `ABSENT`, following the rows the `coordination_generation` fence already carries.
+
+### SPEC-6 · spec/16_observability.md § 16.1 (metric catalog)
+
+Add three rows to the §16.1 metric catalog table, beside the session-slot failure count. The
+first two are gateway series emitted from the compensation's outcome mapping; the third is an
+adapter series and carries the adapter metrics endpoint's existing deferral (the adapter process
+exposes no scrape target today), so its row records the series for the register and names the
+deferral.
+
+```
+| Slot compensation removed a started entry (`lenny_slot_compensation_removed_started_total`, labeled by `pool`, `k8s_pod_name` — a compensating `Shutdown` answered `reclaimed` for an entry whose session had started; zero on a conforming deployment, and non-zero is the identity gate's regression signal) | Counter |
+| Slot compensation superseded (`lenny_slot_compensation_superseded_total`, labeled by `pool`, `k8s_pod_name` — a compensating `Shutdown` answered `superseded` because a later bind attempt owns the entry; non-zero on a system that retries, and is the count of retries the fence protected) | Counter |
+| Slot shutdown met an untokened entry (`lenny_slot_shutdown_untokened_entry_total`, labeled by `k8s_pod_name` — a `Shutdown` carrying an attempt token met a registry entry that carries none; zero on a conforming adapter. Adapter-side; not scraped until the adapter metrics endpoint is wired) | Counter |
+```
 
 ## Spec sections deliberately untouched
 
 Listed so a reviewer can tell scope from oversight.
 
-- **§15.1's error catalog.** The reclaim-in-progress refusal is answered on the
-  gateway-adapter surface and mints no client-visible error code.
 - **§15.4.6's conformance categories.** They exercise the runtime binary over JSONL against a
   fake adapter, so they have no adapter under test and cannot observe an adapter obligation.
-  CONF-1 lands in the tier-10 conformance battery instead.
+  CONF-1 lands in the tier-10 conformance battery instead, and the wire-level clauses land in
+  the tier-3 contract suite.
 - **§5.2's non-retryable failure categories.** The list is scoped to
   `maxConcurrentSessions > 1` and the reclaim hold is not, and the refusal the hold returns
   is transient, so no category is added or removed.
-- **§10.1's coordinator handoff.** The bind epoch is not a coordination generation and
+- **§10.1's coordinator handoff.** The bind attempt token is not a coordination generation and
   changes nothing about the handoff.
 - **§28's registers.** `Shutdown` appears in no §28 register row, and §28.5.1 is organised
   per channel rather than per field, so a new field on an existing message adds no row.
 
 ## Spec files touched
 
-- `spec/04_system-components.md` — §4.1 Request Message Scope (one sentence replaced), §4.7 Gateway → Adapter RPC table `Shutdown` row (first sentence replaced, the
-  no-op sentence and the epoch-and-outcomes sentences added), §4.7.1 (the bind-epoch block,
-  new, after the RPC tables), §4.7.9 step 5 (one sentence).
-- `spec/05_runtime-registry-and-pool-model.md` — §5.2 `**Scrub model.**` paragraph (the
+- `spec/04_system-components.md`: §4.1 Request Message Scope (one sentence replaced), §4.7
+  Gateway → Adapter RPC table `Shutdown` row (first sentence replaced, the no-op sentence and
+  the two-field rule with its outcomes added), §4.7.1 (the bind attempt token block, new, after
+  the RPC tables), §4.7.9 step 5 (one sentence).
+- `spec/05_runtime-registry-and-pool-model.md`: §5.2 `**Scrub model.**` paragraph (the
   per-slot cleanup pointer, the cleanup-outcome report rules, and the slot-identifier
-  reclaim-hold paragraph appended), the §5.2
+  reclaim-hold paragraph appended, whose closing sentence points at the bind attempt token), the §5.2
   `**Slot cleanup:**` bullet's action-list sentence (replaced), and the §5.2
   slot-retry-policy `**Max retries:**` bullet's pod-selection sentence (replaced).
-- `spec/06_warm-pod-model.md` — §6.2 per-slot sub-state fence (one edge), the prose after
+- `spec/06_warm-pod-model.md`: §6.2 per-slot sub-state fence (one edge), the prose after
   it (one paragraph, pointing at the §5.2 reclaim hold), and the §6.2
   `resuming` mid-resume cancel bullet (one clause).
-- `spec/07_session-lifecycle.md` — §7.1 atomicity paragraph (one parenthetical) and a new
+- `spec/07_session-lifecycle.md`: §7.1 atomicity paragraph (one parenthetical) and a new
   paragraph after it carrying the reclaim obligation, §7.2's mid-resume snapshot-close
   sequence (the section preamble's premise sentence deleted, a sentence added to step 2, and
   step 3 replaced), and §7.3's resume flow (one sentence appended after the numbered list).
-- `spec/15_external-api-surface.md` — §15.4 (the published bind-epoch contract and the
-  slot-identifier reclaim-hold contract, new, after the SDK-warm demotion contract).
-- `spec/29_communication-scenarios.md` — §29.4 session-end step 13 (one sentence appended).
+- `spec/15_external-api-surface.md`: §15.1's error catalog (one row for
+  `SLOT_BIND_ATTEMPT_SUPERSEDED` and one for `SLOT_BIND_ALREADY_STARTED`, each with its
+  category, its HTTP status, and its description), and §15.4 (the published bind attempt token
+  contract and the slot-identifier reclaim-hold contract, new, after the SDK-warm demotion
+  contract).
+- `spec/16_observability.md`: §16.1's metric catalog (one row for each counter
+  the compensation's outcome mapping and the adapter's fail-closed row emit).
+- `spec/29_communication-scenarios.md`: §29.4 session-end step 13 (one sentence appended).
+
+Two files outside `spec/` move with them. `docs/reference/error-catalog.md` gains the published
+row for each of the two new codes, matching the §15.1 rows, and `docs/reference/metrics.md`
+gains the row for each counter, matching the §16.1 rows, so the catalogs a reader consults and
+the catalogs the specification states stay one list each. The non-spec changes carry both
+edits as DOCS-3 and CODE-9.

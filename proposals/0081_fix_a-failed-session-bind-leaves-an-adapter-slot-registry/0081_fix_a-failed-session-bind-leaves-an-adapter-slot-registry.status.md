@@ -2,11 +2,11 @@
 proposal: 0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry
 title: A failed session bind leaves a stale adapter slot registry entry
 kind: fix
-status: Reviewed
-drafted-date: 2026-09-08
+status: Draft
+drafted-date: 2026-09-16
 drafted-by: change-proposal
-reviewed-date: 2026-09-11
-reviewed-by: change-proposal
+reviewed-date: 
+reviewed-by: 
 approved-date: 
 approved-by: 
 implemented-date: 
@@ -16,3 +16,14 @@ implemented-by:
 ## Review history
 
 On 2026-09-10, an adversarial review run executed two loops. The spec loop ran 3 rounds and converged, performing 1 full-pool sweep. The non-spec loop ran 7 rounds and converged, performing 3 full-pool sweeps. Across both loops, 32 findings were fixed. The run did not reach full convergence; findings that the loops did not close remain open.
+
+On 2026-09-16, the proposal was revised by hand from the fifth determination recorded in
+`scratchpad/attempt-fence-determination.md`, after five determinations and eight
+adversarial rounds found the staged bind epoch self-defeating under its own latch rule. The
+revision replaces the epoch with a caller-minted per-attempt token compared inside the
+adapter's registry resolve step, adds an explicit `unconditional_teardown` flag to `Shutdown`
+so destruction requires an affirmative act, folds the started-entry refusal and the per-slot
+guard into the proposal's own lane, removes the pod-exclusion mechanism, and re-cuts the
+checklist as a dependency graph. The status returns to Draft because the review history above
+certifies text this revision replaced. The revision has not been through `change-proposal`
+convergence and must be before approval.
