@@ -8,7 +8,7 @@ The deliverables are listed below in reading order. Build order differs and is t
 implementation checklist's: the spec edits land first, then SCHEMA-1's single proto window and
 its regenerated stubs, then CODE-7's typed-error translation, then the adapter deliverables
 CODE-6, CODE-1 and CODE-2, then the gateway deliverables CODE-8, CODE-4 and CODE-5, then
-CONF-1, DOCS-1 and DOCS-2.
+CONF-1, DOCS-1, DOCS-2 and DOCS-3.
 
 ## Design (implementation-facing)
 
@@ -1834,6 +1834,49 @@ Amend the `DemoteSDK` row (`:64`) so it states the registry effect §4.7.1's cal
 
 DOCS-2 lands beside DOCS-1, after SPEC-1, SPEC-3 and SPEC-5 have landed the contract it mirrors.
 Its tier-11 work is specified under `## Testing`.
+
+### DOCS-3 · docs/reference/error-catalog.md · the `SETUP_COMMAND_FAILED` row mirrors its widened §15.1 row
+
+The started-session refusal reaches the client under the `SETUP_COMMAND_FAILED` envelope §15.1
+already defines for a deterministic `FailedPrecondition` failure in the setup window, and
+SPEC-5 widens the §15.1 row's three cause-naming sentences so they no longer state a cause the
+refusal does not have. The published catalog at `docs/reference/error-catalog.md:129` states the
+same row for readers who do not have the specification, and the tier-11 catalog cross-check
+holds the two to one text. This deliverable makes the three matching replacements in the
+published row, in the reference page's own column set.
+
+The description cell's opening sentence, which reads "A session setup command exited non-zero
+(or hit its hard timeout), which the runtime adapter reports as a deterministic failure.",
+becomes:
+
+```
+The runtime adapter answered a setup-window request with a deterministic failure: either a session setup command exited non-zero or hit its hard timeout, or a bind-sequence request was refused because the pod slot it reached already carried a started session for the same session identifier.
+```
+
+The description cell's retryability sentence, which reads "Not retryable: the command fails
+identically until the workspace plan or setup script changes.", becomes:
+
+```
+Not retryable: a setup command fails identically until the workspace plan or setup script changes, and a bind refusal means another start of the same session already holds the pod slot.
+```
+
+The description cell's `details.reason` sentence, which reads "`details.reason` is
+`setup_command_failed`; the per-command stdout and stderr are retrievable via
+`GET /v1/sessions/{id}/setup-output`.", becomes:
+
+```
+`details.reason` is `setup_command_failed`. Where a setup command ran, its per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`; a bind refusal runs no setup command and produces no such output.
+```
+
+The remedy cell gains a second clause after "and create a new session":
+
+```
+; for a bind refusal, read the session's state with `GET /v1/sessions/{id}` rather than retrying the start, because the session is already running.
+```
+
+No new row is added. The two adapter error codes SCHEMA-1 adds are gateway-to-adapter codes
+that the gateway maps into this existing envelope and into the retryable slot-failure envelope,
+so neither appears in the client-facing catalog. Tiers: 11.
 
 ## Testing
 

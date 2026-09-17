@@ -15,15 +15,8 @@ implemented-by:
 
 ## Review history
 
-On 2026-09-10, an adversarial review run executed two loops. The spec loop ran 3 rounds and converged, performing 1 full-pool sweep. The non-spec loop ran 7 rounds and converged, performing 3 full-pool sweeps. Across both loops, 32 findings were fixed. The run did not reach full convergence; findings that the loops did not close remain open.
+On 2026-09-10, an adversarial review run executed two loops. The spec loop ran 3 rounds and converged, performing 1 full-pool sweep. The non-spec loop ran 7 rounds and converged, performing 3 full-pool sweeps. Across both loops, 32 findings were fixed.
 
-On 2026-09-16, the proposal was revised by hand from the fifth determination recorded in
-`scratchpad/attempt-fence-determination.md`, after five determinations and eight
-adversarial rounds found the staged bind epoch self-defeating under its own latch rule. The
-revision replaces the epoch with a caller-minted per-attempt token compared inside the
-adapter's registry resolve step, adds an explicit `unconditional_teardown` flag to `Shutdown`
-so destruction requires an affirmative act, folds the started-entry refusal and the per-slot
-guard into the proposal's own lane, removes the pod-exclusion mechanism, and re-cuts the
-checklist as a dependency graph. The status returns to Draft because the review history above
-certifies text this revision replaced. The revision has not been through `change-proposal`
-convergence and must be before approval.
+On 2026-09-16, the proposal was revised by hand from the fifth determination recorded in `scratchpad/attempt-fence-determination.md`, after five determinations and eight adversarial rounds found the staged bind epoch self-defeating under its own latch rule. The revision replaces the epoch with a caller-minted per-attempt token compared inside the adapter's registry resolve step, adds an explicit `unconditional_teardown` flag to `Shutdown` so destruction requires an affirmative act, folds the started-entry refusal and the per-slot guard into the proposal's own lane, removes the pod-exclusion mechanism, and re-cuts the checklist as a dependency graph.
+
+On 2026-09-16, an adversarial spec-loop review ran 6 rounds and did not converge, performing 1 full-pool sweep. Forty findings were fixed. The non-spec loop was not run. Findings the spec loop had not closed remain open. The proposal must continue through convergence before approval.

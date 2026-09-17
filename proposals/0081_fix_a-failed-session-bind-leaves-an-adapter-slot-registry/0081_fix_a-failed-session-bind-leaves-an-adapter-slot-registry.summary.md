@@ -221,57 +221,6 @@ the current defect as the contract by gating the whole teardown on the binding.
   covering proposal 0080 rewrites these files, so this proposal keeps its edits in each to the
   smallest set the mechanism needs.
 
-**Accepted failure modes.**
-
-The token closes two residues the earlier design recorded as unclosable. A bind that fails
-inside its first entry-creating RPC is fenced, because the caller holds its token before that
-RPC rather than latching it off a response. Two attempts that share one entry are told apart whenever both
-carry a token, because the entry carries the token of the attempt that created it and the later
-attempt is refused rather than admitted.
-
-Further residues stand, and each is accepted as recorded rather than closed here.
-
-- An attempt's own later RPC can recreate the entry an unconditional teardown removed
-  mid-sequence. A non-mid-session finalize may legitimately be an attempt's first RPC, on a plan
-  with no uploads, so creation is permitted, and the attempt recreates its own entry under its
-  own token and can materialize from an empty staging tree. A token cannot fence an attempt
-  against itself. Closing it needs either a generation on the tree or a bind-scoped lock
-  spanning the attempt.
-- An abandoned attempt's late `StartSession` creates an entry carrying no token, because neither
-  `StartSession` nor `ConfigureWorkspace` carries one. A `Shutdown` naming an attempt answers
-  `superseded` against that entry and removes nothing, so it is released only by an unconditional
-  teardown or by the pod's retirement, and every later bind attempt at that session on that pod
-  is refused while it stands.
-- A compensation lost to a gateway crash leaves an entry stamped with a dead attempt's token,
-  and every later attempt at that session on that pod is refused, so the session is unstartable
-  there until the pod is replaced. This is the direction the token trades for: the earlier design
-  would have let a retry adopt that entry, which is how a live session got destroyed.
-- A bind-sequence refusal reaches the client under the envelope its stage already selects. The
-  gateway consumes both refusal codes and this proposal leaves its envelope selection alone, so
-  a workspace-stage refusal reaches the client under the transient session-start envelope. In
-  the setup window the writer branches on the gRPC code rather than on the window, so an
-  already-started refusal, answered on `FAILED_PRECONDITION`, reaches the client as the
-  non-retryable `SETUP_COMMAND_FAILED` that §15.1 defines for a deterministic setup-window
-  failure, and a superseded refusal, answered on `ABORTED`, reaches it as the retryable
-  session-start fallback carrying `Retry-After`. The client-visible code names the stage the
-  refusal arrived in rather than the refusal itself. The category and the retryability the
-  client reads are correct in every case, and narrowing the code is outside this proposal.
-
-Recovery for the self-recreated entry, the entry a tokenless start created, and the entry a
-lost compensation stranded is routed to position 2 of the gateway-runtime-comms remediation
-plan, which is where the durable compensation record that survives a gateway crash and is
-re-driven from a startup sweep, the reaper for a registry entry nothing collects, and the rule
-that narrows which RPC may create an entry at all are staged. None is in this proposal. The
-envelope-naming residue has no position-2 work and is left as recorded, because the category and
-the retryability the client reads are already correct.
-
-Two further residues are priced and accepted. A retry is refused while the previous attempt's
-entry stands, and burns one attempt; the window is bounded by the compensation's latency plus
-the §5.2 reclaim hold, and a refused retry is cheaper than a destroyed session or a successor
-reaching `running` on an empty workspace. And an entry that outlives its attempt costs the pod
-its MCP arming and its unaddressed-frame path for the pod's life, which both gates count
-deliberately and which is recorded under the defects this proposal does not stage.
-
 **Watch out for.**
 
 - The reclaim closures must learn to read a refusal before the gates go live. `failPhase` gates
@@ -450,57 +399,62 @@ deliberately and which is recorded under the defects this proposal does not stag
   residue. Naming them would state a rule change the code does not make and would invite a
   later reader to weaken a count that fails closed on purpose.
 
+**Accepted failure modes.**
+
+The token closes two residues the earlier design recorded as unclosable. A bind that fails
+inside its first entry-creating RPC is fenced, because the caller holds its token before that
+RPC rather than latching it off a response. Two attempts that share one entry are told apart whenever both
+carry a token, because the entry carries the token of the attempt that created it and the later
+attempt is refused rather than admitted.
+
+Further residues stand, and each is accepted as recorded rather than closed here.
+
+- An attempt's own later RPC can recreate the entry an unconditional teardown removed
+  mid-sequence. A non-mid-session finalize may legitimately be an attempt's first RPC, on a plan
+  with no uploads, so creation is permitted, and the attempt recreates its own entry under its
+  own token and can materialize from an empty staging tree. A token cannot fence an attempt
+  against itself. Closing it needs either a generation on the tree or a bind-scoped lock
+  spanning the attempt.
+- An abandoned attempt's late `StartSession` creates an entry carrying no token, because neither
+  `StartSession` nor `ConfigureWorkspace` carries one. A `Shutdown` naming an attempt answers
+  `superseded` against that entry and removes nothing, so it is released only by an unconditional
+  teardown or by the pod's retirement, and every later bind attempt at that session on that pod
+  is refused while it stands.
+- A compensation lost to a gateway crash leaves an entry stamped with a dead attempt's token,
+  and every later attempt at that session on that pod is refused, so the session is unstartable
+  there until the pod is replaced. This is the direction the token trades for: the earlier design
+  would have let a retry adopt that entry, which is how a live session got destroyed.
+- A bind-sequence refusal reaches the client under the envelope its stage already selects. The
+  gateway consumes both refusal codes and this proposal leaves its envelope selection alone, so
+  a workspace-stage refusal reaches the client under the transient session-start envelope. In
+  the setup window the writer branches on the gRPC code rather than on the window, so an
+  already-started refusal, answered on `FAILED_PRECONDITION`, reaches the client as the
+  non-retryable `SETUP_COMMAND_FAILED` that §15.1 defines for a deterministic setup-window
+  failure, and a superseded refusal, answered on `ABORTED`, reaches it as the retryable
+  session-start fallback carrying `Retry-After`. The client-visible code names the stage the
+  refusal arrived in rather than the refusal itself. The category and the retryability the
+  client reads are correct in every case, and narrowing the code is outside this proposal.
+
+Recovery for the self-recreated entry, the entry a tokenless start created, and the entry a
+lost compensation stranded is routed to position 2 of the gateway-runtime-comms remediation
+plan, which is where the durable compensation record that survives a gateway crash and is
+re-driven from a startup sweep, the reaper for a registry entry nothing collects, and the rule
+that narrows which RPC may create an entry at all are staged. None is in this proposal. The
+envelope-naming residue has no position-2 work and is left as recorded, because the category and
+the retryability the client reads are already correct.
+
+Two further residues are priced and accepted. A retry is refused while the previous attempt's
+entry stands, and burns one attempt; the window is bounded by the compensation's latency plus
+the §5.2 reclaim hold, and a refused retry is cheaper than a destroyed session or a successor
+reaching `running` on an empty workspace. And an entry that outlives its attempt costs the pod
+its MCP arming and its unaddressed-frame path for the pod's life, which both gates count
+deliberately and which is recorded under the defects this proposal does not stage.
+
 ## Open decisions for human to make
 
-The spec review loop routed entries 11 and 16 through 18 to a human. All four are resolved, and
-each is recorded below with the ground that settled it, so a reader of the review history can
-see that they were answered rather than dropped. Entry 9, the create-time-reserved retry's
-unbounded exposure, left this section earlier: the fence and the reclaim hold close the
-released-entry ordering, and the shared-entry ordering that entry 17 re-put is closed by the
-per-attempt token. Entries 12 through 15 left it because the staged spec already answers each.
-Resolved entries are deleted and the survivors keep their original numbers, so the numbering
-below does not start at 1 and skips the numbers the resolved entries held.
-
-**Resolved by this revision.**
-
-- **Entry 11, whether §7.1's trigger reads "fails" or "abandoned or fails".** It stays as it is.
-  The widening was refuted: abandonment at the other sites means the gateway abandoned the bind
-  by failing it, which §7.1's trigger already names, and client abandonment is out of scope by
-  the problem statement.
-- **Entry 16, whether the exclusive-pool resume budget wants an upper clamp.** No clamp. The
-  formula is correct by design: it divides the per-slot cleanup timeout by the concurrency the
-  timeout must serve, and on an exclusive pool there is one slot to clean up, so the whole
-  timeout is the budget for it. No stated budget is breached and no accounting is deferred by
-  the longer hold.
-- **Entry 17, whether to ship the shared-entry residue or widen the proposal to close it.** The
-  question is moot, because the residue is closed. It existed because a value the adapter mints
-  per entry cannot tell two attempts apart while they share one entry, which is what let a
-  second attempt adopt a surviving entry and a stale teardown then destroy a live session. A
-  caller-minted per-attempt token is that discriminator, and the write rule prevents the
-  sharing: the second attempt meets the first attempt's entry, is refused on identity, and never
-  adopts it. The cost the recommendation priced against, carrying a discriminator on every
-  request that can create or resolve an entry, is what this revision stages.
-- **Entry 18, whether a retry refused by a reclaim hold that never clears gets a distinct
-  client-visible outcome.** The refusal stays `codes.Aborted`. A hold that never clears is a
-  recovery problem rather than a status-code problem, and both recoveries, a durable
-  compensation record re-driven from a startup sweep and a reaper for a registry entry nothing
-  collects, are pushed out as their own findings at position 2 of the remediation plan.
-
-**Open.**
-
-19. **Resolved on 2026-09-16: the mid-session admission guard reads what it appears to read.**
-    `handleUploadToSession` requires `s.podRegistry.Get(row.ID)` to return a binding whose
-    `Adapter` is non-nil, and refuses with `TARGET_NOT_READY` otherwise
-    (`pkg/gateway/sessionserver/upload_to_session.go:112-122`, read in the tree). A binding
-    reaches `podRegistry` through `registerBinding` after a successful launch on this replica,
-    or through the coordinator-handoff re-adopt, which publishes only after the pod acknowledges
-    the `CoordinatorFence` and therefore only for the pod actually running the session. A
-    foreign bind attempt publishes nothing and cannot satisfy the guard. The mid-session request
-    is then issued on `bind.Adapter`, the connection to the pod hosting the live session, so the
-    entry it resolves is that session's own. The exemption's safety argument holds as stated in
-    the §4.7.1 block, and the step that lands the mid-session rules is not blocked on it. The
-    remaining obligation is the tier-4 case that pins the guard, which the Testing section
-    carries.
+One decision is still open for a human. It keeps the identifier it was stamped with, so the
+number below does not start at 1: the entries that held the earlier numbers were resolved,
+their answers are staged in the change files, and their record is in the review log.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -823,7 +777,7 @@ below does not start at 1 and skips the numbers the resolved entries held.
 | 0080 (inventory of the residues 0073 recorded and deferred) | Draft, stages no changes. Its own `Date` line reads 2026-08-31 and the last commit to the file is 2026-09-06, which records when someone touched the file rather than when it was reviewed. It heads itself an unconverged inventory rather than a design. | **§1.2 is the entry this proposal promotes, and it is discharged in its entry-removal half.** The staged reclaim removes the registry entry for both of §1.2's classes, together with the per-slot tree, the slot's credential directory and the armed §4.9 expiry timers, so the held inbound count and the pinned drain gate lose their subject. §1.2's third clause survives with a different cause and moves to §1.4. **§1.4 is made worse by a leaked entry, and this proposal records that rather than fixing it.** `claimPodMCPStartLocked` returns false whenever the pod's entry count is not one (`pkg/adapter/slotsession.go:110`), and the only entry-removal site is `deregisterSlotLocked`, whose §10.1.4 sweep caller filters on `st.started` and so cannot collect an unstarted entry. `writeSessionManifest` mints a fresh nonce before the arming guard is consulted, so every later session on that pod reads a manifest advertising a socket no running server authenticates. `deliverToSession`'s rejection of unaddressed session-scoped frames once the slot count passes one has the same cause. Both gates are deliberate co-tenancy rules; the defect is that the entry never goes away. This proposal removes the entry on every path it compensates, which restores the arming wherever the failed bind caused the loss, and changes neither gate. The entry that survives an unanswered compensation is not collected here, and the reaper that would collect it is named under the accepted failure modes. **The claim-register arithmetic moves and must be re-derived when the rows land.** `tests/claim-map.json` carries 76 rows today, 20 `ABSENT`, 24 `UNWIRED` and 32 `WIRED`. This revision adds `WIRED` rows for the new wire contract and at least one `ABSENT` row for the absent third-party conformance harness, so the denominator §1.12 and §1.18 quote and the `WIRED` count §1.18 quotes both move. The exact figures depend on how many rows the schema step and the conformance step seed, so they are re-derived against `tests/claim-map.json` on application rather than quoted here. **§1.19 keeps its class set and moves only membership.** `boundSlotState` and `checkSessionBound` are untouched. A fence for a session whose bind failed and whose reclaim completed meets the absent-entry refusal rather than the unbound-entry refusal, and so does a fence for a session whose `StartSession` or `Resume` rolled back because the reclaim landed after its claim. After a reclaim the adapter did not acknowledge, a surviving entry is present-and-unbound or present-and-bound for a session the gateway has abandoned, so a fence in that window meets the unbound-entry refusal or neither refusal. The ABA arm closes rather than narrows: a successor's claim creates an entry carrying its own random token, so the abandoned attempt's start confirmation refuses against a token that cannot repeat, and the case where an abandoned attempt's own claim re-created the entry is the self-recreation residue recorded under the accepted failure modes rather than a §1.19 class. The two new refusals are outside §1.19's inventory for the reason the hold's refusal already is: they are raised inside `ensureSlotStateLocked` with `codes.Aborted` and `codes.FailedPrecondition` on the bind-sequence and workspace RPCs, and carry neither the status code nor the RPC §1.19 is scoped to. **§1.7 keeps its subject and grows the spec side of its divergence.** `slothealth.UnhealthyThreshold`'s clamp of a sub-1 denominator to 1 and `drainLedger.RecordLeak` are unmodified, and no staged code produces a `leaked` disposition on an exclusive pod: the §7.3 re-attach accounting is gated on a non-empty slot id, which an exclusive pool never reserves, and the other accounting callers sit behind `maxConcurrentSessions > 1`. SPEC-2's §7.1 paragraph and SPEC-3's §5.2 scrub-model append each restate that the `leaked` sub-state and the whole-pod replacement trigger are stated for concurrent occupancy, and each states pod retirement under §6.2's pre-attached failure disposition as the exclusive-pod alternative. **§1.1, §1.3, §1.5, §1.16 and §1.20 have no conflict of subject.** The adapter edits are placed in `session.go`, `runtimegeneration.go`, `resume.go`, `sdkwarm.go`, `server.go`, `staging.go`, `slotcreds.go`, `slotsession.go`, `slot.go`, `holdstate.go` and one new file for the reclaim hold and its helper. `slot.go` and `slotsession.go` are opened because `ensureSlotStateLocked` stamps the token, raises both refusals and refuses the hold, `slotState` gains a `bindAttempt` field, and `reclaimSlotLocked` sits beside `deregisterSlotLocked`. `server.go` declares the reclaim-hold set, `staging.go` and `slotcreds.go` move their resolve sites to the shared helper and pass what their RPCs assert, and `holdstate.go` gives the §10.1.4 hold termination a deferred hold release. Each edit is small and localised, so a later position's rewrite of those files re-lands a hold set, a stamp, two refusals, the moved resolve sites, a struct field, a helper and a deferred release rather than a mechanism. | Re-derive four entries when 0080 is triaged into successor proposals. Split §1.2 so its MCP-arming clause moves to §1.4 as a gap this proposal does not take, and record the rest of §1.2 as discharged here. Re-derive §1.4 against the leaked-entry cause and the reaper it waits on. Re-derive §1.19's membership against the remaining cases and the closed ABA class, its class set being unchanged. Re-derive §1.7 against four spec sites rather than the two §6.2 and §5.2 sites it names. Re-derive the claim-register counts in both §1.12 and §1.18 from `tests/claim-map.json` once the schema and conformance steps have landed their rows. Re-land the stamp, the two refusals, the hold refusal, the `slotState.bindAttempt` field and the `reclaimSlotLocked` helper when the rewrite of `slot.go` and `slotsession.go` happens, and the reclaim-hold set, the moved resolve sites in `staging.go` and `slotcreds.go` and `terminateHeldSession`'s deferred hold release when the rewrite reaches `server.go`, `staging.go`, `slotcreds.go` and `holdstate.go`. No edit to 0080's staged content, because it stages none. |
 | 0073 (give every session a slot) | Implemented (2026-08-31 per its own status line; spec applied 2026-08-19) | This change touches 0073 in two ways. 0073 recorded this gap in its §9 recorded limits and declined to discharge it, and this proposal discharges it. SPEC-1 also retires the third sentence of §4.1's `ShutdownRequest` paragraph, which 0073's SPEC-7 authored and which reached `spec/04_system-components.md:157` in commit `f37e867b8`. That sentence states one per-session teardown gated on a bound entry; after the split there are two teardowns with two preconditions, and the slot release is gated on the entry being present. The paragraph's first two sentences, its session-scoped classification, and its closing rule are preserved. SPEC-4 and CODE-3 extend 0073's per-slot sub-state fence (`spec/06_warm-pod-model.md:150-155`) and its `pkg/sandbox/slotstate` edge list with one new edge, which adds to that list rather than retracting from it. | Nothing. A landed proposal is not edited, so this row is the record of what this proposal takes back from 0073. |
 | 0075 (derive message scope from the address type) | Implemented (2026-09-08 per its status file's `implemented-date`) | 0075's SPEC-1 replaced the §4.1 block around the `ShutdownRequest` paragraph and reserved the paragraph itself, stating that it "stands unedited" because it explains a divergence between what a request addresses and what its handler touches that 0075's D3 rests on. SPEC-1 here rewrites that paragraph's third sentence. The ground D3 rests on survives: the first two sentences carry the session-scoped classification and the single address unchanged, and the replacement keeps the whole-pod-scrub clause and the closing rule that no operation is selected by a field's presence standing in for a scope. Nothing 0075 landed is opened, including the derivation rule at `spec/04_system-components.md:151-155`, its tier-0 addressing gate, its tier-3 session-address suite, and its `tests/spec-map.json` entries. The new `ShutdownRequest.bind_attempt` and `ShutdownRequest.unconditional_teardown` fields do not disturb that rule: both are bare scalars present on every `ShutdownRequest`, as the `coordination_generation` fence on the same message already is, so no operation is selected by a field's presence. SPEC-1 restates the justification per message rather than stating a precondition in §4.1, and the §4.7 `Shutdown` row carries every precondition. | Nothing. |
-| 0078 (keep the pod's runtime listener across a session teardown) | Draft for review (2026-08-25 per its own `Date` line) | No deliverable of 0078 loses its subject. CODE-1, CODE-2, TEST-1 through TEST-7 and DOCS-1 all keep theirs, because this proposal opens neither `pkg/adapter/socketruntime.go` nor `cmd/lenny-adapter/main.go`. Two effects are real. The staged co-tenancy-hazard case adds a sibling assertion in `pkg/adapter/socketruntime_test.go` beside `TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2` (`:252`), inside the block 0078's TEST-1 through TEST-4 and their cleanup conversion at `:258` and `:316` rewrite. 0078's CODE-1 replaces the `return p.listener.Close()` at `pkg/adapter/socketruntime.go:467` that the assertion's listener half records, so that half stops discriminating once 0078 lands, while its connection-close and child-kill halves stand and this proposal's own CODE-1 `started` gate is still required. This proposal also extends `tests/tier4_integration/concurrent_workspace_test.go`, whose cleanup at `:126` 0078's TEST-5 converts, and adds a case to `tests/tier7a_load_local/`, where 0078's TEST-6 and TEST-7 land; it edits no file 0078's TEST-7 rewrites, so that last overlap is package co-location rather than a file collision. The tier-4 assertion that the pod's listener survives holds on the shipped tree independently of 0078, because alice is still active when bob's compensation runs and `Close` takes the sibling early return (`pkg/adapter/socketruntime.go:441-446`). The row previously stated that 0078 widens the exposure by making a pod serve more sessions. 0078's own fixed decision states the opposite, that after it lands a recycling sidecar pod still serves one session and fails at the accept timeout, so that premise is withdrawn. | Land after this one, and amend the sibling assertion's listener half when 0078's CODE-1 removes the listener close. |
+| 0078 (keep the pod's runtime listener across a session teardown) | Draft for review (2026-08-25 per its own `Date` line; the file's last commit, `9589aea54`, carries the same date, which records when someone touched it rather than when it was reviewed) | No deliverable of 0078 loses its subject. CODE-1, CODE-2, TEST-1 through TEST-7 and DOCS-1 all keep theirs, because this proposal opens neither `pkg/adapter/socketruntime.go` nor `cmd/lenny-adapter/main.go`. Three file collisions are real, all of them in test files. The staged co-tenancy-hazard case adds a sibling assertion in `pkg/adapter/socketruntime_test.go` beside `TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2` (`:252`), inside the block 0078's TEST-1 through TEST-4 and their cleanup conversion at `:258` and `:316` rewrite. 0078's CODE-1 replaces the `return p.listener.Close()` at `pkg/adapter/socketruntime.go:467` that the assertion's listener half records, so that half stops discriminating once 0078 lands, while its connection-close and child-kill halves stand and this proposal's own CODE-1 `started` gate is still required. This proposal also extends `tests/tier4_integration/concurrent_workspace_test.go`, whose cleanup at `:126` 0078's TEST-5 converts. And it edits `tests/tier7a_load_local/shutdown_drain_gate_race_test.go`, the file 0078's TEST-7 rewrites: CODE-4 sets `unconditional_teardown` at every non-compensating `Shutdown` caller, so `TestConcurrentShutdownsSendOneDrainSignal_spec_6_4` (`:232`) and `TestShutdownDrainRacesAnIncomingSession_spec_6_4` (`:316`) take that one-field edit at their four `ShutdownRequest` literals (`:269`, `:332`, `:373`, `:453`) and must keep passing. The two proposals' edit regions in that file are distinct, so the collision is a merge hazard rather than a design conflict. The tier-4 assertion that the pod's listener survives holds on the shipped tree independently of 0078, because alice is still active when bob's compensation runs and `Close` takes the sibling early return (`pkg/adapter/socketruntime.go:441-446`). The row previously stated that 0078 widens the exposure by making a pod serve more sessions. 0078's own fixed decision states the opposite, that after it lands a recycling sidecar pod still serves one session and fails at the accept timeout, so that premise is withdrawn. | Land after this one. Preserve the `unconditional_teardown` field on those four `Shutdown` calls when TEST-7 rewrites the fixture's accept-timeout bound and the sequenced-leg assertion, because after this proposal lands the adapter answers a `Shutdown` carrying neither selector with `INVALID_ARGUMENT` and performs nothing. Amend the sibling assertion's listener half when 0078's CODE-1 removes the listener close. |
 | gateway-runtime-comms remediation, step R1b | Programme step | SCHEMA-1 opens `schemas/lenny-adapter.proto` under rule S-2's second window rather than against R1b's reservation. S-2 reserves the first window to R1b and states that a later step needing a field the plan did not enumerate opens a second narrow window, whose precondition is that every in-flight `pkg/adapter` handler edit has merged first. R1b's end state is in the tree, and the file has already been reopened once, for proposal 0076's comment-only edit. The edit is additive, so the baseline R1b recorded is extended rather than reopened: no field is removed, none is renumbered, and no identifier R1b renamed is touched. The precondition binds this proposal's own step ordering, because it opens three of S-2's covered handler files (`session.go`, `slotcreds.go`, `sdkwarm.go`), so SCHEMA-1 and its regenerated stubs land in one commit before those handler steps. | Record the second window against S-2, so the steps that plan against the generated types (R12, R15, R16, R17, R22, R23) plan against the regenerated set rather than against R1b's. |
 | gateway-runtime-comms remediation, step R12 | Programme step | The hold-timeout reclaim of unstarted slots and its §10.1.4 statement are left to R12, which builds the control-stream consumer that arms the hold and owns the gateway-side whole-pod-loss response. | Take both halves when it builds the consumer, together with an in-flight-upload guard. |
 
@@ -854,22 +808,3 @@ tests for the tiers it reaches, specified per deliverable under `## Testing` in 
 changes file. CONF-1 is listed above because a conformance battery for a contract §15.4
 publishes to third-party adapter authors is the deliverable that makes that contract
 checkable, rather than the test coverage of another deliverable.
-
-## Revision history
-
-On 2026-09-15 this proposal was revised against the fifth determination recorded in
-`scratchpad/attempt-fence-determination.md`. The revision replaces the adapter-minted bind
-epoch with a caller-minted per-attempt token, after adversarial review found the epoch
-self-defeating under its own latch rule: the value that has to fence a compensation is a value
-the failing attempt may never have received, which left a bind that fails inside its first
-entry-creating RPC unfenced and left two attempts sharing one entry indistinguishable. The
-revision also moves the comparison into the adapter's resolve chokepoint, where it covers the
-claim path as well as the workspace path; folds in the started-entry gate, the adapter-client
-typed-error translation and the reclaim-closure short-circuit as prerequisites the mechanism
-cannot ship without; and pushes the remaining findings out as their own `BUILD-GAPS.md`
-entries, recorded above under the defects this proposal does not stage.
-
-The revision changes the mechanism, the wire contract, the spec text and every implementation
-step, so it goes back through `change-proposal` convergence before it is put up for approval,
-and the proposal's status is reset to Draft. Read and write that status with
-`.claude/tools/proposal-status.mjs`, passing the proposal directory.

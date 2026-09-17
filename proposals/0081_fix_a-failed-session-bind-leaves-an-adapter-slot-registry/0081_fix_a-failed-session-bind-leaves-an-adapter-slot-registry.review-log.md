@@ -4499,6 +4499,88 @@ WATCHOUT: the staged §4.7 no-op sentence ("A request naming a session the adapt
 
 UNVERIFIED: whether a bind that fails after `AssignCredentials` but before `running`, on a CONCURRENT pod that already carries a persistently `leaked` sibling slot, can leave unverified credential residue indefinitely — because §5.2's own shipped text says a persistently `leaked` slot holds total occupancy above zero indefinitely (spec/05:488), so the occupancy-zero whole-pod boundary the staged §5.2 append routes that residue to may never arrive on exactly the pod class this proposal newly creates leaked slots on. I did not file it: the per-slot cleanup itself is stated to run (tree + credential dir), the residue at stake is only the unverified case, the pod is still bounded by `maxSessionsPerPod` and by the §5.2 whole-pod replacement trigger, and today's behaviour is identical. A later security or mechanism lens may want to decide whether the staged sentence should say "at the whole-pod boundary or at pod retirement, whichever comes first".
 
+### [f1.open-decisions.out-of-scope-defects.threshold-retune]
+
+DECISION: retuning the §5.2 `ceil(maxConcurrentSessions/2)` unhealthy threshold stays out of
+scope and `## Defects in the shipped tree that this proposal does not stage` gains no row for
+it. I wrote nothing into the proposal, because it already carries the item exactly as
+adjudicated.
+FACT: the record stands where it belongs. The Non-goals bullet is at
+`0081_....summary.md:440-441` ("Retuning the `ceil(maxConcurrentSessions/2)` unhealthy
+threshold. Named out of scope. The accounting deliverable adds accounting where there is none
+and changes no threshold"), the problem statement's out-of-scope paragraph names the retuning at
+`0081_....problem-statement.md:141-142`, and the defects section (`0081_....summary.md:512-818`)
+carries no threshold row.
+FACT: the behavioural cost of the new reach is recorded as the "Faster pod churn at
+`maxConcurrentSessions >= 3`" bullet, now at `0081_....non-spec-changes.md:2501`. This CORRECTS
+the `:1954-1963` citation in the earlier `[f1.open-decisions.out-of-scope-defects.threshold-retune]`
+block, which has drifted; the bullet's content is unchanged.
+FACT: no staged deliverable touches the formula, its clamp, or the drain block.
+`UnhealthyThreshold` is at `pkg/gateway/runtime/slothealth/slothealth.go:215`, `Tracker.Unhealthy`
+at `:136`, and the sole production trigger at `pkg/gateway/sessionserver/start.go:2858`. CODE-5
+adds callers that reach that trigger and moves nothing.
+FACT: the shipped code conforms to the spec here, so a defects row would have no divergence to
+cite. `spec/05_runtime-registry-and-pool-model.md:561` and `spec/06_warm-pod-model.md:160` state
+the trigger as rolling-window `failed` plus persistently counted `leaked` slots reaching
+`ceil(maxConcurrentSessions/2)`, which is what the clamped `(maxConcurrent+1)/2` computes. Every
+row the defects section carries is a spec-versus-tree divergence; a conformant tuning value is
+not one.
+
+No staged deliverable is added, removed, merged, split or resequenced, so the implementation
+checklist is unchanged.
+
+### [f1.open-decisions.other-proposals.0078-test7-collision]
+
+DECISION: The 0078 impacts row in the summary no longer stands as written. Its clause "it edits no
+file 0078's TEST-7 rewrites, so that last overlap is package co-location rather than a file
+collision" is falsified by this proposal's own staging, so the existing row is corrected in place
+rather than joined by a new one.
+
+FACT: `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` is in this proposal's `## Files
+touched on application (non-spec)` (non-spec-changes.md:2637), and non-spec-changes.md:2329-2334
+states that `TestConcurrentShutdownsSendOneDrainSignal_spec_6_4` and
+`TestShutdownDrainRacesAnIncomingSession_spec_6_4` must keep passing "with the mechanical edit that
+their `Shutdown` calls set `unconditional_teardown`".
+
+FACT: 0078 lists the same file against TEST-7 (0078:785, "The fixture's accept-timeout bound and the
+tightened sequenced-leg assertion"). 0078's header reads `Status: Draft for review.` and
+`Date: 2026-08-25` (0078:3-4), and the file's only commit is `9589aea54`, dated 2026-08-25.
+
+FACT: The two test functions sit at `:232` and `:316` of that file and carry four
+`adapterv1.ShutdownRequest` literals between them, at `:269`, `:332`, `:373` and `:453`. None of the
+four carries either selector today, so under the staged two-field precondition each one goes red
+unless edited. The edit is forced rather than optional: `Client.Shutdown` sets the field for its own
+callers, but these cases construct the request against the adapter server directly.
+
+WATCHOUT: The two proposals' edit regions inside that file are distinct (0078 touches
+`socketDrainPod`'s accept timeout and the sequenced leg's assertion; this proposal sets a request
+field). The collision is a merge hazard rather than a design conflict, and the corrected row says so
+in those terms, so a later reader does not read it as a design conflict between the two.
+
+Edits made: summary.md, `## Impacts on other proposals`, the 0078 row only. "Two effects are real"
+became "Three file collisions are real, all of them in test files"; the co-location clause was
+replaced with the collision and its two named cases; the status cell gained the commit gloss the
+other rows in the section already carry; and the "What it must do" cell gained the instruction to
+preserve `unconditional_teardown` on those four `Shutdown` calls when TEST-7 rewrites the fixture.
+
+No staged deliverable is added, removed, merged, split or resequenced, so the implementation
+checklist is unchanged.
+
+### [f1.cleanup]
+
+FACT: `summary.md` now carries exactly the eight listed sections in order, with `## Summary` holding `**Problem statement.**`, `**What changes.**`, `**Decisions.**` and `**Watch out for.**` and no prose of its own, and `## Deliverable index` last and byte-identical, nineteen deliverable lines.
+FACT: `**Accepted failure modes.**` stood as a fifth labelled part under `## Summary` and the section list names no such part. The whole block, its label included, was moved verbatim to the end of `## Non-goals`, which is the listed section whose subject (what this proposal does not close) covers it. No sentence was reworded, so every "recorded under the accepted failure modes" pointer elsewhere in the file still resolves.
+OPEN: no listed section is named for accepted failure modes, so the block now sits under a heading that does not announce it. Whoever owns the summary's structure should decide whether the section list wants a part or a section of its own for residues the design accepts, rather than leaving a format pass to choose a host each firing.
+FACT: `## Revision history` stood after `## Deliverable index`, which must be last, and the section list does not name it. It was removed and its substance is recorded on the OPEN line below.
+OPEN: the removed `## Revision history` recorded that on 2026-09-15 the proposal was revised against the fifth determination in `scratchpad/attempt-fence-determination.md`, replacing the adapter-minted bind epoch with a caller-minted per-attempt token after review found the epoch self-defeating under its own latch rule; that the revision moved the comparison into the adapter's resolve chokepoint, folded in the started-entry gate, the adapter-client typed-error translation and the reclaim-closure short-circuit, and pushed the remaining findings out as their own `BUILD-GAPS.md` entries; and that the proposal's status was reset to Draft, to be read and written with `.claude/tools/proposal-status.mjs`. The standing context's compaction-pass-16 changelog carries the same history, and `status.md` carries the status. Whoever owns the summary should decide whether any of it belongs in a listed section.
+FACT: `**Resolved by this revision.**` was the equivalent of a `### Retired` block inside `## Open decisions for human to make` and was deleted. Its four entries were checked first: entry 11 (§7.1's trigger stays "fails") and entry 16 (no upper clamp on the exclusive-pool resume budget) are answered by the staged §7.1 and §5.2 text, which carries the trigger and the `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` formula unchanged; entry 17 (the shared-entry residue) is answered by the staged per-attempt token and its first-writer-wins stamp in §4.7.1; entry 18 (the refusal's client-visible outcome) is answered by the staged `ABORTED` classification of `SLOT_BIND_ATTEMPT_SUPERSEDED`. None was still open, so none was carried up.
+FACT: entry 19 stood under `**Open.**` headed "Resolved on 2026-09-16" and is not an open decision. It was deleted. Its finding, that `handleUploadToSession` refuses a mid-session upload unless `s.podRegistry.Get(row.ID)` returns a binding with a non-nil `Adapter`, is what the staged §4.7.1 mid-session rules rest on, and the tier-4 case that pins the guard is carried in the non-spec changes file's Testing section.
+FACT: entry 20, whether the two new `ErrorCode` values take the next two enum values or the Phase-2 range, is the only entry left in `## Open decisions for human to make`. It keeps its identifier `20` verbatim and its text is unchanged.
+WATCHOUT: entry 20 states its question, its ground and why it is the enum owner's call, and it carries no recommendation, no alternatives-and-why-each-lost, and no confidence. A format pass may not mint any of the three. The next adjudication firing owes them.
+FACT: the `## Open decisions for human to make` preamble described entries 11 and 16 through 18 and the numbering of a section that no longer holds them, so its own account of itself was false after the deletions. It was rewritten to say that one decision is open and that it keeps the identifier it was stamped with, which is why the number does not start at 1.
+OPEN: three pointers to other proposals sit outside `## Impacts on other proposals`, and that section has no row for any of them. The relocated accepted-failure-modes block routes the recovery work to "position 2 of the gateway-runtime-comms remediation plan"; the bricked-pod defect entry names 0078 and 0079 as the owners of BUILD-GAPS finding F-5.2.33's two halves; and the `**Decisions.**` file-collision bullet names "a later position covering proposal 0080". All three sit inside blocks this pass moves verbatim or may not reword, and minting a row for a programme position would assert something on a format pass's authority. Whoever next edits one of those blocks should decide whether each wants a row. Third firing to record it.
+FACT: `## Goals`, `## Defects in the shipped tree that this proposal does not stage` and `## Impacts on other proposals` were not edited. The defects section carries twenty-one entries and no preamble, so nothing there was falsified by the moves.
+
 ## Retired
 
 This section holds the adversarial-review history that is no longer live. Each entry records a
