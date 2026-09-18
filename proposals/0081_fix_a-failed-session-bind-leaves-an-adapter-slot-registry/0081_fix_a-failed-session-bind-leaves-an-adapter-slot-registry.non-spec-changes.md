@@ -600,7 +600,7 @@ Scope of the call-site change:
 above it gains the matching line:
 
 ```go
-//	receiving_uploads → slot_cleanup    (bind abandoned before the runtime is given the session)
+//	receiving_uploads → slot_cleanup    (a cleanup reclaims the slot after its bind is abandoned before the runtime is given the session)
 ```
 
 `ValidTransitions()` and `TestValidTransitions_spec_6_2`'s `want` list are one statement of the
@@ -1100,11 +1100,13 @@ before them and compiles alone. W8's per-slot guard is folded in rather than nam
 because it is a lock-ordering rule over the same two functions and splitting it would leave an
 intermediate commit in which the resolve is fenced and the destructive section is not.
 
-What the epoch design contributed and what replaces it: the epoch counter, `slotState.epoch`,
-`nextBindEpochLocked`, the seven epoch-bearing response fields, the seven handlers that
-reported them, and the per-connection latch in `adapterclient` all come out. The reclaim hold,
-`reclaimSlotLocked`, the refusal sentinel, and the five-site `slotResolveError` routing all
-stay, unchanged in substance.
+Every name in this deliverable is new to the tree. `slotState` carries no token field today
+(`pkg/adapter/slot.go`), `ensureSlotStateLocked` (`slot.go:105`) and `ensureSlotPaths`
+(`slot.go:140`) take a slot identifier and nothing else, and `slotsession.go:174` declares
+`deregisterSlotLocked` with no reclaim helper beside it. Nothing named `bindEpoch`,
+`BindEpoch`, `reclaimSlotLocked` or `slotResolveError` exists anywhere under `pkg/adapter` or
+`pkg/gateway/runtime/adapterclient`, so this deliverable removes nothing and every element
+below is an addition.
 
 **New file `pkg/adapter/bindattempt.go`**, holding:
 
@@ -1439,10 +1441,10 @@ func (c *Client) ShutdownReclaim(
 ) (adapterv1.SlotReclaimOutcome, bool, error)
 ```
 
-Its returns are the outcome, `exited_cleanly` and the error. The
-per-connection epoch latch, `BindEpoch()`, and every read of it come out: the value the
-compensation names is the token the attempt holds, so nothing is latched off a response and the
-`atomic.Int64` has no remaining reader.
+Its returns are the outcome, `exited_cleanly` and the error. The value the compensation names
+is the token the attempt already holds, so nothing is latched off a response and the client
+needs no per-connection state: `pkg/gateway/runtime/adapterclient` holds none today, and this
+deliverable introduces none.
 
 ### CODE-8 · pkg/gateway/podlifecycle/podsession/binder.go · the reclaim closures return a typed refusal without draining the pod
 
@@ -1785,7 +1787,7 @@ Under `### Per-slot sub-states`, add the row matching the §6.2 edge, immediatel
 `receiving_uploads` → `running` row:
 
 ```
-| `receiving_uploads` | `slot_cleanup` | The bind is abandoned or fails before the runtime has been given the session, a start still in flight included |
+| `receiving_uploads` | `slot_cleanup` | A cleanup reclaims the slot after its bind is abandoned or fails before the runtime has been given the session, a start still in flight included |
 ```
 
 No shipped tier-11 gate compares this table's edge rows against the §6.2 block: the tests in
@@ -1823,7 +1825,7 @@ Add the block below immediately after the `**Scrub responsibilities.**` paragrap
 attempt and the hold reach the third-party adapter author the page is written for:
 
 ```
-**Bind attempt and slot-identifier reclaim hold.** Each bind attempt mints an opaque token before its first call and carries that token on the requests that stage the session's workspace, its credentials and its setup, and on a `Resume`. The adapter treats the token as opaque, writes it onto the entry it creates, and never writes it onto an entry it resolved. The resolve, the creation, the write and the comparison are one indivisible step under the lock that guards the registry. A request whose token differs from the one the entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED` on `ABORTED`, which is the transient classification a caller retries on. A request that resolves an entry whose session has already started is refused with `SLOT_BIND_ALREADY_STARTED` on `FAILED_PRECONDITION`, which is permanent, unless it is a mid-session upload or a repeat `ConfigureWorkspace` for the session that started on that pod, which this page publishes as idempotent. A request meeting both conditions is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, because the token comparison is applied before the started-session rule. A mid-session upload carries no token: it resolves an existing entry, creates none, and is admitted against a started session. Before the adapter records the pod's shared runtime process as holding a session it confirms it still holds that slot's entry under the token the starting request was admitted against, and when it does not it records nothing, takes the session back off that process, and refuses that request with the transient `ABORTED` status. `StartSession` and `ConfigureWorkspace` carry no token either and are not mid-session uploads. They may create an entry, which then carries no token, and the started-session rule governs them rather than any token comparison. Every other RPC resolves an entry the session already holds and is outside these rules. A `Shutdown` naming a bind attempt acts only on an entry carrying it. When the entry carries a different attempt, or carries none, the response reports `superseded`, and when the adapter holds no entry for the session it reports `absent`; on either outcome the adapter performs neither teardown. The unconditional teardown removes whatever entry the adapter holds and reports `reclaimed`. Every outcome is answered on a successful call. The adapter holds the slot identifier from the deregistration of that slot's registry entry until the cleanup that reclaims the slot has finished, and while the identifier is held it refuses a request that would create or resolve an entry under it with the gRPC status code `ABORTED`, which is the transient classification a caller retries on.
+**Bind attempt and slot-identifier reclaim hold.** Each bind attempt mints an opaque token before its first call and carries that token on the requests that stage the session's workspace, its credentials and its setup, and on a `Resume`. The adapter treats the token as opaque, writes it onto the entry it creates, and never writes it onto an entry it resolved. The resolve, the creation, the write and the comparison are one indivisible step under the lock that guards the registry. A request whose token differs from the one the entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED` on `ABORTED`, which is the transient classification a caller retries on. A request that resolves an entry whose session has already started is refused with `SLOT_BIND_ALREADY_STARTED` on `FAILED_PRECONDITION`, which is permanent, unless it is a mid-session upload or a repeat `ConfigureWorkspace` for the session that started on that pod, which this page publishes as idempotent. A request meeting both conditions is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, because the token comparison is applied before the started-session rule. A mid-session upload carries no token: it resolves an existing entry, creates none, and is admitted against a started session. Before the adapter records the pod's shared runtime process as holding a session it confirms it still holds that slot's entry under the token the starting request was admitted against, and when it does not it records nothing, takes the session back off that process, and refuses that request with the transient `ABORTED` status. `StartSession` and `ConfigureWorkspace` carry no token either and are not mid-session uploads. They may create an entry, which then carries no token, and the started-session rule governs them rather than any token comparison. Every other RPC resolves an entry the session already holds and is outside these rules. A `Shutdown` naming a bind attempt acts only on an entry carrying it. When the entry carries a different attempt, or carries none, the response reports `superseded`, and when the adapter holds no entry for the session it reports `absent`; on either outcome the adapter performs neither teardown. The unconditional teardown removes whatever entry the adapter holds and reports `reclaimed`. Every outcome is answered on a successful call. The adapter holds the slot identifier from the deregistration of that slot's registry entry until the cleanup that reclaims the slot has finished. While the identifier is held it refuses, with the gRPC status code `ABORTED`, which is the transient classification a caller retries on, every request that would create or resolve a registry entry under that identifier. The requests that can create one are `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials`, `StartSession`, `Resume` and `ConfigureWorkspace`; a mid-session upload, which resolves the session's entry and creates none, is refused on the same terms for as long as the identifier is held. `Shutdown` is outside the hold. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming `Shutdown` carries when it carries one, by that request's own deadline when it carries none, and, for the adapter's own coordinator-lost termination, which runs under no request, by a graceful window of ten seconds.
 ```
 
 Amend the `DemoteSDK` row (`:64`) so it states the registry effect §4.7.1's caller rule turns on:
@@ -1835,15 +1837,24 @@ Amend the `DemoteSDK` row (`:64`) so it states the registry effect §4.7.1's cal
 DOCS-2 lands beside DOCS-1, after SPEC-1, SPEC-3 and SPEC-5 have landed the contract it mirrors.
 Its tier-11 work is specified under `## Testing`.
 
-### DOCS-3 · docs/reference/error-catalog.md · the `SETUP_COMMAND_FAILED` row mirrors its widened §15.1 row
+### DOCS-3 · docs/reference/error-catalog.md · the `SETUP_COMMAND_FAILED` row takes four sentence replacements and a replaced remedy cell
 
 The started-session refusal reaches the client under the `SETUP_COMMAND_FAILED` envelope §15.1
 already defines for a deterministic `FailedPrecondition` failure in the setup window, and
-SPEC-5 widens the §15.1 row's three cause-naming sentences so they no longer state a cause the
-refusal does not have. The published catalog at `docs/reference/error-catalog.md:129` states the
-same row for readers who do not have the specification, and the tier-11 catalog cross-check
-holds the two to one text. This deliverable makes the three matching replacements in the
-published row, in the reference page's own column set.
+SPEC-5 replaces three sentences of the §15.1 row so they no longer state a cause the refusal
+does not have. The published catalog at `docs/reference/error-catalog.md:129` states the same
+row for readers who do not have the specification. Nothing holds the two to one text: no file
+under `tests/`, `scripts/` or `cmd/`, and no `Makefile` target, names
+`docs/reference/error-catalog.md`, so the page drifts from §15.1 silently and this deliverable
+is the only thing that moves it.
+
+This deliverable makes four sentence replacements and one remedy-cell replacement in the
+published row, in the reference page's own column set. Three mirror SPEC-5's three. The fourth
+has no SPEC-5 counterpart, because §15.1's own exclusion sentence is keyed on the gRPC code and
+stays true for a refusal answered `ABORTED`, while the page states the same exclusion keyed on
+the cause class, where the superseded refusal is neither a crashed pod nor a transport timeout.
+The page's prose names the pod slot rather than the registry entry, and carries no
+specification section number, because the reader is a REST client who has neither term.
 
 The description cell's opening sentence, which reads "A session setup command exited non-zero
 (or hit its hard timeout), which the runtime adapter reports as a deterministic failure.",
@@ -1868,15 +1879,36 @@ The description cell's `details.reason` sentence, which reads "`details.reason` 
 `details.reason` is `setup_command_failed`. Where a setup command ran, its per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`; a bind refusal runs no setup command and produces no such output.
 ```
 
-The remedy cell gains a second clause after "and create a new session":
+The description cell's closing sentence, which reads "A non-deterministic setup-window failure
+(a crashed pod or a transport timeout) instead surfaces as the retryable
+`SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.", becomes:
 
 ```
-; for a bind refusal, read the session's state with `GET /v1/sessions/{id}` rather than retrying the start, because the session is already running.
+Every other setup-window failure surfaces instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`: a crashed pod, a transport timeout, and a bind-sequence request refused because a newer start of the same session has superseded this one.
+```
+
+The sentence is re-keyed off the cause class because the superseded refusal is a deterministic
+refusal that is retryable, so it belongs to the set the sentence describes while sitting
+outside the predicate the sentence states. §15.1's counterpart needs no such edit: it is keyed
+on the gRPC code, and the superseded refusal is answered `ABORTED`.
+
+The remedy cell, which reads "Inspect the setup-command output, correct the workspace plan or
+setup script, and create a new session.", is replaced whole, because the clause has to land
+inside the cell's terminating period rather than after it:
+
+```
+Inspect the setup-command output, correct the workspace plan or setup script, and create a new session. Where the failure is a bind refusal, no setup command ran: read the session's state with `GET /v1/sessions/{id}` rather than retrying the start, because another start of the same session already holds the pod slot.
 ```
 
 No new row is added. The two adapter error codes SCHEMA-1 adds are gateway-to-adapter codes
 that the gateway maps into this existing envelope and into the retryable slot-failure envelope,
-so neither appears in the client-facing catalog. Tiers: 11.
+so neither appears in the client-facing catalog.
+
+DOCS-3 adds no gate and declares no tier above 0. There is no shipped reconciliation between
+§15.1's catalog and this page to extend, and a gate built for the one row this deliverable
+touches would leave every other row of the page ungated. The absent reconciliation is a defect
+of the page rather than of this change, and it goes out as its own finding against §15.1.
+Tiers: 0.
 
 ## Testing
 
@@ -2428,6 +2460,12 @@ precondition the staged row states. Assert over the whole page, beside the row a
 carries `"bind attempt"` and `"reclaim hold"`. Add one clause to the `// diagnosis:` comment
 naming the two teardowns and the two teardown preconditions.
 
+**For DOCS-3**, no file. No shipped gate compares `docs/reference/error-catalog.md` against
+§15.1: no file under `tests/`, `scripts/` or `cmd/` and no `Makefile` target names the page.
+This deliverable adds none, because a gate built for the one row it touches would leave every
+other row of a sixty-row page ungated and would read as coverage the page does not have. The
+deliverable lands beside SPEC-5 in the same step, which is what holds the two texts together.
+
 **For the counters and SPEC-6**, the shipped `alert_catalog_crosscheck_test.go` and the
 metrics-catalog reconciliation it drives gain the three counter names, so a counter present in
 `catalog.go` and absent from `docs/reference/metrics.md` or from the §16.1 row fails tier 11.
@@ -2483,9 +2521,12 @@ treating a failure as this change's.
   Closing it would need a per-session identity on the shared runtime's active set, which no
   `Runtime` implementation carries.
 - **A cleanup the adapter runs inside its own start handler reports its failure nowhere.** A
-  bind that fails after its slot entered `receiving_uploads` and before the runtime was given
-  the session runs the §5.2 per-slot cleanup inside the failing handler, through
-  `releaseSessionSlot`. That function discards `removeSlotTree`'s error
+  bind that fails inside a start handler (`StartSession`, `Resume`, or the SDK-warm start) after
+  its slot entered `receiving_uploads` and before the runtime was given the session runs the
+  §5.2 per-slot cleanup inside that handler, through `releaseSessionSlot`. A bind that fails at
+  the workspace-preparation, setup or credential-assignment stage runs no adapter-side cleanup,
+  so its residue is reclaimed by the §7.1 compensation or, where that obligation does not reach,
+  at the pod boundary. That function discards `removeSlotTree`'s error
   (`pkg/adapter/slotsession.go:217`), and CODE-6 replaces the discard with a warning log line
   rather than with a carrier the gateway can read. The gateway's compensation then finds no
   entry, is answered `ABSENT`, and CODE-4 reads that as a completed reclaim with `sbe.Leaked`
@@ -2611,8 +2652,7 @@ treating a failure as this change's.
 - `pkg/gateway/runtime/adapterclient/client.go` · the two error sentinels and
   `translateSlotBindRefusal` with its call sites, `bind_attempt` on the six requests,
   `mid_session` on `PrepareWorkspace`, `unconditional_teardown` set inside `Shutdown` and
-  `ShutdownRecycle`, the new `ShutdownReclaim`, and the removal of the per-connection epoch latch
-  and `BindEpoch`.
+  `ShutdownRecycle`, and the new `ShutdownReclaim`.
 - `pkg/adapter/session.go` · `Shutdown`'s two-field precondition, its bind-attempt comparison,
   its reclaim hold, its split gates, its response, its doc comment, and the `StartSession`
   rollback.
@@ -2657,6 +2697,8 @@ treating a failure as this change's.
 - `docs/reference/state-machines.md` · the per-slot sub-state table.
 - `docs/reference/adapter-contract.md` · the `Shutdown` row, the bind-attempt block after the
   scrub-responsibilities paragraph, and the `DemoteSDK` row.
+- `docs/reference/error-catalog.md` · the `SETUP_COMMAND_FAILED` row's four replaced
+  sentences and its replaced remedy cell.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
   `pkg/adapter/slotsession_test.go`, `pkg/adapter/socketruntime_test.go`,
   `pkg/adapter/export_test.go`, `pkg/adapter/usage_test.go`,

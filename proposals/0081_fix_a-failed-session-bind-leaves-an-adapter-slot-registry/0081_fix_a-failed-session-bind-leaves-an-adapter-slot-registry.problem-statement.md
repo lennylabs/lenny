@@ -2,7 +2,7 @@
 
 ## Statement
 
-A FAILED SESSION BIND LEAVES AN ADAPTER SLOT REGISTRY ENTRY THAT NOTHING REMOVES. On a pod that still
+**A failed session bind leaves an adapter slot registry entry that nothing removes.** On a pod that still
 holds a sibling slot at the moment the reservation is released, or on a recycling pool, the entry survives
 for the rest of the pod's life and degrades both the session already running on that pod and every session
 placed there afterwards.
@@ -10,7 +10,7 @@ placed there afterwards.
 This is proposal 0080's inventory entry §1.2, promoted to its own proposal. Every anchor below was
 re-verified against the tree at commit f2a397b53 on 2026-09-08.
 
-THE ENTRY IS CREATED EARLY. The adapter's slot registry entry is created by the first workspace-prep RPC,
+**The entry is created early.** The adapter's slot registry entry is created by the first workspace-prep RPC,
 well before StartSession. `ensureSlotPaths` calls `ensureSlotStateLocked`, which inserts into `s.slots`
 unconditionally, and its own doc comment states the case: "The §4.7 workspace-prep RPCs (PrepareWorkspace,
 FinalizeWorkspace, RunSetup) run before StartSession, so this creates the slot tree the first time the
@@ -22,7 +22,7 @@ still fail afterwards at the credential-file write (`pkg/adapter/slotcreds.go:23
 by the session identifier on every path: the RPC handler passes `sessionID` as both the session and the slot
 argument (`pkg/adapter/credentials.go:74`), so there is no slot-identifier divergence.
 
-NOTHING REMOVES IT ON A FAILED BIND. When a bind fails, the gateway calls `ReleaseSlotReservation`, whose
+**Nothing removes it on a failed bind.** When a bind fails, the gateway calls `ReleaseSlotReservation`, whose
 doc comment states plainly that it releases the SandboxClaim and the active_slots count "without an adapter
 Shutdown", on the stated ground that "the failed attempt already closed its adapter connection"
 (`pkg/gateway/podlifecycle/podsession/slotbinder.go:487-503`). Its body reaches only
@@ -37,7 +37,7 @@ whole-pod scrub does not clear the registry either: it enumerates residue from d
 its own comment, "because the residue the scrub must reach belongs to a leaked slot whose registry entry is
 already gone" (`pkg/adapter/podscrub.go:119-158`).
 
-THE TRIGGER IS FOUR OF THE FIVE SLOT FAILURE STAGES. `slotbinder.go:285-325` carries
+**The trigger is four of the five slot failure stages.** `slotbinder.go:285-325` carries
 `slotFailureWorkspacePrep` (a PrepareWorkspace or FinalizeWorkspace failure), `slotFailureSetup` (a RunSetup
 failure), `slotFailureCredentialAssignment` (including a credential-file write failure), and
 `slotFailureSessionStart` (including a lost or cancelled StartSession RPC). Each closes the client and
@@ -51,7 +51,7 @@ transport-level failure before the PrepareWorkspace handler reaches `resolvePrep
 entry (`pkg/adapter/staging.go:122-140`). The other three stages run strictly after PrepareWorkspace
 succeeded, so for them the entry always exists.
 
-THERE ARE THREE RESIDUE CLASSES, AND A REMEDY MUST CLOSE ALL THREE.
+**There are three residue classes, and a remedy must close all three.**
 
 Registered but unbound, left by the workspace-prep and setup stages. The entry exists with `sessionID`
 empty. `len(s.slots) != 1` then holds forever, so `claimPodMCPStartLocked` returns false for every later
@@ -82,7 +82,7 @@ arms only from the close of the `AdapterEvents` stream (`pkg/adapter/holdstate.g
 `pkg/adapter/adapterevents.go:100-108`), and no gateway code opens that stream today, so it waits on the
 control-stream consumer remediation step R12 builds.
 
-THE EXPOSURE IS NARROWER THAN A FAILED BIND AND WIDER THAN A SINGLE OCCUPANCY EPISODE. The exclusive path is
+**The exposure is narrower than a failed bind and wider than a single occupancy episode.** The exclusive path is
 outside the problem: `failPhase` reclaims through a claim DELETE and the pod retires, so the residue dies
 with it (`pkg/gateway/podlifecycle/podsession/binder.go:996-999`, `:1072-1082`). The concurrent path retires
 the pod too whenever the failed bind's slot was the pod's last occupant. `ReleaseSlotReservation` passes
@@ -96,7 +96,7 @@ recycling pool: the recycle branch patches the claim bound → recycling and run
 scrub touches disk only, and the pod returns to inventory still holding the entry, whose paths now point at
 directories the scrub removed.
 
-WHY IT MATTERS AND WHY NOW. The trigger is any transient error on those stages rather than a race, so it
+**Why it matters and why now.** The trigger is any transient error on those stages rather than a race, so it
 needs no unusual timing, only co-tenancy. One mitigation caps the compounding, and only on one path: the
 §5.2 retry policy records each failed bind on the per-pod slot-health tracker and drains the whole pod once
 the rolling-window failures plus persistent leaks reach `ceil(maxConcurrentSessions/2)`
@@ -111,7 +111,7 @@ and fails at the accept timeout. It is sequenced after this one for the test-fil
 impacts row records. Proposal 0079 does not widen it, because it retires a sidecar pod at each
 occupancy-zero recycle boundary.
 
-THE MISSING COMPENSATION IS ON THE GATEWAY SIDE, so this is not an adapter-only change, and it is the change
+**The missing compensation is on the gateway side**, so this is not an adapter-only change, and it is the change
 most able to break a working bind path. The remedy is closer to hand than the original statement assumed.
 The `Shutdown` RPC already deregisters an entry whether or not it is bound (`removed` is true for an unbound
 entry; `bound` gates only the teardown), it is documented as deliberately idempotent, and the gateway
@@ -125,7 +125,7 @@ final usage flush, the §15.4.2 drain frame, `Runtime.Close`, and a `reportSessi
 pod's sessions_served, for a session that never ran; and on a registered-but-unbound entry it skips
 `removeSlotTree`, so the on-disk tree survives the registry removal (`pkg/adapter/session.go:243-282`).
 
-WHAT THE PROPOSAL MUST DECIDE. Whether the compensation is gateway-driven, adapter-driven, or both, and what
+**What the proposal must decide.** Whether the compensation is gateway-driven, adapter-driven, or both, and what
 happens to the third class's running runtime and to the armed expiry timers. What the spec says about it:
 §5.2's "Slot cleanup" bullet already states the rule for slot completion or failure, but §6.2's per-slot
 sub-state machine has no edge into `slot_cleanup` from `slot_assigned` or `receiving_uploads`, which is
@@ -135,7 +135,7 @@ missing sub-state edge), §5.2 (slot cleanup and the slot retry policy), §28.5.
 (the MCP arming), and §15.4.2 (the drain gate). §4.6.1 is not among them: it is the Warm Pool Controller
 section and states no inbound count.
 
-NAMED OUT OF SCOPE. `claimPodMCPStartLocked` gates on `len(s.slots) != 1`, a raw entry count, so two
+**Named out of scope.** `claimPodMCPStartLocked` gates on `len(s.slots) != 1`, a raw entry count, so two
 interleaved binds on a healthy concurrent pod each observe two entries and neither arms the pod-wide MCP
 surface, with no failed bind anywhere. That is an independent defect this residue makes permanent rather
 than causes, and it needs its own fix. Also out of scope: retuning the `ceil(maxConcurrentSessions/2)`
@@ -144,10 +144,10 @@ calls Launch leaves the same entry by a different trigger with a different owner
 
 ## Evidence
 
-VERIFIED AGAINST THE TREE AT COMMIT f2a397b53, BRANCH proposal-b/gateway-runtime-comms-remediation, ON
-2026-09-08. Every citation below was opened and read in this run. Line numbers are as of that commit.
+**Verified against the tree at commit f2a397b53, branch proposal-b/gateway-runtime-comms-remediation, on
+2026-09-08.** Every citation below was opened and read in this run. Line numbers are as of that commit.
 
-CREATION AND BINDING. `pkg/adapter/slot.go:97-126` (`ensureSlotStateLocked` inserts `s.slots[slotID]`) and
+**Creation and binding.** `pkg/adapter/slot.go:97-126` (`ensureSlotStateLocked` inserts `s.slots[slotID]`) and
 `:135-148` (the `ensureSlotPaths` doc comment, quoted verbatim in the statement) — verified.
 `pkg/adapter/staging.go:134`, `:181`, `:337` (its three production callers) — verified.
 `pkg/adapter/slotcreds.go:23-44` (`ensureSlotStateLocked`, then `if st.sessionID == "" { st.sessionID =
@@ -156,7 +156,7 @@ sessionID }` under the comment "The §4.7 bind sequence assigns credentials befo
 (`assignCredentialsSlot(sessionID, sessionID, ...)`, so the registry key is the session identifier) —
 verified.
 
-ABSENT REMOVAL. `pkg/gateway/podlifecycle/podsession/slotbinder.go:487-503` (`ReleaseSlotReservation`; both
+**Absent removal.** `pkg/gateway/podlifecycle/podsession/slotbinder.go:487-503` (`ReleaseSlotReservation`; both
 quoted phrases are verbatim, and the body reaches only `claimer.ReleaseSlot`) — verified.
 `pkg/adapter/slotsession.go:174-188` (`deregisterSlotLocked`, the only `delete(s.slots, ...)` in the adapter;
 a repository-wide grep returns that one site) — verified. `pkg/adapter/slotsession.go:375-395`
@@ -165,14 +165,14 @@ a repository-wide grep returns that one site) — verified. `pkg/adapter/slotses
 (`releaseSessionSlot` on the server-side start rollbacks) — verified. `pkg/adapter/podscrub.go:119-158` (the
 scrub enumerates on-disk children and never reads `s.slots`) — verified.
 
-FAILURE STAGES. `pkg/gateway/podlifecycle/podsession/binder.go:286-299` (five stage constants, with
+**Failure stages.** `pkg/gateway/podlifecycle/podsession/binder.go:286-299` (five stage constants, with
 `slotFailureConnect` documented as "not a `lenny_slot_failure_total` error_type value") — verified, and the
 original statement's count of six is refuted. `slotbinder.go:285-325` (the four post-connection stages, each
 preceded by `cl.Close()`) and `:233-250` (the four connect-stage returns, all before any workspace-prep RPC)
 — verified. `pkg/adapter/staging.go:122-140` (the entry is created inside the PrepareWorkspace handler, so
 the workspace-prep stage is conditional) — verified.
 
-CONSEQUENCES. `pkg/adapter/slotsession.go:107-115` (`claimPodMCPStartLocked` returns false when
+**Consequences.** `pkg/adapter/slotsession.go:107-115` (`claimPodMCPStartLocked` returns false when
 `len(s.slots) != 1`), reached from `:75-88` on every start path — verified.
 `pkg/adapter/slotsession.go:398-407` (`slotCount`, cited in code to §28.5.3, counting registered-but-unbound
 entries deliberately) and `pkg/adapter/attach.go:344-362` (`deliverToSession` rejecting an unaddressed
@@ -186,7 +186,7 @@ timers, cancelled only inside `deregisterSlotLocked`, firing `EmitAuthExpired`) 
 `pkg/adapter/sdkwarm.go:217` — verified. `pkg/adapter/runtimegeneration.go:20-93` (the cohort the third
 residue class raises, and `runtimeIdleLocked`) — verified.
 
-SPEC ANCHORS. spec/15_external-api-surface.md:1593 ("on a pod holding more than one slot an unaddressed
+**Spec anchors.** spec/15_external-api-surface.md:1593 ("on a pod holding more than one slot an unaddressed
 session-scoped frame is rejected and relayed to no stream") — verified. spec/15_external-api-surface.md:1734
 and spec/04_system-components.md:962 (the intra-pod MCP call-time exactly-one-session rule) — verified.
 spec/16_observability.md:189 (`lenny_adapter_unaddressed_frame_rejected_total`, and its scrape-target
@@ -198,7 +198,7 @@ spec/06_warm-pod-model.md:144-156 (the per-slot sub-state machine, with no edge 
 sequence as a linear happy path) — verified. spec/04_system-components.md:338 (§4.6.1 is "Warm Pool
 Controller (Pod Lifecycle)") — verified, and the original statement's "§4.6.1's inbound count" is refuted.
 
-POD RETIREMENT AND MITIGATION. `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:845-885` (remaining > 0
+**Pod retirement and mitigation.** `pkg/gateway/podlifecycle/podclaim/slotclaimer.go:845-885` (remaining > 0
 keeps the claim; remaining == 0 with recycle=false deletes it "so the pod retires"; the recycle branch
 patches bound → recycling and contacts no registry) — verified. `pkg/controller/warmpool/occupancy.go:78-80`,
 `:132-140` ("no claim on a claimed pod → draining") — verified.
@@ -213,13 +213,13 @@ the create-time reserved row routes there) — verified.
 `pkg/gateway/podlifecycle/podsession/binder.go:1031` is the only `verifyIntegrationLevel` call site, on the
 exclusive Launch, so `materializeSlot` runs no declared-versus-observed check — verified.
 
-SEQUENCING. Proposal 0073 (give every session a slot) is Implemented and created this surface. Proposal 0076
+**Sequencing.** Proposal 0073 (give every session a slot) is Implemented and created this surface. Proposal 0076
 is Implemented and moved the coordination generation onto the slot entry, so `slotState` already carries
 per-session fence state. Proposals 0078 and 0079 are "Draft for review" and are sequenced after this one, so
 this must not depend on them. Proposal 0080 is an unconverged inventory that stages no changes; its §1.2 is
 this problem — verified from each proposal's own status text.
 
-PROGRAMME CONSTRAINTS. Rule S-2 in `gateway-runtime-comms-remediation.md` states that exactly one step
+**Programme constraints.** Rule S-2 in `gateway-runtime-comms-remediation.md` states that exactly one step
 (R1b) edits `schemas/lenny-adapter.proto` and runs `make generate-proto`. The original reading of that rule,
 that this proposal must not open the file at all, is refuted by the rest of the rule: S-2 reserves the FIRST
 window to R1b and states that "a later step needing a field the plan did not enumerate opens a second narrow
@@ -229,18 +229,18 @@ the second window is available — verified against the rule's own text. The pre
 step ordering rather than its scope, because it opens three of S-2's covered handler files (`session.go`,
 `slotcreds.go`, `sdkwarm.go`): the schema step and its regenerated stubs land before those handler steps.
 
-TESTING SURFACE. `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` exercises the drain gate this
+**Testing surface.** `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` exercises the drain gate this
 residue suppresses, and `pkg/adapter/slotsession_test.go:308`
 (`TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2`) already pins the registered-but-unbound
 case of that gate — verified. The concurrent bind path is exercised in `tests/tier4_integration`.
 
-A STANDING HAZARD IN THIS REPOSITORY. Work has repeatedly landed by a route nobody recorded, and a
+**A standing hazard in this repository.** Work has repeatedly landed by a route nobody recorded, and a
 proposal's assertion that something is absent has repeatedly proved stale. Verify absence by reading the
 tree, never by trusting a register or another proposal's text.
 
 ## Who observes it
 
-THE INCUMBENT SESSION ON THE POD, FIRST AND WITHOUT WAITING FOR A LATER SESSION. `slotCount()` counts
+**The incumbent session on the pod, first and without waiting for a later session.** `slotCount()` counts
 registered-but-unbound entries, so one residue entry holds the count permanently above one, and
 `deliverToSession` then rejects every session-scoped runtime output frame that omits `sessionId`
 (`pkg/adapter/attach.go:344-362`; `pkg/adapter/slotsession.go:398-407`). The spec permits a runtime to omit
@@ -248,14 +248,14 @@ that field precisely while the pod holds at most one slot (spec/15_external-api-
 serving one session, on which a second session's bind fails, therefore drops the incumbent's unaddressed
 output from that moment on.
 
-EVERY LATER SESSION PLACED ON THAT POD, for as long as the pod keeps taking sessions. Such a session arms
+**Every later session placed on that pod**, for as long as the pod keeps taking sessions. Such a session arms
 neither the platform MCP server nor any connector server, because `claimPodMCPStartLocked` refuses on the
 entry count, while `writeSessionManifest` still hands its runtime a nonce and a socket path
 (`pkg/adapter/session.go:124-153`). On an SDK-warm pod it is worse: the claim itself is refused with
 `Unavailable`, so `StartSession`, `Resume`, and `ConfigureWorkspace` all fail
 (`pkg/adapter/slotsession.go:64-73`).
 
-OPERATORS, ONLY IF THEY WIRED AN ADAPTER SCRAPE TARGET. The one metric that moves is
+**Operators, only if they wired an adapter scrape target.** The one metric that moves is
 `lenny_adapter_unaddressed_frame_rejected_total`, which the spec records as emitted by the adapter process
 inside the agent pod and therefore outside the default scrape target set until a deployer wires an adapter
 scrape target (spec/16_observability.md:189). The only other signal is an adapter log line. Nothing on the
@@ -263,50 +263,50 @@ gateway side observes the residue at all, and `materializeSlot` runs no `verifyI
 session that arms no MCP surface is never flagged as underperforming its declared level
 (`pkg/gateway/podlifecycle/podsession/binder.go:1031` is the sole call site, on the exclusive Launch).
 
-THE EXPOSED POPULATION is deployments that opted into concurrent sessions. `maxConcurrentSessions` defaults
+**The exposed population** is deployments that opted into concurrent sessions. `maxConcurrentSessions` defaults
 to 1 and a value above 1 requires `acknowledgeProcessLevelIsolation`; the gateway dispatches to the slot path
 only above 1, and the exclusive path drains the pod on failure. Single-session pools are unaffected.
 
 ## What breaks if nothing changes
 
-THE §28.5.3 RESOLVE-OR-REJECT RULE FAILS CLOSED FOREVER on the affected pod. Unaddressed session-scoped
+**The §28.5.3 resolve-or-reject rule fails closed forever** on the affected pod. Unaddressed session-scoped
 runtime output is relayed to no stream for the rest of the pod's life, which is a silent loss of a live
 session's output rather than a degraded start.
 
-THE POD'S INTRA-POD MCP SURFACE NEVER ARMS AGAIN. No later session on that pod gets a platform MCP server or
+**The pod's intra-pod MCP surface never arms again.** No later session on that pod gets a platform MCP server or
 a connector server, and the third residue class additionally drives `soleSession` empty as soon as one
 further session starts, which refuses every `tools/list` and `tools/call` on the pod under the
 exactly-one-session rule. A remedy that removes the residue restores the arming only for a session that
 claims while it holds the pod alone; wherever two binds overlap, the entry-count guard named out of scope
 above refuses it with no residue involved.
 
-THE §15.4.2 DRAIN IS SUPPRESSED for every later Shutdown on that pod, because a bound residue entry keeps
+**The §15.4.2 drain is suppressed** for every later Shutdown on that pod, because a bound residue entry keeps
 `boundRemains` true. A Full-level runtime is then hard-closed with no DRAINING signal.
 
-CREDENTIAL MATERIAL AND ARMED TIMERS OUTLIVE THE SESSION. A residue left after a successful
+**Credential material and armed timers outlive the session.** A residue left after a successful
 `AssignCredentials` keeps `/run/lenny/slots/{sessionId}/credentials.json` on disk and an armed direct-mode
 expiry timer per provider. When one fires, `onSlotLeaseExpired` rewrites that file and emits AUTH_EXPIRED on
 `CH-ADAPTEREVENTS` for a lease belonging to a session the gateway has since re-placed on another pod. This is
 the same hazard class `hasStartedSession`'s own comment names for the §10.1 hold, left unmitigated on the
 expiry path.
 
-A RUNTIME RUNS FOR AN ABANDONED SESSION, in the third class. The gateway has re-placed the session
+**A runtime runs for an abandoned session**, in the third class. The gateway has re-placed the session
 elsewhere while the adapter's shared runtime process still holds it, `runtimeIdleLocked` is false forever so
 no MCP surface can ever be torn down, and the §10.1 coordinator hold would arm on a pod the gateway believes
 holds nothing once remediation step R12 opens the `AdapterEvents` stream whose close arms it.
 
-THE RESIDUE CROSSES THE RECYCLE BOUNDARY on a recycling pool, so a pod returns to inventory carrying an entry
+**The residue crosses the recycle boundary** on a recycling pool, so a pod returns to inventory carrying an entry
 whose paths point at directories the whole-pod scrub has removed, and later tenants inherit it after the
 pinned-tenant hold expires.
 
-THE COMPOUNDING IS BOUNDED ON ONE PATH ONLY. The §5.2 unhealthy threshold retires a repeatedly-failing pod on
+**The compounding is bounded on one path only.** The §5.2 unhealthy threshold retires a repeatedly-failing pod on
 the retry path, at the first failure when `maxConcurrentSessions` is 2. The mainline create-time
 `BindReservedSlot` path records no health event and never evaluates the threshold, so residue accumulates
 there at any concurrency.
 
 ## Findings this unblocks
 
-BUILD-GAPS FINDING IDS: none. No BUILD-GAPS.md finding references this problem. What follows is
+**BUILD-GAPS finding ids: none.** No BUILD-GAPS.md finding references this problem. What follows is
 the downstream work this change unblocks or constrains.
 
 PROPOSAL 0080 §1.19, three fence-refusal classes sharing one status code. One of those classes is produced by
@@ -315,19 +315,19 @@ PROPOSAL 0080 §1.19, three fence-refusal classes sharing one status code. One o
 predicates read, so it is sequenced first deliberately. State the effect on that predicate rather than
 leaving it for the later work to discover.
 
-FILES A LATER POSITION ALSO REWRITES, so prefer a remedy that does not force a second restructure of them:
+**Files a later position also rewrites**, so prefer a remedy that does not force a second restructure of them:
 `pkg/adapter/slotsession.go` and `pkg/adapter/slot.go` are rewritten by a later position covering 0080 §1.1,
 §1.3, §1.4, §1.5, §1.16, §1.19, and §1.20.
 
 ## Prior art considered
 
-NO PROPOSAL STAGES A REMEDY. Proposal 0080 is an inventory that explicitly stages no changes, and its §1.2 is
+**No proposal stages a remedy.** Proposal 0080 is an inventory that explicitly stages no changes, and its §1.2 is
 this entry. Proposal 0073, which created the surface, recorded the gap in its §9 recorded limits and states
 that discharging it is an obligation it does not take. The gateway-runtime-comms remediation programme's step
 list carries no step touching the adapter slot registry's failed-bind compensation; its only slot mention is
 per-slot hold state in R12.
 
-THE ADAPTER-SIDE REMOVAL MECHANISM ALREADY EXISTS AND IS REACHABLE FROM THE GATEWAY.
+**The adapter-side removal mechanism already exists and is reachable from the gateway.**
 `Shutdown`'s clause two runs `deregisterSlotLocked(sessionID)` unconditionally and gates only the teardown on
 `bound := removed && st.sessionID != ""`, and its own doc comment states that the conditional structure is
 what makes the handler idempotent, because the §11.4 full revoke and the occupancy-zero edge each send a
@@ -339,20 +339,20 @@ No new RPC is needed, so `Shutdown` clause two stays the single removal entry po
 does not carry is any statement of which bind attempt a reclaim compensates, and that is what the proposal
 adds as an additive field on the same message.
 
-REUSING `Shutdown` UNMODIFIED IS NOT A DROP-IN. On a bound-but-unstarted entry it takes the full teardown
+**Reusing `Shutdown` unmodified is not a drop-in.** On a bound-but-unstarted entry it takes the full teardown
 branch, the final usage flush, the §15.4.2 drain frame when no bound entry remains, `Runtime.Close`, and a
 `reportSessionScrub` that advances the pod's sessions_served and feeds the leaked ledger, for a session that
 never ran. On a registered-but-unbound entry it skips `removeSlotTree`, so the on-disk slot tree survives the
 registry removal (`pkg/adapter/session.go:243-282`).
 
-A SPEC SURFACE ALREADY STATES THE COMPENSATION RULE, PARTLY. §5.2's "Slot cleanup" bullet states that on slot
+**A spec surface already states the compensation rule, partly.** §5.2's "Slot cleanup" bullet states that on slot
 completion or failure the adapter removes the slot's workspace directory, kills the slot's processes, and
 releases the `slotId`. What the spec does not model is the pre-start case: §6.2's per-slot sub-state machine
 has edges only `slot_assigned → receiving_uploads → running → slot_cleanup → released|leaked`, with no edge
 into cleanup from `slot_assigned` or `receiving_uploads`, which is exactly the failed-bind window. §4.7.9
 states the bind sequence with no failure branch at all.
 
-THE TREE HAS MADE THE BOUND-TO-STARTED REFINEMENT TWICE ALREADY, so a third, cheaper option exists for part
+**The tree has made the bound-to-started refinement twice already**, so a third, cheaper option exists for part
 of the problem and should be weighed and rejected explicitly rather than overlooked. `hasStartedSession`
 chose the `started` flag over the bound state expressly because a bind that failed after credential
 assignment leaves a bound entry for a re-placed session (`pkg/adapter/slotsession.go:326-340`), and
