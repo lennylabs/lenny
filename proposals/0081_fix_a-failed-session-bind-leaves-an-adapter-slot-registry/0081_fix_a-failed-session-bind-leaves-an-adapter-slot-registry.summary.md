@@ -464,8 +464,10 @@ deliberately and which is recorded under the defects this proposal does not stag
 
 The decisions below are open for a human. Each keeps the identifier it was stamped with, so the
 numbering does not start at 1: the entries that held the earlier numbers were resolved, their
-answers are staged in the change files, and their record is in the review log. Where the review
-loop derived no recommendation, the entry says so.
+answers are staged in the change files, and their record is in the review log. Entries 21 and 27
+carry a recommendation with its ground, its alternatives and a confidence. Entries 20, 22 and 26
+carry the question and its ground alone, because the review loop derived no recommendation for
+them.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -474,13 +476,42 @@ loop derived no recommendation, the entry says so.
     recorded here rather than taken in the deliverable because the enum's numbering convention
     is not stated anywhere this proposal can cite.
 
-21. **Does `recycle.maxSessionsPerPod` count a bind that reached `RunSetup`?** §4.7.9 step 5
-    runs the deployer and client setup commands before `AssignCredentials`, so a bind abandoned
-    at `ready` has executed code on the pod that primes the residual-state vectors §5.2
-    enumerates. Neither the shipped tree nor the spec this proposal stages counts such a bind
-    toward the pod's session limit. The condition is pre-existing rather than introduced here,
-    and the proposal stages no change to it. The review loop derived no recommendation and
-    routed it to a human or a later proposal.
+21. **Should a bind that ran the setup commands but never reached `running` count toward
+    `recycle.maxSessionsPerPod`?** §4.7.9 step 5 runs the deployer and client setup commands
+    (`RunSetup`) before `AssignCredentials`, so a bind abandoned at `ready` has already executed
+    code on the pod, priming the residual-state vectors §5.2 says the scrub cannot address
+    (TCP `TIME_WAIT` and conntrack entries, DNS resolver cache, page-cache priming,
+    `inotify`/`fanotify` registrations, and pipes or sockets outside managed paths). Neither the
+    shipped tree nor the spec this proposal stages counts such a bind toward the pod's session
+    limit, and the condition is pre-existing rather than introduced here.
+
+    **Recommendation (moderate confidence): leave the counter as it is, and raise the
+    residual-state argument as its own finding against §5.2's retirement predicate.** The ground
+    is that the counter is defined as a record of sessions served: §5.2 keys the retirement
+    trigger on "the pod's served-session count", the field comment calls it "counts every session
+    served", and §12 records `sessions_served` as gateway-written at each session release. A bind
+    abandoned before `running` is never served and never released, so the shipped definition
+    already excludes it, and the staged §5.2 append withholds the cleanup-outcome report on that
+    path for the same reason.
+
+    The alternatives and why each lost. **Count it**, treating a pod that has executed setup
+    commands as having consumed one of its reuses: this loses on accounting, because the
+    cleanup-outcome report carries no per-session dedup, so a §5.2 slot retry that re-binds the
+    same session onto the same pod would be counted twice, retiring the pod early against a
+    number that no longer measures sessions served and skewing the `lenny_pod_session_reuse_count`
+    p50 the PoolScalingController derives `mode_factor` from (§16 observability, §5.2 scaling).
+    **Withdraw the question as already answered by the staged text**: this loses because the
+    staged text answers only what the counter counts, while §5.2 gives the field a second role
+    when it requires the deployer to choose `maxSessionsPerPod` "based on the workload's
+    sensitivity and the residual state vectors enumerated above". On that role the question is a
+    policy question about how much unscrubbable residue one pod may accumulate, and neither the
+    spec nor the code settles it.
+
+    What deciding otherwise costs. Deciding that it should count commissions work this proposal
+    has not scoped: a §5.2 edit that restates the retirement predicate in terms other than
+    sessions served, a gateway accounting change with a per-session dedup so a retry is not
+    double-counted, and an answer for the leak signal that rides the same report. None of that is
+    staged here, so an affirmative answer is a new proposal rather than an edit to this one.
 
 22. **Does an incomplete reclaim for a §7.3 re-attach onto a pod serving one session need a
     stated disposition?** The §7.1 obligation SPEC-2 stages reaches that attempt, because its
@@ -495,37 +526,6 @@ loop derived no recommendation, the entry says so.
     filing it would have to rest on §5.2 delegating into §6.2 text that does not cover the case.
     The decision is whether to state the disposition or to accept the gap.
 
-23. **Was the widening of §7.1's leak predicate deliberate?** An earlier round reworded the
-    staged §7.1 paragraph so the slot is `leaked` on any outcome without a clean exit, where the
-    text before it said `reclaimed` without a clean exit. The staged code lane is consistent
-    with the wider form, because every teardown rule that removes no entry answers a clean exit,
-    so the disposition reads the RPC error and the clean-exit flag alone. Nobody recorded
-    whether the widening was intended or a side effect of the row rewrite, and an earlier
-    decision in the review log states the narrower form. Confirming the wider form retires that
-    earlier decision; confirming the narrower one reopens the §7.1 sentence and the code that
-    reads it.
-
-24. **Do the pairing rule and the mid-session-create rule need an error category and an
-    `ErrorCode`?** §15.4's published block asserts that the status code and error category
-    answering each named §4.7.1 rule are stated once, by §4.7.1. §4.7.1 states a category only
-    for the attempt identity rule (`CATEGORY_TRANSIENT`) and the started-session rule
-    (`CATEGORY_PERMANENT`). The pairing rule answers `INVALID_ARGUMENT` and the
-    mid-session-create rule answers `FAILED_PRECONDITION`, and neither carries a category or an
-    `ErrorCode`. The staged code lane answers neither of those two on an adapter error envelope,
-    so the §15.4 sentence may hold vacuously for them. The decision is whether to give those two
-    rules an envelope, or to narrow §15.4's sentence to the rules that carry one.
-
-25. **Does the `Shutdown` row's "which teardown it asks for" phrasing stand?** The staged §4.7
-    row names the slot release and the runtime teardown as two teardowns with two preconditions,
-    then says every request states which teardown it asks for by carrying either a non-empty
-    `bind_attempt` or `unconditional_teardown`. Neither field selects between those two
-    teardowns: the unconditional-teardown rule and the attempt-match rule each perform both
-    under their own preconditions, and the no-entry and attempt-mismatch rules perform neither.
-    What the fields select is which entry the request is addressed to. The same phrasing is used
-    at four staged sites (the §4.7 row, §4.7.1's heading, §15.4's block, and DOCS-2's row), so
-    treating it as a term collision makes the remedy a sweep rather than one sentence. The loop
-    read it as one reading away from harmless and left it unfiled through ten rounds.
-
 26. **Is a hand-maintained `docs/reference/error-catalog.md` acceptable, or does it need a
     gate?** No test, script, or Makefile target holds that page to §15.1. After this proposal
     the `SETUP_COMMAND_FAILED` statement is a hand-maintained pair in three places: the §15.1
@@ -534,14 +534,56 @@ loop derived no recommendation, the entry says so.
     decision is whether this proposal adds the reconciliation gate or leaves the pages paired by
     hand.
 
-27. **Should the claim-DELETE retirement race get its own finding?** A claim DELETE whose
-    retirement is lost because the occupancy projection never observed the intermediate
-    `claimed` phase is a pre-existing platform property. Nothing in the spec or in this proposal
-    records it, and SPEC-4's re-keying of the projection on the observed phase does not close
-    it. Closing it would need a finding against §4.6.1, with the fix either on the gateway side
-    (do not delete the claim before the pod projects `claimed`) or on the controller side (a
-    durable marker on the claim rather than the observed phase). The loop derived no
-    recommendation on whether it is worth closing.
+27. **Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1, and
+    if so does the fix belong on the gateway side or the controller side?** The occupancy
+    projection decides a released pod's fate from the phase the pod is observed in at the moment
+    the claim is gone: `pkg/controller/warmpool/occupancy.go:128-140` returns `Draining` for a
+    pod observed as `Claimed`, `Idle` for one observed as `Reserved`, and no phase at all for any
+    other value, which leaves the pod where it was. A bind that claims and releases a pod between
+    two reconciles therefore never takes the `claimed → draining` retirement edge, and the pod
+    stays in inventory as an ordinary idle candidate. Nothing in the spec records this, and it is
+    a pre-existing platform property rather than something this proposal introduces.
+
+    **Recommendation (moderate confidence): open it as a finding against §4.6.1, and leave the
+    choice of side to whoever owns that finding.** The ground is that the race is mechanically
+    reachable in the shipped tree rather than hypothetical. `observeClaim` is a level read of
+    current state, mapping a NotFound to "no claim" with no event history
+    (`pkg/controller/warmpool/occupancy.go:217-227`). Nothing holds the claim in existence long
+    enough to be observed: `claimToSandbox` maps every claim event to a reconcile request keyed
+    on the one owning Sandbox (`occupancy.go:281-291`), so the workqueue coalesces a create and a
+    delete into a single dequeue; the per-pod `SandboxClaim` carries no production finalizer, the
+    only claim finalizers in the tree being test holds (`gc_reclaim_internal_test.go:69`); and
+    `podclaim.DeleteClaim` is an unconditional delete (`claimer.go:322-330`). The loop that first
+    raised this recorded no recommendation because it could not establish whether the
+    intermediate phase can be missed at all. That fact is now established, and it points toward
+    filing.
+
+    The alternatives and why each lost. **Do not file, and record it as a shipped-tree defect
+    only**: this loses because a pod whose retirement was lost is not inert. It carries no
+    used-pod guard beyond `expiredByUptime`
+    (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:336-347`), so it is re-offered to the next
+    claimant as a fresh idle pod, which is the outcome the `claimed → draining` edge exists to
+    prevent. **Stage the fix here**: this loses because both candidate fixes sit in components
+    this proposal does not touch, and neither is derivable from the projection alone.
+    **Treat SPEC-4 as closing it**: this loses because SPEC-4 re-keys the spec's claim-deletion
+    prose onto the projected phase at the claim DELETE
+    (`spec-changes.md` SPEC-4, §4.6.1 and §6.2), which aligns the description with what
+    `occupancy.go` already does. Aligning the description with the mechanism does not change the
+    mechanism.
+
+    The second half of the question stays open on its own terms. A **gateway-side** fix holds the
+    claim until the pod projects `claimed` before deleting it, which puts an ordering constraint
+    on the release path and costs latency on every release. A **controller-side** fix records the
+    retirement on the claim durably, so the projection reads a marker rather than an observed
+    phase, which costs a schema field and a migration and changes what the projection is allowed
+    to conclude. Choosing between them commits work in a component this proposal does not touch,
+    and nothing in the tree ranks the two.
+
+    What deciding otherwise costs. This proposal stages nothing on this and is unaffected by the
+    answer either way. Deciding not to file loses a latent retirement leak on the recycling path;
+    if that is the answer, move this entry into the defects section below rather than deleting
+    it, so the property stays recorded. Deciding to file spends a problem statement and a review
+    cycle on a race whose frequency nobody has measured.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -859,6 +901,8 @@ loop derived no recommendation, the entry says so.
 | 0073 (give every session a slot) | Implemented (2026-08-31 per its own status line; spec applied 2026-08-19) | This change touches 0073 in two ways. 0073 recorded this gap in its §9 recorded limits and declined to discharge it, and this proposal discharges it. SPEC-1 also retires the third sentence of §4.1's `ShutdownRequest` paragraph, which 0073's SPEC-7 authored and which reached `spec/04_system-components.md:157` in commit `f37e867b8`. That sentence states one per-session teardown gated on a bound entry; after the split there are two teardowns with two preconditions, and the slot release is gated on the entry being present. The paragraph's first two sentences, its session-scoped classification, and its closing rule are preserved. SPEC-4 and CODE-3 extend 0073's per-slot sub-state fence (`spec/06_warm-pod-model.md:150-155`) and its `pkg/sandbox/slotstate` edge list with one new edge, which adds to that list rather than retracting from it. | Nothing. A landed proposal is not edited, so this row is the record of what this proposal takes back from 0073. |
 | 0075 (derive message scope from the address type) | Implemented (2026-09-08 per its status file's `implemented-date`) | 0075's SPEC-1 replaced the §4.1 block around the `ShutdownRequest` paragraph and reserved the paragraph itself, stating that it "stands unedited" because it explains a divergence between what a request addresses and what its handler touches that 0075's D3 rests on. SPEC-1 here rewrites that paragraph's third sentence. The ground D3 rests on survives: the first two sentences carry the session-scoped classification and the single address unchanged, and the replacement keeps the whole-pod-scrub clause and the closing rule that no operation is selected by a field's presence standing in for a scope. Nothing 0075 landed is opened, including the derivation rule at `spec/04_system-components.md:151-155`, its tier-0 addressing gate, its tier-3 session-address suite, and its `tests/spec-map.json` entries. The new `ShutdownRequest.bind_attempt` and `ShutdownRequest.unconditional_teardown` fields do not disturb that rule: both are bare scalars present on every `ShutdownRequest`, as the `coordination_generation` fence on the same message already is, so no operation is selected by a field's presence. SPEC-1 restates the justification per message rather than stating a precondition in §4.1, and the §4.7 `Shutdown` row carries every precondition. | Nothing. |
 | 0078 (keep the pod's runtime listener across a session teardown) | Draft for review (2026-08-25 per its own `Date` line; the file's last commit, `9589aea54`, carries the same date, which records when someone touched it rather than when it was reviewed) | No deliverable of 0078 loses its subject. CODE-1, CODE-2, TEST-1 through TEST-7 and DOCS-1 all keep theirs, because this proposal opens neither `pkg/adapter/socketruntime.go` nor `cmd/lenny-adapter/main.go`. Three file collisions are real, all of them in test files. The staged co-tenancy-hazard case adds a sibling assertion in `pkg/adapter/socketruntime_test.go` beside `TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2` (`:252`), inside the block 0078's TEST-1 through TEST-4 and their cleanup conversion at `:258` and `:316` rewrite. 0078's CODE-1 replaces the `return p.listener.Close()` at `pkg/adapter/socketruntime.go:467` that the assertion's listener half records, so that half stops discriminating once 0078 lands, while its connection-close and child-kill halves stand and this proposal's own CODE-1 `started` gate is still required. This proposal also extends `tests/tier4_integration/concurrent_workspace_test.go`, whose cleanup at `:126` 0078's TEST-5 converts. And it edits `tests/tier7a_load_local/shutdown_drain_gate_race_test.go`, the file 0078's TEST-7 rewrites: CODE-4 sets `unconditional_teardown` at every non-compensating `Shutdown` caller, so `TestConcurrentShutdownsSendOneDrainSignal_spec_6_4` (`:232`) and `TestShutdownDrainRacesAnIncomingSession_spec_6_4` (`:316`) take that one-field edit at their four `ShutdownRequest` literals (`:269`, `:332`, `:373`, `:453`) and must keep passing. The two proposals' edit regions in that file are distinct, so the collision is a merge hazard rather than a design conflict. The tier-4 assertion that the pod's listener survives holds on the shipped tree independently of 0078, because alice is still active when bob's compensation runs and `Close` takes the sibling early return (`pkg/adapter/socketruntime.go:441-446`). The row previously stated that 0078 widens the exposure by making a pod serve more sessions. 0078's own fixed decision states the opposite, that after it lands a recycling sidecar pod still serves one session and fails at the accept timeout, so that premise is withdrawn. | Land after this one. Preserve the `unconditional_teardown` field on those four `Shutdown` calls when TEST-7 rewrites the fixture's accept-timeout bound and the sequenced-leg assertion, because after this proposal lands the adapter answers a `Shutdown` carrying neither selector with `INVALID_ARGUMENT` and performs nothing. Amend the sibling assertion's listener half when 0078's CODE-1 removes the listener close. |
+| 0072 (correct the inconsistencies the scenario authoring surfaced) | Draft for review (2026-08-13 per its own `Date` line; the file's last commit, `57427ee5f`, is dated 2026-08-26, which records when someone touched it rather than when it was reviewed) | **No deliverable of 0072 loses its subject.** SPEC-1, SPEC-2, SPEC-4 through SPEC-8 and CODE-1 through CODE-3 all keep theirs, because this proposal changes no checkpoint quiescence timeout, no Basic-level checkpoint statement, no eviction retry budget, no `awaiting_client_action` entry-path enumeration, no upload route, no metric label domain and no naming matcher. SPEC-5's premise in particular stands: it rests on §7.2's state-transition list, and this proposal's §7.2 edits are confined to the mid-resume snapshot-close block (a preamble sentence, a sentence appended to step 2, and step 3 replaced), leaving that list untouched. **Seven files are opened by both proposals, and every collision is a merge hazard rather than a design conflict.** Four of them collide inside the same section. In `spec/07_session-lifecycle.md` §7.3, 0072's SPEC-5 rewrites the `awaiting_client_action` **Entry paths** bullet (`spec/07_session-lifecycle.md:432`; 0072 cites `:431`, one line of drift) while SPEC-2 here appends a paragraph after the numbered list under `**Resume flow after pod failure:**` (`spec/07_session-lifecycle.md:402-414`). In `spec/15_external-api-surface.md` §15.1, 0072's SPEC-6 names the mid-session upload route in the endpoint and precondition tables while SPEC-5 here replaces four sentences of the `SETUP_COMMAND_FAILED` error-catalog row; in §15.4, 0072's SPEC-2 corrects the §15.4.3 integration-level text and its SPEC-8 corrects the §15.4.2 handshake sentence while SPEC-5 here adds a published bind-attempt block after the SDK-warm demotion contract. In `spec/16_observability.md` §16.1 and `docs/reference/metrics.md`, 0072's SPEC-7 adds the `reason` label to the `lenny_checkpoint_storage_failure_total` row (`spec/16_observability.md:203` and `docs/reference/metrics.md:193`; 0072 cites `:201` and `:191`, two lines of drift each) while SPEC-6 and CODE-9 here add one row per counter CODE-9 emits to those same two tables. The remaining three files are shared at distinct sections: `spec/04_system-components.md` (0072 in §4.4.3 and §4.4.5, this proposal in §4.1, §4.6.1, §4.7, §4.7.1 and §4.7.9), `spec/29_communication-scenarios.md` (0072 in §29.9, this proposal in §29.4), and `docs/reference/adapter-contract.md` (0072's SPEC-8 in the `Version Negotiation` section, now at `docs/reference/adapter-contract.md:446-452` against the `:426` it cites, and DOCS-2 here in the RPC table's `DemoteSDK` and `Shutdown` rows at `:64` and `:75`). Nothing here falsifies 0072's §1.6: the §7.4 upload pair sets `mid_session` on its `PrepareWorkspace` (`pkg/gateway/sessionserver/upload_to_session.go`), which is the mid-session route SPEC-6 documents. | Land in either order and resolve the shared files as a merge, re-running the tier-11 documentation reconciliation after the second lands. No content of 0072 needs re-deriving. Re-anchor 0072's four drifted citations (`spec/07_session-lifecycle.md:431`, `spec/16_observability.md:201`, `docs/reference/metrics.md:191` and `docs/reference/adapter-contract.md:426`) against the tree before it is applied, whichever proposal lands first. |
+| 0079 (name who starts the next session's runtime on a recycled pod) | Draft for review (2026-08-25 per its own `Date` line; the file's last commit, `a5bf9db26`, carries the same date, which records when someone touched it rather than when it was reviewed) | **No deliverable of 0079 loses its subject.** SPEC-1 through SPEC-8, CODE-1 through CODE-4, TEST-1 through TEST-8 and DOC-1 through DOC-4 all keep theirs, because this proposal names no creator of a runtime process, stamps no pod label, opens neither `pkg/sandbox/podscrub` nor `pkg/controller/sandbox`, and edits `pkg/adapter/socketruntime.go` not at all. **Five spec files are opened by both proposals, and every collision lands on a different anchor.** In §4.7.9, 0079's SPEC-1 replaces step 7 while SPEC-2 here replaces step 5 and states that no other part of §4.7.9 changes. In §5.2, 0079 appends to the scrub procedure after step 6 and adds a sentence to step 1 (SPEC-3), replaces the **Recycling and integration levels** paragraph (SPEC-4) and edits the sizing text (SPEC-5), while SPEC-3 here appends to the `**Scrub model.**` paragraph and replaces the `**Slot cleanup:**` bullet's action-list sentence. In §6.2 both edit the same fenced state machine at different entries: SPEC-4 here replaces the `claimed ──→ draining` trigger list in the `Occupancy projection` group and rewrites three clauses of the projection prose, leaving the `Recycle edges` group untouched, while 0079's SPEC-6 qualifies the `claimed ──→ sdk_connecting` and `claimed ──→ reserved` edges in that group, adds a new `claimed ──→ draining` edge after the vm-restart drain edge, and appends to the §6.1 preConnect row. In §15.4, SPEC-5 here inserts its two blocks after the SDK-warm demotion contract (`spec/15_external-api-surface.md:1469`) and before the `#### 15.4.1` heading (`:1471`), while 0079's SPEC-7 replaces the recycling paragraph at `:1785`, inside §15.4.3. In §16.1, SPEC-6 here adds one catalog row per counter CODE-9 emits, while 0079's SPEC-8 extends the existing `lenny_gateway_pod_retirement_total` row's parenthetical with a `no_successor_runtime` reason value, which adds a label value rather than a series. **The two statements are compatible.** 0079 conditions pod reuse on the deployment model; the per-slot reclaim staged here is adapter-executed and holds on both models. 0079 in turn narrows one of the two harm classes this proposal fixes: a sidecar recycling pod that retires at its occupancy-zero boundary cannot carry a leaked entry into a later session. The co-tenant class, where the pod still holds another session at the moment of release, is untouched by it. | Land in either order, resolving the five shared spec files as a merge. Nothing of 0079 needs re-deriving. |
 | gateway-runtime-comms remediation, step R1b | Programme step | SCHEMA-1 opens `schemas/lenny-adapter.proto` under rule S-2's second window rather than against R1b's reservation. S-2 reserves the first window to R1b and states that a later step needing a field the plan did not enumerate opens a second narrow window, whose precondition is that every in-flight `pkg/adapter` handler edit has merged first. R1b's end state is in the tree, and the file has already been reopened once, for proposal 0076's comment-only edit. The edit is additive, so the baseline R1b recorded is extended rather than reopened: no field is removed, none is renumbered, and no identifier R1b renamed is touched. The precondition binds this proposal's own step ordering, because it opens three of S-2's covered handler files (`session.go`, `slotcreds.go`, `sdkwarm.go`), so SCHEMA-1 and its regenerated stubs land in one commit before those handler steps. | Record the second window against S-2, so the steps that plan against the generated types (R12, R15, R16, R17, R22, R23) plan against the regenerated set rather than against R1b's. |
 | gateway-runtime-comms remediation, step R12 | Programme step | The hold-timeout reclaim of unstarted slots and its §10.1.4 statement are left to R12, which builds the control-stream consumer that arms the hold and owns the gateway-side whole-pod-loss response. | Take both halves when it builds the consumer, together with an in-flight-upload guard. |
 
