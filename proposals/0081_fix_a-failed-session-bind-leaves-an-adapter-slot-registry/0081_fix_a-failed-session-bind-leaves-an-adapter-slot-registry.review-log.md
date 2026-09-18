@@ -4998,3 +4998,59 @@ Whoever runs the non-spec lane should confirm that against the CODE deliverables
 the orchestrator already routed the `session.go` `_ =` handoff. EVIDENCE:
 spec-changes.md:643 (the staged §5.2 sentence); spec/05_runtime-registry-and-pool-model.md:517
 (shared credential-file group-read access); pkg/adapter/session.go:271.
+
+### [f2.post-spec-recheck]
+
+DECISION: Item `marker:code-6:shipped hole on that stream...` (out-of-scope-defects, disposition `out-of-scope-stands`) was written as one new entry under `## Defects in the shipped tree that this proposal does not stage` in the summary, headed "**`PrepareWorkspace` never validates a later frame's `session_id` against the one it resolved.**", placed in the adapter-surface cluster between the §10.1 coordination-generation-fence entry and the `BindReservedSlot` entry (summary.md:654-667). No decision was opened and no fix was staged.
+FACT: The defect is in the shipped tree as described. `pkg/adapter/staging.go:68` rejects only an empty `session_id` per frame, and `if stagingDir == ""` at `:77` runs `resolvePrepareStagingDir` off the first frame at `:78`, so no later frame's identifier is compared against the resolved one and every later frame's bytes land in the first frame's staging tree.
+FACT: Nothing else was edited. CODE-6's first-frame-rule paragraph (non-spec-changes.md:1335-1346) already declares the hole out of scope in the same terms and needed no correction; the summary's restatement of the latching rule at summary.md:147-149 is consistent with the new entry and was left as it stands.
+FACT: The leak's direction is inward, so no staged guarantee is falsified: a later frame creates and resolves no registry entry, and its bytes reach only the tree the resolving frame was already admitted to write. The entry says so, so a later reader does not read the row as a cross-session write.
+
+### [f2.post-spec-recheck]
+
+DECISION: Item `marker:0080...:### 1.2 a bind that fails after prepareworkspace leaves an entry nothing removes` (other-proposals, disposition `impact-row`) was written by correcting the existing 0080 row in `## Impacts on other proposals` (summary.md:914) rather than adding a second row. Three corrections landed: the false "ABA arm closes rather than narrows" sentence was deleted, the hedged claim-register cell was replaced with determinate arithmetic, and the file-placement cell gained `credentials.go` and named `bindattempt.go` and the per-slot guard table. The last column's re-derivation instructions were restated to match. No file belonging to 0080 was touched.
+FACT: 0080 contains no ABA class in any spelling; `grep -ni aba` over `proposals/0080_fix_discharge-the-residues-proposal-0073-recorded-and-deferred.md` returns nothing, and §1.19's three classes at :350-358 are a genuine stale fence, a fence for a session the registry does not hold bound, and a re-fence at the already-recorded generation. The deleted sentence asserted a class the entry does not carry.
+FACT: The claim-register arithmetic is determinate. `tests/claim-map.json` carries 76 rows, 20 `ABSENT`, 24 `UNWIRED`, 32 `WIRED`. SCHEMA-1's JSON block (non-spec-changes.md:1813-1833) is exactly three rows, two `WIRED` and one `ABSENT`, which gives 79 rows, 21 `ABSENT`, 24 `UNWIRED`, 34 `WIRED`. That restates 0080 §1.12's "twenty of the register's seventy-six rows" (:161) and §1.18's "seventy-six rows, thirty-two are `WIRED`, twenty are `ABSENT`" (:306-307); the `UNWIRED` count alone is unchanged.
+FACT: CODE-9's `lenny_slot_shutdown_untokened_entry_total` is registered in `pkg/adapter/metrics.go` (non-spec-changes.md:1543-1544) and the adapter process still exposes no scrape target, so it joins the surface 0080 §1.12 (:173-176) already names as deferred under `deferral_id: R12`. §1.12's R12 note gains a member rather than losing one.
+FACT: The summary's file-collision bullet at :215-220 said "Four further adapter files" and omitted `credentials.go`, which non-spec-changes.md:2750 stages for `AssignCredentials`'s wire-rule check and the resolve it passes. It was corrected to five in the same edit, so the bullet and the impact row no longer disagree.
+WATCHOUT: The standing context's SCHEMA-1 figures (review-log.md:462, :525) still say two rows and a 78/34 register. They are superseded by the three-row block now in `non-spec-changes.md`; the round-boundary compaction pass owns that file's `## Standing context` and should restate them.
+
+### [f2.cleanup]
+
+DECISION: The summary's cleanup pass for this firing relocated nothing, deleted nothing and
+rewrote nothing. `0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.summary.md`
+already carried exactly the eight listed sections in the listed order (`# Summary:`, `## Summary`,
+`## Goals`, `## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree
+that this proposal does not stage`, `## Impacts on other proposals`, `## Deliverable index`), with
+`## Summary` holding only its four labelled parts under their current names and in the listed order
+(`**Problem statement.**` at :5, `**What changes.**` at :21, `**Decisions.**` at :105, `**Watch out
+for.**` at :223). No file was edited in this pass.
+FACT: There is no `### Retired` block or equivalent inside `## Open decisions for human to make`,
+and no meta-list of staged items anywhere in the file: `grep -n '^#'` returns the eight headings
+above and nothing else, and `grep -n '^\*\*'` returns the four `## Summary` parts plus
+`**Accepted failure modes.**`.
+FACT: `**Accepted failure modes.**` (:412) remains at the end of `## Non-goals`, where the
+`f1.cleanup` firing placed it. It is a labelled block inside a listed section rather than an
+unlisted section, and its subject, the residues this proposal accepts rather than closes, is what
+`## Non-goals` carries, so it was left where it stands rather than relocated.
+FACT: `## Open decisions for human to make` carries entries 20, 21, 22, 26 and 27, each with its
+identifier verbatim, which is what this firing's dispositions leave open: 21 and 27 stood at the
+gate and applied, and 20, 22 and 26 had their proposed resolutions refuted so no apply was
+attempted. No entry was renumbered and none was added or removed.
+FACT: That section's preamble is true of the entries it now describes. It names 21 and 27 as
+carrying a recommendation with its ground, its alternatives and a confidence, and 20, 22 and 26 as
+carrying the question and its ground alone; entry 21's and entry 27's bodies each carry a
+`**Recommendation (moderate confidence)...**` paragraph, an alternatives paragraph and a cost
+paragraph, and 20, 22 and 26 carry neither. Nothing this firing did falsified it, so it was left
+unedited.
+FACT: `## Defects in the shipped tree that this proposal does not stage` carries twenty-two
+entries and no decision: no entry in it asks a question, records a recommendation, or says a
+decision is open. It covers every `marker:unscoped` item this firing dispositioned
+`out-of-scope-stands` / `no-edit-needed`, in the words earlier passes confirmed against the tree,
+plus the `PrepareWorkspace` first-frame entry this firing's own write path added at :654-667.
+Nothing was promoted, reworded or added by this pass.
+FACT: `## Impacts on other proposals` carries one row per proposal or programme step and no
+duplicate: 0080, 0073, 0075, 0078, 0072, 0079, R1b and R12. The 0080 row is the single one this
+firing corrected, in place, and no second row asserts anything about 0080.
+FACT: `## Deliverable index` stands last and untouched, twenty lines (SPEC-1 to SPEC-6, SCHEMA-1,
+CODE-1 to CODE-9, CONF-1, DOCS-1 to DOCS-3) plus its closing paragraph on tests and CONF-1.
