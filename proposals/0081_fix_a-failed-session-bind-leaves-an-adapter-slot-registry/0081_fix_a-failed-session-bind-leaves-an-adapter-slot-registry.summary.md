@@ -475,7 +475,7 @@ deliberately and which is recorded under the defects this proposal does not stag
 The decisions below are open for a human. Each keeps the identifier it was stamped with, so the
 numbering does not start at 1: the entries that held the earlier numbers were resolved, their
 answers are staged in the change files, and their record is in the review log. Entries 21 and 27
-carry a recommendation with its ground, its alternatives and a confidence. Entries 20, 22 and 26
+carry a recommendation with its ground, its alternatives and a confidence. Entries 20 and 22
 carry the question and its ground alone, because the review loop derived no recommendation for
 them.
 
@@ -535,14 +535,6 @@ them.
     in no spec text" had already been refuted as landing-text completeness, and recorded that
     filing it would have to rest on §5.2 delegating into §6.2 text that does not cover the case.
     The decision is whether to state the disposition or to accept the gap.
-
-26. **Is a hand-maintained `docs/reference/error-catalog.md` acceptable, or does it need a
-    gate?** No test, script, or Makefile target holds that page to §15.1. After this proposal
-    the `SETUP_COMMAND_FAILED` statement is a hand-maintained pair in three places: the §15.1
-    row, the published docs row, and the enumeration sentence that lists the causes. DOCS-3
-    records the absence of a gate and files it as its own finding rather than closing it. The
-    decision is whether this proposal adds the reconciliation gate or leaves the pages paired by
-    hand.
 
 27. **Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1, and
     if so does the fix belong on the gateway side or the controller side?** The occupancy
@@ -913,6 +905,18 @@ them.
   mints are adapter-contract codes the gateway consumes, so they take no §15.1 row either,
   following the `PROTOCOL_VERSION_INCOMPATIBLE` precedent of an adapter `ErrorCode` published
   through §15.4 alone. The pre-existing gap is its own finding.
+- **No spec change. Nothing reconciles §15.1's error catalog against
+  `docs/reference/error-catalog.md`.** The published `SETUP_COMMAND_FAILED` row sits at
+  `docs/reference/error-catalog.md:129`, and no test, script, or Makefile target in the tree
+  references that page: `grep -rn error-catalog tests/ scripts/ Makefile` returns nothing, while
+  the tier-11 battery does reconcile other reference pages against the spec, among them
+  `adapter-contract.md`, `state-machines.md`, `metrics.md`, `wire-artifacts.md` and
+  `glossary.md`. The published catalog can therefore diverge from the spec catalog with no gate
+  observing it, which is how the missing and misspelled rows recorded in the entry above
+  survived. This proposal stages no gate. DOCS-3 edits the single `SETUP_COMMAND_FAILED` row
+  and declares tier 0, and a reconciliation built for that one row would leave every other row
+  of the page ungated while reading as coverage. Building the reconciliation over the whole page
+  belongs to a finding against §15.1.
 - **No spec change. `Server.ReportSessionFailure` has no production caller.** Every reference
   outside `pkg/gateway/sessionserver/failure.go:115` is a test, so no outcome should be rested on
   it. Recorded so a later reader does not route a terminal disposition through it.
