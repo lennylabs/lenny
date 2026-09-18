@@ -99,9 +99,11 @@ carried beside the address.
 reclaim exclusive while it tears state down. `removeSlotTree` deletes paths derived from the
 slot identifier, `SlotID == SessionID` makes that identifier equal across attempts, and the
 destructive steps read no registry state, so the deregistration alone does not keep a successor
-out of them. The hold is taken in the same critical section as the deregistration, released on
-every return path, and refuses a bind onto a held identifier as a transient condition. It is
-retained from the epoch design unchanged, because it closes an ordering the token does not.
+out of them. The hold is taken in the same critical section as the deregistration, released on the return
+path of a cleanup that completed, retained for the life of the pod where that cleanup did not
+complete, and refuses a bind onto a held identifier as a transient condition. It is retained
+from the epoch design, with its release arm keyed on the cleanup's completion, because it closes
+an ordering the token does not.
 
 **The two residues the token closes that the epoch could not.** A bind that fails inside its
 first entry-creating RPC reclaimed unfenced under the epoch, because the epoch travelled on a
@@ -389,14 +391,22 @@ started := removed && st.started
 // ran.
 live := removed && s.runtimeHoldsLocked(sessionID)
 // spec: §5.2 (pool configuration and execution modes). The deregistration
-// and the hold are one critical section, so no bind is admitted between them,
-// and the release is deferred rather than written at each return: Runtime.Close
-// reaches three implementations and a child process and removeSlotTree reaches
-// the filesystem, so a panic out of either would otherwise hold the identifier
-// for the life of the pod. reclaimSlotLocked returns a non-nil release on every
-// path, so the defer is unconditional and a call that removed no entry takes a
-// no-op.
-defer release()
+// and the hold are one critical section, so no bind is admitted between them.
+// The release is deferred rather than written at each return so that a panic
+// out of Runtime.Close or removeSlotTreeVia is treated as a cleanup that did
+// not complete rather than as a silent release: Runtime.Close reaches three
+// implementations and a child process and removeSlotTree reaches the
+// filesystem. The deferred closure takes the release only on the arm where the
+// cleanup completed, because §5.2 ends the hold when the cleanup completes and
+// keeps the identifier held for the life of the pod when it does not.
+// reclaimSlotLocked returns a non-nil release on every path, so a call that
+// removed no entry takes a no-op.
+completed := false
+defer func() {
+    if completed {
+        release()
+    }
+}()
 s.mu.Unlock()
 
 closeErr := error(nil)
@@ -427,9 +437,13 @@ if removed {
     treeErr = s.removeSlotTreeVia(st)
     s.cancelPodMCPIfRuntimeIdle()
 }
+// spec: §5.2 (pool configuration and execution modes). The cleanup completed
+// when every act it owed the slot returned without error, which is what ends
+// the reclaim hold and what decides the cleanup outcome the report carries.
+completed = closeErr == nil && treeErr == nil
 
 if live {
-    s.reportSessionScrub(ctx, sessionID, closeErr)
+    s.reportSessionScrub(ctx, sessionID, errors.Join(closeErr, treeErr))
 }
 ```
 
@@ -445,6 +459,19 @@ nothing, and CODE-2's `noteRuntimeStarted` then refuses the record; a reclaim af
 flag and holds no per-session dedup
 (`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go:451-481`), so the
 one-report rule is an adapter-side invariant rather than something the gateway can absorb.
+
+The report is keyed on `errors.Join(closeErr, treeErr)` rather than on `closeErr` alone. §5.2
+defines the per-slot cleanup's actions to include the removal of the slot's workspace directory
+and of its credential directory, so a cleanup whose removal failed is `leaked` rather than
+`released`. Keying the report on the same completion predicate that retains the reclaim hold leaves the
+hold and the cleanup-outcome report stating the same thing about the same cleanup on the
+`running` arm. The response's `exited_cleanly` is keyed differently and answers the reclaiming
+request's own question, so a reclaim that closed the runtime cleanly and failed the tree removal
+reports a clean exit and files the cleanup `leaked`; the staged §7.1 paragraph states that
+split. `errors` is already imported by `pkg/adapter/session.go`. The
+`exited_cleanly` predicate below is unchanged and stays keyed on `closeErr == nil && (live ||
+treeErr == nil)`, because it answers the reclaiming request's own question rather than the
+cleanup-outcome question, and the reason it reads `live` is stated with it.
 
 The response becomes:
 
@@ -480,8 +507,10 @@ for a test-only seam in `Server.scrubDone` (`pkg/adapter/server.go:197`) and in 
 `HoldAfterFunc` and `ExpiryAfterFunc` hooks. Nothing in production assigns the field and there is
 no setter, so a deployed adapter always takes the `removeSlotTree` path. `removeSlotTree` keeps
 its signature, and its two other callers (`pkg/adapter/slotsession.go:217`,
-`pkg/adapter/holdstate.go:254`) keep calling it directly and keep discarding its error; only the
-`Shutdown` path's result becomes load-bearing. If the reclaim path is left calling
+`pkg/adapter/holdstate.go:254`) keep calling it directly; after CODE-6 each reads its return to
+decide whether to take the reclaim-hold release. What the seam adds is a test-only injection
+point on the `Shutdown` path, which is the only path whose result also reaches the response and
+the cleanup-outcome report. If the reclaim path is left calling
 `removeSlotTree` directly the seam is unreachable, and the tier-1 case that asserts
 `exited_cleanly` false observes true and fails at its assertion, so the miss is loud.
 
@@ -518,9 +547,12 @@ Doc-comment work on `Shutdown`:
   cannot provide against a section admitted before the hold opened.
 - State the hold and why it is deferred, in the terms the code comment above carries: the
   destructive steps resolve from the slot identifier rather than from the entry, so the
-  deregistration alone does not keep a successor out of them, and a panic out of
-  `Runtime.Close` or `removeSlotTree` would hold the identifier for the life of the pod if the
-  release were a statement at each return.
+  deregistration alone does not keep a successor out of them, and the release is deferred so
+  that a panic out of `Runtime.Close` or `removeSlotTree` reads as a cleanup that did not
+  complete rather than as a release written at a return the panic skipped. State the arm the
+  release is taken on: §5.2 ends the hold when the cleanup completes, so the deferred closure
+  releases only when the runtime close and the tree removal both returned without error, and
+  an identifier a failed cleanup did not release stays held for the life of the pod.
 - State the handler as two teardowns with two preconditions, matching the §4.7 row, and name
   `releaseSessionSlot` (`pkg/adapter/slotsession.go:214-220`) as the shipped statement of the
   unstarted branch's semantics, so the two compensating paths read as one rule.
@@ -930,8 +962,8 @@ the value. CODE-9 states the hook, its forwarder and its wiring.
 the adapter holds nothing for the session; on `SUPERSEDED` another attempt owns the slot
 identifier and everything under it, or the entry carries no token at all, which is what a
 `StartSession` or a `ConfigureWorkspace` creates. Either way this attempt owns nothing the
-reclaim could release. An untokened entry survives the reclaim and is released only by an
-unconditional teardown or by the pod's retirement, which SPEC-5 records as a residue. Reading
+reclaim could release. An untokened entry survives the reclaim, which SPEC-5 records as a
+residue. Reading
 `SUPERSEDED` as leaked would withhold the pod's slot-counter decrement for the life of the pod
 on the common retry case.
 
@@ -1324,8 +1356,11 @@ below is an addition.
   in `pkg/adapter/slotsession.go` beside `deregisterSlotLocked`, which it wraps. It runs the
   deregistration and, when that removed an entry, inserts the identifier into the hold set in
   the same critical section, so nothing can be admitted between the removal and the destructive
-  steps that follow it. `release` is always non-nil and idempotent, so a caller defers it
-  unconditionally and a path that removed nothing takes a no-op. Callers hold `s.mu`. This is
+  steps that follow it. `release` is always non-nil and idempotent. A caller defers it and takes it
+  only on the arm where the cleanup it then ran completed, which is when every destructive act
+  that cleanup owed the slot returned without error, because §5.2 ends the hold on a completed
+  cleanup and keeps the identifier held for the life of the pod on one that did not complete. A
+  path that removed nothing ran no cleanup and takes the no-op. Callers hold `s.mu`. This is
   the only site that takes a hold and the only one that ends one; the side table holds
   `struct{}` because nothing reads a value from it: no entry can stand under a held identifier,
   so there is no token to compare against.
@@ -1337,14 +1372,21 @@ below is an addition.
   (`deregisterStartedSessions`, whose members are destroyed one at a time in
   `terminateHeldSession`, `pkg/adapter/holdstate.go`, one member at a time and seconds later). `heldSession`
   gains a `release func()` field so pass 1 carries each member's hold to the pass-2 call that
-  ends it, and `terminateHeldSession` defers it. That hold release is distinct from the slot-guard
+  ends it, and `terminateHeldSession` defers it behind the same completion predicate, taking the
+  release only when its `removeSlotTree` returned nil. That site's runtime close is best-effort
+  by §10.1.4's own terms and the shipped handler discards its error
+  (`pkg/adapter/holdstate.go:249`), so the tree removal's return is what states completion there.
+  That hold release is distinct from the slot-guard
   release the same function's guard acquisition returns, which it also defers; each is deferred
   separately at that site. `deregisterSlotLocked` keeps its signature because
   `reclaimSlotLocked` calls it; after CODE-6 every production caller goes through that helper and
   no caller takes the deregistration without a destroy. `deregisterSlot` is retired into the
   helper. In the same rewrite `releaseSessionSlot` stops discarding
   `removeSlotTree`'s error and logs it with `slog.Warn` naming the session identifier and the
-  error, because nothing else records that cleanup's failure; `pkg/adapter/slotsession.go` gains
+  error, because nothing else records that cleanup's failure. That same error is what decides the
+  hold: `releaseSessionSlot` closes no runtime, so the tree removal is the whole cleanup, and it
+  takes the release when the removal returned nil and leaves the identifier held otherwise.
+  `pkg/adapter/slotsession.go` gains
   a `log/slog` import for it, matching the structured adapter events `pkg/adapter/podscrub.go`
   already emits. The function still returns nothing and every caller still returns its own
   error, so no control flow changes. It also splits into a guard-acquiring form and an
@@ -1688,9 +1730,9 @@ never removed for the life of the pod. `reclaimSlotLocked`'s `release` ends the 
 touches this table not at all. Deleting an entry cannot block a goroutine that holds the guard it
 named: the holder keeps the old channel, and the next acquirer finds no entry, mints a second
 channel and sends into it immediately, so mutual exclusion would be gone at the moment it is
-needed. The path that reaches it is the ordinary one, because `SlotID == SessionID` and an
-acknowledged reclaim leaves the attempt's failure clean, so a §5.2 retry re-binds the same session
-onto the same pod under the same identifier. The table's bound is one channel per distinct session
+needed. The path that reaches it is the ordinary one, because `SlotID == SessionID` and a
+reclaim that completed leaves the attempt's failure clean, so a §5.2 retry re-binds the same
+session onto the same pod under the same identifier. The table's bound is one channel per distinct session
 the pod has served, and `recycle.maxSessionsPerPod` retires the pod at that count.
 
 ### CODE-7 · pkg/gateway/runtime/adapterclient · the gRPC status detail becomes a Go typed error
@@ -2483,7 +2525,7 @@ Then the thread and the surrounding mechanism:
   `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials` and `Resume`. After
   each refusal the registry holds no entry for the slot identifier and no tree exists on disk
   for it, which is what pins `validateBindFields` ahead of the create rule.
-- **The hold refuses admission until the teardown returns**, across every entry point that
+- **The hold refuses admission until the teardown returns having completed**, across every entry point that
   resolves a slot identifier, and it refuses each at the site the guard's scope puts it at. Park
   the reclaim inside `Runtime.Close` on the §10.1.4 hold termination, which is the one site
   CODE-6 routes that closes a runtime: `releaseSessionSlot` closes none
@@ -2494,15 +2536,25 @@ Then the thread and the surrounding mechanism:
   inside `ensureSlotStateLocked`. Assert each refusal carries the sentinel and that every
   guarded entry point returns while the park still holds, which an implementation that
   blocks the caller on the guard and refuses it only after the cleanup returns cannot do.
-  Release the park, and assert each entry point then admits.
+  Release the park on a cleanup that completes, and assert each entry point then admits. That is
+  the arm on which the release fires; the two cases below are the arms on which it does not.
 - **Every deregister-then-destroy site takes the hold**, table-driven over `releaseSessionSlot`
   and the §10.1.4 hold termination, with the `Shutdown` row added when CODE-1 routes that
   handler through `reclaimSlotLocked`. This is the case that turns red if a later change adds a
   deregister-then-destroy site without routing it through `reclaimSlotLocked`.
-- **The hold is cleared on every return path, including a panic.** Drive `Runtime.Close` to
-  panic, recover it at the test boundary, and assert a later bind is admitted. This is the arm
-  that turns red if the release is written as a statement at each return rather than as a
-  `defer`.
+- **A panic out of the destructive section is a cleanup that did not complete.** Drive
+  `Runtime.Close` to panic, recover it at the test boundary, and assert a later bind naming the
+  same session is refused with the reclaim-hold sentinel, because §5.2 keeps the identifier held
+  for the life of the pod when the cleanup does not complete. This is the arm that turns red if
+  the deferred release ignores the cleanup's outcome, and the `defer` is what puts the panic arm
+  under the same single release site as the ordinary returns.
+- **A cleanup whose tree removal fails keeps the hold.** Drive `Server.removeSlotTreeFn` to
+  return an error against a `Shutdown` that removes the entry, and assert that a later bind
+  naming the same session is refused with the reclaim-hold sentinel, that the response reports a
+  non-clean exit on the pre-`running` arm, and that the cleanup-outcome report on the `running`
+  arm carries `leaked`. This is the arm that turns red if the release or the report is keyed on
+  `closeErr` alone. It drives the same `Server.removeSlotTreeFn` seam the CODE-1 case for
+  `exited_cleanly` on a reclaim the runtime never held drives.
 - **The refusals stay correctly classified through all five resolve sites**, table-driven over
   `resolvePrepareStagingDir`, `FinalizeWorkspace`, `RunSetup`, `claimSessionSlotUnderLock` and
   `assignCredentialsSlot`. Each asserts that the reclaim-hold sentinel and the superseded refusal
@@ -3293,10 +3345,12 @@ treating a failure as this change's.
 ## Edge cases and accepted failure modes
 
 - **A refused retry burns one attempt.** Attempt 2 is refused while attempt 1's entry stands.
-  The window is bounded by the compensation's latency plus the §5.2 reclaim hold, and the retry
+  The window is bounded by the compensation's latency plus the §5.2 reclaim hold where that
+  reclaim's cleanup completes, and by the pod's remaining life where it does not, and the retry
   is refused `Aborted`, which the classifier treats as transient, so the attempt is placed again
-  rather than ended. A refused retry is a cheaper residue than a destroyed session or a
-  successor reaching `running` on an empty workspace.
+  rather than ended. A refused retry is a cheaper residue than a destroyed session, than a
+  successor reaching `running` on an empty workspace, or than a successor materializing over the
+  workspace and credential directories a failed cleanup left in place.
 - **A compensation lost to a gateway crash leaves the session unstartable on that pod.** The
   entry stands stamped with a dead attempt's token, and every later attempt at that session on
   that pod is refused rather than admitted. That is worse on one axis than the epoch design,
@@ -3344,7 +3398,11 @@ treating a failure as this change's.
   nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is the slot's workspace
   tree and its credential directory, bounded at the whole-pod boundary: on a recycling pod the
   occupancy-zero whole-pod scrub removes both and verifies their absence, and a pod that does
-  not recycle retires at that boundary.
+  not recycle retires at that boundary. The residue that goes unaccounted is the leak accounting
+  rather than the identifier: `releaseSessionSlot` runs under `reclaimSlotLocked`, so a
+  `removeSlotTree` that fails there is a cleanup that did not complete and the identifier stays
+  held for the life of the pod, which is what keeps a later bind off that tree. What the gateway
+  never learns is that the cleanup failed, and that is the accepted part.
 - **A pod whose drain failed keeps a dead attempt's token.** `failPhase` logs and continues when
   `drain` fails (`binder.go:1079-1081`), so a surviving pod can hold an entry stamped with a
   dead attempt's token, and every later attempt at that session on that pod is refused. CODE-8
