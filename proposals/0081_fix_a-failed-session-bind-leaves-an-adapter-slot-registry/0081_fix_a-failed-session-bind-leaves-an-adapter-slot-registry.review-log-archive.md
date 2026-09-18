@@ -39349,3 +39349,3056 @@ which is why the injected `Server.removeSlotTreeFn` stands;
 reasoning for `chmodWarmDirWith`.
 WATCHOUT: the checklist's step numbers moved for the first time since the revision. A finding or a
 ledger entry written before this round that names S8, S9 or S10 means the pre-renumber steps.
+
+### [non-spec.8.fix-G1.1]
+
+USEFUL [non-spec.8.fix-design-G1.1]: the design's FACT that `Client.Shutdown` and `Client.ShutdownRecycle` both funnel into one unexported builder `Client.shutdown` is the single correction behind both G1 findings, and it is verified: pkg/gateway/runtime/adapterclient/client.go:807-824 and :860-867. Writing it once removed the phantom caller row, removed the Files-touched bullet, and explained why the real breakage is the test files rather than the five production callers.
+
+FACT: the complete production adapter-`Shutdown` caller set is five sites, all reaching `adapterclient.Client`: slotbinder.go:542, slotbinder.go:574, binder.go:2037, binder.go:2043, cmd/lenny-gateway/user_revocation.go:129. `pkg/gateway/coordination/` contains no `Shutdown` string. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:542,:574; binder.go:2037,:2043; cmd/lenny-gateway/user_revocation.go:129
+
+FACT: `grep -rn "ShutdownRequest{" --include=*_test.go pkg/ tests/` is the sweep set for the two-field precondition, spanning pkg/adapter, tests/tier2_component/warmlayout, tests/tier3_contract/{gatewaycontrol_scrub,adapter_generation_fence}, tests/tier4_integration, tests/tier7a_load_local, tests/tier9_security and tests/tier10_conformance. The added fields are proto scalars, so a skipped sweep produces no build error and those tiers go red together. — EVIDENCE: non-spec-changes.md CODE-1 precondition block; tests/tier4_integration/concurrent_delegation_proxy_test.go:424
+
+DECISION: stated the sweep by the reproducing grep rather than enumerating its files — BECAUSE this document already set that precedent for CODE-6's own widening at non-spec-changes.md:1313, and an enumerated list drifts the moment a test adds or removes a teardown call. ALTERNATIVES: enumerate every file (drifts, doubles the Files-touched list); make the precondition permissive so no test changes (rejected: the fail-closed "exactly one of" is the settled mechanism and a permissive form destroys a live session when a caller forgets the token).
+
+WATCHOUT: the sweep belongs to the CODE-1 step (S15 today), not to the CODE-4 mint step (S12). Production callers get the field from `Client.shutdown` in S12; the tests that break construct the proto request directly against the adapter server and are refused by the S15 handler precondition. — EVIDENCE: implementation-checklist.md:12-15 (ordering note), :45-46
+
+DECISION: reworded summary.md's 0078 impact row from "Three file collisions are real" to "The file collisions are real" instead of writing "four" — BECAUSE the caller's standing rule bans counts of staged sites and a count in that row goes stale on the next widening; the enumerated clauses in the same cell carry the set. The fourth clause names `tests/tier4_integration/concurrent_delegation_proxy_test.go` (0078's TEST-5 converts its cleanup at :168; this proposal's edit is the `ShutdownRequest` literal at :424, distinct regions, a merge hazard). — EVIDENCE: summary.md 0078 row; proposals/0078_fix_keep-the-pod-listener-across-a-session-teardown.md:783
+
+MISTAKE: the CODE-4 caller table carried a sixth row attributing a `Shutdown` to crash takeover and a coordinator-handoff teardown, and the Files-touched list staged an edit at `cmd/lenny-gateway/user_revocation.go` for a field the client sets. Neither exists. The row was the one of six carrying no file:line, which is what let it stand in a table billed as an exhaustive audit supporting a fail-closed precondition. The checklist's CODE-4 step restated the same list and was corrected in the same edit.
+
+OPEN: `tests/tier10_conformance/recycle_scrub_conformance_test.go` is now touched by both 0081 (via the sweep) and 0079's TEST-4. No impact row makes a claim the overlap falsifies today, so nothing is owed; a later round widening either row should count it.
+
+### [non-spec.8.fix-G2.1]
+
+DECISION: CODE-6's create arm now carries the shipped create body inline (nil-map seed, `resolveSlotPaths`, `slotlayout.EnsureTree`, the `&slotState{paths, creds, timers}` literal) plus the `bindAttempt` stamp — BECAUSE the staged `st = s.newSlotStateLocked(slotID)` named a symbol that exists nowhere in the tree or the proposal and could not carry three behaviours the shipped branch has — ALTERNATIVES: minting `newSlotStateLocked(slotID) (*slotState, error)` was rejected because it adds a name that CODE-6's new-symbol enumeration and the `pkg/adapter/slot.go` Files-touched bullet would then both have to carry, for no gain over the code that ships today.
+
+FACT: the shipped create branch is the only fail-closed admission check for a malformed slot identifier. `resolveSlotPaths` is `slotlayout.Resolve`, which runs `ValidateSlotID` first — EVIDENCE: pkg/adapter/slot.go:93-95, pkg/adapter/slotlayout/slotlayout.go:115-131,:136-139; the shipped guard it backs is pkg/adapter/session_test.go:284,:292.
+
+FACT: `New()` never initialises `Server.slots`, so the lazy `if s.slots == nil` seed inside `ensureSlotStateLocked` is load-bearing for every `Server` built by struct literal, which the adapter's own tests do — EVIDENCE: pkg/adapter/server.go:367,:376; pkg/adapter/slot.go:105-108.
+
+DECISION: the per-slot guard was restated as one mechanism with three rules — scope (acquired before the resolve, held through the path work, taken by `Shutdown`, `releaseSessionSlot` and `terminateHeldSession` as well as the workspace handlers), lock order (guard first, `s.mu` taken and released while it is held, never the reverse), and lifetime (pod-lifetime entries, never dropped) — BECAUSE the staged paragraph named the `Shutdown`-versus-`FinalizeWorkspace` race as its subject and then exempted `Shutdown`, on two premises the tree refutes — ALTERNATIVES: withdrawing the race into the accepted failure modes was rejected because it accepts an on-disk workspace and credential directory with no registry entry on the ordinary retry path and strands a correction in the checklist; guarding only the destructive section was rejected because a materialization admitted earlier then re-creates the tree the reclaim just removed.
+
+WATCHOUT: the reclaim hold is an ADMISSION gate and nothing more. It is inserted by `reclaimSlotLocked` inside the reclaiming handler's own critical section and tested only inside `ensureSlotStateLocked`, so it cannot reach a handler that already returned from `ensureSlotPaths` and is inside `workspace.MaterializeWithPolicy`. Any future sentence that says the hold excludes a concurrent workspace RPC is false for that reason — EVIDENCE: pkg/adapter/slot.go:139-147; pkg/adapter/staging.go:181,:245-250.
+
+WATCHOUT: there was never a lock order to invert between `s.mu` and the slot guard. CODE-1's staged `Shutdown` releases `s.mu` before `Runtime.Close` and `removeSlotTree`, and the shipped handler does the same, so a guard acquired ahead of `s.mu` and released after the destructive section conforms — EVIDENCE: pkg/adapter/session.go:236-240,:271; non-spec-changes.md CODE-1's staged body.
+
+MISTAKE: the design handed to this group said the `Shutdown` guard unlock should be "deferred after `defer release()` so the guard outlives the destructive section". Go defers run LIFO, so a defer registered later runs FIRST. The staged code registers `defer unlockSlot()` BEFORE `defer release()`, which is what makes the guard outlive the reclaim hold. The design's intent was applied and its ordering clause was corrected.
+
+WATCHOUT: dropping a `map[string]*sync.Mutex` entry never blocks a holder. The holder keeps the old pointer and the next acquirer mints a second mutex, so a drop voids the guard at exactly the moment it is needed. The staged text now states the pod-lifetime rule and the bound (`recycle.maxSessionsPerPod`, spec/05:488) instead of a drop, and a refcount was rejected as a second mechanism with its own leak mode for a bounded pointer per served session.
+
+FACT: `lockSlotGuard` is new to the tree — `grep -rn lockSlotGuard pkg/ cmd/ tests/` is empty. It is now named in CODE-6's `bindattempt.go` bullet, in CODE-1's Targets list and in the Files-touched entries, so a later round does not re-invent an unnamed hand-out helper.
+
+### [non-spec.8.fix-G3.1]
+
+FACT: `pkg/gateway/podlifecycle/podsession/binder.go` `leaseAssigned` appears at 861, 865, 867, 954, 1062, 1065, 1072, 1073 only. The single assignment `leaseAssigned = true` is at :954, which is `Binder.Prepare`'s second-to-last statement (only `cl.Close()` and the success return follow), so no `reclaim()` in `Prepare` can ever see the flag set — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:950-960
+FACT: both reclaim closures are `func()` with no parameters and no returns (`Binder.Prepare` :866-869, `Binder.Launch` :997-1000), and every `reclaim()` call site declares its failing error inside its own `if`. In `Binder.Launch` the only `err` a closure body could close over is the reconnect error at :977, which is nil on every path reaching a reclaim — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:977, :997-1000, :1010, :1021, :1032
+FACT: the `reclaim()` call sites are :883 (DemoteSDK), :918 (stageWorkspace), :923 (FinalizeWorkspace), :935 (RunSetup), :950 (assignCredentials) in `Prepare`, and :1010 (ConfigureWorkspace), :1021 (StartSession), :1032 (verifyIntegrationLevel) in `Launch`. The two reconnect-failure early returns (:844-857, :977-992) call `ReclaimClaimed` instead and are NOT reclaim sites — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:844-857, :977-992
+DECISION: staged CODE-8 as a closure signature change `reclaim := func(cause error)` plus an enumerated call-site sweep, with `return nil, <its own error>` left at the call sites — BECAUSE a guard written into the existing `func()` bodies does not compile in `Prepare` and silently never fires in `Launch` — ALTERNATIVES: hoisting the `errors.Is` guard to each call site (one predicate copied eight times, and a later call site that forgets it drains a live pod); a captured `var refusal error` each site assigns (same edit count plus a stale value surviving into the next call); giving `reclaim` an error return (the call sites return differently shaped errors, `*SetupCommandFailure`, `*SDKDemotionNotSupported`, a wrapped `fmt.Errorf`, so one returned error cannot serve them)
+DECISION: named the closure parameter `cause` rather than `err` — BECAUSE `Binder.Prepare` already carries a function-scope `err` at :844 and shadowing it inside the closure is a readability trap
+MISTAKE: the pre-revision CODE-8 text cited `binder.go:1053` for the `leaseAssigned = true` assignment. :1053 is a field of the `BindResult` literal `Binder.Launch` returns at :1040-1054, in a different function from the flag. The mis-citation was load-bearing: it made the flag look as though it flipped mid-sequence with failure branches after it, which is what let the next paragraph assert that `Prepare`'s refusal arm releases credentials. Corrected to :954.
+WATCHOUT: do not re-introduce a credential release on CODE-8's refusal arm, and do not plumb CODE-4's `releaseAttemptCredentials` into `binder.go` to "scope" it. `failPhase` is the only release site on either path and the guard returns before it, so the refusal arm releases nothing. `Launch`'s only reachable refusal is `SLOT_BIND_ALREADY_STARTED`, meaning a live session holds the §4.9 leases, and `credassign.Service.ReleaseSession` is a session-keyed walk over `LeasesBySession`, so any release there strips the live session's leases and hides them from the §11.4 revoke fan-out — EVIDENCE: pkg/gateway/credentials/credassign/credassign.go:400-408, pkg/gateway/podlifecycle/podsession/binder.go:1072-1082
+WATCHOUT: `Binder.Launch` issues both `ConfigureWorkspace` and `StartSession`, and neither carries a token, so `SLOT_BIND_ATTEMPT_SUPERSEDED` is unreachable from `Launch`. `StartSession` resolves with `allowStarted` false unconditionally while `ConfigureWorkspace` resolves with `allowStarted` from `idempotentRepeat`, so a test that wants a deterministic `Launch` refusal uses the `StartSession` arm — EVIDENCE: non-spec-changes.md resolve table, the `slotsession.go claimSessionSlotUnderLock` rows
+
+### [non-spec.8.fix-G4.1]
+
+FACT: There is no `tests/tier11_docs/alert_catalog_crosscheck_test.go`. The only file of that basename is a unit-tier package test that derives both its sets at run time and opens no file under `docs/` or `spec/`, so it can never hold a catalogued counter that no alert references. EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:3,:30-38,:68-92
+FACT: The gate that holds an adapter metric to BOTH `docs/reference/metrics.md` and the §16.1 catalog is `tests/tier11_docs/adapter_metric_catalog_test.go`, whose source of truth is a regex over the registrations in `pkg/adapter/metrics.go`. Two maps in that file, `undocumentedAdapterMetrics` and `specCatalogPending`, exempt a name from the sweep, so adding a new counter to either silently removes its only gate. EVIDENCE: tests/tier11_docs/adapter_metric_catalog_test.go:26,:34,:49,:56,:100,:110
+FACT: `spec161Metrics` in `pkg/observability/metrics/catalog_test.go` is reconciled BOTH ways against `MetricCatalog()`, so a name entered there without a `catalog.go` row fails `TestMetricCatalogIsCompleteAgainstSpec161`. The tree's split is on the §16.1 scrape deferral rather than on the emitting process: the deferred adapter rows are absent from both, while `lenny_adapter_coordinator_hold` and `lenny_credential_rotation_inflight_ceiling_hit_total` carry `catalog.go` rows and no deferral. EVIDENCE: pkg/observability/metrics/catalog_test.go:188-211; spec/16_observability.md:186-189; pkg/adapter/metrics.go:50,:108; pkg/observability/metrics/catalog.go:146,:271
+FACT: A new test file named `slot*_test.go` anywhere under `cmd|migrations|pkg|scripts|sdks|tests` is derived into the tier-0 credit inventory by name alone, so it must enter `slotAddressCaseFiles` in sorted position and take a `tests/spec-map.json` credit for every section its `// spec:` annotation names, in the same commit that creates it. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:1173,:1191,:1213-1226,:970-988
+DECISION: The superseded counter is emitted through a `Binder.SlotReclaim` hook forwarded by `Binder.noteCompensationOutcome` in `slotbinder.go` beside `recordSlotFailure`, wired at `cmd/lenny-gateway/metricsbackfill.go:149` — BECAUSE the §16.1 row labels the series by `pool` and `k8s_pod_name`, which only the call site holds, and a package-level function has no receiver to reach a hook through. ALTERNATIVES: a free function with label parameters and its own package-level collector (a second, parallel emission path in a package whose convention is hook-on-Binder); dropping the labels from SPEC-6's row (a spec-lane edit this loop may not make, and it loses per-pod attribution).
+WATCHOUT: `b.SlotReclaim` nil is a silent no-op, and the unit tests set the hook directly, so they pass whether or not the production wiring line exists. The only thing standing between the counter andsilence is the named wiring site. EVIDENCE: cmd/lenny-gateway/metricsbackfill.go:149; pkg/gateway/podlifecycle/podsession/slotbinder.go:353-361
+WATCHOUT: Repointing the `alert_catalog_crosscheck_test.go` citation at the real path was the tempting fix and it is wrong: the path would be right and every operative claim still false. The option lost because the test holds no name inventory and reads no documentation page. EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:30-38
+DEVIATION: The design said to hand the CODE-9 checklist step to G6 rather than edit it. I corrected S20's site list here, because it named a nonexistent test path and a `catalog_test.go` entry for the adapter counter that turns tier 1 red; leaving a known-false step for a re-cut that may not carry my file list is the worse risk. G6's re-cut supersedes it freely.
+
+### [non-spec.8.fix-G5.1]
+
+FACT: the tier-0 claim-register validator rejects a non-`WIRED` row with an empty `deferral_id` ("is ABSENT and names no step that closes it"), rejects a `deferral_id` that does not match the step-id pattern, and rejects one naming a step the remediation plan does not declare — three separate arms. Any staged ABSENT row must carry a declared step id. — EVIDENCE: tests/tier0_static/claim_register_test.go:292-300
+FACT: the shipped `EXPLICIT` list in scripts/seed-claim-register.py carries ABSENT rows keyed `R12`, `R14` and `R8`; the `R8` one is the external-adapter compliance-suite row, so `R8` is the established deferral for a conformance-harness gap. — EVIDENCE: scripts/seed-claim-register.py:169-196, gateway-runtime-comms-remediation.md:980-989
+DECISION: SCHEMA-1's ABSENT claim-register row now carries `"deferral_id": "R8"` (placed after `spec_anchor`, matching the shipped rows' key order) and the prose introducing it states that it names R8 and why. BECAUSE R8 is the reciprocal host-conformance battery and is declared the precondition for R17 asserting anything about third-party conformance. ALTERNATIVES: R17 and R24 (neither declares a conformance harness); marking the row `WIRED` (no harness ships, so the WIRED arm would be a false claim and CONF-1 says the project can run the clauses against its own adapter only); prose-only recording (that precedent applies where no declared step owns the gap, and R8 owns this one).
+FACT: docs/reference/state-machines.md:138 is the published mirror of spec/06_warm-pod-model.md:80 and carries all three projection clauses SPEC-4 replaces word for word. `grep -rn "recycling pod under its limits" docs/` returns that line alone; no other doc page mirrors the projection prose or §4.6.1's bullets. — EVIDENCE: docs/reference/state-machines.md:138
+DECISION: DOCS-1 was widened to two edits on one page rather than split into a DOCS-4 or resolved by deleting the obligation from the staged spec file's docs-mirror trailer. BECAUSE both edits are on one page, both land after SPEC-4, and they share a files-touched line and a checklist step; and the obligation at spec-changes.md's docs-mirror trailer is correct, so deleting it would ship a published page that contradicts the specification on a reachable input (a claim deleted while a `maxConcurrentSessions: 1`, `recycle.enabled: true` pod projects `claimed`, which is what a failed bind produces: `draining` under the new §6.2, `idle` under the unedited page). ALTERNATIVES: a tier-11 gate comparing the paragraph against §6.2 prose (the specification sentence carries vm-restart clauses the page deliberately omits, so the gate needs a bespoke substring set, and DOCS-3 already establishes that a published-mirror edit lands without one).
+WATCHOUT: the three replacement clauses must be copied from SPEC-4's wording clause for clause. Each is re-keyed on the phase the pod projects at the claim DELETE, and rewording one clause reintroduces the two-answers-for-one-input defect SPEC-4's rationale describes. — EVIDENCE: spec-changes.md, SPEC-4's projection-prose block ("three clauses are replaced")
+WATCHOUT: no gate holds docs/reference/state-machines.md's pod state machine paragraph against §6.2. The staged DOCS-1 body now says so explicitly, so a later lens does not read the absence as a missing deliverable. The per-slot table half does carry tier-11 reconciliation work. — EVIDENCE: non-spec-changes.md, DOCS-1 body
+DEFERRED [implementation-checklist.md]: S7's DOCS-1 sentence reads "The per-slot sub-state table in the state-machine reference gains the row matching the new §6.2 edge" and is now incomplete: DOCS-1 also replaces the three projection clauses in the page's pod state machine paragraph, each re-keyed on the phase the pod projects at the claim DELETE. S7 is already recorded as drifted on DOCS-3, so the reconciliation pass rebuilding it must carry both corrections.
+
+### [non-spec.8.fix-G6.1]
+
+DECISION: Moved CODE-9 whole from the tail to S8, immediately after the docs step S7, and renumbered old S8..S19 to S9..S20 — BECAUSE CODE-9 declares `noteShutdownMetUntokenedEntry` and `noteCompensationOutcome`, which the CODE-1 teardown step and the CODE-4 compensation step call, so its recorded `Depends on: S15` was inverted and produced a cycle. ALTERNATIVES: splitting CODE-9 into a declaration step and a catalog/docs step was rejected because `tests/tier11_docs/adapter_metric_catalog_test.go` errors on an adapter counter registered without its `docs/reference/metrics.md` row, so the declaration half would leave a tier-11-red commit; deleting the `Depends on: S15` edge alone was rejected because the edge is a symptom of the ordering; folding the helpers into CODE-1 and CODE-4 was rejected because G4 settled CODE-9 as the owner of the hook, the forwarder and the collector.
+
+FACT: No step identifier exists anywhere in this proposal outside implementation-checklist.md. `grep -n '\bS[0-9]\+\b'` over summary.md, non-spec-changes.md, spec-changes.md, problem-statement.md and status.md returns nothing, so a renumber is contained to one file. EVIDENCE: 0081_...implementation-checklist.md is the sole carrier; the review logs carry step ids but are the protected audit record.
+
+WATCHOUT: A renumber of this checklist is not a `Depends on` sweep. Step identifiers are embedded in prose inside the bullets: the preamble's ordering rule, S5's tier deferral, S6's counter sentence, the CODE-8 step's "the gates S14 lands", the CODE-4 compensation step's "S20's third caller reads", and the CODE-9 step's "the tier-3 closed-field-set gate belongs to S10". A previous renumber on this proposal left exactly that residue. Apply one simultaneous mapping over `\bS[0-9]+\b` across the whole file, then re-grep. EVIDENCE: implementation-checklist.md:11, :14, :25, :27, :31, :39, :53.
+
+FACT: `S-2` (the proto-window rule named in the SCHEMA-1 step) is not a step identifier and survives a `\bS[0-9]+\b` sweep unchanged because of the hyphen. EVIDENCE: implementation-checklist.md, the SCHEMA-1 step's closing sentences.
+
+DECISION: Set the CODE-8 step's tier line to `Tiers 0, 1, 2` and added tier 8 to the CODE-4 compensation step's line — BECAUSE CODE-8's only cases in `## Testing` are the tier-1 short-circuit pair (non-spec-changes.md:2443) and the tier-2 envtest pair on `binder_envtest_test.go` (:2595-2601), so tiers 4, 8 and 9 on its line were unsourced; and the single tier-8 case asserts a stamped entry refusing later attempts while injecting the loss of a compensation, which needs CODE-6's stamp and CODE-4's compensation. ALTERNATIVES: a step of its own for the tier-8 case (churn, and the compensation step already owns the deliverable); attaching it to the CODE-6 stamp step (that step lands no compensation to lose).
+
+USEFUL [non-spec.8.fix-G4]: G4's corrected CODE-9 file list was already in the step when this pass ran, so the move carried it verbatim and no pre-G4 text was re-derived. G1's corrected CODE-4 mint sentence and the CODE-1 sweep clause and tier line likewise survived the renumber untouched, because every anchor here was the deliverable name rather than a line number.
+
+### [non-spec.8.fix-G7.1]
+
+FACT: `tests/spec-map.json` registers a test file at one of three granularities, and the tier-0 gate branches on which. A `path::TestName` entry populates `perCase`; a bare path or a `prefix/...` directory entry populates `wholeFile`. When `perCase` is non-empty the gate checks EVERY case in the file against `wholeFile ∪ perCase[fn]`, so a whole-file credit added to a per-case file is green for the wrong reason. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:846-857,:970-988.
+
+FACT: the verified registration of the files this proposal lands tier-1 cases in, read off the map on 2026-09-18. slotbinder_test.go: whole-file 4.6.3, 4.7, 5.2, 6.2, 7.1 plus 4.1 via `pkg/gateway/...`; no per-case. binder_test.go: NO whole-file credit outside 4.1 via that directory entry, 31 per-case entries. client_test.go: whole-file 4.4, 4.7, 4.9, 5.2, 7.2, 7.3, 7.5, 11.2, 11.3, 11.4, 13.2, 28.5.3 plus 4.1 via directory; no per-case. slotretry_test.go: whole-file 15.1, directory 4.1 and 11.4, 17 per-case. slotretry_load_test.go: directory 4.1 and 11.4 only, 2 per-case. slotsession_test.go: whole-file 4.9, 5.2, 6.1, 6.4, 15.4 plus 4.7 via `pkg/adapter/...`; no per-case. EVIDENCE: tests/spec-map.json.
+
+CORRECTS [the G7 design's spec-map table]: the design said binder_test.go's new cases cite "4.7.1, 5.2, 6.2, 7.1" and that slotbinder_test.go "takes one new whole-file credit, 4.7.1". Neither is right. The CODE-4, CODE-5 and CODE-8 cases that land in those two files carry `// spec: §7.1; §5.2; §6.2` and no 4.7.1 (non-spec-changes.md, the "Gateway tests for CODE-4, CODE-5, CODE-7 and CODE-8" annotation line); 4.7.1 belongs to CODE-7's cases, which land in client_test.go. So slotbinder_test.go needs NO new credit at all, and binder_test.go's per-case entries are under 5.2, 6.2 and 7.1. I wrote it that way and keyed the general rule on each case's own annotation rather than on a section list.
+
+FACT: two of the five gateway tier-1 files the proposal names are NOT in `slotAddressCaseFiles`, so the per-case credit gate never reaches them: `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` and `pkg/adapter/socketruntime_test.go` (the inventory carries `socketruntime_e2e_test.go` instead). Do not stage entries for them on the strength of that gate. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go, the `slotAddressCaseFiles` literal.
+
+FACT: CODE-5's slotretry_test.go work adds ROWS to `TestSlotBindErrorReason_spec_5_2` and `TestClassifySlotBindFailurePassesTransientThrough_spec_5_2`, both already entered per-case under section 5.2, and neither function's annotation changes. No new spec-map entry falls due there. A round that reads "the file is per-case, so the new work needs entries" without checking whether the work creates a FUNCTION will stage entries for cases that do not exist.
+
+WATCHOUT: `Binder.Prepare` never stamps `lenny.dev/drain-request` on any path. `failPhase` calls `drain`, and `drain` is `podclaim.DeleteClaim`; the annotation has exactly one producer, `Binder.DrainSandbox` → `podclaim.StampDrainRequest`, whose only production caller is the §5.2 unhealthy-threshold branch in sessionserver/start.go. A tier-2 case keyed on the annotation is vacuously true on both arms and discriminates nothing. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1079,:1200-1202; slotbinder.go:601; pkg/gateway/sessionserver/start.go:2859.
+
+DECISION: closed the untested `exited_cleanly` disjunct with a per-`Server` injection seam (`Server.removeSlotTreeFn`, read through a new `Server.removeSlotTreeVia`) rather than with the finding's suggested free function `removeSlotTreeWith` — BECAUSE the property under test is a field of `ShutdownResponse`, which only a call through `Shutdown` produces, so a free function the test calls directly pins nothing while `Shutdown` keeps calling the un-injected path. ALTERNATIVES: deleting the `&& (live || treeErr == nil)` disjunct (rejected: `closeErr` is unconditionally nil on the unstarted path, so every unstarted reclaim would report a clean exit and the staged §5.2/§7.1 `leaked` disposition would be unreachable, and it is a spec-lane edit this loop may not make); a package-level `var` swapped by tests (rejected: global mutable singleton, and unsafe for parallel cases); chmod-ing the tree's parent to force `os.RemoveAll` to fail (rejected: succeeds as root, so the case passes or fails on who runs it).
+
+MISTAKE: the "Excluded deliberately" paragraph justified shipping that disjunct unpinned by citing the repository's precedent for a non-portable forced error. The precedent says the opposite: `chmodWarmDirWith` exists precisely so the un-forceable branch can be driven through an injected function. EVIDENCE: pkg/adapter/warmlayout.go:43; pkg/adapter/warmlayout_test.go:164-167. The cost was a spec-named failure path with zero coverage at every tier.
+
+FACT: `removeSlotTree` has three callers and only the `Shutdown` one's error is load-bearing. pkg/adapter/session.go:271 (`_ = removeSlotTree(st)` today, becomes `treeErr = s.removeSlotTreeVia(st)`), pkg/adapter/slotsession.go:217 and pkg/adapter/holdstate.go:254, the last two keeping their discards.
+
+DECISION: stated the `slotAddressCaseFiles` rule instead of correcting its count from three to four — BECAUSE the caller's standing rule and doc-style both ban a stated count, and the count goes stale on the next slot-named file. The bullet now names the gate's two triggers (a `slot*_test.go` name, or a call matching `slotstate.|ClaimSlot(|ReleaseSlot(|ReserveSlotOnPod(|claimAtCreate(|BindReservedSlot(`) and says each enters in the step that creates the file or adds the call. The CONF-1 tier-10 paragraph, the one of the four with no instruction, gained the sentence the tier-7a and tier-9 paragraphs already carry. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:1168,:1173,:1191.
+
+UNVERIFIED: `tests/tier7a_load_local/slot_bind_attempt_race_test.go`'s own Testing paragraph still carries no `slotAddressCaseFiles` instruction (its sibling `slot_reclaim_hold_race_test.go` does). The rewritten files-touched rule covers it, so tier 0 is not left red, but a later round may prefer the instruction beside the case as the other three paragraphs have it.
+
+### [non-spec.8.fix-design-G1.1]
+
+FACT: the complete production adapter-`Shutdown` caller set is FIVE call sites and they all go through `adapterclient.Client`. `grep -rn "\.Shutdown(\|ShutdownRecycle(" --include=*.go pkg/ cmd/ | grep -v _test` yields slotbinder.go:542, slotbinder.go:574, binder.go:2037, binder.go:2043, user_revocation.go:129, plus the client builder itself. `pkg/gateway/coordination/` contains no `Shutdown` string at all. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:542,:574; binder.go:2037,:2043; cmd/lenny-gateway/user_revocation.go:129; pkg/gateway/runtime/adapterclient/client.go:814
+
+FACT: `Client.Shutdown` and `Client.ShutdownRecycle` both funnel into ONE unexported builder, `Client.shutdown`, which is the single place the request literal is constructed. CODE-4 sets `unconditional_teardown = true` there. Consequence nobody had drawn: NO gateway or cmd caller file needs an edit for the field, so the Files-touched bullet naming `cmd/lenny-gateway/user_revocation.go` for that edit is self-refuting in its own trailing clause. — EVIDENCE: pkg/gateway/runtime/adapterclient/client.go:807-824,:860-867; non-spec-changes.md:1461-1463, :2792-2793
+
+DECISION: delete the whole Files-touched bullet at non-spec-changes.md:2792-2793, not only its "and the coordinator-handoff teardown" half — BECAUSE after the phantom is removed the bullet still lists a file whose edit its own clause says the client performs, and `client.go` is already listed at :2751-2754. ALTERNATIVES: delete only the phantom phrase (leaves a file listed as touched for no edit, which is next round's finding); keep the row and reword it as a forward obligation inside the table (rejected: the table is billed as the full list of EXISTING callers, so a future caller belongs in a sentence after it, not as a row).
+
+FACT: the two-field `Shutdown` precondition is a mandatory-field change on a shipped RPC and it is evaluated before the lock and before any registry read, so it refuses EVERY in-tree bare `&adapterv1.ShutdownRequest{SessionId: ...}`. `grep -rn "ShutdownRequest{" --include=*_test.go pkg/ tests/` = 64 call sites across 26 files, tiers 1, 2, 3, 4, 7a, 9 and 10. The proposal's Files-touched test list names three of those 26. The new fields are proto scalars with zero values, so nothing fails to compile: an implementor lands the step and gets six red tiers with no build error to point at. — EVIDENCE: non-spec-changes.md:203-207, :2144-2148, :2800-2827
+
+DECISION: state the sweep set by the reproducing grep rather than enumerating 26 files — BECAUSE CODE-6 already set that precedent in this same document for its own widening ("Roughly twenty-two test call sites across the package thread the same parameter. They are not enumerated here", non-spec-changes.md:1313), and an enumerated 26-file list drifts. ALTERNATIVES: enumerate every file (drifts, and doubles the Files-touched list); make the precondition permissive so no test changes (REJECTED and not re-derivable: the fail-closed "exactly one of" rule is the settled mechanism, and a permissive form destroys a live session when a caller forgets the token).
+
+WATCHOUT: the sweep belongs to S15 (CODE-1, the step that introduces the precondition), NOT to S12. S12 is the gateway-side mint and carry, and the client sets the flag for every production caller there; the tests that break construct the proto request directly against the adapter server and are untouched by S12. The checklist's own ordering note (implementation-checklist.md:12-14) says S12 must precede the refusal steps, which is unaffected. — EVIDENCE: implementation-checklist.md:12-14, :45-46
+
+DEFERRED [none] — both correction targets (non-spec-changes.md, summary.md, implementation-checklist.md) are inside this lane's write scope: the non-spec fix rounds have edited the checklist before (review-log.md:1561 records S9/S10, now S12/S13, rewritten by `non-spec.1.fix-*`).
+
+FACT: adding `tests/tier4_integration/concurrent_delegation_proxy_test.go` to this proposal's footprint makes the 0078 impact row's "Three file collisions are real" a four. 0078's TEST-5 converts that file's cleanup at `:168`; this proposal's edit is the one-field literal at `:424`; distinct regions, so it is a merge hazard rather than a design conflict, exactly like the `shutdown_drain_gate_race_test.go` clause already in that row. The 0079 row makes a SPEC-file collision claim only and is unaffected even though 0079 also touches `podscrub_test.go`, `concurrent_delegation_proxy_test.go` and `recycle_scrub_conformance_test.go`. — EVIDENCE: summary.md:918-920; proposals/0078_fix_keep-the-pod-listener-across-a-session-teardown.md:783; tests/tier4_integration/concurrent_delegation_proxy_test.go:424
+
+OPEN: `tests/tier10_conformance/recycle_scrub_conformance_test.go` is touched by both 0081 (via the sweep) and 0079 (TEST-4). No impact row makes a claim the overlap falsifies today, so nothing is owed now; a later round widening either row should count it.
+
+### [non-spec.8.fix-design-G2.1]
+
+DECISION: finding 4 — restore the shipped create-branch body INLINE under `case !ok:` (seed `s.slots` when nil, `resolveSlotPaths` → `slotlayout.EnsureTree` → build `slotState` with the `creds`/`timers` maps → stamp `bindAttempt` → insert), rather than minting `newSlotStateLocked`. BECAUSE inline adds no symbol, so CODE-6's "every name in this deliverable is new to the tree" paragraph and the `pkg/adapter/slot.go` Files-touched entry need no new-name edit, and the two error returns stay visible at the arm they belong to. ALTERNATIVES: the reviewer's `newSlotStateLocked(slotID string) (*slotState, error)` helper (rejected: a name that must then be carried in two enumerations to buy nothing); keeping the single-value form and doing the tree creation at the call sites (rejected: five resolve sites would each carry it).
+
+DECISION: findings 7 and 8 are ONE fix — the slot guard brackets every section that touches the slot's PATHS, the reclaim's included, and the guard table is never dropped. BECAUSE the residue the finding names is not closed by serializing the destructive section alone: if the reclaim's `removeSlotTree` runs first and the already-admitted `FinalizeWorkspace` materializes after, `MaterializeWithPolicy` re-creates the tree with no registry entry. Only bracketing the resolve AND the materialization under one acquisition orders them. ALTERNATIVES: withdrawing the Shutdown-vs-Finalize case into accepted failure modes (rejected: checklist S14 and non-spec-changes.md:1369-1371 both name it as the guard's subject, and the checklist is the reconciliation pass's to edit, so withdrawing it strands a correction in a file this loop may not touch); refcounting the guard entry and deleting at zero (rejected: second mechanism for a map bounded by the pod's served-session count); a ctx-aware channel semaphore instead of `sync.Mutex` (rejected: every guard holder's work sits inside a gRPC handler whose context the gateway deadline cancels, so the wait is already bounded; recorded here because it is the right answer if a holder is ever added that runs under no request).
+
+WATCHOUT: the staged lock order — "`s.mu` is never taken while a slot guard is held, and a slot guard is acquired only after `s.mu` has been released" (non-spec-changes.md:1373-1376) — FORBIDS bracketing the resolve, because `ensureSlotPaths` takes `s.mu` internally. The fix must restate the order as guard → `s.mu` (a guard may be held while `s.mu` is taken and released; `s.mu` is never HELD while a guard is acquired; never two guards at once). Deadlock-free because no `s.mu` acquisition ever waits on a guard. Leaving the old sentence in place next to a Shutdown that takes the guard is the incoherent middle.
+
+WATCHOUT: the §10.1.4 hold termination is a two-pass path. Pass 1 (`deregisterStartedSessions`) deregisters every member under one `s.mu`, pass 2 (`terminateHeldSession`) destroys each up to ten seconds later. Pass 1 does no path work and must NOT take guards; pass 2 takes the member's guard before `removeSlotTree`. EVIDENCE: pkg/adapter/holdstate.go:229-254.
+
+FACT: `New()` never initialises `Server.slots`, so the nil-map seed in the shipped create branch is load-bearing and the adapter's own tests build a Server by struct literal. EVIDENCE: pkg/adapter/server.go:367 (field), :376-382 (`New`), pkg/adapter/slot.go:105-107 (the seed).
+
+FACT: `releaseSessionSlot` and `terminateHeldSession` do NOT hold `s.mu` across their destroy; they call `deregisterSlot`, which takes it itself. So guard-first ordering costs them nothing. EVIDENCE: pkg/adapter/slotsession.go:214-220; pkg/adapter/holdstate.go:229-254.
+
+FACT: `recycle.maxSessionsPerPod` is required whenever recycling is enabled and retires the pod at that count, which is what bounds a never-dropped `slotGuards` table. EVIDENCE: spec/05_runtime-registry-and-pool-model.md:488.
+
+MISTAKE: finding 8's own closing sentence ("Having `Shutdown` hold the guard across its destructive section closes this too, since the deletion then happens with no other holder") is wrong on its face — the deletion would happen while `Shutdown` ITSELF holds the guard, and the next acquirer still mints a second mutex. The drop has to be deleted outright; do not let a fixer take that sentence as licence to keep it.
+
+OPEN: the reclaim now waits on a guard held by an in-flight `PrepareWorkspace` stream. The wait is bounded by that stream's own gateway deadline, but the adapter performs no context-expiry check of its own, so the bound is external. A later round may want that stated among the accepted failure modes with the bound named.
+
+CORRECTIONS to this pass, applied by the round-9 follow-up fixer. Five defects in this pass's own
+edits, all of them consequences of giving `Resume` the guard.
+
+- **The tier-7a `Resume` arm kept a `ReportSessionScrub` assertion the new ordering falsifies.**
+  The rewritten arm releases the park only after `Resume` returns, so `noteRuntimeStarted` has
+  recorded the session before the compensating `Shutdown` proceeds and CODE-1's
+  `live := removed && s.runtimeHoldsLocked(sessionID)` is true (non-spec-changes.md:352-356,
+  :394-396; pkg/adapter/resume.go:139-144). FIXED: the no-report assertion is now scoped to the
+  `StartSession` arm and the `Resume` arm asserts exactly one cleanup-outcome report, which is
+  what CODE-1 stages the reclaim to file for a session the shared runtime process was given.
+- **The same arm asserted no interleaving against an extraction it cannot reach.** The arm carries
+  no chunks, and `restoreChunks` returns on its empty-set guard before `workspace.ExtractTree`
+  (pkg/adapter/resume.go:169-172, :206). FIXED: the clause is dropped and the arm now states that
+  the extraction-versus-removal property belongs to the third arm of the reclaim-against-an-
+  admitted-section case, which parks a chunk-carrying `Resume` inside `ExtractTree`.
+- **`Checkpoint` met the guard predicate and was absent from the derivation table.**
+  `checkpointRootsForSession` releases `s.mu` before returning the roots (pkg/adapter/slot.go:183-206)
+  and `probeWorkspaceBytes` and `workspace.ArchiveTree` then read the tree outside every registry
+  lock (pkg/adapter/checkpoint.go:140, :205). DECISION: narrow the predicate to a section that
+  creates, writes or destroys the tree, and give `Checkpoint` an unguarded row on the ground that
+  its path work is a read, so a concurrent reclaim destroys the subject rather than corrupting it
+  and the stream fails with the archive's own error. ALTERNATIVE rejected: guarding `Checkpoint`,
+  which puts `pkg/adapter/checkpoint.go` into CODE-6 and orders the slot guard against the
+  pod-level op lock for a section that writes nothing. The three parallels were moved with it
+  (summary.md's objectives bullet and its CODE-6 line, checklist S15).
+- **The guarded `Resume` wait was granted and never priced.** The compensating `Shutdown` runs
+  under `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` seconds and now waits on a guard
+  spanning a checkpoint restore. The bound is the handler's own context: `GetChunk` builds each
+  fetch on it (pkg/adapter/checkpointtransport.go:99-116), so the client deadline that triggered
+  the compensation cancels the fetch, the pipe closes and `ExtractTree` returns. FIXED: CODE-4's
+  sentence names that bound, and a new accepted-failure-mode bullet records the residue the
+  cancellation does not cover (an in-flight chunk copy and the bytes already in the pipe), its leak
+  charge, and why neither a shorter guard nor a second adapter-side deadline is taken. This
+  discharges the OPEN this pass left above about the reclaim waiting on a guarded section.
+- **CODE-6's heading file list still omitted `resume.go`** after this pass gave the deliverable two
+  edits there. FIXED; it now matches summary.md's CODE-6 line and the Files-touched entry.
+
+No edit to `spec-changes.md` was needed for any of the five.
+
+### [non-spec.8.fix-design-G3.1]
+
+DECISION: Close all three G3 findings with ONE rewrite of non-spec-changes.md:1484-1517 — correct `:1053` to `:954`, restage the short-circuit as a closure SIGNATURE change (`reclaim := func(cause error)`) plus a named call-site sweep, and DELETE the credential-release paragraph at :1513-1517 rather than narrow it — BECAUSE the staged code block already returns before `failPhase` on a refusal, so no credential release happens on either refusal arm; the paragraph describes behaviour its own block does not have. ALTERNATIVES: (a) plumb CODE-4's `releaseAttemptCredentials(minted)` into binder.go's closures — rejected, it is a second narrowing mechanism for a release that never fires, pure hair; (b) hoist the `errors.Is` guard to all eight `reclaim()` call sites — rejected, eight copies of one predicate; (c) add a fourth tier-9 arm for the `Launch` refusal — rejected, `failPhase` is the only release site on that path and the staged tier-1 bullet already asserts the closure calls neither `failPhase` nor `drain`, which is the same property; name the consequence in that bullet instead.
+
+FACT: `Binder.Prepare` sets `leaseAssigned = true` at pkg/gateway/podlifecycle/podsession/binder.go:954, AFTER its last `reclaim()` call site (:950) and two statements before its only success return. Every `Prepare` reclaim therefore sees the flag false and `failPhase`'s `releaseCredentials` half is unreachable from `Prepare`. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:865,883,918,923,935,950,954; :1072-1076
+
+FACT: Both reclaim closures are `func()` with no parameters and no returns; every call site is `reclaim(); return nil, <its own error>`. In `Binder.Launch` all three call sites (:1010 ConfigureWorkspace, :1021 StartSession, :1032 verifyIntegrationLevel) declare the failing error inside their own `if`/`else if`, so the only `err` a closure body can close over is the reconnect error at :977, which is nil on every path that reaches a reclaim. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:866-869, :997-1000, :977, :1009-1033
+
+WATCHOUT: The reclaim call sites use three different error scopes — function-scope `err` at :918/:923/:935, `if`-scope at :883/:950/:1010/:1032, `else if`-scope at :1021. Name the closure parameter `cause`, not `err`, or it shadows the function-scope `err` that `Prepare` reuses. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:916,921,933
+
+WATCHOUT: The two reconnect-failure early returns (:846-857, :982-995) call `ReclaimClaimed`, not `reclaim`, and cannot carry a slot refusal. They are outside the sweep; a fixer that "completes" it by touching them is editing an unrelated path. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:845-857, :978-995
+
+MISTAKE: The pre-revision CODE-8 prose claimed `Binder.Launch`'s refusal arm "releases the leases the same way and skips only the drain" (non-spec-changes.md:1516-1517). `Launch`'s refusal can only be SLOT_BIND_ALREADY_STARTED, i.e. a live session owns the entry, and `failPhase`'s release is the session-wide `credassign.Service.ReleaseSession` walk over `LeasesBySession` — the exact strip CODE-4 stages a narrowing to avoid (non-spec-changes.md:866-873; credassign.go:400-409). Cost: the proposal instructed two different things about one call for six rounds.
+
+DEFERRED [implementation-checklist.md]: S11's one-line CODE-8 description ("return either typed refusal without calling `failPhase`") stays true under this fix and needs no edit; noting it so reconciliation does not re-open it. Same for summary.md:226,940 and non-spec-changes.md:10,140,927,1386,2185,2638 — all describe the drain/failPhase gating generally and none restates the withdrawn credential claim.
+
+UNVERIFIED: that no OTHER `func()` closure in the staged CODE deliverables has the same "body needs an error it cannot see" defect. The G3 round only checked binder.go's two. A later non-spec round should sweep the staged code blocks for `func()` closures whose staged bodies read a variable declared at the call site.
+
+### [non-spec.8.fix-design-G4.1]
+
+DECISION: The two new counters split by emitter, and `pkg/observability/metrics/catalog.go` +
+`spec161Metrics` take ONLY the gateway-side `lenny_slot_compensation_superseded_total`. The
+adapter-side `lenny_slot_shutdown_untokened_entry_total` is registered in `pkg/adapter/metrics.go`
+alone and gated by the shipped `tests/tier11_docs/adapter_metric_catalog_test.go` with no edit —
+BECAUSE the tree's apparent ambiguity resolves once you split on the scrape deferral, not on the
+emitting process. The two adapter-emitted metrics that DO carry `catalog.go` rows
+(`lenny_adapter_coordinator_hold` catalog.go:271, `lenny_credential_rotation_inflight_ceiling_hit_total`
+catalog.go:146) carry no deferral wording in §16.1. All FOUR §16.1 adapter rows that carry the
+"outside the §16.9 default scrape target set until a deployer wires an adapter scrape target"
+wording (`lenny_adapter_sopeercred_disabled_total`, `..._sopeercred_selftest_failed_total`,
+`..._set_tracing_context_dropped_total`, `..._unaddressed_frame_rejected_total`) are absent from
+both `catalog.go` and `spec161Metrics` — verified by grep, 0 hits each in both files, 1 hit each in
+pkg/adapter/metrics.go. SPEC-6's staged untokened-entry row uses exactly that deferral wording, so
+it belongs with those four. ALTERNATIVES: giving both counters a `catalog.go` row and citing
+`lenny_adapter_coordinator_hold` as precedent — rejected, it puts an unscraped series into the
+gateway's exported enumeration and breaks the four-row pattern; leaving both staged sentences as
+they are — rejected, they cannot both be executed.
+
+FACT: `spec161Metrics` in pkg/observability/metrics/catalog_test.go is reconciled BOTH ways
+(catalog_test.go:188-197 `TestMetricCatalogIsCompleteAgainstSpec161`, :200-211
+`TestMetricCatalogHasNoUnspecifiedMetrics`). A name added to `spec161Metrics` without a matching
+`MetricCatalog()` row fails; a `catalog.go` row without a `spec161Metrics` entry fails. It is a
+hand list, and it is NOT a complete §16.1 transcription — it omits the four deferred adapter rows.
+EVIDENCE: pkg/observability/metrics/catalog_test.go:188-211; spec/16_observability.md adapter rows.
+
+FACT: `tests/tier11_docs/alert_catalog_crosscheck_test.go` does not exist and never did. The only
+file of that basename is pkg/observability/metrics/alert_catalog_crosscheck_test.go, `package
+metrics_test` (unit tier, not tier 11). It derives both sets at run time — referenced from
+`rules.Catalog()` alert expressions, known from `MetricCatalog()`/`AlertSupportCatalog()` — so it
+holds NO name inventory that a new counter could be added to, and it opens no file under docs/ or
+spec/. A catalogued counter with no alert referencing it is invisible to it.
+EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:3,:19,:30-38,:68-92.
+
+FACT: the `Binder.SlotFailure` hook's ONLY production wiring site is
+cmd/lenny-gateway/metricsbackfill.go:149 (`w.podBinder.SlotFailure = gwMetrics.IncSlotFailure`).
+The proposal names that file NOWHERE. A `SlotReclaim` hook added without that line is nil in
+production and the counter never fires while every tier stays green.
+EVIDENCE: cmd/lenny-gateway/metricsbackfill.go:149; pkg/gateway/podlifecycle/podsession/binder.go:137;
+slotbinder.go:358-361.
+
+WATCHOUT: the tempting local edit on finding 3 is to repoint the citation to
+`pkg/observability/metrics/alert_catalog_crosscheck_test.go`. That keeps a false claim: the file
+cannot gate either counter under any path, because neither counter is referenced by any alert
+expression. The citation must be DELETED, not corrected — from Testing (:2567-2571), CODE-9
+(:1546-1548), Files touched (:2826) and checklist S20.
+EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:30-38.
+
+DEFERRED [implementation-checklist.md]: S20 (line 55) names
+`alert_catalog_crosscheck_test.go` among CODE-9's sites and says the counters' catalog entries land
+in `catalog.go` and `spec161Metrics` without distinguishing the two series. Both are false after
+this fix. What is true: S20's sites are `pkg/observability/metrics/catalog.go` and the
+`spec161Metrics` list in its `catalog_test.go` for the GATEWAY series only,
+`gatewaymetrics_credential.go` for its collector, a `SlotReclaim` hook on `Binder` beside
+`SlotFailure` with its forwarder in `slotbinder.go` and its wiring in
+`cmd/lenny-gateway/metricsbackfill.go`, `pkg/adapter/metrics.go` for the adapter series alone,
+`docs/reference/metrics.md` for both rows, and a new
+`tests/tier11_docs/slot_compensation_metric_reference_test.go`. No
+`alert_catalog_crosscheck_test.go`.
+
+OPEN: whether the proposal should add the new tier-11 doc-reference test for
+`lenny_slot_compensation_superseded_total` or record the absence as an accepted gap. This design
+chose the test, following the shipped one-metric-per-file precedent
+tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go, because the Testing subsection already
+CLAIMS tier-11 coverage for these counters and withdrawing the claim leaves the staged
+docs/reference/metrics.md row held by nothing. A reviewer may prefer the gap.
+
+### [non-spec.8.fix-design-G5.1]
+
+DECISION: SCHEMA-1's ABSENT claim-register row takes `"deferral_id": "R8"` — BECAUSE the tier-0 validator fails any non-WIRED row with an empty DeferralID (tests/tier0_static/claim_register_test.go:292-295) and R8 is the plan's only conformance-harness step, already used by the sibling compliance-suite ABSENT row (scripts/seed-claim-register.py:192) — ALTERNATIVES: R17 (`Enabling CH-RUNTIMEOPS at the deployment boundary`, gateway-runtime-comms-remediation.md:1473) and R24 (disposition of unwired surfaces, :1654) were rejected: R17 is a deployment-enablement step and R24 drains R9's register row by row, neither owns a harness; leaving the row WIRED was rejected because no harness ships.
+
+WATCHOUT: R8's own scope text is the *reciprocal* direction (a reference runtime driven against the real adapter host, gateway-runtime-comms-remediation.md:990-996), while SCHEMA-1's claim is gateway-drives-a-third-party-adapter. R8 is still the right identifier because its Closes line makes it "the precondition for R17 asserting anything about third-party conformance" (:983), but the staged note should say which step closes it so a later lens does not re-file the mismatch. — EVIDENCE: gateway-runtime-comms-remediation.md:980-1004
+
+FACT: the tier-0 gate has three arms, and only the first two are reachable here: empty DeferralID → "is ABSENT and names no step that closes it"; a value not matching the step-id regex → "is not a step identifier"; a well-formed id the plan does not declare → third arm. `### R8.` is declared, so R8 resolves. — EVIDENCE: tests/tier0_static/claim_register_test.go:292-300, gateway-runtime-comms-remediation.md:980
+
+FACT: docs/reference/state-machines.md:138 carries all three clauses SPEC-4 replaces word for word (minus §6.2's vm-restart nuance), and it is the only doc site: `grep -n "recycle.enabled\|no claim projects\|under its limits" docs/reference/state-machines.md` returns :138 plus the Recycle-transitions heading (:209) and the multiplex paragraph (:241), neither of which carries a replaced clause. — EVIDENCE: docs/reference/state-machines.md:138, spec/06_warm-pod-model.md:80
+
+DECISION: DOCS-1 is widened to two edits on one page (per-slot table row kept; a second staged edit replacing the three projection clauses at docs/reference/state-machines.md:138 in the page's own voice) rather than left as one edit — BECAUSE spec-changes.md:1063-1066 already obliges DOCS-1 to carry them and SPEC-4 otherwise leaves the published page contradicting §6.2 on a concrete input (claim deleted while a maxConcurrentSessions:1, recycle.enabled:true pod projects `claimed`) with no gate to catch it — ALTERNATIVES: (a) drop the obligation from spec-changes.md:1063-1066 instead — rejected, it would ship a knowingly false published page; (b) a new tier-11 gate holding the paragraph against §6.2 — rejected as hair, DOCS-3 already sets the precedent of a docs edit with no reconciliation gate, and the page's prose is not mechanically comparable to the spec sentence (the spec sentence carries vm-restart clauses the page does not).
+
+DEFERRED [summary.md]: summary.md:943's DOCS-1 line ("the per-slot sub-state table gains the row matching the §6.2 edge") is false once DOCS-1 is widened; true instead is that DOCS-1 carries that row *and* the three projection-prose clause replacements on the same page.
+DEFERRED [implementation-checklist.md]: the S7 line at implementation-checklist.md:29 describes DOCS-1 as the table row alone; true instead is the two-edit scope. This joins the already-recorded S7 drift about DOCS-3, so reconciliation fixes S7 once.
+
+### [non-spec.8.fix-design-G6.1]
+
+DECISION: close finding 15 by MOVING CODE-9 whole to a new S8 (immediately after S6, before the docs step S7 keeps its number), not by splitting it — BECAUSE the reviewer's suggested split leaves a tier-11-red intermediate commit: `tests/tier11_docs/adapter_metric_catalog_test.go:100` errors on any counter registered in `pkg/adapter/metrics.go` and named nowhere in `docs/reference/metrics.md`, so the declaration half cannot land without the docs half. Splitting also breaks the one-deliverable-per-step invariant the log records at review-log.md:198 and :527. — ALTERNATIVES: (a) the reviewer's two-step split, rejected above; (b) delete only `Depends on: S15` from S20 and leave it at the tail, rejected because the ordering is the defect and the compile break at the call sites survives; (c) fold the two helper declarations into CODE-1 and CODE-4 and shrink CODE-9 to catalog+docs, rejected because it scatters one metric across three deliverables and orphans the catalog/docs mirror rows; (d) keep the numbers and allow a non-monotonic execution order, rejected as hair.
+
+DECISION: renumber rather than leave a step out of sequence — BECAUSE list order is the execution sequence (implement-proposal runs the checklist "as one sequence") and the renumber is fully contained: `grep -n "\bS[0-9]\+\b"` over summary.md, non-spec-changes.md, spec-changes.md, problem-statement.md and status.md returns ZERO hits, so no file outside implementation-checklist.md carries a step id.
+
+FACT: the renumber map is old S7 stays S7 (DOCS); new S8 = old S20 (CODE-9), `Depends on: S6`; old S8..S19 shift +1 to S9..S20; S21 and S22 unchanged; the tail step count stays 22. Every `Depends on` naming old S8..S19 gets +1, and S8 is ADDED to the new S16 (CODE-1) and new S19 (CODE-4 compensation) because their staged bodies call `s.noteShutdownMetUntokenedEntry` and `noteCompensationOutcome`. — EVIDENCE: non-spec-changes.md:253, :842 (call sites); :1534-1544 (CODE-9 declares both); `grep -rn` over pkg/ returns neither symbol.
+
+WATCHOUT: six step references are embedded in PROSE, not in `Depends on` lines, and a renumber sweep that only rewrites the dependency lines misses them. They are the preamble at :12 and :14 ("S12 mints ... S13 and S15 then refuse" becomes S13/S14/S16), S5 at :25 ("tier 1 to S8" becomes S9; the "tier 11 to S7" half is unchanged), S6 at :27 ("each counter S20 emits" becomes S8), old S11 at :37 ("the gates S13 lands" becomes S14), old S18 at :51 ("S19's third caller" becomes S20), and old S20 at :55 ("the gate belongs to S9" becomes S10). A previous renumber on this proposal left exactly this class of residue — EVIDENCE: review-log.md:1010.
+
+DECISION: close finding 17 by setting S11's (new S12's) tier line to `Tiers 0, 1, 2` and moving tier 8 to the CODE-4 compensation step (new S19, old S18) — BECAUSE CODE-8's only cases in `## Testing` are the tier-1 short-circuit pair (non-spec-changes.md:2259) and the tier-2 envtest pair (:2437-2445); its tier-4, tier-8 and tier-9 slots are empty. The tier-8 case (:2510) needs a stamped entry (CODE-6) and a suppressed compensation (CODE-4), both of which the compensation step has transitively.
+
+FACT: dropping tiers 4 and 9 from CODE-8's step loses no case. `## Testing`'s tier-4 cases belong to CODE-4/CODE-1/CODE-5 and its tier-9 credential fence to CODE-1/CODE-4; all are already carried by the steps that land those deliverables. — EVIDENCE: non-spec-changes.md:2410-2445, :2518-2530.
+
+UNVERIFIED: whether G4 (which the orchestrator says settles the counter helpers' home) leaves CODE-9 owning the two helpers. If G4 moved the declarations into CODE-1/CODE-4, finding 15 dissolves and only the `Depends on: S15` edge needs deleting. The G6 fixer must read the checklist and CODE-9 AFTER G1 and G4 land, before applying this renumber.
+
+### [non-spec.8.fix-design-G7.1]
+
+FACT: the tier-0 slot-address gate grants a case `wholeFile ∪ perCase[fn]`, and it branches to
+per-case checking whenever the map holds ANY `path::TestName` entry for the file. The registration
+granularity of every file this proposal adds cases to, derived from tests/spec-map.json today
+(a "(dir)" credit comes from a recursive `prefix/...` entry):
+  pkg/gateway/podlifecycle/podsession/binder_test.go   whole {4.1(dir)}  PER-CASE (31 entries, sections 16.1,4.6.1,4.6.3,4.7,5.1,5.2,6.2,6.3,7.1)
+  pkg/gateway/podlifecycle/podsession/slotbinder_test.go whole {4.1(dir),4.6.3,4.7,5.2,6.2,7.1}  no per-case
+  pkg/gateway/runtime/adapterclient/client_test.go     whole {4.1(dir),4.4,4.7,4.9,5.2,7.2,7.3,7.5,11.2,11.3,11.4,13.2,28.5.3}  no per-case
+  pkg/gateway/sessionserver/slotretry_test.go          whole {4.1(dir),11.4(dir),15.1}  PER-CASE (5.2,6.2,7.3)
+  pkg/gateway/sessionserver/slotretry_load_test.go     whole {4.1(dir),11.4(dir)}  PER-CASE (5.2,6.2)
+  pkg/adapter/slotsession_test.go                      whole {4.7(dir),4.9,5.2,6.1,6.4,15.4}  no per-case
+  tests/tier4_integration/concurrent_workspace_test.go whole {15.1(dir),5.2,6.4,28.5.3}  no per-case
+  tests/tier4_integration/recycle_scrub_path_test.go   whole {15.1(dir)}  PER-CASE (16.1,4.6.3,4.7,5.2,6.2)
+  pkg/sandbox/slotstate/slotstate_test.go              whole {6.2}  no per-case
+EVIDENCE: tests/spec-map.json; tests/tier0_static/spec_map_slot_address_registration_test.go:811-819
+(specMapEntryCoversFile), :826-857 (specMapCredits), :974-987 (the perCase branch).
+
+CORRECTS [the proposal's spec-map bullet, non-spec-changes.md:2727-2731]: it says binder_test.go and
+slotbinder_test.go are both registered whole under 4.1/4.6.3/4.7/5.2/6.2/7.1. Only slotbinder_test.go
+is. binder_test.go's only whole-file credit is 4.1.
+
+FACT: the finding named binder_test.go, but three more files in the gate's inventory are wrong the
+same way and nothing in the proposal stages them. client_test.go is whole-file registered and its
+CODE-7 cases cite 4.7.1 and 15.4, neither of which it holds. slotretry_test.go and
+slotretry_load_test.go are per-case registered, so CODE-5's new cases there need per-case entries.
+pkg/adapter/slotsession_test.go is whole-file registered and CODE-1/CODE-2's new cases cite 4.7.1,
+which it does not hold. Fixing binder_test.go alone leaves tier 0 red on all four.
+EVIDENCE: non-spec-changes.md:2186-2191, :2199-2214, :2087-2088; inventory rows at
+tests/tier0_static/spec_map_slot_address_registration_test.go:278, :303, :325, :326.
+
+WATCHOUT: the tempting shortcut is to add bare whole-file entries for binder_test.go under 4.7.1,
+5.2, 6.2 and 7.1. It would make the gate green, because creditsMissing unions wholeFile with
+perCase[fn], and it is wrong: it silently credits the file's 31 existing unrelated cases to four
+sections they do not assert, which is the exact hollowing the per-case registration exists to stop.
+
+DECISION: re-key the staged tier-2 envtest case onto the per-pod SandboxClaim DELETE
+— BECAUSE `Binder.Prepare`'s ordinary failure runs failPhase → drain → podclaim.DeleteClaim, and the
+`lenny.dev/drain-request` annotation has exactly one gateway producer, Binder.DrainSandbox, whose
+only production caller is the §5.2 unhealthy-threshold branch in sessionserver/start.go. No Prepare
+failure of either kind ever stamps it, so both staged arms observe the same nothing.
+— ALTERNATIVES: keep the annotation and add a third case driven through accountSlotFailure at the
+threshold (rejected for this group: it pins the §5.2 drain policy, not CODE-8's refusal short-circuit,
+and tier 1 already covers the threshold arithmetic at non-spec-changes.md:2265-2270).
+EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1072-1082, :1187-1202;
+pkg/gateway/podlifecycle/podsession/slotbinder.go:601-603; pkg/gateway/sessionserver/start.go:2858-2860;
+the two Prepare call sites, sessionserver/finalize.go:280-282 and start.go:2634-2636.
+
+DECISION: close the untested `exited_cleanly` disjunct with a Server-level injection seam
+(`Server.removeSlotTreeFn func(*slotState) error`, nil default) rather than the free function the
+finding suggested — BECAUSE the property under test is a field of the `ShutdownResponse`, which only
+a call through `Shutdown` produces; a `removeSlotTreeWith(st, remove)` tested directly pins nothing
+about the response. The nil-default Server field is the package's own established seam form.
+— ALTERNATIVES: (a) delete the `&& (live || treeErr == nil)` disjunct and keep `ExitedCleanly:
+closeErr == nil` — smaller, no seam, no new test, but for an entry the runtime never held CODE-1 runs
+no `Runtime.Close`, so closeErr is always nil and the §5.2/§7.1 `leaked` disposition could never fire
+for the case the staged spec wrote it for; and the deletion is a spec-lane edit this loop may not make.
+(b) force the error with a chmod-ed parent directory and no seam — os.RemoveAll succeeds as root, so
+it is not portable, which is the same objection the repo recorded for os.Chmod.
+EVIDENCE: pkg/adapter/session.go:271, :291; pkg/adapter/slot.go:208-212;
+pkg/adapter/slotlayout/tree.go:58-69; the seam precedents pkg/adapter/holdstate.go:60-67 and
+pkg/adapter/server.go:197 (`scrubDone`); the misread precedent pkg/adapter/warmlayout.go:40-43 with
+pkg/adapter/warmlayout_test.go:164-167.
+
+FACT: `removeSlotTree`'s error is discarded at three sites, not one: pkg/adapter/session.go:271,
+pkg/adapter/slotsession.go:217 and pkg/adapter/holdstate.go:254. Only the first feeds the staged
+`exited_cleanly`. A Server method wrapping the seam covers all three if a later round needs them.
+
+FACT: `slotAddressCaseFiles` membership is also derived from the tree, and one derived rule is a
+regex over the FILE BODY for `slotstate\.|ClaimSlot\(|ReleaseSlot\(|ReserveSlotOnPod\(|claimAtCreate\(|BindReservedSlot\(`.
+The new `pkg/gateway/podlifecycle/podsession/binder_envtest_test.go` is not slot-named, so it enters
+the inventory only if its fixture happens to call one of those; today's binder_test.go matches none of
+them, so an envtest fixture in that style will not either, but the fixer must not assume it.
+EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:1157-1173, :1213-1227.
+
+DEFERRED [implementation-checklist.md]: once the spec-map bullet is rewritten per-file, the
+checklist's generic line 5 boilerplate ("registers its tests in tests/spec-map.json under the
+sections its annotations cite") is still true but no longer sufficient: S12/S18/S19/S10/S11 each need
+to say which granularity their file takes. The spec fixer is barred from the checklist; the
+reconciliation pass owns it.
+
+UNVERIFIED: whether `lenny-test validate-maps` requires every test file to appear in spec-map.json at
+all, or only that each listed entry resolve. The proposal asserts the former shape at
+non-spec-changes.md:2710-2712. Whoever touches the new pkg/adapter test files
+(bindattempt_test.go, bindattempt_orderings_test.go) should confirm before assuming they need entries.
+
+### [non-spec.8.review-applicability.1]
+
+DECISION: I simulated the checklist as the execution order and held every staged code block to "does this compile and can an implementor write it from the proposal alone" — BECAUSE the non-spec lane had had zero rounds since the token revision rewrote it by hand, so the staged Go is the least-examined text in the document — ALTERNATIVES: re-reading the spec staging, which six rounds already converged, and which I read only where a code step consumes it.
+
+FACT: the checklist's structural invariants are clean. Every deliverable (SPEC-1..6, CODE-1..9, SCHEMA-1, DOCS-1..3, CONF-1) appears in at least one step; no step carries two lanes; every `Depends on` names an earlier, existing step; all six spec steps lead; every box is unchecked; and all of `spec|code|schema|migration|test|docs` are lanes `.claude/skills/implement-proposal/SKILL.md:18` declares. EVIDENCE: implementation-checklist.md:16-60, .claude/skills/implement-proposal/SKILL.md:18-21
+
+FACT: SCHEMA-1's nine field numbers are all free. Every number the staging skips (Prepare 4, Finalize 5, RunSetup 4, AssignCredentials 3, Resume 6 and 15, Shutdown 4) is an explicit `reserved` from the 0073/0075 address removals, and the staged 5/6/5/4/16/7/8/3 collide with nothing. EVIDENCE: schemas/lenny-adapter.proto, `awk '/^message X /,/^}/' | grep reserved`
+
+FACT: the orchestrator's open handoff at review-log.md:3674 is DISCHARGED. CODE-1 does plumb the cleanup error into the response: its staged return is `ExitedCleanly: closeErr == nil && (live || treeErr == nil)`, with `treeErr = removeSlotTree(st)` replacing the shipped `_ =` at pkg/adapter/session.go:271. EVIDENCE: non-spec-changes.md:337-346, pkg/adapter/session.go:271,:291
+
+WATCHOUT: a tier-0 gate requires every non-`WIRED` claim-register row to carry a `deferral_id` naming a step `gateway-runtime-comms-remediation.md` declares. SCHEMA-1's third row is `ABSENT` and carries none, so `TestClaimRegisterSaysWhatTheSpecificationRequires` fails on "is ABSENT and names no step that closes it". The summary already knows the rule (summary.md:630-631) and the staging does not apply it. R8 is the plan's own third-party-conformance step and is the obvious candidate. EVIDENCE: tests/tier0_static/claim_register_test.go:292-295, non-spec-changes.md:1827-1834, gateway-runtime-comms-remediation.md:980-1002
+
+WATCHOUT: `derivedInventoryCaseFiles` makes tier 0 red for ANY `_test.go` under cmd/migrations/pkg/scripts/sdks/tests whose basename contains `slot`, `one_session_only` or `sole_session` and that `slotAddressCaseFiles` omits. Four new files match, not the three the files-touched bullet counts; the missing one is `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`. The same rule also bites any edited test file that gains a `ClaimSlot(`/`ReleaseSlot(`/`BindReservedSlot(`/`slotstate.` call. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:1172-1175,:1212-1229, non-spec-changes.md:2731-2736
+
+MISTAKE: the staged `ensureSlotStateLocked` body calls `s.newSlotStateLocked(slotID)`, which exists nowhere in the tree and nowhere else in the proposal, and assigns it one value. The shipped create branch it replaces returns errors from `resolveSlotPaths` and `slotlayout.EnsureTree` and lazily initialises `s.slots`, and all three are gone from the staged block. `New()` does not initialise `slots`, so the staged `s.slots[slotID] = st` panics on a fresh Server unless the invented helper does the seeding. EVIDENCE: non-spec-changes.md:1263-1268, pkg/adapter/slot.go:105-125, pkg/adapter/server.go:376
+
+MISTAKE: CODE-9 owns `noteShutdownMetUntokenedEntry` (pkg/adapter/metrics.go) and `noteCompensationOutcome` (gateway collector), and S20 is the step that lands CODE-9 while depending on S15. CODE-1's staged handler calls the first at non-spec-changes.md:253 and CODE-4's staged wrapper calls the second at :842, so S15 and S18 do not compile, and S20's `Depends on: S15` closes the loop into a cycle. The cheapest fix is to move the two counter declarations into CODE-6/CODE-1's own files or to split S20 into a declaration step ahead of S15 and a catalog/docs step after.
+
+OPEN: does `Shutdown` need the per-slot guard? CODE-6 names "a matching `Shutdown` racing a `FinalizeWorkspace`" as a case the unlocked destructive section reaches, then exempts `Shutdown` from `slotGuards` because "the reclaim hold already excludes a concurrent bind". The hold excludes a bind admitted AFTER the deregistration; a `FinalizeWorkspace` admitted before it is already holding `SlotPaths` and materialising, which is the race the paragraph names. EVIDENCE: non-spec-changes.md:1369-1382, pkg/adapter/slot.go:139-147
+
+UNVERIFIED: S11's tier list names tiers 2, 4, 8 and 9 for CODE-8, whose only test in `## Testing` is the tier-2 envtest pair. The only tier-8 case in the document asserts the dead-token refusal and the lost compensation, which need S13 and S18. Whoever rebuilds the checklist should decide whether tier 8 moves to S18 and whether S11's 4 and 9 are real. EVIDENCE: implementation-checklist.md:38, non-spec-changes.md:2497-2504
+
+### [non-spec.8.review-citations.1]
+
+DECISION: ran the citation lens mechanically over `non-spec-changes.md` and `summary.md` — extracted every `path:line` token with a script, resolved each against the tree, then hand-read the surrounding claim for the ones where meaning is load-bearing — BECAUSE the non-spec staging carries ~120 code citations and eyeballing them misses exactly the class of drift this lens exists for. ALTERNATIVES: reading the two files straight through and spot-checking; rejected because three of the four findings below are invisible without resolving the line.
+
+FACT: essentially every code citation in the non-spec staging resolves and says what is claimed. Verified individually and found ACCURATE: `pkg/adapter/staging.go:181`/`:239` (the fifty-eight-line gap is exact), `slot.go:105`/`:140`/`:140-148`, `slotsession.go:174`/`:180`/`:214-220`/`:217`/`:238-260`/`:338`/`:375`/`:398-407`, `socketruntime.go:156-161`/`:398-417`/`:435-467`/`:441-446`/`:467`, `embedded.go:188-204`, `mcpruntime.go:266-291`, `session.go:104`/`:163`/`:259-261`/`:309-321`, `resume.go:25-35`/`:33`/`:50`/`:140`/`:144`, `sdkwarm.go:134`/`:249-252`/`:261`/`:274`/`:297`, `holdstate.go:251` (pass 1 really did remove the entry), `slotcreds.go:34`/`:40-48`, `credentials.go:74`, `binder.go:998`/`:1009`/`:1072-1082`/`:1079-1081`/`:2037`/`:2043`, `slotbinder.go:265`/`:322-324`/`:502`/`:542`/`:574`, `slotfailure.go:41-48`/`:91-99`/`:100-101`, `start.go:2594-2605`/`:2634`/`:2766-2779`/`:3648-3681`/`:4041`, `client.go:333-341`/`:464`, `session.go:289` in `pkg/api/v1/session`, `scrubreport_server.go:451-481`, `credassign.go` `ReleaseSession`, every SCHEMA-1 field-number basis in `schemas/lenny-adapter.proto`, `ErrorCode` running to 27, the 1000-1999 Phase-2 prose at `:586`, `shutdown_recycle_wire_test.go:208`/`:259`/`:264-267`, `tests/claim-map.json` at 76 rows / 20 ABSENT / 24 UNWIRED / 32 WIRED, and every spec/docs anchor in `summary.md`'s impact table (`spec/04:151-155`/`:157`, `spec/06:150-155`, `spec/07:402-414`/`:432`, `spec/15:1469`/`:1471`/`:1785`, `spec/16:201`/`:203`, `docs/reference/metrics.md:191`/`:193`, `docs/reference/adapter-contract.md:10`/`:18`/`:53`/`:64`/`:75`/`:426`/`:446-452`, `docs/reference/error-catalog.md:129`). Do not re-audit these; spend the round elsewhere. — EVIDENCE: proposals/.../0081_....non-spec-changes.md:79
+
+WATCHOUT: `pkg/gateway/podlifecycle/podsession/binder_test.go` is registered in `tests/spec-map.json` CASE BY CASE (`file::TestName`), with no whole-file entry; its only whole-file credit is 4.1, inherited from the `pkg/gateway/...` directory entry. Its sibling `slotbinder_test.go` IS whole-file registered (4.6.3, 4.7, 5.2, 6.2, 7.1). The staging treats the two as identical at non-spec-changes.md:2727-2729 and says neither needs a spec-map entry. `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` branches on `len(perCase) == 0`, so for `binder_test.go` it checks every case one at a time and both files are in `slotAddressCaseFiles`. Any new `binder_test.go` case annotated §7.1/§5.2/§6.2/§4.7.1 needs its own `::TestName` row or tier 0 goes red. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:826-861, :969-988, :303
+
+FACT: the only production adapter-`Shutdown` call sites in the whole tree are `slotbinder.go:542` and `:574`, `binder.go:2037` and `:2043`, and `cmd/lenny-gateway/user_revocation.go:129`. There is no crash-takeover or coordinator-handoff teardown that issues one; `grep -rn "Shutdown(" pkg/ cmd/ --include=*.go` minus tests, `pkg/proto` and the HTTP-server `Shutdown`s returns nothing else. The sixth row of the caller table at non-spec-changes.md:683 names two such sites. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:542
+
+FACT: `alert_catalog_crosscheck_test.go` lives at `pkg/observability/metrics/alert_catalog_crosscheck_test.go`, beside `catalog.go` and `catalog_test.go`. The staging's test inventory writes it as `tests/tier11_docs/alert_catalog_crosscheck_test.go` (non-spec-changes.md:2826) while the two prose references to it (:1548, :2567) correctly call it "the shipped `alert_catalog_crosscheck_test.go`" with no directory. The tier-11 gate that actually reads `spec/16` is `tests/tier11_docs/adapter_metric_catalog_test.go`, which is a different file. — EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:67
+
+FACT: `leaseAssigned` in `Binder.Prepare` is declared at `binder.go:865`, closed over at `:867`, and set true at `:954`. Line `:1053` is inside `Binder.Launch`'s return struct literal (`Timings: t,`). `Binder.Prepare` spans 843-975 and `Binder.Launch` 976-1071, so `:1053` is in the wrong function entirely. — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:954
+
+UNVERIFIED: non-spec-changes.md says the third claim-register row follows "the thirteen `R16` rows the `coordination_generation` fence already carries". `tests/claim-map.json` carries 21 rows with `deferral_id: R16` (15 UNWIRED, 6 ABSENT). I did not file it: the precedent the sentence rests on holds and the count is not load-bearing. A later reader who wants the number right should correct it to 21 or drop the count per `doc-style.md`. — EVIDENCE: tests/claim-map.json
+
+UNVERIFIED: the staging says "`status.Convert` appears nowhere in `pkg/gateway`". It appears twice in `pkg/gateway/mcpfabric/delegationtree/leasecontrol/connectortools_test.go:188-189`. The surrounding load-bearing claim (the only status-DETAIL reader is `client.go:333-341`) is true, so I did not file it. — EVIDENCE: pkg/gateway/mcpfabric/delegationtree/leasecontrol/connectortools_test.go:188
+
+OPEN: `pkg/gateway/podlifecycle/podsession/binder_envtest_test.go` does not exist and the package's existing envtest cases live in `binder_test.go`, `binder_phases_test.go` and friends. The staging's tier-2 section creates it as a new file. Whether the package's envtest harness is reachable from a new file in it is not something I checked; a feasibility or edit-sites lens should.
+
+### [non-spec.8.review-client-surface.1]
+
+DECISION: filed TWO findings, both the same class — a mandatory-field wire change whose in-tree
+consumers are not enumerated — BECAUSE the two new admission preconditions (CODE-1's
+`Shutdown` two-field rule, CODE-6's `validateBindFields` pairing rule) make every shipped
+in-tree request of those messages `INVALID_ARGUMENT`, and the staging's only scope accounting
+(non-spec-changes.md:2144-2148) asserts the opposite for CODE-1 and says nothing at all for
+CODE-6. ALTERNATIVES rejected: (a) the "three slot-named new files" count at
+non-spec-changes.md:2733-2736 versus the four new `slot*_test.go` files the derived rule at
+tests/tier0_static/spec_map_slot_address_registration_test.go:1170 requires — dropped because
+non-spec-changes.md:2519-2522 names the tier-9 one separately, so "three" has a defensible
+reading; (b) the phantom row "crash takeover and the coordinator-handoff teardown | the
+`Shutdown` each issues on adoption" (:683) — no such call site exists in the tree, but
+`Client.Shutdown` sets the flag itself so the table is informational; (c)
+docs/operator-guide/troubleshooting.md:41 — real, but outside this lens and already DEFERRED at
+review-log.md by spec-recheck.5.
+
+FACT: the adapter gRPC surface has NO SDK, OpenAPI, CRD or JSONL mirror. `sdks/` contains no
+reference to `lenny-adapter`, `ShutdownRequest` or `bind_attempt`; the OpenAPI document (at
+`pkg/gateway/externalapi/openapi/openapi.json`, NOT `pkg/gateway/openapi/`) enumerates no error
+codes; `schemas/lenny-adapter-jsonl.schema.json` and `schemas/runtime-ops-events.schema.json`
+carry nothing about the slot registry. So SCHEMA-1's nine fields, its enum and its two error
+codes mirror to exactly three places: the regenerated `pkg/proto/adapter/v1`, the tier-3
+descriptor gate, and the claim register. All three are staged. — EVIDENCE:
+schemas/lenny-adapter-jsonl.schema.json; pkg/gateway/externalapi/openapi/openapi.json
+
+FACT: every field number SCHEMA-1 states is free and every "Basis" cell is exact against the
+tree: Prepare 1-3 + `reserved 4` (schemas/lenny-adapter.proto:682-696), Finalize 1-4 +
+`reserved 5` (:706-731), RunSetup 1-3 + `reserved 4` (:846-857), AssignCredentials 1-2 +
+`reserved 3` (:1021-1030), Resume 1-5,7-14 + `reserved 6,15` (:1333-1412), Shutdown 1-3,5,6 +
+`reserved 4` (:1609-1636), ShutdownResponse 1-2 (:1665-1668), `ErrorCode` ends at 27 (:585).
+Do not re-derive this. — EVIDENCE: schemas/lenny-adapter.proto:682,706,846,1021,1333,1609,1665,585
+
+FACT: the started-session refusal really does reach the client as `SETUP_COMMAND_FAILED`, which
+is what SPEC-5 and DOCS-3 depend on, because BOTH `RunSetup` call sites wrap ANY error from
+`cl.RunSetup` into `&SetupCommandFailure{...}` — the refusal's `FailedPrecondition` included —
+and the typed handler beats the §5.2 `SLOT_FAILED` envelope. — EVIDENCE:
+pkg/gateway/podlifecycle/podsession/slotbinder.go:299-305;
+pkg/gateway/podlifecycle/podsession/binder.go:933-943;
+pkg/gateway/sessionserver/slotretry_test.go:512,:547
+
+FACT: DOCS-3's four quoted "shipped" sentences and its remedy cell are verbatim against
+docs/reference/error-catalog.md:129, and `SETUP_COMMAND_FAILED` has exactly that one
+reader-facing mirror (nothing under `sdks/`, `charts/`, `docs/api/`, or the OpenAPI document).
+`pkg/gateway/externalapi/errorclassify/errorclassify.go:476` keeps it PERMANENT/non-retryable,
+which the staged narrowing does not disturb. — EVIDENCE: docs/reference/error-catalog.md:129;
+pkg/gateway/externalapi/errorclassify/errorclassify.go:476
+
+FACT: `tests/tier3_contract/adapter_session_address/session_address_wire_test.go` is NOT a
+closed field set — it checks `slot_id` absence, `session_id` presence, and the reserved
+numbers only — so additive fields pass it. The staging's claim that
+`shutdown_recycle_wire_test.go:208` holds the ONLY closed set over the messages SCHEMA-1 opens
+is correct, and its cited lines (`assertFieldSet` at :259, the want-map loop at :264-267) all
+resolve. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:44-99;
+tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:208,:259,:264
+
+WATCHOUT: the orchestrator brief for this round still says "ShutdownResponse keeps slot_reclaim
+and gains slot_was_started (4)". `slot_was_started` is staged NOWHERE; SCHEMA-1's field table
+has nine rows and the only response addition is `slot_reclaim = 3`. The brief is reading a
+superseded draft; `spec-recheck.5.review-client-surface.1` recorded the same correction.
+— EVIDENCE: non-spec-changes.md:1748-1758
+
+WATCHOUT: `cmd/lenny-compliance` imports neither `adapterv1` nor `grpc` (a grep over its
+non-test files returns nothing), so the staging's "no third-party adapter harness exists"
+ground for the `ABSENT` claim-register row is true. Do not re-check it. — EVIDENCE:
+cmd/lenny-compliance/
+
+OPEN: the "crash takeover and the coordinator-handoff teardown" row of the
+non-compensating-`Shutdown` table (non-spec-changes.md:683) cites no file:line while its five
+siblings do, and a grep for adapter `Shutdown` callers over `pkg/` and `cmd/` returns only the
+five sites the other rows name. Either the row names a site that does not exist, or it names
+one of the five under a second description. Somebody should settle it; it is inert either way
+because `Client.Shutdown` sets the flag.
+
+### [non-spec.8.review-docs-alignment.1]
+
+DECISION: filed three findings and declined the rest — BECAUSE the docs surface for this
+proposal is small and now fully enumerated by the standing context, so the only live gaps are
+(1) DOCS-1's missing `docs/reference/state-machines.md:138` projection edit, (2) the false gate
+attribution behind the staged `docs/reference/metrics.md` rows, and (3) the `spec161Metrics`
+instruction that turns tier 1 red. ALTERNATIVES: rejected the `slot_cleanup | released`
+annotation widening (standing trap, abbreviated gloss), `docs/reference/adapter-contract.md:81`
+and its three siblings (standing dead end), `docs/api/internal.md` (standing trap),
+`docs/operator-guide/troubleshooting.md:41` (see below), `docs/reference/configuration.md:99`
+(Open item, declined), and the missing edge-case row for the untokened residue (the residue
+lands normatively in staged spec text at spec-changes.md:458 and :859, so the omission from the
+edge-case list is bookkeeping, not correctness).
+
+FACT: the DOCS-1 gap is now fileable and was not before. The standing trap
+"Do NOT file the docs-mirror trailer against DOCS-1's body, for the seventh time" says the gap
+"is closable only by the non-spec lane or the reconciliation pass". THIS IS THE NON-SPEC LANE,
+so the trap no longer bars it. Six spec-lane shards burned two verifiers each on it; a
+non-spec-lane shard should file it, and the fix is one added paragraph in DOCS-1 plus the
+`Files touched` line, summary.md:943 and checklist S7. EVIDENCE:
+proposals/0081_.../0081_....spec-changes.md:1063-1066 vs
+proposals/0081_.../0081_....non-spec-changes.md:1840-1852,:2796.
+
+FACT: `alert_catalog_crosscheck_test.go` lives at `pkg/observability/metrics/`, not under
+`tests/tier11_docs/`, it is a package test rather than a tier-11 test, it holds NO name
+inventory (it derives referenced series from `rules.Catalog()` and known names from
+`MetricCatalog()`/`AlertSupportCatalog()`), and it reads no file under `docs/`. Nothing in the
+tree reconciles a GATEWAY-registered counter against `docs/reference/metrics.md`; the metrics.md
+gates are hand-written per-metric tier-11 tests (`crd_ssa_conflict_metric_reference_test.go`,
+`concurrent_slot_lifecycle_doc_reconciliation_test.go`) plus
+`adapter_metric_catalog_test.go`, which regexes `pkg/adapter/metrics.go` only. EVIDENCE:
+pkg/observability/metrics/alert_catalog_crosscheck_test.go:19-38,:68-93;
+tests/tier11_docs/adapter_metric_catalog_test.go:26,:80-101.
+
+FACT: `spec161Metrics` is NOT a complete transcription of §16.1 despite its own doc comment. It
+omits every adapter-emitted §16.1 row (spec/16:186-189) because `MetricCatalog()` does not carry
+them and `TestMetricCatalogIsCompleteAgainstSpec161` /
+`TestMetricCatalogHasNoUnspecifiedMetrics` reconcile the two lists BIDIRECTIONALLY. Adding an
+adapter-registered name to `spec161Metrics` turns that package red. EVIDENCE:
+pkg/observability/metrics/catalog_test.go:10-14,:96,:188-211; spec/16_observability.md:186-189.
+
+FACT: the adapter-side counter IS gated for both catalogs.
+`TestAdapterMetricsReachTheDocumentationCatalogs` fails any name registered in
+`pkg/adapter/metrics.go` that is missing from `docs/reference/metrics.md` OR from §16.1 with no
+`specCatalogPending` entry, and `specCatalogPending` is empty today. So
+`lenny_slot_shutdown_untokened_entry_total` needs both its metrics.md row (staged) and SPEC-6's
+§16.1 row (staged) or tier 11 goes red. EVIDENCE:
+tests/tier11_docs/adapter_metric_catalog_test.go:42-49,:80-110.
+
+MISTAKE: the standing Deferred at review-log.md against
+`docs/operator-guide/troubleshooting.md:41` ("after SPEC-5 that reason gains a second cause") is
+WRONG and the older adjudication in Traps is right. That row sits inside the **Warm Pool
+Exhaustion** section, under a diagnosis block whose query is
+`rate(lenny_warmpool_warmup_failure_total[5m]) by (reason)`, so its `reason: setup_command_failed`
+is the WARMUP-failure label, not the REST envelope's `details.reason`. SPEC-5 widens the
+client-facing `SETUP_COMMAND_FAILED` envelope and reaches that row not at all. The Deferred's own
+`UNVERIFIED: which reading governs` is hereby answered: the warmup-label reading governs.
+EVIDENCE: docs/operator-guide/troubleshooting.md:14-41.
+
+CORRECTS [the orchestrator brief's "the checklist's S7 line and the summary's deliverable index
+still describe DOCS-3 as two new rows"]: both are now CORRECT. Checklist S7 reads "The published
+error catalog takes no new row; its `SETUP_COMMAND_FAILED` row takes the four sentence
+replacements and the replaced remedy cell", and summary.md:945 carries a full DOCS-3 entry. The
+reconciliation pass discharged those two deferrals. What S7 and summary.md:943 still get wrong is
+DOCS-1's scope, which is finding 1. EVIDENCE:
+proposals/0081_.../0081_....implementation-checklist.md:29;
+proposals/0081_.../0081_....summary.md:943,:945.
+
+USEFUL [the Settled entry "The four docs mirrors this proposal stages, each with the spec edit it
+follows"]: it turned a full docs-surface re-derivation into four spot checks. Its four-page
+enumeration (metrics.md, state-machines.md, adapter-contract.md, error-catalog.md) is complete
+against `grep -rn` over docs/ for every identifier and sentence this proposal touches; I
+re-verified it and found no fifth page.
+
+USEFUL [the Settled entry "DOCS-2 verifies end to end against the tree and the gate"]: still
+true after the hand re-stage. I re-ran the check: the staged `Shutdown` row carries all four
+substrings `TestAdapterContractNamesTheShutdownRPCUnderItsWireName` requires
+(basic_level_echo_stamp_doc_reconciliation_test.go:303-307) plus the five the staged tier-11
+extension adds, and it is one physical line. Do not re-derive.
+
+FACT: DOCS-2 no longer claims the page "publishes `ConfigureWorkspace` as idempotent" and no
+longer calls the page the third-party adapter author's — the hand re-stage rewrote the rationale
+to "the protocol between the adapter sidecar and the runtime binary" and moved the admission
+rules' published home to §15.4 with a `doc-content.md` depth justification. The two standing
+Deferred entries against DOCS-2's bind-attempt block are DISCHARGED; do not re-file them.
+EVIDENCE: proposals/0081_.../0081_....non-spec-changes.md:1856-1859,:1888-1896.
+
+### [non-spec.8.review-edit-sites.1]
+
+FACT: `tests/tier11_docs/alert_catalog_crosscheck_test.go` DOES NOT EXIST. The only file of that
+basename in the tree is `pkg/observability/metrics/alert_catalog_crosscheck_test.go` (package
+`metrics_test`, tier 1, two tests). The non-spec staging names the tier-11 path in its
+Files-touched list. — EVIDENCE: non-spec-changes.md:2826 versus
+pkg/observability/metrics/alert_catalog_crosscheck_test.go:1-13 and `ls tests/tier11_docs/`.
+This is the SECOND path-attribution error of the same family as the already-closed DEFERRED on
+`pkg/gateway/observability/catalog.go` (review-log.md:2610-2621). Whoever fixes the metric sites
+should sweep every path CODE-9 and the Testing section name, not just the one filed.
+
+FACT: `alert_catalog_crosscheck_test.go` has NO hand-maintained metric inventory to "gain the two
+counter names". `TestEverySpec165AlertMetricIsCatalogued` derives its known set from
+`metrics.MetricCatalog()` + `metrics.AlertSupportCatalog()` at runtime and iterates alert
+expressions; `TestAlertSupportCatalogIsDisjointFromCanonical` compares the two slices. Neither
+reads `docs/reference/metrics.md` or `spec/16_observability.md`. So the staged sentence "a counter
+present in `catalog.go` and absent from `docs/reference/metrics.md` or from the §16.1 row fails
+tier 11" is false: adding a metric to `catalog.go` fires nothing there. — EVIDENCE:
+pkg/observability/metrics/alert_catalog_crosscheck_test.go:68-90,:102-118 versus
+non-spec-changes.md:2567-2569.
+
+FACT: the ONLY gate that holds a metric to both `docs/reference/metrics.md` and the §16.1 catalog is
+`tests/tier11_docs/adapter_metric_catalog_test.go:81-116`, and its source of truth is a regex over
+`pkg/adapter/metrics.go` alone. So the ADAPTER counter (`lenny_slot_shutdown_untokened_entry_total`)
+is gated on both catalogs and needs no `specCatalogPending` entry (that map is empty and SPEC-6
+stages its §16.1 row), while the GATEWAY counter (`lenny_slot_compensation_superseded_total`) has no
+docs gate at all. — EVIDENCE: tests/tier11_docs/adapter_metric_catalog_test.go:25-26,:48,:81-116.
+
+FACT: the DOCS-1 gap recorded as DEFERRED at review-log.md:1467 is STILL OPEN and is now this
+lane's to close. `spec-changes.md:1063-1066` obliges `docs/reference/state-machines.md` to take the
+three projection-clause replacements SPEC-4 makes at spec/06:80; DOCS-1 (non-spec-changes.md:1840-1853),
+its file-list line (:2796) and the summary's index (summary.md:943) all stage only the per-slot
+table row. All three clauses are verbatim at docs/reference/state-machines.md:138. — EVIDENCE:
+docs/reference/state-machines.md:138; spec-changes.md:711-717,:1063-1066.
+
+USEFUL [standing context, review-log.md:853 and :1197]: the dead-end entry on
+`docs/reference/adapter-contract.md:81` / `execution-modes.md:68` / `security-principles.md:33`
+saved a wasted finding. SPEC-3's "It **also** runs" keeps the pre-`running` cleanup outside the term
+"session release", so those three sentences stay true. Do not re-derive.
+
+USEFUL [standing context entries on the new-identifier sweep and the absent OpenAPI/SDK/CRD
+mirrors]: I re-ran the sweep independently —
+`grep -rn 'bind_attempt|unconditional_teardown|slot_reclaim|slot_was_started|SlotReclaimOutcome|SLOT_RECLAIM_OUTCOME|SLOT_BIND_ATTEMPT_SUPERSEDED|SLOT_BIND_ALREADY_STARTED|lenny_slot_compensation_superseded_total|lenny_slot_shutdown_untokened_entry_total' spec/ docs/ schemas/ charts/`
+returns ZERO hits for every one. The mint side of the edit-site lens is genuinely clean; the
+remaining risk is entirely on the *supersede* side (surfaces the edits falsify).
+
+FACT: `validateTestFilesMapped` walks only the tier dirs at or above component
+(`cmd/lenny-test/cmd_validate.go:745-748`), so a NEW `_test.go` under `pkg/` — such as the staged
+`pkg/gateway/podlifecycle/podsession/binder_envtest_test.go` — is not an orphan-gate failure and
+needs no `tests/spec-map.json` entry. Do not file its absence from the spec-map paragraph.
+
+FACT: the proto's `Error` comments already claim the `ErrorCode` catalog "mirrors spec §15.1"
+(schemas/lenny-adapter.proto:529,:556-558) while `ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27`
+has no §15.1 row. SCHEMA-1's two new §15.1-less codes therefore do NOT newly falsify it — the claim
+is already false in the shipped file. I considered and dropped this; a later lens should too.
+
+DEFERRED [proposals/0081_.../0081_....implementation-checklist.md, S20]: S20 also names the bare
+`alert_catalog_crosscheck_test.go` among CODE-9's sites. What is true instead: that file is
+`pkg/observability/metrics/alert_catalog_crosscheck_test.go` and it needs NO edit for a new metric,
+because it holds no metric-name inventory. The checklist is the reconciliation pass's to rebuild.
+
+### [non-spec.8.review-feasibility.1]
+
+DECISION: filed four findings, all against `non-spec-changes.md`, none needing a spec edit — BECAUSE the spec staging is unchanged since `spec-recheck-r6` (`diff` of both `.spec-changes.md` and `.non-spec-changes.md` against that snapshot is empty; only `.summary.md` moved, 54 diff lines) and every defect my lens found is in staged code text. ALTERNATIVES: rejected filing the `CredentialAssigner` interface gap (see FACT below) and the S17 checklist contradiction (see DEFERRED below).
+
+FACT: the staged replacement for `ensureSlotStateLocked` calls `s.newSlotStateLocked(slotID)`, which exists NOWHERE in the tree (`grep -rn newSlotStateLocked --include=*.go .` returns nothing) and is named in no deliverable. The shipped create branch it replaces does three things the staged switch arm does not: `resolveSlotPaths` (which is `slotlayout.Resolve` → `ValidateSlotID`, a path-traversal fail-closed check), `slotlayout.EnsureTree` (the on-disk tree), and it RETURNS BOTH ERRORS. EVIDENCE: non-spec-changes.md:1262-1268; pkg/adapter/slot.go:105-124; pkg/adapter/slotlayout/slotlayout.go:115-132, :24-44. The proposal's own summary confirms the create branch is where `EnsureTree` runs (summary.md:811).
+
+FACT: `credassign.Service.Release(leaseID)` (credassign.go:380) and `credassign.Client.Release(leaseID)` (client.go:299) are BOTH exported, so CODE-4's attempt-scoped `releaseAttemptCredentials(minted)` is implementable — but the `CredentialAssigner` interface the Binder holds declares only `AssignProto` and `ReleaseSession(sessionID)` (pkg/gateway/podlifecycle/podsession/binder.go:319-333), so the interface must gain `Release(leaseID string)`. I did NOT file this: both files that need the edit (`binder.go` and `binder_test.go`, whose `fakeAssigner` at binder_test.go:322 is the only implementor of that interface) are already in the Files-touched list, and `AssignProto` returns an `*adapterv1.CredentialLease` carrying `lease_id = 1` (schemas/lenny-adapter.proto:1109), so the identifier is reachable. A later round should not re-derive this.
+
+FACT: there are exactly FIVE production `Shutdown`/`ShutdownRecycle` call sites into the adapter in the whole tree — slotbinder.go:542, slotbinder.go:574, binder.go:2037, binder.go:2043, cmd/lenny-gateway/user_revocation.go:129. Nothing under `pkg/gateway/coordination/` contains the string `Shutdown` at all. EVIDENCE: `grep -rn "\.Shutdown(\|ShutdownRecycle(" --include=*.go pkg/ cmd/ | grep -v _test`.
+
+WATCHOUT: `leaseAssigned = true` is at pkg/gateway/podlifecycle/podsession/binder.go:954, not :1053 (:1053 is `Timings: t,`). The other five binder.go anchors CODE-8/CODE-4 cite all resolve exactly (:843 Prepare, :865, :867, :976 Launch, :998, :1009, :1590 Resume, :1072-1082 failPhase), so this is a single drifted number rather than a stale block.
+
+FACT: the §10.1.4 coordinator-hold allowlist admits exactly CoordinatorFence, NegotiateVersion, AdapterEvents and the two health probes — the edge case claiming a compensation is refused in hold state is accurate. EVIDENCE: pkg/adapter/holdstate.go:52-58.
+
+FACT: every SCHEMA-1 field number checks out against `schemas/lenny-adapter.proto` as the file stands (PrepareWorkspaceRequest 1-3 + reserved 4; FinalizeWorkspaceRequest 1-4 + reserved 5; RunSetupRequest 1-3 + reserved 4; AssignCredentialsRequest 1-2 + reserved 3; ResumeRequest 1-5,7-14 + reserved 6,15; ShutdownRequest 1-3,5,6 + reserved 4; ShutdownResponse 1-2). Do not re-verify.
+
+DEFERRED [implementation-checklist.md]: S17 says the SDK-warm refusal arm goes "through `releaseSessionSlot` with the §6.1 `DemoteSDK` fallback"; CODE-2 says the exact opposite — the arm "removes no registry entry and no slot tree, so it routes neither through `releaseSessionSlot` ... nor through the `DemoteSDK` RPC handler", because both deregister the entry and remove the tree, which the confirmation rule bars. What is true is CODE-2's version: the arm calls `SDKWarmRuntime.DemoteSDK` (the runtime method at pkg/adapter/sdkwarm.go:134) and clears `s.sdkConnected`, and removes nothing. This is a FOURTH checklist contradiction beyond the three the orchestrator listed (S1, S17's site count — which is now already fixed, S17 names three sites — and S7). EVIDENCE: implementation-checklist.md S17; non-spec-changes.md:589-601.
+
+DEFERRED [implementation-checklist.md]: S12's caller list repeats the phantom "crash takeover" `Shutdown` caller that finding 3 files against CODE-4. When reconciliation rebuilds the checklist from the deliverables it must drop it there too, not only in CODE-4's table.
+
+USEFUL [review-log.md:3680]: the spec lane's WATCHOUT explicitly handed the `noteCompensationOutcome(outcome)` label mismatch to the non-spec lane and named both anchors. It is filed here as finding 2; the hand-off was exact and saved a full re-derivation.
+
+USEFUL [review-log.md:3674 handoff]: the `_ = removeSlotTree` question is DISCHARGED for the Shutdown path — CODE-1 does plumb it (`treeErr = removeSlotTree(st)` feeding `ExitedCleanly: closeErr == nil && (live || treeErr == nil)`, non-spec-changes.md:322-331), and CODE-6 turns `releaseSessionSlot`'s discard into a `slog.Warn`. The remaining discard is `terminateHeldSession`'s at pkg/adapter/holdstate.go:255, which is the §10.1.4 hold path and outside this proposal's reclaim obligation. Do not re-open.
+
+### [non-spec.8.review-fresh.1]
+
+DECISION: filed five findings, all against the non-spec staging, none against spec-changes.md — BECAUSE the spec lane has had fourteen rounds and the non-spec lane zero since the token revision, so the cheap yield is in CODE-1/CODE-6/CODE-9 and their edit lists. ALTERNATIVES rejected: (a) the `exited_cleanly: closeErr == nil && (live || treeErr == nil)` disjunct dropping `treeErr` on the started path — Traps entry at review-log.md:841 records this as deliberate and the `live &&` inversion as breaking a shipped test; (b) the proto `Shutdown` / `ReportSessionScrub` / `SessionScrubOutcome` comments going stale ("on every session release") while SCHEMA-1 opens the file — the standing Deferred entry records two lenses declining it and calls landing it "a live choice rather than a constraint", so it is not a constraint violation; (c) the Testing "wire rule's two directions" case listing a mid-session arm for `RunSetup`, `AssignCredentials` and `Resume`, none of which carries `mid_session` — one unconstructible table row in a test sketch, below the bar.
+
+FACT: **`ensureSlotStateLocked`'s create branch is where the malformed-slot-id guard lives.** Shipped `slot.go:112-117` calls `resolveSlotPaths` (→ `slotlayout.ValidateSlotID`) and then `slotlayout.EnsureTree`, both error-returning, and `TestStartSessionRejectsAMalformedSessionAddress_spec_5_2` (pkg/adapter/session_test.go:292) rides on that error. Any rewrite of that switch that loses the two error returns loses a fail-closed path-traversal guard. EVIDENCE: pkg/adapter/slot.go:105-125; pkg/adapter/slotlayout/slotlayout.go:115,:137; pkg/adapter/session_test.go:284,:292
+
+FACT: **`Shutdown`'s two-field precondition is a wire-visible break on ~50 shipped call sites in ~20 test files**, across tiers 1, 2, 3, 4, 7a, 9 and 10, none of which the proposal's `## Files touched` list names except `slotsession_test.go`, `holdstate_test.go` and `shutdown_drain_gate_race_test.go`. The blast radius is mechanical but invisible to the compiler (the request is a proto struct literal; the failure is a runtime `INVALID_ARGUMENT`). Reproduce with `grep -rn "ShutdownRequest{" --include=*_test.go pkg/ tests/`. EVIDENCE: pkg/adapter/session_test.go:393; tests/tier10_conformance/recycle_scrub_conformance_test.go:186; tests/tier9_security/session_teardown_surface_test.go:67
+
+FACT: **`spec161Metrics` ↔ `MetricCatalog()` is a two-way equality gate.** `TestMetricCatalogIsCompleteAgainstSpec161` (catalog_test.go:188) and `TestMetricCatalogHasNoUnspecifiedMetrics` (:202) enforce both directions, so ANY metric given a §16.1 row must be added to `pkg/observability/metrics/catalog.go` even when its Prometheus registration lives in `pkg/adapter/metrics.go`. The shipped precedent is `lenny_adapter_coordinator_hold` and `lenny_credential_rotation_inflight_ceiling_hit_total`, each present in BOTH files. A future round proposing an adapter-side §16.1 metric must stage both sites. EVIDENCE: pkg/observability/metrics/catalog_test.go:188-213; pkg/adapter/metrics.go:50,:108; pkg/observability/metrics/catalog.go:146,:271
+
+FACT: **`alert_catalog_crosscheck_test.go` lives at `pkg/observability/metrics/`, not under `tests/tier11_docs/`, and holds no name inventory.** Both its tests derive their sets from `rules.Catalog()`, `MetricCatalog()` and `AlertSupportCatalog()`; neither reads `docs/reference/metrics.md` or spec/16. The gate that DOES hold an adapter metric to `docs/reference/metrics.md` is `tests/tier11_docs/adapter_metric_catalog_test.go`, which scrapes `Name: "lenny_..."` literals out of `pkg/adapter/metrics.go` and needs no edit (it also carries an `undocumentedAdapterMetrics` exclusion map a new documented metric must NOT be added to). EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:68,:102; tests/tier11_docs/adapter_metric_catalog_test.go:26,:100
+
+FACT: every `bind_attempt` / `mid_session` / `unconditional_teardown` / `slot_reclaim` field number SCHEMA-1 stages was re-verified free against the shipped proto, including the `reserved` statements the table cites: PrepareWorkspaceRequest reserved 4 (:694), FinalizeWorkspaceRequest reserved 5 (:730), RunSetupRequest reserved 4 (:855), AssignCredentialsRequest reserved 3 (:1029), ResumeRequest reserved 15 (:1411), ShutdownRequest reserved 4 (:1599), ShutdownResponse 1-2 used (:1665-1668). `ErrorCode` really does run to 27 (:585) and the 1000-1999 Phase-2 range really is prose-only with no `reserved` statement (:586). Do not re-derive this table. EVIDENCE: schemas/lenny-adapter.proto:585,586,694,730,855,1029,1411,1599,1665
+
+FACT: the gateway's adapter-client `Shutdown` / `ShutdownRecycle` call sites are exactly five and the grep is cheap: `slotbinder.go:542`, `:574`, `binder.go:2037`, `:2043`, `cmd/lenny-gateway/user_revocation.go:129`. There is no separate crash-takeover site; `Binder.shutdownAdapter` IS the retire/recycle path `Release` drives. CODE-4's table row "crash takeover and the coordinator-handoff teardown" names no file:line because there is none to name, and the design is sound anyway (the flag is set inside `Client.Shutdown`). Do not file that row.
+
+USEFUL [Traps, "Do NOT surface `treeErr` on the started path unconditionally"]: killed my first candidate in one read.
+USEFUL [Settled, the `slot_was_started` correction]: the orchestrator brief still claims `ShutdownResponse` "gains slot_was_started (4)"; it does not, and the ledger already says so twice. Round 9's brief will probably still carry it.
+
+WATCHOUT: the orchestrator brief for this run repeats the stale `slot_was_started (4)` claim. `grep -c slot_was_started` over the proposal directory returns 0.
+
+### [non-spec.8.review-kubernetes.1]
+
+DECISION: filed two findings on the non-spec staging, both in `## Testing` / `## Files touched`
+text that has had ZERO review rounds since the 2026-09-16 token revision — BECAUSE `diff -rq`
+against `scratchpad/cp-snap/.../spec-recheck-r6` shows only `review-log.md` and `summary.md`
+differ, so `non-spec-changes.md` is entirely unexamined-since-revision text. The mechanism itself
+(token, chokepoint predicate, reclaim hold, two-field `Shutdown`) raises no Kubernetes-idiom
+question: it lives in the adapter's in-pod registry, the gateway↔adapter gRPC wire, the Redis slot
+counter and in-process gateway structs. ALTERNATIVES: three candidates built and dropped, below.
+
+FACT: `Binder.Prepare`'s ordinary failure path does NOT stamp `lenny.dev/drain-request`. It runs
+`failPhase` → `b.drain` → `podclaim.DeleteClaim`. The annotation stamp is a different mechanism
+(`Binder.DrainSandbox` → `podclaim.StampDrainRequest`), reached only from the §5.2 unhealthy
+threshold inside `applySlotRetryPolicy`, which the exclusive `Prepare` path never enters.
+EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1072-1082, :1200-1202;
+pkg/gateway/podlifecycle/podsession/slotbinder.go:601-603;
+pkg/gateway/sessionserver/start.go:2858-2860. This is what falsifies the staged tier-2 envtest
+case at non-spec-changes.md:2408-2409 (finding 1). The paired tier-1 case at
+non-spec-changes.md:2259-2263 is correct and asserts "the drain's absence on the fake binder".
+
+FACT: `pkg/gateway/podlifecycle/podsession/binder_test.go` has NO whole-file entry in
+tests/spec-map.json. It carries 31 per-case `path::TestName` entries, and its only non-per-case
+credit is section 4.1 through the recursive directory entry `pkg/gateway/...`. By contrast
+`slotbinder_test.go` IS registered whole, under 4.6.3, 4.7, 5.2, 6.2 and 7.1 (not 4.1 directly).
+The tier-0 gate `TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` takes the per-case
+branch for any file with a non-empty `perCase` map, so every new binder_test.go case needs its own
+entry. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:826-861, :970-989;
+tests/spec-map.json (grep `podsession/binder_test.go::` → 31 hits, `"…/binder_test.go"` → 0 hits).
+That falsifies non-spec-changes.md:2727-2730 (finding 2).
+
+FACT: `slotAddressCaseFiles` contains BOTH `podsession/binder_test.go` (line 303) and
+`podsession/slotbinder_test.go` (line 307), so both are inside the credit gate's inventory.
+`pkg/gateway/runtime/adapterclient/client_test.go` (line 310) is in it too, with whole-file
+credits 4.4, 4.7, 4.9, 5.2, 7.2, 7.3, 7.5, 11.2, 11.3, 11.4, 13.2 and 28.5.3 and zero per-case
+entries; CODE-7's new cases there annotate §4.7.1 and §15.4, and 15.4 is not among those credits.
+I did NOT file that, because `creditKey` may resolve a cited id to a declared ancestor and I did
+not verify how §15.4 resolves; a later agent should check `creditKey` before either filing or
+dismissing it. EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:236-310,
+:953-963.
+
+FACT (checked, NOT a finding): `SlotClaimer.ReleaseSlot(ctx, name, recycle, leaked)` with
+`leaked=true` returns before the Redis decrement and before any claim patch or DELETE, so the
+tier-4 datastore-crossing case's claim that "the per-pod `SandboxClaim` survives at `bound`"
+(non-spec-changes.md:2450-2453) is true. EVIDENCE: pkg/gateway/podlifecycle/podclaim/slotclaimer.go:818-836.
+
+FACT (checked, NOT a finding): the two apparently-contradictory statements about
+`ReleaseSlotReservation` are consistent. "the disposition does not travel through
+`ReleaseSlotReservation`'s own parameter list" (non-spec-changes.md:775-779) describes the SHIPPED
+function, which hardcodes `claimer.ReleaseSlot(ctx, sandboxName, false, false)` at
+slotbinder.go:502 and takes no `leaked` parameter; CODE-4's target list adds one. The `leaked`
+parameter on `SlotClaimer.ReleaseSlot` already exists. EVIDENCE:
+pkg/gateway/podlifecycle/podsession/slotbinder.go:493-503; podclaim/slotclaimer.go:818.
+
+WATCHOUT: `tests/tier4_integration/concurrent_workspace_test.go` stands up an adapter.Server, a
+SocketRuntimeProcess and `echo-concurrent` and NOTHING Kubernetes or Redis — its own header says
+it exercises the gateway→adapter wire "without a Kubernetes" cluster. The staged late-reclaim arm
+asks it to assert the slot "releases … with `leaked=false`", which is a gateway-side disposition
+computed at `ReleaseSlotReservation` and has no producer in that fixture. I judged this too soft
+to file (an implementor may add the binder), but it is the weakest test claim in the section.
+EVIDENCE: tests/tier4_integration/concurrent_workspace_test.go:9-15, :352-353;
+non-spec-changes.md:2424-2430.
+
+UNVERIFIED: whether the NEW file `pkg/gateway/podlifecycle/podsession/binder_envtest_test.go`
+needs a `slotAddressCaseFiles` row or a spec-map entry. Its name does not match `slot*_test.go`
+and it drives the exclusive `Prepare` path, which reserves no slot, so the proposal's own stated
+inventory rule does not reach it. Nobody has checked whether any other gate does.
+
+OPEN: the §7.3 re-attach now reaches `accountSlotFailure`, so a failed resume can stamp
+`lenny.dev/drain-request` on a pod for the first time. That is idiomatic (level-triggered: the
+gateway stamps, the WarmPoolController writes `Sandbox.status`), and the gateway's RBAC already
+carries `get`/`patch` on Pods in agent namespaces per §4.6.3, so I filed nothing. A later lens
+that wants to re-check should read spec/04_system-components.md:619 (the ownership table) and
+pkg/gateway/podlifecycle/podsession/slotbinder.go:583-603.
+
+USEFUL [spec-recheck.5.review-kubernetes.1]: its `o.Current` WATCHOUT ("the phase the projection
+last WROTE, not the phase the pod is in") and its "`failPhase` calls `b.drain`, which is
+`podclaim.DeleteClaim`" FACT are what let me spot finding 1 in one read instead of three.
+
+USEFUL [non-spec-recheck-3.1.review-kubernetes.1]: its leaked→claim→finalizer derivation
+(leaked withholds the Redis decrement, the claim stays non-terminal, `activeClaimReferences` holds
+the Sandbox finalizer, and this is pre-existing §6.2 semantics) saved me from re-deriving a
+stuck-finalizer candidate that is not this proposal's.
+
+### [non-spec.8.review-mechanism.1]
+
+FACT: the non-spec staging has NOT moved since `spec-recheck-r6`. `diff -rq` of that snapshot against the live proposal reports only `review-log.md` and `summary.md` differing, and `non-spec-r8-start` is byte-identical to the whole live directory. So this is the FIRST lens pass over `non-spec-changes.md` since the 2026-09-16 token revision rewrote it by hand, and every mechanism claim in it is unexamined. EVIDENCE: scratchpad/cp-snap/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/spec-recheck-r6 vs proposals/0081_.../
+
+FACT: the two adapter `reclaim` closures in `Binder.Prepare` and `Binder.Launch` are both `func()` with no parameters and no returns, and every call site does `reclaim(); return nil, <its own error>`. In `Binder.Launch` all three call sites declare `err` inside their own `if` statement (`if err := cl.ConfigureWorkspace(...); err != nil`), so the only `err` a closure body can see is the reconnect error at `:977`, which is nil on every path that reaches a `reclaim()`. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:866,:997,:1010,:1021,:1032,:977. This is what breaks CODE-8's staged block, which is written with `errors.Is(err, ...)` and `return nil, err`.
+
+FACT: the adapter `Shutdown`/`ShutdownRecycle` production caller set is exactly five sites in three functions: slotbinder.go:542, :574, binder.go:2037, :2043, cmd/lenny-gateway/user_revocation.go:129. There is NO "crash takeover and the coordinator-handoff teardown" Shutdown; the coordinator-handoff re-adopt sends `CoordinatorFence` only. EVIDENCE: `grep -rn "\.Shutdown(\|ShutdownRecycle(" --include=*.go pkg/gateway cmd/ | grep -v _test.go`.
+
+FACT: `tests/tier11_docs/alert_catalog_crosscheck_test.go` does not exist. The file is `pkg/observability/metrics/alert_catalog_crosscheck_test.go`, package `metrics_test`, and its two tests run alert-expression -> `metrics.MetricCatalog()` in BOTH directions and read neither `docs/reference/metrics.md` nor `spec/16`. A metric with no alert referencing it owes it no entry at all. EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:1-13,:68,:102. This CLOSES the standing Open "Is CODE-9's `alert_catalog_crosscheck_test.go` entry needed at all when no alert is added?" — it is not.
+
+FACT: `spec161Metrics` in `pkg/observability/metrics/catalog_test.go` carries exactly one `lenny_adapter_*` name (`lenny_adapter_coordinator_hold`, :96) and omits the four adapter-process rows at spec/16:186-189, so an adapter-registered §16.1 metric added to that slice with no `MetricCatalog()` entry turns `TestMetricCatalogIsCompleteAgainstSpec161` (:188-199) red. EVIDENCE: pkg/observability/metrics/catalog_test.go:15-96,:188-199.
+
+FACT: `docs/reference/state-machines.md:138` carries all three occupancy-projection clauses SPEC-4 replaces at spec/06:80 ("A pod with no claim projects `idle`", "a claim deleted on a recycling pod under its limits projects `idle`", "or a claim deleted on a pod with `recycle.enabled: false`, projects `draining` then `terminated`"). DOCS-1 stages only the per-slot table row.
+
+WATCHOUT: `noteCompensationOutcome(outcome)` (non-spec-changes.md:842,:778,:1534) is a package-level one-argument function in `pkg/gateway/podlifecycle/podsession/bindattempt.go`, while CODE-9 (:1541) calls its emitter "a `SlotReclaim` hook on `Binder` of the same form as `SlotFailure`" and SPEC-6's §16.1 row labels the series `pool`, `k8s_pod_name`. `Binder.SlotFailure` is `func(errorType, pool, podName string)` (binder.go:137, forwarded at slotbinder.go:358). The loop already deleted the sibling `lenny_slot_compensation_outcome_unrecognized_total` row for exactly this reason; this one survived with the labels intact and the free-function emitter intact.
+
+WATCHOUT: CODE-6's per-slot-guard paragraph names "a matching `Shutdown` racing a `FinalizeWorkspace`" (non-spec-changes.md:1370-1371) as a case the `slotGuards` mutex closes, and then exempts `Shutdown` from taking the guard (:1379-1381). `Shutdown` releases `s.mu` before `removeSlotTree` (pkg/adapter/session.go:240,:271), so there is no order inversion to appeal to, and the reclaim hold cannot reach a `FinalizeWorkspace` already past `ensureSlotPaths`. CODE-1 also WIDENS the tree removal from `bound` to `removed`, so the race newly reaches a registered-but-unbound entry, which is precisely the entry a workspace-prep RPC is mid-materialization on.
+
+DEFERRED [summary.md:199 and :921]: both say the proposal "opens three of S-2's covered handler files (`session.go`, `slotcreds.go`, `sdkwarm.go`)". It opens four: `pkg/adapter/credentials.go` is on S-2's covered list (gateway-runtime-comms-remediation.md:1884-1885) and is in `## Files touched on application (non-spec)` at non-spec-changes.md:2750 and in CODE-6's call-site table at :1305. What is true instead: four covered handler files, adding `credentials.go`. The step ordering is unaffected (SCHEMA-1 is S9 and CODE-6 is S13), which is why this is recorded rather than filed.
+
+DEFERRED [non-spec-changes.md:683, CODE-4's unconditional-teardown caller table]: the row "| crash takeover and the coordinator-handoff teardown | the `Shutdown` each issues on adoption |" names a caller that does not exist. What is true instead: the table's five real rows are the whole production set, and `Client.Shutdown`/`Client.ShutdownRecycle` set the field themselves so no caller can omit it. Drop the row or re-point it at the two test sites in `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` that build `adapterv1.ShutdownRequest` literals directly.
+
+UNVERIFIED: the staged `ensureSlotStateLocked` body (non-spec-changes.md:1262-1268) creates through `st = s.newSlotStateLocked(slotID)` with no error return and without the shipped `if s.slots == nil` lazy init. The shipped body returns `resolveSlotPaths`'s and `slotlayout.EnsureTree`'s errors (pkg/adapter/slot.go:105-125) and those are the source of the `codes.InvalidArgument` unresolvable-slot refusal the whole `slotResolveError` design presupposes. Judged illustrative rather than filed; whoever lands CODE-6 must keep both the nil guard and the two error returns.
+
+USEFUL [Standing context, Traps]: the "Do NOT file the docs-mirror trailer against DOCS-1's body" trap is scoped to the SPEC lane, and the paired Deferred at review-log.md:1467 says the fix is authoring that only the non-spec lane can do. Reading both together is what turned a barred candidate into a filable one for this lane.
+
+### [non-spec.8.review-operational.1]
+
+FACT: the metric-catalog gate topology, re-derived from the tree this round. `pkg/observability/metrics/alert_catalog_crosscheck_test.go` is a TIER-1 package test (`package metrics_test`) that derives every set it compares from `rules.Catalog()`, `metrics.MetricCatalog()` and `metrics.AlertSupportCatalog()`; it holds NO hand-maintained name inventory and reads neither `spec/16` nor `docs/reference/metrics.md`. The only spec/docs-reading metric gate is tier-11 `TestAdapterMetricsReachTheDocumentationCatalogs`, whose source of truth is a regex over `pkg/adapter/metrics.go`. So NOTHING gates a GATEWAY-side metric's §16.1 / metrics.md rows. — EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:30-37,:69-93; tests/tier11_docs/adapter_metric_catalog_test.go:26,:81-116
+USEFUL [review-log-archive.md:34292]: that entry already recorded the one-directional gate topology and matched what I re-derived; it stopped me filing a false "SPEC-6 trips a gate" finding.
+
+FACT: an adapter-side §16.1 metric is NOT expected in `catalog.go` or `spec161Metrics`. `lenny_adapter_set_tracing_context_dropped_total` (spec/16:188) and `lenny_adapter_unaddressed_frame_rejected_total` (spec/16:189) are in §16.1 and in `docs/reference/metrics.md` and in NEITHER `pkg/observability/metrics/catalog.go` nor `spec161Metrics`. So CODE-9's split (superseded series in `catalog.go`, untokened series only in `pkg/adapter/metrics.go`) follows precedent and is NOT a defect. The defect is the Testing section's "`catalog_test.go` gains the same two names", which would break `TestMetricCatalogIsCompleteAgainstSpec161`. — EVIDENCE: spec/16_observability.md:188-189; pkg/observability/metrics/catalog_test.go:193-198
+
+FACT: a new `Binder` metric hook needs THREE files, and CODE-9 names one. Registration + struct field go in `gatewaymetrics_credential.go` (named), the `Inc*` accessor in `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics.go` (not named), and the wiring `w.podBinder.<Hook> = gwMetrics.Inc<X>` in `cmd/lenny-gateway/metricsbackfill.go` (not named, and in no "Files touched" list). `recordSlotFailure` no-ops on a nil hook, so an unwired hook emits nothing and turns the staged §16.1 row into a series that never appears. — EVIDENCE: cmd/lenny-gateway/metricsbackfill.go:141-149; pkg/gateway/metrics/gatewaymetrics/gatewaymetrics.go:1175; pkg/gateway/podlifecycle/podsession/slotbinder.go:358-361
+
+USEFUL [review-log.md:790 dead end, the `**Slot cleanup:**` bullet]: spec/05:545's surviving "The adapter reports each slot cleanup outcome" was again the first thing this lens landed on. Saved a round.
+USEFUL [review-log.md:1467 DEFERRED on DOCS-1]: it names the exact three clause replacements DOCS-1 owes at docs/reference/state-machines.md:138 and records that six lanes derived it and none could land it because the SPEC lane may not author docs content. This loop IS the non-spec lane, so I filed it rather than deferring it again.
+
+WATCHOUT: the alert half of this lens is structurally inert and re-verified this round. `grep slot pkg/alerting/rules/*.go` returns nothing, and only three unrelated runbooks mention "slot" (Redis hash slots, a Postgres replication slot, a credential path). Do not spend a round hunting an orphaned alert. — EVIDENCE: docs/runbooks/redis-failure.md; pkg/alerting/rules/
+
+FACT: `lenny_adapter_leaked_slots` is registered with labels `pod_id`, `pool` (not `k8s_pod_name`), and `lenny_slot_pod_replacement_total` with `pool` alone while spec/16:15 states `pool, k8s_pod_name`. Both are live pre-existing spec-vs-code divergences this proposal neither creates nor touches. — EVIDENCE: pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go:212-216,:222-226
+
+UNVERIFIED: whether `noteCompensationOutcome(outcome)` (non-spec-changes.md:842) can populate the `pool` / `k8s_pod_name` labels SPEC-6 mandates. It takes one argument while CODE-9 says the hook fires "because its call site holds `req.Pool` and `sandboxName`" (:1541-1542). Plausibly a closure over the caller's locals, which is why I did not file it; a round that opens the helper's definition should settle it.
+
+### [non-spec.8.review-performance.1]
+
+DECISION: filed two findings, both on CODE-6's per-slot guard (`Server.slotGuards`), and none on capacity — BECAUSE the token mechanism adds no etcd, Postgres or Redis write on any path: the token is one `crypto/rand` string held in gateway process memory for one bind attempt, carried as a scalar field on six existing messages; the two new counters are low-cardinality (`pool`,`k8s_pod_name` and `k8s_pod_name`, both conventions §16.1 already uses at spec/16:15); the two new adapter maps (`reclaiming`, `slotGuards`) are per-pod and bounded by the pod's slot set. The only rate change on the data plane is the synchronous compensating `Shutdown` per failed bind, which is already FILED as the queue-FIFO amplification item (review-log.md:1296) and which I did not re-file. ALTERNATIVES: I built and dropped (a) metric cardinality, already examined at review-log.md:2274-2275; (b) reclaim-hold latency, recorded at review-log.md:1247 and :1278; (c) correlated re-attach churn, recorded at :1237 and :1282.
+
+FACT: the per-slot guard's stated lock order does NOT forbid `Shutdown` from taking it. The order is "`s.mu` is never taken while a slot guard is held, and a slot guard is acquired only after `s.mu` has been released" (non-spec-changes.md:1374-1375), and CODE-1's handler takes `s.mu`, runs `reclaimSlotLocked`, unlocks, and only then runs `Runtime.Close` and `removeSlotTree` (non-spec-changes.md:240-326). Taking the guard after that unlock conforms exactly. So the staged justification "taking both would invert the order" (:1380-1381) is false against the proposal's own rule. — EVIDENCE: non-spec-changes.md:1374-1381; non-spec-changes.md:296-326
+
+WATCHOUT: the reclaim hold and the per-slot guard solve DIFFERENT halves and it is easy to conflate them. The hold refuses a request that reaches `ensureSlotStateLocked` AFTER the deregistration; it says nothing about a `FinalizeWorkspace` or `RunSetup` that already passed its resolve and holds a `SlotPaths` value. `ensureSlotPaths` takes `s.mu`, resolves, releases and returns paths (pkg/adapter/slot.go:140-148), and `removeSlotTree` runs outside `s.mu` (pkg/adapter/session.go:269). Any argument of the form "the hold already excludes it" is wrong for the in-flight case. — EVIDENCE: pkg/adapter/slot.go:140-148; pkg/adapter/session.go:238-270
+
+FACT: no staged test covers the Shutdown-versus-in-flight-materialization interleaving. The tier-1 guard case is two `FinalizeWorkspace` calls only (non-spec-changes.md:2070-2072); the tier-7a hold case asserts "no admitted bind overlaps the reclaim's `Runtime.Close` or its `removeSlotTree`", which is the after-the-hold case; the tier-7a lock-order case asserts only "no deadlock" (non-spec-changes.md:2497-2500). — EVIDENCE: non-spec-changes.md:2070-2072,:2487-2500
+
+USEFUL [Open item at review-log.md:1248, "Can a workspace-prep handler write into the slot directory after `removeSlotTree`?"]: it is the same physical interleaving seen from the residue side and was judged below the bar because the whole-pod scrub sweeps the directories. That judgment does not survive the token revision's own text: CODE-6 now NAMES "a matching `Shutdown` racing a `FinalizeWorkspace`" as one of the two races the per-slot guard exists to close, so the gap is now an internal contradiction in the staging rather than an unowned residue. A later round re-reading :1248 should read non-spec-changes.md:1365-1381 beside it.
+
+OPEN: should `release()` drop the `slotGuards` entry at all? Refcounting, or leaving the map keyed by a bounded slot set and never deleting, both avoid the delete-while-held hole; the map is per-pod and bounded by `maxSessionsPerPod`, so growth was never the pressing constraint the drop rule solves.
+
+### [non-spec.8.review-reliability.1]
+
+FACT: The non-spec staging has not moved since the `spec-recheck-r6` snapshot. `diff -rq` against
+/home/ec2-user/lenny/scratchpad/cp-snap/0081_.../spec-recheck-r6 reports only `review-log.md` and
+`summary.md` differing, so every word of CODE-1 through CONF-1 is the 2026-09-16 hand revision and
+has had zero adversarial rounds. Read it as first-draft text. EVIDENCE: diff -rq output; non-spec-changes.md mtime 2026-09-18 07:56 predates no fix round.
+
+FACT: The adapter has exactly three deregister-then-destroy sites, matching CODE-6's claim:
+`Shutdown` (pkg/adapter/session.go:238), `releaseSessionSlot` (pkg/adapter/slotsession.go:215) and
+`deregisterStartedSessions` (pkg/adapter/slotsession.go:389). EVIDENCE: grep deregisterSlotLocked, pkg/adapter/.
+
+FACT: Every adapter `Shutdown` in the tree goes through one builder,
+`(*Client).shutdown` (pkg/gateway/runtime/adapterclient/client.go:813-824), with five call sites:
+slotbinder.go:542, slotbinder.go:574, binder.go:2037, binder.go:2043,
+cmd/lenny-gateway/user_revocation.go:129. There is NO separate crash-takeover or coordinator-handoff
+`Shutdown`; readopt teardown reaches `shutdownAdapter` like any other release. CODE-4's
+non-compensating-caller table's sixth row ("crash takeover and the coordinator-handoff teardown |
+the `Shutdown` each issues on adoption", non-spec-changes.md:689) names a site that does not exist.
+I did not file it: `Client.Shutdown` sets the field itself, so the table is informational and no
+edit site is missed. A citation lens may want it. EVIDENCE: pkg/gateway/runtime/adapterclient/client.go:807-824; grep '\.Shutdown(' pkg/ cmd/.
+
+WATCHOUT: `PrepareWorkspace` resolves ONCE, on the first frame carrying a session id
+(`if stagingDir == ""`, pkg/adapter/staging.go:77-84), and every later frame writes to the staging
+tree at pkg/adapter/staging.go:102 without touching the registry. The staged §5.2 reclaim hold is
+scoped to "every request that would create or resolve a registry entry" (spec-changes.md:645), so
+later frames of an in-flight upload stream are OUTSIDE the hold by the hold's own scope. Any
+argument that "the hold excludes concurrent work from the reclaim's destructive section" is false
+for them. EVIDENCE: pkg/adapter/staging.go:77-84,:102; spec-changes.md:645.
+
+WATCHOUT: `ensureSlotPaths` takes `s.mu`, resolves, releases it and returns a value
+(pkg/adapter/slot.go:140-147), so a handler's destructive section runs entirely outside both `s.mu`
+and the hold. The hold gates admission, never in-flight work. EVIDENCE: pkg/adapter/slot.go:140-147.
+
+FACT: `sessionScrubOutcome` derives `released`/`leaked` from `closeErr` alone
+(pkg/adapter/sessionscrubreporter.go:40-44) and `removeSlotTree`'s error is discarded at
+pkg/adapter/session.go:271. No staged deliverable touches `sessionScrubOutcome`; `grep -c
+sessionScrubOutcome` over the whole proposal returns 0. CODE-1 captures `treeErr` but feeds it only
+into `exited_cleanly`, and only on the `!live` arm (non-spec-changes.md:322-324,:354). EVIDENCE: pkg/adapter/sessionscrubreporter.go:40-44; pkg/adapter/session.go:271; non-spec-changes.md:322-354.
+
+FACT: `SocketRuntimeProcess.Close` and `InProcessRuntime.Close` never read `ctx.Err()`; the context
+only sets the SIGTERM grace window (pkg/adapter/socketruntime.go:435-467,
+pkg/adapter/embedded.go:188). So CODE-2's rollback `_ = s.Runtime.Close(ctx, sessionID)` on a
+cancelled inbound context still releases the runtime's active set. I chased this as a
+"compensation on a dead context" candidate and it is NOT a defect. Do not re-chase it. EVIDENCE: pkg/adapter/socketruntime.go:435-446; pkg/adapter/embedded.go:188-204.
+
+UNVERIFIED: The tier-7a lock-order case (non-spec-changes.md:2497-2500) asserts only "no deadlock".
+Nothing in the Testing section asserts that a reclaim's `removeSlotTree` excludes a
+`FinalizeWorkspace`/`PrepareWorkspace` admitted before the hold opened. The reclaim-hold case
+(:2494) asserts "no admitted bind overlaps the reclaim's Runtime.Close or its removeSlotTree", but
+it parks inside `Runtime.Close`, i.e. after the hold is open, so it only drives requests the hold
+already refuses. Whoever fixes finding 1 must widen that case, not reuse it.
+
+OPEN: §4.7.1's reclaim-outcome rule (spec-changes.md:863) says a `reclaimed` response takes its
+unclean exit "from the runtime close and the cleanup the removing rule performed", unqualified,
+while §5.2 (spec-changes.md:643) routes the post-`running` cleanup's outcome to `ReportSessionScrub`
+instead. A fixer closing finding 2 has to decide which of the two channels carries a failed tree
+removal for a session that ran, and make the other sentence say so. The non-spec fix (pass `treeErr`
+into `reportSessionScrub`) leaves both staged sentences true; the spec fix (qualify :863) does not
+give §5.2:545's "If cleanup fails, the slot is leaked" any carrier at all.
+
+### [non-spec.8.review-security.1]
+
+DECISION: filed two findings, both in the non-spec lane, and deliberately did NOT file the
+three most tempting security angles — BECAUSE each of the three is already recorded as an
+accepted residue in the proposal's own edge-case list or on the refuted list.
+ALTERNATIVES rejected, with the reason each dies, below.
+
+FACT: `failPhase`'s lease half is the SESSION-WIDE walk, not an attempt-scoped one.
+`failPhase` → `b.releaseCredentials(sessionID)` → `CredentialAssigner.ReleaseSession(sessionID)`
+→ `s.leases.LeasesBySession([]string{sessionID})`, releasing every lease for the identifier.
+CODE-4 knows this and narrows its own call to `releaseAttemptCredentials(minted)`; CODE-8's
+prose re-opens it on the refusal arm, which is the one arm where a live successor provably
+exists. That is finding 1. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1072-1076,
+:1263-1268; pkg/gateway/credentials/credassign/credassign.go:400-408;
+non-spec-changes.md:866-870 versus :1514-1517.
+
+FACT: `Binder.Prepare` sets `leaseAssigned = true` at binder.go:954, and the only statements
+after it are `cl.Close()` and the return. There is therefore NO error path in `Prepare` that
+reaches `reclaim()` with the flag set, so CODE-8's `Prepare` clause is vacuous and the harm is
+`Binder.Launch`'s alone (binder.go:998 passes the literal `true`). The proposal cites `:1053`
+for that assignment, which is inside the `BindResult` literal; that mis-citation is what hides
+the asymmetry. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:954, :998, :1040-1054.
+
+FACT: `Binder.Launch` CAN meet a refusal. It issues `ConfigureWorkspace` or `StartSession`,
+both of which CODE-7 translates, and both resolve through `claimSessionSlotUnderLock`, whose
+started-session rule answers `SLOT_BIND_ALREADY_STARTED`. The identity rule cannot fire there
+(Launch mints no token), so `ALREADY_STARTED` is the reachable arm — and it means a live
+started session owns the entry. EVIDENCE: non-spec-changes.md:1279-1285 (the call-site table),
+:1451-1453 (CODE-7's translated call sites); pkg/gateway/podlifecycle/podsession/binder.go:1009-1019.
+
+DECISION: did NOT file the untokened-entry / `superseded`-is-clean occupancy under-count —
+BECAUSE it is on the refuted list twice and recorded as an accepted residue three times in the
+staging. Same for the residual per-slot credential file on a leaked concurrent slot, and for
+the §4.9 timer cancellation ordering. USEFUL [spec.14.review-security.1] and
+[spec-recheck.5.review-security.1]: both WATCHOUTs stopped me re-deriving all three.
+
+DECISION: did NOT file "CODE-2's rollback closes a successor's runtime session" — BECAUSE the
+proposal already carries it as an accepted failure mode in exactly those terms, naming
+`socketruntime.go:435-467` and the shared active set. I verified it independently before
+finding the bullet: `SocketRuntimeProcess.releaseActiveLocked` is keyed by session identifier
+and `SlotID == SessionID`, and `InProcessRuntime.Close`/`MCPRuntime.Close` ignore the
+identifier entirely. EVIDENCE: non-spec-changes.md:2612-2623;
+pkg/adapter/socketruntime.go:384-388, :435-446; pkg/adapter/embedded.go:188; pkg/adapter/mcpruntime.go:266.
+
+WATCHOUT: the tier-7a reverse-ordering case asserts "the successor's entry, tree and runtime
+membership survive" (non-spec-changes.md:2468-2471). Read "runtime membership" as the adapter's
+`s.runtimeLive` map, which the rollback does not touch, rather than as the socket runtime's own
+active set, which the rollback's `Runtime.Close(ctx, sessionID)` does empty. A reviewer reading
+it the second way will think the staged test contradicts the accepted-failure bullet. It does
+not; the two sentences are about two different sets.
+
+FACT: `releaseAttemptCredentials` needs a release-by-lease-id path that the `CredentialAssigner`
+interface does not declare. `credassign.Service.Release(leaseID)` and `Client.Release(leaseID)`
+both exist and are exported, but the interface at
+pkg/gateway/podlifecycle/podsession/binder.go:319-333 carries only `AssignProto` and
+`ReleaseSession`. I did not file it: `binder.go` is already in the Files-touched list and every
+fake implementing the interface is in the test list, so the edit site is nominally covered. A
+non-spec fixer landing CODE-4 must still widen that interface.
+EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:319-333;
+pkg/gateway/credentials/credassign/credassign.go:380, :414.
+
+UNVERIFIED (carried forward, still nobody's): whether the adapter's gateway-facing gRPC server
+is reachable from the agent container and whether it requires mTLS. If it is reachable
+unauthenticated, an in-pod agent can now also forge `unconditional_teardown = true` for a
+co-tenant session. 0081 grants no power an unadorned `Shutdown` did not, so it stays out of
+scope, but the new flag makes the pre-existing gap slightly cheaper to exploit.
+Originally `spec.12.review-security.1`.
+
+OPEN: the CODE-6 per-slot guard names "a matching `Shutdown` racing a `FinalizeWorkspace`" as
+one of the two cases it is the remedy for, and then excludes `Shutdown` from taking the guard,
+relying on the reclaim hold instead. The hold refuses a resolve taken AFTER the hold opens; a
+`FinalizeWorkspace` already past its resolve is not refused, so that named case stays open and
+`removeSlotTree` can interleave with the materialization. I did not file it: the tree the race
+leaves is same-tenant (every reusing pool is tenant-pinned) and the Standing context already
+records the adjacent handler-insert race as disputed and unresolved. A mechanism lens should
+decide whether the sentence naming the case or the exclusion is the one that is wrong.
+EVIDENCE: non-spec-changes.md:1366-1382.
+
+### [non-spec.8.review-test-coverage.1]
+
+FACT: `ShutdownResponse.ExitedCleanly` is `closeErr == nil` in the shipped tree and `removeSlotTree`'s error is discarded, so the staged `closeErr == nil && (live || treeErr == nil)` predicate (non-spec-changes.md:354) is wholly new. Its ONLY new false-producing arm is `live == false && treeErr != nil`, which is precisely the arm the Testing section excludes at non-spec-changes.md:2153-2156. No listed test at any tier asserts an adapter-side `exited_cleanly` value; the only Testing-section mentions of it are that exclusion and the gateway-side fake-driven leak disposition (:2234). EVIDENCE: pkg/adapter/session.go:271,:291; non-spec-changes.md:354,:2153-2156,:2234
+
+MISTAKE: the exclusion at non-spec-changes.md:2155-2156 cites "the repository's own precedent" that forcing a removal error from a non-root unit test is not portable, as a reason to write NO test. The precedent it points at resolved the same problem the opposite way: `chmodWarmDirWith` (pkg/adapter/warmlayout.go:43) is an injection seam added for exactly this, and pkg/adapter/warmlayout_test.go:160-168 states "os.Chmod cannot be forced to return EPERM portably from a non-root unit test ... so the branch is driven through chmodWarmDirWith, which injects the chmod result". A `removeSlotTreeWith` mirror is the repo-native fix.
+
+FACT: `tests/tier11_docs/alert_catalog_crosscheck_test.go` DOES NOT EXIST. The real file is `pkg/observability/metrics/alert_catalog_crosscheck_test.go`, it is a tier-1 package test, and its two functions (`TestEverySpec165AlertMetricIsCatalogued` :68, `TestAlertSupportCatalogIsDisjointFromCanonical` :102) compare §16.5 ALERT EXPRESSIONS against the catalog. It reads neither `docs/reference/metrics.md` nor `spec/16_observability.md`, so the proposal's claim at non-spec-changes.md:2567-2570 ("a counter present in `catalog.go` and absent from `docs/reference/metrics.md` or from the §16.1 row fails tier 11") is false. `catalog_test.go`'s `spec161Metrics` is a hand-transcribed list compared only against `catalog.go`. EVIDENCE: pkg/observability/metrics/alert_catalog_crosscheck_test.go:19-68,:102; pkg/observability/metrics/catalog_test.go:10-15,:188,:202
+
+FACT: the ADAPTER counter is gated automatically without any test edit, by `tests/tier11_docs/adapter_metric_catalog_test.go`, which sweeps the registration literals out of `pkg/adapter/metrics.go` and requires each name in BOTH `docs/reference/metrics.md` and the §16.1 catalog (:81-128). The proposal never names that file. The GATEWAY counter (`lenny_slot_compensation_superseded_total`, registered in `pkg/observability/metrics/catalog.go`) has no equivalent sweep anywhere in the tree. EVIDENCE: tests/tier11_docs/adapter_metric_catalog_test.go:51-128
+
+WATCHOUT: do not re-derive "the new `slotFailureWorkspaceFinalize` stage constant reclassifies a finalize-stage FailedPrecondition from transient to policy_rejection". `SlotBindError.Reason()`'s only stage-sensitive arm is `e.Stage == slotFailureWorkspacePrep` (pkg/gateway/podlifecycle/podsession/slotfailure.go:90-98), so the hazard is real IF the constant reaches `slotBindError` at slotbinder.go:295. But CODE-9 cites only the two `recordSlotFailure` lines (`slotbinder.go:287,294`) and calls the change "a measurement separating them" (non-spec-changes.md:1558-1561), and the Files-touched entry for slotbinder.go does not list the finalize branch. I judged it scoped to the metric and did not file; a verifier would very likely refute it on that scoping. If a later round wants it, the finding to file is the AMBIGUITY of the scoping, not the reclassification.
+
+WATCHOUT: §7.2 (mid-resume terminal collapse) gains a normative reclaim obligation (spec-changes.md:478-546) and NO listed test carries a `§7.2` annotation. I did not file it: the DELETE-from-`resuming` handler (pkg/gateway/sessionserver/sessionserver.go:2955-2957) releases no pod at all — it writes the terminal state and bumps `coordination_generation` — so §7.2 step 3's release and reclaim ride on the in-flight `Binder.Resume` unwinding, which CODE-4 stages and which "The resume path" and "The cancelled-context case" tier-1 cases cover. The gap is an annotation string, which is a preference, not coverage.
+
+FACT: the terminate-frame suppression (`no terminate frame on CH-RUNTIMEOPS` for a bound-but-unstarted end) and the FINAL_USAGE_REPORT suppression are pinned at tier 1 only. There is no shipped tier-3 suite over CH-RUNTIMEOPS `terminate` (`ls tests/tier3_contract/` has no runtimeops directory; the frame appears in no tier-3 file). I did not file: demanding a new tier-3 directory for an emission-condition change is nice-to-have territory.
+
+### [non-spec.9.fix-G1.1]
+
+DECISION: the per-slot guard's scope is now stated as a PREDICATE plus a derivation table in CODE-6, replacing the closed RPC enumeration — BECAUSE the enumeration failed twice in a row (it omitted `Resume`, and it put `Shutdown`'s non-removing arms inside the guard), and an enumeration cannot be checked against the tree while a predicate can. The predicate: a section that does path work against the slot's tree outside `s.mu` acquires that slot's guard before the resolve that hands out its paths and holds it until that path work ends; a section whose only path work runs inside `s.mu` takes none. The table (non-spec-changes.md, CODE-6 `*Scope.*`) derives every section from the tree and is the ONE statement of which sections are guarded — ALTERNATIVES: adding `Resume` to the sentence (the failure mode that produced this round), a re-entrant guard (needs goroutine identity, undocumentable invariant), guarding `restoreChunks` alone (does not bracket the resolve).
+
+DECISION: the reclaim hold now has ONE predicate and TWO test points, `acquireSlotGuardForResolve` and `ensureSlotStateLocked` — BECAUSE the staged §5.2 text (spec-changes.md:645) names `PrepareWorkspace`, `FinalizeWorkspace` and `RunSetup` FIRST among the requests a held identifier refuses, and §4.7.1's conformance block (spec-changes.md:900) publishes admitting one as non-conformance; with the guard acquired before the resolve, a hold tested only inside the resolve can never refuse those three, because the caller blocks on the guard outside the resolve and reaches the map only after the hold has been cleared — ALTERNATIVES: deleting the hold in favour of the guard (falsifies four staged spec blocks this lane may not edit and downgrades a mid-session loser from transient `ABORTED` to permanent `FailedPrecondition`); narrowing the CODE-6 prose to the unguarded RPCs (contradicts the same spec text); testing the hold after acquiring the guard (the caller still waits the whole cleanup, only the code changes).
+
+DECISION: `Shutdown` compares under `s.mu` FIRST and acquires a guard only on the arm that destroys, re-deciding under `s.mu` after the acquisition — BECAUSE the guard's holders take no context at all (`workspace.MaterializeWithPolicy`/`MaterializeOverlayWithPolicy`, pkg/adapter/workspace/materialize.go:157,:203) or run under a `setupPolicy.timeoutSeconds` spec/14 permits to be absent, while the reclaim's budget is five seconds on an unset pool, and a timed-out reclaim sets `sbe.Leaked`, which spec/06_warm-pod-model.md:160 makes permanent occupancy — ALTERNATIVES: bounding the wait and classifying the timeout as not-leaked (a second accounting mechanism to compensate for the first being wrong); `TryLock` (makes the answer depend on scheduling); routing `Shutdown` through the checked wrapper (spec-changes.md:900 says a `Shutdown` is never refused by a hold).
+
+WATCHOUT: the guard STRICTLY CONTAINS the hold on a single-pass reclaim, so "the hold refuses X" is false for any X that takes the guard before its resolve. `defer unlockSlot()` is registered before `defer release()`, and Go runs defers LIFO, so `release()` runs first and the guard outlives the hold. Any future edit that puts a hold test only inside `ensureSlotStateLocked` re-opens this. EVIDENCE: non-spec-changes.md CODE-1 guard comment and `defer release()`; spec-changes.md:645.
+
+WATCHOUT: `Shutdown` may NOT be refused by a reclaim hold, so it must take the RAW `lockSlotGuard` rather than the hold-checking `acquireSlotGuardForResolve`. Refusing it is published non-conformance. EVIDENCE: spec-changes.md:900.
+
+WATCHOUT: `Resume` calls `releaseSessionSlot` on every one of its rollback paths (pkg/adapter/resume.go:69,:73,:89,:107,:126,:134,:141). Once `Resume` holds the slot guard, leaving those pointing at the guard-acquiring form is a self-deadlock on every `Resume` failure, and a tier-1 happy-path test never reaches it. The staging splits the function into `releaseSessionSlot` (acquires the raw guard) and `releaseSessionSlotUnderGuard` (the body); `session.go`'s and `sdkwarm.go`'s callers keep the acquiring form.
+
+FACT: `releaseSessionSlot` calls NO `Runtime.Close`. Its whole body is `deregisterSlot`, `removeSlotTree`, `cancelPodMCPIfRuntimeIdle`. Only `terminateHeldSession` closes a runtime on a cleanup path. A tier-1 case that parks a reclaim "inside `Runtime.Close` on `releaseSessionSlot`" cannot be built. EVIDENCE: pkg/adapter/slotsession.go:214-220; pkg/adapter/holdstate.go:251-252.
+
+FACT: `Resume` is the adapter's largest UNLOCKED path write. `checkpointRootsForSession` copies `st.paths.Current`/`Sessions` under `s.mu`, releases it and returns the roots; `restoreChunks` then fetches every chunk over the network and runs `workspace.ExtractTree` with no lock and no context check. This is the same hand-out-then-work pattern CODE-6 cites `ensureSlotPaths` for. EVIDENCE: pkg/adapter/slot.go:183-203; pkg/adapter/resume.go:169,:206.
+
+FACT: the guard exemption is CORRECT for `AssignCredentials`, `StartSession` and `ConfigureWorkspace`. `writeSlotCredentialFile` runs inside `assignCredentialsSlot`'s own `s.mu` critical section, and `writeSessionManifest` writes under `ManifestDir`, which `slotlayout.RemoveTree` does not touch (it sweeps the slot root, `Sessions`, `Artifacts` and `CredentialsDir`). EVIDENCE: pkg/adapter/slotcreds.go:24-44; pkg/adapter/manifest.go:280-283; pkg/adapter/server.go:111-114; pkg/adapter/slotlayout/tree.go:58-69.
+
+MISTAKE: the round that added the per-slot guard stated its scope as a list of RPC names. The list omitted `Resume`, whose extraction is the biggest unlocked tree write in the adapter, and included `Shutdown` whole, which put the two arms that remove nothing behind an unbounded materialization. Both were design defects in the same paragraph, filed as two findings in this round. The replacement is a predicate with a derivation table so the next omission is catchable by reading the predicate against the code.
+
+DEFERRED [tier-7a start-versus-reclaim rendezvous, non-spec-changes.md "**Tier 7a, the start-versus-reclaim race.**" and its reverse-ordering sibling]: the paragraph says "The park is released once the compensating `Shutdown` has returned". With `Resume` now holding its slot guard across the whole call, the compensating `Shutdown` on the `Resume` arm blocks on that guard while the parked handler is still inside it, so releasing the park on the `Shutdown`'s return deadlocks that arm. What is true instead: on the `Resume` arm the park must be released on the compensation being SENT rather than on its returning, or the rendezvous must be keyed on the guard rather than on the RPC's return. The group design assigns this sentence to G2, which is rewriting it in the same round; it is recorded here in case G2 does not land it.
+
+OPEN: does CONF-1 owe a property for the guard-acquisition test point of the reclaim hold? The battery's rule cases now cover both test points at tier 3 and tier 10, but CONF-1's property list still carries no reclaim-hold property at all (the standing Deferred on CONF-1's property count is the same subject).
+
+FOLLOW-UP FIX (post-fix review of this pass, three defects in this pass's own edits):
+
+- DECISION: the `slot_guard_not_acquired` warning now has a call site. CODE-1's staged `Shutdown` body binds the acquisition result (`unlockSlot, guarded := s.lockSlotGuard(ctx, sessionID)`) and emits `slog.Warn("slot_guard_not_acquired", "slot_id", sessionID, "caller", "Shutdown")` when it is false; the doc comment, the `pkg/adapter/session.go` Files-touched bullet (which gains the `log/slog` import), the `pkg/adapter/slotsession.go` bullet for `releaseSessionSlot`'s guard-acquiring form, and the `pkg/adapter/holdstate.go` bullet for `terminateHeldSession` all state the same warning — BECAUSE the fail-open paragraph rested its whole observability claim on a warning the one staged call site discarded with `_`, and `pkg/adapter/session.go` imports `log` rather than `log/slog` today (pkg/adapter/session.go:5-17). ALTERNATIVES: emitting inside the helper (rejected: the warning names the caller and the helper takes no caller identity); dropping the observability sentence (rejected: an unguarded destructive removal with no record is the residue the deliverable exists to bound).
+
+- DECISION: `releaseSessionSlot`'s new `context.Context` parameter now enumerates its non-handler callers. The CODE-6 paragraph names `pkg/adapter/podmcp_arming_internal_test.go:144` and `:195` passing `t.Context()`, and states that the exported seam `Server.ReleaseSlotForTest` (`pkg/adapter/export_test.go:32-35`) gains a `context.Context` first parameter threaded to its five call sites; the CODE-1/CODE-2 tier-1 sentence "No `export_test.go` change" is now scoped to those cases, and Files touched gains `integrationlevel_test.go`, `credexpiry_test.go`, `checkpoint_stream_test.go` and `tracingcontext_addressing_test.go` — BECAUSE `grep -rn "releaseSessionSlot(" pkg/adapter/` returns three callers beyond the seven production sites the paragraph enumerated, none of which has a request context, and one of them is an exported seam whose own signature therefore changes.
+
+- DECISION: the sentence justifying the `releaseSessionSlot` split is restated in the guard's own terms — "a second acquisition of the same guard blocks on the capacity-one channel rather than re-entering it" — BECAUSE this pass replaced `*sync.Mutex` with `map[string]chan struct{}` everywhere except that sentence, which went on reasoning from a non-re-entrant mutex the staging no longer contains; `grep -n "mutex\|Mutex"` over the file had been left returning that line alone.
+
+### [non-spec.9.fix-G2.1]
+
+DECISION: The SDK-warm ConfigureWorkspace confirmation-refusal case is a bullet in the existing CODE-1/CODE-2 tier-1 subsection, written in `pkg/adapter/sdkwarm_test.go` (package `adapter_test`) rather than beside the other CODE-2 cases in the internal package — BECAUSE the SDK-warm double `fakeSDKWarmRuntime`, its `configureReq` builder and `sdkWarmServer` are all declared in that external file (pkg/adapter/sdkwarm_test.go:37,:71,:78), and every property the case asserts is reachable through exported surface (`SDKWarmReady`, the exported `Server.SessionScrubReporter` field at pkg/adapter/server.go:177, `AssignCredentials`, `Shutdown`) — ALTERNATIVES: an internal-package file (would duplicate a whole SDKWarmRuntime double for no unexported assertion); a tier-7a arm (the site's only gateway caller is `Binder.Launch`, which CODE-4 does not compensate, so the interleaving is unreachable in production); a tier-3 or tier-10 case (CONF-1 cuts those one case per §4.7.1 rule, and the start-confirmation rule already has one); folding it into the existing `StartSession` rollback case (the two arms share no action beyond the gRPC code).
+
+FACT: `claimSessionSlot` releases `s.mu` before returning (pkg/adapter/slotsession.go:52-59) and `ConfigureWorkspace` calls `sw.ConfigureWorkspace` outside the lock with `noteRuntimeStarted` after it (pkg/adapter/sdkwarm.go:249-262). A hook inside the test double's own `ConfigureWorkspace` therefore lands re-entrant exported RPCs between the claim and the confirmation on the calling goroutine, so this case needs no goroutine, no park and no stress budget — EVIDENCE: pkg/adapter/sdkwarm.go:249-262, pkg/adapter/slotsession.go:52-59
+
+WATCHOUT: the SDK-warm handler's three other failure arms all call `s.releaseSessionSlot(sessionID)` (pkg/adapter/sdkwarm.go:236,:241,:251) and answer `codes.Internal`. Copying that idiom into the confirmation-refusal arm deregisters the entry and `RemoveAll`s the tree (pkg/adapter/slotsession.go:214-220), destroying a successor attempt's workspace. The staged case's successor sub-case and its `codes.Aborted` assertion exist to turn red on exactly those two wrong turns — EVIDENCE: pkg/adapter/sdkwarm.go:236,:241,:251; pkg/adapter/slotsession.go:214-220
+
+FACT: `pkg/adapter/sdkwarm_test.go` is registered in `tests/spec-map.json` whole-file under sections 4.7.9 and 6.1 only. The new case annotates 4.7.1, 6.1 and 7.1, so the file takes whole-file credits under 4.7.1 and 7.1 — EVIDENCE: tests/spec-map.json:841 (4.7.9), :1292 (6.1)
+
+DECISION: The tier-7a start-versus-reclaim rendezvous keeps both the `StartSession` and the `Resume` arm, but their park-release protocols now differ — BECAUSE G1's CODE-6 derivation table guards `Resume` from ahead of its claim to the end of the call, so the compensating `Shutdown` blocks on that guard; the pre-existing protocol ("the park is released once the compensating `Shutdown` has returned") deadlocks on that arm. The `Resume` arm now asserts the ordering the guard admits: the `Shutdown` is issued while `Resume` is parked and observed blocked on the guard, the driver releases the park, `Resume` returns, and only then does the `Shutdown` reclaim — ALTERNATIVES: leaving the paragraph to G1 (two hands on the same sentence in one round); dropping the `Resume` arm (its refusal predicate keeps deterministic coverage at tier 1 but the guard-ordering property would go unpinned).
+
+MISTAKE: the tier-7a reverse-ordering case was written against both arms. A successor cannot be re-created under the identifier while a parked `Resume` holds that slot's guard, so the reverse ordering is reachable only on the unguarded `StartSession` path. It is now scoped to that arm with the reason stated.
+
+DEFERRED [implementation-checklist.md]: S18 states that the SDK-warm confirmation refusal runs "through `releaseSessionSlot` with the §6.1 `DemoteSDK` fallback rather than a bare `Runtime.Close`". That is false and is the inverse of what CODE-2 stages: the refusal arm calls `SDKWarmRuntime.DemoteSDK` and clears `s.sdkConnected` and routes through neither `releaseSessionSlot` nor the `DemoteSDK` RPC handler, because both deregister the entry and remove the tree. What is true: S18 should read "the SDK-warm site through the runtime's own `DemoteSDK` with `s.sdkConnected` cleared, removing no entry and no tree, rather than through `releaseSessionSlot` or a bare `Runtime.Close`", and S18 should name the new tier-1 SDK-warm confirmation case among its tier-1 work. This is a fourth checklist contradiction beyond the three the run already tracks, and it is the reconciliation pass's to land.
+
+### [non-spec.9.fix-G3.1]
+
+DECISION: closed the non-spec lead paragraph's build-order contradiction by DELETING the enumeration and pointing at the implementation checklist as the single statement of build order, keeping only the reading-order disclaimer sentence — BECAUSE the enumeration was a second copy of a sequence the checklist owns and was wrong three independent ways within one revision of being written (docs placed last though they run at S7; adapter deliverables placed before the gateway ones though the checklist's standing ordering rule requires the inverse; CODE-3 and CODE-9 omitted entirely) — ALTERNATIVES: rewriting the enumeration to match the checklist exactly (rejected: reinstates the duplication that produced the defect and takes on a maintenance obligation on every future checklist edit, brittle in a round where other groups touch S15/S16); deleting the whole paragraph including the reading-order sentence (rejected: that sentence is the only text telling a reader this file's section order is not an execution order); adding a "checklist wins on conflict" caveat (rejected: answers a contradiction with an exception clause and leaves a known-wrong ordering in the tree).
+
+FACT: the implementation checklist is the only file in the proposal that enumerates a step sequence. `grep -rn "build order\|reading order\|then CODE-\|then SCHEMA-"` across the proposal directory returns no other enumeration; summary.md's deliverable index is a flat alphanumeric catalog and is not framed as an order, so it did not go stale. EVIDENCE: 0081...summary.md "## Deliverable index"; 0081...implementation-checklist.md:17-63.
+
+FACT: non-spec-changes.md:192 says the per-slot guard hand-out helpers "lands first" for CODE-6 relative to CODE-1. This is a dependency statement rather than a sequence enumeration and it agrees with the checklist (CODE-6 at S14, CODE-1 at S16), so it was deliberately left alone. Do not read it as a second copy of the build order. EVIDENCE: non-spec-changes.md:192; implementation-checklist.md S14, S16.
+
+WATCHOUT: the next agent tempted to restore a build-order summary into non-spec-changes.md for the implementor's convenience should not. The checklist step numbers are the checklist's addressing scheme, and importing them into a second file doubles the surface that moves when a step is inserted. That is exactly how this finding was created.
+
+### [non-spec.9.fix-design-G1.1]
+
+DECISION: The reclaim hold stays and is made TOTAL by testing it at the point a caller would
+otherwise block — inside the guard acquisition — rather than only inside `ensureSlotStateLocked`.
+`lockSlotGuard` keeps its raw form for the three destructive sections, and a checked wrapper
+(`acquireSlotGuardForResolve`) returning `(func(), error)` is what the workspace RPCs and `Resume`
+call. BECAUSE the staged spec is normative and already decided this: spec-changes.md:645 says a held
+identifier refuses `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup` first among the seven, and
+spec-changes.md:900 publishes it as a CONF-1 non-conformance ("An adapter that admits such a request
+while the cleanup is running does not conform"). The non-spec lane must make the code conform, not
+soften the prose. ALTERNATIVES: (a) delete the reclaim hold entirely and let the per-slot guard be
+the single mechanism — genuinely smaller and the guard does subsume the hold on every guarded path,
+but it falsifies four staged spec blocks (§5.2 hold paragraph at spec-changes.md:645, §4.7.1
+admission ordering at :818, the §4.7.1 conformance wire block at :900, the §6.2 pointer at :791) that
+this loop may not edit, and it would downgrade a mid-session upload that lost its slot from transient
+`ABORTED` to permanent `FailedPrecondition`; (b) leave the ordering and narrow the prose to say the
+hold refuses only the four unguarded RPCs — that is the previous failed answer one step smaller and
+contradicts the staged spec; (c) test the hold only after the guard is acquired — leaves the caller
+blocked for the whole cleanup, which is the defect.
+
+DECISION: `Shutdown` compares the bind attempt under `s.mu` FIRST and acquires the guard only on the
+arm that will destroy, then re-takes `s.mu` and re-compares. BECAUSE the guard's holders are
+unbounded (`workspace.MaterializeWithPolicy` and `MaterializeOverlayWithPolicy` take no `ctx` at all,
+pkg/adapter/workspace/materialize.go:157,:203; `RunSetup` runs under a `setupPolicy.timeoutSeconds`
+that spec/14_workspace-plan-schema.md:99 permits to be absent) while the compensating reclaim's whole
+budget is `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)`s, so an `ABSENT`/`SUPERSEDED`
+answer that removes nothing must never queue behind path work. The rule that makes this coherent
+rather than an exception: the guard covers path work, so an arm that touches no path takes no guard.
+ALTERNATIVES: bound the reclaim's wait and classify a wait-timeout as not-leaked (a second accounting
+mechanism, hair); `TryLock` with a fallback (nondeterministic); hold the guard only around the writes
+inside the materializer (the materializer IS the write).
+
+DECISION: The `*Scope.*` paragraph's closed RPC enumeration is replaced by a stated predicate plus a
+derivation table with a "path work outside `s.mu`" column. BECAUSE this paragraph has now failed
+twice as an enumeration (round 8 twice, round 9 findings 0 and 3), and adding `Resume` to the list is
+the same answer one step smaller. The predicate is checkable against the tree; the table is its
+derivation, not the rule. ALTERNATIVES: add `Resume` to the sentence (the narrowing that fails);
+delete the paragraph and let CODE-1/CODE-6 code comments carry it (loses the single statement of
+lock order).
+
+FACT: `Server.releaseSessionSlot` calls NO `Runtime.Close`. Its whole body is `deregisterSlot`,
+`removeSlotTree`, `cancelPodMCPIfRuntimeIdle`. EVIDENCE: pkg/adapter/slotsession.go:214-220. Only
+`terminateHeldSession` closes the runtime on a non-`Shutdown` path. EVIDENCE:
+pkg/adapter/holdstate.go:251-252.
+
+FACT: `Server.Resume` does the adapter's largest unlocked slot-tree write. `checkpointRootsForSession`
+takes `s.mu`, copies `st.paths.Current`/`st.paths.Sessions`, RELEASES `s.mu`, returns the roots;
+`restoreChunks` then runs `workspace.ExtractTree(roots, pr)` with no lock held. EVIDENCE:
+pkg/adapter/slot.go:183-203, pkg/adapter/resume.go:169,:206. The `*Scope.*` paragraph's claim that
+`Resume` "does no path work beyond the resolve's own" is false.
+
+FACT: `AssignCredentials` and `ConfigureWorkspace` really are exempt. `assignCredentialsSlot` writes
+the credential file inside its own `s.mu` critical section (pkg/adapter/slotcreds.go:24-44), and
+`ConfigureWorkspace`'s only write is `writeSessionManifest`, which writes under `Server.ManifestDir`
+(pkg/adapter/manifest.go:280-283, pkg/adapter/server.go:111-114), a pod-level directory that
+`slotlayout.RemoveTree` does not touch (pkg/adapter/slotlayout/tree.go:58-69 removes only slotRoot,
+Sessions, Artifacts, CredentialsDir). So the predicate "path work against the slot's tree outside
+`s.mu`" selects exactly `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup` and `Resume`.
+
+WATCHOUT: `Resume` has SEVEN `releaseSessionSlot` call sites (pkg/adapter/resume.go:69,73,89,107,126,
+134,141). Once `Resume` holds the guard and `releaseSessionSlot` acquires it, every one of them
+self-deadlocks. The fix needs an inner `releaseSessionSlotUnderGuard` that `Resume` calls; do NOT
+make the mutex re-entrant. EVIDENCE: pkg/adapter/resume.go:69-141, pkg/adapter/slotsession.go:214.
+
+WATCHOUT: §10.1.4's pass 1 (`deregisterStartedSessions`) opens holds for every member while holding
+`s.mu` and takes no guard, so it is the one site that opens a hold without the guard. That window is
+why the hold test must stay inside `ensureSlotStateLocked` as well as at the guard acquisition; the
+two test points are one predicate, not two mechanisms. EVIDENCE: pkg/adapter/holdstate.go:203-205,
+non-spec-changes.md:1291-1295.
+
+DEFERRED [implementation-checklist.md]: S15 (line 45) states "The guard is acquired ahead of `s.mu`
+in both" naming "a matching `Shutdown` racing a `FinalizeWorkspace`" and enumerates the guarded
+sections without `Resume`. Both halves are false after this fix: `Shutdown` takes `s.mu` before any
+guard and acquires one only on the destroying arm, and `Resume` is guarded. What is true instead: a
+section acquires the slot's guard before the resolve that hands out its paths and holds it until its
+path work ends, which is `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup` and `Resume`; the three
+destructive sections acquire it before `s.mu`, except `Shutdown`, which compares first under `s.mu`
+and acquires the guard only on the arm that destroys.
+
+DEFERRED [spec-changes.md]: nothing is falsified — the fix exists to make CODE-1/CODE-6 implement
+what spec-changes.md:645 and :900 already say. Recorded so a later round does not re-derive a spec
+edit here.
+
+OPEN: `terminateHeldSession`'s §10.1.4 unconditional teardown now waits behind a `Resume` that is
+restoring checkpoint chunks over the network. That wait is bounded by the `Resume` RPC's own context
+(the chunk fetches take `ctx`), but nobody has measured it against the ten-second graceful window
+§5.2 states for the hold-timeout termination. A later round or a human should decide whether that
+window needs a statement.
+
+MISTAKE: rounds 8 and 9 both tried to repair the `*Scope.*` paragraph by editing the enumeration
+(restore a create body, delete a map drop, then two findings against the same sentence). Each cost a
+round. The enumeration is the defect, not its contents.
+
+### [non-spec.9.fix-design-G2.1]
+
+DECISION: close finding 5 with ONE additive tier-1 case in `pkg/adapter/sdkwarm_test.go` (package `adapter_test`), named in the CODE-1/CODE-2 tier-1 file list at non-spec-changes.md:2284-2285, plus one clause on the tier-7a paragraph (:2696) stating the SDK-warm site takes no race arm — BECAUSE every property CODE-2's refusal arm stages is observable through exported surface (`status.Code` for `Aborted`; the fake's demote counter and `Server.SDKWarmReady()` for the `DemoteSDK`-plus-`sdkConnected` half, `pkg/adapter/sdkwarm.go:176-183`; a successor's `Shutdown` answering `reclaimed` plus `os.Stat` of its cwd and `credentials.json` for the no-release half; a recorder on the exported `Server.SessionScrubReporter` field, `pkg/adapter/server.go:177`, for the no-cleanup-outcome half), and the SDK-warm double (`fakeSDKWarmRuntime`, `configureReq`) already lives in that external file — ALTERNATIVES: (a) a new internal `package adapter` case beside the other CODE-2 cases, rejected because it duplicates a whole `SDKWarmRuntime` double into the internal package for no unexported assertion; (b) a tier-7a `ConfigureWorkspace` arm on the rendezvous, rejected because the site's only gateway caller is `Binder.Launch` (`pkg/gateway/podlifecycle/podsession/binder.go:1009`), which no compensation races, so the interleaving is unreachable in production and the deterministic hook pins the arm fully; (c) tier-3/tier-10 arms, rejected because CONF-1 cuts one case per rule and the start-confirmation rule already has one; (d) folding the site into the existing StartSession confirmation case as a second RPC arm, rejected because the two refusal arms share no action (`DemoteSDK`+`sdkConnected` vs `Runtime.Close`+`cancelPodMCPIfRuntimeIdle`), so a shared table case would assert neither.
+
+FACT: the seam needs no production hook and no goroutine. `claimSessionSlot` releases `s.mu` before returning (`pkg/adapter/slotsession.go:52-60`), and `sw.ConfigureWorkspace` is called outside the lock, with `noteRuntimeStarted` after it (`pkg/adapter/sdkwarm.go:248-262`), so a nil-safe `onConfigure func()` hook on the existing `fakeSDKWarmRuntime` can re-enter the exported `Shutdown` and `AssignCredentials` RPCs inline, between the claim and the confirmation, with no deadlock and no parking. — EVIDENCE: pkg/adapter/slotsession.go:52-60, pkg/adapter/sdkwarm.go:248-262
+
+FACT: the internal tier-1 fixtures the subsection lists are internal-package (`recordingSessionScrubReporter` is defined in `pkg/adapter/sessionscrub_emit_test.go`, `package adapter`), while every SDK-warm double is external (`pkg/adapter/sdkwarm_test.go` and `pkg/adapter/shutdown_demote_test.go` are `package adapter_test`). The new case therefore cannot reuse both sets; it reuses the SDK-warm set and takes a three-line local scrub recorder on the exported field. — EVIDENCE: pkg/adapter/sessionscrub_emit_test.go:20, pkg/adapter/sdkwarm_test.go:3, pkg/adapter/server.go:177
+
+WATCHOUT: the tempting wrong fix is routing the refusal through `releaseSessionSlot` so the test is easier to write. That is the exact defect CODE-2 forbids: `releaseSessionSlot` deregisters and `RemoveAll`s the tree (`pkg/adapter/slotsession.go:214-220`), which would destroy a successor attempt's entry, cwd and credential file. The successor sub-case is what turns red on it, so it is not optional. — EVIDENCE: pkg/adapter/slotsession.go:214-220, non-spec-changes.md:609-611
+
+DEFERRED [0081_...implementation-checklist.md]: S18 states the SDK-warm site refuses "through `releaseSessionSlot` with the §6.1 `DemoteSDK` fallback rather than a bare `Runtime.Close`" (implementation-checklist.md:51). That is false against the staging: CODE-2 states the arm "removes no registry entry and no slot tree, so it routes neither through `releaseSessionSlot` ... nor through the `DemoteSDK` RPC handler" (non-spec-changes.md:609-611) and answers `codes.Aborted`. What is true: the arm calls `SDKWarmRuntime.DemoteSDK` directly, clears `s.sdkConnected` under `s.mu`, removes nothing, and answers `Aborted`. S18 must also gain the new tier-1 case in its tier-1 work sentence. This is a fourth checklist contradiction beyond the three the run already records (S1, S17, S7); reconciliation owns it.
+
+UNVERIFIED: whether `fakeSDKWarmRuntime`'s current construction helper in `pkg/adapter/sdkwarm_test.go` builds a server with a workspace base the successor's `AssignCredentials` can write into without further fixture work. The fixer writing the case should check that helper rather than assume it.
+
+### [non-spec.9.fix-design-G3.1]
+DECISION: Fix finding 4 by DELETING the build-order enumeration at non-spec-changes.md:7-11 and replacing it with a pointer ("the implementation checklist is the single statement of build order"), rather than rewriting the enumeration to match S1..S22 — BECAUSE the enumeration is a second copy of a sequence the checklist already owns, it was wrong in three ways within one revision of being written, and G1/G2 in this same round may still change what S15 and the test deliverables are; a corrected copy would go stale again on the next checklist edit — ALTERNATIVES: (a) rewrite the enumeration exactly as the reviewer's suggested_fix spells it (S1-S6, S7 docs, S8 CODE-3, S9 proto, S10 CODE-9, S11 CODE-7, S12 CODE-8, S13 CODE-4 mint, S14/S15 CODE-6, S16/S17 CODE-1, S18 CODE-2, S19 CODE-4 compensation, S20 CODE-5, S21 adoption cases, S22 CONF-1) — verified accurate against implementation-checklist.md:17-63, but reinstates the duplication that produced the defect; (b) delete the whole paragraph including the "listed in reading order" sentence — rejected, that sentence is the only thing telling a reader the file's own order is not an execution order.
+FACT: The finding's three contradictions are all confirmed against the checklist as it stands: S7 (docs) runs before every code and schema step; CODE-8 (S12) and CODE-4 (S13) precede CODE-6 (S14) and CODE-1 (S16), and the checklist's standing ordering rule at implementation-checklist.md:11-15 requires exactly that inversion; CODE-3 (S8) and CODE-9 (S10) are absent from the enumeration entirely. EVIDENCE: proposals/0081_.../0081_....implementation-checklist.md:11-15,29,31,35,37,39,41,43,45,47,51,59
+WATCHOUT: The spec/docs deliverables land FIRST in the checklist (S1-S6 spec, S7 docs). Any prose that describes docs as trailing work is wrong for this proposal. EVIDENCE: implementation-checklist.md:29
+
+### [non-spec.9.review-applicability.1]
+
+FACT: The `non-spec-r9` snapshot is byte-identical to the live proposal directory (`diff -rq` returns nothing), and the `non-spec-r8` → `non-spec-r9` diff is the whole 2026-09-16 token revision plus the reconciliation pass's checklist rebuild. This lane genuinely has had zero rounds on the token design; treat every word of non-spec-changes.md as round-1 text. — EVIDENCE: scratchpad/cp-snap/0081_.../non-spec-r9 vs proposals/0081_...
+
+FACT: The reconciliation pass DID discharge the three checklist contradictions the orchestrator flagged. S1 now reads "§15.1 takes no new catalog row"; S7 reads "The published error catalog takes no new row"; S18 names all three CODE-2 confirmation sites (`StartSession`, `Resume`, SDK-warm `ConfigureWorkspace`). The summary's deliverable index for DOCS-3 also reads "four replacements ... takes no new row". — EVIDENCE: implementation-checklist.md:17, :29, :51; summary.md deliverable index, DOCS-3 bullet.
+
+FACT: Checklist dependency graph is clean. All 20 deliverables appear in exactly one step-set; every `Depends on` names a strictly earlier step; every box is `[ ]` (`grep -c '^- \[x\]'` returns 0). CODE-1, CODE-4 and CODE-6 are each split across steps deliberately (S16/S17/S21, S13/S19, S14/S15/S21) — do not file that as "a deliverable named by two steps"; the splits are scoped and non-overlapping. — EVIDENCE: implementation-checklist.md:17-60.
+
+FACT: Every wire-level fact I checked in SCHEMA-1 holds against the tree. Free field numbers: PrepareWorkspaceRequest has 1,2,3 + `reserved 4` (so 5,6 free); FinalizeWorkspaceRequest has 1-4 + `reserved 5` (6 free); RunSetupRequest 1,2,3 + `reserved 4` (5 free); AssignCredentialsRequest 1,2 + `reserved 3` (4 free); ResumeRequest up to 14 + `reserved 6,15` (16 free); ShutdownRequest 1,2,3,5,6 + `reserved 4` (7,8 free); ShutdownResponse 1,2 (3 free); ErrorCode ends at 27 (28,29 free). — EVIDENCE: schemas/lenny-adapter.proto:554-585 and the five message blocks.
+
+FACT: The tier-0 inventory gate derives membership from `slotSubjectFileRE = (slot|one_session_only|sole_session)[^/]*_test\.go$` matched against the repo-relative path with `[^/]*`, i.e. the BASENAME must contain "slot" anywhere (not a prefix). FIVE new test files this proposal creates match it, not three or four: the two tier-7a files, the tier-9 file, the tier-10 file, and `tests/tier11_docs/slot_compensation_metric_reference_test.go`. The proposal now states the rule generically ("Every new file whose name matches that pattern enters the inventory ... in the step that creates it") rather than by count, which is why no count finding survives. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:1173, :1191, :1212-1230; non-spec-changes.md:3042-3049.
+
+FACT: `spec161Metrics` is reconciled ONLY against `MetricCatalog()` in both directions (`TestMetricCatalogIsCompleteAgainstSpec161`, `TestMetricCatalogHasNoUnspecifiedMetrics`); nothing reads spec/16 to build it. So S6 (SPEC-6's two §16.1 rows) landing four steps before S10 (catalog.go + list entry) opens no red window. — EVIDENCE: pkg/observability/metrics/catalog_test.go:187-211.
+
+FACT: `tests/spec-map.json` supports directory entries spelled `<dir>/...`; 15.1 carries `tests/tier4_integration/...`, 4.1 carries `pkg/gateway/...`, 4.7 carries `pkg/adapter/...`. Every per-file registration-granularity claim in the Files-touched section checks out against the map, including "binder_test.go holds no whole-file credit outside 4.1 through the directory entry" and "concurrent_workspace_test.go ... the 15.1 credit through the directory entry". — EVIDENCE: tests/spec-map.json.
+
+FACT: `materializeSlotStages` does NOT exist in the tree (`grep` returns 0 hits under pkg/ and cmd/). It is the renamed body of the shipped `materializeSlot`, which the proposal states obliquely as "`materializeSlot` becomes a wrapper" / "`materializeSlot` splits into a stage runner and a compensating wrapper". I judged that sufficient for an implementor and did not file it — a future reader who is puzzled by the Files-touched bullet listing it beside existing functions should read non-spec-changes.md:848-900 before assuming it is a false citation. — EVIDENCE: non-spec-changes.md:657-659, :848-860, :3091.
+
+WATCHOUT: The Design section's citations are unusually clean — I machine-checked binder.go:1072-1082 (`failPhase`), :1200-1202 (`drain` → `DeleteClaim`), staging.go:181/:239, client.go:333-341, slotsession.go:109, slotbinder.go:287/:294/:353-361/:502/:528, gatewaymetrics_credential.go:185-193, gatewaymetrics.go:1170-1175, binder.go:137, session.go:309-321, credassign.go:400-409, slotcreds.go:40-48, adapter-contract.md:10/:18/:53/:64/:75, error-catalog.md:129 (all four quoted sentences verbatim). Do not spend another round re-verifying these; spend it on the prose that has no citation.
+
+MISTAKE: The reconciliation pass rebuilt the checklist but did not re-read the non-spec file's own new lead paragraph (non-spec-changes.md:7-11), which claims to restate the checklist's build order and gets it wrong in three ways (docs last vs S7; gateway-after-adapter vs S12/S13 before S14/S16; CODE-3 and CODE-9 missing). Filed this round. A rebuild of the sequence has to sweep every passage that paraphrases the sequence, not only the checklist file.
+
+OPEN: Steps S14 and S16 declare tiers 3 and 10, but every tier-3 and tier-10 case in the Testing section lands in `tests/tier3_contract/adapter_bind_attempt/` and `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`, both created by S22. Likewise S16/S17 declare tier 2 while the only tier-2 cases belong to S12's deliverable. Either those tier digits mean "run the tier" rather than "carry cases for it", or four steps are mislabelled. I did not file it because the enumerated checklist finding class is the omission direction only. A human or the reconciliation pass should settle which reading the pipeline uses.
+
+### [non-spec.9.review-citations.1]
+
+DECISION: returned an empty findings list — BECAUSE I mechanically extracted and verified every `path:line` citation in non-spec-changes.md (68 distinct targets), spec-changes.md (9), summary.md (~70) and the checklist, plus every attributed-behavior claim I could resolve to a symbol, and every one resolved to text that says what the proposal claims. ALTERNATIVES: I considered filing the "No `export_test.go` change" tension (see WATCHOUT below) and dropped it as wording rather than a defect.
+
+FACT: the full non-spec `path:line` citation set is verifiable in one pass with
+`grep -oEn '`?\b(pkg|cmd|tests|charts|docs|schemas|scripts|spec|sdks|migrations)/[A-Za-z0-9_./-]+\.(go|md|proto|json|yaml|yml|py|sh|mjs)`?:[0-9]+(-[0-9]+)?' <file>` piped through `sed 's/`//g'` and then `sed -n "$s,$e p"` per target. Sub-citations written as bare `:NNN` continuations (`binder.go:954` then `(:950)`) are NOT caught by that regex and have to be read from the surrounding prose; roughly a third of the load-bearing anchors are of that form. EVIDENCE: non-spec-changes.md:1639 ("`Binder.Prepare` sets `leaseAssigned` at `binder.go:954`, after its last `reclaim()` call site (`:950`)").
+
+FACT: `tests/spec-map.json` encodes directory credits with a `...` suffix entry, e.g. `pkg/gateway/...` under section 4.1, `pkg/adapter/...` under 4.7, `tests/tier4_integration/...` under 15.1. A naive "is this file registered whole?" check returns empty for binder_test.go and recycle_scrub_path_test.go and looks like a proposal error; it is not. EVIDENCE: tests/spec-map.json sections "4.1" and "15.1"; the proposal's own reading is at non-spec-changes.md:2995-3030 and is correct at every one of the six files it enumerates.
+
+FACT: the proposal's per-file spec-map registration claims were checked against the map and all six match exactly, including the ordered section lists. slotbinder_test.go whole {4.6.3,4.7,5.2,6.2,7.1}; binder_test.go no whole credit + 21 per-case; client_test.go whole {4.4,4.7,4.9,5.2,7.2,7.3,7.5,11.2,11.3,11.4,13.2,28.5.3}; slotsession_test.go whole {4.9,5.2,6.1,6.4,15.4}. EVIDENCE: tests/spec-map.json.
+
+FACT: `cmd/lenny-compliance` does import `adapterv1`, but only from `schemaassert_test.go`. The proposal's claim "it imports no `adapterv1` and no gRPC" (non-spec-changes.md:1752-1754) is true of the binary and false of the package's test file. The operative conclusion (no adapter under test) holds either way, so this is not a finding, but a lens grepping the whole package will hit it. EVIDENCE: cmd/lenny-compliance/schemaassert_test.go:9.
+
+WATCHOUT: the Testing section says "No `export_test.go` change" (non-spec-changes.md:2261) while CODE-2 stages a change at `pkg/adapter/export_test.go:45` (non-spec-changes.md:621) and the files-touched list names the file (non-spec-changes.md:3128). This reads as a contradiction on a first pass. It is not one: the colon-explanation that follows scopes the sentence to "no NEW exported seam is needed", and CODE-2's edit is a mechanical caller widening. Do not file it; two verification agents would burn on it.
+
+USEFUL [the ledger's `slot_was_started` correction]: the orchestrator brief for round 9 STILL asserts "ShutdownResponse keeps slot_reclaim and gains slot_was_started (4)". `grep -rc slot_was_started` over the proposal directory returns 0 outside the review log. SCHEMA-1's field table has exactly nine rows and no `slot_was_started`. The log entry saved me from filing a phantom omission against the field count.
+
+CORRECTS [any future lens tempted to check "nine fields"]: SCHEMA-1's count is right. The nine are PrepareWorkspaceRequest{bind_attempt=5, mid_session=6}, FinalizeWorkspaceRequest{bind_attempt=6}, RunSetupRequest{bind_attempt=5}, AssignCredentialsRequest{bind_attempt=4}, ResumeRequest{bind_attempt=16}, ShutdownRequest{bind_attempt=7, unconditional_teardown=8}, ShutdownResponse{slot_reclaim=3}. Every "Basis" column entry was checked against `schemas/lenny-adapter.proto` and every number is free. EVIDENCE: non-spec-changes.md:1917-1927; schemas/lenny-adapter.proto messages as they stand.
+
+FACT: SPEC-5's three "reads, verbatim" §15.1 quotes and DOCS-3's four docs-page quotes are all byte-accurate against spec/15_external-api-surface.md:1136 and docs/reference/error-catalog.md:129 respectively, and the two rows genuinely differ in wording ("the adapter" vs "the runtime adapter", plus the spec row's `FailedPrecondition`), so the two sets of quotes are correctly targeted at different files rather than being a copy of one another.
+
+FACT: DOCS-1's three state-machines.md replacement quotes match SPEC-4's three §6.2 projection-prose replacements clause for clause, and the case difference is correct in both directions — spec/06:80 reads lowercase "a pod with no claim projects `idle`" and docs/reference/state-machines.md:138 reads capitalised "A pod with no claim projects `idle`". Each document quotes its own target's casing. EVIDENCE: spec-changes.md:709-713; non-spec-changes.md:2024-2031.
+
+UNVERIFIED: I did not audit the implementation-checklist's step-by-step prose beyond its file:line citations (of which it carries essentially none), because the brief bars the spec lane from the checklist and names S1, S7 and S17 as reconciliation's. Nobody has citation-audited the checklist's non-S1/S7/S17 steps.
+
+### [non-spec.9.review-client-surface.1]
+
+DECISION: returned ZERO findings — BECAUSE `diff -rq` of the whole proposal directory against
+`scratchpad/cp-snap/.../non-spec-r9` is EMPTY (the text has not moved a byte since the snapshot),
+and I re-ran every client-surface sweep from scratch rather than trusting the ledger. All of them
+came back clean. ALTERNATIVES: rejected filing the `Error.ErrorCode` "mirrors spec §15.1" comment
+drift (see FACT below) and the CONF-1 ordering-case gap (see OPEN below).
+
+FACT: the whole client-surface absence sweep re-run independently this round returns ZERO hits:
+`grep -rnE 'bind_attempt|unconditional_teardown|slot_reclaim|SlotReclaimOutcome|SLOT_BIND_' spec/
+docs/ schemas/ charts/ sdks/ pkg/gateway/externalapi/openapi/` → 0 lines. There is no SDK, CRD,
+OpenAPI, JSONL-schema or docs/api mirror of the adapter gRPC surface to keep in step. Do not
+re-run this; it has now been confirmed by at least three independent shards.
+
+FACT: every SCHEMA-1 field number re-verified against the tree this round and all nine resolve
+(PrepareWorkspaceRequest 1-3 + reserved 4; FinalizeWorkspaceRequest 1-4 + reserved 5;
+RunSetupRequest 1-3 + reserved 4; AssignCredentialsRequest 1-2 + reserved 3; ResumeRequest
+1-5,7-14 + reserved 6,15; ShutdownRequest 1-3,5,6 + reserved 4; ShutdownResponse 1-2), and
+`Error.ErrorCode` runs to 27. EVIDENCE: schemas/lenny-adapter.proto:1609-1636, :1665-1668, :553-588.
+
+FACT: SCHEMA-1's account of the tier-3 closed-field-set gate is exact. `wantReq` is the five-entry
+map at tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:211-217, the
+`ShutdownResponse` `assertFieldSet` call is at :233-237 with exactly `{1: exited_cleanly,
+2: exit_code}`, and the doc comment at :195-196 literally says "ShutdownResponse declares exactly
+exited_cleanly and exit_code", which SCHEMA-1's comment-clause edit covers. The claim that this is
+the ONLY closed field set over the messages SCHEMA-1 opens also holds: the other whole-file
+descriptor walker, tests/tier3_contract/adapter_session_address/session_address_wire_test.go,
+asserts only (a) no `slot_id` field, (b) a `session_id` of type `SessionId`, (c) reserved numbers
+and names, and (d) the `SlotId` wrapper is gone — none of which an additive string field perturbs.
+
+FACT: DOCS-3's four "reads, verbatim" quotes of docs/reference/error-catalog.md:129 and the
+remedy cell are all verbatim against the shipped row. SPEC-5's three §15.1 quotes and the §6.2
+"while any other setup-window failure stays the retryable `STARTING_FAILED` fallback" quote are
+verbatim too (spec/15_external-api-surface.md:1136; spec/06_warm-pod-model.md:290).
+
+FACT (closes the standing UNVERIFIED at review-log.md:1389, "does §15.1's endpoint enumeration
+stay complete?"): YES. `RunSetup` has exactly two gateway call sites —
+pkg/gateway/podlifecycle/podsession/slotbinder.go:299 (`materializeSlot`, the concurrent-workspace
+`/{id}/start` path) and binder.go:933 (`Binder.Prepare`, reached from `/finalize`,
+`/v1/sessions/start` and `/{id}/resume`). The four endpoints the §15.1 row names are exactly the
+reachable set, so the started-session refusal cannot surface at a fifth endpoint. Do not re-chase.
+
+FACT (bears on the standing OPEN at review-log.md:1324, the bare-status hold refusal): the gateway
+does branch on the gRPC status rather than on `Error.code` for it. CODE-7's double-`%w` wrap keeps
+`status.Code(err)` walking to the original status, and CODE-5 adds one `codes.Aborted` arm to
+`isTransientPodClaimError`, so the hold refusal needs no `ErrorCode` of its own to be classified.
+EVIDENCE: non-spec-changes.md:1544-1548, :1005.
+
+FACT: the `*adapterv1.Error`-in-status-detail carrier CODE-6/CODE-7 rely on has exactly one shipped
+precedent and it matches the staged form, `Retryable` set explicitly included. EVIDENCE:
+pkg/adapter/staging.go:205-217. `status.WithDetails` appears nowhere else under pkg/ or cmd/ for
+this type.
+
+FACT: adding the two codes to `Error.ErrorCode` silently WIDENS the §24.8 conformance catalog that
+`cmd/lenny-compliance` derives by regexp from the embedded proto (schemaassert.go:52-92), so a
+runtime emitting `"SLOT_BIND_ALREADY_STARTED"` in a JSONL response `error.code` would pass
+`response_error_code_in_proto_catalog`. I did NOT file it: the enum IS the catalog by construction,
+no test reconciles it against §15.1, and the precedent is shipped
+(`ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27` has no §15.1 row). This is the second half of the
+already-dropped "mirrors spec §15.1" comment drift at review-log.md:2368; a later lens should drop
+both halves too.
+
+OPEN: CONF-1's rule paragraph names one case "for the ordering rather than for a rule: a request
+meeting both the attempt identity rule's condition and the started-session rule's is refused under
+the former" (non-spec-changes.md:1736-1738), but the tier-3 behavioural case list
+(:2554-2616) — which claims to cover "CONF-1's rule set and its negative cases one for one" — has
+no case for it. Either it lives only in the tier-10 battery ("the same rule set") or it is an
+omission. Outside my lens; a test-coverage lens should settle it.
+
+USEFUL [Settled, "the per-slot vocabulary has no SDK, CRD or OpenAPI mirror" and "the adapter proto
+has no parallel client representation", review-log.md:84,:249,:318,:366]: these four entries plus
+the OpenAPI path correction (`pkg/gateway/externalapi/openapi/openapi.json`, NOT the
+`pkg/gateway/openapi/` path the lens brief gives) saved me the whole mirror hunt. The brief's path
+is still wrong in round 9.
+
+USEFUL [Settled, review-log.md:709,:762,:1183,:1200 on `slot_was_started`]: the orchestrator brief
+STILL claims "ShutdownResponse keeps slot_reclaim and gains slot_was_started (4)". Both halves are
+false; `grep -c slot_was_started` over the proposal directory returns 0. The ledger caught me before
+I filed the phantom omission, exactly as it says it caught six earlier lenses.
+
+WATCHOUT: the snapshot at scratchpad/cp-snap/.../non-spec-r9 is BYTE-IDENTICAL to the proposal, so
+"read the changed sections first and hardest" has no changed sections this round. Confirm with
+`diff -rq` before planning any reading order around the diff.
+
+### [non-spec.9.review-docs-alignment.1]
+
+DECISION: filed ONE finding — checklist S7 still describes DOCS-1 as the per-slot table row
+alone, while DOCS-1, the Files-touched list, summary.md:946 and the spec-changes docs-mirror
+trailer all carry DOCS-1's second edit (the `docs/reference/state-machines.md:138` projection
+clause replacements) — BECAUSE the r8 fix landed the paragraph in DOCS-1 (:2015-2035),
+Files touched (:3110-3111) and summary.md:946, and the checklist was rebuilt AFTER the summary
+(mtimes: summary 12:01, non-spec-changes 12:14, checklist 12:13) and still omits it.
+ALTERNATIVES: rejected everything the standing Traps already bar, and rejected four candidates
+I re-derived and killed myself (listed below).
+
+USEFUL [non-spec.8.review-docs-alignment.1]: its CORRECTS on the orchestrator brief ("S7 and the
+summary still describe DOCS-3 as two new rows") is still right — S7 (:29) now reads "The
+published error catalog takes no new row" and summary.md:948 carries a full DOCS-3 entry. It
+saved me from re-filing the DOCS-3 bookkeeping. Its four FACTs on the metric gates
+(`alert_catalog_crosscheck_test.go` location, `spec161Metrics` two-way reconciliation,
+`adapter_metric_catalog_test.go` coverage) are all still true and CODE-9's current body now
+states each of them correctly, so findings 2 and 3 of that round are DISCHARGED.
+
+FACT: the r8 fix discharged the DEFERRED at review-log.md `### Deferred` reading
+"[implementation-checklist.md S7, and summary.md:928]: both describe DOCS-1 as the per-slot
+sub-state row alone" for summary.md ONLY. summary.md:946 is now correct; checklist :29 is not.
+That half-discharge is the finding. EVIDENCE:
+proposals/0081_.../0081_....implementation-checklist.md:29 vs
+proposals/0081_.../0081_....summary.md:946 and .non-spec-changes.md:2004,:2015.
+
+FACT: the docs surface for this proposal is FOUR pages and no more. I re-derived it from
+scratch: `grep -rn "Shutdown" docs/ --include=*.md` returns only `adapter-contract.md:75`
+(plus two runtime-author-guide rows about the stdin `shutdown` FRAME, which are a different
+mechanism); `grep -rn SETUP_COMMAND_FAILED docs/` returns only `error-catalog.md:129`;
+`grep -rn "recycling pod under its limits" docs/` returns only `state-machines.md:138`;
+`grep -rn lenny_slot docs/` returns only `metrics.md:166-167`. There is no fifth page.
+
+FACT: every quoted source string in DOCS-1, DOCS-2 and DOCS-3 is verbatim and every line number
+resolves. Verified: `state-machines.md:138` (all three clauses word for word),
+`adapter-contract.md:10,:18,:53,:64,:75`, `error-catalog.md:129` (all four sentences and the
+remedy cell). DOCS-3's "no file under tests/, scripts/ or cmd/ and no Makefile target names the
+page" is true: a repo-wide grep for `error-catalog` outside `docs/` hits only BUILD-GAPS.md and
+TEST-GAPS.md prose.
+
+FACT: DOCS-2's staged `Shutdown` row satisfies every substring gate, old and new. The shipped
+`TestAdapterContractNamesTheShutdownRPCUnderItsWireName`
+(tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go:294-311) requires
+"end-of-session teardown", "recycle disposition", "ReportSessionScrub", "ReportPodScrub" — all
+four survive — and the five the staged extension adds ("no other bound session", "a session
+whose start the adapter has admitted", "either the bind attempt", "reclaimed", "absent") are all
+present. The row is one physical line (non-spec-changes.md:2068). Do not re-derive this.
+
+FACT: DOCS-1's tier-11 plan is mechanically correct against the shipped file.
+`generalSlotEdges` (per_slot_substate_scope_doc_reconciliation_test.go:33-38) really does feed a
+positive loop over the either-concurrency block (:56-60) and a negative loop over the
+concurrent-occupancy block (:70-74), and "receiving_uploads ──→ slot_cleanup" is absent from
+the scoped block, so adding it to the slice passes both. The paired substring
+`` `receiving_uploads` | `slot_cleanup` `` is unique on the page.
+
+FACT: DOCS-1's claim that the `## Pod state machine` paragraph "takes no gate, because the
+specification sentence carries vm-restart clauses the page deliberately omits" is TRUE.
+spec/06_warm-pod-model.md:80 carries two `vm-restart` clauses that
+docs/reference/state-machines.md:138 does not. The only tier-11 readers of that page are
+per_slot_substate_scope_*, concurrent_slot_lifecycle_* and slot_definition_glossary_*, and none
+of the three touches :138.
+
+FACT: the `docs/reference/metrics.md` "Adapter metrics" section preamble (:173) AND every one of
+its four rows carries the "Outside the default scrape set." phrasing, so CODE-9's instruction to
+mirror "the same phrasing its siblings there already use" resolves to a per-row sentence. The
+adapter CAN carry a `k8s_pod_name` label: `pkg/adapter/server.go:36` reads `POD_NAME` from the
+Downward API. SPEC-6's label on the untokened series is therefore implementable.
+
+FACT: `lenny_slot_failure_total`'s docs row scopes itself to `maxConcurrentSessions > 1`
+(docs/reference/metrics.md:166) and CODE-5 does NOT widen it. I checked the guard:
+`reserveResumeSlot` returns the empty slot id when `MaxConcurrentSessions <= 1`
+(pkg/gateway/podlifecycle/podsession/binder.go:1674-1677), and CODE-5's resume caller is gated on
+a non-empty slot id, so the §7.3 re-attach accounting never fires on an exclusive pool. Nobody
+needs to re-derive whether that row drifts.
+
+MISTAKE (nearly filed, four times, each killed by evidence):
+ (1) "DOCS-2's row says the slot release `runs whenever the adapter holds an entry`, which the
+     superseded outcome two sentences earlier contradicts." The staged §4.7 spec row carries the
+     SAME clause verbatim (spec-changes.md:390), so the docs row mirrors the spec exactly and
+     guardrail (1) of this lens bars asking the spec to change to match a doc.
+ (2) "docs/runtime-author-guide/lifecycle.md:319,:330 publish `terminate` as the unconditional
+     Full-level graceful path, which SPEC-1's co-tenancy gate falsifies." The standing Traps
+     entry already names this as a near-mistake: the shipped `!boundRemains` gate at
+     pkg/adapter/session.go:259 makes it false TODAY, so SPEC-1 restates rather than widens.
+ (3) "The docs Recycle-transitions table (state-machines.md:211-222) needs a claim-deletion
+     `claimed → draining` row to mirror SPEC-4's fence trigger." It does not: that table mirrors
+     §6.2's `Recycle edges` group, which SPEC-4 leaves untouched; the claim-deletion projection
+     lives only in the :138 prose, which DOCS-1 does edit.
+ (4) "DOCS-3's fourth replacement drops the shipped exclusion sentence's universal quantifier and
+     so no longer partitions." It never claimed to: the replacement enumerates causes that reach
+     the retryable fallback and asserts nothing about the complement, and DOCS-3's own rationale
+     (:2145-2150) states why. Nothing on the page becomes false.
+
+UNVERIFIED: S7's `Depends on: S1, S2, S5` names SPEC-5, SPEC-1 and SPEC-4 but not S4 (SPEC-3),
+while DOCS-2's own text says it lands "after SPEC-1, SPEC-3 and SPEC-5 have landed the contract
+it mirrors" (non-spec-changes.md:2088) and its row states SPEC-3's withheld cleanup-outcome
+report. I did NOT file it: the checklist executes S1..S22 as one linear sequence, so S4 precedes
+S7 regardless and nothing breaks. A reconciliation pass should add S4 to that line anyway.
+
+DEFERRED [implementation-checklist.md:29]: S7's DOCS-1 clause reads "The per-slot sub-state table
+in the state-machine reference gains the row matching the new §6.2 edge." That is now false as a
+statement of DOCS-1's scope. What is true instead: DOCS-1 makes TWO edits on
+`docs/reference/state-machines.md` — that table row, and the three projection clause replacements
+in the `## Pod state machine` paragraph at :138, each re-keyed on the phase the pod projects at
+the claim DELETE. S7 also names only the `TestAdapterContractNamesTheShutdownRPCUnderItsWireName`
+extension where `## Testing` (non-spec-changes.md:2793-2801) also requires both shipped tests in
+`tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go` to be extended in place.
+This is filed as a finding this round; if the fixer is barred from the checklist, the
+reconciliation pass owns it.
+
+OPEN: nothing new. The three standing docs OPENs (`docs/reference/configuration.md:99`'s
+`cleanupTimeoutSeconds` drift, `lenny_adapter_leaked_slots`' missing §16.1 row, and `SLOT_FAILED`
+having no catalog row anywhere) are all pre-existing and outside 0081; they still want a human.
+
+### [non-spec.9.review-edit-sites.1]
+
+DECISION: returned an EMPTY findings list for the edit-site-completeness lens over the spec+non-spec staging read as one document — BECAUSE every identifier the proposal adds, changes, or removes was swept across `spec/`, `docs/`, `schemas/`, `charts/` and the tier-0/tier-11 gates, and every surface that becomes wrong is already in an edit list; the four candidates I built independently each resolved to a recorded dead end, a recorded Deferred, or below-bar rationale imprecision — ALTERNATIVES rejected, in the order I built them: (a) the `slotFailureWorkspaceFinalize` reclassification hazard, killed by the standing WATCHOUT at review-log.md:2712 which names the exact refutation ground; (b) §5.2:545's surviving "The adapter reports each slot cleanup outcome", the recorded dead end at review-log.md:790; (c) DOCS-2's amended `DemoteSDK` row stating a registry effect no staged spec edit states, dropped because spec/04:674 does not become wrong and the staged §5.2 hold paragraph already alludes to the demotion's release; (d) CODE-9's "SPEC-6's row for this series carries the deferral wording verbatim", which is false but decorative.
+
+FACT: the sweep I ran and what it found, so the next edit-site lens need not repeat it.
+- `bind_attempt` / `mid_session` / `unconditional_teardown` / `slot_reclaim` / `SlotReclaimOutcome` / the two `ERROR_CODE_SLOT_BIND_*` values have NO mirror outside `schemas/lenny-adapter.proto`. `docs/api/internal.md` documents no gateway→adapter RPC (grep for `Shutdown|PrepareWorkspace|AssignCredentials` returns nothing); `schemas/lenny-adapter-jsonl.schema.json` carries no `ERROR_CODE` at all; no `spec/` or `docs/` file names any `ERROR_CODE_*` constant (the `PROTOCOL_VERSION_INCOMPATIBLE` precedent is cited by bare name only, spec/15:1699, docs/reference/adapter-contract.md:448, docs/api/internal.md:443); and no test or script enumerates the `ErrorCode` set against a doc. EVIDENCE: schemas/lenny-adapter.proto:585 (27 is the last value).
+- All nine SCHEMA-1 field numbers are free, verified message by message: PrepareWorkspaceRequest 1-3 used + `reserved 4`; FinalizeWorkspaceRequest 1-4 used (`mid_session` IS already field 4 there) + `reserved 5`; RunSetupRequest 1-3 + `reserved 4`; AssignCredentialsRequest 1-2 + `reserved 3`; ResumeRequest 1-5,7-14 used, 6 and 15 reserved; ShutdownRequest 1-3, `reserved 4`, 5 `recycle`, 6 `coordination_generation`; ShutdownResponse 1-2. EVIDENCE: schemas/lenny-adapter.proto:1609-1668.
+- `charts/` needs nothing. `charts/lenny/templates/openslo-configmap.yaml` names no slot series, and no chart file carries an adapter metric, an alert rule for one, or a `cleanupTimeout`-derived value this change moves. The proposal's "No chart value and no migration" holds.
+- The two new counters' companion surfaces all exist and are staged: `docs/reference/metrics.md` has a `## Gateway metrics`-family row for `lenny_slot_failure_total` at :166 and an `## Adapter metrics` table at :171-181 whose preamble already carries the scrape deferral. No gateway-side sweep holds `docs/reference/metrics.md` to §16.1 — `tests/tier11_docs/runtime_page_metric_names_resolve_test.go` gates only `adapter-contract.md` and `platform-tools.md`, so CODE-9's new one-metric file genuinely is the only gate for the superseded row. EVIDENCE: runtime_page_metric_names_resolve_test.go:36-39.
+- `tests/tier11_docs/adapter_metric_catalog_test.go` does require the adapter series in BOTH `docs/reference/metrics.md` and `spec/16_observability.md`, which S6+S10's ordering satisfies, and CODE-9 is right that the counter must NOT enter `undocumentedAdapterMetrics` (:34) or `specCatalogPending` (:49). EVIDENCE: adapter_metric_catalog_test.go:99-115.
+- `spec161Metrics` is reconciled BOTH ways against `MetricCatalog()` only, never against §16.1 prose, so the adapter series correctly takes no entry. EVIDENCE: pkg/observability/metrics/catalog_test.go:188-211.
+- Every verbatim quote SPEC-1/SPEC-3/SPEC-4/SPEC-5 and DOCS-1/DOCS-3 replace resolves exactly: spec/04:686 (`Shutdown` row opening), spec/04:415 and :416 (the two §4.6.1 claim-deletion bullets, closing sentence included), spec/05:545 (`**Slot cleanup:**` first sentence), spec/05:453 (`**Scrub model.**`), spec/06:80 (all three projection clauses), spec/06:95 (`claimed ──→ draining` trigger), spec/15:1136 (all three `SETUP_COMMAND_FAILED` sentences), docs/reference/state-machines.md:138 (all three clauses, capital-A form), docs/reference/error-catalog.md:129 (all four sentences and the remedy cell), docs/reference/adapter-contract.md:64 and :75.
+
+FACT: the adapter CAN populate `k8s_pod_name`. `pkg/adapter/server.go:36,:380` caches `POD_NAME` from the Downward API into `s.podID`. This closes half of the standing Open "Can the adapter populate `k8s_pod_name` on every pod?" — the label is constructible; what is still open is only the empty-cache behaviour (the scrub reporter withholds rather than fabricating, sessionscrubreporter.go:74). No other adapter metric carries a pod label today.
+
+FACT: the DOCS-2 tier-11 extension's five new substrings all appear verbatim in the staged `Shutdown` row, and the row is one physical line, which is what `lineContaining(page, "| \`Shutdown\` |")` needs. `lineContaining` returns the FIRST matching line and `grep -c` says the page has exactly one. EVIDENCE: tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go:298-306; tests/tier11_docs/backup_status_enum_test.go:48-55.
+
+FACT: the DOCS-1 tier-11 extension checks out on both halves. `generalSlotEdges` (per_slot_substate_scope_doc_reconciliation_test.go:32-37) feeds a positive loop over the §6.2 either-concurrency block AND a negative loop over the concurrent-occupancy block (:55-74), and SPEC-4's staged edge line carries `receiving_uploads ──→ slot_cleanup` on one line so the substring matches. The docs assertion's `` `receiving_uploads` | `slot_cleanup` `` matches DOCS-1's staged row.
+
+USEFUL [review-log.md:2712, the `slotFailureWorkspaceFinalize` WATCHOUT]: this was the FIRST thing my lens landed on and it looked like a clean (d)+(e) finding — the constant is named in exactly two places (non-spec-changes.md:1714-1717 and :3087-3088), no site records it, and `SlotBindError.Reason()`'s only stage-sensitive arm is `e.Stage == slotFailureWorkspacePrep` (pkg/gateway/podlifecycle/podsession/slotfailure.go:96), so applying it at the finalize branch flips a `FailedPrecondition` there from `SlotReasonTransient` to `SlotReasonPolicyRejection`, which `NonRetryable()` reports true for (slotfailure.go:41-46) and which contradicts spec-changes.md:69 ("No failure class becomes non-retryable"). The entry's kill argument is decisive: CODE-9 cites only the two `recordSlotFailure` lines and calls the change "a measurement", and Files-touched does not list the finalize `slotBindError` branch, so the metric-only reading is workable and a verifier refutes the reclassification. Saved a round and a wasted verification pair.
+
+USEFUL [review-log.md:790 dead end, the `**Slot cleanup:**` bullet, and its enumeration of the five `ReportSessionScrub` sites]: it also named `docs/reference/adapter-contract.md:81` explicitly, which is the sibling my lens would otherwise have filed after reading DOCS-2 on the same page. Two candidates killed by one entry.
+
+USEFUL [the standing Deferred at review-log.md:258 (DOCS-1's projection clauses) and :191 (the untokened counter's metrics.md row)]: both are now DISCHARGED in the staging — DOCS-1 carries "**The pod state machine paragraph.**" with all three replacements (non-spec-changes.md:2015-2035) and CODE-9's body says "Both series take a `docs/reference/metrics.md` row". Compaction can retire both. I re-derived each independently before finding the entries, so the discharge is confirmed rather than assumed.
+
+CORRECTS [the orchestrator note for this run, "ShutdownResponse keeps slot_reclaim and gains slot_was_started (4)"]: `slot_was_started` is gone from the whole proposal; `grep -n "slot_was_started" *.md` outside the review logs returns nothing, SCHEMA-1's field table ends at `ShutdownResponse.slot_reclaim = 3`, and CODE-9 states "`ShutdownResponse` carries no started signal". The archive already recorded this at review-log-archive.md:34980; the note is stale in the same way a second time.
+
+CORRECTS [the orchestrator note, "the checklist's S7 line and the summary's deliverable index still describe DOCS-3 as two new rows"]: the SUMMARY half is already fixed — summary.md:948 describes DOCS-3 as the four `SETUP_COMMAND_FAILED` replacements plus the replaced remedy cell and states "The page takes no new row for either adapter error code". Only the checklist S7 line is stale, and it is stale in a SECOND way the note does not mention: it describes DOCS-1 as "the per-slot sub-state table ... gains the row" alone, omitting DOCS-1's pod-state-machine projection-clause replacements, which summary.md:946 does carry. Reconciliation owes both corrections on that one line.
+
+DEFERRED [proposals/0081_.../0081_....implementation-checklist.md S7 (:29)]: the line describes DOCS-1 as the per-slot sub-state row alone. What is true instead: DOCS-1 makes TWO edits on `docs/reference/state-machines.md` — the per-slot sub-state row AND the pod-state-machine paragraph's three projection-clause replacements at :138, which spec-changes.md:1062-1066 obliges and non-spec-changes.md:2015-2035 stages. This is the same S7 line the reconciliation pass is already rebuilding for the DOCS-3 description; take both in one edit. Recorded before at review-log.md:252,:259 against a staging that had not yet landed DOCS-1's second edit; it has landed now and the checklist still has not moved.
+
+DEFERRED [proposals/0081_.../0081_....non-spec-changes.md, CODE-9's adapter-deferral sentence]: it says "SPEC-6's row for this series carries the deferral wording verbatim, so it follows the §16.1 rows that already carry it." It does not. The four shipped §16.1 adapter rows all read "emitted by the adapter process inside the agent pod and therefore outside the [§16.9](#169-prometheus-scrape-targets-and-crds) default scrape target set until a deployer wires an adapter scrape target" (spec/16_observability.md:186-188), while SPEC-6's staged row reads "Adapter-side; not scraped until the adapter metrics endpoint is wired" and cites no §16.9. What is true instead: the row states the same deferral in shorter words and drops the §16.9 cross-reference its siblings carry. Below the bar on its own (no gate reads it, nothing becomes false, and the paragraph's real justification — that `spec161Metrics` is reconciled against `MetricCatalog()` rather than against §16.1 — is sound and stated in the same breath), so recorded rather than filed. A fixer already inside either the SPEC-6 row or that CODE-9 paragraph should either match the sibling wording or drop the word "verbatim".
+
+OPEN: does DOCS-2's amended `DemoteSDK` row owe a spec counterpart? The staged row adds "drop the adapter's slot registry entry for the session" and "The next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token." That IS shipped behaviour (`pkg/adapter/sdkwarm.go:296-301` calls `releaseSessionSlot` on the registry's single entry), and staged §5.2's hold paragraph alludes to it ("the pod-warm bind sequence that follows an SDK demotion does not meet it"), but spec/04:674's own `DemoteSDK` row states only "Tear down the pre-connected SDK process and return the pod to pod-warm state". Not filed: the spec row does not become wrong, and `.claude/rules/doc-content.md`'s "verify against the spec" rule is about inventing behaviour rather than about a published page being richer than its spec row. A docs-alignment lens that disagrees should argue from that rule rather than from an edit-site omission, because there is no edit site here that breaks.
+
+### [non-spec.9.review-feasibility.1]
+
+DECISION: returned ZERO findings for the actor-action feasibility lens on the combined
+spec+non-spec staging — BECAUSE every actor assignment I could falsify resolved against the tree,
+and the three candidates I developed all failed the "would a verifier confirm it" test.
+ALTERNATIVES: (a) the `slotFailureWorkspaceFinalize` scoping ambiguity — dropped, see MISTAKE
+below; (b) the per-slot guard's non-context-aware `sync.Mutex` blocking a compensating `Shutdown`
+behind a long `PrepareWorkspace` upload — dropped as latency/hardening, not a broken mechanism;
+(c) `cmd/lenny-compliance` "imports no adapterv1" — literally false (`schemaassert_test.go:9`
+imports it) but immaterial, the claim is about the tool having no adapter under test.
+
+FACT: the diff between the r9 snapshot and the live proposal is EMPTY. `diff -ru
+scratchpad/cp-snap/.../non-spec-r9 proposals/0081_.../` produced no output, so the "read the
+changed sections first and hardest" instruction had nothing to point at this round. Confirm this
+before planning a reading order. — EVIDENCE: scratchpad/cp-snap/0081_.../non-spec-r9
+
+FACT: there is exactly ONE production `adapterv1.AdapterServer` implementation
+(`pkg/adapter/server.go`) and exactly ONE production construction site for
+`adapterv1.ShutdownRequest` (`pkg/gateway/runtime/adapterclient/client.go:814`, inside the
+unexported `Client.shutdown` builder). Every other match is a test fake. So the proposal's design
+of setting `unconditional_teardown` inside `Client.Shutdown` (:807-809) and
+`Client.ShutdownRecycle` (:860-867) rather than at call sites genuinely covers every production
+teardown, including `cmd/lenny-gateway/user_revocation.go:129`, which reaches
+`bind.Adapter.Shutdown`. There is no in-process gateway↔adapter bypass and no second deployment
+model to check. Do not re-derive this. — EVIDENCE: pkg/gateway/runtime/adapterclient/client.go:807-824,:860-867;
+cmd/lenny-gateway/user_revocation.go:129
+
+FACT: the `grep -rn "ShutdownRequest{" --include=*_test.go pkg/ tests/` set CODE-1's sweep is
+defined by is COMPLETE — a tree-wide grep finds no `ShutdownRequest{` literal outside `pkg/` and
+`tests/` (nothing in `cmd/`, `sdks/`, `migrations/`). The sweep's roots are not under-scoped.
+
+FACT: every actor-visibility precondition the orchestrator's handoff named checks out.
+`podsession.ResumeRequest` carries `Pool`, `MaxConcurrentSessions` and `CleanupTimeoutSeconds`
+(binder.go:602-663), so CODE-4's resume-side `compensateFailedSlotBind` and
+`noteCompensationOutcome` can read what they need; `resumeOnPod` holds `match.Pool`,
+`maxConcurrentSessions(match.MaxConcurrentSessions)` (start.go:3353, :4029) and the four
+`sessionserver.Server` collaborators `accountSlotFailure` needs (`slotHealth`, `slotStates`,
+`slotReplacement`, `slotLeakGauge`, sessionserver.go:401-421). CODE-5's new caller is feasible as
+written. — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:602-663;
+pkg/gateway/sessionserver/sessionserver.go:401-421,start.go:3353,:4029
+
+FACT: CODE-8's citation set is now clean after the earlier :1053→:954 fix. Verified individually:
+`leaseAssigned` declared :865 and set true :954; `Binder.Prepare`'s closure :866-869; its five
+`reclaim()` sites :883, :918, :923, :935, :950; `Binder.Launch`'s closure :997-1000 with the
+literal `true` at :998 and sites :1010, :1021, :1032; `failPhase` :1072-1082 with `b.drain`
+outside the `leaseAssigned` block; `drain` = `podclaim.DeleteClaim` at :1200-1202, whose own doc
+comment states "§4.6.3 (gateway is not a writer of Sandbox.status)", which is exactly what the
+staged tier-2 envtest case asserts on. Do not re-audit CODE-8's line numbers. — EVIDENCE:
+pkg/gateway/podlifecycle/podsession/binder.go:865-869,:883,:918,:923,:935,:950,:954,:997-1000,:1010,:1021,:1032,:1072-1082,:1200-1202
+
+FACT: the tier-11 adapter metric gate needs no edit and the proposal's reading of it is exact.
+`adapter_metric_catalog_test.go` derives its source of truth from a regex over `Name: "lenny_..."`
+in `pkg/adapter/metrics.go` (:26, :56) and errors when a registered name is missing from
+`docs/reference/metrics.md` or from the §16.1 catalog, with `undocumentedAdapterMetrics` (:34) and
+`specCatalogPending` (:49) as the only exemptions. So SPEC-6's §16.1 row plus CODE-9's
+`docs/reference/metrics.md` row are jointly sufficient and the adapter scrape-endpoint deferral is
+NOT a spec/18 phase dependency: the counter is emitted and catalogued without any later-phase
+artifact. — EVIDENCE: tests/tier11_docs/adapter_metric_catalog_test.go:26,:34,:49,:56,:95-115
+
+FACT: `slotSubjectFileRE` is `(slot|one_session_only|sole_session)[^/]*_test\.go$` and is
+unanchored at the head, so ANY new test file with "slot" anywhere in its basename enters
+`slotAddressCaseFiles`. `inventoryWalkRoots` includes `tests/`. Both
+`per_slot_substate_scope_doc_reconciliation_test.go` and
+`basic_level_echo_stamp_doc_reconciliation_test.go` already exist and are already registered
+(:175/:369 and :359), so the proposal's "extend in place" instruction is correct and adds no
+inventory row for them. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:175,:359,:369,:1170-1175,:1191
+
+MISTAKE: I nearly re-filed the `slotFailureWorkspaceFinalize` hazard that
+`[review-log.md:2712]` already self-suppressed, and I want the next agent to have the full picture
+so the round after this does not pay for it a third time. Two facts sharpen the earlier entry.
+First, the shipped stage constants live in `pkg/gateway/podlifecycle/podsession/binder.go:290-294`,
+NOT in `slotfailure.go`, yet the Files-touched line at non-spec-changes.md:3087-3088 puts the new
+constant in `slotfailure.go` — the file that holds `Reason()`'s `e.Stage == slotFailureWorkspacePrep`
+carve-out. Second, CODE-9's body (non-spec-changes.md:1714-1717) names ONLY the two
+`recordSlotFailure` lines and calls it "a measurement separating them", and slotbinder.go's
+Files-touched entry does not list the finalize branch. Under the metric-only reading everything is
+consistent (`recordSlotFailure(slotFailureWorkspaceFinalize, …)` at :294 beside
+`slotBindError(… slotFailureWorkspacePrep …)` at :295, and `lenny_slot_failure_total`'s
+`error_type` values are not enumerated in `docs/reference/metrics.md:166`, so no doc edit falls
+due). Under the Stage reading a finalize-stage `FailedPrecondition` reclassifies from
+`SlotReasonTransient` to `SlotReasonPolicyRejection`, which `NonRetryable()` reports true for.
+I judged, as r8 did, that a verifier refutes the finding on CODE-9's own scoping language.
+EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:290-294;
+pkg/gateway/podlifecycle/podsession/slotfailure.go:90-98; slotbinder.go:287,:294,:295;
+proposals/0081_.../non-spec-changes.md:1714-1717,:3087-3088
+
+USEFUL [review-log.md:2712]: saved me from filing the `slotFailureWorkspaceFinalize`
+reclassification. Its advice ("the finding to file is the AMBIGUITY of the scoping, not the
+reclassification") is right, and I still judged the ambiguity below the bar. Promote it; do not
+delete it.
+
+USEFUL [review-log.md:7149 in the archive, the citation sweep]: I spot-checked eleven of its
+claims at random (`sdkwarm.go:134`, `session.go:163`, `resume.go:50`/`:144`, `slotbinder.go:265`,
+`binder.go:1009`, `slotfailure.go:91-99`, `start.go:3353`, `scrubreport_server.go:451-481`,
+`client.go:807-824`, `upload_to_session.go` podRegistry guard) and every one resolved. The sweep's
+"do NOT re-run this" instruction is trustworthy; spend the round on mechanism instead.
+
+OPEN: the per-slot guard CODE-6 stages is a bare `sync.Mutex` handed out by `lockSlotGuard`, and
+`PrepareWorkspace` holds it "to the end of the call" — the whole client-streaming upload. A
+compensating `Shutdown` acquires the same guard before `s.mu`, and `sync.Mutex.Lock` does not
+observe the RPC context, so the reclaim's handler goroutine blocks past its own deadline behind a
+slow upload. The lock ORDER is sound and there is no deadlock (guard → s.mu everywhere; §10.1.4
+pass 1 holds s.mu and takes no guard). I judged this hardening rather than a broken mechanism and
+did not file it. Someone should decide whether the staged tier-7a lock-order case's "assert no
+deadlock across a stress budget" is enough, or whether the guard needs a context-aware acquire.
+EVIDENCE: proposals/0081_.../non-spec-changes.md (CODE-6, *Scope*/*Lock order*/*Lifetime*)
+
+UNVERIFIED: I did not audit the staged spec file's §4.7.1 rule set against CONF-1's sixteen named
+rules one-for-one. CONF-1 says "a rule with no case named against it is a coverage gap a reader
+sees by reading the two lists side by side" — nobody in this loop is recorded as having actually
+read them side by side. A test-coverage lens should.
+
+### [non-spec.9.review-fresh.1]
+
+DECISION: filed one finding — the r9 `removeSlotTreeVia` paragraph asserts `pkg/adapter/slotsession.go:217` "keeps discarding" `removeSlotTree`'s error, while CODE-6 stages exactly the opposite for that line — BECAUSE it is a flat, verifiable contradiction between two deliverables in the same document, both statements about one call site, introduced by this round's fix. ALTERNATIVES: I built and dropped three. (a) non-spec-changes.md:815-818 justifies making `noteCompensationOutcome` a method on `Binder` "because the series ... is emitted through a `Binder` hook, **both of which a package-level function can reach**" — the premise is inverted (it should be "neither of which"), but the instruction itself is unambiguous and no edit changes, so it is wording. (b) summary.md's new 0078 row cites `tests/tier4_integration/concurrent_delegation_proxy_test.go:168` as "whose cleanup"; the cleanup is at `:170` and `:168` is `rt.AcceptTimeout` (the sibling row's `concurrent_workspace_test.go:126` IS the cleanup) — accurate-but-immaterial drift in an impact table nobody applies. (c) SPEC-6 stages two §16.1 rows labeled `k8s_pod_name` and does not touch §16.1.1's attribute table at `spec/16_observability.md:297`, whose `Used on` column is currently exhaustive over the four shipped `k8s_pod_name` metrics; dropped because §16.1.1:293's normative rule is only that the label appear in the table (it does), no gate reconciles the `Used on` column, and `git log -L297,297` shows it has only ever been edited by a terminology rename, never to add a metric.
+
+FACT: r8→r9 was a large fix round. `diff -rq non-spec-r9 <proposal>` returns nothing (the "snapshot" the prompt names is identical to the current tree); the real delta is `scratchpad/cp-snap/.../non-spec-r8-start` vs the proposal, 1021 diff lines across non-spec-changes, checklist and summary. EVIDENCE: scratchpad/cp-snap/0081_.../non-spec-r8-start (mtime 2026-09-18 10:31) vs non-spec-r9 (12:26)
+
+FACT: the checklist renumbered this round. CODE-9 moved from S20 to S10 (ahead of the schema-dependent code steps, depending on S6+S9), pushing CODE-7→S11, CODE-8→S12, CODE-4-mint→S13, CODE-6→S14/S15, CODE-1→S16/S17, CODE-2→S18, CODE-4-compensation→S19, CODE-5→S20. All 21 `Depends on:` lines point backward; no cycle. Any finding quoting an old S-number is stale. EVIDENCE: implementation-checklist.md:33-46
+
+FACT: every line citation added in r9 that I checked resolves, and there are ~30 of them. Verified: binder.go 137/866-869/883/918/923/935/950/954/977-992/997-1000/1010/1021/1032/1072-1082/1079/2037/2043; slotbinder.go 353-361/502/528/542/543/574; credassign.go 400-408; metricsbackfill.go 149; gatewaymetrics_credential.go 185-193; gatewaymetrics.go 1170-1175; catalog.go 146/271; catalog_test.go 188-211; pkg/adapter/metrics.go 50/108; adapter_metric_catalog_test.go 26/34/49/100/110; spec_map_slot_address_registration_test.go 970-988/1173/1191; server.go 197/367/376; slotsession.go 217; holdstate.go 254; warmlayout_test.go 164-167; podscrub_test.go 747-749; slotlayout.go 115-131/136-139; client.go 807-824/860-867; user_revocation.go 129; session_test.go 284; state-machines.md 138; gateway-runtime-comms-remediation.md 980; seed-claim-register.py 192. Do not re-verify these from scratch.
+
+FACT: the only production constructor of `adapterv1.ShutdownRequest` outside generated code is `Client.shutdown` at `pkg/gateway/runtime/adapterclient/client.go:814`, so CODE-4's "set it in the builder" claim holds and the `--include=*_test.go pkg/ tests/` sweep set is complete (27 test files, reaching tiers 1, 2, 3, 4, 7a, 9, 10 — matching S16's tier line). EVIDENCE: `grep -rn "ShutdownRequest{" --include=*.go . | grep -v _test.go | grep -v /pkg/proto/`
+
+FACT: `spec161Metrics` in `pkg/observability/metrics/catalog_test.go` genuinely excludes every adapter metric carrying the §16.1 scrape deferral (`lenny_adapter_sopeercred_disabled_total`, `lenny_adapter_unaddressed_frame_rejected_total`) and includes the two that do not (`lenny_adapter_coordinator_hold`, `lenny_credential_rotation_inflight_ceiling_hit_total`). CODE-9's reason for keeping the untokened-entry series out of `catalog.go` is sound. EVIDENCE: catalog_test.go:41,:96; catalog.go:146,:271
+
+WATCHOUT: `pkg/adapter/metrics.go` registers no metric carrying `k8s_pod_name` today and the collectors are package-level vars with no access to `Server.podID`. SPEC-6's staged row labels `lenny_slot_shutdown_untokened_entry_total` by `k8s_pod_name`, and the staged call is `s.noteShutdownMetUntokenedEntry(sessionID)` — a method, so it can read `s.podID`, but `New` leaves `podID` empty when `POD_NAME` is unset. Nobody has stated which value the label carries there. EVIDENCE: pkg/adapter/metrics.go:34-104; pkg/adapter/server.go:190-196; non-spec-changes.md:267
+
+OPEN: `PrepareWorkspace` now holds the per-slot guard "from the frame that resolves the identifier to the end of the call" (non-spec-changes.md:2034-2036 region). A long multi-frame upload therefore blocks a compensating `Shutdown` for that slot for the whole upload, against a budget of `slotCleanupBudget(...)`. Nobody has checked whether that can turn a compensation into an unanswered (leaked) reclaim under an ordinary large-workspace upload. Not filed: the accounting treats an unanswered reclaim as leaked, which is fail-closed.
+
+UNVERIFIED: S10 (CODE-9) lands `func (b *Binder) noteCompensationOutcome(...)` whose only caller lands at S19/S16. If golangci-lint's `unused` runs with tests excluded at that step, tier 0 goes red on an unexported method with no callers. Whoever runs the implementation should check `.golangci.yml`'s `run.tests` before ordering S10 ahead of its callers. Not filed — the loop has already refuted one "intermediate commit leaves tiers red" finding as commit-ordering rather than end-state correctness.
+
+USEFUL [orchestrator note on review-log.md:3674]: the handoff it names is discharged. r9's CODE-1 adds `Server.removeSlotTreeVia`/`removeSlotTreeFn` and `ExitedCleanly: closeErr == nil && (live || treeErr == nil)`, so the staged §5.2 sentence now has a code deliverable behind it, with tier-1 cases on both sides of the `live` gate. EVIDENCE: non-spec-changes.md:336-340, :368, :376-394, :554-565
+
+### [non-spec.9.review-kubernetes.1]
+
+DECISION: returned an EMPTY findings list — BECAUSE both r8 findings are fixed in the staging and
+a second full pass over every Kubernetes surface the proposal touches turned up nothing that
+meets the bar. ALTERNATIVES: four candidates built and dropped, recorded below so a later lens
+does not rebuild them.
+
+FACT: r8 finding 1 is FIXED. The staged tier-2 envtest case no longer asserts a
+`lenny.dev/drain-request` stamp. It now asserts the per-pod `SandboxClaim` present on the typed
+refusal and deleted on the ordinary failure, and states in the same paragraph that the gateway is
+not a writer of `Sandbox.status` and that the annotation belongs to `Binder.DrainSandbox`.
+EVIDENCE: non-spec-changes.md:2637-2649. Both arms verified against the tree: the ordinary arm is
+`failPhase` → `b.drain` → `podclaim.DeleteClaim` (binder.go:1072,:1079,:1200-1202), and the
+refusal arm makes no apiserver write at all, because both `Prepare` callers return the error
+unchanged with no reclaim (finalize.go:280-283 "the outer finalize handler does not reclaim on a
+pre-Prepare error"; start.go:2633-2636).
+
+FACT: every CODE-8 and CODE-4 line citation I re-checked resolves. `leaseAssigned := false` is
+binder.go:865, the `Prepare` closure binder.go:866-869, `leaseAssigned = true` binder.go:954, the
+`Launch` closure binder.go:997-1000 with its literal `true` at :998, `failPhase` at :1072-1082,
+`drain`/`DeleteClaim` at :1200-1202. The five-row unconditional-teardown caller table is complete
+and accurate: `grep -rn "\.Shutdown(\|ShutdownRecycle(" pkg/ cmd/` outside tests returns exactly
+slotbinder.go:542, :574, binder.go:2037, :2043 and cmd/lenny-gateway/user_revocation.go:129, and
+CODE-4 sets the field inside `Client.Shutdown`/`ShutdownRecycle` so no caller edit is owed.
+
+FACT: SPEC-4's §4.6.1 replacement bullets match the shipped text word for word and the
+controller behind them. Shipped `idle` bullet at spec/04_system-components.md:417 and the
+`draining`, then `terminated` bullet with its false closing sentence at :418;
+`ProjectOccupancyPhase` switches on `o.Current` alone and never returns `Idle` from `Claimed`
+(pkg/controller/warmpool/occupancy.go:128-140), and its own comment states the rule the edit
+adopts at :57-63. The re-key leaves §4.6.1's bullet list a partition on the projection's real
+input.
+
+FACT: open decision 27's citations all resolve: `observeClaim` is a level read mapping NotFound
+to no-claim (occupancy.go:217-227), `claimToSandbox` keys every claim event on the one owning
+Sandbox (occupancy.go:281-291), the per-pod claim carries no production finalizer (the only one
+in the tree is the test hold at pkg/controller/warmpool/gc_reclaim_internal_test.go:69),
+`DeleteClaim` is unconditional (podclaim/claimer.go:322-332), and `expiredByUptime` is the only
+used-pod guard (podclaim/slotclaimer.go:336-347). Nothing to file under (a) there.
+
+FACT (candidate 1, dropped): the widened `leaked` disposition does NOT create a new
+stuck-finalizer footgun. `SlotClaimer.ReleaseSlot` with `leaked=true` returns before the Redis
+decrement and before any claim patch or DELETE (podclaim/slotclaimer.go:830-840), so the claim
+stays non-terminal and `activeClaimReferences` holds the Sandbox finalizer
+(pkg/controller/sandbox/finalizer.go:64,:116-129). That is pre-existing §6.2 semantics, written
+down in the shipped doc comment at slotclaimer.go:795-809 ("retired by the §5.2/§6.2 liveness
+paths"), and CODE-5 states the trade it widens explicitly at non-spec-changes.md:1116-1128.
+Hardening, not a defect of this proposal.
+
+FACT (candidate 2, dropped): the in-`pkg/` envtest file placement is established repo
+convention, not a misplacement. `pkg/gateway/session/recycle/scrubreporter_seams_envtest_test.go`,
+`pkg/embedded/stack/*_envtest_test.go` and `cmd/lenny-gateway/statelessrouting_envtest_test.go`
+all carry NO build tag and run under the unit tier's `go test ./...`
+(cmd/lenny-test/cmd_run.go `runUnitTier`), while the component tier runs only
+`./tests/tier2_component/...`, `./tests/testinfra/containers/...` and `./cmd/lenny-ops/...`
+with `-tags=component` (cmd/lenny-test/cmd_run.go:965-1011). So "Tier 2" in the proposal names the
+kind of test rather than the runner's tier target, exactly as the shipped precedents do.
+
+FACT (candidate 3, dropped): no chart or RBAC edit site is missed. The proposal adds no apiserver
+access: `DrainSandbox` → `StampDrainRequest` is a JSON-merge patch on the agent Pod's annotation
+under `client.FieldOwner(ownership.Gateway)` (podclaim/slotclaimer.go:95-108), and the WPC remains
+the sole writer of `Sandbox.status`. `charts/lenny/templates/` carries controller, pool-scaling and
+ops RBAC only, with no gateway Role at all — a pre-existing condition, unchanged by this proposal
+and reachable today from `applySlotRetryPolicy`.
+
+FACT (candidate 4, dropped): CODE-5's new `resumeOnPod` caller of `accountSlotFailure` can reach
+`DrainSandbox` and so stamp `lenny.dev/drain-request` from the §7.3 re-attach for the first time.
+That is level-triggered and correctly decomposed (gateway stamps an annotation, WPC consumes it
+and writes the phase), so it is idiomatic. This repeats r8's OPEN, which I now close as "checked,
+not a finding" rather than leaving it open.
+
+WATCHOUT: `slotAddressCaseFiles` membership is DERIVED, not only hand-listed. Rule 1 is a call
+into `slotstate.|ClaimSlot(|ReleaseSlot(|ReserveSlotOnPod(|claimAtCreate(|BindReservedSlot(`;
+rule 2 is a file name matching `(slot|one_session_only|sole_session)[^/]*_test\.go$`; rule 3 is a
+tier-11 file reading TEST-GAPS.md. EVIDENCE:
+tests/tier0_static/spec_map_slot_address_registration_test.go:1160-1173, :1189-1191, :1211-1229.
+Note `ReleaseSlot\(` does NOT match `ReleaseSlotReservation(`.
+
+UNVERIFIED (carried from r8, still unchecked by anyone): whether the new
+`pkg/gateway/podlifecycle/podsession/binder_envtest_test.go` owes a `slotAddressCaseFiles` row.
+Its name matches neither derived name rule, and whether it owes one turns entirely on whether the
+implementor's fixture calls the slot claim surface. The proposal states the conditional rule
+(non-spec-changes.md:3037-3044) rather than the file, which is defensible; a test-coverage lens
+should decide whether that is enough.
+
+UNVERIFIED: the staged tier-4 datastore-crossing case asks
+`tests/tier4_integration/recycle_scrub_path_test.go` to exercise a bind whose compensating
+`Shutdown` goes unanswered, but that file's existing driver (`bindRecyclingSession` →
+`recycleBinder`) runs the session-mode recycle path, and the compensation lives on the
+concurrent-slot path through `materializeSlot`. The fixture has miniredis and so can carry a slot
+counter, but nobody has confirmed a concurrent-pool arm is constructible there.
+EVIDENCE: tests/tier4_integration/recycle_scrub_path_test.go:1-26, :203-218, :409-421;
+non-spec-changes.md:2673-2687.
+
+USEFUL [non-spec.8.review-kubernetes.1]: its `Binder.Prepare` FACT (ordinary failure is
+`failPhase` → `b.drain` → `DeleteClaim`, and the annotation stamp is a different mechanism) is
+what let me confirm the r8 fix in one read. Its `slotAddressCaseFiles` FACT saved the whole
+inventory derivation.
+
+USEFUL [non-spec-recheck-3.1.review-kubernetes.1]: its leaked→claim→finalizer derivation, cited
+forward by r8, is why candidate 1 above took ten minutes instead of an hour.
+
+### [non-spec.9.review-mechanism.1]
+
+FACT: the per-slot guard and the reclaim hold are NESTED, not parallel, and the guard strictly
+contains the hold on every single-pass reclaim path. CODE-6's Scope paragraph acquires the guard
+"before its resolve" for `PrepareWorkspace`, `FinalizeWorkspace` and `RunSetup` and "before they
+take `s.mu`" for `Shutdown`, `releaseSessionSlot` and `terminateHeldSession`
+(non-spec-changes.md:1449-1455); the hold is tested only inside `ensureSlotStateLocked`
+(:1291-1295), which sits under the guard; and CODE-1 states outright that "the guard outlives the
+hold" (:250-251, `defer unlockSlot()` at :253 registered before `defer release()` at :310, so LIFO
+runs `release()` first). Consequence: a workspace RPC racing a reclaim BLOCKS on the guard and is
+never refused with `errSlotReclaimInProgress`; when it wakes the hold is already gone. The hold's
+refusal survives only for `AssignCredentials`, `StartSession`, `Resume` and `ConfigureWorkspace`
+(which take no guard) and, on the §10.1.4 two-pass path, in the window between
+`deregisterStartedSessions` (hold, no guard) and `terminateHeldSession` (guard). FILED.
+
+FACT: `releaseSessionSlot` calls NO `Runtime.Close`. Its whole body is `deregisterSlot` +
+`removeSlotTree` + `cancelPodMCPIfRuntimeIdle`. EVIDENCE: pkg/adapter/slotsession.go:214-220.
+`terminateHeldSession` does close (pkg/adapter/holdstate.go:251-252). The tier-1 hold case at
+non-spec-changes.md:2249-2250 names both as parkable "inside `Runtime.Close`"; only the second is.
+FILED.
+
+FACT (verified, do not re-derive): every field number SCHEMA-1 stages is free in
+schemas/lenny-adapter.proto exactly as the basis column claims, `ErrorCode` runs to 27, and the
+Phase-2 1000-1999 comment declares no `reserved` statement. EVIDENCE: schemas/lenny-adapter.proto,
+messages `PrepareWorkspaceRequest`/`FinalizeWorkspaceRequest`/`RunSetupRequest`/
+`AssignCredentialsRequest`/`ResumeRequest`/`ShutdownRequest`/`ShutdownResponse`.
+
+FACT: every production `ShutdownRequest` literal in the tree is built in ONE place,
+`Client.shutdown` (pkg/gateway/runtime/adapterclient/client.go:813-824), reached by both
+`Client.Shutdown` (:807) and `Client.ShutdownRecycle` (:860). All five named callers
+(slotbinder.go:542, :574, binder.go:2037, :2043, cmd/lenny-gateway/user_revocation.go:129) go
+through those two, so CODE-4's "no caller can forget it" holds. `grep -rn "ShutdownRequest{"` over
+non-test Go returns only that one site plus the generated pb.go.
+
+FACT: CODE-1's staged fenced-form early returns skip shipped clause three
+(`if rc := req.GetRecycle(); rc != nil { s.startPodScrub(rc) }`, pkg/adapter/session.go:288-290),
+but the unconditional form does NOT early-return on an absent entry, so the occupancy-zero
+`ShutdownRecycle` (slotbinder.go:574, sent after the session's own Shutdown already removed the
+entry) still reaches the whole-pod scrub. I chased this as a dropped scrub and refuted myself.
+
+FACT: `failPhase` (binder.go:1072-1082) reclaim/leaseAssigned citations are exact: `reclaim()` at
+:950, `leaseAssigned = true` at :954, `drain` = `podclaim.DeleteClaim` (:1200-1202). The tier-2
+envtest case's "SandboxClaim deleted on the ordinary arm, present on the refusal arm" is correct.
+
+MISTAKE (mine, nearly filed, WITHDRAWN): "`stageWorkspace` (binder.go:1283, the only gateway
+`PrepareWorkspace` call site at :1327) is never named as a token-threading site, so every bind
+sends an empty `bind_attempt` and is refused `INVALID_ARGUMENT`." Dropped as site-list
+completeness: CODE-4's target list says `Binder.Prepare` "mints and carries", and this loop has
+already refuted two findings of exactly that form (the `validateBindFields` fixture sweep and the
+CODE-9 wiring-site one).
+
+MISTAKE (mine, nearly filed): non-spec-changes.md:815-817 argues `noteCompensationOutcome` is a
+method "rather than a free function, because the series ... is labeled by `pool` and
+`k8s_pod_name` and is emitted through a `Binder` hook, both of which a package-level function can
+reach." The clause inverts its own argument (should be "cannot"). One word, no mechanism turns on
+it; below the bar, but a fixer passing nearby should correct it.
+
+UNVERIFIED: the §10.1.4 two-pass path holds the reclaim hold for every started session from pass 1
+until each member's pass-2 destroy, "up to ten seconds later" (non-spec-changes.md:1217-1219). No
+staged text bounds how many identifiers are held at once, and §5.2's bound is stated per cleanup.
+Nobody has checked whether a pod-wide hold-timeout termination therefore refuses every bind on the
+pod for that whole window, or whether that matters given the pod is being torn down anyway.
+
+### [non-spec.9.review-operational.1]
+
+FACT: The alert surface is untouched by this proposal and needs no work. `grep -rn "lenny_slot\|leaked_slots" pkg/alerting/ docs/runbooks/` returns nothing: no bundled alert and no runbook references any slot series, so SPEC-6's two new counters create no alert-to-runbook obligation and tests/tier11_docs/alert_runbook_test.go is unaffected. — EVIDENCE: spec/16_observability.md:14-15 (the only slot rows in §16.1, neither cited by an alert), pkg/alerting/rules/ (no slot match)
+
+FACT: CODE-9's observability citations all resolve. Verified in tree: gatewaymetrics_credential.go:185-193 (`lenny_slot_failure_total` collector), gatewaymetrics.go:1170-1175 (`IncSlotFailure`), binder.go:137 (`SlotFailure` hook field), slotbinder.go:353-361 (`recordSlotFailure`), cmd/lenny-gateway/metricsbackfill.go:149 (the only production wiring), pkg/adapter/metrics.go:50/:108 with catalog.go:146/:271, catalog_test.go:188-211 (the two-way `spec161Metrics` reconciliation), tests/tier11_docs/adapter_metric_catalog_test.go:26,:34,:49,:56,:100,:110, tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go (the one-metric-per-file precedent), tests/tier0_static/spec_map_slot_address_registration_test.go:1173,:1191,:970-988. Do not re-verify these. — EVIDENCE: pkg/observability/metrics/catalog_test.go:188-211
+
+FACT: `spec161Metrics` is a hand-transcribed Go slice reconciled only against `MetricCatalog()`, never parsed from spec/16. Nothing in the tree parses §16.1 for metric names except tests/tier11_docs/adapter_metric_catalog_test.go (substring containment on registered adapter names) and tests/tier11_docs/runtime_page_metric_names_resolve_test.go (reader pages -> §16.1). So adding a §16.1 row with no catalog.go entry breaks no gate, and CODE-9's exclusion argument holds. — EVIDENCE: pkg/observability/metrics/catalog_test.go:15,:188-211
+
+WATCHOUT: The §5.2 `error_type` label set is not just a label set. `SlotBindError.Reason()` branches on it: `if e.Stage == slotFailureWorkspacePrep { return SlotReasonTransient }` under the `PermissionDenied, FailedPrecondition` case. Any change to which constant a bind stage stamps changes the §5.2 retry category and the client-visible `retryable` flag. CODE-9's new `slotFailureWorkspaceFinalize` constant does exactly that for FinalizeWorkspace and no deliverable widens the predicate — filed as this round's only finding. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotfailure.go:91-99, binder.go:286-299
+
+DEFERRED [proposals/.../non-spec-changes.md:1697-1699]: CODE-9 claims "SPEC-6's row for this series carries the deferral wording verbatim, so it follows the §16.1 rows that already carry it." It does not. The four shipped deferral rows read "emitted by the adapter process inside the agent pod and therefore outside the [§16.9](#169-prometheus-scrape-targets-and-crds) default scrape target set until a deployer wires an adapter scrape target" (spec/16_observability.md:186-189); SPEC-6's staged row reads "Adapter-side; not scraped until the adapter metrics endpoint is wired" (spec-changes.md:1000). Not filed: no gate checks the phrasing, the exclusion argument stands on `spec161Metrics` being hand-maintained, and the operational fact reaches the operator either way. The honest fix is to soften CODE-9's sentence (or restate SPEC-6's row in the sibling phrasing, which is a spec-lane edit).
+
+UNVERIFIED: After CODE-5, a failed `Binder.Resume` on a concurrent pool reaches `accountSlotFailure` (health ledger `RecordFailure`/`MarkLeaked`, leak gauge, the §5.2 fail-or-leak drain) while emitting no `lenny_slot_failure_total`: `recordSlotFailure` is called only from the five `materializeSlotStages` sites (slotbinder.go:287,294,302,309,322) and `Binder.Resume` (binder.go:1590) calls none of them. A pod can therefore be drained at the `ceil(maxConcurrentSessions/2)` threshold with that counter flat. I judged this pre-existing (Resume never emitted it) and not widened in kind, so I did not file it. Someone should decide whether the resume arm deserves an `error_type` value, or whether §16.1's row description should say the counter covers the bind path only. — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1590, slotbinder.go:353-361, spec/16_observability.md:14
+
+UNVERIFIED: SPEC-6's superseded row says "the reclaim released nothing and the slot is not leaked", while CODE-4 computes the slot's disposition as `compensation leaked || relErr != nil` (non-spec-changes.md:988, :2503-2505), so a `superseded` compensation whose `ReleaseSlotReservation` then errors both increments the counter and marks the slot leaked. I read the row as scoped to the reclaim's own effect and did not file it. A reviewer who reads it as an operator-facing disjointness claim between this counter and `lenny_adapter_leaked_slots` should revisit. — EVIDENCE: spec-changes.md:999, non-spec-changes.md:2503-2505
+
+FACT: `diff -rq` between scratchpad/cp-snap/.../non-spec-r9 and the proposal directory is empty. The non-spec lane's round 9 is its FIRST round on the hand-revised token staging; nothing in the non-spec file was written by a fixer in this loop, so `introducedBy: pre-existing` is the right answer for defects found there.
+
+### [non-spec.9.review-performance.1]
+
+DECISION: filed two findings, both consequences of round 8's per-slot-guard fix, and none on
+capacity — BECAUSE the token mechanism still adds no etcd, Postgres or Redis write on any path
+(one `crypto/rand` string in gateway process memory per attempt, carried as a scalar on six
+existing messages; two low-cardinality counters; two per-pod adapter maps). The whole delta this
+round is latency and charge-back on the teardown path, which is where both findings live.
+ALTERNATIVES: I built and dropped (a) `slotGuards` unbounded growth, refuted below; (b) the
+synchronous compensation blocking the client goroutine, already Trap'd at review-log.md:155 and
+FILED as the queue-FIFO item at review-log.md:270; (c) metric cardinality, examined in round 8.
+
+FACT: round 8's fix put `Shutdown` INSIDE the per-slot guard, and the guard is acquired BEFORE the
+bind-attempt comparison. All three refusal arms (`ABSENT`, untokened `SUPERSEDED`, mismatched
+`SUPERSEDED`) execute after `unlockSlot := s.lockSlotGuard(sessionID)`, so a reclaim that by
+construction removes nothing still waits for the holder's whole materialization. — EVIDENCE:
+non-spec-changes.md:252-278
+
+FACT: the guard's holders are unbounded in wall time and two of them take no context at all.
+`workspace.MaterializeWithPolicy` and `MaterializeOverlayWithPolicy` have no `ctx` parameter
+(pkg/adapter/workspace/materialize.go:157,:203); `RunSetup` runs the setup commands under
+`setupPolicy.timeoutSeconds`, and spec/14_workspace-plan-schema.md:99 says that with no
+per-command and no aggregate cap "the command runs until the pod is killed by an external
+deadline". `lockSlotGuard` returns a plain `sync.Mutex` unlock, so no RPC deadline bounds the
+wait. — EVIDENCE: non-spec-changes.md:1444-1459; pkg/adapter/workspace/materialize.go:157,:203;
+spec/14_workspace-plan-schema.md:99
+
+FACT: every timed-out `Shutdown` is charged as a LEAK, on both teardown call sites.
+`sbe.Leaked = cerr != nil || !cleanly` (non-spec-changes.md:805,:882) and the shipped
+`leaked = err != nil || !cleanly` (pkg/gateway/podlifecycle/podsession/slotbinder.go:543). A
+`leaked` slot stays counted in the pod's Redis occupancy until pod termination and counts
+persistently toward the `ceil(maxConcurrentSessions/2)` drain trigger, so at
+`maxConcurrentSessions: 2` ONE false leak drains the pod. — EVIDENCE:
+spec/06_warm-pod-model.md:160
+
+FACT: shipped `Shutdown` waits on nothing. It takes `s.mu` for the deregistration alone and
+proceeds through `Runtime.Close` and `removeSlotTree` with the lock released, so today a revoke or
+a session-end teardown is not delayed by an in-flight `FinalizeWorkspace`. Any claim that the
+guard "degrades nothing" has to be argued against this. — EVIDENCE: pkg/adapter/session.go:236-280
+
+FACT: the §11.4 revoke fan-out cannot reach a session that is still MID-BIND, because
+`podRegistry.Put` runs only after the bind returns (pkg/gateway/sessionserver/start.go:2936,:4057)
+and the fan-out iterates `p.registry.Snapshot()`. Its exposure to the guard is therefore through
+the §7.4 mid-session upload alone, which does hold the guard
+(`pkg/gateway/sessionserver/upload_to_session.go:128,:134`). Do not argue the revoke case from a
+mid-bind session. — EVIDENCE: cmd/lenny-gateway/user_revocation.go:121-129;
+pkg/gateway/sessionserver/start.go:2936
+
+FACT/REFUTED: `slotGuards` growth is NOT a finding, and the staged bound sentence is loose rather
+than harmful. non-spec-changes.md:1476-1477 says "The table's bound is one pointer per distinct
+session the pod has served, and `recycle.maxSessionsPerPod` retires the pod at that count", but
+`sessions_served` advances only on `ReportSessionScrub`, so a FAILED bind adds a `slotGuards` entry
+and advances nothing. The growth is still bounded in practice because a bind failure is a §6.2
+windowed `failed` slot and `ceil(maxConcurrentSessions/2)` of them in five minutes drains the pod,
+so the table cannot reach a size that matters. I chased this to the end; do not re-chase it. —
+EVIDENCE: non-spec-changes.md:1476-1477; spec/06_warm-pod-model.md:160
+
+WATCHOUT: the Testing section parks a materialization and then runs "the matching `Shutdown`"
+(non-spec-changes.md:2745-2751). MATCHING is the arm that legitimately destroys. No staged case
+drives a NON-matching (superseded) reclaim against a parked section, which is the arm where the
+guard costs a refusal that should be free, and no staged case asserts any latency bound on the
+acquisition. — EVIDENCE: non-spec-changes.md:2745-2751
+
+OPEN: should `lockSlotGuard` be context-aware at all? A `chan struct{}`-based semaphore selected
+against `ctx.Done()` would let the two bounded teardown callers (§11.4's 10s/20s, §10.1.4's ten
+seconds) fail fast instead of blocking past their own deadline, at the cost of a refusal code on a
+teardown. Nobody has picked. The cheaper half of the answer, comparing the token under `s.mu`
+before taking the guard, is finding 1 and needs no new code on the wire.
+
+### [non-spec.9.review-reliability.1]
+
+FACT: `Server.Resume` does substantial UNLOCKED path work against handed-out paths, exactly the
+`ensureSlotPaths` pattern CODE-6's per-slot guard was invented for. `checkpointRootsForSession`
+takes `s.mu`, copies `st.paths.Current`/`.Sessions`, RELEASES `s.mu`, and returns the roots
+(pkg/adapter/slot.go:183-207); `restoreChunks` then fetches every chunk over the network and runs
+`workspace.ExtractTree(roots, pr)` with no lock and no ctx (pkg/adapter/resume.go:169-208), called
+from `Resume` at resume.go:106. `workspaceRootForSession` (slot.go:156-165) is the same hand-out.
+EVIDENCE: pkg/adapter/slot.go:183-207; pkg/adapter/resume.go:106,:169-208.
+
+MISTAKE: the r9 rewrite of CODE-6's guard scope (non-spec-changes.md:1458-1459) exempts `Resume`
+with "they resolve and then do no path work beyond the resolve's own, which runs under `s.mu`".
+True for `AssignCredentials` (`assignCredentialsSlot` holds `s.mu` across
+`writeSlotCredentialFile`, slotcreds.go:24-44) and for `StartSession` (its only later file write
+is the pod-global manifest). FALSE for `Resume`. The checklist's S15 line repeats the same
+omission. Filed this round as finding 1.
+
+WATCHOUT: the concurrent partner that makes it bite is NOT only the compensating `Shutdown`
+CODE-4 newly adds to `Binder.Resume`'s failure branch. `terminateHeldSession`
+(pkg/adapter/holdstate.go:228-254) fires on the §10.1.4 hold timeout in its own goroutine, takes
+the guard under CODE-6, and calls `removeSlotTree(m.state)` at holdstate.go:254 — with an
+in-flight `Resume` extraction holding no guard at all. That pair is unambiguously concurrent and
+needs no client-deadline reasoning to reach.
+
+DEFERRED [implementation-checklist.md]: S15's guard-scope sentence enumerates
+`FinalizeWorkspace`, `RunSetup`, `PrepareWorkspace`, `Shutdown`, `releaseSessionSlot` and
+`terminateHeldSession` and omits `Resume`. If finding 1 lands in CODE-6, S15 needs `Resume` added
+to the same list. The spec fixer may not touch the checklist; the reconciliation pass must.
+
+FACT: two staged deliverables give opposite instructions for the SAME line,
+`pkg/adapter/slotsession.go:217`. CODE-1's new r9 paragraph says `removeSlotTree`'s "two other
+callers (`pkg/adapter/slotsession.go:217`, `pkg/adapter/holdstate.go:254`) keep calling it
+directly and keep discarding its error" (non-spec-changes.md:390-391); CODE-6 says
+"`releaseSessionSlot` stops discarding `removeSlotTree`'s error and logs it with `slog.Warn` …
+`pkg/adapter/slotsession.go` gains a `log/slog` import" (:1222-1227), and the files-touched list
+agrees with CODE-6 (:3072-3074). Filed as finding 2. EVIDENCE: pkg/adapter/slotsession.go:214-218.
+
+FACT (checked, no finding): every production `adapterv1.ShutdownRequest` in the tree is built in
+one place, the unexported `Client.shutdown` builder at
+pkg/gateway/runtime/adapterclient/client.go:813-824, reached by `Client.Shutdown` (:807-809) and
+`Client.ShutdownRecycle` (:860-867). `grep -rn "ShutdownRequest{" --include=*.go pkg/ cmd/ tests/
+sdks/` outside `_test.go` returns that site and the generated pb.go alone. So CODE-4's removal of
+the crash-takeover row from the unconditional-teardown caller table leaves no production teardown
+uncarried, and no shipped path can meet the two-field `INVALID_ARGUMENT` refusal.
+
+FACT (checked, no finding): the claim-register `deferral_id: "R8"` the r9 edit adds is real —
+`### R8. Reciprocal host-conformance battery` is at gateway-runtime-comms-remediation.md:980.
+
+FACT (checked, no finding): `Shutdown`'s defer order is right as staged. `defer unlockSlot()` is
+registered before `defer release()`, and Go runs defers LIFO, so the slot guard does outlive the
+reclaim hold exactly as the comment at non-spec-changes.md:250-251 claims.
+
+USEFUL [Settled: "`ensureSlotStateLocked` calls `slotlayout.EnsureTree` BEFORE registering"] and
+[Settled: "A retry inherits the slot TREE and nothing else"]: both pointed at the hand-out-paths
+pattern that turned out to be the whole of finding 1.
+
+### [non-spec.9.review-security.1]
+
+DECISION: returned an empty findings list for the security lens on the non-spec staging — BECAUSE every control this lens owns either survives the change unchanged or is tightened by it, and the three security-adjacent residues I could substantiate are already on the refuted list. ALTERNATIVES: (a) file the `slotGuards` lifetime bound ("one pointer per distinct session the pod has served, and `recycle.maxSessionsPerPod` retires the pod at that count", non-spec-changes.md:1477-1479) as a false bound, because a failed bind adds a permanent table entry while `sessions_served` does not advance (`RecordSessionScrub` is the only writer and CODE-1 gates the report on `live`) — rejected as capacity hygiene rather than a security bound, and "merely less strict than it could be is NOT a finding"; (b) file CODE-1's narrowing of `ReportSessionScrub` from the shipped `bound` gate to `live` as a relaxation of the `maxSessionsPerPod` pod-reuse counter — rejected because on the paths it narrows (a pre-start compensating `Shutdown`) the tree sends no `Shutdown` today at all, so the narrowing preserves shipped counting rather than relaxing it, and the spec lane settled the §5.2 one-report rule behind it.
+
+FACT: the unconditional-teardown caller table (non-spec-changes.md:719-727) is COMPLETE against the tree and all four in-tree line cites resolve exactly. `grep -rn "ShutdownRequest{" --include=*.go pkg/ cmd/ tests/ sdks/` finds exactly ONE production constructor, `pkg/gateway/runtime/adapterclient/client.go:814` inside the unexported `Client.shutdown` builder; every other hit is a `pkg/adapter` or `tests/` literal. So the "set the field in the builder, no caller edited" claim holds and no production teardown can silently forget the field. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:542,:574; binder.go:2037,:2043; cmd/lenny-gateway/user_revocation.go:129; pkg/gateway/runtime/adapterclient/client.go:807-824,:860-867.
+
+FACT: `AssignCredentials` has exactly two gateway call sites and both are inside the bind sequence (`pkg/gateway/podlifecycle/podsession/binder.go:1256` in `Binder.Prepare`, `slotbinder.go:403` in `materializeSlotStages`). There is NO mid-session credential-refresh path through `AssignCredentials`, so CODE-6's "AssignCredentials always carries a non-empty token" cannot break §4.9 renewal. Renewal and revocation go through `RotateCredentials`/`RevokeCredentials`, whose adapter handlers use `slotStateLocked` (read-only), NOT `ensureSlotStateLocked`, so they never reach the five-rule predicate and neither the phase gate nor the identity gate can refuse them. EVIDENCE: pkg/adapter/slotcreds.go:69-72,:119-122 versus :25-27.
+
+FACT: `Binder.Launch` issues only `ConfigureWorkspace` or `StartSession` and calls no `assignCredentials`; `Binder.Bind` is a thin `Claim`→`Prepare`→`Launch` composition and runs no bind-sequence RPC of its own. So CODE-4's three mint sites (`materializeSlot`, `Binder.Prepare`, `Binder.Resume`) are exhaustive over the paths that carry a token. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:770-803 (Bind), :976-1053 (Launch), :949 (the only assignCredentials call).
+
+FACT: the §7.4 mid-session admission guard CODE-6's mid-session exemption relies on is real and tenant-scoped, not merely binding-scoped: `handleUploadToSession` resolves the row with `s.store.Get(ctx, tenantID, id)` BEFORE `s.podRegistry.Get(row.ID)`, so a foreign tenant cannot reach another tenant's live binding and thereby reach the untokened, phase-gate-exempt resolve arm. EVIDENCE: pkg/gateway/sessionserver/upload_to_session.go:72-75, :112-121.
+
+FACT: the coordinator-hold allowlist in the edge-case bullet is quoted accurately — `CoordinatorFence`, `NegotiateVersion`, `AdapterEvents`, `Health/Check`, `Health/Watch` and nothing else, so a compensating `Shutdown` to a held pod is refused and classified leaked as the bullet states. EVIDENCE: pkg/adapter/holdstate.go:45-59.
+
+WATCHOUT: `CredentialAssigner` (pkg/gateway/podlifecycle/podsession/binder.go:319-333) declares only `AssignProto` and `ReleaseSession(sessionID)`, so CODE-4's `releaseAttemptCredentials(minted)` needs the interface to gain a per-lease `Release(leaseID string)`. This is implementable (`credassign.Service.Release` at credassign.go:380, `Client.Release` at client.go:299 are both exported) and an earlier round deliberately declined to file it because both files needing the edit are already in Files-touched. Do not re-derive it and do not file it. EVIDENCE: review-log.md:2384, :2675-2676.
+
+UNVERIFIED: CODE-6 states the lazy seed of `s.slots` inside the create arm ("`New` never initialises that map") but states no seed for the two new maps `Server.reclaiming` and `Server.slotGuards`. A write into a nil `slotGuards` inside `lockSlotGuard` panics. I judged this below the bar as implementation minutiae an implementor closes the same way, and over-specification is itself a defect — but an implementor should seed both. EVIDENCE: non-spec-changes.md:1315-1318 (the `s.slots` seed sentence), :1454-1459 (`lockSlotGuard`'s described body, which says "reads or creates the slot's mutex" and nothing about seeding the table).
+
+USEFUL [Settled, the `slot_was_started` correction]: the orchestrator brief for round 9 STILL asserts "ShutdownResponse keeps slot_reclaim and gains slot_was_started (4)". `grep -rn "slot_was_started" proposals/0081_.../` returns hits only inside the review log's own corrections. The ledger saved me from filing a phantom omission; it has now saved at least seven lenses.
+
+USEFUL [the refuted-family index in Traps]: the four already-refuted credential/residue findings (the §5.2 timer-cancellation exposure, the stranded-token residue, the self-recreated-entry residue, the started-path `treeErr` discard) are exactly the four candidates my lens re-derived independently. Reading the refuted list first was worth roughly a full pass.
+
+### [non-spec.9.review-test-coverage.1]
+
+DECISION: Filed ONE finding — CODE-2's third confirmation site (`pkg/adapter/sdkwarm.go:261`, SDK-warm `ConfigureWorkspace`) gains a refusal arm with actions no other site has (`SDKWarmRuntime.DemoteSDK`, clear `s.sdkConnected`, remove NO entry and NO tree, answer `codes.Aborted` where the site's other arms answer `codes.Internal`, all under the `fresh` guard) and the whole `## Testing` block names no case for it at any tier — BECAUSE a grep of the Testing span (non-spec-changes.md:2167-2853) for `sdkwarm|DemoteSDK|sdkConnected|ConfigureWorkspace` returns only two hits, both about ConfigureWorkspace as an entry CREATOR (:2558, :2585), never as a confirmation site; the tier-1 CODE-1/CODE-2 file list is `slotsession_test.go` + `socketruntime_test.go` only (:2284-2285) and the tier-7a race is "driven over both RPCs CODE-2 gives the rollback" (:2696), i.e. two of three. — ALTERNATIVES: rejected filing DOCS-2's `DemoteSDK` row as ungated (a doc row is not a behavior, and DOCS-1/:2036-2042 and DOCS-3/:2812-2816 show the proposal states its ungated-doc reasons, so the DOCS-2 silence is at most bookkeeping); rejected the `slotFailureWorkspaceFinalize` reclassification (see WATCHOUT below).
+
+WATCHOUT: do NOT re-file "the new `slotFailureWorkspaceFinalize` stage constant has no test / reclassifies a finalize FailedPrecondition from transient to policy_rejection". review-log.md:2712 records round 8 deriving exactly this and declining it: CODE-9 (non-spec-changes.md:1714-1717) calls it "a measurement separating them" and cites only the two `recordSlotFailure` lines, and the Files-touched entry (:3087-3088) names only the constant, so the site adoption is never stated and a verifier refutes the finding on that scoping. `SlotBindError.Reason()`'s only stage-sensitive arm is `e.Stage == slotFailureWorkspacePrep` (pkg/gateway/podlifecycle/podsession/slotfailure.go:96) and the shipped table row `{"workspace_prep", codes.FailedPrecondition, SlotReasonTransient}` (pkg/gateway/sessionserver/slotretry_test.go:395) stays green either way, so nothing in the tree turns red to force the question. — EVIDENCE: review-log.md:2712
+
+FACT: the whole `## Testing` block is non-spec-changes.md:2167-2853, split into eleven subsections; the per-deliverable coverage is complete except as noted above: CODE-1/2 tier 1 (:2282), adoption orderings tier 1 (:2379), CODE-4/5/7/8 tier 1 (:2406), tier 3 wire (:2535), tier 10 conformance (:2615), CODE-3 edge list (:2628), tiers 2/4/7a/8/9 (:2635), tier 11 docs (:2791). No tier the change reaches is absent. — EVIDENCE: non-spec-changes.md:2167-2853
+
+FACT: the SPEC-5 §4.7.1 start-confirmation rule is stated universally — "The confirmation is required of every request that starts a session, including one that carries no token of its own" — and §15.4 publishes non-conformance against it, so the third site is a published-contract obligation rather than an internal detail. That is why an untested third site is a coverage gap rather than a redundant repetition. — EVIDENCE: spec-changes.md:814, :894
+
+DEFERRED [implementation-checklist.md, S18]: S18 (:51) tells the implementor the SDK-warm refusal runs "through `releaseSessionSlot` with the §6.1 `DemoteSDK` fallback rather than a bare `Runtime.Close`". CODE-2's current body says the opposite in terms: the arm "routes neither through `releaseSessionSlot` ... nor through the `DemoteSDK` RPC handler ... both deregister the entry and remove the tree ... which is the act SPEC-5's confirmation rule bars on a refused confirmation" (non-spec-changes.md:609-615). What is true is CODE-2's version: `sw.DemoteSDK` is called directly and `s.sdkConnected` is cleared, with no registry or tree removal. This is a FOURTH checklist contradiction beyond the three the round-9 brief names (S1, S17, S7), and it is the dangerous one, because an implementor following S18 destroys a successor's entry and tree. — EVIDENCE: implementation-checklist.md:51 vs non-spec-changes.md:609-615
+
+USEFUL [Standing context, Settled "`ConfigureWorkspace` sets `st.started = true`" and the sdkwarm caller entries at review-log.md:49, :553, :1301]: these gave the three-site caller list and the published-obligation decision in one read, which is what let this lens see that the Testing block covers two of three sites rather than all of them.
+
+### [non-spec.10.fix-G1.1]
+
+DECISION: Closed the CODE-4 `ReleaseSlotReservation` contradiction by deleting the false paragraph at non-spec-changes.md:890-894 ("Correcting a claim the shipped text carried: the disposition does not travel through `ReleaseSlotReservation`'s own parameter list...") and writing no replacement — BECAUSE the true statement it was reaching for is already made twice inside the same deliverable, at the staged signature and thread-through block and at the paragraph that corrects the shipped `leaked=false` doc comment, so a rewrite would be a third statement of one signature change a hundred lines above the table that owns it — ALTERNATIVES: rewriting it as the reviewer's suggested sentence (redundant with the two existing statements); a forward pointer to the signature-and-call-site block (intra-deliverable navigation that buys nothing and gives a later round another sentence to keep in sync); deleting the staged signature change instead and keeping the denial (larger, and wrong against the tree, since `SlotClaimer.ReleaseSlot` already implements the fourth parameter and removing the thread-through would leave `applySlotRetryPolicy` and `BindReservedSlot` unable to report a leaked reservation release at all).
+
+FACT: `podclaim.SlotClaimer.ReleaseSlot` already takes a fourth `leaked` argument, and `Binder.ReleaseSlotReservation` hard-codes the literal `false` for it today, while `Binder.ReleaseSlot` passes a computed value. Threading a disposition through `ReleaseSlotReservation` therefore adds no new mechanism; it only stops hard-coding an argument that already exists — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:502 (`_, err := claimer.ReleaseSlot(ctx, sandboxName, false, false)`), :559 (`recycled, err := claimer.ReleaseSlot(ctx, result.SandboxName, result.Recycle, leaked)`)
+
+WATCHOUT: the false claim was wrapped across a line break in non-spec-changes.md, so `grep -c "no such parameter"` on that file returned 0 while the sentence was plainly there. Grep a short unwrapped fragment when looking for further copies of a claim in these files — EVIDENCE: 0081_....non-spec-changes.md:893 (pre-deletion: "takes no such" / "parameter; the only `leaked=true` producer")
+
+DEFERRED [proposals/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.implementation-checklist.md]: S19 (:53) ends with the clause "`ReleaseSlotReservation` carries no such parameter and the only `leaked` producer is `Binder.ReleaseSlot`." That clause is false, and executed as written it produces code that does not compile at S20, whose staged `applySlotRetryPolicy` call passes four arguments (`ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked)`, non-spec-changes.md CODE-5). What is true instead: "`ReleaseSlotReservation` gains a `leaked bool` parameter that its call sites supply, so `Binder.ReleaseSlot` is no longer the only producer of `leaked=true`." Replace only the clause after the final semicolon; everything before it stands, including the true sentence that the disposition travels through the `*SlotBindError` `Binder.Resume` returns, which S20's third caller reads. Not landed here because the checklist is the reconciliation pass's to rebuild and no fix group in this round writes it.
+
+### [non-spec.10.fix-G2.1]
+
+DECISION: Closed CONF-1's promised evaluation-order case by landing it in CONF-1's own negative-case list and in the tier-3 behavioural list, and by relaxing the two rule-per-case framing sentences that the new case falsifies — BECAUSE the ordering behaviour is already normative (spec-changes.md:828 states identity-before-phase, :896 publishes mis-ordering as non-conformance) and CONF-1's preamble already committed to a case titled for the order — ALTERNATIVES: deleting the promise sentence (drops the only coverage of a published §15.4 non-conformance whose two siblings are exercised); relying on the tier-1 "Rule precedence." case (that pins CODE-6's internal predicate rather than the wire contract); folding the assertion into the existing attempt-identity bullet (hides an ordering non-conformance inside a rule case and still contradicts the preamble).
+
+FACT: CONF-1's negative-case list preamble says "Each appears at tier 3 and again at tier 10", so one insertion into that list is a tier-10 case by construction. There is no separate tier-10 case list, only the battery paragraph. EVIDENCE: 0081...non-spec-changes.md, CONF-1 negative-case preamble and the "Conformance battery for CONF-1, tier 10" subsection.
+
+WATCHOUT: the tier-3 behavioural list in `## Testing` is a near-duplicate restatement of CONF-1's negative-case list, in a different voice (rule-first rather than title-first). A fix that edits one and not the other is a half-fix that reads as complete. EVIDENCE: the "**The negative cases**" list and the "**The behavioural cases**" list in 0081...non-spec-changes.md.
+
+DEFERRED [0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.implementation-checklist.md]: S22's clause describing CONF-1's battery as "one case per named §4.7.1 rule" is now an incomplete description, because the battery also carries one case titled for the evaluation order rather than for a rule. S22's stated done-criterion ("every rule in that section's set has a case at tier 3 and at tier 10") stays correct and is now satisfiable from the staged content. The reconciliation pass rebuilds the checklist; the correction is to add the evaluation-order case to S22's description of what the step cuts.
+
+FACT: the tier-1 assertion this case restates already exists as "**Rule precedence.**" in the CODE-6 tier-1 list, so the wire-tier case is a restatement rather than new design.
+
+### [non-spec.10.fix-G3.1]
+
+DECISION: closed the §10.1.4 pass-2 head-of-line stall by changing the per-slot guard's ACQUISITION semantics rather than its scope — `Server.slotGuards` becomes `map[string]chan struct{}` (capacity-one semaphores), `lockSlotGuard(ctx, slotID) (func(), bool)` and `acquireSlotGuardForResolve(ctx, slotID) (func(), error)` both select the send against `ctx.Done()`, and one rule states the expiry disposition for every caller at once (a destructive section destroys unguarded and logs `slot_guard_not_acquired`; an admission RPC is refused with `ctx.Err()`) — BECAUSE the rule is checkable from a signature rather than from an enumeration, it holds for callers this proposal does not add, and it needs no per-row caveat in the derivation table — ALTERNATIVES: a third hand-out `lockSlotGuardCtx` for §10.1.4 alone (the finding's own suggested fix) was rejected because it makes three "two hand-out forms" inventories stale, leaves the admission-side wait unbounded and answers a universal rule with a per-caller exception; exempting the §10.1.4 row from the guard was rejected because it turns the derivation back into an enumeration with exceptions; making pass 2 concurrent was rejected because the shipped shared-budget reasoning depends on the serial order (pkg/adapter/holdstate.go:196-200).
+
+FACT: every production `releaseSessionSlot` caller already has a handler context in scope, so the new `context.Context` first parameter is mechanical: session.go:133,:147,:157 (StartSession), sdkwarm.go:236,:241,:251 (ConfigureWorkspace) and sdkwarm.go:298 (DemoteSDK). The remaining call sites are internal tests. EVIDENCE: pkg/adapter/session.go:133; pkg/adapter/sdkwarm.go:298; pkg/adapter/podmcp_arming_internal_test.go:144,:195; pkg/adapter/export_test.go:34.
+
+FACT: the §10.1.4 pass-2 loop is serial over the whole member set under ONE ten-second context, so an unbounded wait inside `terminateHeldSession` starves every LATER member's `emitFinalUsage` and `Runtime.Close`, not only its own. That is the harm, and it is what the two-member test run pins. EVIDENCE: pkg/adapter/holdstate.go:201-206.
+
+WATCHOUT: the `slotGuards` map type is written in THREE places in non-spec-changes.md, not one — the CODE-6 remedy sentence, the new-file `pkg/adapter/bindattempt.go` inventory bullet, and the Files-touched `pkg/adapter/server.go` bullet. All three were changed together this round; a later round that changes the guard's representation again must sweep all three. EVIDENCE: non-spec-changes.md, grep `slotGuards`.
+
+WATCHOUT: the phrase "It never refuses" in `lockSlotGuard`'s bullet is about the reclaim HOLD, and the new `bool` reports a failure to ACQUIRE. Those are different things and the sentence was deliberately left standing. Do not "reconcile" them by qualifying the refusal sentence; the reclaim hold still never refuses a `Shutdown`, which spec-changes.md:900 publishes as non-conformance to violate.
+
+DEFERRED [implementation-checklist.md, S15 (:45)]: the sentence "The guard has two hand-out forms: the raw one the destructive sections take, and the hold-checking one every guarded admission RPC takes at its entry, which refuses a held identifier with the transient sentinel rather than letting the caller block" is the implementor's whole statement of the hand-out contract and after this round's CODE-6 change it carries only half of it; its contrast ("rather than letting the caller block") leads straight to the unbounded `sync.Mutex` acquisition the change removes, and the step's opening phrase "A per-slot mutex" now names a representation CODE-6 no longer stages. What is true instead: the guard is a per-slot capacity-one channel; the count of hand-out forms and both descriptions stand; and the sentence additionally states that both forms take the caller's context and neither wait outlives it, that a destructive section whose acquisition expires destroys unguarded and logs, and that an admission RPC whose acquisition expires is refused. The same line's guard-scope enumeration also omits `Resume`, already recorded at review-log.md:3613-3616; land both corrections in the one rebuild of S15.
+
+DEFERRED [summary.md, the CODE-6 deliverable-index bullet (:941)]: nothing there is false — the hold is still tested at the guard acquisition and inside the resolve — but the bullet describes `acquireSlotGuardForResolve` as refusing on the hold alone, and after this change it also returns `ctx.Err()` when the acquisition outlives the caller's context. Recorded rather than edited because no claim there became untrue.
+
+OPEN (answered, recorded so it is not re-derived): review-log.md:3582 asked whether `lockSlotGuard` should be context-aware at all, and review-log.md:3331 recorded the unbounded admission-side wait. Both are discharged by this round's acquisition rule; a later round that reads either entry should treat it as closed rather than re-open it.
+
+### [non-spec.10.fix-G3.2]
+
+DECISION: pinned CODE-1's guard re-decision with a fifth arm on the tier-7a case "a reclaim against a section admitted before the hold opened", driving the SUCCESSOR sub-case (the parked `Resume` releases the entry under its guard, an unguarded `AssignCredentials` carrying a successor token creates a fresh entry, tree and `credentials.json` inside the blocked `Shutdown`'s wait, and the waking `Shutdown` answers `superseded` and removes nothing) — BECAUSE it asserts the HARM the proposal exists to prevent rather than an absence, so it discriminates a one-decision handler — ALTERNATIVES: the empty-slot sub-case (`absent`, removes nothing) passes against several wrong implementations and was folded in as prose rather than made the arm; a tier-1 form with an injected seam between the two evaluations was rejected because the seam would be production code inside the handler's critical path and `.claude/rules/test-coverage.md` puts ordering and atomicity at tier 7a; extending the fourth arm was rejected because it would give one case two subjects and lose its latency bound.
+
+FACT: the successor must be driven through `AssignCredentials`, because it is the only entry-creating RPC the derivation table leaves unguarded; `FinalizeWorkspace`, `RunSetup` and `Resume` all block on the guard the parked holder owns, so a successor driven through one of them can never be created inside the window. Verified in the tree: `assignCredentialsSlot` runs its whole body under `s.mu` and takes no guard. EVIDENCE: pkg/adapter/slotcreds.go:23-53; non-spec-changes.md, the derivation table's `AssignCredentials` row.
+
+WATCHOUT: both of this group's test edits land in ONE paragraph of `## Testing` and share one parked-`Resume` fixture in `tests/tier7a_load_local/slot_reclaim_hold_race_test.go`. The third arm's second run now drives TWO started members; the fifth arm reuses the same park. An implementor who builds two separate parks gets two descriptions of the same rendezvous, which is the drift this reconciliation was written to prevent.
+
+WATCHOUT: the fifth arm's rendezvous must complete well inside the blocked `Shutdown`'s own request context. Under this round's context-bounded acquisition a test that parks the holder longer than that context simply watches the `Shutdown` proceed unguarded, which is a passing run that asserts nothing.
+
+### [non-spec.10.fix-design-G1.1]
+
+DECISION: delete the paragraph at non-spec-changes.md:891-894 outright (with its leading blank line, :890-894) rather than rewrite it — BECAUSE its only unique content is the false denial; the true half it was groping for is already stated twice inside the same deliverable, at :1001-1006 ("`ReleaseSlotReservation` takes the disposition and threads it to the parameter `SlotClaimer.ReleaseSlot` already implements", with the new 4-arg signature) and at :1007-1010 (the paragraph that explicitly corrects the shipped `leaked=false` doc comment). A rewrite would be a third statement of the same signature change, 110 lines above the table that owns it — ALTERNATIVES: (a) the reviewer's rewrite ("today `ReleaseSlotReservation` passes the literal `false`, which is why CODE-4 gives it a `leaked` parameter") — rejected as redundant with :1007-1010; (b) a one-sentence forward pointer to :1001 — rejected, intra-deliverable navigation for a reader who reaches :1001 a page later is hair; (c) keeping the paragraph and deleting the :1001-1024 signature change — rejected, the tree settles it: `podclaim.SlotClaimer.ReleaseSlot` already takes a fourth `leaked` argument and `ReleaseSlotReservation` hard-codes `false` for it (slotbinder.go:502), so threading is the smaller change and CODE-5 at :1121-1122 and S20 already call the 4-arg form.
+
+FACT: the false claim lives in exactly TWO live places, verified by grep across every proposal file and the tree: non-spec-changes.md:891-894 and implementation-checklist.md:53 (S19's closing clause). `ReleaseSlotReservation` is an internal Go identifier that spec/, docs/, schemas/ and charts/ never name, so there is no spec-side mirror. — EVIDENCE: non-spec-changes.md:894, implementation-checklist.md:53
+
+FACT: the tree half the reviewer relied on is real. `pkg/gateway/podlifecycle/podsession/slotbinder.go:502` is `_, err := claimer.ReleaseSlot(ctx, sandboxName, false, false)` — a four-argument call whose last argument IS the disposition — and :559 is `recycled, err := claimer.ReleaseSlot(ctx, result.SandboxName, result.Recycle, leaked)` with a computed one. The doc comment at :495-501 states the `leaked=false` justification the staging at non-spec-changes.md:1007-1010 corrects. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:495-502, :559
+
+WATCHOUT: two review-log-archive FACTs (archive:6019, :30053) state that `ReleaseSlotReservation` hard-codes `recycle=false` so `bound → recycling` is unreachable on the failed-bind path with EITHER disposition. That is still true after this fix and is not contradicted by it: CODE-4 adds only `leaked`, never `recycle`. Do not read those entries as support for the deleted paragraph. — EVIDENCE: review-log-archive.md:6019, :30053
+
+DEFERRED [proposals/0081_.../0081_....implementation-checklist.md, S19 (:53)]: the closing clause reads "`ReleaseSlotReservation` carries no such parameter and the only `leaked` producer is `Binder.ReleaseSlot`." Both halves are false against CODE-4's own staging, and an implementor obeying them makes S20's staged `ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked)` (non-spec-changes.md:1121-1122) fail to compile. What is true instead: `ReleaseSlotReservation` gains a `leaked bool` parameter that all seven call sites in CODE-4's table supply (non-spec-changes.md:1011-1024), so `Binder.ReleaseSlot` is no longer the only producer of `leaked=true` — `BindReservedSlot` and `applySlotRetryPolicy` pass `sbe.Leaked`. The preceding sentence of S19, that the disposition travels through the `*SlotBindError` `Binder.Resume` returns, is correct and stays. Recorded as DEFERRED because review-log.md:1461 records "the reconciliation pass owns the checklist"; if the non-spec fixer's lease does cover the checklist it should land this clause replacement in the same edit, since the two sentences are one contradiction.
+
+MISTAKE: the "Correcting a claim the shipped text carried" framing is how this survived. A paragraph that announces itself as a correction reads as the authoritative half, and the round that added the :1001-1024 signature change never re-read it. Any future paragraph opening "Correcting a claim..." deserves a grep for the thing it claims to correct before it is trusted.
+
+### [non-spec.10.fix-design-G2.1]
+
+DECISION: Land the missing evaluation-order case rather than delete CONF-1's promise of it — BECAUSE spec-changes.md:896 publishes mis-ordered application as one of three §15.4 non-conformances that are "not any single rule's condition", and the other two (separable steps, gRPC error for a reclaim outcome) are each already exercised at non-spec-changes.md:1897-1900 and :1948-1950, so the ordering one is the only published non-conformance the battery would leave unreachable. — ALTERNATIVES: (a) delete the promise sentence at :1864-1866, rejected because it shrinks the battery below the published obligation it exists to make checkable; (b) rely on the tier-1 "Rule precedence" case at :2351-2354, rejected because that pins CODE-6's internal predicate, not the wire contract §15.4 publishes to third-party adapter authors; (c) fold the ordering assertion into the attempt identity rule's existing case so "one case per rule" stays literally true, rejected as hair — it hides an ordering non-conformance inside a rule case and contradicts :1864-1866, which already commits to a distinct, order-titled case.
+
+FACT: CONF-1's negative-case list carries its own tier statement — "Each appears at tier 3 and again at tier 10" — so a case added there lands at BOTH tiers by construction; the tier-3 subsection list at :2734-2795 is a partial restatement of the same set and needs the case too, while there is no separate tier-10 case list to edit (only the framing paragraph at :2797-2807). — EVIDENCE: non-spec-changes.md:1890, :2730-2795, :2797-2807
+
+WATCHOUT: two framing sentences assert a rule-per-case battery with no exception and are falsified the moment the ordering case lands: ":2731 Each case is titled for the rule it exercises" and ":2801 one case per rule and each titled for its rule". The CONF-1 preamble at :1864-1866 already carries the exception; these two are the ones that have to catch up, not the reverse. A fixer that adds the case and leaves them is exactly the half-fix the next round files. — EVIDENCE: non-spec-changes.md:2730-2732, :2799-2802, :1864-1866
+
+DEFERRED [implementation-checklist.md]: S22 at :59 states "The battery is cut one case per named §4.7.1 rule", which becomes an incomplete description of the battery once the order-titled case lands. Its stated done-criterion ("every rule in that section's set has a case at tier 3 and at tier 10") is NOT falsified and stays correct as written; only the "cut one case per named rule" clause needs the exception clause the CONF-1 preamble carries. The checklist belongs to the reconciliation pass; do not edit it from this lane.
+
+FACT: summary.md:945's CONF-1 deliverable-index line reads "a case per named §4.7.1 rule, as a descriptor gate and bufconn handler cases at tier 3 and an in-process battery at tier 10". Adding one extra non-rule case does not falsify it, so it is not a landing site for this fix and needs no reconciliation entry. — EVIDENCE: summary.md:945
+
+FACT: the precedence is settled normative text and needs no re-derivation — spec-changes.md:828 states identity-before-phase and its rationale (a stale attempt identity is transient and must not be presented as permanent), spec-changes.md:896 publishes the non-conformance. The case states the observable outcome only; restating the rationale in the case text would be a third prose copy of a rule the CONF-1 preamble at :1855-1857 explicitly refuses to copy. — EVIDENCE: spec-changes.md:828, :896; non-spec-changes.md:1855-1857
+
+### [non-spec.10.fix-design-G3.1]
+
+DECISION: the §10.1.4 pass-2 stall is closed by making the per-slot guard's acquisition
+context-bounded in BOTH existing hand-out forms rather than by adding a third one — the guard
+becomes `chan struct{}` (cap 1), `lockSlotGuard(ctx, slotID) (func(), bool)` and
+`acquireSlotGuardForResolve(ctx, slotID) (func(), error)` both select against `ctx.Done()`, and the
+disposition on expiry is stated once: a destructive section destroys unguarded and logs, an
+admission RPC is refused. BECAUSE the count "two hand-out forms" is restated in three inventories
+(non-spec-changes.md:1238, :3285, implementation-checklist.md:45) and a third form makes all three
+stale while leaving the OTHER unbounded wait (a compensating `Shutdown` behind a multi-frame
+upload, the standing OPEN at review-log.md:3331) unanswered, so it is the same defect one step
+smaller. One uniform rule also discharges the standing OPEN at review-log.md:3582 ("should
+`lockSlotGuard` be context-aware at all?") — ALTERNATIVES: (a) the finding's own `lockSlotGuardCtx`
+third form, rejected as above; (b) deleting the §10.1.4 row from the guarded set, rejected because
+a derivation table that carries an exception stops being a derivation, which is the failure the
+log records at review-log.md:2777 as costing two rounds; (c) running pass 2's members
+concurrently, rejected because the shipped loop's shared 10s budget rests on the members closing
+in order ("only the last member's close consumes the grace", pkg/adapter/holdstate.go:196-200);
+(d) taking the guard around `removeSlotTree` alone after the close, rejected because it fixes the
+member's OWN budget and leaves the cross-member head-of-line stall untouched.
+
+FACT: the non-spec loop's fixer DOES edit `implementation-checklist.md` — it is modified in the
+working tree against the last baseline (26 insertions, 26 deletions vs 09fa615cb), which is r9's
+S-number renumber. Several DEFERRED entries in the review log say "the spec fixer may not touch the
+checklist"; that is the SPEC lane's rule and it does not bar this lane. EVIDENCE: `git diff --stat
+09fa615cb -- .../implementation-checklist.md`
+
+FACT: `terminateHeldSession` today waits on nothing before its close, so the shared ten-second
+`closeCtx` is currently a real bound on the whole of pass 2. The loop is serial with no early
+break and one shared context. Any guard wait inserted ahead of the close is therefore charged to
+every LATER member, not only to the member that waits. EVIDENCE: pkg/adapter/holdstate.go:196-205,
+:226-256.
+
+FACT: `releaseSessionSlot` takes no `context.Context` today and has 7 production call sites
+(resume.go:69,73,89,107,126,134,141 — all moving to the under-guard form) plus session.go:133,147,157
+and sdkwarm.go:236,241,251,298, and two internal test sites (podmcp_arming_internal_test.go:144,:195)
+and export_test.go:34. Every production caller is a handler with a ctx in scope, so threading one is
+mechanical; the proposal already changes this function's shape (the guard-acquiring /
+under-guard split), so the marginal cost is near zero. EVIDENCE: `grep -n releaseSessionSlot pkg/adapter/*.go`
+
+WATCHOUT: the expiry disposition must NOT be uniform across both forms. A destructive section that
+cannot obtain the guard proceeds and destroys unguarded (that is exactly today's shipped behaviour,
+so it is no regression); an admission RPC that cannot obtain it must be refused, because proceeding
+unguarded is how a materialization re-creates the tree a reclaim just removed — the residue the
+guard exists to prevent. Writing one rule for both is the tempting simplification and it reintroduces
+the original race.
+
+WATCHOUT: `AssignCredentials` takes NO guard (derivation table, non-spec-changes.md:1569; verified
+at pkg/adapter/slotcreds.go:23-53, the whole body runs under `s.mu`). That is what makes the
+missing re-decision test buildable: a successor entry can be created under the same slot identifier
+WHILE the guard is held by a parked section, which is the only way to reach the window between
+`Shutdown`'s fast-path decision and its guarded re-decision.
+
+DECISION: the CODE-1 re-decision gets a tier-7a arm rather than a tier-1 seam — BECAUSE a tier-1
+form needs an injected hook BETWEEN the two evaluations, i.e. production code that exists only for
+a test, and `.claude/rules/test-coverage.md` assigns "concurrency, ordering, atomicity" to 7a.
+ALTERNATIVES: the finding's sub-case (a), holder releases leaving the slot empty and the reclaim
+answers `absent`, was rejected as the primary arm because it asserts an absence; sub-case (b),
+a successor entry created through the unguarded `AssignCredentials`, asserts the HARM (successor's
+entry, `current` and `credentials.json` survive) and is the one that turns red against a handler
+acting on its first decision.
+
+OPEN: discharged here rather than left open — review-log.md:3582 ("should `lockSlotGuard` be
+context-aware at all?") and review-log.md:3331 (`PrepareWorkspace` holding the guard across a long
+upload blocks a compensating `Shutdown` past its own deadline). Both are closed by the
+context-bounded acquisition in this design. A later round re-reading them should read this entry
+beside them rather than re-deriving.
+
+MISTAKE: review-log.md:1895 rejected "a ctx-aware channel semaphore instead of `sync.Mutex`" on the
+premise that "every guard holder's work sits inside a gRPC handler whose context the gateway
+deadline cancels, so the wait is already bounded", and recorded that it "is the right answer if a
+holder is ever added that runs under no request". The premise was about the HOLDER; the defect is
+in the WAITER. `terminateHeldSession` is a waiter that runs under no request, under its own budget,
+on behalf of other sessions. Cost: one round.
+
+DEFERRED [proposals/0081_.../0081_....summary.md]: summary.md's CODE-6 index bullet describes the
+second hold test at `acquireSlotGuardForResolve` as being there "so a guarded admission RPC is
+refused rather than left to block for the whole cleanup". After this fix the same helper also
+refuses on context expiry, and the summary bullet states only the hold half. What is true instead:
+`acquireSlotGuardForResolve` refuses on two conditions, an open reclaim hold and an acquisition
+that outlives the caller's context. Recorded rather than assigned because the G3 fixer's edit list
+is already the largest in this round and summary.md carries no falsified claim, only an incomplete
+one.
+
+### [non-spec.10.review-applicability.1]
+
+FACT: the reconciliation pass DID rebuild the checklist. Every checklist DEFERRED entry standing in the review log's `### Deferred` block against S1, S3, S6, S7, S13, S15, S17 and S20 is discharged in the current file: S1 now says "§15.1 takes no new catalog row for either adapter error code" (implementation-checklist.md:17), S6 stages two rows not three (:27), S7 says "The published error catalog takes no new row" (:29), S18 names three CODE-2 confirmation sites including the SDK-warm one (:51). Do not re-file any of them. — EVIDENCE: implementation-checklist.md:17,:27,:29,:51
+
+FACT: checklist graph re-verified this round and is clean. 20 deliverables, 22 steps, every `Depends on:` names a strictly earlier step, every box `[ ]`, one lane per step (spec/docs/code/schema), all six spec steps lead. CODE-1 (S16/S17/S21), CODE-4 (S13/S19) and CODE-6 (S14/S15/S21) are split deliberately — review-log.md:2927 already blesses that; do not file it. — EVIDENCE: implementation-checklist.md:17-60
+
+FACT: every SCHEMA-1 field-number basis is exact against the shipped proto. `PrepareWorkspaceRequest` 1-3 used + `reserved 4 "slot_id"`; `FinalizeWorkspaceRequest` `mid_session = 4`, `reserved 5`; `RunSetupRequest` 1-3 + reserved 4; `AssignCredentialsRequest` 1-2 + reserved 3; `ResumeRequest` 1-5,7-14 used, 6 and 15 reserved; `ShutdownRequest` 1-3, reserved 4, `recycle = 5`, `coordination_generation = 6`; `ShutdownResponse` 1-2. `ErrorCode` runs to 27 and the 1000-1999 Phase-2 range is prose with no `reserved` statement. All nine new numbers are free. — EVIDENCE: schemas/lenny-adapter.proto, `enum ErrorCode` at :554, `ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27` at :585
+
+FACT: all three SPEC-5 §15.1 verbatim anchors and all four DOCS-3 verbatim anchors resolve exactly. spec/15_external-api-surface.md:1136 is the single `SETUP_COMMAND_FAILED` row; docs/reference/error-catalog.md:129 is its published mirror; docs/reference/adapter-contract.md:75 (`Shutdown`) and :64 (`DemoteSDK`) and docs/reference/state-machines.md:138 all match the quoted text. No unresolvable anchor in the staged docs or spec edits. — EVIDENCE: spec/15_external-api-surface.md:1136; docs/reference/error-catalog.md:129; docs/reference/adapter-contract.md:64,:75; docs/reference/state-machines.md:138
+
+FACT: `ensureSlotStateLocked` has exactly three production callers in the tree (`pkg/adapter/slot.go:143` via `ensureSlotPaths`, `pkg/adapter/slotcreds.go:26` via `assignCredentialsSlot`, `pkg/adapter/slotsession.go:75` via `claimSessionSlotUnderLock`) and `ensureSlotPaths` exactly three (`staging.go:134,:181,:337`). `rotateCredentialsSlot` reaches neither, so CODE-6's ten-row call-site table is complete. — EVIDENCE: pkg/adapter/slot.go:105,:140,:143; pkg/adapter/slotcreds.go:26,:67; pkg/adapter/slotsession.go:75
+
+FACT: the tier-0 claim-register gate applies the reachability join to the CREDENTIAL rows only; every other row is held to schema alone (well-formed, status in the closed set, WIRED names a surface that is a path-or-symbol, non-WIRED names a declared plan step, anchor resolves to a §28 heading). So SCHEMA-1's two `WIRED` rows at S9 naming `Binder.compensateFailedSlotBind` and `podsession/bindattempt.go` — symbols S13/S19 create — do NOT turn the gate red in the intervening commits. Do not file that as an ordering defect; I checked it. — EVIDENCE: tests/tier0_static/claim_register_test.go:29-45; `#2851-gateway-to-pod` resolves to spec/28_communication-channels.md:205; `R8` declared at gateway-runtime-comms-remediation.md:980
+
+FACT: `podclaim.SlotClaimer.ReleaseSlot(ctx, name, recycle, leaked)` already takes a fourth `leaked` argument; `Binder.ReleaseSlotReservation` passes `false` for it today at pkg/gateway/podlifecycle/podsession/slotbinder.go:502. This is the fact that decides which half of CODE-4's two contradictory `ReleaseSlotReservation` statements is the live one. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:502,:559
+
+WATCHOUT: `pkg/adapter/metrics.go` declares NO methods on `*Server` — every counter helper there is a package-level `incX(...)`/`IncX(...)` function, and the adapter counters carry no `k8s_pod_name` label (the scrape adds it). CODE-1's staged handler calls `s.noteShutdownMetUntokenedEntry(sessionID)`, a `*Server` method with a session argument, and no deliverable declares it. Do not assume CODE-9 covers it: CODE-9 names only "the untokened-entry series" for that file and specifies the gateway twin `noteCompensationOutcome` in full by contrast. — EVIDENCE: pkg/adapter/metrics.go:117-222; non-spec-changes.md:307, :1819-1834, :3351
+
+MISTAKE: an earlier round left CODE-4 carrying both ":891-894 the disposition does not travel through `ReleaseSlotReservation`'s own parameter list" and ":1001-1006 `ReleaseSlotReservation` takes the disposition … `func (b *Binder) ReleaseSlotReservation(ctx, sandboxName, slotID string, leaked bool) error`". The false half propagated into implementation-checklist.md:53 (S19). CODE-5 at :1121-1122 writes the four-argument call, so two of the three carriers agree and the checklist is the one an implementor executes. Filed this round.
+
+DEFERRED [proposals/0081_.../0081_....summary.md:948]: the deliverable index says DOCS-3 takes "the four replacements that match SPEC-5's §15.1 edits". SPEC-5 stages only THREE §15.1 sentence replacements and leaves the exclusion sentence "exactly as it stands" (spec-changes.md:962-966); DOCS-3's fourth replacement has no SPEC-5 counterpart by its own statement (non-spec-changes.md:2239-2242), and the spec-changes docs-mirror trailer gets it right ("three of them mirroring SPEC-5's §15.1 replacements and the fourth re-keying the page's retryable-fallback sentence off the cause class", spec-changes.md:1068-1071). Not filed: the loop has refuted this bookkeeping-in-descriptive-prose class repeatedly. A fixer in that index line should say "four replacements, three of them mirroring SPEC-5's".
+
+DEFERRED [proposals/0081_.../0081_....non-spec-changes.md, CODE-4's `Targets:` list at :713-726]: it omits `pkg/gateway/sessionserver/upload_to_session.go` and `pkg/gateway/sessionserver/start.go`, both of which CODE-4's own body edits (:762-764 the §7.4 `mid_session` pair; :1021,:1023,:1024 the three start.go `ReleaseSlotReservation` call sites) and both of which `## Files touched` carries (:3344-3348). Not filed: this is the site-list-completeness class the loop refuted on CODE-9's hook wiring. Note for the checklist owner: the preamble's ordering guarantee ("the gateway learns to send the new fields before the adapter begins requiring them", implementation-checklist.md:11-15) depends on the `upload_to_session.go` `mid_session` edit landing at S13, and no step line names it; S13's line covers only the token mint/carry and `unconditional_teardown`.
+
+OPEN: should the `tests/tier3_contract/adapter_bind_attempt/` files be named? The proposal states "one file" for the descriptor gate and "one file" for the behavioural cases and gives neither a name. Nothing turns on it — the tier-0 inventory regex `(slot|one_session_only|sole_session)[^/]*_test\.go$` matches basenames only, and the spec-map entry is a DIRECTORY entry — so I judged it implementor's choice rather than an underspecified target. A later lens deciding otherwise should say why a gate depends on the name.
+
+USEFUL [review-log.md:2927]: "CODE-1, CODE-4 and CODE-6 are each split across steps deliberately (S16/S17/S21, S13/S19, S14/S15/S21) — do not file that as 'a deliverable named by two steps'". Saved me from filing a false positive against an explicit rule in my own lens brief.
+
+### [non-spec.10.review-mechanism.1]
+
+DECISION: filed exactly one finding, the missing test for CODE-1's new `Shutdown` re-decision under the slot guard — BECAUSE it is the only thing in the r9 delta that is a newly-introduced fail-closed predicate with no listed assertion at any tier, and the r9 guard rework is otherwise internally consistent and its tree citations all resolve — ALTERNATIVES: (a) "the compensating `Shutdown` waits on a guarded `FinalizeWorkspace`/`RunSetup` for the whole materialization or the whole `setupPolicy.timeoutSeconds`, blows `slotCleanupBudget` and is charged a leak, and only the `Resume` form of that residue is recorded" — dropped as a close variant of the already-refuted "the per-slot guard is an uninterruptible mutex no request deadline bounds" (material skeptic: mutual exclusion held across the critical section is the workable design; latency is not a correctness defect); (b) "CODE-2's `Resume` start-confirmation refusal is unreachable in production now that `Resume` holds the slot guard from ahead of its claim to the end of the call, so no staged destructive path can remove or replace the entry between `claimSessionSlot` and `noteRuntimeStarted`" — dropped as the defense-in-depth class the loop already refuted for the `ExcludePod` pass-2 skip, and the proposal itself states the tier-7a `Resume` arm no longer asserts a pre-confirmation reclaim and re-points that coverage at the deterministic tier-1 case; (c) the summary 0080 §1.19 row's "raised inside `ensureSlotStateLocked`" and the CODE-6 file lists (`credentials.go` in summary.md:918, absent from the CODE-6 heading and index line) — dropped as the bookkeeping class refuted five times.
+
+FACT: `reclaimSlotLocked` opens the hold ONLY when the deregistration removed an entry (non-spec-changes.md:1269-1277, "when that removed an entry, inserts the identifier into the hold set"), and `release` is idempotent and a no-op otherwise. That kills the obvious "two concurrent holders of a set-valued hold, first release clears it" candidate: the one path that can open a hold without taking a guard (§10.1.4 pass 1) has already removed the entry, so a later `releaseSessionSlot` under the same identifier removes nothing and takes no hold. EVIDENCE: non-spec-changes.md:1269-1277; pkg/adapter/holdstate.go:189-205.
+
+FACT: every tree citation the r9 guard-derivation table added resolves exactly. `ensureSlotPaths` pkg/adapter/slot.go:140-147; `checkpointRootsForSession` :183-203 (copies `current`/`sessions` under `s.mu`, unlocks at :193); `resolvePrepareStagingDir` call staging.go:78 and its own `ensureSlotPaths` at :134; `MaterializeWithPolicy`/`MaterializeOverlayWithPolicy` staging.go:246-249 after `ensureSlotPaths` at :181; `workspace.RunSetup` staging.go:353 after :337; `restoreChunks` resume.go:169-172 empty-set guard and `ExtractTree` :206; `probeWorkspaceBytes` checkpoint.go:140 and `ArchiveTree` :205; `writeSlotCredentialFile` inside `s.mu` slotcreds.go:24-44; `slotlayout.RemoveTree` tree.go:58-69 removes slotRoot/Sessions/Artifacts/CredentialsDir and does NOT touch `ManifestDir` (`/run/lenny`, server.go:114), which is what lets `ConfigureWorkspace` and `StartSession` take no guard; `releaseSessionSlot` slotsession.go:214-220 closes no runtime; `claimSessionSlot` releases `s.mu` before returning, slotsession.go:52-59; `Binder.Launch`'s `ConfigureWorkspace` call binder.go:1009. Do not re-verify these.
+
+FACT: the r9 SDK-warm tier-1 case's fixture citations are all exact — `fakeSDKWarmRuntime` pkg/adapter/sdkwarm_test.go:37, its `ConfigureWorkspace` :55-61, `configureReq` :71, `sdkWarmServer` :78, package `adapter_test` at :3, `shutdown_demote_test.go:3` likewise; `Server.SDKWarmReady` sdkwarm.go:177; the handler's `sw.ConfigureWorkspace` outside the lock with the confirmation after it, sdkwarm.go:249-262; `Server.SessionScrubReporter` server.go:177. `tests/spec-map.json` registers `pkg/adapter/sdkwarm_test.go` WHOLE-FILE under 4.7.9 and 6.1 only (spec-map.json:841, :1292), so the proposal's stated credit additions (4.7.1, 7.1) are right and its granularity claim is right.
+
+MISTAKE (stale standing entry, CORRECTS the `### Open` item "Does the SIGTERM `ShutdownDemoteSDK` path race `sdkwarm.go:261`?"): that entry says "CODE-2 makes that site `_ = s.noteRuntimeStarted(...)` with no rollback". That is no longer true. CODE-2 now gives sdkwarm.go:261 a real refusal arm that calls `SDKWarmRuntime.DemoteSDK`, clears `s.sdkConnected`, removes no entry and no tree, and answers `codes.Aborted` (non-spec-changes.md:661-677), and r9 added its deterministic tier-1 case (:2509-2528). Re-read :661-677 before reasoning about that site.
+
+USEFUL [Traps, "Do NOT name `releaseSessionSlot` as a `Runtime.Close` park site"]: the r9 fix landed exactly this correction — the tier-1 hold case now parks inside `Runtime.Close` on the §10.1.4 hold termination and names `releaseSessionSlot` as closing none, citing slotsession.go:214-220 (non-spec-changes.md:2382-2391). Verified true in the tree.
+
+USEFUL [Traps, the snapshot trap]: `non-spec-r10` and `non-spec-r10-start` are byte-identical to the live proposal; the newest DIFFERING snapshot is `non-spec-r9-prefix` (13:02), and the real delta is the r9 fix stage: 734 diff lines in `.non-spec-changes.md`, 14 in the checklist, 24 in the summary. `diff -u` the three files individually against `non-spec-r9-prefix`.
+
+WATCHOUT: the r9 guard rework changed the guard's scope statement from "every section that touches a slot's paths" to "every section that writes or destroys the slot's tree outside `s.mu`", and it swept every carrier. `grep -n "touches a slot"` over the proposal directory now returns nothing outside the review logs, and the three surviving "ahead of `s.mu`" sites are correct for their own subjects (non-spec-changes.md:298, :1574, :2970). Do not file a stale-wording finding there.
+
+UNVERIFIED: whether CODE-2's `Resume` confirmation refusal has any production reacher left after `Resume` takes the slot guard for the whole call. Every staged destructive path (`Shutdown`'s removing arm, `releaseSessionSlot`, §10.1.4 `terminateHeldSession`) takes that same guard, so nothing can remove or replace the entry between `claimSessionSlot` (resume.go:50) and `noteRuntimeStarted` (resume.go:144). Whoever owns CODE-2 should decide whether the arm is deliberate defense in depth (it is still pinned deterministically at tier 1 by "The confirmation refuses a replaced entry", non-spec-changes.md:2499-2501) or whether the tier-7a `Resume` arm's new ordering should say so outright.
+
+OPEN: the compensating `Shutdown` on the ordinary bind path (a `FinalizeWorkspace` or `RunSetup` whose client deadline expired while the adapter handler keeps running) now blocks on that handler's slot guard for the whole materialization or the whole `setupPolicy.timeoutSeconds` window, which can exceed `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)`. The proposal records that residue for `Resume` alone (non-spec-changes.md:3164-3178). Judged a close variant of the refuted uninterruptible-mutex family and not filed; a human may still want the bind-path half written beside the `Resume` bullet, since it is the design's primary path.
+
+### [non-spec.10.review-performance.1]
+
+DECISION: filed ONE finding, on §10.1.4 pass 2 blocking on the per-slot guard, and none on
+capacity — BECAUSE the r9 fix changed nothing on the store side: the token is still one
+`crypto/rand` string in gateway process memory per bind attempt carried as a scalar on six
+existing messages, no etcd/Postgres/Redis write is added on any path, and the two new counters
+stay low-cardinality. The whole r10 delta is where the guard is taken and who waits on it, so
+that is where the finding is. ALTERNATIVES built and dropped: (a) re-filing the uninterruptible-
+mutex/§11.4 item, already REFUTED this loop as immaterial (gateway-side timeout, modelled
+outcome); (b) `slotGuards` growth, chased to the end in round 9 and refuted; (c) the compensating
+`Shutdown` waiting on a guarded `Resume`, which the r9 fix now records as an accepted failure
+mode at non-spec-changes.md:3161-3175 with a correct budget formula.
+
+FACT: round 9's two findings were both fixed, and correctly. `Shutdown` now decides under `s.mu`
+with NO guard, answers `ABSENT`/`SUPERSEDED` from that fast path, and takes the guard only on the
+removing arm, re-deciding under `s.mu` afterwards (non-spec-changes.md:274-310). `Resume` is now
+guarded (derivation table row, non-spec-changes.md:1571). Do not re-file either.
+
+FACT: §10.1.4 pass 2 is a SERIAL loop over the sorted member set sharing ONE 10s context
+(`closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)`;
+`for _, m := range members { s.terminateHeldSession(closeCtx, m) }`). Pass 1
+(`deregisterStartedSessions`) collects only `st.started` members. Staged CODE-6 makes
+`terminateHeldSession` take the raw `lockSlotGuard` before `s.mu`, and `lockSlotGuard` "never
+refuses" and takes no ctx. A started member CAN hold its own guard: `Resume` holds it from ahead
+of `claimSessionSlot` (which sets `started`) to the end of the call, and a §7.4 mid-session
+`PrepareWorkspace`/`FinalizeWorkspace` holds it over a stream / over
+`workspace.MaterializeWithPolicy`, which has no ctx parameter at all. So one member's holder
+stalls every LATER member's termination, past the 10s budget, and the later members are then
+terminated with an already-cancelled `closeCtx`. Shipped `terminateHeldSession` blocks on
+nothing. — EVIDENCE: pkg/adapter/holdstate.go:201-205; pkg/adapter/slotsession.go:375-381;
+non-spec-changes.md:1519-1524,:1571,:1574,:3320-3323; pkg/adapter/workspace/materialize.go:157,:203
+
+FACT: the proposal already recognises blocking-on-the-guard as the thing to avoid, for admission
+RPCs only. non-spec-changes.md:1544-1547 and the summary's CODE-6 index line both say the hold is
+tested at the guard acquisition "so a guarded admission RPC is refused rather than left to block
+for the whole cleanup". The destructive §10.1.4 path is given the opposite treatment with no
+statement of what bounds it. That asymmetry is the shape of the finding.
+
+WATCHOUT: the staged tier-7a third arm's second run ("a §10.1.4 hold termination in place of the
+`Shutdown`", non-spec-changes.md:2959-2961) asserts non-interleaving only. It would pass while
+exhibiting the stall, because the driver releases the park itself and no arm bounds the
+termination's wall time or asserts a second member makes progress. A fixer that thinks that arm
+already covers this is wrong. — EVIDENCE: non-spec-changes.md:2955-2964
+
+FACT: `CheckpointTransport.GetChunk` DOES build on the handler ctx
+(`http.NewRequestWithContext(ctx, http.MethodGet, url, nil)`), so the r10 accepted-failure
+bullet's cancellation argument holds, and net/http also aborts the in-flight body read, making
+that bullet conservative rather than wrong. Do not file against it. — EVIDENCE:
+pkg/adapter/checkpointtransport.go:99-101
+
+FACT: no deadlock exists in the staged lock order. Every guard-taking path is guard→`s.mu`
+(`Shutdown` releases `s.mu` before acquiring), `Resume`'s rollbacks move to
+`releaseSessionSlotUnderGuard` so the non-re-entrant mutex is not re-taken, and
+`terminateHeldSession` calls `removeSlotTree` directly rather than through `releaseSessionSlot`.
+I checked this specifically; do not re-derive it. — EVIDENCE: pkg/adapter/holdstate.go:245-250;
+non-spec-changes.md:1578-1586
+
+MISTAKE (orchestrator note, not a round): the note for this run says "THE NON-SPEC LANE HAS HAD
+ZERO ROUNDS since the token revision". False — rounds 8 and 9 both ran and are in the live ledger
+at review-log.md:2589 and :3520, and this round's text is the r9 fix. Trusting the note costs a
+re-derivation of ground the last two rounds already covered.
+
+### [non-spec.10.review-reliability.1]
+
+DECISION: returned an EMPTY findings list for the reliability lens on the r9-rewritten non-spec
+staging — BECAUSE every recovery path I traced through crash, restart, deadline expiry and
+concurrent teardown is either correct as staged or lands on a residue the proposal already names
+in `## Edge cases and accepted failure modes`. ALTERNATIVES considered and rejected below.
+
+FACT: the r9 rewrite is large and is where every reliability-relevant change sits. The four
+substantive mechanism changes, all new since the r9 snapshot, are: (1) `Shutdown` no longer takes
+the slot guard ahead of `s.mu`; it decides under `s.mu` alone, answers and returns on every arm
+that removes nothing, and only the removing arm releases `s.mu`, takes the raw `lockSlotGuard`,
+re-takes `s.mu` and RE-DECIDES (non-spec-changes.md:236-330); (2) the guard hand-out splits into
+`lockSlotGuard` (never refuses, for destructive sections) and `acquireSlotGuardForResolve`
+(tests the reclaim hold, for admission RPCs) (:1512-1528); (3) the guard scope becomes a
+PREDICATE plus a derivation table over eleven sections (:1552-1575), which newly guards `Resume`;
+(4) `releaseSessionSlot` splits into `releaseSessionSlot` and `releaseSessionSlotUnderGuard`
+because `Resume` calls it from inside the guard it holds (:1577-1585).
+
+FACT (checked, no finding): the `Shutdown` two-phase re-decision is sound against every remover in
+the tree. While the removing arm waits on the guard it holds neither `s.mu` nor the hold, so the
+entry can change underneath it; the only writer that can remove an entry WITHOUT taking the guard
+is §10.1.4 pass 1 `deregisterStartedSessions`, which removes under `s.mu` alone
+(pkg/adapter/holdstate.go:189-205). The re-decision catches exactly that and answers `absent`.
+Two concurrent `Shutdown`s serialize on the guard and the loser re-decides to `absent`. I chased
+this as the obvious "TOCTOU between the two decisions" candidate and it is NOT a defect.
+EVIDENCE: non-spec-changes.md:306-330; pkg/adapter/holdstate.go:189-205.
+
+FACT (checked, no finding): `Resume` holding its slot guard for the whole call introduces no
+self-deadlock. Its seven rollback sites (pkg/adapter/resume.go:69,:73,:89,:107,:126,:134,:141) are
+moved to the under-guard form, and CODE-2's NEW arm after `noteRuntimeStarted` (resume.go:144)
+takes `Runtime.Close` + `cancelPodMCPIfRuntimeIdle` and deliberately routes through NO release
+helper (non-spec-changes.md:661-665), so it acquires no second guard. The non-reentrancy hazard is
+closed at both the old sites and the new one.
+
+FACT (checked, no finding): `defer unlockSlot()` is registered before `defer release()` in the
+staged body, and Go runs defers LIFO, so the hold ends before the guard. `release()` needs `s.mu`
+and `s.mu` is unlocked by then (`s.mu.Unlock()` follows `defer release()`).
+EVIDENCE: non-spec-changes.md:326-364.
+
+FACT (checked, no finding): CODE-4's claim that the `Resume` compensation's wait on the guard is
+bounded by the handler's own context resolves. `httpCheckpointTransport.GetChunk` builds each
+fetch with `http.NewRequestWithContext(ctx, ...)` at pkg/adapter/checkpointtransport.go:100, and
+Go's net/http aborts an in-flight body read when that context is done, so the bullet's admission
+("the copy of a chunk body already in flight ... is not bounded") is CONSERVATIVE rather than
+wrong. EVIDENCE: pkg/adapter/checkpointtransport.go:99-116; non-spec-changes.md:3166-3178.
+
+FACT (checked, no finding): CODE-8's refusal short-circuit leaks no §4.9 lease. `Binder.Prepare`
+sets `leaseAssigned = true` at pkg/gateway/podlifecycle/podsession/binder.go:954, two statements
+after the LAST `reclaim()` site (`assignCredentials`, :949-951), so every refusal arm sees the
+flag false and `failPhase`'s release would have been a no-op anyway. Leases minted INSIDE
+`assignCredentials` before the adapter refuses are unreleased on the ordinary-failure path too,
+which is shipped behaviour this proposal does not touch. EVIDENCE: binder.go:865-869,:949-954,
+:1072-1082; non-spec-changes.md:1780-1790.
+
+ALTERNATIVES: (a) file the §10.1.4 pass-2 loop (`for _, m := range members {
+s.terminateHeldSession(closeCtx, m) }`, pkg/adapter/holdstate.go:203-205) blocking on a member's
+guard held by an in-flight `Resume`, so a coordinator-lost recovery stalls behind a
+network-bound restore with no deadline over the guard acquisition — REJECTED as a close variant
+of the already-refuted "the per-slot guard is acquired with an uninterruptible mutex that no
+request deadline bounds, so the §11.4 revoke fan-out's stated termination window is no longer
+enforceable", and because the wait is bounded by the `Resume` client's own deadline; (b) file the
+same argument for `PrepareWorkspace`, whose guard spans a client-paced upload stream and is
+therefore worse than the `Resume` case the proposal DOES record among accepted failure modes —
+REJECTED for the same reason, and because the consequence (unanswered reclaim, leaked
+disposition, reaper) is already the stated accepted outcome; (c) file that `Runtime.Start` is not
+named in the "compensating `Shutdown` can spend its budget waiting on a guarded `Resume`" bullet
+even though `Resume` holds the guard across it (resume.go:140) — REJECTED as completeness of an
+accepted-failure bullet whose stated consequence already covers it.
+
+WATCHOUT: the round-10 orchestrator brief says "THE NON-SPEC LANE HAS HAD ZERO ROUNDS since the
+token revision". That is STALE by two rounds: the ledger carries full `non-spec.8.*` and
+`non-spec.9.*` blocks (review-log.md:2603, :3588) and the r9 fix rewrote CODE-1's `Shutdown`
+body, CODE-6's guard scope, CODE-4's resume compensation and four tier-7a cases. Read the r9
+diff (`diff -u scratchpad/cp-snap/.../non-spec-r9-start/...non-spec-changes.md` against the live
+file) before re-deriving anything about the guard.
+
+WATCHOUT: the brief also still asserts "ShutdownResponse keeps slot_reclaim and gains
+slot_was_started (4)". `grep -rn slot_was_started` over the proposal returns hits only inside the
+review log's own corrections of that same claim. Do not file its absence.
+
+USEFUL [non-spec.9.review-reliability.1]: its MISTAKE entry (the r9 guard scope exempted `Resume`
+on a false premise) is the finding the current staging fixes, and reading it first told me exactly
+which text was new and why, which is where the whole of my pass went.
+
+USEFUL [Traps: the refuted-family index]: the four already-refuted credential/residue findings and
+the refuted uninterruptible-mutex finding are precisely the candidates my lens re-derived. Reading
+the refuted list before the tree saved a full pass.
+
+### [non-spec.10.review-test-coverage.1]
+
+FACT: The r9→r10 hand revision rewrote two mechanisms and the Testing section was only partly updated with them. `diff -u` of the r9 and r10 snapshots is the fastest way to see it; the r10 snapshot is byte-identical to the live proposal, so `diff` against r10 returns nothing. — EVIDENCE: scratchpad/cp-snap/0081_.../non-spec-r9 vs non-spec-r10
+FACT: `Resume`'s seven rollback sites all sit AFTER `claimSessionSlot` at pkg/adapter/resume.go:50, and the claim's own failure arm returns at :51-53 without calling `releaseSessionSlot`. So the tier-1 orderings row "A resume onto a leaked entry stamped by an earlier attempt", which is refused at the claim, exercises none of the seven rollback sites. — EVIDENCE: pkg/adapter/resume.go:50-53, :69,:73,:89,:107,:126,:134,:141
+FACT: CODE-6 (r10) splits `releaseSessionSlot` into a guard-acquiring form and `releaseSessionSlotUnderGuard`, because `Resume` now holds the slot's non-reentrant guard across its whole call. The failure mode of getting one of the seven sites wrong is a self-deadlock that holds the slot guard for the life of the pod, not a wrong answer. No listed test drives a FAILING `Resume` under the guard at any tier. — EVIDENCE: non-spec-changes.md:1578-1585
+FACT: CODE-1 (r10) evaluates `shutdownReclaimOutcome` twice, and the staged comment states the second evaluation is load-bearing because the entry can be removed or replaced while the guard is being acquired. The Testing section has no case in that window; the tier-7a fourth arm (:2967) covers only the FIRST decision refusing without a guard. — EVIDENCE: non-spec-changes.md:289-296, :2967-2972
+WATCHOUT: Testing-section text repeats verbatim in two places (the tier-3 behavioural list and the CONF-1 list), so a grep hit count of 2 for a case title is one case, not two. — EVIDENCE: non-spec-changes.md:2779-2785 and the CONF-1 mirror
+
+### [f4.summary-cleanup]
+
+FACT: The summary already carried exactly the required sections, in the required order, and
+nothing else. `grep -n '^#'` returns `# Summary: ...`, `## Summary`, `## Goals`, `## Non-goals`,
+`## Open decisions for human to make`, `## Defects in the shipped tree that this proposal does not
+stage`, `## Impacts on other proposals`, `## Deliverable index`. No file was rewritten this firing.
+— EVIDENCE: summary.md:1,3,289,312,467,592,914,927
+FACT: `## Summary` carries no prose of its own and holds the four labelled parts in order:
+`**Problem statement.**` (:5), `**What changes.**` (:21), `**Decisions.**` (:107), `**Watch out
+for.**` (:225). No part needed renaming; `**Fixed decisions.**` and `**What is fixed.**` were both
+renamed by an earlier firing and neither spelling survives.
+FACT: `**Accepted failure modes.**` (:415) stands at the end of `## Non-goals`, where the
+`f1.summary-cleanup` firing relocated it verbatim. It was not moved again and not reworded, so every
+"recorded under the accepted failure modes" pointer elsewhere in the file still resolves.
+— EVIDENCE: summary.md:415-465, :456, and the 0080 impacts row
+FACT: `## Open decisions for human to make` carries exactly entries 20, 21, 22, 26 and 27, each with
+the identifier it was stamped with. That matches this firing's adjudication: 20, 22 and 26 were
+proposed for resolution and the gate refuted each, so they stay the human's; 21 and 27 stand as
+human decisions with their recommendations applied. No entry was renumbered and no withdrawn
+identifier was reused. — EVIDENCE: summary.md:476,483,520,532,539
+FACT: The section's preamble is true as it stands and was not edited. It claims the numbering does
+not start at 1 because earlier-numbered entries were resolved with their answers staged, and that
+21 and 27 carry a recommendation with ground, alternatives and a confidence while 20, 22 and 26
+carry the question and its ground alone. Read against the five entries the section now carries, both
+halves hold. — EVIDENCE: summary.md:469-474
+FACT: No `### Retired` block or equivalent survives inside `## Open decisions for human to make`;
+the section carries five numbered entries and nothing else.
+FACT: `## Defects in the shipped tree that this proposal does not stage` carries twenty-two entries,
+no preamble and no decisions. Every `marker:unscoped:` item this firing judged out-of-scope-stands
+resolves to one of them, and each was left verbatim rather than reworded.
+FACT: `## Impacts on other proposals` carries one row per proposal or programme step (0080, 0073,
+0075, 0078, 0072, 0079, R1b, R12) and no second row for any of them. Nothing was merged this firing.
+— EVIDENCE: summary.md:914-925
+FACT: `## Deliverable index` stands last, unedited, with its twenty deliverable lines and its
+closing paragraph on tests. — EVIDENCE: summary.md:927-954
+OPEN: The `**Decisions.**` file-collision bullet (:216-223) enumerates nine `pkg/adapter` files
+while the 0080 impacts row enumerates eleven, adding `resume.go` and `sdkwarm.go`. This is the
+standing Open item already recorded in `### Open`; a fourth format pass has now declined it, because
+correcting either site is a content edit rather than a move. Named here only so the count of firings
+that have passed it over is accurate.
+
+### [non-spec.11.fix-F0.1]
+
+FIXED: The 0080 impacts row still described this proposal's `pkg/adapter/holdstate.go` edit as one
+deferred hold release, which round 11's fix for confirmed finding 0 falsifies. The row's middle
+column now reads that `holdstate.go` gives `terminateHeldSession` a slot-guard acquisition with two
+deferred releases and moves the §10.1.4 pass's ten-second budget from one shared close context to a
+guard-acquisition deadline plus a per-member close context, the "small and localised … rather than a
+mechanism" characterisation is scoped to the edits outside `holdstate.go`, and the action column now
+instructs a 0080 rewrite to re-land the guard acquisition, both deferred releases and the per-member
+close-context split rather than the deferred release alone. Without the last clause a 0080 rewrite
+executing this row reinstates the shared close budget the fix removes. The two parallel statements
+round 11 had already corrected (the file-collision bullet and the CODE-6 deliverable-index bullet)
+are unchanged and now agree with this row. — EVIDENCE: summary.md:919 against
+non-spec-changes.md:3488-3500, summary.md:218-222 and summary.md:942
+
+### [non-spec.11.fix-G1.1]
+
+DECISION: Re-scoped the §10.1.4 pass-2 budget rather than dividing it — BECAUSE the falsified claim was that a parked member cannot cost a later member its close budget, which no wording of a shared context makes true. `onHoldTimeout`'s single `context.WithTimeout(context.Background(), 10*time.Second)` becomes the pass's GUARD-ACQUISITION deadline alone, and `terminateHeldSession` mints its own ten-second close context after the acquisition returns, which `emitFinalUsage` and `Runtime.Close` run on — ALTERNATIVES: per-member slices carved out of the shared context (invents arithmetic and still burns member 1's own grace); deleting the guard from `terminateHeldSession` (needs a §10.1.4 exception to CODE-6's universal guard predicate and re-opens the `ExtractTree`-vs-`removeSlotTree` race the third tier-7a arm exists to catch); accepting the regression with no code change (silently loses every later member's final usage report, so §8.3 `budget_return.lua` runs on incomplete token totals).
+
+DECISION: Deleted the clause "one section's holder cannot delay another section past its own budget" at the guard-invariant paragraph rather than qualifying it — BECAUSE the recorded failure mode on this proposal is a false universal, then a closed enumeration the log calls "the same defect one step weaker", then a deletion. Replaced it with a sentence saying the rule makes no caller-budget claim and that each call site states its own disposition.
+
+DECISION: Moved the close-budget property from the tier-7a third arm to a deterministic tier-1 case in `pkg/adapter/holdstate_test.go` — BECAUSE the tier-7a sentence was non-discriminating in both directions (a driver that releases its park early passes against an unbounded acquisition too), and a context-lifetime property is read off `ctx.Err()` and the deadline rather than off a wall clock under a stress budget. Tier 7a keeps only the ordering and residue assertions.
+
+FACT: `tests/spec-map.json` credits `pkg/adapter/holdstate_test.go` under sections 5.2, 6.4, 9.1, 10.1, 10.1.4, 11.2, 15.4, 15.4.3 and 28.5.3, plus 4.7 through the `pkg/adapter/...` directory entry. It has NO 4.7.1 credit and no per-case entries, so it is in whole-file mode, and `4.7.1` IS a keyed section, so `creditKey` does not fall back to 4.7. A new case there annotating §4.7.1 therefore needs a whole-file 4.7.1 credit or tier 0 goes red — EVIDENCE: tests/spec-map.json (walk of `sections[*].tests`), tests/tier0_static/spec_map_slot_address_registration_test.go:900-965 (`creditKey`, `creditsMissing`).
+
+CORRECTS [non-spec.11.fix-design-G1]: the design's third edit told me to write that `pkg/adapter/holdstate_test.go` "is already credited in `tests/spec-map.json`, so this adds no inventory row". Half true: it adds no inventory row and no `slotAddressCaseFiles` row, but it does need one new whole-file credit under 4.7.1. The staging now says that, and the spec-map sublist under "Files touched" gained a `pkg/adapter/holdstate_test.go` item beside the `sdkwarm_test.go` one.
+
+WATCHOUT: the CODE-6 bullet said the §10.1.4 members are destroyed "up to ten seconds later". Under the split that worst case is a guard wait plus a close window, so the numeral was newly false. It now reads "one member at a time and seconds later" — EVIDENCE: non-spec-changes.md CODE-6 deliverable, the `heldSession.release` bullet.
+
+FACT: SPEC-3's staged §5.2 sentence already bounds "the cleanup's close", per cleanup, by a ten-second graceful window, so the shared pass-wide close context was a mis-scoping of the staged spec rather than a spec gap. No spec-changes.md edit was needed or made — EVIDENCE: spec-changes.md, the "Slot-identifier reclaim hold" paragraph.
+
+DEFERRED [implementation-checklist.md]: S15 does not name the `onHoldTimeout` re-scope, nor the three new tier-1 cases (destructive-expiry, admission-expiry, per-member close budget), nor the new `tests/spec-map.json` 4.7.1 whole-file credit for `pkg/adapter/holdstate_test.go`. What is true instead: CODE-6 now also edits `onHoldTimeout` so its ten-second context is the pass's guard-acquisition deadline alone and each member mints its own ten-second close context, and CODE-6's test list gains those three cases and that credit. The design for this group barred the checklist edit; the reconciliation pass closes it.
+
+UNVERIFIED: whether `pkg/adapter/holdstate_test.go`'s existing fixtures expose a fake `Runtime` that can capture the context handed to `Close`. The tier-1 case as staged assumes one can be written or extended there. Whoever implements S15 should check before assuming a new fixture is free.
+
+### [non-spec.11.fix-G1.2]
+
+DECISION: The tier-1 close-budget case asserts DISTINCT, MONOTONE close deadlines rather than a parked guard holder and a nil `Err()` after expiry — BECAUSE the design's parked form needs the pass's real ten-second acquisition deadline to elapse, which is a ten-second unit test and the wall-clock dependence the design set out to remove. With per-member contexts each member's close deadline is strictly later than the previous member's and than the pass's acquisition deadline; with one shared context every deadline is identical. That discriminates the two designs in milliseconds — ALTERNATIVES: parking the first member's guard until the pass deadline expires (correct but slow and clock-bound); injecting the ten-second constant so a test can shrink it (a new operator-visible knob for a test's benefit, and CODE-6 adds no constant today). The unguarded fall-through, including the `terminateHeldSession` row, is pinned by the destructive-expiry case instead.
+
+### [non-spec.11.fix-G2.1]
+
+DECISION: closed the "CODE-9's new stage label has no test" finding with one new bullet in the gateway tier-1 case list (`non-spec-changes.md`, "CODE-4 and CODE-5's cases", directly after `- **The counters.**`), and edited nothing in CODE-9's body, nothing in the checklist, and nothing in `spec-changes.md` — BECAUSE the missing artifact is an assertion and the section that owns the counter assertions is that list; checklist S10 already delegates the fire-assertions to S16 and S19 — ALTERNATIVES: restating the claim inside CODE-9 (duplicates S10's ownership and goes stale when the case list moves); deleting `slotFailureWorkspaceFinalize` outright (smaller mechanism, recorded as OPEN below); enumerating `error_type` values in `docs/reference/metrics.md` so tier 11 gates it (no metric row in that page or §16.1 enumerates label values for any series, so this invents a closed enumeration to maintain forever); a standalone `## Testing` subsection for one assertion (accretion, and it moves anchors other groups depend on).
+
+FACT: the two `recordSlotFailure` calls that the finding is about are seven lines apart with identical argument lists, and each is paired with a `slotBindError(...)` call taking the SAME stage string as an independent argument. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:287,289 (stage) and :294,296 (finalize).
+
+WATCHOUT: the new bullet deliberately pins the `slotBindError` stage argument at the finalize site as unchanged. Do not "simplify" that clause away. `SlotBindError.Reason()`'s only stage-sensitive arm is `if e.Stage == slotFailureWorkspacePrep { return SlotReasonTransient }`, so passing the new constant there flips a finalize `FailedPrecondition` to `SlotReasonPolicyRejection`, which `NonRetryable()` reports true for and which contradicts the staged §5.2 sentence that no failure class becomes non-retryable. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotfailure.go:91-99.
+
+USEFUL [review-log.md:2712, :3678]: the standing WATCHOUTs on `slotFailureWorkspaceFinalize` gave the exact scoping (CODE-9 is metric-only) that made this a one-bullet fix instead of a reopening of CODE-9. The new bullet now states that scoping as an assertion rather than as prose, which is what those entries asked a later round to do.
+
+OPEN: whether `slotFailureWorkspaceFinalize` should exist at all. Nothing outside CODE-9's closing paragraph, its files-touched entry and checklist S10 references it, and no spec or docs row enumerates `error_type` values, so deleting it would owe no test. It was kept because CODE-9 states an operator-facing rationale that earlier rounds examined and left standing; a human or a later round can take the deletion deliberately.
+
+DEFERRED [implementation-checklist.md]: S10 is accurate as written (it scopes CODE-9's tier-1 work to the catalog transcription and delegates the counter-fire assertions to S16 and S19), so nothing is false there. Recording it only so the reconciliation pass knows the new gateway tier-1 bullet lands under S16/S19 and needs no new step.
+
+### [non-spec.11.fix-G3.1]
+
+DECISION: closed the "CODE-1's non-removing early return bypasses clause three" finding by folding the handler into ONE exit after the two-field precondition — `answerRefusal` becomes `answerShutdown(outcome, exitedCleanly, untokened)`, which counts the untokened row, runs clause three (`if rc := req.GetRecycle(); rc != nil { s.startPodScrub(rc) }`) and builds the response; the shipped trailing clause three is DELETED — BECAUSE the scrub is unconditional on the teardown decision in the proposal's own staged spec (spec-changes.md:343 and :349, SPEC-1's §4.1 replacement: "runs the whole-pod scrub when the recycle disposition is set"), so this is a conformance correction rather than a design change, and one closure evaluated at every exit cannot diverge where the same statement written twice can — ALTERNATIVES: calling `startPodScrub` inside `answerRefusal` while leaving the trailing copy (duplicates the statement in one handler, and the removing path then scrubs twice); restructuring into `if remove { … }` with a fall-through (the post-guard re-decision can flip `remove` back to false, so it needs a label or a third flag, and it rewrites text the six spec rounds settled); hoisting clause three above the comparison (reverses the shipped ordering for no gain); relaxing the staged §4.1 sentence instead (makes the published contract follow a code bug).
+
+FACT: every production `ShutdownRecycle` names a session the adapter holds no entry for, so the `absent` arm is the ONLY arm the recycle disposition ever reaches. `Binder.ReleaseSlot` tears the session down with a plain `Shutdown` and then sends `ShutdownRecycle` for the SAME session id. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:541 then :574; pkg/gateway/podlifecycle/podsession/binder.go:2037
+
+MISTAKE: review-log.md:1013 and review-log.md:3481-3484 both barred this finding, on the ground that only a fenced compensation carries the fence and it never carries a recycle disposition. That reasoning belonged to the retired per-entry-epoch design, where a zero epoch meant "no fence". Under the token design the unconditional form is a FIRST-CLASS arm that `ShutdownRecycle` takes, and the staged switch tests entry absence BEFORE the unconditional flag, so `unconditional_teardown` against an absent entry takes the non-removing early return. The bar is dead; do not reuse it. review-log.md:3481-3484's self-refutation ("the unconditional form does NOT early-return on an absent entry") is false against the staged `shutdownReclaimOutcome` switch order.
+
+WATCHOUT: the `INVALID_ARGUMENT` two-field precondition return is the one exit that does NOT go through the helper, deliberately: a malformed request performs nothing, the scrub included. An implementor who moves that return below the helper starts a pod-level scrub from a rejected call. — EVIDENCE: non-spec-changes.md, CODE-1's precondition block above the handler body
+
+WATCHOUT: the implementor must DELETE the shipped trailing `if rc := req.GetRecycle(); rc != nil { s.startPodScrub(rc) }` (pkg/adapter/session.go:283-291) when the helper gains it. Leaving both starts two scrubs over one pod and double-sends `ReportPodScrub`. Named in CODE-1's Targets list, in the summary's CODE-1 bullet and in the files-touched entry, all three.
+
+OPEN: CONF-1's conformance battery has no recycle-carrying row, so a third-party adapter is not held to the unconditional-scrub rule by the battery. Adding one needs the harness to observe `ReportPodScrub`, which travels the GatewayControl link rather than the RPC response. Not justified by this finding; a later round or a human should decide whether the battery is widened.
+
+DEFERRED [implementation-checklist.md]: S16 and S17 describe CODE-1's handler without naming clause three or the single exit helper. Neither statement is now false, and no deliverable was added, removed, merged or split, so no step changed. If the reconciliation pass rebuilds the checklist, S17 (which already owns the `if bound` split and the response's `exited_cleanly`) is where the single-exit helper and the clause-three move belong.
+
+### [non-spec.11.fix-G4.1]
+DECISION: Corrected checklist S18 and S19 toward the deliverables they execute (CODE-2 and CODE-4), touching nothing else — BECAUSE the deliverable text, the staged §4.7.1 rule and the summary's index all already agree and the checklist was the lone wrong site — ALTERNATIVES: deleting the S18 clause (rejected: the clause is the one instruction an implementor gets wrong, since `releaseSessionSlot` is the site's own idiom), replacing it with a pointer to CODE-2 (rejected: every other step restates its deliverable in compressed form), shortening to a bare "through `DemoteSDK`" (rejected: ambiguous between the runtime method and the RPC handler, and the handler is the forbidden path).
+WATCHOUT: `DemoteSDK` names two different things in the adapter. `SDKWarmRuntime.DemoteSDK` is the runtime method CODE-2's refusal arm calls; `Server.DemoteSDK` is the RPC handler, which deregisters the entry and removes the tree and must not be used there. Always qualify. — EVIDENCE: pkg/adapter/sdkwarm.go:134 (interface method), pkg/adapter/sdkwarm.go:274 (handler), pkg/adapter/slotsession.go:214-220 (`releaseSessionSlot` deregisters and removes the tree).
+FACT: the SDK-warm `ConfigureWorkspace` failure arm ships as `s.releaseSessionSlot(sessionID)` guarded on `fresh`, which is exactly the idiom CODE-2 forbids for the new start-confirmation refusal. — EVIDENCE: pkg/adapter/sdkwarm.go:249-252, :261.
+FACT: CODE-4's call-site table for the new `leaked bool` parameter is the enumeration to cite; it includes `BindReservedSlot` (which sets `sbe.Leaked = true`) and `applySlotRetryPolicy`, so `Binder.ReleaseSlot` was never the only producer. — EVIDENCE: non-spec-changes.md:1035-1060.
+DECISION: wrote "every call site in CODE-4's table" rather than the design's "all seven call sites" — BECAUSE the loop's hard rule bars writing a count of sites, and a count goes stale the moment the table gains a row — ALTERNATIVES: keeping the numeral (rejected on that rule).
+DEFERRED [review-log.md]: the DEFERRED entries at review-log.md:3696 and :3748, which derived exactly the S19 correction, are now landed in the checklist. The review log is the protected audit record and was not edited; the reconciliation pass should record S19 among the discharged steps, since review-log.md:3852 lists S1, S3, S6, S7, S13, S15, S17 and S20 and omits it.
+
+### [non-spec.11.fix-design-G1.1]
+
+DECISION: For finding 0 I chose to RE-SCOPE the §10.1.4 pass-2 budget rather than slice it: `onHoldTimeout`'s single `context.WithTimeout(context.Background(), 10*time.Second)` becomes the pass's GUARD-ACQUISITION deadline only, and `terminateHeldSession` mints its OWN ten-second close context, after the acquisition returns, for `emitFinalUsage` and `Runtime.Close`. — BECAUSE the two prior attempts at this sentence both made the WAIT smaller (r10: bound the acquisition by ctx; r11's suggested fix: divide ctx by member count) and the r11 finding is the r10 fix one step narrower. Decoupling the two budgets does not touch the wait at all; it changes which budget the wait spends, so no member's usage flush or runtime close can ever run on an expired context regardless of how long a parked holder waits. It also ALIGNS the code with text SPEC-3 already stages: spec-changes.md:645 bounds "the cleanup's close" — per cleanup, i.e. per slot — "by a graceful window of ten seconds", so the shared pass-wide close context was already a mis-scoping of the staged spec and the correction needs no new rule. — ALTERNATIVES: (a) per-member slice of the shared budget (the reviewer's own suggestion) — rejected: it invents unspecified arithmetic (`remaining/len(members)`? a fixed slice?), leaves member 1's OWN close still running on the remains of its own acquisition wait, and is the same kind of answer that already failed twice; (b) delete the guard acquisition from `terminateHeldSession` — rejected: it needs an "except the §10.1.4 pass" exception clause against CODE-6's own guard predicate (non-spec-changes.md:1583-1590), which is hair, and it deletes the residue the tier-7a third arm's second run exists to catch; (c) make the whole pass per-member 10s and keep one context per member for both acquisition and close — rejected: a parked holder then still burns member 1's own close grace.
+
+DECISION: I also chose to DELETE, rather than narrow, the clause "one section's holder cannot delay another section past its own budget" at non-spec-changes.md:1544. — BECAUSE it is a false universal about CALLER budgets stated inside a paragraph about the GUARD helpers. What each helper delivers ("neither waits past its caller's context") is true and stays; what a given call site does with its own budget is a property of that site and belongs at that site. Narrowing it to "except the §10.1.4 pass" is the recorded failure mode. — ALTERNATIVES: qualifying it with the shared-context exception (rejected, that is the enumeration-of-exceptions failure); moving it verbatim into the holdstate bullet (rejected, it would still be false there before the budget re-scope and redundant after it).
+
+DECISION: For finding 1 I chose to pin the budget property DETERMINISTICALLY AT TIER 1 and strip it out of the tier-7a third arm, rather than rewrite the tier-7a assertion a third time. — BECAUSE the finding correctly observes the tier-7a assertion at :3011-3014 is non-discriminating in both directions (a driver that releases the park early passes against an unbounded acquisition too). A fake `Runtime` that records `ctx.Err()` and the deadline it was handed at close is a deterministic observable; a wall-clock race arm is not. The tier-7a arm keeps only the ordering and no-residue assertions, with a park SHORTER than the acquisition deadline so the guard is genuinely acquired. — ALTERNATIVES: restating the tier-7a assertion against a per-member bound with a longer park (rejected: still timing-dependent, and it is the third rewrite of the same sentence).
+
+FACT: §10.1.4 pass 2 is a serial loop over pass 1's whole member set sharing ONE 10s context, and that one value reaches `emitFinalUsage`, `Runtime.Close` and everything after them inside `terminateHeldSession`. — EVIDENCE: pkg/adapter/holdstate.go:196-205 (the shared `closeCtx` and the `for _, m := range members` loop), :237 (`s.emitFinalUsage(ctx, ...)`), :249 (`_ = s.Runtime.Close(ctx, ...)`).
+
+FACT: the `release func()` field the proposal adds to `heldSession` is the RECLAIM-HOLD release from `reclaimSlotLocked`, not the slot-guard release; pass 1 carries it to pass 2. non-spec-changes.md:3392's "defers the release its `heldSession` carries" reads as though it were the guard release. Two distinct deferred releases exist at that site. — EVIDENCE: non-spec-changes.md:1286-1288 vs :3391-3394.
+
+FACT: `pkg/adapter/holdstate_test.go` is package `adapter` (internal) and is already a `slotAddressCaseFiles` member, and the new `pkg/adapter/bindattempt_test.go` is already a staged file, so the tests finding 1 asks for add NO new tier-0 inventory row and NO new `tests/spec-map.json` file entry. — EVIDENCE: pkg/adapter/holdstate_test.go:3; tests/tier0_static/spec_map_slot_address_registration_test.go:259; non-spec-changes.md:2353.
+
+FACT: nothing already landed in `spec/`, `docs/`, `schemas/` or `charts/` mentions `terminateHeldSession`, the ten-second window, or a per-pass vs per-member close budget; spec/10_gateway-internals.md §10.1.4 (lines 53-60) states no window duration. The only text the re-scope must agree with is SPEC-3's staged §5.2 paragraph, which it already does. — EVIDENCE: spec-changes.md:645; spec/10_gateway-internals.md:53.
+
+WATCHOUT: implementation-checklist S15 (line 45) restates the guard bound and the split of `releaseSessionSlot` but says nothing about the §10.1.4 close-context re-scope, and the spec/non-spec fixers may not edit the checklist. — EVIDENCE: implementation-checklist.md:45.
+
+DEFERRED [0081_....implementation-checklist.md]: S15's CODE-6 instruction is now INCOMPLETE. It tells the implementor that `terminateHeldSession` takes the guard across its destructive section and that a failed acquisition removes unguarded with a warning, but not that `onHoldTimeout`'s context is now the pass's guard-acquisition deadline alone and that each member mints its own ten-second close context for `emitFinalUsage` and `Runtime.Close`. What is true instead: S15 must gain that instruction, and S15's test list must gain the three tier-1 expiry cases (destructive fall-through, admission refusal, per-member close-budget decoupling). The reconciliation pass between the loops owns it.
+
+WATCHOUT: summary.md:218-221, :941 and the 0080 impact row at :918 each describe holdstate.go's CODE-6 edit as "a deferred hold release" only. Those are INCOMPLETE after this fix rather than false, so I did not require an edit; if the loop's scope includes summary.md, add "and the per-member close context" to :220-221 and :941. — EVIDENCE: summary.md:220-221, :941.
+
+MISTAKE: round 10 answered "pass 2 blocks on the uninterruptible guard" by context-bounding the acquisition, which stopped the wait running past the budget but not CONSUMING it. Round 11's suggested fix (slice the budget per member) repeats the kind. Cost: two rounds on one sentence. The generalisable lesson is that bounding a wait and protecting the work that follows the wait are two different problems.
+
+OPEN: the pass's guard-acquisition deadline keeps the shipped 10s value with no separate justification. A shorter dedicated acquisition budget (the ordering is best-effort; the fall-through is the shipped behaviour) may be the better number. Nobody has argued the value; a human or a later round should.
+
+UNVERIFIED: I did not check whether any tier-7a or tier-8 case asserts a wall-clock bound on the WHOLE §10.1.4 pass that a per-member close context would relax (worst case moves from 10s to N*10s, N bounded by `maxConcurrentSessions`). Whoever lands this should grep `tests/` for hold-timeout duration assertions before running tier 7a/8.
+
+### [non-spec.11.fix-design-G2.1]
+
+DECISION: Close the missing-test finding by extending the EXISTING `- **The counters.**` bullet in the CODE-4/CODE-5 gateway tier-1 case list (non-spec-changes.md:2697-2701) with the finalize/staging stage-label separation, and changing NOTHING in CODE-9's body — BECAUSE the checklist's S10 already states "This step's tier-1 work is the catalog transcription and the collectors; the assertions that each counter fires belong to S16 and S19, where the call sites land" (implementation-checklist.md:35), so the assertion's home is already named and the bullet that owns the other §16.1 counter assertion for the same deliverables is already there — ALTERNATIVES: (a) a new sentence in CODE-9's closing paragraph asserting the test exists — rejected, it restates S10 in a second place and is exactly the "design plus patches" accretion; (b) a standalone new tier-1 metrics subsection — rejected, one bullet in an existing list is the smaller mechanism; (c) DELETE the `slotFailureWorkspaceFinalize` constant entirely (the genuinely smaller design: no spec row, no doc row, no other deliverable names it) — rejected because CODE-9's stated operator rationale stands and three prior rounds already scoped the constant deliberately; recorded as OPEN below rather than taken unilaterally.
+
+FACT: the two `recordSlotFailure` calls the finding turns on are seven lines apart and each is paired with an INDEPENDENT `slotBindError(...)` call taking the same stage string as a separate argument — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:287-296. A test asserting only the metric argument therefore cannot force the error-side stage to change; the designed bullet says so explicitly so no implementor moves both.
+
+WATCHOUT: moving the new stage constant onto the `slotBindError` argument at :294 flips a FinalizeWorkspace `FailedPrecondition` from transient to non-retryable and contradicts spec-changes.md:69. Three earlier rounds derived this and declined to file it — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotfailure.go:90-98; review-log.md:3178-3216,:3278-3306.
+
+FACT: no site in the tree enumerates `error_type` VALUES — docs/reference/metrics.md:166 and spec/16_observability.md:14 name the label only. So the tier-11 sweeps cannot gate the new value, and pinning the string literal into a doc would be a new closed enumeration nobody asked for. The designed test asserts against the Go constant, and the design deliberately does not stipulate the label's string.
+
+MISTAKE: the finding's own suggested_fix carries `// spec: §5.2; §16.1` as a per-bullet annotation. The gateway tier-1 list fixes its annotation once at the list header (non-spec-changes.md:2667-2668) and the sibling counters bullet carries none; adding one per-bullet annotation would be the only one in the list.
+
+OPEN: whether `slotFailureWorkspaceFinalize` should exist at all. Nothing outside CODE-9 (:1876-1879, :3408) and checklist S10 names it, no spec or docs row enumerates label values, and deleting it would shrink CODE-9 and remove the ambiguity about which of the two call sites takes it. Left for a human or a later round; this round pins the behaviour the deliverable states rather than reopening it.
+
+### [non-spec.11.fix-design-G3.1]
+
+DECISION: Close the dropped-recycle-scrub finding by folding CODE-1's `answerRefusal` closure and the handler's final `return` into ONE exit helper, `answerShutdown(outcome, exitedCleanly, untokened)`, which runs the shipped clause three (`if rc := req.GetRecycle(); rc != nil { s.startPodScrub(rc) }`) and then builds the response — BECAUSE the handler then has exactly one exit after the two-field precondition, clause three is written once rather than twice, and the staging NET-DELETES a closure rather than adding a mechanism. — ALTERNATIVES: (a) call `startPodScrub` at the top of `answerRefusal` and leave the trailing clause three where it is — rejected: the scrub statement then appears twice in one handler, which is the exact duplication CODE-1's own `shutdownReclaimOutcome` rationale argues against ("two calls of one function cannot diverge, where the same comparison written out twice can"); (b) restructure the removing path into an `if remove { … }` block so both refusal arms fall through to a trailing clause three — rejected: the post-guard re-decision can flip `remove` to false, so it needs a nested skip or a label, and it rewrites more of the handler than the defect warrants; (c) hoist clause three above the comparison — rejected: it reverses the shipped ordering (clause two removes the ending session's tree ahead of the whole-pod scrub) for no gain.
+
+FACT: The staged spec ALREADY states the rule CODE-1's staged code breaks. SPEC-1's replacement §4.1 sentence reads "runs the whole-pod scrub when the recycle disposition is set, so no operation is selected by a field's presence standing in for a scope" — unconditional on the teardown decision. The fix brings CODE-1 to the proposal's own staged spec rather than changing a design. EVIDENCE: proposals/0081_.../0081_....spec-changes.md:349
+
+FACT: The recycle `Shutdown` ALWAYS lands on the absent-entry arm in production. `Binder.ReleaseSlot` tears the session down with a plain `Shutdown` at pkg/gateway/podlifecycle/podsession/slotbinder.go:541, then sends `ShutdownRecycle` for the SAME session id at :574 over the still-open connection; `Binder.shutdownAdapter` does the same shape at binder.go:2037. So `unconditional_teardown=true` + no entry + a carried `RecycleScrub` is not an edge, it is the only way clause three is ever reached. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:541,574; pkg/adapter/session.go:283-291
+
+WATCHOUT: CODE-1's Targets list (non-spec-changes.md:172-190) does not name clause three, so a fixer reading only the target list will not know it is in play. Folding clause three into the exit helper MOVES it, so the Targets list must gain it in the same edit or the implementor will leave the shipped statement in place and the scrub will run twice on the removing path. EVIDENCE: proposals/0081_.../non-spec-changes.md:172-190
+
+WATCHOUT: the two-field precondition's `InvalidArgument` return is the ONE exit that must NOT run clause three, because a malformed request performs nothing. State that in the doc-comment work list, or a later round files the asymmetry as a defect. EVIDENCE: proposals/0081_.../non-spec-changes.md:196-215
+
+FACT: tests/tier4_integration/recycle_scrub_path_test.go drives a real `adapter.Server` through the binder's recycle `Shutdown` and asserts `ReportPodScrub` arrives (`TestRecyclePathScrubReportedReuses_spec_5_2`). It would go red on the staged handler as written, and it is the existing regression witness for this rule; the new coverage the fix adds is a tier-1 case, not a new integration test. EVIDENCE: tests/tier4_integration/recycle_scrub_path_test.go:204-205,404
+
+DECISION: The two duplicated bullets "the same request for a session the adapter holds no entry for answers `absent` and leaves the pod unchanged" (non-spec-changes.md:1984 under CONF-1, :2818 under the tier-3 wire-contract tests) are IN SCOPE as a wording narrowing, not as a new test row — BECAUSE the test cases as described carry no recycle disposition, so they still pass, but the bullet states the no-entry rule in general terms and a third-party adapter author implementing from it would write exactly the early return this finding is about. Replace "leaves the pod unchanged" with "removes nothing and runs neither teardown" in both copies. — ALTERNATIVES: adding a recycle-carrying row to CONF-1 itself, rejected because the battery would have to observe `ReportPodScrub`, which travels the GatewayControl link rather than the RPC response, and that is harness plumbing this finding does not justify.
+
+OPEN: should the conformance battery (CONF-1) eventually assert that a third-party adapter runs the whole-pod scrub on a recycle `Shutdown` naming a session it holds no entry for? The rule is part of the published adapter contract and is the thing our own staging got wrong, but pinning it needs a `ReportPodScrub` observer in the battery harness. For a later round or a human.
+
+UNVERIFIED: whether any OTHER CODE deliverable's staged code introduces an early return between the precondition and clause three (CODE-6's guard helpers, CODE-4's credential release). I checked only CODE-1's handler body. The next non-spec round should re-grep the staged Go blocks for `return &adapterv1.ShutdownResponse` after the fix lands and confirm there is exactly one construction site.
+
+CORRECTS [this pass's own FACT "The recycle `Shutdown` ALWAYS lands on the absent-entry arm in production"]: that FACT is false and the two-sender correction already landed in the staging replaced it. `Binder.Release`'s recycle branch is the second sender, and it sends the recycle-carrying `Shutdown` as the session's only teardown, so the entry is still present and the request answers `reclaimed` on the removing arm. The absent arm belongs to `Binder.ReleaseSlot` alone, whose separate unconditional `Shutdown` has already torn the last slot down. — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1974 (`if result.Recycle && disposition != dispositionFailed {`), :1994 (`b.shutdownAdapter(ctx, result, true)`), :2037 (`result.Adapter.ShutdownRecycle(`), with the plain-`Shutdown` else arm at :2043 exclusive of it; pkg/gateway/podlifecycle/podsession/slotbinder.go:541 then :574
+
+CORRECTS [the tier-1 test bullet "The recycle scrub runs on the absent arm", non-spec-changes.md]: that bullet survived the two-sender correction unedited, and both of its claims went stale with it. It named `tests/tier4_integration/recycle_scrub_path_test.go`'s `TestRecyclePathScrubReportedReuses_spec_5_2` as the end-to-end witness for "the same rule", but that test drives `binder.Release`, which is the removing arm rather than the absent one. With the absent arm the only staged case, no case at any tier pinned the scrub on the removing arm, which the corrected text identifies as the arm every session-mode recycling pool reaches and the one where the scrub overlaps the slot guard and the reclaim hold. The staging now carries two sibling tier-1 cases, one per arm, and the tier-4 witness is credited to the removing one. — EVIDENCE: tests/tier4_integration/recycle_scrub_path_test.go:404 (`func TestRecyclePathScrubReportedReuses_spec_5_2`), :429 (`binder.Release(context.Background(), res, "completed")`)
+
+FACT: after that edit the Testing section's scrub coverage is the two tier-1 arm cases, the shipped tier-4 reuse witness and the staged tier-4 leaked-slot case `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2` (non-spec-changes.md:3023). A `grep -n scrub` over the section returns no other asserting case, so the two added arms are the whole of clause three's tier-1 coverage and neither may be dropped as redundant with the other.
+
+### [non-spec.11.fix-design-G4.1]
+
+DECISION: Both G4 findings are text-only corrections to implementation-checklist.md lines 51 (S18) and 53 (S19); each line is rewritten to restate, in the checklist's own compressed voice, the rule its own deliverable already carries — no deliverable text moves — BECAUSE the canonical statements in non-spec-changes.md (CODE-2 at :665-685, CODE-4 at :1004-1024) and summary.md:937 are already correct and mutually consistent, so the checklist is the sole wrong site and any edit to the deliverables would be the hair — ALTERNATIVES: (a) delete the offending clauses instead of correcting them, rejected because both clauses are load-bearing warnings an implementor needs (S18's "not releaseSessionSlot" is the whole point of the CODE-2 sdkwarm arm; S19's signature sentence is what stops a three-argument build reaching S20); (b) make the checklist lines cite the deliverable instead of restating it, rejected because every other step in this checklist restates, and a lone pointer line breaks the file's one voice.
+
+FACT: The checklist steps are single-paragraph prose blocks with a trailing "Tiers …  Depends on: …" line; S18 is line 51, S19 line 53, S20 line 55. S20's text does not restate the ReleaseSlotReservation signature, so correcting S19 cascades nowhere inside the file. EVIDENCE: proposals/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.implementation-checklist.md:51,53,55
+
+FACT: CODE-2's SDK-warm refusal arm calls the runtime method `SDKWarmRuntime.DemoteSDK` (pkg/adapter/sdkwarm.go:134) and clears `s.sdkConnected` under `s.mu`; it must route through neither `releaseSessionSlot` nor the `DemoteSDK` RPC handler (pkg/adapter/sdkwarm.go:274), because both deregister the entry and remove the tree (pkg/adapter/slotsession.go:214-220). The distinction between the runtime method and the same-named RPC handler is the trap in this finding. EVIDENCE: proposals/0081_.../0081_....non-spec-changes.md:673-683
+
+WATCHOUT: Do not "simplify" S18 to "the SDK-warm site through `DemoteSDK`" without saying which `DemoteSDK`. The bare name reads as the RPC handler, which is the exact wrong arm. Write `SDKWarmRuntime.DemoteSDK` and name what it must not touch. EVIDENCE: proposals/0081_.../0081_....non-spec-changes.md:676-681
+
+WATCHOUT: S19's false clause has two halves and a fixer who corrects only the signature half leaves the second falsehood ("the only `leaked` producer is `Binder.ReleaseSlot`") standing; `BindReservedSlot` sets `sbe.Leaked = true` and `applySlotRetryPolicy` passes `sbe.Leaked`. EVIDENCE: proposals/0081_.../0081_....non-spec-changes.md:1019,1024
+
+MISTAKE: S18's wrong clause and the old-S17 DEFERRED at review-log.md:1444 carry the same phrasing, which suggests it was copied forward when the checklist was renumbered rather than re-derived against CODE-2. Anyone rebuilding the checklist should re-read each deliverable rather than renumber the previous text.
+
+DEFERRED [0081_....review-log.md]: review-log.md:3852 records the reconciliation pass's discharged set as "S1, S3, S6, S7, S13, S15, S17 and S20", omitting S19, while :3696 and :3748 file the S19 correction as DEFERRED. Landing this round's S19 edit discharges those two entries; the audit record is protected and is not edited, so the next reconciliation pass should read S19 as closed by non-spec round 11 rather than re-deriving it.
+
+### [non-spec.11.review-applicability.1]
+
+FACT: the proposal text did NOT move since the r11 snapshot. `diff -rq scratchpad/cp-snap/.../non-spec-r11 proposals/0081_.../` reports only `review-log.md` differing, so the "read the changed sections hardest" instruction had no changed sections this round; the whole document is r10 text. — EVIDENCE: scratchpad/cp-snap/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/non-spec-r11
+
+FACT: checklist graph is still clean on the mechanical properties. 22 steps, 20 deliverables, every deliverable in at least one step, every `Depends on:` strictly backward, one lane per step, all six spec steps lead, zero `[x]` boxes, and NO `S<n>` reference survives outside the checklist file (`grep -on '\bS[0-9]\+\b'` over spec-changes/non-spec-changes/summary returns nothing), so the renumber-residue class is closed. The defects this round are all CONTENT of a step line against its own deliverable. — EVIDENCE: implementation-checklist.md:17-63
+
+MISTAKE: the reconciliation pass rebuilt the checklist from the `### Deferred` block VERBATIM, and one of those entries was already stale. review-log.md:1445 (the S17/CODE-2 entry) says the SDK-warm site "takes the refusal through `releaseSessionSlot` with the §6.1 `DemoteSDK` fallback"; CODE-2's body was later rewritten to say the opposite ("it routes neither through `releaseSessionSlot` ... nor through the `DemoteSDK` RPC handler", non-spec-changes.md:677-681). The pass copied the stale half into S18 and it now instructs an implementor to perform the exact act the staged §4.7.1 start-confirmation rule bars ("it records nothing, removes no entry", spec-changes.md:810). Lesson for the next reconciliation: re-read the DELIVERABLE before landing a DEFERRED correction, because a DEFERRED written N rounds ago describes the deliverable as it was then. — EVIDENCE: implementation-checklist.md:51 vs non-spec-changes.md:677-681
+
+CORRECTS [review-log.md:3481]: that FACT reads "CODE-1's staged fenced-form early returns skip shipped clause three ... but the unconditional form does NOT early-return on an absent entry, so the occupancy-zero `ShutdownRecycle` ... still reaches the whole-pod scrub. I chased this as a dropped scrub and refuted myself." That refutation is WRONG against the staged `shutdownReclaimOutcome`: its switch tests `case !ok:` BEFORE `case unconditional:` (non-spec-changes.md:253-256), so an unconditional teardown for a session the adapter holds no entry for answers ABSENT with `remove == false` and takes the `answerRefusal` early return at :323-325. `Binder.ReleaseSlot` sends its `ShutdownRecycle` AFTER the per-session `Shutdown` already removed the entry (pkg/gateway/podlifecycle/podsession/slotbinder.go:541,:574), which is exactly the "always names a session the adapter holds no entry for" case the standing context records at review-log.md:86. So the staged handler drops `startPodScrub` on the one production path that always produces it. The epoch-era exemption at review-log.md:1013 ("only a fenced compensation carries a non-zero epoch and it never sets the recycle disposition") does not survive the token revision, because the early return is now taken on entry ABSENCE rather than on the fence.
+
+USEFUL [review-log.md:86]: "The occupancy-zero recycle `Shutdown` is a second RPC reusing the just-released session's identifier, so it always names a session the adapter holds no entry for and its clause three runs the whole-pod scrub regardless. Any blanket 'a request naming a session the adapter holds no entry for removes nothing' rule must except it." That entry is what turned a switch-ordering observation into a confirmed production regression in one step.
+
+USEFUL [review-log.md:2935 / :3854]: "CODE-1, CODE-4 and CODE-6 are each split across steps deliberately (S16/S17/S21, S13/S19, S14/S15/S21) — do not file that as 'a deliverable named by two steps'." Saved a false positive against an explicit rule in my own lens brief.
+
+WATCHOUT: `pkg/adapter/session.go`'s clause three (`if rc := req.GetRecycle(); rc != nil { s.startPodScrub(rc) }`, session.go:288-290) is NOT staged anywhere in the proposal — `grep -n "startPodScrub"` over every proposal file returns nothing. Any rewrite of `Shutdown` that adds an early return has to account for it, and no staged test drives recycle-plus-absent, so only `tests/tier4_integration/recycle_scrub_path_test.go` would catch it. — EVIDENCE: pkg/adapter/session.go:283-291
+
+DEFERRED [implementation-checklist.md, S19 (:53)]: STILL OPEN after the reconciliation pass. The closing clause "`ReleaseSlotReservation` carries no such parameter and the only `leaked` producer is `Binder.ReleaseSlot`" is false against CODE-4 (non-spec-changes.md:1004-1024 stages `func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error` with a seven-row call-site table) and makes S20's staged `ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked)` (:1124-1125) fail to compile. What is true instead: `ReleaseSlotReservation` gains a `leaked bool` parameter that all seven call sites supply, so `Binder.ReleaseSlot` is no longer the only producer of `leaked=true`. This is the third round it has been written down (review-log.md:3696, :3748); review-log.md:3852's claim that the reconciliation pass discharged "every checklist DEFERRED entry" lists S1, S3, S6, S7, S13, S15, S17, S20 and does NOT include S19.
+
+OPEN: does `Binder.noteCompensationOutcome` forward an `outcome` STRING to a hook whose series carries only `pool` and `k8s_pod_name` (spec-changes.md:999)? CODE-9 declares `SlotReclaim func(outcome, pool, podName string)` and wires it to `gwMetrics.IncSlotCompensationSuperseded` "in the form `IncSlotFailure` already takes" (3 args, 3 labels). Nothing states `IncSlotCompensationSuperseded`'s arity, and the two-label series wants two. Derivable either way; not filed, but a fixer already in CODE-9 should state the signature.
+
+OPEN (not filed, judged below the bar twice over): CODE-6's heading file list (non-spec-changes.md:1225) omits `pkg/adapter/server.go`, `pkg/adapter/sdkwarm.go` and `pkg/adapter/credentials.go`, all three of which its own body and `## Files touched` assign to it (:1236-1240, :3387-3400). The identical defect against `resume.go` was CONFIRMED in an earlier round, so the class is live; I dropped it only because Files-touched is the authoritative list and the prior fix set the precedent that the heading follows it.
+
+### [non-spec.11.review-mechanism.1]
+
+FACT: Since the r10 snapshot the ONLY proposal-content change is the r10 fix stage (r10 -> r11
+diff); `diff -rq non-spec-r11-start non-spec-r11` and the snapshot-vs-tree diff both show only
+`review-log.md` differing. So the newest text this round is the whole "guard becomes a
+capacity-one channel semaphore bounded by the caller's context" rewrite.
+— EVIDENCE: scratchpad/cp-snap/.../non-spec-r10 vs non-spec-r11
+
+FACT: §10.1.4 pass 2 runs on ONE shared 10s close context for every member, by design: the
+shipped comment says so explicitly ("One close context is shared by every member, which keeps
+the bound the single-session timeout had ... only the last member's close consumes the grace").
+Any per-member wait staged onto that context is therefore drawn from the same pool that funds
+every member's `emitFinalUsage` and `Runtime.Close`.
+— EVIDENCE: pkg/adapter/holdstate.go:197-205
+
+FACT: `reclaimSlotLocked` inserts the hold ONLY when the deregistration removed an entry, so two
+concurrent holders of one identifier are impossible and the §10.1.4-pass-1-hold-versus-
+Resume-rollback-hold nesting I chased is not a defect. The rollback's `reclaimSlotLocked` finds
+no entry, removes nothing, and takes the no-op release.
+— EVIDENCE: non-spec-changes.md:1272-1277
+
+FACT: The r10 fix's test-seam accounting is accurate against the tree. `ReleaseSlotForTest` has
+exactly five callers (integrationlevel_test.go:84, credexpiry_test.go:320,
+checkpoint_stream_test.go:1012, tracingcontext_addressing_test.go:425, one_session_only_test.go:77)
+and `releaseSessionSlot` has exactly seven production callers (session.go:133,147,157;
+sdkwarm.go:236,241,251,298) plus podmcp_arming_internal_test.go:144,195. Do not re-derive these.
+— EVIDENCE: pkg/adapter/export_test.go:32-35
+
+WATCHOUT: The claim "no guard acquisition outlives its caller's context" (non-spec-changes.md:1542)
+is true per-section but its corollary "one section's holder cannot delay another section past its
+own budget" fails wherever two sections SHARE a context. The only such site in the staging is
+§10.1.4 pass 2. Any future rewrite of that paragraph must keep the shared-budget case in view.
+— EVIDENCE: non-spec-changes.md:1543-1544 vs pkg/adapter/holdstate.go:201-205
+
+WATCHOUT: The tier-7a third arm's second run (non-spec-changes.md:3004-3014) is non-discriminating
+in both directions. If the driver releases the parked `Resume` before the budget elapses, an
+unbounded acquisition passes the assertion too; if it does not, the staged bounded acquisition
+waits the whole 10s and the assertion fails. A discriminating case needs a per-member bound.
+
+FACT: The "compensating `Shutdown` can spend its budget waiting on a guarded `Resume`" residue IS
+priced in the accepted-failure-mode list (non-spec-changes.md:3233-3248), which closes an earlier
+round's finding. The §10.1.4 analogue is NOT priced anywhere; `grep -n "10.1.4"` on
+non-spec-changes.md returns no edge-case bullet.
+
+UNVERIFIED: No listed test at any tier drives an EXPIRED guard acquisition on either hand-out
+form. `grep -n "slot_guard_not_acquired"` hits only the three staging/prose sites and the one
+staged call site, never a test. A tier-1 case on each form would pin the two expiry arms.
+
+### [non-spec.11.review-performance.1]
+
+FACT: §10.1.4 pass 2 shares ONE 10s close context across every member:
+`closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)` then
+`for _, m := range members { s.terminateHeldSession(closeCtx, m) }`. Inside,
+`emitFinalUsage(ctx, ...)` and `s.Runtime.Close(ctx, ...)` both run on that same ctx.
+Any per-member wait charged to `closeCtx` is charged to every later member.
+— EVIDENCE: pkg/adapter/holdstate.go:197-205,:237,:249
+
+FACT: a §10.1.4 member CAN be holding its own slot guard. `Resume` marks the entry started at
+`claimSessionSlot` and then holds the guard through the network-bound `workspace.ExtractTree`
+(non-spec-changes.md:1589), so a started member parked in the extraction is exactly the fixture
+the proposal's own tier-7a third arm builds (non-spec-changes.md:3007-3009). This is not
+hypothetical reachability.
+
+WATCHOUT: non-spec-changes.md:3394-3395 claims the bounded acquisition "cannot outrun the pass's
+own close budget or let one member's in-flight section delay a later member's termination". The
+first half holds; the second does not, because the budget is shared. A parked extraction can burn
+the whole 10s on member 1's `lockSlotGuard`, after which every remaining member runs
+`emitFinalUsage` and `Runtime.Close` on an expired context. The tier-7a arm at :3011-3014 asserts
+exactly the property the design does not guarantee; whether it is green depends only on how long
+the fixture parks the extraction.
+— EVIDENCE: non-spec-changes.md:3391-3399, :3011-3014, pkg/adapter/holdstate.go:201-205
+
+FACT (checked, NOT a finding): `Server.slotGuards` growth is genuinely bounded. The Lifetime
+paragraph's claim holds: `SlotID == SessionID`, a recycling pod retires at
+`recycle.maxSessionsPerPod` (required with no default when `recycle.enabled: true`), and a
+non-recycling pod is terminated when its claim is deleted, so the table is one channel per session
+of one pod lifetime. Do not re-file this as an unbounded map.
+— EVIDENCE: non-spec-changes.md:1631-1639; spec/05_runtime-registry-and-pool-model.md:488,:511;
+spec/06_warm-pod-model.md:80
+
+FACT (checked, NOT a finding): `lenny_slot_compensation_superseded_total`'s `pool` +
+`k8s_pod_name` labels are not new cardinality. The shipped sibling `lenny_slot_failure_total`
+already carries `error_type`, `pool`, `k8s_pod_name`, sanctioned by §16.1.
+— EVIDENCE: pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go:185-193;
+spec/16_observability.md:14; docs/reference/metrics.md:166
+
+FACT (checked, NOT a finding): the proposal adds no etcd, Postgres or Redis write per bind. The
+bind-attempt token is process-local on both ends; CODE-5's only new control-plane write pressure
+is the extra `accountSlotFailure` reach on the reserved and §7.3 resume branches, and the
+resulting pod-drain rate change is stated as a deliberate trade at non-spec-changes.md:1152-1162.
+
+FACT (checked, NOT a finding): per-slot guards do not serialize across sessions. The key is the
+slot identifier, which equals the session identifier, so two co-tenant sessions on one pod never
+contend; the only serialization added is a session against itself.
+
+### [non-spec.11.review-test-coverage.1]
+
+DECISION: Filed three test-coverage findings — the five untested `Resume` rollback sites, the
+untested `slotFailureWorkspaceFinalize` metric label, and the untested guard-acquisition-expiry
+branch — BECAUSE each is a behaviour the staging adds or changes whose only observable is not
+asserted anywhere in `## Testing`. ALTERNATIVES: rejected a "tier 5 is omitted" finding (the drain
+decision's apiserver effect is already pinned at tier 2 by the `binder_envtest` case, so a Kind
+case adds nothing the change requires); rejected a finding on the widened
+`cancelPodMCPIfRuntimeIdle` gate (the double guard `runtimeIdleLocked() || mcpArmingHeldLocked()`
+at `pkg/adapter/slotsession.go:238-260` makes the harmful state unreachable, so a case would be a
+nice-to-have); rejected a finding on DOCS-2's `DemoteSDK` row having no tier-11 substring
+assertion where the `Shutdown` row has several (documentation polish).
+
+CORRECTS [the r10/r11 FACT at review-log.md:4055]: "CODE-1 evaluates `shutdownReclaimOutcome`
+twice ... The Testing section has no case in that window" is now stale. The tier-7a **fifth arm**
+covers exactly that interval: a compensating `Shutdown` decides `RECLAIMED` on its fast path, waits
+for the guard a parked `Resume` holds, the `Resume` fails and calls `releaseSessionSlotUnderGuard`,
+an `AssignCredentials` creates a successor entry, and the woken `Shutdown` re-decides `superseded`
+and deregisters nothing. — EVIDENCE: non-spec-changes.md:3025-3040
+
+USEFUL [the refuted "No test drives a failing Resume under the per-slot guard" entry]: its residual
+paragraph did the site-by-site work — `resume_test.go:301` covers `resume.go:107` and `:329`/`:383`
+cover `resume.go:73`, leaving `:69`, `:89`, `:126`, `:134`, `:141` uncovered. I re-verified each:
+`grep -rn "func TestResume" pkg/adapter/resume_test.go` lists fourteen cases and none drives a
+`Runtime.Start` failure, a manifest-write failure, a `startPlatformMCP` failure or a
+`WorkspaceSizePreCheck` failure; `ExpectedWorkspaceBytes`/`WorkspaceSizeLimitBytes` appear only in
+`pkg/adapter/checkpoint_stream_test.go:85,:631`, on `Server` rather than on a `ResumeRequest`.
+
+FACT: The shipped `lenny_slot_failure_total` stage label is asserted by exact string in
+`pkg/gateway/podlifecycle/podsession/slotbinder_test.go:753-779`
+(`got.errorType != "session_start"`), so the form a `slotFailureWorkspaceFinalize` case would take
+already exists and the proposal's own fixture work (per-stage finalize error injection on
+`concurrentAdapter`, non-spec-changes.md:2634-2640) supplies the driver. — EVIDENCE:
+pkg/gateway/podlifecycle/podsession/slotbinder_test.go:775-777
+
+FACT: `slot_guard_not_acquired` appears at non-spec-changes.md:294, :331, :1546, :1616, :3377,
+:3387, :3397 and nowhere in `## Testing` (lines 2340-3143). Neither expiry branch of either
+hand-out form — the destructive side's unguarded removal nor the admission side's `ctx.Err()`
+refusal — is driven by any listed case at any tier. — EVIDENCE: non-spec-changes.md:1542-1552
+
+WATCHOUT: `diff -ru` against `scratchpad/cp-snap/.../non-spec-r11` shows **no change** to any
+proposal file this round except the review log's `[f4.summary-cleanup]` block. Do not read the
+snapshot's name as evidence that the non-spec staging was edited for round 11. — EVIDENCE:
+review-log.md:4057-4097
+
+### [non-spec.12.fix-G1.1]
+DECISION: Closed the missing-test finding with ONE new tier-1 bullet, "**The refusals' client envelopes.**", inserted after "**The refusals' classifications.**" in non-spec-changes.md's "Gateway tests for CODE-4, CODE-5, CODE-7 and CODE-8, tier 1" list, and changed nothing else — BECAUSE the two newly reachable client outcomes are chosen by `writeSetupCommandError`, a different decision from the `Reason()`/`classifySlotBindFailure` rows the existing bullet pins — ALTERNATIVES: a tier-3 case beside tests/tier3_contract/rest_sessions/slot_address_absence_test.go:445 (rejected: no new wire surface, and it would drag a new Files-touched entry and a spec-map registration in); folding the envelope into the existing classifications bullet (rejected: conflates two independent code paths and falsifies that bullet's stated subject); recording it in "Edge cases and accepted failure modes" (rejected: that section pins nothing); narrowing §15.1 so no split exists (rejected: spec-changes.md states the narrowing is out of scope and six spec rounds settled the widening).
+FACT: The client envelope for a refused `RunSetup` is chosen by `status.Code(setupFail.Cause)` alone, in `writeSetupCommandError`, reached through the typed `*SetupCommandFailure` handler that wins over SLOT_FAILED — EVIDENCE: pkg/gateway/sessionserver/start.go:87 (writePodClaimError), :239-249 (the branch: 422 SETUP_COMMAND_FAILED with no Retry-After, else 503 + Retry-After)
+FACT: Every `RunSetup` error, refusal included, is wrapped `&SetupCommandFailure{...}` inside a `SlotBindError` whose Stage is the setup label — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:303-304; the same wrapper on Binder.Prepare's path at podsession/binder.go:938
+WATCHOUT: `details.reason` is `setup_command_failed` on BOTH the 422 and the 503 arm, so it discriminates nothing. Only the status code, the body `code`, and the `Retry-After` header differ, and a test asserting `details.reason` pins nothing — EVIDENCE: pkg/gateway/sessionserver/start.go:241,:249
+WATCHOUT: The shipped harness `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` builds its fixture with `Stage: "session_start"`. Copying that verbatim mismatches the production path, which uses the setup label. The new cases use `"setup"` — EVIDENCE: pkg/gateway/sessionserver/slotretry_test.go:519-548 vs podsession/binder.go:291 (slotFailureSetup = "setup")
+FACT: `pkg/gateway/sessionserver/slotretry_test.go` is already in the Files-touched Tests: list and the paragraph at non-spec-changes.md:3434-3443 (post-insertion) already states the catch-all spec-map rule for a new function in it, so this addition needed no Files-touched edit — EVIDENCE: non-spec-changes.md:3434-3443 (post-insertion)
+OPEN: Whether the HTTP wire form of the two arms also warrants a tier-3 case beside tests/tier3_contract/rest_sessions/slot_address_absence_test.go:445. Deliberately left out this round because no status code, header, or body key is new; a later round may revisit.
+
+### [non-spec.12.fix-G2.1]
+DECISION: Added `pkg/adapter/sdkwarm.go` to the CODE-2 heading's file list at non-spec-changes.md:558, changing nothing else — BECAUSE the deliverable body stages a whole refusal arm at that file (non-spec-changes.md:700-714) and the other two carriers of CODE-2's scope already name it (`## Files touched` at :3529, summary.md:938), so the heading was the lone dissenter — ALTERNATIVES: splitting the sdkwarm arm into its own deliverable (rejected: it is the runtime half of the same §6.1 demotion CODE-2 stages, and it would contradict summary.md:938); dropping file lists from deliverable headings entirely (rejected: churn far past the defect, and the heading list is what an implementor reads first).
+FACT: CODE-2's file list lives in exactly three carriers and nowhere else. A grep for `CODE-2` across the proposal's non-log files returns the heading, `## Files touched`, summary.md:938's deliverable index, checklist S18 (prose only, no file list), and prose cross-references that name no files. Nothing else went stale from this edit. EVIDENCE: non-spec-changes.md:558,:3529; summary.md:938; implementation-checklist.md:51
+WATCHOUT: The `## Files touched` sdkwarm entry has drifted from :3508 to :3529 since the finding was written. Anchor on the literal `- \`pkg/adapter/sdkwarm.go\` ·` rather than on a line number. EVIDENCE: non-spec-changes.md:3529
+DEFERRED [summary.md:72]: The narrative bullet saying the confirmation binds "both RPCs" and citing three adapter files is wrong on its own account, independently of the heading: the confirmation binds three request paths across four files. This finding's design explicitly barred touching it here, and review-log.md:1429 already carries it DEFERRED as the same omission class. The reconciliation pass should rewrite that bullet to name the SDK-warm `ConfigureWorkspace` site and `pkg/adapter/sdkwarm.go`.
+
+### [non-spec.12.fix-G3.1]
+
+DECISION: Replaced the "recycle always answers ABSENT" claim in CODE-1's staged `answerShutdown` comment, its `Shutdown` doc-comment bullet, and the summary's CODE-1 capsule with a two-sender statement naming each caller's actual outcome — BECAUSE both senders exist in the tree and only one is preceded by a separate teardown — ALTERNATIVES: deleting the justification paragraph (rejected: the paragraph is the reason clause three sits outside every early return, and losing it invites the regression the deliverable prevents); keeping the ABSENT rule with an exception clause (rejected: the two-sender form is shorter and true); fixing only the drifted line cite (rejected: the false invariant is the finding).
+
+FACT: There are two recycle-carrying `Shutdown` senders, and they reach different arms. `Binder.ReleaseSlot` sends a plain unconditional `Shutdown` first and the recycle one second, so the second finds no entry and answers ABSENT — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:542 then :574.
+
+FACT: `Binder.Release`'s recycle branch calls `b.shutdownAdapter(ctx, result, true)` and returns immediately; `shutdownAdapter`'s two arms are exclusive, so the recycle request is the session's ONLY teardown, the entry is still present, and the outcome is RECLAIMED on the removing arm — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1974, :1994-1995, :2036-2044.
+
+FACT: The session-mode recycle path is live in production, not theoretical: `exclusiveBindRequest` sets `Recycle: match.Recycle`, so any exclusive pool with `recycle.enabled: true` reaches it on every non-failed release — EVIDENCE: pkg/gateway/sessionserver/start.go:2520.
+
+WATCHOUT: `slotbinder.go:541` is a comment line, not the `Shutdown` call. The call is at :542. The stale cite survived several rounds inside the staged code comment — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:541-542.
+
+OPEN: On the removing arm the whole-pod scrub now provably overlaps the slot guard and the reclaim hold, because `answerShutdown` runs in the return expression and the guard/hold releases are deferred. `startPodScrub` is asynchronous (pkg/adapter/podscrub.go), so the overlap is non-blocking, but nothing in the staged §5.2 or §4.7.1 prose states an ordering. A later round or a human should decide whether an ordering statement is wanted; this fix deliberately did not decide it inside a citation correction.
+
+### [non-spec.12.fix-design-G1.1]
+
+DECISION: close the G1 finding with ONE new bullet in the existing "Gateway tests for CODE-4, CODE-5, CODE-7 and CODE-8, tier 1" list, placed immediately after "**The refusals' classifications.**", naming two arms written beside the shipped `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` in `pkg/gateway/sessionserver/slotretry_test.go` — BECAUSE the two newly-assigned client outcomes are selected by `writeSetupCommandError`'s branch on `status.Code(setupFail.Cause)` alone, which the listed `Reason()`/`classifySlotBindFailure` rows never reach, and the shipped test is the exact precedent for driving that renderer from a wrapped `SlotBindError` — ALTERNATIVES: (a) add a tier-3 case beside `tests/tier3_contract/rest_sessions/slot_address_absence_test.go:445`, rejected because the HTTP surface is unchanged (no new status code, header or body key is introduced; only which error value arrives at an already-tier-3-covered renderer), and adding it drags a new Files-touched test-file entry and a spec-map registration into the proposal for no new wire contract; (b) rewrite the existing "refusals' classifications" bullet to also cover the envelope, rejected because `Reason()` and the envelope are two independent decisions and merging them into one bullet re-creates the conflation this finding names; (c) state the envelope split only in "Edge cases and accepted failure modes", rejected because that section records accepted behaviour and pins nothing.
+
+FACT: `writeSetupCommandError` (pkg/gateway/sessionserver/start.go:236-249) branches on `status.Code(setupFail.Cause)` ONLY. `FailedPrecondition` -> 422 `SETUP_COMMAND_FAILED`, `details.reason: setup_command_failed`, no `Retry-After`; every other code -> 503 fallback code + `Retry-After` and the SAME `details.reason: setup_command_failed`. So `details.reason` does NOT discriminate the two arms; the three discriminating assertions are the status code, the body `code`, and the presence/absence of the `Retry-After` header. A fix that asserts `details.reason` as the distinguishing signal is wrong. EVIDENCE: pkg/gateway/sessionserver/start.go:239-249
+
+FACT: the stage constant is `slotFailureSetup = "setup"` (pkg/gateway/podlifecycle/podsession/binder.go:291), used at slotbinder.go:302-303 for every `RunSetup` error. The shipped precedent test instead builds `Stage: "session_start"` (slotretry_test.go:525) and still lands 422, because the typed `*SetupCommandFailure` handler in `writePodClaimError` (start.go:87-90) wins over stage-derived classification. Either stage value reaches the same arm; use `slotFailureSetup` in the new cases so the fixture matches production. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:291, slotbinder.go:302-303, pkg/gateway/sessionserver/slotretry_test.go:519-548
+
+FACT: no new Files-touched entry falls due. `pkg/gateway/sessionserver/slotretry_test.go` is already in the Tests: file list, and the Files-touched paragraph at non-spec-changes.md:3413-3420 already carries the catch-all "A new function added to that file takes a `path::TestName` entry under every section its own annotation names." The fix is purely additive to the Testing section. EVIDENCE: non-spec-changes.md:3417-3420
+
+WATCHOUT: the fixer must NOT touch the "**The refusals' classifications.**" bullet's existing rows (non-spec-changes.md:2816-2823). Those rows pin `SlotBindError.Reason()` and the retry classifier, which are a different decision from the envelope and are correct as filed. The finding is a missing bullet, not a wrong one. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotfailure.go:93-99
+
+WATCHOUT: this group edits the latest position in non-spec-changes.md on purpose, so the other G-groups' line anchors survive. Land it before any earlier-file edit in this round.
+
+OPEN: the tier-3 form of this envelope split (`tests/tier3_contract/rest_sessions/slot_address_absence_test.go:445 TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2`) exists in the tree but appears in neither the Testing section nor the Files-touched test list (non-spec-changes.md:3524-3560). This design deliberately does not add a tier-3 case. If a later round judges the retryability half to be a client-observable wire contract requiring tier 3, that is the round that adds it, and it must also add the file to the Files-touched Tests: list.
+
+### [non-spec.12.fix-design-G2.1]
+DECISION: Apply the reviewer's fix verbatim — append `, pkg/adapter/sdkwarm.go` to the CODE-2 heading's file list at non-spec-changes.md:558 — BECAUSE the two other carriers of CODE-2's scope already name the file (summary.md:938 lists four files; the `## Files touched` entry at non-spec-changes.md:3508-3509 names sdkwarm.go), so the heading is the lone dissenting carrier and the edit makes three carriers agree. ALTERNATIVES: (a) drop the sdkwarm.go refusal arm from CODE-2 and move it to its own deliverable — rejected, the arm is the §6.1 demotion half of the same confirmation and splitting it invents a deliverable for one paragraph; (b) strip file lists from all headings and rely on `## Files touched` — rejected, larger churn than the defect and the heading list is what an implementor reads first.
+FACT: non-spec-changes.md:558 currently reads three files; :700-714 stages the sdkwarm.go:261 refusal arm; :3508-3509 and summary.md:938 both already carry sdkwarm.go. EVIDENCE: proposals/0081_.../0081_….non-spec-changes.md:558,3508; proposals/0081_.../0081_….summary.md:938
+WATCHOUT: do NOT also "fix" summary.md:72 in this edit. That bullet omits sdkwarm.go on its own account and is a pre-existing defect already flagged (review-log.md:1429 DEFERRED, same class); touching it here widens a trivial finding into an unreviewed one. EVIDENCE: proposals/0081_.../0081_….summary.md:72
+
+### [non-spec.12.fix-design-G3.1]
+
+DECISION: Rewrite the CODE-1 recycle-scrub claim in three coupled places (non-spec-changes.md:319-324 staged code comment, :546-549 doc-comment bullet, summary.md:937 capsule) to name BOTH recycle senders and their actual outcomes, and fix the line cite :541 -> :542. No mechanism change: answerShutdown already runs the scrub on every outcome, which is what makes both senders correct. BECAUSE the invariant "every recycle-carrying Shutdown answers ABSENT" is false for Binder.Release's recycle branch, and a false invariant in a comment that lands verbatim in pkg/adapter/session.go is what a future reader reasons from. ALTERNATIVES: (a) delete the justification paragraph entirely and keep only "the scrub runs on every outcome" — rejected, the paragraph is the reason clause three sits outside every early return and deleting it invites a later reader to reintroduce the early return; (b) add an exception clause ("except on the session-mode path") to the ABSENT claim — rejected as hair, the two-sender statement is shorter and true.
+
+FACT: There are exactly two recycle-carrying Shutdown senders in the tree, and only one is preceded by a separate teardown. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:542 (plain Shutdown) then :574 (ShutdownRecycle) — concurrent path, second request answers `absent`; pkg/gateway/podlifecycle/podsession/binder.go:1994 `b.shutdownAdapter(ctx, result, true)` then :1995 `return nil`, with shutdownAdapter's arms exclusive at :2037 (ShutdownRecycle) vs :2043 (plain Shutdown) — session-mode path sends ShutdownRecycle as the session's ONLY teardown, so the entry is still present and the outcome is `reclaimed` on the removing arm.
+
+FACT: The session-mode recycle path is live in production, not a dead arm: pkg/gateway/sessionserver/start.go:2520 sets `Recycle: match.Recycle` in exclusiveBindRequest (also :2561), so any exclusive pool with recycle enabled reaches it on every non-failed release. EVIDENCE: pkg/gateway/sessionserver/start.go:2520,:2561.
+
+WATCHOUT: slotbinder.go:541 is a comment line ("// edge below the whole-pod recycle Shutdown reuses it before it is closed."); the call is at :542. Any staged text citing :541 for the concurrent path's plain Shutdown is off by one. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:541-542.
+
+FACT: startPodScrub is asynchronous — it spawns a goroutine and returns immediately. EVIDENCE: pkg/adapter/podscrub.go:40-42 (`func (s *Server) startPodScrub(...)` / `go func() {`). So firing the scrub from answerShutdown on the removing arm does not block under the slot guard or the reclaim hold; it does, however, run CONCURRENTLY with the per-slot cleanup those two protect.
+
+OPEN: On the session-mode sender the whole-pod scrub now starts on the removing arm, i.e. while the slot guard and the reclaim hold are still held and the per-slot tree removal is in flight. Whether the whole-pod scrub racing the per-slot cleanup over the same tree is benign was not established by this design and is not part of G3's edit. A later round (or the non-spec lane on CODE-6) should decide whether §5.2's scrub model needs to state an ordering. EVIDENCE: pkg/adapter/podscrub.go:40; non-spec-changes.md:318-326.
+
+DEFERRED: none. All three sites this correction touches are inside files this loop may edit (non-spec-changes.md, summary.md).
+
+### [non-spec.12.review-applicability.1]
+
+FACT: The checklist's three known contradictions (S1 saying §15.1 gains rows, S17 naming two CODE-2 confirmation sites, S7 describing DOCS-3 as two new rows) are all FIXED in the current text. S1 now reads "§15.1 takes no new catalog row for either adapter error code"; the CODE-2 step is S18 and names three sites including the SDK-warm `ConfigureWorkspace`; S7 reads "The published error catalog takes no new row". The summary's DOCS-3 index entry is fixed too. — EVIDENCE: implementation-checklist.md:17, :53, :39; summary.md:949
+
+FACT: Full checklist mechanics re-verified this round and clean: every deliverable (SPEC-1..6, SCHEMA-1, CODE-1..9, CONF-1, DOCS-1..3) appears in at least one of S1..S22; every Depends-on names an earlier, existing step; every box is unchecked; every step carries one lane (spec / docs / schema / code); the six spec steps lead in a block. Deliberate multi-step splits are CODE-1 (S16/S17/S21), CODE-4 (S13/S19) and CODE-6 (S14/S15/S21), each step carving a distinct part. — EVIDENCE: implementation-checklist.md:16-60
+
+FACT: SCHEMA-1's nine field numbers are all the next free number on their message once the `reserved` lines are read: PrepareWorkspaceRequest reserves 4, FinalizeWorkspaceRequest reserves 5 (and already ships `mid_session` at 4), RunSetupRequest reserves 4, AssignCredentialsRequest reserves 3, ResumeRequest reserves 6 and 15, ShutdownRequest reserves 4. So 5/6, 6, 5, 4, 16, 7/8 and ShutdownResponse 3 are all correct and no renumber is needed. — EVIDENCE: schemas/lenny-adapter.proto (grep `reserved` per message)
+
+FACT: Adding fields to the five bind-sequence request messages breaks no shipped descriptor gate. `tests/tier3_contract/adapter_session_address/session_address_wire_test.go` asserts the ABSENCE of `slot_id` rather than a closed field set, and `adapter_generation_fence/generation_fence_wire_test.go` pins only `coordination_generation`'s number. The only closed-field-set gate on this surface is `TestShutdownMessagePostRemovalDescriptor_spec_4_1`, which S9 already moves. — EVIDENCE: tests/tier3_contract/adapter_session_address/session_address_wire_test.go:44-97; tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go:76; tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go:208-237
+
+FACT: The tier-0 inventory rule is `slotSubjectFileRE = (slot|one_session_only|sole_session)[^/]*_test\.go$`, which is CONTAINS-slot-in-the-basename rather than the `slot*_test.go` PREFIX the proposal glosses it as. Both readings admit the same five new files, so the gloss is harmless here, but a future agent checking a file named e.g. `bind_slot_test.go` should read the regex rather than the gloss. The companion rule is `slotSurfaceCallRE = slotstate\.|ClaimSlot\(|ReleaseSlot\(|ReserveSlotOnPod\(|claimAtCreate\(|BindReservedSlot\(`. — EVIDENCE: tests/tier0_static/spec_map_slot_address_registration_test.go:1168, :1173
+
+WATCHOUT: Deliverable HEADING file lists are a live drift surface, and three of them now lag their own bodies. This round filed CODE-2 (omits `pkg/adapter/sdkwarm.go`) and CODE-6 (omits `pkg/adapter/credentials.go`, `pkg/adapter/server.go`, `pkg/adapter/sdkwarm.go`). The same class was confirmed in an earlier round against CODE-6's omission of `resume.go`, so a fixer touching a heading should re-derive it from `## Files touched` rather than patching one name. — EVIDENCE: non-spec-changes.md:558, :1256 versus :3465, :3494, :3508 and summary.md:938, :942
+
+UNVERIFIED: `pkg/gateway/sessionserver/upload_to_session.go` is named in `## Files touched` (:3528) and in CODE-4's prose (:801) but in no deliverable's Targets list and in no summary deliverable index. The edit is load-bearing: once S14's `validateBindFields` lands, a §7.4 `PrepareWorkspace` carrying an empty `bind_attempt` and `mid_session` false is `INVALID_ARGUMENT`, so the whole mid-session upload route refuses. Not filed, because the adapterclient signature change forces the compiler to flag the caller and :3528 states the value to pass. Someone should decide whether CODE-4's Targets list should carry it. — EVIDENCE: non-spec-changes.md:801, :3528; pkg/gateway/sessionserver/upload_to_session.go:128
+
+FACT: `deregisterSlot` (retired by CODE-6, non-spec-changes.md:1324) has two TEST callers the proposal never names, at pkg/adapter/podmcp_arming_internal_test.go:88 and :245. The file is in the files-touched test list so the edit is in scope, but the replacement form is not stated. Routing them through `reclaimSlotLocked` would open a reclaim hold nothing releases and make later binds in those tests refuse; the safe replacement is an inline `s.mu.Lock(); s.deregisterSlotLocked(...)`. Not filed (mechanical), but it is a trap. — EVIDENCE: pkg/adapter/podmcp_arming_internal_test.go:88, :245; non-spec-changes.md:1324, :3544
+
+FACT: The new `answerShutdown` exit helper is NOT the handler's only non-precondition return, contrary to non-spec-changes.md:459-462 ("The one return that does not go through it is the two-field precondition's `INVALID_ARGUMENT`"). The shipped empty-session-id check at pkg/adapter/session.go:228-230 also returns without it. Both are `INVALID_ARGUMENT` no-ops that perform nothing including the scrub, so the rule the sentence states is right and only its count is loose. Not filed as a finding. — EVIDENCE: non-spec-changes.md:459-462; pkg/adapter/session.go:228-230
+
+FACT: `pkg/gateway/podlifecycle/podsession/slotbinder.go:541` is cited for the session-end `Shutdown` call; the call is at :542 (:541 is the last line of its comment). `:574` (`ShutdownRecycle`) is exact. One line of drift, not filed. — EVIDENCE: non-spec-changes.md:322-323; pkg/gateway/podlifecycle/podsession/slotbinder.go:542, :574
+
+USEFUL [orchestrator note on the three known checklist contradictions]: saved a full re-derivation of the checklist against the staging; all three were already discharged, so the reconciliation pass the note promised has run.
+
+### [non-spec.12.review-mechanism.1]
+
+FACT: `diff -rq scratchpad/cp-snap/.../non-spec-r12 proposals/0081_...` is EMPTY this round. The r12 snapshot and the live proposal are byte-identical, so the "read the changed sections first" instruction had nothing to point at. Do not spend a round looking for a hunk. — EVIDENCE: scratchpad/cp-snap/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/non-spec-r12
+
+FACT: there are TWO recycle-carrying `Shutdown` senders in the tree, not one. The concurrent path (`Binder.ReleaseSlot`, slotbinder.go:542 then :574) sends a plain `Shutdown` FIRST and the `ShutdownRecycle` second, so the second finds no entry. The session-mode path (`Binder.Release` -> `shutdownAdapter(ctx, result, true)`, binder.go:1994 -> :2037) sends `ShutdownRecycle` as the session's ONLY teardown, so the entry is live and the staged comparison answers RECLAIMED. Any statement of the form "a recycle-carrying Shutdown always answers ABSENT" is false. — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1974-1996,:2032-2046; pkg/gateway/podlifecycle/podsession/slotbinder.go:542,:574
+
+FACT: `status.Code`/`status.FromError` in grpc v1.80.0 DOES walk the error chain with `errors.As` (status.go:112-125), so CODE-5's `status.Code(err) == codes.Aborted` arm fires through CODE-4's `*SlotBindError` wrapper and through CODE-7's double-`%w`. The claim at non-spec-changes.md:1090-1094 and :1243-1245 is verified; do not re-derive it. — EVIDENCE: ~/go/pkg/mod/google.golang.org/grpc@v1.80.0/status/status.go:96-126
+
+FACT: no division-by-zero risk in `slotCleanupBudget`. `SlotBindRequest` is built only for concurrent pools (`slotBindRequest`, start.go:2540-2568) and `ResumeRequest.MaxConcurrentSessions` is normalized to >= 1 by its one caller (`maxConcurrentSessions()` at start.go:3353-3358, applied at start.go:4029). — EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:640-645
+
+FACT: the chokepoint claim holds mechanically. `s.slots[...]` is WRITTEN at exactly one site, `pkg/adapter/slot.go:124`, and `ensureSlotStateLocked` has exactly three callers (slot.go:143, slotsession.go:75, slotcreds.go:26); `ensureSlotPaths` has exactly three (staging.go:134,:181,:337). A predicate at `ensureSlotStateLocked` really does cover all seven RPCs. — EVIDENCE: pkg/adapter/slot.go:105-148; pkg/adapter/slotsession.go:75; pkg/adapter/slotcreds.go:26
+
+FACT: `deregisterSlot` (slotsession.go:192), which CODE-6 retires into `reclaimSlotLocked`, has two live TEST callers at `pkg/adapter/podmcp_arming_internal_test.go:88` and `:245`. That file is already in the proposal's Files-touched test list, so this is mechanical, but an implementor who greps only non-test callers will find none and delete the function without touching them. — EVIDENCE: pkg/adapter/podmcp_arming_internal_test.go:88,:245
+
+FACT: every line citation I spot-checked this round resolves: staging.go:77,:78,:134,:181,:239,:246-249,:337,:353; slotsession.go:52-59,:84-86,:174,:180,:192,:214-220; slot.go:105,:130,:140,:183-206,:210-212; sdkwarm.go:217,:236,:241,:249-262,:274,:298; resume.go:25-35,:50,:69,:73,:89,:107,:126,:134,:140,:141,:144,:169-172; holdstate.go:197-200,:251,:254; binder.go:137,:1097,:1714,:2037,:2043; slotbinder.go:265,:353-362,:493,:542,:574; slotfailure.go:41-48,:91-99,:100-101; start.go:2594-2605,:3648-3681,:4029; gatewaymetrics_credential.go:185-193; gatewaymetrics.go:1170-1175; metricsbackfill.go:149; credentials.go:74; user_revocation.go:129. The ONE exception is `slotbinder.go:541`, which is a comment line; the `Shutdown` call is at :542. — EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go:541-542
+
+USEFUL [standing-context :200/:231]: the standing context's record that `materializeSlot` "holds exactly the five `cl.Close()` calls the staging moves out" saved me filing a bogus "the wrapper compensates on a closed connection" finding. The staged wrapper's own `cl.Close()` (non-spec-changes.md:992) is the only close after the split, and that was already adjudicated.
+
+UNVERIFIED: CODE-9 declares the gateway hook as `SlotReclaim func(outcome, pool, podName string)` (three strings) while SPEC-6's §16.1 row gives `lenny_slot_compensation_superseded_total` only `pool` and `k8s_pod_name`, and the forwarder already filters to SUPERSEDED alone, so the `outcome` argument is a constant the accessor must discard. Workable but odd; a metrics-shaped lens should decide whether the hook should be two-argument. — EVIDENCE: non-spec-changes.md:1871-1873; spec-changes.md:999
+
+UNVERIFIED: staged §5.2's reclaim-hold paragraph and §15.4's published hold block say the hold reaches "every request that would create or resolve a registry entry", while CODE-6 tests it at only two sites (`acquireSlotGuardForResolve` and `ensureSlotStateLocked`), which between them cover the seven bind-sequence RPCs. I judged this vacuous rather than a defect, because the hold is opened only after the entry has been deregistered, so nothing else CAN resolve an entry under a held identifier — `checkpointRootsForSession` answers FailedPrecondition on the absent entry instead. If a later round wants to file it, the argument has to defeat that vacuity first. — EVIDENCE: spec-changes.md:645,:816,:900; pkg/adapter/slot.go:183-196
+
+### [non-spec.12.review-performance.1]
+
+FACT: The r12 snapshot and the live proposal are byte-identical — `diff -rq scratchpad/cp-snap/0081_.../non-spec-r12 proposals/0081_...` returns nothing. The "read the changed sections hardest" instruction had no changed sections to point at this round; the whole document is equally aged. EVIDENCE: scratchpad/cp-snap/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/non-spec-r12
+
+FACT: The proposal adds NO new control-plane or data-plane store write at any tier. Quantified against the tree: no new apiserver write (the tier-2 case at non-spec-changes.md:2948-2958 states the per-pod `SandboxClaim` is the only apiserver object either `Prepare` arm touches, and CODE-8 REMOVES a drain, i.e. a `DeleteClaim`, on the refusal path, so etcd write rate falls rather than rises); no new Redis key or command (the compensation's disposition feeds the existing `SlotClaimer.ReleaseSlot` leaked parameter, pkg/gateway/podlifecycle/podclaim/slotclaimer.go:831-838, which SKIPS the decrement — strictly fewer Redis ops); no new Postgres table or row; no new informer, watch or controller, so no informer-cache growth and no reconcile-queue pressure. The only new per-bind-failure work is one gRPC `Shutdown` on an already-open connection. EVIDENCE: pkg/gateway/podlifecycle/podclaim/slotclaimer.go:818-843; proposals/0081_.../...non-spec-changes.md:2948-2958
+
+FACT: No new store-backed value is introduced, so §12.4's durable-fallback rule has nothing new to bind. The bind-attempt token is per-attempt, gateway-process-local, and never persisted; the proposal accepts and documents the consequence (a gateway crash mid-attempt strands the entry) and pins it at tier 8. EVIDENCE: non-spec-changes.md:3232-3243 (edge case); :3137-3145 (`TestCompensationLostToAGatewayCrashLeavesTheEntryRefusable_spec_7_1`)
+
+FACT: `slotGuards` is never pruned, but the growth is genuinely bounded and the proposal's bound argument checks out against the tree. On a NON-recycling concurrent pool the occupancy-zero release takes `DeleteClaim` and the pod retires (slotclaimer.go:886-890), so the pod serves at most one occupancy episode; on a recycling pool `recycle.maxSessionsPerPod` is required and caps the distinct session identifiers (docs/reference/configuration.md:91). One `chan struct{}` + map entry per distinct session is order-of-kilobytes at `maxSessionsPerPod: 50`. Do not re-file this as unbounded growth. EVIDENCE: pkg/gateway/podlifecycle/podclaim/slotclaimer.go:884-890; non-spec-changes.md:1666-1675
+
+WATCHOUT: The compensating `Shutdown` runs SYNCHRONOUSLY inside `materializeSlot` on a `context.WithoutCancel(ctx)` with a budget of `max(cleanupTimeoutSeconds/maxConcurrentSessions, 5)s`, so a failed bind now holds a gateway goroutine and an adapter connection past the client's own deadline — up to 30s on a default `cleanupTimeoutSeconds: 60` / `maxConcurrentSessions: 2` pool, twice over with `maxSlotRetries = 1`. Shipped `materializeSlot` calls `cl.Close()` and returns immediately (pkg/gateway/podlifecycle/podsession/slotbinder.go:285-288). This IS a real new latency cost on the failure path. I did not file it: the RPC is inherent to the fix (you cannot reclaim pod-side state without one), the budget is the §5.2 figure rather than an invented constant, the shipped §11.4 revoke fan-out holds the same relation at `userTerminateRPCTimeout = 20s`, and the refuted list already killed a structurally identical latency argument against the guard. A future lens re-deriving it should expect the same disposition unless it can show a concrete top-tier exhaustion (goroutine or connection-pool ceiling) with numbers. EVIDENCE: non-spec-changes.md:820-836 (`compensateFailedSlotBind`, `context.WithoutCancel`); pkg/gateway/podlifecycle/podsession/slotbinder.go:285-288; spec/05_runtime-registry-and-pool-model.md:545 (the `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` formula, verbatim)
+
+FACT: `slotCleanupBudget`'s "cleanupTimeoutSeconds is optional, so an unset pool yields the 5s floor" is true in the tree: `CleanupTimeoutSeconds` is a bare `int` on `podsession.SlotBindRequest` with no defaulting layer (pkg/gateway/podlifecycle/podsession/resolve.go:128, binder.go:478), so an unset pool gives 0 and the `max(..., 5)` clamp yields 5s. docs/reference/configuration.md:99's "default 60" is the documented pool-spec default, not an injected Go default. Do not file the two as contradicting.
+
+FACT: The §10.1.4 pass-2 budget split is a worst-case extension of the pass from a shared 10s to (shared 10s guard acquisition) + N x 10s per-member close. Shipped `onHoldTimeout` uses ONE shared 10s context whose comment explains why that sufficed (only the last member's close consumes the grace). The extension runs on a background timer goroutine on a pod that is already being torn down, is explicitly priced in the edge-case list, and the split IS the fix for an earlier confirmed finding. Do not re-file it. EVIDENCE: pkg/adapter/holdstate.go:196-205; non-spec-changes.md:3324-3332
+
+FACT: `k8s_pod_name` on `lenny_slot_compensation_superseded_total` is not a new cardinality precedent: the sibling `lenny_slot_failure_total` already carries `{error_type, pool, k8s_pod_name}` with an in-code note that §16.1 sanctions the label for it, and the superseded series only fires on a rare outcome, so its live label set is sparse. EVIDENCE: pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go:185-192
+
+DECISION: Returned an empty findings list — BECAUSE every perf/scale/failure-mode surface my lens owns is either unchanged by the proposal, quantitatively bounded and stated in the proposal's own edge-case list (guard waits, the §10.1.4 budget, the guarded-`Resume` compensation wait, faster pod churn at `maxConcurrentSessions >= 3`, the coordinator-hold refusal), or already adjudicated in the refuted index. ALTERNATIVES: the synchronous-compensation latency and the `slotGuards` lifetime, both rejected above with the reasoning recorded so the next lens does not repay it.
+
+### [non-spec.12.review-test-coverage.1]
+
+FACT: the SETUP_COMMAND_FAILED envelope is selected by the TYPED `*podsession.SetupCommandFailure` wrapper, not by `SlotBindError.Reason()`. Every `RunSetup` error is wrapped in `&SetupCommandFailure{Cause: err}` at pkg/gateway/podlifecycle/podsession/slotbinder.go:304 and binder.go:938, and `writeSetupCommandError` (pkg/gateway/sessionserver/start.go:237-248) branches on `status.Code(setupFail.Cause) == codes.FailedPrecondition` alone: FailedPrecondition gives the non-retryable 422 SETUP_COMMAND_FAILED with no Retry-After, every other code the retryable 503 fallback with Retry-After. So SPEC-5's staged §15.1 claim is TRUE in the tree: SLOT_BIND_ALREADY_STARTED at `RunSetup` reaches 422 SETUP_COMMAND_FAILED and SLOT_BIND_ATTEMPT_SUPERSEDED (Aborted) at the same request reaches the retryable 503. EVIDENCE: pkg/gateway/sessionserver/start.go:239; pkg/gateway/podlifecycle/podsession/slotbinder.go:304.
+
+FACT: `SlotBindError.Reason()` is irrelevant to that envelope — the typed setup handler wins over SLOT_FAILED, which the shipped `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` pins. A lens checking the §15.1 claim against the Testing section's `TestSlotBindErrorReason_spec_5_2` rows will look in the wrong place. EVIDENCE: pkg/gateway/sessionserver/slotretry_test.go:519-548.
+
+DECISION: filed exactly one finding — the two new setup-stage client envelopes have no listed test at any tier — BECAUSE it is the only staged behaviour I could find that the Testing section names nowhere (grep over the whole Testing section for `SETUP_COMMAND_FAILED|envelope|422|503|Retry-After|STARTING_FAILED` returns one hit, the §7.4 hold case's HTTP 502). ALTERNATIVES: rejected a `slotCleanupBudget` floor-boundary finding (the per-stage compensation table at non-spec-changes.md:2761-2764 already asserts deadlineMs against the budget the case's pool produces, so a dedicated floor case is a nice-to-have); rejected a `cancelPodMCPIfRuntimeIdle` widening finding (the gate moves from `bound` to `removed` but the call is double-guarded by `runtimeIdleLocked` and `mcpArmingHeldLocked`, pkg/adapter/slotsession.go:238-248, and I could not show a reachable harm); rejected a DOCS-2 `DemoteSDK`-row-has-no-gate finding (the row's behaviour claims are covered by the create-and-stamp rule cases).
+
+FACT: the double-scrub hazard CODE-1 names (moving clause three into `answerShutdown` while leaving the trailing copy) IS caught by a shipped test: `TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2` asserts `len(reports) != 1` on a removing arm carrying a recycle. Do not file it. EVIDENCE: pkg/adapter/podscrub_test.go:193,219-221.
+
+FACT: CONF-1 names sixteen rules plus the evaluation-order case, and the tier-3 behavioural list covers all seventeen. I walked them one for one. Do not re-derive. EVIDENCE: non-spec-changes.md:1930-1936 (rule list) against :2848-2922 (tier-3 cases).
+
+WATCHOUT: the tier-1 wire-rule case says both pairing directions are asserted "across `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials` and `Resume`" (non-spec-changes.md:2472-2477), but SCHEMA-1 gives `mid_session` only to `PrepareWorkspaceRequest` and `FinalizeWorkspaceRequest` (:2116-2118), so the "mid-session request carrying a token" direction is unconstructible on the other three. I judged this over-specified wording rather than a coverage gap (the empty-token direction is testable on all five and is the one that matters) and did NOT file it. A later reviewer reaching the same observation should weigh the same way unless the format bars it.
+
+UNVERIFIED: whether the §11.4 revoke fan-out's `Client.Shutdown` path has any test at all today, before or after the `unconditional_teardown` sweep. I confirmed it routes through `Client.Shutdown` (cmd/lenny-gateway/user_revocation.go:129) so the field is set by the shared builder and the row needs no edit, but I did not look for a test over that fan-out. Someone checking CODE-4's caller table should.
+
+### [non-spec.13.review-applicability.1]
+
+DECISION: filed exactly one finding, the unaccounted `deregisterSlot` call sites — BECAUSE the
+applicability/sequencing surface of this proposal is now close to clean: I re-walked the whole
+checklist (lanes, Depends-on, order, tier lists, deliverable coverage) and the whole created-artifact
+worklist, and everything else I found sits below the bar — ALTERNATIVES: rejected filing two other
+candidates, both recorded as DEFERRED below.
+
+FACT: the checklist is now internally consistent on every mechanical check this lens owns. All 22
+boxes unchecked; each step carries exactly one lane (S1-S6 spec, S7 docs, S8+ code, S9 schema); every
+Depends-on names an EARLIER step and no step that does not exist; every deliverable (SPEC-1..6,
+DOCS-1..3, SCHEMA-1, CODE-1..9, CONF-1) appears in at least one step; the leading spec block is
+unbroken. The three contradictions the orchestrator's brief lists as "known wrong" (S1 saying §15.1
+gains rows, S17 naming two CODE-2 confirmation sites, S7 describing DOCS-3 as two new rows) are ALL
+FIXED — the reconciliation pass rebuilt the checklist. Do not re-file them.
+EVIDENCE: implementation-checklist.md:17 ("§15.1 takes no new catalog row for either adapter error
+code"), :29 ("The published error catalog takes no new row"), :51 (S18 is CODE-2 and names all three
+sites including the SDK-warm one).
+
+FACT: CONF-1's rule set and its two batteries now line up one-for-one. The rule list at
+non-spec-changes.md:1932-1939 names sixteen rules; the tier-3 battery (:2885-2958) and the tier-10
+list (:2999-2048 region) each carry a case per rule plus the evaluation-order case, seventeen in all.
+The earlier "CONF-1 promises an evaluation-order case and its battery contains none" defect is closed.
+
+FACT: every citation I spot-checked in the newest text resolves byte-for-byte. Verified this round:
+slotbinder.go:265/:542/:543/:574, binder.go:843/:976/:1009/:1072-1082/:1590/:1994/:2037/:2043,
+user_revocation.go:129, staging.go:181/:239, adapterclient/client.go:333-341,
+slotretry_test.go:519-548, start.go:239-249, slotbinder.go:303-304, binder.go:291
+(`slotFailureSetup = "setup"`), shutdown_recycle_wire_test.go:208/:259/:264-267,
+seed-claim-register.py:192 (R8) and its 13-row GENERATION_FENCE block,
+gateway-runtime-comms-remediation.md:980 (R8 heading), catalog_test.go:188-211,
+adapter_metric_catalog_test.go:26/:34/:49/:56/:100/:110,
+spec_map_slot_address_registration_test.go:970-988/:1173/:1191,
+basic_level_echo_stamp_doc_reconciliation_test.go:294, adapter-contract.md:10/:18/:53/:64/:75,
+state-machines.md:138 (all three replaced clauses unique), error-catalog.md:129, and every
+SCHEMA-1 field-number "basis" cell against schemas/lenny-adapter.proto (ErrorCode max is 27;
+every claimed free number is free). I found no false citation.
+
+FACT: the call-site enumerations are exhaustive where the proposal claims them. `noteRuntimeStarted`
+has exactly the ten callers CODE-2 names (resume.go:144, sdkwarm.go:261, session.go:163,
+export_test.go:45, podmcp_arming_internal_test.go:84/:185/:230, usage_test.go:233,
+adapterevents_test.go:95/:184). `releaseSessionSlot` has exactly the seventeen CODE-6 names
+(session.go:133,:147,:157; sdkwarm.go:236,:241,:251,:298; resume.go seven; podmcp:144,:195;
+export_test.go:34). `ReleaseSlotForTest` has exactly the five callers named. That precision is what
+makes the `deregisterSlot` omission a gap rather than a style choice.
+
+WATCHOUT: `deregisterSlot` (the s.mu-taking wrapper, `pkg/adapter/slotsession.go:192`) has TWO TEST
+callers besides the production one, at `pkg/adapter/podmcp_arming_internal_test.go:88` and `:245`.
+CODE-6 says "`deregisterSlot` is retired into the helper" (non-spec-changes.md:1330) and enumerates
+the SAME FILE's `releaseSessionSlot` sites at `:144` and `:195` twelve lines later (:1652), so the
+omission is inside an enumeration the deliverable otherwise completes. Retiring the function breaks
+both lines at compile time and the replacement is a judgment call: `reclaimSlotLocked` requires the
+caller to hold `s.mu` and returns a `release func()` whose invocation opens and closes a hold.
+Semantic risk is LOW (the hold is per-slot-identifier and the follow-on at :88 claims a DIFFERENT
+identifier, "bob"), but the edit is not mechanical. EVIDENCE: pkg/adapter/slotsession.go:192;
+pkg/adapter/podmcp_arming_internal_test.go:88,:245; non-spec-changes.md:1330,:1652.
+
+DEFERRED [implementation-checklist.md and/or non-spec-changes.md CODE-4]:
+`pkg/gateway/sessionserver/upload_to_session.go` is a REQUIRED edit site owned by no deliverable's
+target list and named in no checklist step. Files-touched carries it with its value stated
+(non-spec-changes.md:3563, "the §7.4 pair sets `mid_session` true and carries no token") and CODE-4's
+prose calls it "the mirror" (:807), but CODE-4's heading scopes the deliverable to
+`pkg/gateway/podlifecycle/podsession` and its Targets list (:759-770) does not include it, and neither
+S13 nor S20 names it. Today `upload_to_session.go:128` calls
+`bind.Adapter.PrepareWorkspace(ctx, row.ID, uploads)` with no mid-session marker, so once CODE-6's
+`validateBindFields` lands, a §7.4 upload's `PrepareWorkspace` carries neither a token nor
+`mid_session` and is INVALID_ARGUMENT. I did NOT file it: the client.go signature change at S13
+breaks the caller at compile time in the same step, and the value the caller must pass is stated
+twice, so the material bar ("Files-touched is the authoritative list") is not met. The correction is
+one line in CODE-4's Targets and one clause in S13.
+
+DEFERRED [non-spec-changes.md Files touched, line 3592]:
+`pkg/gateway/sessionserver/start_test.go` is listed among the touched test files and is named NOWHERE
+else in the proposal — no deliverable, no Testing bullet, no checklist step states what edit it takes.
+This is the same item the standing context already carries as an UNVERIFIED at review-log.md:1375
+("Name the case or drop the file from the list"); it has now survived at least three more rounds
+unresolved. It is a bare filename with no stated value, which is the class-2 pattern, but nothing
+breaks if an implementor ignores it, so I did not file it. The live hazard if they do NOT ignore it is
+recorded at review-log.md:1096: landing a `BindReservedSlot(` literal in that file pulls the whole
+shipped file into `slotAddressCaseFiles` in WHOLE-FILE mode and turns tier 0 red on its PRE-EXISTING
+§15.1 and §4.4 citations. The fix is to drop the line or name the case.
+
+USEFUL [standing context, review-log.md:156]: the "snapshot diffs have been empty for most rounds"
+entry saved me real time. `non-spec-r13` AND `non-spec-r13-start` were both byte-identical to the live
+proposal; the newest snapshot that actually differs is `non-spec-r12-prefix`. Run
+`for s in <every snapshot>; do diff -rq $s $PROPOSAL; done` first, newest to oldest, and take the
+first that differs. The real r12->r13 delta is three hunks only: the G3 two-recycle-sender correction
+in CODE-1's exit-helper comment and its doc-comment bullet, CODE-2's heading gaining
+`pkg/adapter/sdkwarm.go`, the tier-1 recycle-scrub pair (absent arm + removing arm), and the new
+"The refusals' client envelopes" tier-1 gateway case.
+
+USEFUL [standing context, review-log.md:1073 and :1096]: the credit-inventory trap entries are what
+let me judge the `start_test.go` line correctly instead of filing it as an ordinary missing edit.
+
+OPEN: three steps (S16, S21, S22) consume the per-slot guard's hand-out forms `lockSlotGuard` /
+`acquireSlotGuardForResolve`, which S15 creates, and all three list `Depends-on: ... S14` without S15.
+The stated execution order (S15 before S16) makes this harmless, and the lens's checklist rule only
+names "a Depends-on that names a LATER step or a step that does not exist", so I did not file it. If a
+future round ever reorders the code block, this is the first thing that breaks.
+
+### [non-spec.13.review-mechanism.1]
+
+DECISION: returned an empty findings list — BECAUSE every flow I traced origin-to-effect
+closes, and every line citation I sampled resolves verbatim — ALTERNATIVES: I held one
+borderline item (DOCS-2's replacement `Shutdown` row states both "`superseded` ... so nothing
+was released" and, two sentences later, "The slot release ... runs whenever the adapter holds
+an entry for the named session"). I did not file it: the staged §4.7 row carries the identical
+general sentence and delegates it to §4.7.1's named rules, the log records the
+"general-narrowed-by-specific-in-the-same-block" pattern as refuted four times
+(review-log.md:4137), and DOCS-2 itself argues the page's audience is runtime authors who
+"can neither issue a request they govern nor observe a refusal they produce"
+(non-spec-changes.md:2289-2296), so nobody implements the contract from it.
+
+FACT: the proposal's gateway line citations are all live as of this round. I re-resolved
+binder.go:843/976/1590 (Prepare/Launch/Resume), :866-869 and :997-1000 (the two reclaim
+closures), :918/:923/:935/:950 and :1010/:1021/:1032 (every `reclaim()` call site), :954
+(`leaseAssigned = true`), :1072-1082 (`failPhase`), :137 (`SlotFailure`), :1994/:2037/:2043
+(Release's recycle branch, ShutdownRecycle, Shutdown); slotbinder.go:265/:287/:294/:353-361/
+:542/:574; metricsbackfill.go:149; client.go:807-824 and :860-867 (the single `shutdown`
+builder); start.go:3648-3681 and :4041. EVIDENCE: all of the above, read this round.
+
+FACT: every proto field number SCHEMA-1 claims free IS free, and `ErrorCode` does stop at 27.
+EVIDENCE: schemas/lenny-adapter.proto — PrepareWorkspaceRequest 1-3 + reserved 4;
+FinalizeWorkspaceRequest 1-4 + reserved 5; RunSetupRequest 1-3 + reserved 4;
+AssignCredentialsRequest 1-2 + reserved 3; ResumeRequest 1-5,7-14 + reserved 6,15;
+ShutdownRequest 1-3,5,6 + reserved 4; ShutdownResponse 1-2;
+ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27.
+
+FACT: `shutdown_recycle_wire_test.go:208` really is the ONLY closed field set over any message
+SCHEMA-1 opens. `grep -rn "ResumeRequest{}).ProtoReflect"` and its four siblings return
+nothing, and checkpoint_stream_wire_test.go's only count assertion is over `CheckpointStart`
+(`:151`). EVIDENCE: tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go:77,:151.
+
+FACT: `Client.PrepareWorkspace` (client.go:247) today takes neither `midSession` nor a token,
+and `stageWorkspace` (binder.go:1283, called from binder.go:916 AND slotbinder.go:284) is the
+single shared sender of `PrepareWorkspace` on both bind paths (binder.go:1327). The token
+therefore has to thread through `stageWorkspace`'s signature. Neither CODE-4's Targets nor the
+Files-touched entries name `stageWorkspace` by name, though both name the files it lives in.
+I judged that below the bar (the same class as the already-refuted CODE-6 heading-file-list
+finding), but a future reader should not conclude from the silence that the threading is
+missed. EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1283,:1327,:916;
+slotbinder.go:284; non-spec-changes.md:3550-3559.
+
+FACT: `deregisterSlot` (slotsession.go:191-196), which CODE-6 says is "retired into the
+helper", has exactly two live callers and both are tests:
+pkg/adapter/podmcp_arming_internal_test.go:88 and :245. That file IS in the Files-touched test
+list, so the edit site is covered, but the specific rewrite (they deregister WITHOUT destroying,
+so `reclaimSlotLocked` would open a hold they never release) is not spelled out anywhere.
+EVIDENCE: pkg/adapter/slotsession.go:191; podmcp_arming_internal_test.go:88,:245;
+non-spec-changes.md:1315-1330.
+
+WATCHOUT: `Server.Resume`'s ordering is NOT what a reader guesses from the proposal's citation
+list. `restoreChunks`/`ExtractTree` (resume.go:105, and the function body at :169/:206) run
+BEFORE `Runtime.Start` (:140) and `noteRuntimeStarted` (:144). A lens reasoning that the guard
+must outlive the start because the extraction follows it will build a false race.
+EVIDENCE: pkg/adapter/resume.go:50,:105,:140,:144,:169,:206.
+
+WATCHOUT: `claimSessionSlotUnderLock` sets `st.started` at slotsession.go:87-88, i.e. at
+resume.go:50 — long before the restore and the start. So a `Resume` is already a §10.1.4 "started
+member" while it sits inside `workspace.ExtractTree`, and pass 1 can deregister its entry
+mid-restore. That interleaving is benign under the staged design (the rollbacks find nothing,
+and `noteRuntimeStarted` then refuses), but it is not the interleaving the proposal's §10.1.4
+prose walks through. EVIDENCE: pkg/adapter/slotsession.go:87; holdstate.go:190;
+slotsession.go:374-388.
+
+FACT: every `PrepareWorkspace` frame is required to carry a non-empty session id
+(staging.go:66-74), so "the first frame that carries one" is always frame 1 and the first-frame
+latch has no unresolved-frame case. EVIDENCE: pkg/adapter/staging.go:66-82.
+
+FACT: `slotstate.Registry.Transition` has no production caller anywhere under pkg/gateway — only
+`Assign`, `MarkLeaked`, `MarkReleased` and `ForgetPod` are called. CODE-3's new
+`receiving_uploads → slot_cleanup` edge is therefore a declarative contract artifact reconciled
+by tier 11, not a trigger anything fires, so "this edge can never fire" is NOT a finding.
+EVIDENCE: pkg/sandbox/slotstate/registry.go:58; grep over pkg/gateway returns no
+`slotStates.Transition`.
+
+FACT: DOCS-3's absence claim holds. `grep -rn error-catalog tests/ scripts/ cmd/ Makefile`
+returns nothing, so nothing gates docs/reference/error-catalog.md, and all four quoted
+"currently reads" sentences plus the remedy cell are verbatim at line 129.
+EVIDENCE: docs/reference/error-catalog.md:129.
+
+USEFUL [orchestrator note on the five Shutdown senders]: the check is cheap and it holds.
+`grep -rn "\.Shutdown(\|\.ShutdownRecycle(" pkg/ cmd/` over non-test Go returns exactly the five
+adapterclient sites CODE-4's table names (slotbinder.go:542,:574; binder.go:2037,:2043;
+user_revocation.go:129), and all five route through the one `Client.shutdown` builder
+(client.go:812-824), so the `unconditional_teardown` claim is structurally true rather than
+enumeration-dependent. EVIDENCE: pkg/gateway/runtime/adapterclient/client.go:807-824,:860-867.
+
+OPEN: the summary at summary.md:141 attributes CODE-5's new `codes.Aborted` arm to "the
+accounting helper", while the deliverable puts it in `isTransientPodClaimError` and
+`accountSlotFailure` is the accounting helper. I did not file it (nothing built from the
+proposal changes either way, and CODE-5 and SCHEMA-1 both name the right function), but the
+reconciliation pass could tidy it in one word.
+
+### [non-spec.13.review-test-coverage.1]
+
+DECISION: Returned an EMPTY findings list for the test-coverage lens in round 13 — BECAUSE the proposal text is byte-identical to the r13 snapshot (`diff -ru scratchpad/cp-snap/.../non-spec-r13 proposals/0081_... -x '*review-log*'` returns nothing; only the review log moved), and a deliverable-by-deliverable walk of `## Testing` (non-spec-changes.md:2381-3260) found every changed behaviour pinned at the tier `.claude/rules/test-coverage.md` routes it to. ALTERNATIVES: filing the tier-1 wire-rule over-specification (see the CORRECTS-adjacent note below), rejected as already adjudicated and recorded.
+
+FACT: the tier map of the staged Testing section, verified against the checklist's per-step tier digits, is complete. tier 1 (bindattempt_test.go, bindattempt_orderings_test.go, slotsession_test.go, sdkwarm_test.go, socketruntime_test.go, holdstate_test.go, slotstate_test.go, the four gateway files); tier 2 (binder_envtest_test.go, two arms, under S12/CODE-8); tier 3 (tests/tier3_contract/adapter_bind_attempt/, descriptor gate + behavioural battery, under S22); tier 4 (concurrent_workspace_test.go three arms, recycle_scrub_path_test.go one case); tier 7a (slot_bind_attempt_race_test.go, slot_reclaim_hold_race_test.go); tier 8 (compensation_loss_test.go, filed under S19/CODE-4, which is the deliverable that can produce the behaviour); tier 9 (slot_credential_reclaim_fence_test.go, three arms); tier 10 (slot_bind_attempt_conformance_test.go); tier 11 (two shipped gates extended in place plus slot_compensation_metric_reference_test.go). EVIDENCE: non-spec-changes.md:2381-3260; implementation-checklist.md:33-59.
+
+FACT: every new adapter/gateway symbol the staging introduces has at least one named case. Checked by grepping each identifier against the Testing window: `reclaimSlotLocked`, `acquireSlotGuardForResolve`, `lockSlotGuard`, `releaseSessionSlotUnderGuard`, `removeSlotTreeFn`, `validateBindFields`, `ensureSlotStateLocked`, `accountSlotFailure`, `ReleaseSlotReservation`, `slotFailureWorkspaceFinalize`, `terminateHeldSession`, `runtimeHoldsLocked`, `noteRuntimeStarted`, `slotResolveError`, `ShutdownReclaim`. The three that return zero hits inside the window — `removeSlotTreeVia`, `noteCompensationOutcome`, `isTransientPodClaimError` — are each covered under a different name: the seam is driven as `Server.removeSlotTreeFn`, the forwarder as "The counters" case asserting the recorded `(outcome, pool, podName)` triple, and the `codes.Aborted` arm through `TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3`'s three rows. EVIDENCE: non-spec-changes.md:2650-2660, :2808-2818, :2862-2870.
+
+WATCHOUT: the orchestrator brief for round 13 STILL says "ShutdownResponse keeps slot_reclaim and gains slot_was_started (4)" and "the non-spec lane has had zero rounds". Both are false and the ledger has corrected them at least a dozen times (review-log.md:1241,:1267,:3368). `grep -rn slot_was_started` over the proposal returns hits only inside the review log. Do not derive a missing-test finding for a field that does not exist. EVIDENCE: non-spec-changes.md:2129-2139 (SCHEMA-1's nine-row field table ends at `ShutdownResponse.slot_reclaim = 3`).
+
+USEFUL [Deferred, "the tier-1 wire-rule case"]: review-log.md:1581 records that the case's "across `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials` and `Resume`" is unconstructible in the mid-session direction for three of the five, and classifies it as over-specification rather than a coverage gap. I re-verified the ground: `grep -n mid_session schemas/lenny-adapter.proto` returns only `FinalizeWorkspaceRequest.mid_session = 4` (schemas/lenny-adapter.proto:724), and SCHEMA-1 adds the field to `PrepareWorkspaceRequest` alone (non-spec-changes.md:2129-2131). The ledger entry saved a finding that would have been refuted as polish.
+
+FACT: `cmd/lenny-gateway` has no shipped wiring test for any `podBinder` metric hook — `grep -rn "SlotFailure\|FallbackSkipped\|SlotConflict" cmd/lenny-gateway/*_test.go` returns one unrelated hit. So CODE-9's own admission that "the tier-1 case below sets the hook directly and so cannot observe the omission" (non-spec-changes.md:1885-1890) matches the repo precedent and is not a missing-tier finding; a prior round already refuted the sibling claim. EVIDENCE: cmd/lenny-gateway/metricsbackfill.go:141-161; cmd/lenny-gateway/scrub_report_wiring_test.go:284.
+
+OPEN: the two new client-envelope cases (422 `SETUP_COMMAND_FAILED` versus the retryable 503) are pinned at tier 1 in `pkg/gateway/sessionserver/slotretry_test.go` rather than at tier 3, even though `.claude/rules/test-coverage.md` routes an HTTP response contract to tier 3. I declined to file: the envelopes themselves are unchanged and the shipped precedent for exactly this assertion, `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3`, already sits at tier 1 in that same file. A later lens that wants to re-open it should start from that precedent rather than from the tier table. EVIDENCE: non-spec-changes.md:2836-2860.
+
+### [non-spec.14.fix-followup.1]
+
+The round-14 fixer opened no ledger entry, so this entry carries that pass and the post-fix
+corrections to it as bullets.
+
+- DECISION: CODE-4's own prose now states the attempt-scoped lease release at BOTH minting
+  boundaries — BECAUSE round 14 added a second call site (`Binder.Prepare`'s
+  credential-assignment failure arm) and updated only CODE-4's Targets bullet and the file-touch
+  list, leaving the deliverable body saying the release "sits in this wrapper, which is exactly
+  the boundary of the stages that mint one". That rationale is false: `assignCredentials` mints
+  at `binder.go:1225` and `:1248` and issues the refusable RPC at `:1256`, all outside
+  `materializeSlot`. The paragraph at non-spec-changes.md now reads "each bind path takes it at
+  its own minting boundary", names the wrapper for the concurrent path and the
+  credential-assignment failure arm for the exclusive path. ALTERNATIVES: reverting the second
+  call site (rejected: it closes a lease leak that ships today); leaving the Targets bullet as
+  the only statement (rejected: an implementor reads the deliverable body).
+- DECISION: the **`Binder.Prepare` mints and carries, and sends no compensation.** paragraph now
+  names two things `Prepare` needs rather than one. The attempt-scoped release is stated first,
+  with `assignCredentials` returning the identifiers it minted and the failure arm releasing them
+  unconditionally outside the refusal guard, and CODE-8's short-circuit second. EVIDENCE for the
+  gate that makes the release necessary: `leaseAssigned` is set at
+  `pkg/gateway/podlifecycle/podsession/binder.go:954`, after the `assignCredentials` call at
+  `:948`, so `failPhase`'s session-wide release covers nothing on that arm.
+- DECISION: the standing DECISION at review-log.md:570 carries a CORRECTED clause in the form
+  :236 uses — BECAUSE the round-14 G2 edit deleted the §5.2 sentence that decision mandates
+  ("so the slot is `leaked` and its identifier stays held until the pod terminates"; a grep for
+  "stays held" over spec-changes.md now returns nothing), and the staged explanatory prose states
+  the opposite disposition, that the hold's bound is the cleanup's return on every arm. An
+  unretracted decision requiring a deleted sentence is how a later round re-adds it. The clause
+  retires the identifier-hold half only; the rejection of ending the hold at the timeout stands
+  as written, and the failed cleanup's disposition is the scrub-model paragraph's `leaked` clause
+  alone. ALTERNATIVES: deleting the entry (rejected: the log is an audit record and :236 sets the
+  in-place correction precedent); re-adding the sentence to §5.2 (rejected: it reopens converged
+  spec text and contradicts the staged prose).
