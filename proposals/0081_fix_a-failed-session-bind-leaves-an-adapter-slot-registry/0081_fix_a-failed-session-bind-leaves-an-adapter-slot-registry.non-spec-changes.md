@@ -34,22 +34,25 @@ predicate placed in the handlers instead would leave the three claim callers ung
 `Resume` landing on a leaked entry would then resolve that entry without comparing and set
 `started`, destroying a live resumed session.
 
-`validateBindFields` runs at the handler's entry, before the resolve, and is not one of the
-five rules below; the rules below are reached only by a well-formed request. The predicate
+`validateBindFields` takes the pairing rule at the handler's entry, before the resolve and ahead
+of the cascade below; the rules below are reached only by a request it admits. The predicate
 itself is evaluated under `s.mu`, before anything is written, as part of the same indivisible
 resolve-or-create-and-stamp step:
 
-1. The entry is absent and the caller may not create: `FailedPrecondition`. Nothing is created.
-2. The entry is absent: create it, stamp the caller's token on it, and return it.
-3. The entry is present, both tokens are non-empty, and they differ:
-   `SLOT_BIND_ATTEMPT_SUPERSEDED` on `codes.Aborted`.
-4. The entry is present, its session has already started, and the caller does not permit a
-   started entry: `SLOT_BIND_ALREADY_STARTED` on `codes.FailedPrecondition`.
-5. Otherwise return the entry, writing nothing.
+- The mid-session-create rule. The entry is absent and the caller may not create:
+  `FailedPrecondition`. Nothing is created.
+- The create-and-stamp rule. The entry is absent: create it, stamp the caller's token on it, and
+  return it.
+- The attempt identity rule. The entry is present, both tokens are non-empty, and they differ:
+  `SLOT_BIND_ATTEMPT_SUPERSEDED` on `codes.Aborted`.
+- The started-session rule. The entry is present, its session has already started, and the caller
+  does not permit a started entry: `SLOT_BIND_ALREADY_STARTED` on `codes.FailedPrecondition`.
+- The admit rule. Otherwise return the entry, writing nothing.
 
-Rule 5 covers both "the entry carries no token" and "the caller asserts no identity". Rules 3
-and 4 are the identity gate and the phase gate. They share one critical section and one call
-graph, which is why they land together rather than in sequence.
+The admit rule covers both "the entry carries no token" and "the caller asserts no identity".
+The attempt identity rule and the started-session rule are the identity gate and the phase gate.
+They share one critical section and one call graph, which is why they land together rather than
+in sequence.
 
 **The atomicity requirement.** The resolve, the create, the stamp and the comparison are one
 step under the lock that guards the registry. Without that clause first-writer-wins is not
@@ -58,17 +61,19 @@ stamps conforms to the letter while being broken in fact. SPEC-5 states the clau
 tests it.
 
 **The mid-session conditioning.** The §7.4 mid-session upload is issued against an entry whose
-token the gateway does not hold, because the binding predates the request and may have been
-made by another replica. The wire rule is therefore conditioned rather than absolute: on `PrepareWorkspace` and
-`FinalizeWorkspace`, the two requests that carry both fields, `bind_attempt` is non-empty
-exactly when `mid_session` is false, while `RunSetup`, `AssignCredentials` and `Resume` carry
-no `mid_session` marker and always carry a non-empty token. A mid-session
-request carrying a token, and a non-mid-session request carrying none, are both
-`INVALID_ARGUMENT`, refused by `validateBindFields` before the handler resolves anything. A mid-session request asserts no identity under rule 5, cannot create under
-rule 1, and is exempt from the phase gate. What keeps that safe is the shipped admission guard:
-a mid-session upload is admitted only for a session with a live binding in the replica's
-`podRegistry` (`pkg/gateway/sessionserver/upload_to_session.go`), which a foreign attempt
-cannot obtain. Reading that guard is a precondition of landing CODE-6's rule 1.
+token the gateway does not hold, because the binding predates the request and may have been made
+by another replica. The wire rule is therefore conditioned rather than absolute: on
+`PrepareWorkspace` and `FinalizeWorkspace`, the two requests that carry both fields,
+`bind_attempt` is non-empty exactly when `mid_session` is false, while `RunSetup`,
+`AssignCredentials` and `Resume` carry no `mid_session` marker and always carry a non-empty
+token. A mid-session request carrying a token, and a non-mid-session request carrying none, are
+both `INVALID_ARGUMENT`, refused by `validateBindFields` before the handler resolves anything. A
+mid-session request asserts no identity under the admit rule, cannot create under the
+mid-session-create rule, and is exempt from the phase gate. What keeps that safe is the shipped
+admission guard: a mid-session upload is admitted only for a session with a live binding in the
+replica's `podRegistry` (`pkg/gateway/sessionserver/upload_to_session.go`), which a foreign
+attempt cannot obtain. Reading that guard is a precondition of landing CODE-6's
+mid-session-create rule.
 
 Conditioning on `mid_session` is also what closes a hole the resolve ordering opens today.
 `FinalizeWorkspace` calls `ensureSlotPaths` at `pkg/adapter/staging.go:181` and reads
@@ -77,9 +82,9 @@ session the pod holds no entry for creates an entry and a full on-disk tree befo
 mid-session branch is consulted. `RunSetup` and `PrepareWorkspace` have the same unconditional
 ordering. The entry created that way would carry no token, every attempt would be admitted
 against it, no compensation could collect it, and it would be permanent. Reading `mid_session`
-before the resolve is what makes rule 1 reachable, and that requires the field on
-`PrepareWorkspaceRequest` as well, which is why it belongs in the same proto window as the
-token.
+before the resolve is what makes the mid-session-create rule reachable, and that requires the
+field on `PrepareWorkspaceRequest` as well, which is why it belongs in the same proto window as
+the token.
 
 **`Shutdown` says which teardown it is asking for.** `bind_attempt` and
 `unconditional_teardown` sit beside the address on `ShutdownRequest`, and exactly one of a
@@ -146,7 +151,7 @@ recovers `RunSetup` partial outputs. CODE-7 adds the translation from the status
 Go sentinels, following that reader's pattern. Four deliverables have nothing to match on
 without it.
 
-**What the change costs.** One additive proto window: two enum values, one enum, and ten fields,
+**What the change costs.** One additive proto window: two enum values, one enum, and nine fields,
 no field removed, no field renumbered, and no RPC added, so `buf breaking` has nothing to fire on.
 On the gateway side: one mint helper, one in-process error field, one existing parameter
 threaded to two more call sites, two error sentinels, and one predicate split. No new frame, no
@@ -216,9 +221,9 @@ critical section. The rule table:
 | non-empty `bind_attempt` | token differs | `superseded` | no |
 | non-empty `bind_attempt` | token matches | `reclaimed` | yes |
 
-The empty-token row fails closed and is reachable. With `materializeSlot`, `Binder.Prepare`
-and `Binder.Resume` all minting, and with CODE-6's rule 1 removing the mid-session creation
-route, the remaining producer of an unstamped entry is a `StartSession` or a
+The empty-token row fails closed and is reachable. With `materializeSlot`, `Binder.Prepare` and
+`Binder.Resume` all minting, and with CODE-6's mid-session-create rule removing the mid-session
+creation route, the remaining producer of an unstamped entry is a `StartSession` or a
 `ConfigureWorkspace` that resolved none and created one, because neither carries a token. The
 untokened-entry counter below names the row, so that entry, and a future caller that creates one
 without a token, are visible rather than silent.
@@ -539,7 +544,7 @@ unconsumed, for a failure a further attempt clears. `Aborted` takes the classifi
 default (`slotfailure.go:100-101`), so `applySlotRetryPolicy` still places its retry and
 `classifySlotBindFailure` passes the error through with the retryable `STARTING_FAILED`
 envelope intact on the create-time-reserved path
-(`pkg/gateway/sessionserver/start.go:2766-2779`, `:2873-2879`). No change is staged to that
+(`pkg/gateway/sessionserver/start.go:2766-2779`). No change is staged to that
 switch. `Aborted` is also the code the identity gate answers, which is deliberate: both are
 "another attempt owns this", both clear on a further attempt, and CODE-5's single `Aborted` arm
 on `isTransientPodClaimError` covers the rollback, the reclaim-hold refusal, and the identity
@@ -580,9 +585,10 @@ Scope of the call-site change:
   from the claim it already makes, and every test caller must hold a bound registry entry when
   it records, because the guard now keys the record on that entry and its token.
   `pkg/adapter/export_test.go:45` (inside `ClaimSessionForTest`, after `claimSessionSlot`),
-  `usage_test.go:233` (after `bindSessionForTest`), and
   `podmcp_arming_internal_test.go:84,185,230` (each after `claimSessionSlot("alice", …)`)
-  already satisfy that and need only the discard. `adapterevents_test.go:95` and `:184` do not,
+  already satisfy that and need only the discard. `usage_test.go:233` reaches its entry through
+  `bindSessionForTest` (`usage_test.go:350-363`), which calls `ensureSlotStateLocked` and returns
+  nothing, so that helper is widened to hand the token back and the caller takes it from there. `adapterevents_test.go:95` and `:184` do not,
   because both build a bare `New("served")` with nothing in `s.slots`, so both gain a
   `bindSessionForTest(t, s, …)` call before the record; that helper is in the same package and
   sets the workspace base itself when it is empty (`pkg/adapter/usage_test.go:350-363`). The
@@ -744,38 +750,42 @@ func (b *Binder) compensateFailedSlotBind(
 
 `ShutdownReclaim` returns the outcome, `exited_cleanly` and the error, in that order.
 
-**The outcome mapping, at the caller.** An unrecognized outcome is not a leak:
+**The leaked disposition, at the caller.** The outcome does not enter it. Every rule that
+removes no entry answers `exited_cleanly` true, so the disposition is the one the shipped
+compensation call site at `slotbinder.go:543` already computes, and an outcome arm would only
+add a default arm that is fail-open on version skew:
 
 ```go
-// spec: §6.2 (pod state machine). The leaked disposition withholds the pod's
-// slot-counter decrement for the life of the pod, and UnhealthyThreshold is
-// int((maxConcurrent+1)/2), so at maxConcurrentSessions: 2 the threshold is 1,
-// Unhealthy compares with >=, and RecordLeak increments a map that is never
-// window-pruned. One unknown outcome would therefore drain the pod. An outcome
-// this build does not recognize is counted and treated as not leaked.
-func slotReclaimLeaked(outcome adapterv1.SlotReclaimOutcome, cleanly bool, err error) bool {
-    switch {
-    case err != nil:
-        return true
-    case outcome == adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED:
-        return !cleanly
-    case outcome == adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED,
-        outcome == adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_ABSENT:
-        return false
-    default:
-        slotReclaimOutcomeUnrecognized.Inc()
-        return false
-    }
-}
+// spec: §6.2 (pod state machine); §7.1 (normal flow). A reclaim the adapter
+// did not answer, and one that ran a teardown whose close failed, are the
+// reclaims that did not complete. Every §4.7.1 teardown rule that removes no
+// entry answers exited_cleanly true, so `superseded` and `absent` land here as
+// not leaked without a branch, and an outcome value this build does not
+// recognize is judged on the same two fields rather than on a default arm that
+// would treat a failed close as clean. The drain hazard the six-arm form was
+// written against is an unknown outcome judged leaked when nothing failed;
+// that case reports a clean exit and is not leaked here either.
+sbe.Leaked = cerr != nil || !cleanly
 ```
+
+The expression is written at the compensation's call site rather than as a free function, which
+is why the staged `materializeSlot` body changes with it.
+
+This differs from the six-arm form in one case, and the difference is fail-closed: an adapter
+answering `superseded`, `absent`, or a value this build does not recognize together with
+`exited_cleanly` false is leaked here, where the six-arm form called it clean.
+
+The outcome is read for observability alone. `noteCompensationOutcome` fires the superseded
+series and nothing else consumes the value.
 
 `SUPERSEDED` and `ABSENT` are completed reclaims that correctly performed nothing. On `ABSENT`
 the adapter holds nothing for the session; on `SUPERSEDED` another attempt owns the slot
 identifier and everything under it, or the entry carries no token at all, which is what a
 `StartSession` or a `ConfigureWorkspace` creates. Either way this attempt owns nothing the
 reclaim could release. An untokened entry survives the reclaim and is released only by an
-unconditional teardown or by the pod's retirement, which SPEC-5 records as a residue. Reading `SUPERSEDED` as leaked would withhold
-the pod's slot-counter decrement for the life of the pod on the common retry case.
+unconditional teardown or by the pod's retirement, which SPEC-5 records as a residue. Reading
+`SUPERSEDED` as leaked would withhold the pod's slot-counter decrement for the life of the pod
+on the common retry case.
 
 Correcting a claim the shipped text carried: the disposition does not travel through
 `ReleaseSlotReservation`'s own parameter list into `claimer.ReleaseSlot`. That function calls
@@ -820,7 +830,15 @@ func (b *Binder) materializeSlot(
             outcome, cleanly, cerr := b.compensateFailedSlotBind(
                 ctx, cl, req.SessionID, attempt,
                 req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, sandboxName, slotID)
-            sbe.Leaked = slotReclaimLeaked(outcome, cleanly, cerr)
+            // spec: §6.2 (pod state machine); §7.1 (normal flow). A reclaim the
+            // adapter did not answer, and one that ran a teardown whose close
+            // failed, are the reclaims that did not complete. Every §4.7.1
+            // teardown rule that removes no entry answers exited_cleanly true,
+            // so `superseded` and `absent` land here as not leaked without a
+            // branch, and an outcome value this build does not recognize is
+            // judged on the same two fields rather than on a default arm that
+            // would treat a failed close as clean.
+            sbe.Leaked = cerr != nil || !cleanly
             noteCompensationOutcome(outcome)
         }
         // spec: §7.1 (normal flow); §4.9 (credential leasing service). Every
@@ -1155,19 +1173,24 @@ below is an addition.
   (`deregisterStartedSessions`, whose members are destroyed one at a time in
   `terminateHeldSession`, `pkg/adapter/holdstate.go`, up to ten seconds later). `heldSession`
   gains a `release func()` field so pass 1 carries each member's hold to the pass-2 call that
-  ends it, and `terminateHeldSession` defers it. `deregisterSlotLocked` keeps its signature for
-  the read-only caller that needs the deregistration without a destroy, and `deregisterSlot` is
-  retired into the helper. In the same rewrite `releaseSessionSlot` stops discarding
+  ends it, and `terminateHeldSession` defers it. `deregisterSlotLocked` keeps its signature because
+  `reclaimSlotLocked` calls it; after CODE-6 every production caller goes through that helper and
+  no caller takes the deregistration without a destroy. `deregisterSlot` is retired into the
+  helper. In the same rewrite `releaseSessionSlot` stops discarding
   `removeSlotTree`'s error and logs it with `slog.Warn` naming the session identifier and the
   error, because nothing else records that cleanup's failure; `pkg/adapter/slotsession.go` gains
   a `log/slog` import for it, matching the structured adapter events `pkg/adapter/podscrub.go`
   already emits. The function still returns nothing and every caller still returns its own
   error, so no control flow changes.
 - `errSlotReclaimInProgress`, a `codes.Aborted` status carrying `slot_reclaim_in_progress`, and
-  `isSlotReclaimInProgress(err) bool`, both unchanged from the shipped text.
+  `isSlotReclaimInProgress(err) bool`. Neither symbol exists in the tree today; the reclaim hold
+  is new behaviour this deliverable introduces rather than shipped behaviour it records.
 - `errSlotBindAttemptSuperseded(slotID string) error`, a `codes.Aborted` status whose detail is
   an `adapterv1.Error` with `code: ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED`, `category:
-  TRANSIENT`, and a message naming the slot identifier and nothing else. The token itself is
+  TRANSIENT`, `Retryable: true`, and a message naming the slot identifier and nothing else.
+  `Retryable` is set explicitly, as the one shipped adapter-side `adapterv1.Error` sets it
+  (`pkg/adapter/staging.go:209-214`), because the proto3 default of false contradicts the
+  declared category on the wire. The token itself is
   never put in the message: it is a capability over a live session's teardown, and
   `code-best-practices.md` forbids logging or returning credential-like material.
 - `errSlotBindAlreadyStarted(slotID string) error`, a `codes.FailedPrecondition` status whose
@@ -1197,8 +1220,10 @@ below is an addition.
   its `bind_attempt` pairs with `unconditional_teardown` rather than with a mid-session marker
   and is checked by the two-field rule in the `Shutdown` handler.
 
-**`ensureSlotStateLocked` takes the resolve and evaluates the five-rule predicate.** The hold
-refusal stays first, before the map lookup, because a held identifier has no entry to return:
+**`ensureSlotStateLocked` takes the resolve and evaluates the cascade §4.7.1 names**, in that
+section's order and under its names, so the function is the whole of the cascade and no handler
+carries a second copy of it. The hold refusal stays first, before the map lookup, because a held
+identifier has no entry to return:
 
 ```go
 // ensureSlotStateLocked resolves the slot's registry entry or creates it, and
@@ -1220,31 +1245,36 @@ refusal stays first, before the map lookup, because a held identifier has no ent
 //
 // spec: §4.7.1 (role and gateway RPC contract)
 func (s *Server) ensureSlotStateLocked(slotID string, r slotResolve) (*slotState, error) {
+    // The reclaim hold, applied before the map lookup: a held identifier has no
+    // entry to return.
     if _, held := s.reclaiming[slotID]; held {
         return nil, errSlotReclaimInProgress
     }
     st, ok := s.slots[slotID]
     switch {
     case !ok && !r.allowCreate:
-        // Rule 1. A mid-session request resolves an entry that already exists
+        // The mid-session-create rule. A mid-session request resolves an entry
+        // that already exists
         // and never creates one. Creating here would mint an entry carrying no
         // token, which no attempt could ever reclaim and no sweep collects.
         return nil, status.Errorf(codes.FailedPrecondition,
             "slot %s has no registry entry for a mid-session request", slotID)
     case !ok:
-        // Rule 2. The create branch, and the only writer of bindAttempt.
+        // The create-and-stamp rule. The create branch, and the only writer of
+        // bindAttempt.
         st = s.newSlotStateLocked(slotID)
         st.bindAttempt = r.bindAttempt
         s.slots[slotID] = st
         return st, nil
     case r.bindAttempt != "" && st.bindAttempt != "" && st.bindAttempt != r.bindAttempt:
-        // Rule 3, the identity gate.
+        // The attempt identity rule.
         return nil, errSlotBindAttemptSuperseded(slotID)
     case st.started && !r.allowStarted:
-        // Rule 4, the phase gate.
+        // The started-session rule, the phase gate.
         return nil, errSlotBindAlreadyStarted(slotID)
     default:
-        // Rule 5. The entry is returned and the token is not written, which
+        // The admit rule. The entry is returned and the token is not written,
+        // which
         // covers both "the entry carries no token" and "the caller asserts no
         // identity".
         return st, nil
@@ -1263,7 +1293,7 @@ resolve it passes:
 
 | Site | `bindAttempt` | `allowCreate` | `allowStarted` |
 |:--|:--|:--|:--|
-| `staging.go` `resolvePrepareStagingDir`, from `PrepareWorkspace` | the frame's `bind_attempt` | `!midSession` | `midSession` |
+| `staging.go` `resolvePrepareStagingDir`, from `PrepareWorkspace` | the first frame's `bind_attempt` | `!midSession` | `midSession`, both from the first frame's latch |
 | `staging.go` `FinalizeWorkspace`'s `ensureSlotPaths` | `req.GetBindAttempt()` | `!req.GetMidSession()` | `req.GetMidSession()` |
 | `staging.go` `RunSetup`'s `ensureSlotPaths` | `req.GetBindAttempt()` | true | false |
 | `slotcreds.go` `assignCredentialsSlot`, from `AssignCredentials` | `req.GetBindAttempt()` | true | false |
@@ -1286,31 +1316,34 @@ enumerated here, because every one of them is a mechanical widening to
 
 **`claimSessionSlotUnderLock`'s own refusal becomes typed.** Its shipped
 `status.Errorf(codes.Unavailable, "session %s has already started on this pod")` at
-`slotsession.go:84-86` is the phase gate stated in one handler's terms, and rule 4 now states it
-for all seven. The `!idempotentRepeat` arm therefore returns `errSlotBindAlreadyStarted(slotID)`
-rather than the untyped `Unavailable`, and the `idempotentRepeat` arm is unchanged: it still
-returns `(false, false, nil, nil)` and the caller still treats it as a satisfied claim. In
-practice rule 4 fires first, inside the resolve, so the arm is reached only when
-`allowStarted` was true and the entry started between the resolve and the arm, which the lock
-forbids; it is kept as the local statement of the same rule so a later reader of the claim does
-not conclude that a started entry is admitted there.
+`slotsession.go:84-86` is the phase gate stated in one handler's terms, and the started-session
+rule now states it for all seven. The `!idempotentRepeat` arm therefore returns
+`errSlotBindAlreadyStarted(slotID)` rather than the untyped `Unavailable`, and the
+`idempotentRepeat` arm is unchanged: it still returns `(false, false, nil, nil)` and the caller
+still treats it as a satisfied claim. In practice the started-session rule fires first, inside
+the resolve, so the arm is reached only when `allowStarted` was true and the entry started
+between the resolve and the arm, which the lock forbids; it is kept as the local statement of
+the same rule so a later reader of the claim does not conclude that a started entry is admitted
+there.
 
-**Rule 1 needs `mid_session` read before the resolve.** `FinalizeWorkspace` reads
-`req.GetMidSession()` at `pkg/adapter/staging.go:239` today, fifty-eight lines after its
+**The mid-session-create rule needs `mid_session` read before the resolve.** `FinalizeWorkspace`
+reads `req.GetMidSession()` at `pkg/adapter/staging.go:239` today, fifty-eight lines after its
 `ensureSlotPaths` call at `:181`. The read moves to the top of the handler and the value is
 passed into the resolve; the branch at `:239` reads the same local. `RunSetup` and
 `AssignCredentials` are never mid-session and pass `allowCreate` true and `allowStarted` false.
 
-**The per-frame rule on `PrepareWorkspace`.** `PrepareWorkspace` is a client-streaming RPC that
-resolves lazily on the first frame carrying a session identifier
-(`resolvePrepareStagingDir`, `staging.go:78`). The handler therefore latches
-`bind_attempt` and `mid_session` from the frame that resolves the entry and refuses any later
-frame in the same call whose values disagree, with `codes.InvalidArgument`. It also resolves at
-most once per call: the staged bytes are keyed by `sha256(uploadRef)` under the live session's
-own staging directory, opened `O_CREATE|O_WRONLY|O_TRUNC` and named by refs the client supplies
-verbatim, so a second resolve inside one call would let a later frame's assertion take effect
-over bytes the first frame's assertion admitted. Both rules are conformance clauses CONF-1
-tests.
+**The first-frame latch on `PrepareWorkspace`.** `PrepareWorkspace` is a client-streaming RPC
+that resolves lazily on the first frame carrying a session identifier
+(`resolvePrepareStagingDir`, `staging.go:78`), and the shipped handler already resolves at most
+once per call: the `if stagingDir == ""` guard at `staging.go:77` runs the resolve on the first
+frame alone, and no later frame's `session_id` is compared against it. The handler therefore
+latches `bind_attempt` and `mid_session` from that frame, evaluates the cascade on the latched
+values, and reads neither field again for the rest of the call. It refuses no later frame on
+either field. With the resolve taken once, a later frame's assertion cannot take effect over
+bytes the resolving frame's assertion admitted, so a refusal there would add a handler
+comparison, a wire clause and two conformance cases that protect nothing, while the larger
+shipped hole on that stream, an unchecked later-frame `session_id`, would stay open. That hole
+is out of scope here. This is the first-frame rule.
 
 **The five resolve sites keep the shared helper.** All five re-wrap any slot-resolve failure as
 `codes.InvalidArgument` today, which `SlotBindError.Reason()` maps to
@@ -1496,35 +1529,36 @@ dead attempt's token, and every later attempt at that session on that pod is ref
 recorded among the accepted failure modes and closing it needs a reaper this proposal does not
 stage.
 
-### CODE-9 · pkg/gateway/observability/catalog.go, docs/reference/metrics.md, pkg/gateway/podlifecycle/podsession/slotbinder.go · the counters that make the fence observable
+### CODE-9 · pkg/observability/metrics/catalog.go, pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go, pkg/adapter/metrics.go, docs/reference/metrics.md, pkg/gateway/podlifecycle/podsession/slotbinder.go · the counters that make the fence observable
 
 `noteCompensationOutcome(outcome)` is the one helper the compensation's caller runs to fire the
 superseded counter, so a later caller that maps the outcome without counting it is a missing
-call rather than a missing branch. The unrecognized-outcome counter is incremented in the
-default arm of CODE-4's `slotReclaimLeaked`, which is the single site that decides an outcome is
-unrecognized.
+call rather than a missing branch.
 
-The counters are registered in `catalog.go` beside `SlotFailure` (`slotbinder.go:358`). The
-superseded series takes a `SlotReclaim` hook on `Binder` of the same form, because its call site
-holds `req.Pool` and `sandboxName`. The unrecognized-outcome series takes no hook and carries no
-labels, because `slotReclaimLeaked` is a free function that holds neither value, which is why
-SPEC-6 stages its §16.1 row unlabelled. Both are documented in `docs/reference/metrics.md` and
-in the §16.1 rows SPEC-6 stages. `catalog_test.go` and `alert_catalog_crosscheck_test.go` gain
-the matching entries.
+The superseded series is registered in `pkg/observability/metrics/catalog.go` and transcribed
+into the `spec161Metrics` list in its `catalog_test.go`; its Prometheus collector sits with the
+other gateway slot series in `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go`
+and is fed through a `SlotReclaim` hook on `Binder` of the same form as `SlotFailure`
+(`slotbinder.go:358` is the forwarder, not the registration), because its call site holds
+`req.Pool` and `sandboxName`. The untokened-entry series is registered in
+`pkg/adapter/metrics.go`, which is the surface the tier-11 adapter sweep reads. Both series take
+a `docs/reference/metrics.md` row matching the §16.1 row SPEC-6 stages, the untokened-entry row
+under that page's `## Adapter metrics` table with the same "outside the default scrape set"
+phrasing its siblings there already use. `catalog_test.go` and
+`alert_catalog_crosscheck_test.go` gain the matching entries.
 
 | Counter | Fires when | Expected value |
 |:--|:--|:--|
-| `lenny_slot_compensation_outcome_unrecognized_total` | the outcome mapping met a `SlotReclaimOutcome` value this build does not recognize, which it treats as not leaked | zero, and a non-zero value means the gateway and the adapter are running different versions of the contract |
 | `lenny_slot_compensation_superseded_total` | a compensation answered `superseded`, meaning the adapter held an entry the compensation was not addressed to | no expected rate; the series records the outcome, whose meaning SPEC-6's §16.1 row states |
 | `lenny_slot_shutdown_untokened_entry_total` | the adapter met an entry carrying no token, incremented from CODE-1's fail-closed row | zero on the bind paths, and non-zero when an abandoned attempt's late `StartSession` left an untokened entry behind, which SPEC-5 records as a residue |
 
-The unrecognized-outcome and superseded series are gateway-side. The untokened-entry series is
-adapter-side, and the adapter process emits nothing scrapeable today, so its catalog row carries
-the same deferral the adapter metrics endpoint already owns; it is recorded in the register
-rather than wired to a scrape target here. `slotFailureFinalize` does not exist: both
-`stageWorkspace` and `FinalizeWorkspace` record `slotFailureWorkspacePrep`
-(`slotbinder.go:287,294`), so a measurement separating them needs a new stage constant, which
-this deliverable adds as `slotFailureWorkspaceFinalize`.
+The superseded series is gateway-side. The untokened-entry series is adapter-side, and the
+adapter process emits nothing scrapeable today, so its catalog row carries the same deferral the
+adapter metrics endpoint already owns; it is recorded in the register rather than wired to a
+scrape target here. `slotFailureFinalize` does not exist: both `stageWorkspace` and
+`FinalizeWorkspace` record `slotFailureWorkspacePrep` (`slotbinder.go:287,294`), so a
+measurement separating them needs a new stage constant, which this deliverable adds as
+`slotFailureWorkspaceFinalize`.
 
 ### CONF-1 · tests/tier3_contract/adapter_bind_attempt/, tests/tier10_conformance/slot_bind_attempt_conformance_test.go · the published contract is enforced at the wire and exercised in process
 
@@ -1532,56 +1566,39 @@ The shipped CONF-1 asserted a one-entry-one-epoch invariant. Under the amended m
 invariant does not exist, and a battery asserting it would pass a defective adapter and fail a
 conforming one, so the re-cut is a requirement rather than a preference.
 
-**The non-conformance set**, which SPEC-5 states normatively and which the cases below cover one
-for one. An adapter does not conform when it:
+**The rule set under test.** §4.7.1 names the rules and §15.4 publishes non-conformance against
+them; neither is restated here, because a second prose copy of a rule is a copy that diverges.
+The battery covers the set one case per rule: the pairing rule, the reclaim hold, the
+mid-session-create rule, the create-and-stamp rule, the attempt identity rule, the
+started-session rule, the admit rule, the stamp-once rule, the start-confirmation rule, the
+first-frame rule, the teardown-pairing rule, the no-entry rule, the unconditional-teardown rule,
+the attempt-mismatch rule, the attempt-match rule, and the reclaim-outcome rule. Each case below
+names the rule it exercises and reads its assertion off that rule at the time the test is
+written, so a rule that changes moves one test rather than four prose copies, and a rule with no
+case named against it is a coverage gap a reader sees by reading the two lists side by side. One
+case is named for the ordering rather than for a rule: a request meeting both the attempt
+identity rule's condition and the started-session rule's is refused under the former.
 
-(a) admits a bind-sequence RPC whose `mid_session` is false and which resolves an entry whose
-    session has already started, other than a repeat `ConfigureWorkspace` for the session that
-    started on that pod, which §4.7 publishes as idempotent;
-(b) admits a bind-sequence RPC whose non-empty `bind_attempt` differs from the non-empty token
-    the entry carries;
-(c) writes a `bind_attempt` onto an entry it resolved rather than created, in either direction;
-(d) performs the slot release or the runtime teardown for a `Shutdown` whose non-empty
-    `bind_attempt` differs from the entry's, instead of answering `superseded`;
-(e) performs either teardown for a `Shutdown` carrying neither a non-empty `bind_attempt` nor
-    `unconditional_teardown`, instead of answering `INVALID_ARGUMENT`;
-(f) performs either teardown for a `Shutdown` carrying both, instead of answering
-    `INVALID_ARGUMENT`;
-(g) admits a bind-sequence RPC whose `mid_session` is false and whose `bind_attempt` is empty,
-    or whose `mid_session` is true and whose `bind_attempt` is non-empty;
-(h) creates a registry entry for a request whose `mid_session` is true and which resolves no
-    entry, instead of answering `FailedPrecondition`;
-(i) resolves the slot identifier more than once within one `PrepareWorkspace` call, or admits a
-    later frame whose `bind_attempt` or `mid_session` disagrees with the first frame's;
-(j) records the pod's shared runtime process as holding a session while it holds no entry for the
-    slot identifier carrying the token the request that started the session was admitted against,
-    instead of recording nothing, taking the session back off that process, and refusing that
-    request on `codes.Aborted`.
-
-The clauses are a set rather than an evaluation order. A request meeting both (a)'s and (b)'s
-conditions is refused under (b), because §4.7.1 applies the attempt identity rule before the
-started-session rule.
-
-**Tier 3 is the enforcement.** The clauses are wire behaviour and the precedent is exact:
+**Tier 3 is the enforcement.** The rules are wire behaviour and the precedent is exact:
 `tests/tier3_contract/adapter_generation_fence/` holds `generation_fence_wire_test.go`, a
 descriptor-and-bytes gate pinning a precondition field's number and type across thirteen
 messages, and `barrier_unfenced_session_wire_test.go`, a bufconn case driving `adapter.New` over
-gRPC and asserting the handler's behaviour. Cases (a) through (j) land in a new
+gRPC and asserting the handler's behaviour. A case per named rule lands in a new
 `tests/tier3_contract/adapter_bind_attempt/` following both forms.
 
 **Tier 10 is the in-process battery**, following
 `tests/tier10_conformance/recycle_scrub_conformance_test.go`, which drives the exported adapter
-`Server` directly with a fake runtime. It covers the same clauses against this adapter and is
+`Server` directly with a fake runtime. It covers the same rules against this adapter and is
 worth having for the diagnosis it gives, rather than as the gate.
 
 **The honest limit, recorded rather than papered over.** The §15.4 obligation is published for
 third-party adapter authors and the project has no harness that can run one.
 `cmd/lenny-compliance` drives a runtime binary over stdin and stdout JSONL against a fake
 adapter; it imports no `adapterv1` and no gRPC, so it has no adapter under test and cannot
-observe an adapter obligation. SPEC-5 states that the clauses are normative for a third-party
+observe an adapter obligation. SPEC-5 states that the rules are normative for a third-party
 adapter and that the project runs them against its own. The absence of a third-party harness
 registers as a `tests/claim-map.json` row with status `ABSENT`, following the thirteen `R16`
-rows the `coordination_generation` fence already carries, naming the clause set it cannot
+rows the `coordination_generation` fence already carries, naming the rule set it cannot
 enforce and the reason.
 
 **The negative cases, named because a battery of positives would pass a defective adapter.**
@@ -1589,43 +1606,82 @@ Each appears at tier 3 and again at tier 10:
 
 - **Overwrite on resolve.** A second attempt's admitted request against an entry carrying no
   token does not stamp its own token: a later `Shutdown` naming that second attempt's token
-  still answers `superseded`. This is clause (c) and it is the one a naive implementation gets
-  wrong, because stamping on resolve looks like an improvement.
+  still answers `superseded`. This is the stamp-once rule, and it is the one a naive
+  implementation gets wrong, because stamping on resolve looks like an improvement. The rule's
+  second arm is the indivisibility of the step, asserted by driving two concurrent bind attempts
+  at one slot identifier over separate connections and requiring that exactly one is admitted
+  and the other refused `SLOT_BIND_ATTEMPT_SUPERSEDED`, under `-race`. An adapter that resolves,
+  releases its lock and then stamps admits both.
 - **A differing token is admitted.** A bind-sequence RPC carrying attempt B against an entry
   stamped A is refused `SLOT_BIND_ATTEMPT_SUPERSEDED` on `codes.Aborted`, and the entry, its
-  `current` directory and its `credentials.json` all survive the call. Clause (b).
+  `current` directory and its `credentials.json` all survive the call. The attempt identity
+  rule.
 - **Teardown on `superseded`.** A `Shutdown` naming attempt B against an entry stamped A answers
   `superseded` on a successful RPC and removes nothing: the entry, the tree and the credential
-  file survive. Clause (d).
+  file survive. The attempt-mismatch rule. The same case with the entry carrying no token at all
+  answers `superseded` and removes nothing on the same terms; both are the attempt-mismatch rule.
 - **An empty-token bind is admitted.** A non-mid-session bind-sequence RPC carrying an empty
-  `bind_attempt` is `INVALID_ARGUMENT` and creates nothing. Clause (g), and its mirror, a
+  `bind_attempt` is `INVALID_ARGUMENT` and creates nothing. The pairing rule, and its mirror, a
   mid-session request carrying a token.
 - **`unconditional_teardown` mishandled.** A `Shutdown` carrying neither field, and one carrying
   both, are each `INVALID_ARGUMENT` and each leave the entry, the tree and the credential file
-  intact. Clauses (e) and (f).
+  intact. The teardown-pairing rule.
 - **A mid-session request creates an entry.** A `FinalizeWorkspace` with `mid_session` true for a
   session the adapter holds no entry for answers `FailedPrecondition`, and the registry and the
-  filesystem are both unchanged afterwards. Clause (h), and the same for `PrepareWorkspace`.
-- **A second resolve inside one `PrepareWorkspace` call.** A stream whose second frame carries a
-  different `bind_attempt` or a different `mid_session` is refused `INVALID_ARGUMENT`, and the
-  bytes the first frame staged are not extended by the second. Clause (i).
+  filesystem are both unchanged afterwards. The mid-session-create rule, and the same for
+  `PrepareWorkspace`.
+- **A later frame does not re-decide the call.** A `PrepareWorkspace` stream whose second frame
+  carries a different non-empty `bind_attempt`, and one whose second frame carries `mid_session`
+  true where the first frame's was false, are each admitted, extend the first frame's staged
+  bytes, leave the entry's stamp as the first frame set it, and create no second entry. The
+  first-frame rule.
 - **The phase gate.** A bind-sequence RPC with `mid_session` false against an entry whose session
   has started is refused `SLOT_BIND_ALREADY_STARTED` on `codes.FailedPrecondition`, while the
   same RPC with `mid_session` true and no token is admitted, and so is a repeat
-  `ConfigureWorkspace` for the session that started on that pod. Clause (a), with the §7.4 upload
-  and the idempotent repeat as its paired positives.
+  `ConfigureWorkspace` for the session that started on that pod. The started-session rule, with
+  the §7.4 upload and the idempotent repeat as its paired positives.
 - **A start recorded after its entry went.** A start whose entry is removed while `Runtime.Start`
   is still running is refused on `codes.Aborted`, the runtime is observed closed, and no cleanup
   outcome is reported. The fake runtime blocks inside `Start` until the test has sent an
   unconditional `Shutdown` on a second call, which is what makes the ordering deterministic.
-  Clause (j).
+  The start-confirmation rule.
+- **A reclaim against an untokened entry.** A `Shutdown` naming an attempt, against an entry a
+  `StartSession` or a `ConfigureWorkspace` created and which therefore carries no token, answers
+  `superseded` and removes nothing. This is the fail-closed arm of the attempt-mismatch rule,
+  and without it a reclaim naming any attempt would collect a successor's live session.
+- **A `Resume` that creates an entry stamps it.** A `Resume` for a slot the adapter holds no
+  entry for creates one carrying that request's token, observed through a later `Shutdown`
+  naming that token answering `reclaimed` and one naming another answering `superseded`. The
+  create-and-stamp rule.
+- **The unconditional teardown is not withheld.** A `Shutdown` asking for the unconditional
+  teardown against an entry the adapter holds removes that entry, runs the slot release, runs
+  the runtime teardown when the entry's session has started, and answers `reclaimed`; the same
+  request for a session the adapter holds no entry for answers `absent` and leaves the pod
+  unchanged. The unconditional-teardown rule and the no-entry rule, and the arm a battery of
+  refusal cases alone would never reach.
+- **Every outcome is a successful RPC.** `reclaimed`, `superseded` and `absent` are each
+  answered on a successful call with the matching `slot_reclaim` value and no gRPC error. The
+  reclaim-outcome rule.
+- **A bind while the slot identifier is held.** A bind-sequence RPC issued for a slot whose
+  identifier the adapter holds through a running cleanup is refused on `codes.Aborted` and
+  creates and resolves nothing, and a `Shutdown` for the same session is admitted on the same
+  terms. The reclaim hold, which §5.2 states and §4.7.1 applies ahead of the cascade, and the
+  one mandatory fail-closed gate a battery of cascade cases alone never reaches.
+- **An admitted request leaves the stamp alone.** A bind-sequence RPC carrying the entry's own
+  token against an entry whose session has not started, and a mid-session request carrying no
+  token against an entry whose session has started, are each admitted and return the entry with
+  its token exactly as found. The admit rule.
+- **A reclaim naming the entry's own attempt.** A `Shutdown` naming the token the entry carries
+  removes that entry, runs the slot release, runs the runtime teardown when the entry's session
+  has started, and answers `reclaimed`. The attempt-match rule, and the positive the
+  attempt-mismatch and no-entry cases are read against.
 
 ## Staged schema, chart, and migration changes
 
 ### SCHEMA-1 · schemas/lenny-adapter.proto · the bind attempt, the mid-session conditioning, the two-field teardown precondition, the reclaim outcome, and the two refusal codes
 
 One window, and the only schema step in this proposal. The edit is additive: two enum values,
-one enum, and ten fields, no field removed, no field renumbered, no RPC added, no message
+one enum, and nine fields, no field removed, no field renumbered, no RPC added, no message
 removed. `buf breaking` has nothing to fire on. `make generate-proto` runs in the same commit
 and the regenerated `pkg/proto/adapter/v1` package lands with it, so no step compiles against a
 half-generated tree.
@@ -1692,7 +1748,7 @@ enum SlotReclaimOutcome {
 | Message | Field | Number | Basis | Role |
 |:--|:--|--:|:--|:--|
 | `PrepareWorkspaceRequest` | `string bind_attempt` | 5 | 1-3 used, 4 `reserved "slot_id"` | the token, on the first entry-creating RPC |
-| `PrepareWorkspaceRequest` | `bool mid_session` | 6 | same block | read before the resolve, so rule 1 is reachable |
+| `PrepareWorkspaceRequest` | `bool mid_session` | 6 | same block | read before the resolve, so the mid-session-create rule is reachable |
 | `FinalizeWorkspaceRequest` | `string bind_attempt` | 6 | 1-4 used (`mid_session` is 4), 5 reserved | the token |
 | `RunSetupRequest` | `string bind_attempt` | 5 | 1-3 used, 4 reserved | the token |
 | `AssignCredentialsRequest` | `string bind_attempt` | 4 | 1-2 used, 3 reserved | the token |
@@ -1750,7 +1806,7 @@ anchor the sibling `AttachRequest.coordination_generation` row uses.
 
 Two rows are `WIRED`, because a production reader ships in the same change: the adapter compares
 the token and the two teardown fields inside `Shutdown`, and the gateway's compensation reads
-the outcome. The third is `ABSENT`, recording that the §15.4 clause set is normative for a
+the outcome. The third is `ABSENT`, recording that the §15.4 rule set is normative for a
 third-party adapter and that the project has no harness able to run one, per CONF-1.
 
 ```json
@@ -1769,11 +1825,11 @@ third-party adapter and that the project has no harness able to run one, per CON
   "note": "the gateway mints one token per bind attempt and carries it on every request that can create or resolve the entry; the adapter writes it on the create branch alone and compares it on every resolve"
 },
 {
-  "claim": "third-party adapter conformance harness for the §15.4 slot-bind clauses",
+  "claim": "third-party adapter conformance harness for the §15.4 slot-bind rules",
   "status": "ABSENT",
   "spec_anchor": "#2851-gateway-to-pod",
   "surface": "`tests/tier3_contract/adapter_bind_attempt/`, `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`",
-  "note": "the clauses are normative for any adapter implementation; cmd/lenny-compliance drives a runtime binary over JSONL against a fake adapter and imports no gRPC, so the project runs the clauses against its own adapter only"
+  "note": "the rules are normative for any adapter implementation; cmd/lenny-compliance drives a runtime binary over JSONL against a fake adapter and imports no gRPC, so the project runs the clauses against its own adapter only"
 }
 ```
 
@@ -1795,11 +1851,12 @@ No shipped tier-11 gate compares this table's edge rows against the §6.2 block:
 the reference page separately and never meet. DOCS-1 therefore carries the tier-11 work that
 makes the pair reconcile, specified under `## Testing`, and it lands after SPEC-4.
 
-### DOCS-2 · docs/reference/adapter-contract.md · the `Shutdown` row, the bind-attempt block, and the `DemoteSDK` row
+### DOCS-2 · docs/reference/adapter-contract.md · the `Shutdown` row and the `DemoteSDK` row
 
-`docs/reference/adapter-contract.md` states of itself that it is the complete reference for the
-gateway-to-adapter gRPC protocol (`docs/reference/adapter-contract.md:10`), and its `Shutdown`
-row (`:75`) is the reader-facing mirror of the §4.7 row SPEC-1 rewrites. After SPEC-1, SPEC-3,
+`docs/reference/adapter-contract.md` states of itself that it is the reference for the protocol
+between the adapter sidecar and the runtime binary, covering the gateway-to-adapter gRPC
+protocol among other sections (`docs/reference/adapter-contract.md:10`), and its `Shutdown` row
+(`:75`) is the reader-facing mirror of the §4.7 row SPEC-1 rewrites. After SPEC-1, SPEC-3,
 SPEC-5 and CODE-1 that row is false on the usage flush and the runtime close, which the staged
 §4.7 row gates on a session whose start the adapter has admitted while the slot release runs for
 any entry the call removed; on the unconditional cleanup-outcome report, which SPEC-3 withholds
@@ -1818,15 +1875,19 @@ Replace the `Shutdown` row under `**Gateway-to-Adapter RPCs:**` with the row bel
 physical line, because the gate reads the row through `lineContaining(page, "| \`Shutdown\` |")`.
 
 ```
-| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for: it carries either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The slot release removes the session's slot tree and runs whenever the adapter holds an entry for the named session, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report and then closes the runtime, and the CH-RUNTIMEOPS drain signal precedes that close only when the deregistration leaves the adapter holding no other bound session. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a session the shared runtime process was given, and reports no outcome for a cleanup on a slot the runtime was never given. A request naming a session the adapter holds no entry for removes nothing, runs neither teardown, and answers with a clean-exit response. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
+| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for, by carrying either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The response reports which entry the request was addressed to and what became of it: `reclaimed` when the adapter held that entry and released the slot, `superseded` when the adapter holds an entry the request is not addressed to, so nothing was released, and `absent` when the adapter holds no entry for the session. Every outcome is answered on a successful call. The slot release removes the session's slot tree and runs whenever the adapter holds an entry for the named session, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report and then closes the runtime, and the CH-RUNTIMEOPS drain signal precedes that close only when the deregistration leaves the adapter holding no other bound session. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a session the shared runtime process was given, and reports no outcome for a cleanup on a slot the runtime was never given. A request naming a session the adapter holds no entry for removes nothing, runs neither teardown, and answers with a clean-exit response. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
 ```
 
-Add the block below immediately after the `**Scrub responsibilities.**` paragraph, so the bind
-attempt and the hold reach the third-party adapter author the page is written for:
-
-```
-**Bind attempt and slot-identifier reclaim hold.** Each bind attempt mints an opaque token before its first call and carries that token on the requests that stage the session's workspace, its credentials and its setup, and on a `Resume`. The adapter treats the token as opaque, writes it onto the entry it creates, and never writes it onto an entry it resolved. The resolve, the creation, the write and the comparison are one indivisible step under the lock that guards the registry. A request whose token differs from the one the entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED` on `ABORTED`, which is the transient classification a caller retries on. A request that resolves an entry whose session has already started is refused with `SLOT_BIND_ALREADY_STARTED` on `FAILED_PRECONDITION`, which is permanent, unless it is a mid-session upload or a repeat `ConfigureWorkspace` for the session that started on that pod, which this page publishes as idempotent. A request meeting both conditions is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, because the token comparison is applied before the started-session rule. A mid-session upload carries no token: it resolves an existing entry, creates none, and is admitted against a started session. Before the adapter records the pod's shared runtime process as holding a session it confirms it still holds that slot's entry under the token the starting request was admitted against, and when it does not it records nothing, takes the session back off that process, and refuses that request with the transient `ABORTED` status. `StartSession` and `ConfigureWorkspace` carry no token either and are not mid-session uploads. They may create an entry, which then carries no token, and the started-session rule governs them rather than any token comparison. Every other RPC resolves an entry the session already holds and is outside these rules. A `Shutdown` naming a bind attempt acts only on an entry carrying it. When the entry carries a different attempt, or carries none, the response reports `superseded`, and when the adapter holds no entry for the session it reports `absent`; on either outcome the adapter performs neither teardown. The unconditional teardown removes whatever entry the adapter holds and reports `reclaimed`. Every outcome is answered on a successful call. The adapter holds the slot identifier from the deregistration of that slot's registry entry until the cleanup that reclaims the slot has finished. While the identifier is held it refuses, with the gRPC status code `ABORTED`, which is the transient classification a caller retries on, every request that would create or resolve a registry entry under that identifier. The requests that can create one are `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials`, `StartSession`, `Resume` and `ConfigureWorkspace`; a mid-session upload, which resolves the session's entry and creates none, is refused on the same terms for as long as the identifier is held. `Shutdown` is outside the hold. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming `Shutdown` carries when it carries one, by that request's own deadline when it carries none, and, for the adapter's own coordinator-lost termination, which runs under no request, by a graceful window of ten seconds.
-```
+No bind-attempt or reclaim-hold block is added to this page. The page states that it is the
+reference for the protocol between the adapter sidecar and the runtime binary
+(`docs/reference/adapter-contract.md:10`), calls the adapter container Lenny-managed (`:18`),
+and says of the gRPC section that the runtime binary never sees those RPCs directly (`:53`). The
+admission and teardown rules are gateway-to-adapter, and a runtime author can neither issue a
+request they govern nor observe a refusal they produce, so republishing them here would drop a
+normative cascade into a page whose gRPC section is a one-line orientation table
+(`.claude/rules/doc-content.md`, "Match technical depth to the page"). The contract's published
+home is §15.4, which the proposal's own audience statement names. What is runtime-observable,
+and what the staged `Shutdown` row therefore carries, is the teardown behaviour.
 
 Amend the `DemoteSDK` row (`:64`) so it states the registry effect §4.7.1's caller rule turns on:
 
@@ -1839,8 +1900,10 @@ Its tier-11 work is specified under `## Testing`.
 
 ### DOCS-3 · docs/reference/error-catalog.md · the `SETUP_COMMAND_FAILED` row takes four sentence replacements and a replaced remedy cell
 
-The started-session refusal reaches the client under the `SETUP_COMMAND_FAILED` envelope §15.1
-already defines for a deterministic `FailedPrecondition` failure in the setup window, and
+A started-session refusal reaches the client under the `SETUP_COMMAND_FAILED` envelope only
+where it arrives at the request that runs the session setup commands, which is the stage whose
+deterministic `FailedPrecondition` failure §15.1 already maps to this code. A refusal arriving at
+any other bind-sequence request reaches the client under the envelope that stage already selects.
 SPEC-5 replaces three sentences of the §15.1 row so they no longer state a cause the refusal
 does not have. The published catalog at `docs/reference/error-catalog.md:129` states the same
 row for readers who do not have the specification. Nothing holds the two to one text: no file
@@ -1851,8 +1914,8 @@ is the only thing that moves it.
 This deliverable makes four sentence replacements and one remedy-cell replacement in the
 published row, in the reference page's own column set. Three mirror SPEC-5's three. The fourth
 has no SPEC-5 counterpart, because §15.1's own exclusion sentence is keyed on the gRPC code and
-stays true for a refusal answered `ABORTED`, while the page states the same exclusion keyed on
-the cause class, where the superseded refusal is neither a crashed pod nor a transport timeout.
+stays true for a refusal answered `ABORTED`, while the page states the same exclusion by naming
+its causes, and the superseded refusal is neither a crashed pod nor a transport timeout.
 The page's prose names the pod slot rather than the registry entry, and carries no
 specification section number, because the reader is a REST client who has neither term.
 
@@ -1861,14 +1924,14 @@ The description cell's opening sentence, which reads "A session setup command ex
 becomes:
 
 ```
-The runtime adapter answered a setup-window request with a deterministic failure: either a session setup command exited non-zero or hit its hard timeout, or a bind-sequence request was refused because the pod slot it reached already carried a started session for the same session identifier.
+The runtime adapter answered the request that runs the session setup commands with a deterministic failure: either a setup command exited non-zero or hit its hard timeout, or the request was refused because the pod slot it reached already carried a started session for the same session identifier.
 ```
 
 The description cell's retryability sentence, which reads "Not retryable: the command fails
 identically until the workspace plan or setup script changes.", becomes:
 
 ```
-Not retryable: a setup command fails identically until the workspace plan or setup script changes, and a bind refusal means another start of the same session already holds the pod slot.
+Not retryable: a setup command fails identically until the workspace plan or setup script changes, and a refusal of that request means another start of the same session already holds the pod slot.
 ```
 
 The description cell's `details.reason` sentence, which reads "`details.reason` is
@@ -1876,7 +1939,7 @@ The description cell's `details.reason` sentence, which reads "`details.reason` 
 `GET /v1/sessions/{id}/setup-output`.", becomes:
 
 ```
-`details.reason` is `setup_command_failed`. Where a setup command ran, its per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`; a bind refusal runs no setup command and produces no such output.
+`details.reason` is `setup_command_failed`. Where a setup command ran, its per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`; a refused request runs no setup command and produces no such output.
 ```
 
 The description cell's closing sentence, which reads "A non-deterministic setup-window failure
@@ -1884,12 +1947,13 @@ The description cell's closing sentence, which reads "A non-deterministic setup-
 `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.", becomes:
 
 ```
-Every other setup-window failure surfaces instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`: a crashed pod, a transport timeout, and a bind-sequence request refused because a newer start of the same session has superseded this one.
+A non-deterministic setup-window failure (a crashed pod or a transport timeout), and a request refused because a newer start of the same session has superseded this one, surface instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.
 ```
 
-The sentence is re-keyed off the cause class because the superseded refusal is a deterministic
-refusal that is retryable, so it belongs to the set the sentence describes while sitting
-outside the predicate the sentence states. §15.1's counterpart needs no such edit: it is keyed
+The sentence enumerates its causes rather than quantifying over every other setup-window
+failure, because the superseded refusal is a deterministic refusal that is retryable, and
+because a started-session refusal that arrives at a request other than the one running the
+setup commands reaches a different envelope. §15.1's counterpart needs no such edit: it is keyed
 on the gRPC code, and the superseded refusal is answered `ABORTED`.
 
 The remedy cell, which reads "Inspect the setup-command output, correct the workspace plan or
@@ -1897,7 +1961,7 @@ setup script, and create a new session.", is replaced whole, because the clause 
 inside the cell's terminating period rather than after it:
 
 ```
-Inspect the setup-command output, correct the workspace plan or setup script, and create a new session. Where the failure is a bind refusal, no setup command ran: read the session's state with `GET /v1/sessions/{id}` rather than retrying the start, because another start of the same session already holds the pod slot.
+Inspect the setup-command output, correct the workspace plan or setup script, and create a new session. Where the setup-command request was refused, no setup command ran: read the session's state with `GET /v1/sessions/{id}` rather than retrying the start, because another start of the same session already holds the pod slot.
 ```
 
 No new row is added. The two adapter error codes SCHEMA-1 adds are gateway-to-adapter codes
@@ -1929,25 +1993,26 @@ contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)`.
 
 The five-rule predicate is the subject, table-driven over the rule it exercises:
 
-- **Rule 1.** A resolve with `allowCreate` false against an absent entry answers
-  `FailedPrecondition`, creates no registry entry, and leaves the filesystem untouched. The
-  filesystem assertion is the one that matters: `ensureSlotPaths` creates the tree, so a rule
-  that refuses after creating would pass a registry-only check.
-- **Rule 2.** A create stamps the caller's token, and the entry carries exactly that value
-  afterwards. A create with an empty token stamps the empty string, which is the state the
-  fail-closed `Shutdown` row and the untokened-entry counter exist for.
-- **Rule 3.** A resolve carrying B against an entry stamped A is refused, the error satisfies the
-  superseded sentinel's code and detail, and the entry's token is unchanged afterwards.
-- **Rule 4.** A resolve with `allowStarted` false against a started entry is refused with the
-  already-started code; the same resolve with `allowStarted` true is admitted.
-- **Rule 5, both arms and the write rule.** A resolve carrying B against an entry carrying no
-  token is admitted and **does not stamp B**; a resolve carrying no token against an entry
-  stamped A is admitted and leaves A. This is the case that fails against an implementation that
-  stamps on resolve, which is the most likely wrong turn.
+- **The mid-session-create rule.** A resolve with `allowCreate` false against an absent entry
+  answers `FailedPrecondition`, creates no registry entry, and leaves the filesystem untouched.
+  The filesystem assertion is the one that matters: `ensureSlotPaths` creates the tree, so a
+  rule that refuses after creating would pass a registry-only check.
+- **The create-and-stamp rule.** A create stamps the caller's token, and the entry carries
+  exactly that value afterwards. A create with an empty token stamps the empty string, which is
+  the state the fail-closed `Shutdown` row and the untokened-entry counter exist for.
+- **The attempt identity rule.** A resolve carrying B against an entry stamped A is refused, the
+  error satisfies the superseded sentinel's code and detail, and the entry's token is unchanged
+  afterwards.
+- **The started-session rule.** A resolve with `allowStarted` false against a started entry is
+  refused with the already-started code; the same resolve with `allowStarted` true is admitted.
+- **The admit rule, both arms and the write rule.** A resolve carrying B against an entry
+  carrying no token is admitted and **does not stamp B**; a resolve carrying no token against an
+  entry stamped A is admitted and leaves A. This is the case that fails against an
+  implementation that stamps on resolve, which is the most likely wrong turn.
 - **Rule precedence.** An entry that is both started and stamped A, resolved with B and
   `allowStarted` false, answers the superseded code rather than the already-started one, because
-  rule 3 precedes rule 4 and the caller's correct response differs: superseded is retryable and
-  already-started is not.
+  the attempt identity rule precedes the started-session rule and the caller's correct response
+  differs: superseded is retryable and already-started is not.
 
 Then the thread and the surrounding mechanism:
 
@@ -1963,9 +2028,13 @@ Then the thread and the surrounding mechanism:
   session the pod holds no entry for answers `FailedPrecondition` and leaves the registry and the
   filesystem unchanged. Against the tree today it creates an entry and a full tree, so the case
   is a regression guard on the read ordering rather than a property test.
-- **`PrepareWorkspace` resolves once per call and pins the first frame's assertion.** A stream
-  whose second frame carries a different token, and one whose second frame flips `mid_session`,
-  are each refused `InvalidArgument`, and the bytes the first frame staged are not extended.
+- **`PrepareWorkspace` latches the first frame's assertion and reads no later frame.** A stream
+  whose second frame carries a different non-empty token, and one whose second frame raises
+  `mid_session` to true where the first frame's was false, are each admitted, extend the bytes
+  the first frame staged, leave the entry's stamp as the first frame set it, and create no
+  second entry. A multi-chunk mid-session upload whose later frames carry the proto3 default for
+  both fields is admitted and staged in full, which is the regression guard for the ordinary
+  §7.4 upload larger than one chunk.
 - **The wire rule's two directions.** A non-mid-session request with an empty token and a
   mid-session request with a non-empty one are each `InvalidArgument`, across
   `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials` and `Resume`. After
@@ -2106,7 +2175,7 @@ set covers one adoption ordering each:
 | Attempt A's own `FinalizeWorkspace` after an unconditional `Shutdown` removed A's entry | A recreates its own entry stamped A and materializes from an empty staging tree. This pins an accepted residue rather than a refusal, and its comment names the accepted-failure-mode bullet it records |
 | Attempt 2 against a live started session | refused twice, by the phase gate and the identity gate; no workspace, credential, setup or staging damage and no compensation sent |
 | Resume onto a replacement pod | the resume mints, its claim stamps the entry it creates, its compensation matches; a stale compensation from an earlier attempt answers `superseded` |
-| §7.4 mid-session upload onto a live session | empty token and `mid_session` true, admitted by rule 5, barred from creating by rule 1, exempt from the phase gate |
+| §7.4 mid-session upload onto a live session | empty token and `mid_session` true, admitted by the admit rule, barred from creating by the mid-session-create rule, exempt from the phase gate |
 | Adapter process restart between the attempt and its compensation | a fresh process holds no entry the stale compensation can match, so it answers `absent`, and any entry a later attempt creates carries that attempt's own token, so it answers `superseded` |
 | A compensation lost to a gateway crash | the entry stands stamped with a dead token and every later attempt at that session on that pod is refused. This pins the residue, and its comment names the recovery that is out of scope |
 
@@ -2159,12 +2228,10 @@ execution modes); §6.2 (pod state machine)`:
   `unconditional_teardown` false, while every other teardown caller sends
   `unconditional_teardown` true with an empty token. Table-driven over `Binder.ReleaseSlot`, its
   recycle arm, `Binder.shutdownAdapter` and its recycle arm.
-- **The outcome mapping, six arms.** `RECLAIMED` + clean → not leaked; `RECLAIMED` + not clean →
-  leaked; `SUPERSEDED` → not leaked; `ABSENT` → not leaked; RPC error → leaked; an outcome value
-  this build does not recognize → not leaked, with
-  `lenny_slot_compensation_outcome_unrecognized_total` incremented. The last arm is the one that
-  fails against a fail-closed default, and it is the arm to write first: at
-  `maxConcurrentSessions: 2` a fail-closed default drains the pod on one unknown value.
+- **The leaked disposition, two arms.** A clean answer is not leaked and an unclean one is,
+  whatever outcome the answer carries; an RPC error is leaked. Table-driven across `reclaimed`,
+  `superseded`, `absent` and a value this build does not recognize, each paired with a clean and
+  an unclean exit, asserting that the outcome never changes the disposition.
 - **The compensation is suppressed on either typed refusal**, and so is the credential release.
   Two arms, one per sentinel: no `Shutdown` is recorded at all, and the `fakeAssigner`'s release
   list stays empty. This is the case that fails against a guard written as `errors.As` on
@@ -2188,9 +2255,7 @@ execution modes); §6.2 (pod state machine)`:
   deadline still sends the compensation. This is the residue class the compensation exists for
   and the case a naive implementation gets wrong.
 - **The counters.** A compensation answering `superseded` increments
-  `lenny_slot_compensation_superseded_total`, and one answering an outcome this build does not
-  recognize increments `lenny_slot_compensation_outcome_unrecognized_total`. The second must be
-  zero across every other case in this file, asserted once at the end of the table.
+  `lenny_slot_compensation_superseded_total`.
 - **CODE-8's short-circuit, both closures.** `Binder.Prepare` and `Binder.Launch` each meet a
   typed refusal from their adapter RPC, return the refusal, and call neither `failPhase` nor
   `drain`; the same closure meeting an ordinary failure drains as it does today. Assert the
@@ -2250,50 +2315,83 @@ transport rather than against a fake. `tests/spec-map.json` gains the directory 
 `tests/tier3_contract/adapter_bind_attempt/...` under sections 4.7, 4.7.1, 7.1 and 15.4, in the
 step that creates the first file under it.
 
-**The descriptor gate**, one file. It pins each of the ten fields SCHEMA-1 adds by message, number
+**The descriptor gate**, one file. It pins each of the nine fields SCHEMA-1 adds by message, number
 and type, and pins both new `ErrorCode` values by number and name. This is the gate that fails if
 a later change renumbers a field or reuses a number, which no `buf breaking` run catches for an
 addition.
 
-**The behavioural cases**, one file, covering clauses (a) through (j) of CONF-1's set and its
-negative cases one for one:
+**The behavioural cases**, one file, covering CONF-1's rule set and its negative cases one for
+one. Each case is titled for the rule it exercises, so a rule with no case is visible as an
+absent title:
 
-- Clause (a): a bind-sequence RPC with `mid_session` false against a started entry is refused
-  `SLOT_BIND_ALREADY_STARTED` on `codes.FailedPrecondition`, with the detail carrying that code,
-  and a repeat `ConfigureWorkspace` for the session that started on that pod is admitted.
-- Clause (b): a differing token is refused `SLOT_BIND_ATTEMPT_SUPERSEDED` on `codes.Aborted`, and
-  the entry, its `current` directory and its `credentials.json` survive.
-- Clause (c): an admitted resolve does not overwrite the entry's token, in both directions,
-  observed through a later `Shutdown`'s answer.
-- Clause (d): a `Shutdown` naming a differing token answers `superseded` on a successful RPC and
-  removes nothing.
-- Clauses (e) and (f): a `Shutdown` carrying neither field and one carrying both are each
+- The started-session rule: a bind-sequence RPC with `mid_session` false against a started entry
+  is refused `SLOT_BIND_ALREADY_STARTED` on `codes.FailedPrecondition`, with the detail carrying
+  that code, and a repeat `ConfigureWorkspace` for the session that started on that pod is
+  admitted.
+- The attempt identity rule: a differing token is refused `SLOT_BIND_ATTEMPT_SUPERSEDED` on
+  `codes.Aborted`, and the entry, its `current` directory and its `credentials.json` survive.
+- The stamp-once rule: an admitted resolve does not overwrite the entry's token, in both
+  directions, observed through a later `Shutdown`'s answer.
+- The attempt-mismatch rule: a `Shutdown` naming a differing token answers `superseded` on a
+  successful RPC and removes nothing.
+- The teardown-pairing rule: a `Shutdown` carrying neither field and one carrying both are each
   `INVALID_ARGUMENT` and leave the entry, the tree and the credential file intact.
-- Clause (g): a non-mid-session request with an empty token, and a mid-session request with a
-  non-empty one, are each `INVALID_ARGUMENT`.
-- Clause (h): a mid-session request resolving no entry answers `FailedPrecondition` and creates
-  nothing on disk.
-- Clause (i): a `PrepareWorkspace` stream whose later frame disagrees with the first on either
-  field is refused, and the first frame's bytes are not extended.
-- Clause (j): a start whose registry entry is removed by an unconditional `Shutdown` while the
-  fake runtime blocks inside `Start` is refused on `codes.Aborted`, the runtime is observed
-  closed, and no cleanup outcome is reported.
+- The pairing rule: a non-mid-session request with an empty token, and a mid-session request
+  with a non-empty one, are each `INVALID_ARGUMENT`.
+- The mid-session-create rule: a mid-session request resolving no entry answers
+  `FailedPrecondition` and creates nothing on disk.
+- The first-frame rule: a `PrepareWorkspace` stream whose later frame carries a non-empty token
+  differing from the first frame's, and one whose later frame carries `mid_session` true where
+  the first frame's was false, are each admitted, extend the first frame's staged bytes, leave
+  the entry's stamp as the first frame set it, and create no second entry.
+- The start-confirmation rule: a start whose registry entry is removed by an unconditional
+  `Shutdown` while the fake runtime blocks inside `Start` is refused on `codes.Aborted`, the
+  runtime is observed closed, and no cleanup outcome is reported.
 - **The §7.4 positive**, `TestMidSessionUploadIsAdmittedOnAStartedSession`: a mid-session upload
   on a started session, sent over the connection the successful bind published, is admitted on
   both `PrepareWorkspace` and `FinalizeWorkspace` and creates no second entry. This is the case
   whose absence let the §7.4 regression stand for three rounds, so it is written with the rest
   rather than deferred.
-- **The unconditional teardown** answers `reclaimed` for an entry it removed and `absent` for a
-  session the adapter holds no entry for.
+- **A reclaim against an untokened entry.** A `Shutdown` naming an attempt, against an entry a
+  `StartSession` or a `ConfigureWorkspace` created and which therefore carries no token, answers
+  `superseded` and removes nothing. This is the fail-closed arm of the attempt-mismatch rule,
+  and without it a reclaim naming any attempt would collect a successor's live session.
+- **A `Resume` that creates an entry stamps it.** A `Resume` for a slot the adapter holds no
+  entry for creates one carrying that request's token, observed through a later `Shutdown`
+  naming that token answering `reclaimed` and one naming another answering `superseded`. The
+  create-and-stamp rule.
+- **The unconditional teardown is not withheld.** A `Shutdown` asking for the unconditional
+  teardown against an entry the adapter holds removes that entry, runs the slot release, runs
+  the runtime teardown when the entry's session has started, and answers `reclaimed`; the same
+  request for a session the adapter holds no entry for answers `absent` and leaves the pod
+  unchanged. The unconditional-teardown rule and the no-entry rule, and the arm a battery of
+  refusal cases alone would never reach.
+- **Every outcome is a successful RPC.** `reclaimed`, `superseded` and `absent` are each
+  answered on a successful call with the matching `slot_reclaim` value and no gRPC error. The
+  reclaim-outcome rule.
+- **A bind while the slot identifier is held.** A bind-sequence RPC issued for a slot whose
+  identifier the adapter holds through a running cleanup is refused on `codes.Aborted` and
+  creates and resolves nothing, and a `Shutdown` for the same session is admitted on the same
+  terms. The reclaim hold, which §5.2 states and §4.7.1 applies ahead of the cascade, and the
+  one mandatory fail-closed gate a battery of cascade cases alone never reaches.
+- **An admitted request leaves the stamp alone.** A bind-sequence RPC carrying the entry's own
+  token against an entry whose session has not started, and a mid-session request carrying no
+  token against an entry whose session has started, are each admitted and return the entry with
+  its token exactly as found. The admit rule.
+- **A reclaim naming the entry's own attempt.** A `Shutdown` naming the token the entry carries
+  removes that entry, runs the slot release, runs the runtime teardown when the entry's session
+  has started, and answers `reclaimed`. The attempt-match rule, and the positive the
+  attempt-mismatch and no-entry cases are read against.
 
 ### Conformance battery for CONF-1, tier 10
 
 `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`, following
 `recycle_scrub_conformance_test.go`, which drives the exported adapter `Server` directly with a
-fake runtime. It covers the same clause set in process, where a failure names the internal state
-that produced it rather than a wire answer. `tests/spec-map.json` gains it as an entry under
-sections 4.7.1 and 15.4. The `ABSENT` claim-register row SCHEMA-1 states lands with it, recording
-that the clauses are normative for a third-party adapter and that no harness runs one.
+fake runtime. It covers the same rule set in process, one case per rule and each titled for its
+rule, where a failure names the internal state that produced it rather than a wire answer.
+`tests/spec-map.json` gains it as an entry under sections 4.7.1 and 15.4. The `ABSENT`
+claim-register row SCHEMA-1 states lands with it, recording that the rules are normative for a
+third-party adapter and that no harness runs one.
 
 ### Edge-list test for CODE-3, tier 1
 
@@ -2455,10 +2553,10 @@ and a negative loop over the concurrent-occupancy block. Add the paired substrin
 **For DOCS-2**, file `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`.
 Extend the shipped `TestAdapterContractNamesTheShutdownRPCUnderItsWireName` in place. Add to the
 row's `requireAllContain` list the substrings `"no other bound session"`, `"a session whose start
-the adapter has admitted"`, and `"either the bind attempt"`, the last of which pins the two-field
-precondition the staged row states. Assert over the whole page, beside the row assertion, that it
-carries `"bind attempt"` and `"reclaim hold"`. Add one clause to the `// diagnosis:` comment
-naming the two teardowns and the two teardown preconditions.
+the adapter has admitted"`, `"either the bind attempt"`, which pins the two-field precondition
+the staged row states, and `"reclaimed"` and `"absent"`, which gate the outcome sentence the
+staged row adds. Add one clause to the `// diagnosis:` comment naming the two teardowns and the
+two teardown preconditions.
 
 **For DOCS-3**, no file. No shipped gate compares `docs/reference/error-catalog.md` against
 §15.1: no file under `tests/`, `scripts/` or `cmd/` and no `Makefile` target names the page.
@@ -2467,9 +2565,9 @@ other row of a sixty-row page ungated and would read as coverage the page does n
 deliverable lands beside SPEC-5 in the same step, which is what holds the two texts together.
 
 **For the counters and SPEC-6**, the shipped `alert_catalog_crosscheck_test.go` and the
-metrics-catalog reconciliation it drives gain the three counter names, so a counter present in
+metrics-catalog reconciliation it drives gain the two counter names, so a counter present in
 `catalog.go` and absent from `docs/reference/metrics.md` or from the §16.1 row fails tier 11.
-`catalog_test.go` gains the same three names in its own inventory.
+`catalog_test.go` gains the same two names in its own inventory.
 
 ### Coverage and preflight
 
@@ -2554,9 +2652,10 @@ treating a failure as this change's.
   compensating `Shutdown` is not held, finds no entry, and answers `ABSENT`. In all three cases
   the refusal is `codes.Aborted`, which the caller can retry on, but what records it differs by
   caller. The §7.3 resume's bind attempt builds a `SlotBindError`, takes `Reason()`'s transient
-  default, and costs the pod one windowed `RecordFailure`; once that retry budget is spent the
-  surviving error reaches `holdOrFailOnResumeError`, and CODE-5's `codes.Aborted` arm is what
-  reverts the row to `awaiting_client_action` rather than to a terminal `failed`. The
+  default, and costs the pod one windowed failure through `accountSlotFailure`'s `resumeOnPod`
+  caller. That branch runs no retry loop, so the error reaches `holdOrFailOnResumeError` on the
+  first refusal, and CODE-5's `codes.Aborted` arm is what reverts the row to
+  `awaiting_client_action` rather than to a terminal `failed`. The
   mid-session upload builds none: `handleUploadToSession` converts the error into an HTTP 502
   `UPSTREAM_ERROR` and nothing is counted against the pod. The §5.2 retry's refused attempt
   costs one windowed `RecordFailure`, and `maxSlotRetries` is 1, so that attempt is the
@@ -2588,19 +2687,18 @@ treating a failure as this change's.
   consistently. At `maxConcurrentSessions: 2` the disposition changes nothing on the retry path,
   because the threshold there is already 1. The reserved branch and the §7.3 re-attach change at
   every concurrency because they reach the accounting at all for the first time.
-- **An unrecognized reclaim outcome is not a leak.** `UnhealthyThreshold` is
-  `int((maxConcurrent + 1) / 2)`, so at `maxConcurrentSessions: 2` the threshold is 1,
-  `Unhealthy` compares with `>=`, and `RecordLeak` increments a map that is never window-pruned.
-  A fail-closed default on an unknown outcome would therefore drain the pod on the first one. It
-  is counted instead, and the counter is what surfaces a build talking to an adapter that
-  answers a value it does not know.
+- **The reclaim outcome does not decide the leak.** Every teardown rule that removes no entry
+  answers a clean exit, so the disposition reads the error and the clean-exit flag alone. An
+  outcome this build does not recognize, answered with a clean exit, is not leaked, which is the
+  drain hazard the enum arm was written against. One answered with an unclean exit is leaked,
+  which is fail-closed and is the one case this differs from an outcome-first mapping on.
 - **`slotCount` still counts a registered-but-unbound entry.** The §28.5.3 count fails closed on
   purpose and its comment says so. The predicate is left exactly as it is.
 
 ## Files touched on application (non-spec)
 
 - `schemas/lenny-adapter.proto` · the two `ErrorCode` values, the `SlotReclaimOutcome` enum and
-  the ten fields SCHEMA-1 states.
+  the nine fields SCHEMA-1 states.
 - `pkg/proto/adapter/v1` · regenerated by `make generate-proto` in the same commit as the proto
   edit.
 - `scripts/seed-claim-register.py` · the three rows SCHEMA-1 states, two `WIRED` and one
@@ -2620,7 +2718,8 @@ treating a failure as this change's.
   `tests/tier9_security/slot_credential_reclaim_fence_test.go` under sections 4.7, 4.9 and 5.2;
   and `tests/tier10_conformance/slot_bind_attempt_conformance_test.go` under sections 4.7.1 and
   15.4. `tests/tier4_integration/concurrent_workspace_test.go` is registered as a whole, under
-  sections 5.2, 6.4 and 28.5.3, so it gains whole-file credits under sections 7.1 and 4.7.1. The
+  sections 5.2, 6.4, 15.1 and 28.5.3, the 15.1 credit through the directory entry, so it gains
+  whole-file credits under sections 7.1 and 4.7.1. The
   new cases landing in files the map already registers case by case take per-case entries: in
   `tests/tier4_integration/recycle_scrub_path_test.go`, whose only whole-file credit is 15.1,
   `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2` is entered as
@@ -2645,7 +2744,7 @@ treating a failure as this change's.
   `slotResolve` parameter and five-rule predicate, and `ensureSlotPaths`'s widened signature.
 - `pkg/adapter/staging.go` · the three resolve sites' `slotResolve` arguments,
   `resolvePrepareStagingDir`'s widened signature, `FinalizeWorkspace`'s `mid_session` read moved
-  above the resolve, `PrepareWorkspace`'s per-frame latch and resolve-once rule, the wire rule's
+  above the resolve, `PrepareWorkspace`'s first-frame latch, the wire rule's
   two directions on all three handlers, and the per-slot guard around the destructive sections.
 - `pkg/adapter/slotcreds.go` · the resolve site's `slotResolve` argument.
 - `pkg/adapter/credentials.go` · `AssignCredentials`'s wire-rule check and the resolve it passes.
@@ -2672,12 +2771,12 @@ treating a failure as this change's.
 - `pkg/adapter/sdkwarm.go` · `ConfigureWorkspace`'s resolve, which carries no token and sets
   `allowStarted` from `idempotentRepeat`, and the `noteRuntimeStarted` call site.
 - `pkg/sandbox/slotstate/slotstate.go` · `ValidTransitions()` and its doc comment.
-- `pkg/gateway/podlifecycle/podsession/bindattempt.go` · new: `newBindAttempt` and the three
+- `pkg/gateway/podlifecycle/podsession/bindattempt.go` · new: `newBindAttempt` and the two
   counters.
 - `pkg/gateway/podlifecycle/podsession/slotfailure.go` · `SlotBindError.Leaked` and the new
   `slotFailureWorkspaceFinalize` stage constant.
 - `pkg/gateway/podlifecycle/podsession/slotbinder.go` · `slotCleanupBudget`,
-  `compensateFailedSlotBind`, `slotReclaimLeaked`, `materializeSlot` and
+  `compensateFailedSlotBind`, `materializeSlot` and
   `materializeSlotStages` with the mint and the attempt-scoped lease release,
   `releaseAttemptCredentials`, `ReleaseSlotReservation`, `BindReservedSlot`, `ClaimSlot`'s
   connect-stage release, and `Binder.ReleaseSlot`'s two teardown calls.
@@ -2692,11 +2791,10 @@ treating a failure as this change's.
   carries no token.
 - `cmd/lenny-gateway/user_revocation.go` and the coordinator-handoff teardown ·
   `unconditional_teardown` on their `Shutdown` calls, which `Client.Shutdown` sets for them.
-- `pkg/gateway/observability/catalog.go` and `catalog_test.go` · the counters CODE-9 states.
-- `docs/reference/metrics.md` · the three counter rows.
+- `pkg/observability/metrics/catalog.go` and `catalog_test.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` and `pkg/adapter/metrics.go` · the counters CODE-9 states.
+- `docs/reference/metrics.md` · the two counter rows.
 - `docs/reference/state-machines.md` · the per-slot sub-state table.
-- `docs/reference/adapter-contract.md` · the `Shutdown` row, the bind-attempt block after the
-  scrub-responsibilities paragraph, and the `DemoteSDK` row.
+- `docs/reference/adapter-contract.md` · the `Shutdown` row and the `DemoteSDK` row.
 - `docs/reference/error-catalog.md` · the `SETUP_COMMAND_FAILED` row's four replaced
   sentences and its replaced remedy cell.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
