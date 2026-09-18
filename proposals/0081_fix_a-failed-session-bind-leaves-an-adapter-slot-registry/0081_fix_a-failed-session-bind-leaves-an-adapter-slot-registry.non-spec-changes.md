@@ -436,14 +436,19 @@ treeErr := error(nil)
 if removed {
     treeErr = s.removeSlotTreeVia(st)
     s.cancelPodMCPIfRuntimeIdle()
+    if treeErr != nil {
+        slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", treeErr)
+    }
 }
 // spec: §5.2 (pool configuration and execution modes). The cleanup completed
 // when every act it owed the slot returned without error, which is what ends
-// the reclaim hold and what decides the cleanup outcome the report carries.
+// the reclaim hold. The cleanup-outcome report below is keyed separately,
+// because it is §6.2 occupancy accounting rather than a statement about the
+// slot identifier.
 completed = closeErr == nil && treeErr == nil
 
 if live {
-    s.reportSessionScrub(ctx, sessionID, errors.Join(closeErr, treeErr))
+    s.reportSessionScrub(ctx, sessionID, closeErr)
 }
 ```
 
@@ -460,18 +465,37 @@ flag and holds no per-session dedup
 (`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go:451-481`), so the
 one-report rule is an adapter-side invariant rather than something the gateway can absorb.
 
-The report is keyed on `errors.Join(closeErr, treeErr)` rather than on `closeErr` alone. §5.2
-defines the per-slot cleanup's actions to include the removal of the slot's workspace directory
-and of its credential directory, so a cleanup whose removal failed is `leaked` rather than
-`released`. Keying the report on the same completion predicate that retains the reclaim hold leaves the
-hold and the cleanup-outcome report stating the same thing about the same cleanup on the
-`running` arm. The response's `exited_cleanly` is keyed differently and answers the reclaiming
-request's own question, so a reclaim that closed the runtime cleanly and failed the tree removal
-reports a clean exit and files the cleanup `leaked`; the staged §7.1 paragraph states that
-split. `errors` is already imported by `pkg/adapter/session.go`. The
-`exited_cleanly` predicate below is unchanged and stays keyed on `closeErr == nil && (live ||
-treeErr == nil)`, because it answers the reclaiming request's own question rather than the
-cleanup-outcome question, and the reason it reads `live` is stated with it.
+The report stays keyed on `closeErr`, which is the key the shipped handler already uses
+(`pkg/adapter/session.go:279`). The report's outcome value and the response's `exited_cleanly`
+are the two inputs to one §6.2 quantity rather than two independent statements. On the `running`
+arm the gateway reads the clean exit, computes `leaked = err != nil || !cleanly` as false
+(`pkg/gateway/podlifecycle/podsession/slotbinder.go:543`) and frees the slot's Redis
+slot-counter occupancy through `SlotClaimer.ReleaseSlot`, so a report of `leaked` filed against
+that same answer books a leak against occupancy that is already free: the slot never reaches
+`lenny_adapter_leaked_slots` and never counts toward `ceil(maxConcurrentSessions/2)`, while the
+gateway's leak count is persistent and never pruned
+(`pkg/gateway/runtime/slothealth/slothealth.go:121-125`, stated at `:127-134`) and stamps
+`lenny.dev/drain-request` as soon as it reaches the unhealthy threshold, which is 1 for
+`maxConcurrentSessions` 1 and 2 (`pkg/gateway/session/recycle/scrubreporter_seams.go:184-197`).
+The `live` arm is the ordinary end-of-session teardown on every pod rather than this proposal's
+reclaim, so keying the report on both errors would retire a pod and issue its drain-request
+merge patch on the first `os.RemoveAll` failure at an ordinary session end, a class of event the
+shipped design absorbs inside the occupancy-zero whole-pod scrub and its budgeted
+`onScrubFailure` and `maxScrubFailures` policy (§5.2).
+
+The reclaim hold and the cleanup-outcome report answer different questions and therefore differ
+on this arm. `completed` is keyed on both errors because the hold is a property of the slot
+identifier and makes no occupancy claim, while the report is §6.2 occupancy accounting. The
+failed tree removal is accounted where it distorts neither: on the pre-`running` arm it is
+carried on the response's `exited_cleanly`, which the unchanged disjunct below already does; on
+the `running` arm it is recorded by the `slog.Warn` above, whose event name and fields are the
+ones CODE-6 fixes for this same failure so that every site reads as one convention, and its
+residue is reclaimed at the occupancy-zero whole-pod scrub the staged §5.2 text names. The warn
+uses the `log/slog` import this handler's `slot_guard_not_acquired` warning already adds to
+`pkg/adapter/session.go`. The `exited_cleanly` predicate below is unchanged and stays keyed on
+`closeErr == nil && (live || treeErr == nil)`, because it answers the reclaiming request's own
+question rather than the cleanup-outcome question, and the reason it reads `live` is stated with
+it.
 
 The response becomes:
 
@@ -1372,18 +1396,37 @@ below is an addition.
   (`deregisterStartedSessions`, whose members are destroyed one at a time in
   `terminateHeldSession`, `pkg/adapter/holdstate.go`, one member at a time and seconds later). `heldSession`
   gains a `release func()` field so pass 1 carries each member's hold to the pass-2 call that
-  ends it, and `terminateHeldSession` defers it behind the same completion predicate, taking the
-  release only when its `removeSlotTree` returned nil. That site's runtime close is best-effort
-  by §10.1.4's own terms and the shipped handler discards its error
-  (`pkg/adapter/holdstate.go:249`), so the tree removal's return is what states completion there.
+  ends it, and `terminateHeldSession` defers it behind the same completion predicate. That site's
+  cleanup owes the slot both a runtime close and a tree removal, so it captures both results
+  rather than discarding either: it binds `closeErr := error(nil)` and assigns
+  `closeErr = s.Runtime.Close(closeCtx, m.sessionID)` under the existing `s.Runtime != nil`
+  guard, where `closeCtx` is the member's own ten-second close context this deliverable mints
+  inside `terminateHeldSession` after the guard acquisition returns rather than the pass context
+  `ctx` the function is handed, replacing the `_ =` discard at `pkg/adapter/holdstate.go:249`,
+  and binds `treeErr := removeSlotTree(m.state)`, replacing the discard at `:254`. It takes the release
+  only on `closeErr == nil && treeErr == nil`, which is the predicate `Shutdown` states above.
+  A non-nil `closeErr` is logged as `slog.Warn("runtime_close_failed", "slot_id", m.sessionID,
+  "error", closeErr)`, the sibling record of the tree-removal warning stated below, because
+  nothing else records that failure. The close stays best-effort in control flow: neither error
+  aborts the termination, so the final usage flush, `noteRuntimeClosed`, the tree removal,
+  `cancelPodMCPIfRuntimeIdle` and `EmitAdapterTerminating` all still run on either arm, and only
+  which arm takes the hold release changes. That is what §5.2 requires of this site, because the
+  paragraph names the close of the session on the pod's shared runtime process among the acts the
+  cleanup owes the slot and bounds that close for this very termination by a graceful window of
+  ten seconds; a release taken on the tree removal alone would readmit binds onto a slot whose
+  agent process the failed close may have left running.
   That hold release is distinct from the slot-guard
   release the same function's guard acquisition returns, which it also defers; each is deferred
   separately at that site. `deregisterSlotLocked` keeps its signature because
   `reclaimSlotLocked` calls it; after CODE-6 every production caller goes through that helper and
   no caller takes the deregistration without a destroy. `deregisterSlot` is retired into the
   helper. In the same rewrite `releaseSessionSlot` stops discarding
-  `removeSlotTree`'s error and logs it with `slog.Warn` naming the session identifier and the
-  error, because nothing else records that cleanup's failure. That same error is what decides the
+  `removeSlotTree`'s error and logs it as
+  `slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", err)`, because nothing
+  else records that cleanup's failure. That event and those field names are the form every site
+  this deliverable stops discarding a tree-removal error at uses, and `runtime_close_failed`
+  carries the identical fields for a discarded runtime close, so the records read as one
+  convention rather than as one per site. That same error is what decides the
   hold: `releaseSessionSlot` closes no runtime, so the tree removal is the whole cleanup, and it
   takes the release when the removal returned nil and leaves the identifier held otherwise.
   `pkg/adapter/slotsession.go` gains
@@ -2551,10 +2594,19 @@ Then the thread and the surrounding mechanism:
 - **A cleanup whose tree removal fails keeps the hold.** Drive `Server.removeSlotTreeFn` to
   return an error against a `Shutdown` that removes the entry, and assert that a later bind
   naming the same session is refused with the reclaim-hold sentinel, that the response reports a
-  non-clean exit on the pre-`running` arm, and that the cleanup-outcome report on the `running`
-  arm carries `leaked`. This is the arm that turns red if the release or the report is keyed on
-  `closeErr` alone. It drives the same `Server.removeSlotTreeFn` seam the CODE-1 case for
-  `exited_cleanly` on a reclaim the runtime never held drives.
+  non-clean exit on the pre-`running` arm, and that on the `running` arm the hold is still taken
+  and the cleanup-outcome report carries `released`. The case pins the hold and the report
+  apart: it turns red if the release is keyed on `closeErr` alone, and equally if the report is
+  keyed on both errors, which would file a leak against occupancy the same response frees. It
+  drives the same `Server.removeSlotTreeFn` seam the CODE-1 case for `exited_cleanly` on a
+  reclaim the runtime never held drives.
+- **A cleanup whose runtime close fails keeps the hold.** Drive `Runtime.Close` to return an
+  error at the §10.1.4 hold termination, through the same seam the park case above uses, and
+  assert that a later bind naming that session is refused with the reclaim-hold sentinel. Assert
+  also that the termination still emitted the member's final usage report, removed the slot tree
+  and sent `AdapterTerminating`, because the close is best-effort in control flow and only the
+  hold release is keyed on its error. This is the arm that turns red if that site's release is
+  keyed on the tree removal alone.
 - **The refusals stay correctly classified through all five resolve sites**, table-driven over
   `resolvePrepareStagingDir`, `FinalizeWorkspace`, `RunSetup`, `claimSessionSlotUnderLock` and
   `assignCredentialsSlot`. Each asserts that the reclaim-hold sentinel and the superseded refusal
@@ -3596,7 +3648,7 @@ treating a failure as this change's.
   under `s.mu` and the `shutdownReclaimOutcome` function that decides it, its context-bounded
   slot-guard acquisition, its `slot_guard_not_acquired` warning on an acquisition that did not
   complete (the file gains a `log/slog` import) and its re-decision on the removing arm, its reclaim
-  hold, its split gates, its single exit helper (which carries the response construction and the
+  hold, its `slot_tree_removal_failed` warning on a failed tree removal, its split gates, its single exit helper (which carries the response construction and the
   whole-pod recycle scrub the shipped handler runs as a trailing statement, that trailing copy
   being deleted), its doc comment, and the `StartSession` rollback.
 - `pkg/adapter/runtimegeneration.go` · `noteRuntimeStarted`'s signature, body and doc comment,
@@ -3614,7 +3666,11 @@ treating a failure as this change's.
   takes `s.mu`, and defers two distinct releases: the reclaim-hold release its `heldSession` carries
   from pass 1, and the slot-guard release the acquisition returns. The hold release is what holds the
   identifier from pass 1's deregistration until pass 2 has closed the runtime and removed the slot
-  tree. `onHoldTimeout` is edited so that the single ten-second context it mints is the pass's
+  tree, and the release is taken only when both of those returned without error: the function
+  stops discarding `Runtime.Close`'s error, captures it, logs a non-nil one as
+  `runtime_close_failed` naming the slot identifier and the error, and captures
+  `removeSlotTree`'s error beside it. Neither error changes the termination's control flow.
+  `onHoldTimeout` is edited so that the single ten-second context it mints is the pass's
   guard-acquisition deadline alone and reaches nothing else, and each member mints its own
   ten-second close context inside `terminateHeldSession` after the acquisition returns, which is
   what `emitFinalUsage`, `Runtime.Close` and every call after them run on. No member's final usage
