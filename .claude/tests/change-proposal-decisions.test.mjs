@@ -63,6 +63,12 @@ function growingDelta() {
   };
 }
 
+const TRIAGE_ALL = { humanDecisions: true, outOfScopeDefects: true, why: "the diff could hold either kind" };
+// One counter for the whole file: every firing builds its own base(), so a
+// counter per stub table would hand firing 2 the digest firing 1 was given.
+let digestSerial = 0;
+const changingDigest = () => () => (++digestSerial).toString(16).padStart(12, "0") + "\n";
+
 const EMPTY = { coverage: "swept the whole population; nothing in it", decisions: [] };
 
 const base = () => ({
@@ -71,6 +77,13 @@ const base = () => ({
   "*:delta:apply:*": growingDelta(),
   "*:corpus": { proposals: [] },
   "*:reversal-check": { items: [] },
+  // The two gates a firing after the first runs before its collectors. The
+  // defaults here open both, so a multi-firing test exercises the collectors it
+  // stubs: the triage says everything may hold something new, and the inputs
+  // digest differs at every call, so sub-task 4 never reads as unchanged. D17
+  // and D18 override them.
+  "*:triage": TRIAGE_ALL,
+  "*:impact-inputs": changingDigest(),
   "*:human-decisions:*": EMPTY,
   "*:implementor-blanks": EMPTY,
   "*:out-of-scope-defects": EMPTY,
@@ -92,6 +105,13 @@ const ARGS = (over = {}) => ({
 });
 
 const fire = (over, stubs) => runWorkflow(WF, ARGS(over), { ...base(), ...stubs });
+// The three-reading panel is opt-in now (`humanReadings: 3`; one reading is the
+// default), so a test of the panel's join asks for the panel by name.
+const fire3 = (over, stubs) => fire({ humanReadings: 3, ...over }, stubs);
+// What lets a SINGLE reading resolve: its own `high` confidence. The default
+// path has no panel to agree, so a resolve entry a test means to reach the gate
+// as a resolve says it is sure.
+const SURE = { confidence: "high" };
 
 // One entry as a collector returns it, with every field the schema requires.
 const entry = (over = {}) => ({
@@ -126,7 +146,9 @@ t.section("D1. every firing runs the collectors, each under its own brief");
   // adjudication finds and whether or not anything has changed since the last
   // one. The gate and the write path are the two that run over items, so they
   // are pinned by the sections below rather than here.
-  const { result, calls, error } = await fire({}, {});
+  // The panel of three is what this section's brief-sharing checks are about;
+  // the single-reading default is pinned in D14.
+  const { result, calls, error } = await fire3({}, {});
   t.check("the firing completes", !error && result && result.status === "done", String(error || (result && result.status)));
 
   const readings = matching(calls, "f1:human-decisions:");
@@ -403,7 +425,7 @@ t.section("D2c. the brief's rules on confidence, staging, and decision reference
 {
   // The staged files state what is built, never the question behind it.
   const { calls } = await fire({}, {
-    "f1:human-decisions:*": found(entry({ id: "OD-1", disposition: "resolve", answer: "equality", summaryAction: "withdrawn" })),
+    "f1:human-decisions:*": found(entry({ id: "OD-1", disposition: "resolve", answer: "equality", summaryAction: "withdrawn", ...SURE })),
     "f1:apply:0": { outcome: "edited", wrote: "The gate compares for equality.", where: [P.spec + " — SPEC-1"] },
   });
   const ap = promptOf(calls, "f1:apply:0");
@@ -425,7 +447,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
   // Three adjudicators disposing of one item differently. The join needs no
   // clause for a split: an item is `resolve` only when all three resolve it to
   // one answer, so anything else is the human's by construction.
-  const split = await fire({}, {
+  const split = await fire3({}, {
     "f1:human-decisions:1": found(entry({ ...q, disposition: "resolve", answer: "it survives", summaryAction: "withdrawn" })),
     "f1:human-decisions:2": found(entry({ ...q, disposition: "human", summaryAction: "updated" })),
     "f1:human-decisions:3": found(entry({ ...q, disposition: "implementor", summaryAction: "unchanged" })),
@@ -445,7 +467,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 
   // Three that all resolve, to substantively different answers. Picking one is
   // what this phase does not do; the alternatives are recorded instead.
-  const divergent = await fire({}, {
+  const divergent = await fire3({}, {
     "f1:human-decisions:1": found(entry({ ...q, disposition: "resolve", answer: "the lease survives the restart" })),
     "f1:human-decisions:2": found(entry({ ...q, disposition: "resolve", answer: "the lease is revoked and re-minted" })),
     "f1:human-decisions:3": found(entry({ ...q, disposition: "resolve", answer: "the lease expires with the pod" })),
@@ -467,7 +489,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
   const prefix =
     "the lease is revoked at gateway restart and re-minted by the successor replica from the pod's " +
     "stored nonce, exactly as the staged text for SPEC-2 now states it, and ";
-  const longTail = await fire({}, {
+  const longTail = await fire3({}, {
     "f1:human-decisions:1": found(entry({ ...q, disposition: "resolve", answer: prefix + "the old lease id is retired" })),
     "f1:human-decisions:2": found(entry({ ...q, disposition: "resolve", answer: prefix + "the old lease id is reused" })),
     "f1:human-decisions:3": found(entry({ ...q, disposition: "resolve", answer: prefix + "the old lease id is retired" })),
@@ -487,7 +509,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
   // of a staged change file's `## Open decisions for review` is the case the
   // design names, and it is the Apply stage that writes it.
   const staged = { ...q, home: "staged-open-decisions", disposition: "human", summaryAction: "not-applicable" };
-  const migrate = await fire({}, {
+  const migrate = await fire3({}, {
     "f1:human-decisions:1": found(entry(staged)),
     "f1:human-decisions:2": found(entry(staged)),
     "f1:human-decisions:3": found(entry(staged)),
@@ -500,7 +522,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
   );
 
   // The control: unanimity on one answer is the only route to `resolve`.
-  const agreed = await fire({}, {
+  const agreed = await fire3({}, {
     "f1:human-decisions:*": found(entry({ ...q, disposition: "resolve", answer: "the lease survives the restart", summaryAction: "withdrawn" })),
   });
   const ag = itemById(agreed.result, key);
@@ -509,7 +531,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 
   // A dead adjudicator leaves two readings, and two readings cannot be
   // unanimous, so the item cannot reach `resolve` however the survivors read it.
-  const oneDead = await fire({}, {
+  const oneDead = await fire3({}, {
     "f1:human-decisions:1": found(entry({ ...q, disposition: "resolve", answer: "the lease survives the restart" })),
     "f1:human-decisions:2": null,
     "f1:human-decisions:3": found(entry({ ...q, disposition: "resolve", answer: "the lease survives the restart" })),
@@ -535,7 +557,7 @@ t.section("D3. sub-task 1's join is script-side: unanimity, or the human's");
 
   // All three dead is not two dead: there is no reading at all, so sub-task 1's
   // population is unadjudicated rather than swept clean.
-  const allDead = await fire({}, { "f1:human-decisions:*": null });
+  const allDead = await fire3({}, { "f1:human-decisions:*": null });
   t.check(
     "three dead adjudicators leave the population unadjudicated",
     (allDead.result.unadjudicated || []).includes("human-decisions"),
@@ -570,7 +592,7 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
     "f1:human-decisions:3": found(mk(c)),
   });
   const K = { answerKey: "equality", confidence: "high" };
-  const same = await fire({}, three(
+  const same = await fire3({}, three(
     { ...K, answer: "It stays an equality comparison." },
     { ...K, answer: "Equality: the pod accepts only a matching generation." },
     { ...K, answer: "The comparison remains equality against the held value." },
@@ -583,7 +605,7 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
     JSON.stringify((it0(same.result) || {}).alternatives));
 
   // Genuinely different answers are still the human's, measured on the key.
-  const split = await fire({}, three(
+  const split = await fire3({}, three(
     { ...K, answerKey: "equality", answer: "stays equality" },
     { ...K, answerKey: "widen-to-at-least", answer: "widens to at least" },
     { ...K, answerKey: "equality", answer: "stays equality" },
@@ -596,7 +618,7 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
     JSON.stringify(s2.alternatives));
 
   // A majority that is not sure is the human's.
-  const unsure = await fire({}, three(
+  const unsure = await fire3({}, three(
     { answerKey: "equality", confidence: "low", answer: "stays equality" },
     { answerKey: "equality", confidence: "low", answer: "stays equality" },
     { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
@@ -605,7 +627,7 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
   t.check("a low-confidence majority does not resolve", u && u.disposition === "human", u && u.disposition);
 
   // Moderate resolves when the proposal already stages that answer.
-  const staged = await fire({}, three(
+  const staged = await fire3({}, three(
     { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", stagedAnswerMatches: true, answer: "stays equality" },
     { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages equality", stagedAnswerMatches: true, answer: "stays equality" },
     { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
@@ -618,7 +640,7 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
   // that `whatIsStaged` was non-empty, which is nearly always true once staging
   // nothing counts as staging the status-quo answer, so a moderate majority
   // whose staging says the opposite would have been settled here.
-  const disagrees = await fire({}, three(
+  const disagrees = await fire3({}, three(
     { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages the wider form", stagedAnswerMatches: false, answer: "stays equality" },
     { answerKey: "equality", confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages the wider form", stagedAnswerMatches: false, answer: "stays equality" },
     { answerKey: "widen-to-at-least", confidence: "low", answer: "widens" },
@@ -628,7 +650,7 @@ t.section("D3b. the join compares answer KEYS, and a sure majority carries it");
 
   // Staging nothing is staging the status-quo answer, so a do-nothing
   // recommendation is aligned and settles on the same terms as a written one.
-  const doNothing = await fire({}, three(
+  const doNothing = await fire3({}, three(
     { answerKey: "successor-owns-it", confidence: "moderate", whatIsStaged: "no edit is staged, which is the successor-owns-it option", stagedAnswerMatches: true, answer: "a successor owns it" },
     { answerKey: "successor-owns-it", confidence: "moderate", whatIsStaged: "no edit is staged, which is the successor-owns-it option", stagedAnswerMatches: true, answer: "a successor owns it" },
     { answerKey: "lands-here", confidence: "low", answer: "it lands here" },
@@ -650,6 +672,8 @@ t.section("D4. the gate: one falsifier per item, asymmetric defaults, a script-s
     decision: "which timeout does the adapter use?",
     disposition: "resolve",
     answer: "thirty seconds, as the chart already sets",
+    // One reading is the default, and a single reading resolves only when sure.
+    ...SURE,
     // `updated` rather than `withdrawn`, so this item's route through the
     // report is the gate's refusal rather than the refused withdrawal D11
     // covers: the two reasons are different and both are pinned.
@@ -852,7 +876,7 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
 t.section("D5. the write path: sequential, each after the first told what the earlier ones wrote");
 // ==========================================================================
 {
-  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn" });
+  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const B = entry({ id: "OD-2", decision: "does it widen to the CLI?", disposition: "human", summaryAction: "added" });
   const population = { "f1:human-decisions:*": found(A, B) };
 
@@ -901,7 +925,7 @@ t.section("D5. the write path: sequential, each after the first told what the ea
 t.section("D6. the baseline commit: before Apply, the proposal directory alone");
 // ==========================================================================
 {
-  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn" });
+  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const population = { "f1:human-decisions:*": found(A) };
 
   const run = await fire({}, population);
@@ -963,7 +987,7 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
 // ==========================================================================
 {
   const OD = { id: "OD-1", decision: "which timeout does the adapter use?" };
-  const RESOLVED = entry({ ...OD, disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn" });
+  const RESOLVED = entry({ ...OD, disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const first = await fire({ firing: 1 }, {
     "f1:human-decisions:*": found(RESOLVED),
     "f1:apply:0": { outcome: "edited", wrote: "The adapter waits thirty seconds.", where: [P.spec + " — SPEC-1"] },
@@ -1314,7 +1338,7 @@ t.section("D9b. the cleanup corrects a section preamble its own moves falsify");
 t.section("D10. sub-task 8's verify: read-only, over what the firing claims");
 // ==========================================================================
 {
-  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn" });
+  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const run = await fire({}, {
     "f1:human-decisions:*": found(A),
     "f1:cleanup": {
@@ -1355,7 +1379,7 @@ t.section("D11. what leaves the summary, and what a withdrawal must name");
 {
   // A resolution the gate passed and the write path landed: the answer is
   // staged, the entry leaves the human's list, and it is returned as closed.
-  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn" });
+  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const run = await fire({}, {
     "f1:human-decisions:*": found(A),
     "f1:apply:0": { outcome: "edited", wrote: "The adapter waits thirty seconds.", where: [P.spec + " — SPEC-1"] },
@@ -1397,7 +1421,7 @@ t.section("D11. what leaves the summary, and what a withdrawal must name");
   // join left the item listed with their three answers beside it.
   const R = { id: "OD-3", decision: "which backoff does the adapter use?" };
   const rd = (answer) => entry({ ...R, disposition: "resolve", answer, summaryAction: "withdrawn" });
-  const divergent = await fire({}, {
+  const divergent = await fire3({}, {
     "f1:human-decisions:1": found(rd("a fixed one-second backoff")),
     "f1:human-decisions:2": found(rd("an exponential backoff to one minute")),
     "f1:human-decisions:3": found(rd("no backoff at all")),
@@ -1454,7 +1478,7 @@ t.section("D11. what leaves the summary, and what a withdrawal must name");
 t.section("D12. lockSpecChanges: a resolution needing the spec staging is recorded, not written");
 // ==========================================================================
 {
-  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn" });
+  const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const locked = await fire({ lockSpecChanges: true }, {
     "f1:human-decisions:*": found(A),
     "f1:apply:0": {
@@ -1632,7 +1656,9 @@ t.section("D-collect. the reversal check and the three collectors run as one wav
   );
   for (const [what, re] of [
     ["the reversal check", /\(\)\s*=>\s*checkReversals\(\)/],
-    ["sub-task 1", /\(\)\s*=>\s*collectHumanDecisions\(\)/],
+    // Sub-task 1 sits behind the triage answer now, so its call is one arm of a
+    // conditional inside the wave's thunk rather than the thunk's whole body.
+    ["sub-task 1", /\(\)\s*=>\s*triage\.humanDecisions === false[\s\S]{0,160}:\s*collectHumanDecisions\(\)/],
     ["sub-task 3", /key:\s*"out-of-scope-defects"/],
     ["sub-task 4", /key:\s*"other-proposals"/],
   ]) {
@@ -1720,6 +1746,412 @@ t.section("D-window. sub-task 4 sweeps a window of proposal numbers, not the who
     "the retired recency arm is still in the brief",
   );
   t.check("impactWindow is an argument with a default of 15", /input\.impactWindow[\s\S]{0,80}: 15;/.test(src), "impactWindow is not defaulted to 15");
+}
+
+// ==========================================================================
+t.section("D14. one reading is the default, and a single reading resolves only when sure");
+// ==========================================================================
+{
+  const OD = { id: "OD-7", decision: "does the lease survive a gateway restart?" };
+  const key = "id:OD-7";
+  const res = (over) => entry({ ...OD, disposition: "resolve", answer: "it survives", answerKey: "survives", summaryAction: "withdrawn", ...over });
+
+  const plain = await fire({}, {});
+  t.check("one adjudicator runs by default", matching(plain.calls, "f1:human-decisions:").length === 1,
+    String(matching(plain.calls, "f1:human-decisions:").length));
+  t.check("and it is reading 1", matching(plain.calls, "f1:human-decisions:1").length === 1);
+  t.check("it stays on the base model rather than the collectors'",
+    (plain.calls.find((c) => c.label === "f1:human-decisions:1") || { opts: {} }).opts.model !== "sonnet",
+    String((plain.calls.find((c) => c.label === "f1:human-decisions:1") || { opts: {} }).opts.model));
+
+  // One reading always agrees with itself, so agreement carries nothing here.
+  const bare = await fire({}, { "f1:human-decisions:*": found(res({})) });
+  const b = itemById(bare.result, key);
+  t.check("a lone resolve that is not sure is the human's", b && b.disposition === "human", b && b.disposition);
+  t.check("recorded as a resolve the join declined, not as a divergence", b && b.agreement === "unsure-resolve", b && b.agreement);
+  t.check("with no alternatives invented from one answer", b && (b.alternatives || []).length === 0, JSON.stringify(b && b.alternatives));
+  t.check("and nothing is reported resolved", !(bare.result.decisionsResolved || []).some((d) => d.id === key), ids(bare.result.decisionsResolved));
+  const low = await fire({}, { "f1:human-decisions:*": found(res({ confidence: "low" })) });
+  t.check("low confidence is the human's", itemById(low.result, key).disposition === "human", itemById(low.result, key).disposition);
+
+  const sure = await fire({}, { "f1:human-decisions:*": found(res(SURE)) });
+  const su = itemById(sure.result, key);
+  t.check("a lone resolve at high confidence resolves", su && su.disposition === "resolve", su && su.disposition);
+  t.check("recording that one reading of one carried it",
+    su && su.resolvedBy && su.resolvedBy.of === 1 && su.resolvedBy.readings === 1 && su.resolvedBy.confidence === "high",
+    JSON.stringify(su && su.resolvedBy));
+  // The falsifier is the adversarial check the extra readings stood in for.
+  t.check("it still faces its own falsifier", /You are the GROUND judge/.test(promptOf(sure.calls, "f1:falsify:0")));
+  const refuted = await fire({}, { "f1:human-decisions:*": found(res(SURE)), "f1:falsify:0": UNCERTAIN });
+  t.check("and an uncertain falsifier still sets it aside", itemById(refuted.result, key).gate === "refuted", itemById(refuted.result, key).gate);
+  t.check("unapplied", (refuted.result.applied || []).length === 0, ids(refuted.result.applied));
+
+  const STAGED = { confidence: "moderate", whatIsStaged: "spec-changes.md:158 stages survival", stagedAnswerMatches: true };
+  const staged = await fire({}, { "f1:human-decisions:*": found(res(STAGED)) });
+  const st = itemById(staged.result, key);
+  t.check("a moderate reading the staging agrees with resolves", st && st.disposition === "resolve", st && st.disposition);
+  t.check("recorded as carried by the staging", st && st.resolvedBy && st.resolvedBy.confidence === "moderate+staged", JSON.stringify(st && st.resolvedBy));
+  const against = await fire({}, { "f1:human-decisions:*": found(res({ ...STAGED, stagedAnswerMatches: false })) });
+  t.check("a moderate reading the staging contradicts is the human's", itemById(against.result, key).disposition === "human");
+  const unstaged = await fire({}, { "f1:human-decisions:*": found(res({ ...STAGED, whatIsStaged: "  " })) });
+  t.check("and so is one that names no staging", itemById(unstaged.result, key).disposition === "human");
+
+  const impl = await fire({}, { "f1:human-decisions:*": found(entry({ ...OD, disposition: "implementor", summaryAction: "unchanged" })) });
+  t.check("a lone implementor reading keeps its disposition", itemById(impl.result, key).disposition === "implementor", itemById(impl.result, key).disposition);
+
+  const dead = await fire({}, { "f1:human-decisions:*": null });
+  t.check("a dead single adjudicator leaves the population unadjudicated", (dead.result.unadjudicated || []).includes("human-decisions"));
+  t.check("and the log does not speak of three", dead.logs.some((l) => /the adjudicator returned nothing; the population is UNADJUDICATED/.test(l)),
+    dead.logs.filter((l) => /UNADJUDICATED/.test(l)).join(" | "));
+
+  // Two readings: both must agree, and agreement alone is still not enough.
+  const two = (a, c) => fire({ humanReadings: 2 }, { "f1:human-decisions:1": found(res(a)), "f1:human-decisions:2": found(res(c)) });
+  const both = await two(SURE, {});
+  t.check("humanReadings: 2 runs two adjudicators", matching(both.calls, "f1:human-decisions:").length === 2);
+  t.check("two that agree, one of them sure, resolve", itemById(both.result, key).disposition === "resolve", itemById(both.result, key).disposition);
+  const unsureTwo = await two({}, {});
+  t.check("two that agree and are not sure do not: bare unanimity needs three", itemById(unsureTwo.result, key).disposition === "human");
+  const splitTwo = await two(SURE, { answerKey: "revoked", answer: "it is revoked", ...SURE });
+  t.check("one of two is not a majority however sure", itemById(splitTwo.result, key).disposition === "human");
+  t.check("and that one is a divergence", itemById(splitTwo.result, key).agreement === "divergent-resolve", itemById(splitTwo.result, key).agreement);
+
+  for (const bad of [0, -2, "3", NaN]) {
+    const r = await fire({ humanReadings: bad }, {});
+    t.check("humanReadings " + String(bad) + " falls back to one reading", matching(r.calls, "f1:human-decisions:").length === 1,
+      String(matching(r.calls, "f1:human-decisions:").length));
+  }
+  const frac = await fire({ humanReadings: 3.9 }, {});
+  t.check("a fractional count is floored", matching(frac.calls, "f1:human-decisions:").length === 3);
+}
+
+// ==========================================================================
+t.section("D15. collectorModel: the single collectors run on sonnet unless told otherwise");
+// ==========================================================================
+{
+  const optsOf = (calls, label) => (calls.find((c) => c.label === label) || { opts: {} }).opts;
+  const dflt = await fire({}, {});
+  for (const label of ["f1:out-of-scope-defects", "f1:other-proposals"]) {
+    t.check(label + " runs on sonnet by default", optsOf(dflt.calls, label).model === "sonnet", String(optsOf(dflt.calls, label).model));
+    t.check("at high effort", optsOf(dflt.calls, label).effort === "high", String(optsOf(dflt.calls, label).effort));
+  }
+  t.check("the falsifier is not moved with them", optsOf((await fire({}, { "f1:out-of-scope-defects": found(entry({
+    home: "out-of-scope-defect", deliverable: "CODE-4", marker: "out of scope: x", disposition: "out-of-scope-stands",
+  })) })).calls, "f1:falsify:0").model !== "sonnet");
+  const over = await fire({ collectorModel: "opus" }, {});
+  for (const label of ["f1:out-of-scope-defects", "f1:other-proposals"]) {
+    t.check(label + " takes the override", optsOf(over.calls, label).model === "opus", String(optsOf(over.calls, label).model));
+  }
+  t.check("which does not reach sub-task 1", optsOf(over.calls, "f1:human-decisions:1").model === optsOf(dflt.calls, "f1:human-decisions:1").model);
+}
+
+// A first firing that resolves and applies one decision, for the later-firing
+// sections below to continue from.
+const OD1 = { id: "OD-1", decision: "which timeout does the adapter use?" };
+const OD1_RESOLVED = entry({ ...OD1, disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
+const PRESENT = (id) => ({ items: [{ id, state: "present", nowCarries: "" }] });
+const later = (state, n, stubs, over = {}) =>
+  runWorkflow(WF, ARGS({ firing: n, phaseState: JSON.parse(JSON.stringify(state)), ...over }), { ...base(), ...stubs });
+
+// ==========================================================================
+t.section("D16. cleanup and verify are skipped only by a later firing that wrote nothing");
+// ==========================================================================
+{
+  const first = await fire({}, {});
+  t.check("firing 1 applied nothing", (first.result.applied || []).length === 0);
+  t.check("and still runs the cleanup, because nothing has conformed the summary yet", matching(first.calls, "f1:cleanup").length === 1);
+  t.check("and the verify pass", matching(first.calls, "f1:verify").length === 1);
+
+  const idle = await later(first.result.phaseState, 2, {});
+  t.check("a later firing that applies nothing completes", idle.result && idle.result.status === "done", String(idle.error));
+  t.check("runs no cleanup", never(idle.calls, "f2:cleanup"));
+  t.check("and no verify", never(idle.calls, "f2:verify"));
+  t.check("the cleanup result says it was skipped", idle.result.summaryCleanup && idle.result.summaryCleanup.outcome === "skipped-nothing-applied",
+    JSON.stringify(idle.result.summaryCleanup));
+  t.check("so it is not read as a dead agent", idle.result.summaryCleanup !== null && !(idle.result.deadAgents || []).includes("f2:cleanup"));
+  t.check("the verification says the same", idle.result.verification && idle.result.verification.skipped === "nothing-applied" &&
+    idle.result.verification.conforms === true && (idle.result.verification.defects || []).length === 0, JSON.stringify(idle.result.verification));
+  t.check("and the skip is logged", idle.logs.some((l) => /applied nothing, so the summary cleanup and the verify pass are skipped/.test(l)));
+
+  const busy = await later(first.result.phaseState, 2, { "f2:human-decisions:*": found(OD1_RESOLVED) });
+  t.check("a later firing that applies something", (busy.result.applied || []).length === 1, ids(busy.result.applied));
+  t.check("runs the cleanup", matching(busy.calls, "f2:cleanup").length === 1);
+  t.check("and the verify pass after it", firstIndex(busy.calls, "f2:verify") > firstIndex(busy.calls, "f2:cleanup"));
+
+  // A carried item costs no Apply, so a firing of nothing but carries is idle.
+  const carried = await later(busy.result.phaseState, 3, { "f3:reversal-check": PRESENT("id:OD-1"), "f3:human-decisions:*": found(OD1_RESOLVED) });
+  t.check("a firing that only carries forward is skipped too", never(carried.calls, "f3:cleanup") && never(carried.calls, "f3:verify"));
+
+  // The tree, not the tally, is what the two passes exist to check. An Apply
+  // that died after editing is not `applied`, and its text is in the summary.
+  const diedWriting = await later(first.result.phaseState, 2, { "f2:human-decisions:*": found(OD1_RESOLVED), "f2:apply:0": null });
+  t.check("an Apply that died applied nothing", (diedWriting.result.applied || []).length === 0);
+  t.check("but the tree it changed is still cleaned up", matching(diedWriting.calls, "f2:cleanup").length === 1);
+  t.check("and verified", matching(diedWriting.calls, "f2:verify").length === 1);
+  const blind = await later(first.result.phaseState, 2, { "f2:human-decisions:*": found(OD1_RESOLVED), "*:delta:apply:*": null });
+  t.check("an Apply with no git evidence is not assumed to have written nothing", matching(blind.calls, "f2:cleanup").length === 1);
+  const claimed = await later(first.result.phaseState, 2, { "f2:human-decisions:*": found(OD1_RESOLVED), "*:delta:apply:*": NO_DELTA });
+  t.check("an Apply the diff shows wrote nothing leaves the firing idle", never(claimed.calls, "f2:cleanup") && never(claimed.calls, "f2:verify"));
+}
+
+// ==========================================================================
+t.section("D17. sub-task 4 is keyed on its inputs: unchanged inputs skip the sweep and keep its rows");
+// ==========================================================================
+{
+  const ROW = entry({
+    home: "other-proposal", deliverable: "0090_earlier", marker: "0090's SPEC-2 deliverable",
+    decision: "what does this staging do to 0090?", disposition: "impact-row",
+    recommendation: "0090_earlier (Approved, 2026-08-20) — its SPEC-2 loses its subject",
+    changesWithChoice: false, summaryAction: "added",
+  });
+  const ROW_KEY = "marker:0090_earlier:0090's spec-2 deliverable";
+  const DIGEST = "0123456789ab";
+  const one = await fire({}, { "f1:impact-inputs": DIGEST + "  -\n", "f1:other-proposals": found(ROW) });
+  const probe = one.calls.find((c) => c.label === "f1:impact-inputs") || { opts: {}, prompt: "" };
+  t.check("the digest is read by a command agent", !!probe.label && /md5sum/.test(probe.prompt));
+  t.check("on haiku", probe.opts.model === "haiku", String(probe.opts.model));
+  t.check("over what this proposal touches", /Files touched on application\|Deliverable index/.test(probe.prompt) && probe.prompt.includes(P.summary));
+  t.check("and the other proposals, this one excluded", probe.prompt.includes("':(exclude)proposals/0099_open_decisions'"));
+  t.check("firing 1 has nothing to compare against, so the sweep runs", matching(one.calls, "f1:other-proposals").length === 1);
+  t.check("and the digest is kept for the next firing", one.result.phaseState.impactInputs === DIGEST, String(one.result.phaseState.impactInputs));
+  t.check("with the row on record", !!one.result.phaseState.itemRecords[ROW_KEY], Object.keys(one.result.phaseState.itemRecords).join(","));
+
+  const same = await later(one.result.phaseState, 2, { "f2:impact-inputs": DIGEST, "f2:reversal-check": PRESENT(ROW_KEY) });
+  t.check("unchanged inputs skip the sweep", never(same.calls, "f2:other-proposals"), "sub-task 4 ran");
+  t.check("and the corpus read with it", never(same.calls, "f2:corpus"));
+  t.check("costing no falsifier", never(same.calls, "f2:falsify:"));
+  t.check("and no Apply", never(same.calls, "f2:apply:"));
+  const kept = same.result.phaseState.itemRecords[ROW_KEY];
+  t.check("the row's record is carried forward as seen at this firing", kept && kept.lastSeen === 2, JSON.stringify(kept && kept.lastSeen));
+  t.check("with the verdict and the text it had", kept && kept.gate === "stands" && kept.firing === 1 && kept.applyStatus === "applied", JSON.stringify(kept));
+  t.check("so it is not reported as a record nothing matched", !(same.result.unmatchedRecords || []).some((u) => u.id === ROW_KEY), ids(same.result.unmatchedRecords));
+  t.check("the population is not unadjudicated", !(same.result.unadjudicated || []).includes("other-proposals"));
+  t.check("the skip is logged with the rows it kept", same.logs.some((l) => /Sub-task 4 .*SKIPPED\..* its 1 row\(s\) stand as adjudicated/.test(l)),
+    same.logs.filter((l) => /Sub-task 4/.test(l)).join(" | "));
+  t.check("and the digest stands", same.result.phaseState.impactInputs === DIGEST);
+  const third = await later(same.result.phaseState, 3, { "f3:impact-inputs": DIGEST, "f3:reversal-check": PRESENT(ROW_KEY) });
+  t.check("a skip does not wear off at the firing after", never(third.calls, "f3:other-proposals") && third.result.phaseState.itemRecords[ROW_KEY].lastSeen === 3);
+
+  const moved = await later(one.result.phaseState, 2, { "f2:impact-inputs": "ba9876543210", "f2:reversal-check": PRESENT(ROW_KEY), "f2:other-proposals": found(ROW) });
+  t.check("changed inputs run the sweep", matching(moved.calls, "f2:other-proposals").length === 1);
+  t.check("and the new digest replaces the old", moved.result.phaseState.impactInputs === "ba9876543210", String(moved.result.phaseState.impactInputs));
+
+  // A digest that cannot be read is never equal to anything.
+  for (const [what, stub] of [["a dead digest agent", null], ["a reply carrying no digest", "I could not run the command"]]) {
+    const r = await later(one.result.phaseState, 2, { "f2:impact-inputs": stub, "f2:reversal-check": PRESENT(ROW_KEY), "f2:other-proposals": found(ROW) });
+    t.check(what + " runs the sweep", matching(r.calls, "f2:other-proposals").length === 1);
+    t.check("and leaves no digest a later firing could match", r.result.phaseState.impactInputs === null, String(r.result.phaseState.impactInputs));
+  }
+
+  // The digest stands for a sweep that COMPLETED. One whose collector died put
+  // no row on record, so the same inputs at the next firing must sweep again.
+  const deadSweep = await fire({}, { "f1:impact-inputs": DIGEST, "f1:other-proposals": null });
+  t.check("a sweep that died keeps no digest", deadSweep.result.phaseState.impactInputs === null, String(deadSweep.result.phaseState.impactInputs));
+  const afterDead = await later(deadSweep.result.phaseState, 2, { "f2:impact-inputs": DIGEST, "f2:other-proposals": found(ROW) });
+  t.check("so the next firing sweeps the same inputs", matching(afterDead.calls, "f2:other-proposals").length === 1);
+  const aborted = await fire({}, { "f1:impact-inputs": DIGEST, "f1:other-proposals": found(ROW), "f1:commit": { outcome: "failed", error: "locked", outsideProposal: [] } });
+  t.check("an aborted firing recorded no row and keeps no digest", !aborted.result.phaseState.impactInputs, String(aborted.result.phaseState.impactInputs));
+
+  // A row whose falsifier died has no verdict, and only a sweep that returns it
+  // again sends it back to the gate.
+  const noVerdict = await fire({}, { "f1:impact-inputs": DIGEST, "f1:other-proposals": found(ROW), "f1:falsify:0": null });
+  const regated = await later(noVerdict.result.phaseState, 2, { "f2:impact-inputs": DIGEST, "f2:other-proposals": found(ROW) });
+  t.check("unchanged inputs do not strand a row with no verdict", matching(regated.calls, "f2:other-proposals").length === 1);
+  t.check("which reaches its falsifier at last", matching(regated.calls, "f2:falsify:").length === 1 && itemById(regated.result, ROW_KEY).gate === "stands");
+}
+
+// ==========================================================================
+t.section("D18. triage: a later firing runs only the collectors the diff could feed, and fails open");
+// ==========================================================================
+{
+  const DEFECT = entry({
+    home: "out-of-scope-defect", deliverable: "CODE-4", marker: "out of scope: the drain race",
+    decision: "does this proposal fix the drain race?", disposition: "out-of-scope-stands", summaryAction: "added",
+  });
+  const DEFECT_KEY = "marker:code-4:out of scope: the drain race";
+  const population = (n) => ({ ["f" + n + ":human-decisions:*"]: found(OD1_RESOLVED), ["f" + n + ":out-of-scope-defects"]: found(DEFECT) });
+  const NO = (over) => ({ humanDecisions: true, outOfScopeDefects: true, why: "only the impacts table moved", ...over });
+
+  const first = await fire({}, population(1));
+  t.check("triage never runs on firing 1", never(first.calls, "f1:triage"), "a triage agent ran at firing 1");
+  t.check("where every collector runs", matching(first.calls, "f1:human-decisions:").length === 1 && matching(first.calls, "f1:out-of-scope-defects").length === 1);
+  t.check("even when a stub would have said no", never((await fire({}, { ...population(1), "*:triage": NO({ humanDecisions: false, outOfScopeDefects: false }) })).calls, "f1:triage"));
+  const state = first.result.phaseState;
+  const both = { "f2:reversal-check": PRESENT("id:OD-1"), ...population(2) };
+
+  const open = await later(state, 2, both);
+  const tri = open.calls.find((c) => c.label === "f2:triage") || { opts: {}, prompt: "" };
+  t.check("a later firing runs one triage agent", matching(open.calls, "f2:triage").length === 1);
+  t.check("before any collector", firstIndex(open.calls, "f2:triage") < firstIndex(open.calls, "f2:human-decisions:"));
+  t.check("on sonnet at medium effort", tri.opts.model === "sonnet" && tri.opts.effort === "medium", tri.opts.model + "/" + tri.opts.effort);
+  t.check("read-only, over the diff under the proposal", /READ-ONLY/.test(tri.prompt) && tri.prompt.includes("git -C /repo diff c0ffee1 -- " + P.root));
+  t.check("told that doubt means run", /When you are unsure about one, answer true/.test(tri.prompt));
+  t.check("sub-task 4 is not its question", !/other-proposals|otherProposals/.test(JSON.stringify(tri.opts.schema)));
+  t.check("a yes to both runs both", matching(open.calls, "f2:human-decisions:").length === 1 && matching(open.calls, "f2:out-of-scope-defects").length === 1);
+
+  const noHuman = await later(state, 2, { ...both, "f2:triage": NO({ humanDecisions: false }) });
+  t.check("a no for the human's decisions skips sub-task 1", never(noHuman.calls, "f2:human-decisions:"), "sub-task 1 ran");
+  t.check("and runs sub-task 3", matching(noHuman.calls, "f2:out-of-scope-defects").length === 1);
+  const keptRec = noHuman.result.phaseState.itemRecords["id:OD-1"];
+  t.check("the skipped collector's record is kept", !!keptRec && keptRec.disposition === "resolve" && keptRec.applyStatus === "applied", JSON.stringify(keptRec));
+  t.check("marked seen at this firing", keptRec && keptRec.lastSeen === 2, String(keptRec && keptRec.lastSeen));
+  t.check("with the text the reversal check reads", keptRec && keptRec.wrote === "the text this item staged", keptRec && keptRec.wrote);
+  t.check("and is not reported as unmatched", !(noHuman.result.unmatchedRecords || []).some((u) => u.id === "id:OD-1"), ids(noHuman.result.unmatchedRecords));
+  t.check("a skip is not an unadjudicated population", (noHuman.result.unadjudicated || []).length === 0, (noHuman.result.unadjudicated || []).join(","));
+  t.check("the skip and its reason are logged", noHuman.logs.some((l) => /^Triage: human-decisions skipped, out-of-scope-defects RUNS — only the impacts table moved/.test(l)),
+    noHuman.logs.filter((l) => /^Triage/.test(l)).join(" | "));
+  t.check("with what it kept", noHuman.logs.some((l) => /Triage: human-decisions skipped; its 1 earlier record\(s\) stand/.test(l)));
+  t.check("the other collector's item is matched as usual", !!(itemById(noHuman.result, DEFECT_KEY) || {}).carried);
+
+  const noDefects = await later(state, 2, { ...both, "f2:triage": NO({ outOfScopeDefects: false }) });
+  t.check("a no for the out-of-scope calls skips sub-task 3 alone", never(noDefects.calls, "f2:out-of-scope-defects") && matching(noDefects.calls, "f2:human-decisions:").length === 1);
+  t.check("keeping its record", noDefects.result.phaseState.itemRecords[DEFECT_KEY].lastSeen === 2 &&
+    !(noDefects.result.unmatchedRecords || []).some((u) => u.id === DEFECT_KEY));
+
+  const neither = await later(state, 2, { ...both, "f2:triage": NO({ humanDecisions: false, outOfScopeDefects: false }) });
+  t.check("a no to both skips both", never(neither.calls, "f2:human-decisions:") && never(neither.calls, "f2:out-of-scope-defects"));
+  t.check("and the firing still completes", neither.result && neither.result.status === "done", String(neither.error));
+  t.check("with both records kept", (neither.result.unmatchedRecords || []).length === 0, ids(neither.result.unmatchedRecords));
+  t.check("the reversal check is not triaged away", matching(neither.calls, "f2:reversal-check").length === 1);
+
+  // Fail-open: only a clear no skips a collector.
+  const deadTriage = await later(state, 2, { ...both, "f2:triage": null });
+  t.check("a dead triage agent runs everything", matching(deadTriage.calls, "f2:human-decisions:").length === 1 && matching(deadTriage.calls, "f2:out-of-scope-defects").length === 1);
+  t.check("and is named dead", (deadTriage.result.deadAgents || []).includes("f2:triage"), (deadTriage.result.deadAgents || []).join(","));
+  t.check("and the log says why everything ran", deadTriage.logs.some((l) => /the triage agent returned nothing, so every collector runs/.test(l)));
+  const malformed = await later(state, 2, { ...both, "f2:triage": { why: "no verdicts given" } });
+  t.check("a triage return missing its verdicts runs everything", matching(malformed.calls, "f2:human-decisions:").length === 1 && matching(malformed.calls, "f2:out-of-scope-defects").length === 1);
+  const vague = await later(state, 2, { ...both, "f2:triage": NO({ humanDecisions: "no", outOfScopeDefects: 0 }) });
+  t.check("anything but a boolean false runs the collector", matching(vague.calls, "f2:human-decisions:").length === 1 && matching(vague.calls, "f2:out-of-scope-defects").length === 1);
+
+  // A reversal is listed for the human from the RECORD exactly when no collector
+  // saw it, so a skip must not mark a contested record seen. The reversal check
+  // runs in the same wave as the skip, so this is also an ordering test.
+  const reversed = await later(state, 2, {
+    ...both,
+    "f2:triage": NO({ humanDecisions: false }),
+    "f2:reversal-check": { items: [{ id: "id:OD-1", state: "absent", nowCarries: "the question, open again" }] },
+  });
+  t.check("a record contested while its collector is skipped is still the human's",
+    (reversed.result.decisionsLeftToHuman || []).some((d) => d.id === "id:OD-1" && /CONTESTED/.test(d.reason)), ids(reversed.result.decisionsLeftToHuman));
+  t.check("and is reported as not seen this firing",
+    (reversed.result.contested || []).some((c) => c.id === "id:OD-1" && c.seenThisFiring === false), JSON.stringify(reversed.result.contested));
+  const stillReversed = await later(reversed.result.phaseState, 3, { ...population(3), "f3:triage": NO({ humanDecisions: false }) });
+  t.check("and stays listed at a later skipped firing",
+    (stillReversed.result.decisionsLeftToHuman || []).some((d) => d.id === "id:OD-1" && /CONTESTED/.test(d.reason)), ids(stillReversed.result.decisionsLeftToHuman));
+
+  // Work only a collector can reach overrides a no: an item is gated and applied
+  // only when a collector returns it.
+  const noVerdict = await fire({}, { ...population(1), "f1:falsify:0": null });
+  const regated = await later(noVerdict.result.phaseState, 2, { ...population(2), "f2:triage": NO({ humanDecisions: false, outOfScopeDefects: false }) });
+  t.check("a record with no verdict runs its collector whatever triage says", matching(regated.calls, "f2:human-decisions:").length === 1);
+  t.check("and only its own", never(regated.calls, "f2:out-of-scope-defects"));
+  t.check("so the item reaches its falsifier", (itemById(regated.result, "id:OD-1") || {}).gate === "stands", (itemById(regated.result, "id:OD-1") || {}).gate);
+  t.check("and the override is logged", regated.logs.some((l) => /Triage: human-decisions RUNS whatever the diff holds/.test(l)));
+  const failedApply = await fire({}, { ...population(1), "f1:apply:0": null });
+  const reapplied = await later(failedApply.result.phaseState, 2, { ...population(2), "f2:triage": NO({ humanDecisions: false, outOfScopeDefects: false }) });
+  t.check("a standing item whose Apply failed is retried rather than skipped", (reapplied.result.applied || []).some((a) => a.id === "id:OD-1"), ids(reapplied.result.applied));
+  const deadCollector = await fire({}, { ...population(1), "f1:human-decisions:*": null });
+  t.check("a dead collector is remembered as unswept", (deadCollector.result.phaseState.unswept || []).join(",") === "human-decisions", String(deadCollector.result.phaseState.unswept));
+  const resweep = await later(deadCollector.result.phaseState, 2, { ...population(2), "f2:triage": NO({ humanDecisions: false }) });
+  t.check("and its population is swept at the next firing whatever triage says", matching(resweep.calls, "f2:human-decisions:").length === 1);
+  t.check("after which nothing is owed", (resweep.result.phaseState.unswept || []).length === 0, String(resweep.result.phaseState.unswept));
+  const aborted = await fire({}, { ...population(1), "f1:commit": { outcome: "failed", error: "locked", outsideProposal: [] } });
+  t.check("an aborted firing recorded nothing, so every population is owed",
+    ["human-decisions", "out-of-scope-defects", "other-proposals"].every((k) => (aborted.result.phaseState.unswept || []).includes(k)), String(aborted.result.phaseState.unswept));
+}
+
+// ==========================================================================
+t.section("D19. a collector reads two subsections of the log, and a later firing is pointed at the diff");
+// ==========================================================================
+{
+  const DEFECT = entry({ home: "out-of-scope-defect", deliverable: "CODE-4", marker: "out of scope: x", disposition: "out-of-scope-stands", summaryAction: "added" });
+  const one = await fire({}, { "f1:out-of-scope-defects": found(DEFECT) });
+  const two = await later(one.result.phaseState, 2, { "f2:other-proposals": found(entry({
+    home: "other-proposal", deliverable: "0090_x", marker: "0090's row", disposition: "impact-row", recommendation: "0090_x — a row", summaryAction: "added",
+  })) });
+  const COLLECTORS = ["human-decisions:1", "out-of-scope-defects", "other-proposals"];
+  for (const c of COLLECTORS) {
+    const p = promptOf(one.calls, "f1:" + c);
+    t.check(c + " is told to read `### Open` and `### Deferred`", p.includes("`### Open` and `### Deferred`"));
+    t.check("and nothing else in the log", p.includes("and nothing else in that file"));
+    t.check("with the one command that pulls them", p.includes("awk '/^### (Open|Deferred)/{p=1}") && p.includes(P.log));
+    t.check("the ledger and the archive are out of bounds", p.includes("Do not read the `## Ledger`, and do not open the log's archive"));
+    t.check("and the whole-section read is gone from its brief", !p.includes("it is curated, it is short"));
+    t.check("still writing nothing to the log", p.includes("Write nothing to the log"));
+    t.check("firing 1 carries no delta instruction", !p.includes("WHERE TO LOOK FIRST"));
+    const p2 = promptOf(two.calls, "f2:" + c);
+    t.check("firing 2's " + c + " brief carries it", p2.includes("WHERE TO LOOK FIRST"));
+    t.check("naming the diff under the proposal", p2.includes("git -C /repo diff c0ffee1 -- " + P.root));
+    t.check("and the recent commits under it", p2.includes("git -C /repo log -3 --stat --format=%s -- " + P.root));
+    t.check("without forbidding an item met elsewhere", p2.includes("Still report an item you meet elsewhere"));
+    t.check("and keeps the narrowed log read", p2.includes("`### Open` and `### Deferred`"));
+  }
+  // The agents that judge and write keep the whole section.
+  t.check("a falsifier still reads the whole standing context", promptOf(one.calls, "f1:falsify:0").includes("it is curated, it is short"));
+  t.check("and is not narrowed to two subsections", !promptOf(one.calls, "f1:falsify:0").includes("and nothing else in that file"));
+  t.check("nor pointed at the diff at a later firing", !promptOf(two.calls, "f2:falsify:0").includes("WHERE TO LOOK FIRST") && !never(two.calls, "f2:falsify:0"));
+}
+
+// ==========================================================================
+t.section("D20. the diff a later firing reads is taken from the last baseline commit, and only from a well-formed one");
+// ==========================================================================
+{
+  const SHA = "abc1234def5678";
+  const COMMIT = (sha) => ({ ...OK_COMMIT, sha });
+  const COLLECTORS = ["human-decisions:1", "out-of-scope-defects", "other-proposals"];
+  // A triage that would skip both collectors if it were asked, so a collector
+  // that runs in (b) ran because triage never did.
+  const SKIP_BOTH = { humanDecisions: false, outOfScopeDefects: false, why: "nothing moved" };
+
+  // (c) what a firing hands the next one.
+  const first = await fire({}, { "f1:commit": COMMIT(SHA) });
+  t.check("a firing's phase state carries the sha of its baseline commit", first.result.phaseState.lastBaseline === SHA,
+    String(first.result.phaseState.lastBaseline));
+  t.check("firing 1 has no baseline to diff, so no brief of its own names one",
+    COLLECTORS.every((c) => !promptOf(first.calls, "f1:" + c).includes("WHERE TO LOOK FIRST")));
+  const NEXT = "fedcba9";
+  const second = await later(first.result.phaseState, 2, { "f2:commit": COMMIT(NEXT) });
+  t.check("the next firing replaces it with its own", second.result.phaseState.lastBaseline === NEXT, String(second.result.phaseState.lastBaseline));
+  const noSha = await later(first.result.phaseState, 2, { "f2:commit": { ...OK_COMMIT, sha: "" } });
+  t.check("a commit that reports no sha leaves the earlier baseline in place", noSha.result.phaseState.lastBaseline === SHA,
+    String(noSha.result.phaseState.lastBaseline));
+
+  // (a) a valid baseline: the triage and every collector diff against it.
+  const DIFF = "git -C /repo diff " + SHA + " -- " + P.root;
+  const tri = promptOf(second.calls, "f2:triage");
+  t.check("the triage agent runs", matching(second.calls, "f2:triage").length === 1);
+  t.check("and diffs against the earlier firing's baseline", tri.includes(DIFF), (tri.match(/git -C [^`]*/) || [""])[0]);
+  t.check("never against HEAD", !/diff HEAD/.test(tri));
+  t.check("nor against the baseline this firing is about to take", !tri.includes(NEXT));
+  for (const c of COLLECTORS) {
+    const p2 = promptOf(second.calls, "f2:" + c);
+    t.check(c + " is pointed at the same diff", p2.includes("WHERE TO LOOK FIRST") && p2.includes(DIFF));
+    t.check(c + " never at HEAD", !/diff HEAD/.test(p2));
+  }
+  t.check("no prompt of the firing diffs against HEAD", !second.calls.some((c) => /diff HEAD/.test(c.prompt)),
+    second.calls.filter((c) => /diff HEAD/.test(c.prompt)).map((c) => c.label).join(","));
+
+  // (b) no baseline, or one that is not a sha: no diff is named at all.
+  const bare = JSON.parse(JSON.stringify(first.result.phaseState));
+  delete bare.lastBaseline;
+  for (const [name, state] of [
+    ["an absent lastBaseline", bare],
+    ["a malformed lastBaseline", { ...bare, lastBaseline: "zzz; rm -rf" }],
+    ["a sha shorter than seven digits", { ...bare, lastBaseline: "abc12" }],
+    ["an uppercase ref", { ...bare, lastBaseline: "HEAD" }],
+  ]) {
+    const run = await later(state, 2, { "f2:triage": SKIP_BOTH, "f2:commit": COMMIT(NEXT) });
+    t.check(name + ": the firing completes", !run.error && run.result && run.result.status === "done", String(run.error || (run.result && run.result.status)));
+    t.check(name + ": no triage agent runs", never(run.calls, "f2:triage"), "a triage agent ran");
+    t.check(name + ": every collector runs", matching(run.calls, "f2:human-decisions:").length === 1 &&
+      matching(run.calls, "f2:out-of-scope-defects").length === 1 && matching(run.calls, "f2:other-proposals").length === 1,
+      run.calls.map((c) => c.label).join(","));
+    t.check(name + ": no collector brief carries the delta block",
+      COLLECTORS.every((c) => !promptOf(run.calls, "f2:" + c).includes("WHERE TO LOOK FIRST")));
+    t.check(name + ": and the value reaches no prompt", !run.calls.some((c) => /rm -rf|diff HEAD|diff abc12 /.test(c.prompt)));
+    t.check(name + ": the firing still records its own baseline for the next", run.result.phaseState.lastBaseline === NEXT,
+      String(run.result.phaseState.lastBaseline));
+  }
 }
 
 t.done();

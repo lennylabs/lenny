@@ -41,6 +41,15 @@
     "blocks": []
   },
   {
+    "label": "hash:firing:after:1",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
     "label": "hash:spec:after-first-firing",
     "phase": "Review",
     "model": "haiku",
@@ -50,16 +59,7 @@
     ]
   },
   {
-    "label": "snap:r1-start",
-    "phase": "",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
-  },
-  {
-    "label": "r1:review:citations",
+    "label": "r1:review:single-source",
     "phase": "non-spec R1: review",
     "model": "opus",
     "schema": "coverage+findings",
@@ -73,7 +73,7 @@
     ]
   },
   {
-    "label": "r1:review:feasibility",
+    "label": "r1:review:citations",
     "phase": "non-spec R1: review",
     "model": "opus",
     "schema": "coverage+findings",
@@ -227,20 +227,6 @@
     ]
   },
   {
-    "label": "r1:review:operational",
-    "phase": "non-spec R1: review",
-    "model": "opus",
-    "schema": "coverage+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
     "label": "r1:review:fresh",
     "phase": "non-spec R1: review",
     "model": "opus",
@@ -262,17 +248,10 @@
     "blocks": []
   },
   {
-    "label": "r1:verify-material",
+    "label": "r1:verify",
     "phase": "non-spec R1: verify",
     "model": "opus",
-    "schema": "confirmed+reason",
-    "blocks": []
-  },
-  {
-    "label": "r1:verify-evidence",
-    "phase": "non-spec R1: verify",
-    "model": "opus",
-    "schema": "confirmed+reason",
+    "schema": "first+firstReason+second+secondReason",
     "blocks": [
       "read-only",
       "evidence"
@@ -341,15 +320,6 @@
     ]
   },
   {
-    "label": "snap:r2-start",
-    "phase": "",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
-  },
-  {
     "label": "r2:review:citations",
     "phase": "non-spec R2: review",
     "model": "opus",
@@ -373,16 +343,7 @@
     ]
   },
   {
-    "label": "snap:r3-start",
-    "phase": "",
-    "model": "haiku",
-    "schema": "",
-    "blocks": [
-      "one-command"
-    ]
-  },
-  {
-    "label": "r3:review:citations",
+    "label": "r3:review:single-source",
     "phase": "non-spec R3: review",
     "model": "opus",
     "schema": "coverage+findings",
@@ -396,7 +357,7 @@
     ]
   },
   {
-    "label": "r3:review:feasibility",
+    "label": "r3:review:citations",
     "phase": "non-spec R3: review",
     "model": "opus",
     "schema": "coverage+findings",
@@ -550,20 +511,6 @@
     ]
   },
   {
-    "label": "r3:review:operational",
-    "phase": "non-spec R3: review",
-    "model": "opus",
-    "schema": "coverage+findings",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence",
-      "finding-bar",
-      "loop-scope",
-      "deviations"
-    ]
-  },
-  {
     "label": "r3:review:fresh",
     "phase": "non-spec R3: review",
     "model": "opus",
@@ -596,11 +543,22 @@
     ]
   },
   {
-    "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
-    "phase": "",
-    "model": "",
+    "label": "hash:non-spec-readset:non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
     "schema": "",
-    "blocks": []
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "hash:firing:before:post-non-spec-loop",
+    "phase": "Review",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
   },
   {
     "label": "hash:spec:after-non-spec-loop",

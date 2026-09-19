@@ -120,6 +120,17 @@ const maxPeriodicFirings = input.maxPeriodicFirings || 5;
 // window of 15 held every row those proposals actually carried and excluded
 // both rows a falsifier went on to refute.
 const impactWindow = Number.isFinite(input.impactWindow) ? Number(input.impactWindow) : 15;
+// How many independent readings sub-task 1 takes of the decisions left to the
+// human. It was three, on the ground that a majority of three means something.
+// Every resolve already goes through its own falsifier, which is the adversarial
+// check, so the two extra readings bought agreement about prose at about 230k
+// tokens a firing. One is the default; pass 3 to bring the panel back.
+const HUMAN_READINGS = Number.isFinite(input.humanReadings) && input.humanReadings >= 1
+  ? Math.floor(Number(input.humanReadings)) : 1;
+// The model the two extraction collectors run on. Sub-tasks 3 and 4 find and
+// transcribe declarations; the judgement is the falsifier's, which stays on the
+// base model.
+const collectorModel = input.collectorModel || "sonnet";
 const periodicBudgetSpent = (phaseState.periodicFirings || 0) >= maxPeriodicFirings;
 
 // The run-wide refuted list the parent accumulates across both loops. An item an
@@ -244,6 +255,8 @@ const ARG_CLASS = {
   baseEffort: "launch",
   maxPeriodicFirings: "forward",
   impactWindow: "forward",
+  humanReadings: "forward",
+  collectorModel: "launch",
 };
 
 // ---- Agent plumbing -------------------------------------------------------
@@ -710,6 +723,42 @@ async function checkReversals() {
 // carry-forward rest on. An item that matches nothing is adjudicated afresh,
 // and a record nothing matched is recorded as unmatched under its own prior
 // identifier so the operator can see it.
+// ---- Whether sub-task 4 has anything new to read ---------------------------
+//
+// What this staging does to another proposal is a function of two inputs: what
+// this proposal touches (its files-touched lists and its deliverable index) and
+// the other proposals themselves. The sweep re-derived every row at every
+// firing and carried a row forward only when the re-derived PROSE compared
+// equal to the last firing's, which two language-model derivations never do. So
+// every row was "fresh" at every firing and paid a falsifier each time: one
+// measured run falsified the same six to eight rows in all eight of its
+// firings, 55 of its 89 falsifiers, every one answering that the row stands.
+// Keying the sweep on its inputs rather than on its output is what ends that.
+// A digest that cannot be read is never equal to anything, so the sweep runs.
+async function impactInputsUnchanged() {
+  const rel = P.dir.startsWith(repo + "/") ? P.dir.slice(repo.length + 1) : P.dir;
+  const raw = await robustAgent(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "cd " + repo + " && { awk '/^## (Spec files touched|Files touched|Files touched on application|Deliverable index)/{p=1;print;next} /^## /{p=0} p' " +
+      [P.spec, P.nonSpec, P.summary].join(" ") + " 2>/dev/null; " +
+      "git log -1 --format=%H -- proposals ':(exclude)" + rel + "'; " +
+      "git status --porcelain -- proposals ':(exclude)" + rel + "'; } | md5sum | cut -c1-12" +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "f" + firing + ":impact-inputs", model: "haiku", effort: "high", phase: "Collect" },
+  );
+  const m = String(raw || "").trim().match(/[0-9a-f]{12}/);
+  const key = m ? m[0] : null;
+  const before = phaseState.impactInputs || null;
+  // Held rather than written. The digest goes onto the phase state only once
+  // the sweep it stands for has completed and its rows are on record (see
+  // `settleSweepState`). Writing it here let a sweep whose collector died, or a
+  // firing that aborted at its baseline, leave a digest behind, and every later
+  // firing then skipped a sweep that had never produced a row.
+  impactKey = key;
+  return key !== null && before !== null && key === before;
+}
+let impactKey = null;
+
 // The row an `impact-row` item derives at this firing, normalised for the
 // comparison below. It is the recommendation, which sub-task 4's brief fixes as
 // the row itself as it should stand under `## Impacts on other proposals`.
@@ -1088,6 +1137,45 @@ const STANDING_CONTEXT =
   "section of " + P.log + " BEFORE you start: it is curated, it is short, and it " +
   "is where a trap someone already fell into is recorded. Write nothing to it.";
 
+// The collectors' narrower read. A collector finds items in the PROPOSAL; the
+// log is background for it, and the standing context of a long run is over a
+// thousand lines, read in full by every collector at every firing. The two
+// subsections below are the ones that bear on what a collector is looking for:
+// a question nobody has answered and an answer nobody has applied. The traps
+// and the settled list guide a reviewer or a fixer and change nothing a
+// collector reports. Falsifiers, the Apply agents, cleanup and verify keep the
+// whole section, because they judge and write.
+const COLLECTOR_CONTEXT =
+  "THE REVIEW LOG carries what earlier agents on this proposal learned. Before you start, read TWO " +
+  "subsections of the `## Standing context` section of " + P.log + " and nothing else in that file: " +
+  "`### Open` and `### Deferred`. Pull them with one command rather than by paging the file:\n" +
+  "  awk '/^### (Open|Deferred)/{p=1} /^### /&&!/^### (Open|Deferred)/{p=0} /^## Ledger/{exit} p' " + P.log + "\n" +
+  "Do not read the `## Ledger`, and do not open the log's archive. Write nothing to the log.";
+
+// When this firing is not the first, what changed in the proposal since the
+// last firing's baseline commit is the population that can hold anything NEW.
+// Everything else was read by an earlier firing's collectors and its items are
+// on the record, carried forward by identifier.
+// WHAT "SINCE THE LAST FIRING" IS MEASURED FROM. Not HEAD: the parent commits
+// the proposal directory immediately before every firing, so at this point
+// `git diff HEAD` is empty by construction and a triage reading it would rule
+// every collector out on every firing. The reference is the baseline commit the
+// PREVIOUS firing took, carried on the phase state; diffing the working tree
+// against it shows that firing's own Applies as well as everything the review
+// loop did after it, which is the superset a collector should see. With no
+// recorded reference nothing is narrowed.
+const DELTA_REF = /^[0-9a-f]{7,40}$/.test(String(phaseState.lastBaseline || "")) ? phaseState.lastBaseline : "";
+const DELTA_FOCUS =
+  firing > 1 && DELTA_REF
+    ? "WHERE TO LOOK FIRST. An earlier firing of this phase already swept this proposal, and every " +
+      "item it found is on record and carries forward without you. What can hold something new is " +
+      "what has changed since. Run `git -C " + repo + " diff " + DELTA_REF + " -- " + PATHSPEC + "` and " +
+      "`git -C " + repo + " log -3 --stat --format=%s -- " + PATHSPEC + "` to see it, read the changed " +
+      "hunks and the sections that contain them, and report from there. Still report an item you " +
+      "meet elsewhere; do not go looking for one by re-reading text no commit since the last firing " +
+      "touched."
+    : "";
+
 // THE PHASE WRITES THE REVIEW LOG DIRECTLY, which is why the block above is
 // only the read half of the parent's. The merge that turns a shard into log
 // text runs inside `closeRound`, a round-boundary operation, so a shard a
@@ -1262,7 +1350,8 @@ function briefFrame(head, body) {
     COLLECTOR_READ_ONLY + "\n\n" +
     FILE_MAP + "\n\n" +
     EVIDENCE + "\n\n" +
-    STANDING_CONTEXT + "\n\n" +
+    COLLECTOR_CONTEXT + "\n\n" +
+    (DELTA_FOCUS ? DELTA_FOCUS + "\n\n" : "") +
     (LOCK_NOTE ? LOCK_NOTE + "\n\n" : "") +
     body + "\n\n" +
     IDENTIFIER_RULE + "\n\n" +
@@ -1611,7 +1700,7 @@ async function collectHumanDecisions() {
   const label = (n) => "f" + firing + ":human-decisions:" + n;
   const prompt = humanDecisionsBrief();
   const returns = await parallel(
-    [1, 2, 3].map(
+    Array.from({ length: HUMAN_READINGS }, (_, k) => k + 1).map(
       (n) => () =>
         robustAgent(prompt, { label: label(n), schema: OPEN_DECISIONS_FINDINGS, phase: "Collect" }),
     ),
@@ -1637,19 +1726,23 @@ async function collectHumanDecisions() {
   });
   if (liveAgents === 0) {
     unadjudicated.push("human-decisions");
-    log("Sub-task 1 (decisions left to the human): all three adjudicators returned nothing; the population is UNADJUDICATED");
+    log(
+      "Sub-task 1 (decisions left to the human): " +
+        (HUMAN_READINGS === 3 ? "all three adjudicators" : HUMAN_READINGS === 1 ? "the adjudicator" : "all " + HUMAN_READINGS + " adjudicators") +
+        " returned nothing; the population is UNADJUDICATED",
+    );
     return [];
   }
-  if (liveAgents < 3) {
+  if (liveAgents < HUMAN_READINGS) {
     log(
-      "Sub-task 1: " + liveAgents + "/3 adjudicators returned; no item can be unanimous on fewer than " +
-        "three readings, so each stands as the human's",
+      "Sub-task 1: " + liveAgents + "/" + HUMAN_READINGS + " adjudicators returned; no item can be unanimous on fewer than " +
+        (HUMAN_READINGS === 3 ? "three" : String(HUMAN_READINGS)) + " readings, so each stands as the human's",
     );
   }
   const out = [];
   for (const [key, readings] of byKey) {
     const first = readings[0].entry;
-    const unanimousResolve = readings.length === 3 && readings.every((x) => x.disposition === "resolve");
+    const unanimousResolve = readings.length === HUMAN_READINGS && readings.every((x) => x.disposition === "resolve");
     // Readings are compared on `answerKey` rather than on the answer's prose.
     // Comparing prose required three independent writers to produce the same
     // sentence, and a measured run had 21 of 41 readings proposing to resolve
@@ -1682,21 +1775,31 @@ async function collectHumanDecisions() {
     // readings that agree are not a majority of three: the redundancy this
     // sub-task buys is what makes a majority mean anything, so an item with a
     // missing reading stands as the human's however sure the survivors are.
+    // With fewer than three readings, agreement among them proves nothing on its
+    // own: one reading always agrees with itself. So below three, a resolve needs
+    // `high` confidence or a staging that already carries the answer, and it
+    // still has to survive its own falsifier, which is the adversarial check the
+    // extra readings used to stand in for.
     const agreed =
-      readings.length === 3 && bloc.length >= 2 && (bloc.length === 3 || sure || stagedAgrees);
+      readings.length === HUMAN_READINGS &&
+      bloc.length * 2 > HUMAN_READINGS &&
+      ((HUMAN_READINGS >= 3 && bloc.length === HUMAN_READINGS) || sure || stagedAgrees);
     // Three readings that agree the decision is the IMPLEMENTOR'S take it off
     // the human's list without this phase answering it. Sub-task 2 used to be
     // the only route to that disposition, and deleting it left the DELEGATION
     // falsifier brief unreachable; a decision the summary carries that is really
     // a bounded build choice is the case it exists for.
     const unanimousImplementor =
-      readings.length === 3 && readings.every((x) => x.disposition === "implementor");
+      readings.length === HUMAN_READINGS && readings.every((x) => x.disposition === "implementor");
     const disposition = agreed ? "resolve" : unanimousImplementor ? "implementor" : "human";
     let agreement = "split";
     if (agreed) agreement = bloc.length === readings.length ? "unanimous-resolve" : "majority-resolve";
     else if (unanimousImplementor) agreement = "unanimous-implementor";
-    else if (unanimousResolve) agreement = "divergent-resolve";
-    else if (readings.length < 3) agreement = "incomplete-readings";
+    // `divergent` needs more than one answer on the table. A single reading that
+    // resolves without the confidence or the staging to carry it diverges from
+    // nothing; it is a resolve the join declined.
+    else if (unanimousResolve) agreement = byAnswer.size > 1 ? "divergent-resolve" : "unsure-resolve";
+    else if (readings.length < HUMAN_READINGS) agreement = "incomplete-readings";
     out.push({
       id: key,
       subTask: "human-decisions",
@@ -1731,7 +1834,7 @@ async function collectHumanDecisions() {
   }
   log(
     "Sub-task 1 (decisions left to the human): " + out.length + " item(s) from " + liveAgents +
-      " reading(s), " + out.filter((i) => i.disposition === "resolve").length + " unanimously resolvable",
+      " reading(s), " + out.filter((i) => i.disposition === "resolve").length + " resolvable",
   );
   return out;
 }
@@ -1746,6 +1849,8 @@ async function collectSingle(cfg) {
     label,
     schema: OPEN_DECISIONS_FINDINGS,
     phase: "Collect",
+    model: collectorModel,
+    effort: "high",
   });
   if (!r) {
     recordDead(label);
@@ -2584,6 +2689,11 @@ async function applyAll(list) {
     // skipped here would credit that edit to the next item.
     const now = await treeDelta("apply:" + i);
     const own = now ? deltaSince(before, now) : null;
+    // An Apply can change the tree without being counted as applied: an agent
+    // that edited and died, one that reported already-correct over a diff, and
+    // one whose evidence could not be read at all. Each leaves text the cleanup
+    // and the verify pass have to see.
+    if (!own || own.files.length > 0) applyTouchedTree = true;
     // A dead detection agent leaves the cumulative reading where it was, so the
     // next item's own diff may carry this one's edits. That is recorded against
     // this item as missing evidence rather than silently absorbed.
@@ -3230,6 +3340,7 @@ if (trigger === "periodic" && periodicBudgetSpent) {
 const items = [];
 // What the Apply stage wrote, and what it could not.
 const applied = [];
+let applyTouchedTree = false;
 const failedItems = [];
 // Items an Apply could not write because the resolution needs a file this phase
 // may not edit, which under `lockSpecChanges` is the staged spec edits. Not a
@@ -3274,11 +3385,122 @@ let corpus = [];
 // Sub-task 4 chains behind the corpus rather than behind the whole wave. The
 // corpus is gathered once at the first firing and carried on the phase state,
 // so on every later firing that thunk starts its agent immediately.
+// ---- Triage: which collectors have anything new to read --------------------
+//
+// A firing after the first runs over a proposal an earlier firing already
+// swept, and everything that sweep found is on the record and carries forward
+// by identifier. A collector is worth its cost only when what changed since
+// could hold something of its kind. One inexpensive agent reads the diff and
+// says which of sub-tasks 1 and 3 that is. Sub-task 4 is gated on its inputs by
+// `impactInputsUnchanged` instead, because its question is mechanical.
+//
+// It fails OPEN: an agent that dies, or that answers anything but a clear no,
+// runs the collector. A skipped collector's records are marked seen so the
+// unmatched report does not read a skip as items that vanished, and the
+// parent's fold across firings keeps every earlier item in the run's report.
+const TRIAGE = {
+  type: "object",
+  required: ["humanDecisions", "outOfScopeDefects", "why"],
+  properties: {
+    humanDecisions: { type: "boolean" },
+    outOfScopeDefects: { type: "boolean" },
+    why: { type: "string" },
+  },
+};
+async function triageCollectors() {
+  if (firing <= 1) return { humanDecisions: true, outOfScopeDefects: true, why: "first firing" };
+  if (!DELTA_REF) return { humanDecisions: true, outOfScopeDefects: true, why: "no earlier baseline to diff against" };
+  const label = "f" + firing + ":triage";
+  const r = await robustAgent(
+    "You are the triage step of the open-decisions-and-impact-review phase of a change proposal's " +
+      "review. You are READ-ONLY: edit nothing. This is firing " + firing + " on " + P.stem + ".\n\n" +
+      "An earlier firing already swept this whole proposal, and everything it found is on record. " +
+      "Your one job is to say whether what has CHANGED since could hold anything new for each of two " +
+      "collectors, so a collector with nothing new to read is not run.\n\n" +
+      "Run `git -C " + repo + " diff " + DELTA_REF + " -- " + PATHSPEC + "` and read the hunks. Exclude the review " +
+      "log and its archive from your judgement: they are this run's own bookkeeping.\n\n" +
+      "humanDecisions: true when any hunk adds, removes, rewords or answers an entry under " +
+      "`## Open decisions for human to make`, adds an open question or an unresolved choice anywhere " +
+      "in the staged changes, or changes staged text that an open decision's question or recommendation " +
+      "rests on. False when the hunks touch none of that.\n\n" +
+      "outOfScopeDefects: true when any hunk adds, removes or rewords a statement that something is out " +
+      "of scope, deferred, a non-goal, a known residue, an accepted failure mode, or a defect in the " +
+      "shipped tree this proposal does not fix. False when the hunks touch none of that.\n\n" +
+      "When you are unsure about one, answer true for it. A collector that runs for nothing costs " +
+      "tokens; one that is skipped wrongly loses an item. An empty diff is false for both.",
+    { label, schema: TRIAGE, model: "sonnet", effort: "medium", phase: "Collect" },
+  );
+  if (!r) {
+    recordDead(label);
+    return { humanDecisions: true, outOfScopeDefects: true, why: "the triage agent returned nothing, so every collector runs" };
+  }
+  return r;
+}
+// A CONTESTED record is left alone. It is listed for the human from the record
+// itself exactly when no collector saw it this firing, and `seenThisFiring`
+// reports the same fact, so marking it seen on a skip would drop a reversal
+// from the human's list and misreport it. This runs AFTER the wave for the
+// same reason: the reversal check is in the wave, and a record it contests at
+// this firing must already be contested when the skip is accounted for.
+function keepRecordsOf(subTask) {
+  let kept = 0;
+  for (const rec of Object.values(records())) {
+    if (rec.subTask === subTask && !rec.contested) {
+      rec.lastSeen = firing;
+      kept++;
+    }
+  }
+  return kept;
+}
+// Whether a sub-task still owes work that only running its collector pays. An
+// item is gated and applied only when a collector returns it, so a skip strands
+// a record whose falsifier died (no verdict) and one that stands but whose
+// Apply failed or never ran, both of which the next firing exists to retry. A
+// population the last firing left unadjudicated, or a firing that aborted
+// before recording anything, owes its whole sweep. Any of these overrides the
+// triage answer and the unchanged-inputs digest.
+function owesWork(subTask) {
+  if (Array.isArray(phaseState.unswept) && phaseState.unswept.includes(subTask)) return true;
+  return Object.values(records()).some(
+    (rec) =>
+      rec.subTask === subTask &&
+      !rec.contested &&
+      ((rec.gate !== "stands" && rec.gate !== "refuted") ||
+        (rec.gate === "stands" && (rec.applyStatus === "failed" || rec.applyStatus === "not-attempted"))),
+  );
+}
+const SUB_TASKS = ["human-decisions", "out-of-scope-defects", "other-proposals"];
+// What the next firing may trust about this one's sweep, written once the
+// firing's records are. `aborted` is the firing that recorded nothing.
+function settleSweepState(aborted) {
+  phaseState.unswept = aborted ? SUB_TASKS.slice() : unadjudicated.slice();
+  if (aborted) return;
+  if (unadjudicated.includes("other-proposals")) phaseState.impactInputs = null;
+  else if (!skippedSubTasks.includes("other-proposals")) phaseState.impactInputs = impactKey;
+}
+const skippedSubTasks = [];
+const triage = await triageCollectors();
+for (const [field, subTask] of [["humanDecisions", "human-decisions"], ["outOfScopeDefects", "out-of-scope-defects"]]) {
+  if (triage[field] === false && owesWork(subTask)) {
+    triage[field] = true;
+    log("Triage: " + subTask + " RUNS whatever the diff holds: an earlier firing left it work only its collector can reach");
+  }
+}
+log(
+  "Triage: human-decisions " + (triage.humanDecisions ? "RUNS" : "skipped") + ", out-of-scope-defects " +
+    (triage.outOfScopeDefects ? "RUNS" : "skipped") + " — " + String(triage.why || "").slice(0, 240),
+);
+
 const [, humanItems, oosItems, otherItems] = await parallel([
   () => checkReversals(),
-  () => collectHumanDecisions(),
   () =>
-    collectSingle({
+    triage.humanDecisions === false
+      ? Promise.resolve(skippedSubTasks.push("human-decisions")).then(() => [])
+      : collectHumanDecisions(),
+  () =>
+    triage.outOfScopeDefects === false
+      ? Promise.resolve(skippedSubTasks.push("out-of-scope-defects")).then(() => [])
+      : collectSingle({
       key: "out-of-scope-defects",
       title: "Sub-task 3 (out-of-scope defect declarations)",
       prompt: outOfScopeDefectsBrief(),
@@ -3286,7 +3508,15 @@ const [, humanItems, oosItems, otherItems] = await parallel([
       fallback: "out-of-scope-stands",
     }),
   () =>
-    corpusInventory().then((rows) => {
+    impactInputsUnchanged().then((unchanged) => {
+      if (!unchanged || owesWork("other-proposals")) return null;
+      // Every impact row an earlier firing adjudicated stands as it was. The
+      // records are marked seen after the wave, which keeps them out of the
+      // unmatched report: it would otherwise read a skipped sweep as rows that
+      // vanished.
+      skippedSubTasks.push("other-proposals");
+      return [];
+    }).then((skipped) => skipped || corpusInventory().then((rows) => {
       // Held for the result object, which reports how many proposals the sweep
       // was working from.
       corpus = rows;
@@ -3297,11 +3527,22 @@ const [, humanItems, oosItems, otherItems] = await parallel([
         allowed: ["impact-row"],
         fallback: "impact-row",
       });
-    }),
+    })),
 ]);
 // Pushed in the order the phase reads the populations, which is what kept them
 // sequential before.
 items.push(...(humanItems || []), ...(oosItems || []), ...(otherItems || []));
+for (const subTask of skippedSubTasks) {
+  const kept = keepRecordsOf(subTask);
+  if (subTask === "other-proposals") {
+    log(
+      "Sub-task 4 (impacts on other proposals): SKIPPED. Neither what this proposal touches nor any " +
+        "other proposal has changed since the last sweep, so its " + kept + " row(s) stand as adjudicated",
+    );
+  } else {
+    log("Triage: " + subTask + " skipped; its " + kept + " earlier record(s) stand as adjudicated");
+  }
+}
 // ---- Dedup, across every sub-task rather than within one ------------------
 //
 // Sub-task 1's join already dedupes its own three readings of one home. Nothing
@@ -3400,12 +3641,14 @@ await designAnswers(survivors);
 // needs an edit, run sequentially because they edit the same files.
 phase("Apply");
 const commit = await commitBaseline();
+if (commit.sha) phaseState.lastBaseline = commit.sha;
 if (commit.outcome === "failed") {
   // A firing that cannot take its baseline has no way to tell what it wrote
   // from what was already there, so its Apply stage would author onto an
   // unusable baseline and its report of what it changed would be unfounded.
   // It stops and says why rather than proceeding.
   log("Baseline commit FAILED: " + (commit.error || "no reason given") + "; the firing does not run");
+  settleSweepState(true);
   return {
     status: "aborted",
     abortReason: "the baseline commit failed: " + (commit.error || "no reason given"),
@@ -3451,8 +3694,19 @@ await applyAll(survivors);
 // The summary is rewritten to the listed sections, in order, and anything the
 // list does not name is relocated to where it belongs. It runs after Apply
 // because what belongs in each section depends on what Apply resolved.
+// Cleanup and Verify exist to conform and check what THIS firing wrote. A
+// firing that applied nothing wrote nothing: every item was carried forward,
+// set aside, or left to the human, and the summary is byte-for-byte what the
+// last firing's cleanup left. One measured run ran both passes in all eight of
+// its firings, two of which had applied nothing, at about 0.9M each across the
+// run. The first firing always runs them, because nothing has conformed the
+// summary yet.
+const wroteSomething = applied.length > 0 || applyTouchedTree || firing === 1;
+if (!wroteSomething) {
+  log("This firing applied nothing, so the summary cleanup and the verify pass are skipped");
+}
 phase("Cleanup");
-const cleanup = await runSummaryCleanup();
+const cleanup = wroteSomething ? await runSummaryCleanup() : { outcome: "skipped-nothing-applied", sections: [], relocated: [] };
 
 // What this firing closed and what it leaves for the human, built from its own
 // record before the verify pass reads the files against it.
@@ -3461,10 +3715,13 @@ buildDecisionPayloads();
 // This firing's outcome onto the per-item records the next firing reads, and
 // the prior records nothing matched this time.
 const unmatchedRecords = recordItems();
+settleSweepState(false);
 
 // A read-only pass over the result: factual accuracy and format conformance.
 phase("Verify");
-const verification = await runVerify(cleanup);
+const verification = wroteSomething
+  ? await runVerify(cleanup)
+  : { conforms: true, defects: [], skipped: "nothing-applied" };
 
 // What the firing changed, read from the tree rather than from the agents. It
 // is the delta against the baseline this firing committed above, so it covers

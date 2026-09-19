@@ -9,6 +9,26 @@
   {
     "label": "f2:out-of-scope-defects",
     "phase": "Collect",
+    "model": "sonnet",
+    "schema": "coverage+decisions",
+    "blocks": [
+      "read-only",
+      "log-shard",
+      "evidence"
+    ]
+  },
+  {
+    "label": "f2:impact-inputs",
+    "phase": "Collect",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "f2:human-decisions:1",
+    "phase": "Collect",
     "model": "opus",
     "schema": "coverage+decisions",
     "blocks": [
@@ -27,42 +47,9 @@
     ]
   },
   {
-    "label": "f2:human-decisions:1",
-    "phase": "Collect",
-    "model": "opus",
-    "schema": "coverage+decisions",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence"
-    ]
-  },
-  {
-    "label": "f2:human-decisions:2",
-    "phase": "Collect",
-    "model": "opus",
-    "schema": "coverage+decisions",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence"
-    ]
-  },
-  {
-    "label": "f2:human-decisions:3",
-    "phase": "Collect",
-    "model": "opus",
-    "schema": "coverage+decisions",
-    "blocks": [
-      "read-only",
-      "log-shard",
-      "evidence"
-    ]
-  },
-  {
     "label": "f2:other-proposals",
     "phase": "Collect",
-    "model": "opus",
+    "model": "sonnet",
     "schema": "coverage+decisions",
     "blocks": [
       "read-only",

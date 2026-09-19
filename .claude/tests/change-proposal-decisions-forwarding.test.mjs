@@ -37,6 +37,8 @@ const ARGS = {
   baseEffort: "high",
   maxPeriodicFirings: 7,
   impactWindow: 9,
+  humanReadings: 3,
+  collectorModel: "haiku",
 };
 
 // The refuted premise the run-wide list carries. `rejected` is the one argument
@@ -64,6 +66,8 @@ const STUBS = {
   "*:review:*": ({ label }) =>
     (/^r1:/.test(label) ? { coverage: "c", findings: [F] } : { coverage: "c", findings: [] }),
   "*:dedup": { findings: [{ ...F, lenses: ["citations"] }] },
+  // The merged verifier, the default verifyMode, refusing at its first question.
+  "*:verify": { first: false, firstReason: "it changes nothing a reader acts on", second: null, secondReason: "" },
   "*:verify-material": { confirmed: false, reason: "it changes nothing a reader acts on" },
   "*:verify-evidence": { confirmed: true, reason: "evidence holds" },
   "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
@@ -117,6 +121,8 @@ const EXPECTED = {
   baseEffort: "high",
   maxPeriodicFirings: 7,
   impactWindow: 9,
+  humanReadings: 3,
+  collectorModel: "haiku",
 };
 
 for (const [key, value] of Object.entries(EXPECTED)) {

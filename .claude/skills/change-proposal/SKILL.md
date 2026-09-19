@@ -74,7 +74,9 @@ The spec staging converges first, alone. Then the non-spec staging converges, wi
 
 Each loop keeps its own rounds, retired set, sweeps, and convergence, because a lens satisfied by the spec staging has said nothing about the code staging. The refuted-findings memory and the round history stay run-wide, so a finding refuted in the first loop is not re-litigated in the second.
 
-Convergence is unchanged: a lens that finds nothing retires, a full sweep of the pool runs when every lens has retired, and a clean complete sweep converges. `operational` and `fresh` were once a second pool with their own schedule, one rotating in per round. That is a second mechanism for the job retirement already does, and the worse of the two, because it withheld a lens on a round number rather than on evidence. It also produced a lens that had never run, which cannot retire, which blocks the sweep, so a clean proposal spent a whole round discharging one lens: a measured run went thirteen lenses, then `fresh` alone, then a fourteen-lens sweep. The singleton round costs a snapshot, a dedup, the verifiers and a boundary whatever it contains. A round now **closes before it may certify**, because a round whose bookkeeping did not complete left its log unmerged and the next round without a snapshot.
+**What a lens is told changed.** Each lens is pointed at a diff against the snapshot taken just before the previous round's fixes, which is the document exactly as that round's lenses read it, with the review log left out. It was pointed at the round boundary's snapshot, which is taken after the fixes, so the diff was empty by construction. In a round that runs only part of the pool, a lens that read the whole proposal in the round before reads **only what changed** (`deltaReads`): every hunk and its section, every other site naming an identifier a hunk touched, and the repository claims the new text makes. That is safe for a structural reason rather than because the lens is careful: a partial round cannot certify anything, convergence needs a round in which every lens ran, and in such a round no lens is delta-scoped.
+
+Convergence is unchanged: a lens that finds nothing retires, a full sweep of the pool runs when every lens has retired, and a clean complete sweep converges. A complete round that ran the whole pool and confirmed nothing is that sweep, and converges without a second one. `operational` and `fresh` were once a second pool with their own schedule, one rotating in per round. That is a second mechanism for the job retirement already does, and the worse of the two, because it withheld a lens on a round number rather than on evidence. It also produced a lens that had never run, which cannot retire, which blocks the sweep, so a clean proposal spent a whole round discharging one lens: a measured run went thirteen lenses, then `fresh` alone, then a fourteen-lens sweep. The singleton round costs a snapshot, a dedup, the verifiers and a boundary whatever it contains. A round now **closes before it may certify**, because a round whose bookkeeping did not complete left its log unmerged and the next round without a snapshot.
 
 ### The open-decisions-and-impact-review phase
 
@@ -97,9 +99,10 @@ review workflow. One invocation is one firing, and each firing runs every sub-ta
 them, and the question that fits a decision left to the human is the wrong one to ask of a bounded
 implementor blank. Sub-task 1 collects every decision the proposal leaves to a human, including any left in
 a staged change file's retired `## Open decisions for review` section, and decides for each whether it is
-really the human's or whether the workflow can answer it; three independent agents run it, because it is the
-widest judgment in the phase, and an item reaches `resolve` only when all three resolve it to the same
-answer. Sub-task 2 collects every `IMPLEMENTOR'S CHOICE:` marker and every unbounded blank, and specifies
+really the human's or whether the workflow can answer it. One agent reads it by default (`humanReadings`),
+and its `resolve` stands only when it is sure or the staged text already agrees, because the falsifier
+behind it is the adversarial check; with `humanReadings: 3` three independent agents read it and an item
+reaches `resolve` only when all three resolve it to the same answer. Sub-task 2 collects every `IMPLEMENTOR'S CHOICE:` marker and every unbounded blank, and specifies
 one only where leaving it to the implementor is a clear risk or an obviously wrong path; the default is to
 leave it alone, because the escape hatch exists so a proposal does not grow hair. Sub-task 3 collects every
 defect the proposal calls out as out of scope and asks whether that is the right call, defaulting to yes,
@@ -154,18 +157,32 @@ before each firing, and the firing reads `git status --porcelain` and a diff aro
 same pathspec. An Apply that claims a resolution landed while its diff is empty is recorded as a failed
 item. The same evidence is what a later firing compares against to detect a reversal.
 
-**Where it fires.** Every review loop is followed by a firing: the spec loop, the non-spec loop, and every
-recheck of either lane. That is why there is no condition asking whether any decision changed, since the
-answer is always to look, and carrying an untouched item's disposition forward is what keeps an empty firing
-cheap. The firing after the spec loop sits before the non-spec loop starts and runs on the paths where the
+**A firing pays only for what changed.** Measured on one run, the phase took 19% of the tokens over eight
+firings: the same impact rows were falsified in every firing because each firing re-derived them as fresh
+prose that never string-matched the last, one firing ran after a round that changed nothing, and the verify
+step ran in firings that applied nothing. So:
+
+- A firing is skipped, and recorded as `skipped-unchanged`, when a digest of the proposal's files equals the
+  digest left by the last firing that ran.
+- Sub-task 4 is skipped, and its rows carried forward, when its inputs are unchanged: this proposal's
+  files-touched sections and deliverable index, and the state of every other proposal.
+- On a firing after the first, a Sonnet triage agent reads the diff since the last firing and says which of
+  the human-decisions and out-of-scope collectors have anything new to read. A collector it rules out keeps
+  its earlier records. A triage agent that dies runs everything.
+- Collectors run on `collectorModel` (Sonnet), read only the `### Open` and `### Deferred` sections of the
+  review log's standing context, and on a later firing are pointed at the diff first.
+- Cleanup and the read-only verify run only when an Apply landed, or on the first firing.
+
+**Where it fires.** Every review loop is followed by a firing, subject to the skip above: the spec loop, the
+non-spec loop, and every recheck of either lane. The firing after the spec loop sits before the non-spec loop starts and runs on the paths where the
 spec loop never ran and on the paths where the non-spec loop does not run, so a run that stops early is
-still adjudicated once. A periodic firing runs inside the non-spec loop as well, at the round boundary every
-`periodEvery` rounds, so decisions are adjudicated as they accumulate rather than in one batch at the end.
-Its cadence counts firings rather than rounds, a round that exits on introspection is covered by the
+still adjudicated once. A periodic firing inside the non-spec loop is off by default (`periodEvery: 0`),
+because a firing mid-loop adjudicates text the loop is still moving and the loop then contests what the
+firing wrote. Set `periodEvery` to fire at the round boundary every that many rounds. Its cadence counts firings rather than rounds, a round that exits on introspection is covered by the
 post-loop firing instead, and no periodic firing runs inside a recheck. It is the only trigger whose count
 is open-ended and the only one with a budget of its own, `maxPeriodicFirings`: exhausting it stops the
 periodic trigger for the rest of the run, is reported in the result object, and leaves every post-loop
-firing running. **All firings are full firings.**
+firing running.
 
 ### Rechecks, and when the run may converge
 
@@ -191,7 +208,12 @@ same permission. When the non-spec hash has moved and the spec hash has not, a *
 runs with no `spec-recheck` in front of it. When both have moved, the pair runs and no lone recheck is
 taken, because the pair's `non-spec-recheck` already reads that text. Each recheck's scope note names the
 delta since that lane's last convergence as its lenses' focus while they still read the whole staging: the
-pool does not shrink and the attention narrows. Under `lockSpecChanges` no post-convergence spec edit
+pool does not shrink and the attention narrows. **The pair's second half is skipped when it has nothing new
+to read.** A non-spec lens reads both change files and the summary as one document, so a digest of all
+three is recorded whenever a non-spec review converges. When that digest is unchanged after the pair's
+`spec-recheck` and its firing, every line in front of the non-spec pool is one it has already certified, the
+recheck is recorded as `skipped: "read-set-unchanged"`, and that certification stands. An unreadable
+digest, or no converged non-spec review to compare against, runs the recheck. Under `lockSpecChanges` no post-convergence spec edit
 happens, so no pair runs.
 
 A pair can beget a pair, because `non-spec-recheck` keeps the permission to edit `spec-changes.md` and such
@@ -244,6 +266,8 @@ is renamed in place.
 
 Materiality runs first and evidence only if it survives. Materiality reads only the proposal, defaults to refuted, and kills the largest share for the least cost; evidence opens every cited file and is the expensive one. A refusal records which skeptic made it, because "not material" and "the citation is wrong" are different signals to a later round's lens.
 
+**One agent asks both questions** (`verifyMode: "merged"`, the default), in that order, and stops at the first refusal. Measured on one run, every agent opened at 41k to 60k tokens before it read its task, so the second skeptic cost more in fixed context than in work. The two answers are still separate fields and the script still decides what they add up to. What the merge gives up is independence, since the agent that judged a finding material then checks its evidence; `verifyMode: "split"` restores two agents. A merged verifier that confirms the first question and says nothing on the second is treated as a dead verifier rather than as a refusal.
+
 A verifier that **died** is not a refusal. The finding reaches neither verdict, is not added to the refuted memory where an outage would suppress it permanently, and the round cannot certify convergence.
 
 ### Fixing
@@ -251,6 +275,8 @@ A verifier that **died** is not a refusal. The finding reaches neither verdict, 
 Three stages replace one fixer.
 
 **site expansion** runs first, one Sonnet agent per confirmed finding, in parallel. It starts from the sites the finding already names and answers one question about the rest of the repository: if this fix lands, which other text becomes wrong? The test is falsification rather than relatedness, so a site that discusses the same subject and stays true is not reported; consistent restatement is excluded by the review bar. Results land in `potentiallyRelatedSites` on the finding, never merged into `where` or `evidence`, because those two survived two verifiers and these did not. Proposal sites and tree sites are kept apart: the fixer edits the first and may not touch the second, where a falsified site means the proposal is missing an edit site.
+
+**One rule, one home.** The writer, the designer, and the fixer all work to the same rule: a rule, predicate, or contract is stated once, in its normative home, which is the staged spec text when there is one, and every other site cites it by heading and number. A fix that changes a rule changes it in its home; a fix that finds a second full statement replaces it with a citation. The fixer was previously told to propagate a changed predicate to every section that states it, which maintained the copies: on one measured run a cascade stated at five sites absorbed 49 rounds, each fix re-synchronising four copies and drifting the fifth. Staged code and test text is the exception, since code cannot cite prose, and it references the rule by number in a comment.
 
 **fix-plan** splits the round's confirmed findings into cohesive groups. The only cap is on the number of groups; **group size is uncapped**, because size is the wrong axis. Forty trivial citation corrections that share a subject belong in one group where one fixer applies them consistently, while three deep design findings belong in three groups however few they are. A partition that drops, duplicates, or invents an index is rejected in favour of one group of everything.
 
@@ -299,23 +325,34 @@ The pass edits rather than rewriting the whole file. It was told to write the fi
 
 ### Introspection
 
-A **warrant gate** runs before the full pass. The counters that wake it are crude and wrong in both directions, so the pass first asks cheaply whether the pattern is really there; an unwarranted counter wake returns healthy without paying for a pass or a panel. A **cadence** wake ignores the gate, because the cadence exists to look when no counter has fired.
+A **warrant gate** runs before the full pass. The counters that wake it are crude and wrong in both directions, so the pass first asks cheaply whether the pattern is really there; an unwarranted counter wake returns healthy without paying for a pass. A **cadence** wake ignores the gate, because the cadence exists to look when no counter has fired.
 
-**Every verdict goes to a panel, including healthy**, which is the most expensive verdict in the loop and had nothing checking it. Each verdict has its own panel whose judges read the same evidence and weigh different things; the `redesign` panel works to the same principles as `fix-design`.
+**The pass diagnoses and does not act** (`introspectMode: "advisory"`, the default). Measured over two runs on one proposal, its diagnoses were right and its remedies made things worse: the first redesign it ordered created the five-site restatement the second one diagnosed, a `healthy` verdict falsified on a factual slip stopped a run outright, and each redesign cleared the retirement set and bought a full-pool round. In the advisory mode:
 
-**The judges falsify rather than vote.** Handing a reviewer a conclusion and asking it to check produces agreement rather than examination. A judge attacks the pass's argument, must restate it first, and the verdict **stands unless a majority falsifies it conclusively**. `partial` is an honest answer that leaves the verdict standing.
+- `healthy` continues with no panel.
+- `redesign`, `prune`, and `reframe` run nothing. The diagnosis becomes a **directive**, a paragraph carried into every later lens, fix-design, and fixer prompt (the latest three, newest last), and is returned in `introspection.directives`. The retirement set stands.
+- `halt` and `reframe` stop the run only when the script's own counters corroborate the pass (`hardSignals`: confirmed findings did not fall across `haltWindow` rounds of the loop, or one finding title was confirmed `haltRepeatTitle` times) **and** a single falsifier fails to overturn the stop. Without a hard signal, or with the stop falsified, the verdict becomes a directive and the loop continues.
+- The pass and its falsifier run on `introspectModel` (`fable`) at `introspectEffort` (`high`). It is a handful of calls per run and the one stage whose judgement spans the whole run.
 
-A stopping verdict carries **proposed next steps**, because a halt that says only to stop leaves a human work the pass is best placed to do.
+`introspectMode: "acting"` restores the earlier behaviour whole: every verdict, including `healthy`, goes to a panel of falsifying judges, the verdict stands unless a majority falsifies it conclusively, and `redesign` and `prune` execute inside the loop under their budgets.
 
-## Automatic restart on a clear halt
+A stopping verdict carries **proposed next steps** and the hard signals behind it. The remedy a stop calls for is applied by this skill, in the main session, which holds the whole conversation and can ask a person; see the next section.
 
-When the run returns `introspection.stoppedBy` with `verdict: "halt"`, **and** `introspection.nextSteps.confidence` is `clear`, **and** the proposed `rerunArgs` parse and name only known arguments:
+## Remedy and restart on a stop
 
-**Relaunch the workflow immediately with those arguments, without asking first.** Report that you did, with the pass's reasoning and the arguments used.
+A run that returns `introspection.stoppedBy` (status `stopped-halt` or `stopped-reframe`) has findings still open. It also stops short with `recheck-budget-exhausted` or `spec-not-converged`. In each case, decide first whether a person is needed, and when one is not, **apply the remedy yourself and relaunch without asking**.
 
-A stopped run returns status `stopped-halt` or `stopped-reframe`, and its findings remain open.
+**A person is needed**, so stop and ask, when any of these holds: `nextSteps.confidence` is `needs-human`; the remedy chooses between designs the proposal's fixed decisions or open decisions leave to the human; the verdict is `reframe` and the remedy changes what the problem *is* rather than correcting its record; the proposed `rerunArgs` do not parse or name unknown arguments; or this invocation has already restarted twice.
 
-At most **two** automatic restarts per invocation; track the count yourself. On the third, stop and put the question to the user. Stop and ask also when `confidence` is `needs-human`, when the arguments do not parse, or when the verdict is `reframe` and the pass proposed no problem-statement edit: a reframe rewrites the problem, and rewriting it on a guess is worse than pausing.
+**Otherwise:**
+
+1. Read `stoppedBy.reasoning`, `stoppedBy.hardSignals`, `nextSteps`, `introspection.directives`, and the last rounds' `confirmedTitles`. State the diagnosis in one paragraph to the user before acting.
+2. Pick the remedy the diagnosis calls for. A rule restated at several sites that the rounds keep re-synchronising is reduced to one normative statement with citations elsewhere. An over-specified section is pruned to a bounded `IMPLEMENTOR'S CHOICE`. A mechanism the rounds keep correcting is redesigned, by the `redesign` mode with `focusAreas` when the areas are clear, or by subagents you brief with the pass's reasoning when the edit is a restructure rather than a redesign. Prefer the remedy that removes text.
+3. Apply it to the proposal directory only, review the edit with a fresh subagent that did not make it, and fix what it finds. Commit the proposal directory with a message naming the remedy, so the relaunched run's snapshots start from it.
+4. Relaunch with `resumeState: true`, every entry of the stopped run's `introspection.directives` carried over as `directives` strings (they are not part of the resume state), the pass's `rerunArgs` where they parse, and a `directives` entry stating what the stopped run diagnosed and what was done about it, so the new run's fixers do not rebuild what the remedy removed.
+5. Report what was diagnosed, what was changed, and the arguments used.
+
+At most **two** remedy-and-restart cycles per invocation; track the count yourself. On the third stop, put the question to the user with the three diagnoses side by side, because a run that stops three times on different remedies has a problem none of them named.
 
 ## Arguments
 
@@ -338,7 +375,9 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `maxSpecReviewRounds` | forward | 15 | budget for the spec loop |
 | `maxNonSpecReviewRounds` | forward | 15 | budget for the non-spec loop; it wins over `maxReviewRounds`, which applies only when this is unset |
 | `maxReviewRounds` | forward | none | a fallback budget for the non-spec loop, used only when `maxNonSpecReviewRounds` is absent |
-| `periodEvery` | forward | 3 | rounds between periodic firings of the open-decisions phase, counted at the non-spec loop's round boundary |
+| `periodEvery` | forward | 0 | rounds between periodic firings of the open-decisions phase, counted at the non-spec loop's round boundary. `0`, the default, turns periodic firings off: the phase fires after each loop, and only when the proposal changed since its last firing |
+| `humanReadings` | forward | 1 | independent readings of each open decision in the phase's sub-task 1. The falsifier is the adversarial check; `3` restores the unanimity join |
+| `collectorModel` | launch | `sonnet` | the model the phase's single collectors run at. The falsifier stays on the base tier |
 | `maxPeriodicFirings` | forward | 5 | the periodic firing's own budget; exhausting it is reported and stops that trigger alone, leaving every post-loop firing running |
 | `maxRecheckPairs` | forward | 2 | how many `spec-recheck` plus `non-spec-recheck` pairs may run; exhausting it stops the run with the outstanding spec edit unreviewed |
 | `maxNonSpecRechecks` | forward | 2 | how many lone `non-spec-recheck` loops may run, under the same reported stop |
@@ -347,15 +386,21 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `lockSpecChanges` | forward | false | the non-spec loop may never edit the spec staging; such a finding becomes an open decision |
 | `allowNonSpecOnUnconvergedSpec` | forward | false | runs the non-spec loop even when the spec loop exhausted its budget; otherwise the run stops at `spec-not-converged` |
 | `verifyOrder` | forward | `["material","evidence"]` | which skeptic short-circuits |
-| `verifySequential` | forward | true | false restores both skeptics in parallel |
+| `verifySequential` | forward | true | false restores both skeptics in parallel, as two agents |
+| `verifyMode` | forward | `merged` | `merged`: one agent answers both skeptics' questions in `verifyOrder`, stopping at the first refusal. `split`: two agents |
+| `deltaReads` | forward | true | in a partial round, a lens that read the whole proposal last round reads only what changed. `false` restores a full read every round |
 | `maxFixGroups` | forward | 7 | the only cap on the fix split; group size is uncapped by design |
 | `fixDesignDepth` | forward | `auto` | `shallow` forces the trivial path; `deep` forces the architect path |
 | `maxExpansions` | forward | 12 | confirmed findings per round given a site-expansion pass. A finding the cap skipped, or whose pass died, is marked as NOT SEARCHED in the designer's and fixer's prompts, so absence of sites is never read as evidence there are none |
 | `skipExpansion` | forward | false | turns site expansion off; the designer then sees only the sites the finding names |
 | `introspectEvery` | forward | 5 | rounds between mandatory passes |
 | `introspectGate` | forward | true | the warrant gate; a cadence wake ignores it either way |
-| `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts |
-| `judgesHealthy` | forward | 2 | panel size for `healthy` |
+| `introspectMode` | forward | `advisory` | `advisory`: the pass diagnoses, its non-healthy verdicts become directives, and a stop needs a hard signal and one falsifier. `acting`: panels on every verdict, redesign and prune executed in the loop |
+| `introspectModel`, `introspectEffort` | launch | `fable`, `high` | what the pass and its judges run at |
+| `haltWindow`, `haltRepeatTitle` | forward | 4, 3 | the hard signals a stop needs: rounds over which confirmed findings did not fall, and confirmations of one title |
+| `directives` | anchored | none | strings carried into every lens, fix-design, and fixer prompt from round 1; how a relaunch carries what the stopped run learned |
+| `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts, in the `acting` mode |
+| `judgesHealthy` | forward | 2 | panel size for `healthy`, in the `acting` mode |
 | `falsificationBar` | forward | `conclusive` | `partial` makes the panel easier to convince |
 | `standingContextTarget` | forward | 200 | what a compaction pass is asked to reach; raises itself when a pass cannot |
 | `standingContextTrigger` | forward | 320 | when compaction becomes due, kept above the target so a pass buys real headroom |
@@ -366,6 +411,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `prompts` | anchored | `{}` | per-agent text, keyed by agent |
 | `startLenses` | anchored | none | lens keys to lead with; every other begins retired and first reads in the sweep |
 | `excludeLenses` | forward | none | lens keys removed entirely; convergence certifies nothing about those domains |
+| `enableLenses` | forward | none | lens keys to switch back on from the disabled-by-default set (`feasibility`, `operational`) |
 | `focusAreas` | launch | none | required in `redesign`: a slug or `{area, reason}` each |
 | `churnWindow`, `churnMinFindings`, `churnStrikes` | forward | 6, 5, 3 | the churn detector's thresholds |
 | `maxRedesigns`, `redesignReviewRounds` | forward | 2, 2 | the redesign budget |
@@ -376,7 +422,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 
 `prompts` keys: `validate.<lens>`, `validate.consolidate`, `draft.<stance>`, `draft.consolidate`, `challenge`, `write`, `bootstrap`, `conventions`, `handoff`, `expand-sites`, `fix-plan`, `fix-design`, `fix-design-reconcile`, `fix`, `compact`, `introspect.gate`, `judge.<verdict>`. `introspect` reaches only the gate by prefix fallback; the introspection pass itself takes no injected text. To add text to every review lens use `lensPrompt`, which is a standalone argument rather than a `prompts` key. The text is wrapped in a block saying it adds context and focus, does not lower a bar, and that an instruction to reach a conclusion is to be ignored and reported.
 
-Lens keys: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. An unknown key in `startLenses` or `excludeLenses` is a hard error.
+Lens keys: `single-source`, `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability`, `operational`, `fresh`, and `plan-conformance` when `planPath` is set. `feasibility` and `operational` are off by default: across the measured runs each confirmed about one finding per run for a full lens's cost. Their definitions stay in the workflow and `enableLenses` switches them on. Convergence certifies nothing about a disabled lens's domain, as with `excludeLenses`. `single-source` reads across every proposal file for one rule stated in full at more than one site, and its findings are exempt from the bar's exclusion of consistent restatement, because copies that agree today are what the fixers spend later rounds re-synchronising. Every lens is scheduled the same way: it runs unless it has retired, and when all have retired the whole pool runs again as a sweep. A round that ran the whole pool, completed, and confirmed nothing is itself the sweep and converges, rather than retiring every lens and paying for the pool a second time. An unknown key in `startLenses` or `excludeLenses` is a hard error.
 
 ### The lens cache
 

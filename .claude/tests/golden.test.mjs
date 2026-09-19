@@ -96,6 +96,9 @@ const CASES = [
         "hash:*": "0123456789ab",
         "*:review:*": ({ label }) => (/^r1:/.test(label) ? { coverage: "c", findings: [F] } : { coverage: "c", findings: [] }),
         "*:dedup": { findings: [{ ...F, lenses: ["citations"] }] },
+        // The merged verifier is the default mode. Without this stub the default
+        // `{}` reads as a refusal and the whole fix path drops out of the digest.
+        "*:verify": { first: true, firstReason: "m", second: true, secondReason: "e" },
         "*:verify-material": { confirmed: true, reason: "m" },
         "*:verify-evidence": { confirmed: true, reason: "e" },
         "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
