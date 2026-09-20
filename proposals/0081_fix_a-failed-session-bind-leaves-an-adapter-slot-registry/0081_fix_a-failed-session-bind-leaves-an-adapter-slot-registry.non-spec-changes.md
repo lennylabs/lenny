@@ -2217,8 +2217,9 @@ enum SlotReclaimOutcome {
 what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's `**Slot cleanup:**`
 exception reports `released` for a cleanup that closes the session cleanly and fails only in
 removing the slot's slot tree, so both comments become false when that lands. Each one drops
-the effect list and cites the section that fixes the terms, matching the §6.2 fence annotation
-SPEC-4 replaces. In the `ReportSessionScrub` RPC comment, the sentence that reads, verbatim:
+the effect list and cites §5.2 for the terms. Both comments document the outcome values the RPC
+reports, where naming the report is the right thing to state, so each names the outcome and
+leaves what it implies to the section. In the `ReportSessionScrub` RPC comment, the sentence that reads, verbatim:
 
 ```
   // RELEASED when the slot's runtime, credential timers, and per-slot
@@ -2367,9 +2368,9 @@ edge, immediately after the `receiving_uploads` → `running` row:
 | `receiving_uploads` | `slot_cleanup` | A cleanup runs on the slot after its bind is abandoned or fails before the runtime has been given the session, a start still in flight included |
 ```
 
-The same table's `slot_cleanup` → `released` row (`docs/reference/state-machines.md:237`) is the
-published mirror of the fence annotation SPEC-4 replaces, and it takes the matching trigger-cell
-replacement. It currently reads:
+The same table's `slot_cleanup` → `released` row (`docs/reference/state-machines.md:237`) states
+the acts SPEC-4 stops asserting in the fence, and it takes its own trigger-cell replacement. It
+currently reads:
 
 ```
 | `slot_cleanup` | `released` | Slot workspace removed, processes killed, slot released |
@@ -2378,11 +2379,18 @@ replacement. It currently reads:
 Replace it with:
 
 ```
-| `slot_cleanup` | `released` | The cleanup reported `released` |
+| `slot_cleanup` | `released` | The cleanup ends and the slot stops counting toward the pod's occupancy |
 ```
 
-The page carries no specification citation, so the trigger cell states the trigger and leaves
-the cleanup's acts to the pages that document them.
+The fence entry SPEC-4 leaves behind carries a section pointer in place of a trigger, and this
+page carries no specification citation, so the cell states in the page's own voice the one
+property every traversal of this edge shares. Completion is not that property: a cleanup that
+closes the session cleanly and fails only in removing the slot's slot tree reaches `released`
+without having completed. Every traversal does end with the slot no longer counting toward the
+pod's occupancy, and the leaked disposition the page states below already distinguishes a
+leaked slot by the occupancy it retains, so the two outcomes of a cleanup read apart in the
+page's own terms. The cell leaves the cleanup's acts and the terms of each outcome to the
+pages that document them.
 
 **The pod state machine paragraph.** The paragraph under `## Pod state machine`
 (`docs/reference/state-machines.md:138`) is the published mirror of the projection prose SPEC-4
@@ -2430,8 +2438,9 @@ the substrings "end-of-session teardown", "recycle disposition", "ReportSessionS
 
 DOCS-2 makes three edits and republishes no rule. The `Shutdown` row states the two-field
 precondition and the outcomes, which is the part of the contract a reader of this page can
-observe. The `DemoteSDK` row states the registry effect rule 4 (**the create-and-stamp rule**)
-turns on. One added paragraph says what the token is for and where the rules are stated. The
+observe. The `DemoteSDK` row mirrors the registry removal the §4.7 row SPEC-1 amends, and carries
+the fresh-entry consequence rule 4 (**the create-and-stamp rule**) gives, because this page cannot
+cite the rule. One added paragraph says what the token is for and where the rules are stated. The
 cascade and its wire observables stay in §4.7.1: republishing them here would drop a
 normative cascade into a page whose gRPC section is a one-line orientation table
 (`.claude/rules/doc-content.md`, "Match technical depth to the page"), and a runtime author can
