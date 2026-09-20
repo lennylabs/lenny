@@ -2025,7 +2025,7 @@ invariant does not exist, and a battery asserting it would pass a defective adap
 conforming one, so the re-cut is a requirement rather than a preference.
 
 **The rule set under test.** §4.7.1 numbers and names the rules and states, per numbered rule,
-the gRPC status, the `ErrorCode` and the `Shutdown` outcome an adapter answers on, and §15.4
+whatever answer an adapter gives, and §15.4
 states what conformance against them means. Neither is restated here. The battery is derived
 from those two by reference: every case below names the rule it drives, and it reads its
 assertion off that rule at the time the test is written. A rule that acquires no case shows up as a missing number in the
@@ -2143,13 +2143,13 @@ for a rule, and each appears at both tiers:
   applying them in the other order as non-conformance.
 - **The reclaim hold against the `Shutdown` cascade.** A `Shutdown` for a session whose cleanup
   is running is admitted and answers under rule 11, while a bind-sequence request for the same
-  identifier is refused under rule 2. The interaction is stated by §15.4's reclaim-hold block
+  identifier is refused under rule 2. The interaction is stated by §5.2's reclaim-hold paragraph
   rather than by either rule, and an adapter that applies the hold to a reclaim blocks its own
   cleanup behind itself.
 
 ## Staged schema, chart, and migration changes
 
-### SCHEMA-1 · schemas/lenny-adapter.proto, scripts/seed-claim-register.py, tests/claim-map.json · the bind attempt, the mid-session conditioning, the two-field teardown precondition, the reclaim outcome, the two refusal codes, and the scrub-outcome comments
+### SCHEMA-1 · schemas/lenny-adapter.proto, scripts/seed-claim-register.py, tests/claim-map.json · the bind attempt, the mid-session conditioning, the two-field teardown precondition, the reclaim outcome, the two refusal codes, and the scrub-outcome and report-trigger comments
 
 One window, and the only schema step in this proposal. Every declaration the edit makes is
 additive: two enum values, one enum, and nine fields, no field removed, no field renumbered, no
@@ -2214,8 +2214,8 @@ enum SlotReclaimOutcome {
 }
 ```
 
-**The scrub-outcome comments.** Two comments on the shipped `ReportSessionScrub` surface state
-what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's §5.2 disposition table
+**The scrub-outcome and report-trigger comments.** Comments on the shipped `ReportSessionScrub`
+surface state what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's §5.2 disposition table
 reports `released` for a cleanup that closes the session cleanly and fails only in a directory
 removal, so both comments become false when that lands. Each one drops
 the effect list and cites §5.2 for the terms. Both comments document the outcome values the RPC
@@ -2251,8 +2251,49 @@ becomes:
 ```
 
 The `SESSION_SCRUB_OUTCOME_LEAKED` comment beside it already states its own case as a resource
-that could not be reclaimed and is unedited. No enum value, field number or RPC signature
-moves, so the regenerated package is unchanged by these two replacements.
+that could not be reclaimed and is unedited.
+
+Two further comments on the same surface state that the adapter files the report on every
+session release, which is the universal SPEC-3's §5.2 scrub-model biconditional withdraws. Each
+one loses the universal and cites §5.2 for the cleanups the adapter reports. The opening
+sentence of the `ReportSessionScrub` RPC comment reads, verbatim:
+
+```
+  // ReportSessionScrub reports the outcome of the per-slot cleanup the
+  // adapter runs on every session release (§5.2), across the
+  // `maxConcurrentSessions > 1` and recycling cases alike.
+```
+
+becomes:
+
+```
+  // ReportSessionScrub reports a per-slot cleanup's outcome for the
+  // cleanups §5.2 states the adapter reports, and for no other release.
+```
+
+The opening sentence of the `ReportSessionScrubRequest` message comment reads, verbatim:
+
+```
+// ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
+// adapter reports on every session release.
+```
+
+becomes:
+
+```
+// ReportSessionScrubRequest carries a per-slot cleanup's outcome, for the
+// cleanups §5.2 states the adapter reports and for no other release.
+```
+
+The rest of that comment, which names `pod_id` as the `agent_pod_state` row key the gateway
+increments `sessionsServed` on and `session_id` as the released session, is unedited and stays
+true: the increment rides the report. The `SessionScrubOutcome` enum's own opening comment and
+the `ReportSessionScrubResponse` comment are unedited, the first because it describes the
+cleanup, which still runs on every session release, and the second because it states the
+increment as a gateway-side effect with no trigger of its own.
+
+No enum value, field number or RPC signature moves, so the regenerated package is unchanged by
+these replacements.
 
 **The fields.** Every number below was checked free against the message it lands in, in
 `schemas/lenny-adapter.proto` as the file stands:
@@ -2519,7 +2560,7 @@ the `**Adapter-to-Gateway RPCs:**` heading. It is the whole of what this page sa
 token:
 
 ```
-**Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the requests through which that attempt creates or resolves the session's slot registry entry. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy: a reclaim naming an attempt that no longer owns the slot answers `superseded` and removes nothing, so it cannot destroy a session a later attempt has started. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule the gRPC status code, the `ErrorCode` and the `Shutdown` outcome an adapter answers on; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
+**Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the requests through which that attempt creates or resolves the session's slot registry entry. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy: a reclaim naming an attempt that no longer owns the slot answers `superseded` and removes nothing, so it cannot destroy a session a later attempt has started. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule whatever answer it fixes; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
 ```
 
 DOCS-2 lands beside DOCS-1, after SPEC-1, SPEC-3 and SPEC-5 have landed the contract it mirrors.
@@ -3595,7 +3636,8 @@ of these cases:
 ## Files touched on application (non-spec)
 
 - `schemas/lenny-adapter.proto` · the two `ErrorCode` values, the `SlotReclaimOutcome` enum,
-  the nine fields SCHEMA-1 states, and the two scrub-outcome comment replacements.
+  the nine fields SCHEMA-1 states, and the scrub-outcome and report-trigger comment
+  replacements SCHEMA-1 states.
 - `pkg/proto/adapter/v1` · regenerated by `make generate-proto` in the same commit as the proto
   edit.
 - `scripts/seed-claim-register.py` · the three rows SCHEMA-1 states, two `WIRED` and one
