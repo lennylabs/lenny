@@ -1614,7 +1614,7 @@ is out of scope here. This implements rule 9 (**the first-frame rule**).
 `codes.InvalidArgument` today, which `SlotBindError.Reason()` maps to
 `SlotReasonWorkspaceValidation` and `NonRetryable()` reports true for. Routing the three
 sentinels through `slotResolveError` is what keeps rule 5's refusal transient and rule 6's
-refusal correctly permanent, on the categories §15.4 publishes for each:
+refusal correctly permanent, on the categories rule 5 and rule 6 state:
 
 | Site | Wrap | Span category stamped at |
 |:--|:--|:--|
@@ -2021,11 +2021,11 @@ The shipped CONF-1 asserted a one-entry-one-epoch invariant. Under the amended m
 invariant does not exist, and a battery asserting it would pass a defective adapter and fail a
 conforming one, so the re-cut is a requirement rather than a preference.
 
-**The rule set under test.** §4.7.1 numbers and names the rules, and §15.4 publishes, per
-numbered rule, the gRPC status, the `ErrorCode` and the `Shutdown` outcome an adapter answers on.
-Neither is restated here. The battery is derived from those two by reference: every case below
-names the rule it drives, and it reads its assertion off that rule and off that rule's §15.4 row
-at the time the test is written. A rule that acquires no case shows up as a missing number in the
+**The rule set under test.** §4.7.1 numbers and names the rules and states, per numbered rule,
+the gRPC status, the `ErrorCode` and the `Shutdown` outcome an adapter answers on, and §15.4
+states what conformance against them means. Neither is restated here. The battery is derived
+from those two by reference: every case below names the rule it drives, and it reads its
+assertion off that rule at the time the test is written. A rule that acquires no case shows up as a missing number in the
 list below, and a case cannot drift from its rule, because the rule text lives in §4.7.1 alone.
 
 **Tier 3 is the enforcement.** The rules are wire behaviour and the precedent is exact:
@@ -2055,7 +2055,7 @@ bufconn and again at tier 10 in process:
 
 - Rule 1, **the pairing rule**: drives a non-mid-session bind-sequence request carrying an empty
   `bind_attempt`, and a mid-session request carrying a non-empty one; asserts the status that
-  rule's §15.4 row gives and that the adapter created, resolved and stamped nothing.
+  rule states and that the adapter created, resolved and stamped nothing.
 - Rule 2, **the reclaim hold**: drives a bind-sequence request for a slot whose identifier the
   adapter holds through a running cleanup; asserts the status §15.4's
   reclaim-hold block gives, and that nothing was created and nothing resolved. Both code sites
@@ -2065,17 +2065,17 @@ bufconn and again at tier 10 in process:
   are one answer to the caller.
 - Rule 3, **the mid-session-create rule**: drives a mid-session `FinalizeWorkspace` and a
   mid-session `PrepareWorkspace` for a session the adapter holds no entry for; asserts the status
-  that rule's row gives and that the registry and the filesystem are both unchanged.
+  that rule states and that the registry and the filesystem are both unchanged.
 - Rule 4, **the create-and-stamp rule**: drives a `Resume` for a slot the adapter holds no entry
   for; asserts that the entry it creates carries that request's token, read back through a later
   `Shutdown` naming that token and one naming another.
 - Rule 5, **the attempt identity rule**: drives a bind-sequence RPC carrying attempt B against an
-  entry stamped A; asserts the status, the `ErrorCode` and the category that rule's row gives,
+  entry stamped A; asserts the status, the `ErrorCode` and the category that rule states,
   and that the entry, its `current` directory and its `credentials.json` survive the call.
 - Rule 6, **the started-session rule**: drives a non-mid-session bind-sequence RPC against an
   entry whose session has started, a §7.4 mid-session upload against that same entry, and a
   repeat `ConfigureWorkspace` for the session that started on that pod; asserts the status and
-  the `ErrorCode` that rule's row gives for the first, and admission for the two the rule
+  the `ErrorCode` that rule states for the first, and admission for the two the rule
   exempts. The mid-session arm is `TestMidSessionUploadIsAdmittedOnAStartedSession`, driven over
   the connection the successful bind published, and it is written with the rest rather than
   deferred: its absence is what let the §7.4 regression stand for three rounds.
@@ -2084,7 +2084,7 @@ bufconn and again at tier 10 in process:
   entry whose session has started; asserts each is admitted and returns the entry with its token
   exactly as found.
 - Rule 8, **the start-confirmation rule**: drives a start whose entry an unconditional `Shutdown`
-  removes while the fake runtime blocks inside `Start`; asserts the status that rule's row gives,
+  removes while the fake runtime blocks inside `Start`; asserts the status that rule states,
   that the session is taken back off the shared runtime process, and that no cleanup outcome is reported. The fake
   runtime's block inside `Start` is what makes the ordering deterministic.
 - Rule 9, **the first-frame rule**: drives a `PrepareWorkspace` stream whose second frame carries
@@ -2093,23 +2093,23 @@ bufconn and again at tier 10 in process:
   first frame's staged bytes, leaves the entry's stamp as the first frame set it, and creates no
   second entry.
 - Rule 10, **the teardown-pairing rule**: drives a `Shutdown` carrying neither field and one
-  carrying both; asserts the status that rule's row gives and that the entry, the tree and the
+  carrying both; asserts the status that rule states and that the entry, the tree and the
   credential file are each intact.
 - Rule 11, **the no-entry rule**: drives a `Shutdown` of each form for a session the adapter
-  holds no entry for; asserts the status and the outcome that rule's row gives, that nothing is
-  removed, and that neither teardown runs.
+  holds no entry for; asserts the outcome that rule states, the successful status rule 15 fixes
+  for every reclaim outcome, that nothing is removed, and that neither teardown runs.
 - Rule 12, **the unconditional-teardown rule**: drives a `Shutdown` asking for the unconditional
-  teardown against an entry the adapter holds; asserts the outcome that rule's row gives, that
+  teardown against an entry the adapter holds; asserts the outcome that rule states, that
   the slot release ran, and that the runtime teardown ran for an entry whose session has started.
   This is the arm a battery of refusal cases alone never reaches.
 - Rule 13, **the attempt-mismatch rule**: drives a `Shutdown` naming attempt B against an entry
   stamped A, and a `Shutdown` naming an attempt against an entry a `StartSession` or a
   `ConfigureWorkspace` created and which therefore carries no token; asserts the outcome that
-  rule's row gives on each arm, and that the entry, the tree and the credential file survive
+  rule states on each arm, and that the entry, the tree and the credential file survive
   both. The second arm is the fail-closed one, and without it a reclaim naming any attempt would
   collect a successor's live session.
 - Rule 14, **the attempt-match rule**: drives a `Shutdown` naming the token the entry carries;
-  asserts the outcome that rule's row gives, that the slot release ran, and that the runtime
+  asserts the outcome that rule states, that the slot release ran, and that the runtime
   teardown ran for an entry whose session has started. This is the positive the rule 11 and rule
   13 cases are read against.
 - Rule 15, **the reclaim-outcome rule**: drives one `Shutdown` reaching each of rule 11, rule 12,
@@ -2135,7 +2135,7 @@ for a rule, and each appears at both tiers:
   then stamps admits both.
 - **Rule 5 evaluated ahead of rule 6.** A bind-sequence RPC carrying attempt B, with
   `mid_session` false, against an entry stamped A whose session has already started, answered as
-  rule 5's §15.4 row gives rather than as rule 6's, with the entry, its `current` directory and
+  rule 5 states rather than as rule 6 states, with the entry, its `current` directory and
   its `credentials.json` surviving. The request meets both rules' conditions, and §15.4 publishes
   applying them in the other order as non-conformance.
 - **The reclaim hold against the `Shutdown` cascade.** A `Shutdown` for a session whose cleanup
@@ -2372,7 +2372,7 @@ DOCS-2 makes three edits and republishes no rule. The `Shutdown` row states the 
 precondition and the outcomes, which is the part of the contract a reader of this page can
 observe. The `DemoteSDK` row states the registry effect rule 4 (**the create-and-stamp rule**)
 turns on. One added paragraph says what the token is for and where the rules are stated. The
-cascade stays in §4.7.1 and its wire observables in §15.4: republishing them here would drop a
+cascade and its wire observables stay in §4.7.1: republishing them here would drop a
 normative cascade into a page whose gRPC section is a one-line orientation table
 (`.claude/rules/doc-content.md`, "Match technical depth to the page"), and a runtime author can
 neither issue a request those rules govern nor observe a refusal they produce
@@ -2401,7 +2401,7 @@ the `**Adapter-to-Gateway RPCs:**` heading. It is the whole of what this page sa
 token:
 
 ```
-**Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the requests through which that attempt creates or resolves the session's slot registry entry. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy: a reclaim naming an attempt that no longer owns the slot answers `superseded` and removes nothing, so it cannot destroy a session a later attempt has started. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), and [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) publishes, for each numbered rule, the gRPC status code, the `ErrorCode` and the `Shutdown` outcome an adapter author observes on the wire. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
+**Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the requests through which that attempt creates or resolves the session's slot registry entry. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy: a reclaim naming an attempt that no longer owns the slot answers `superseded` and removes nothing, so it cannot destroy a session a later attempt has started. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule the gRPC status code, the `ErrorCode` and the `Shutdown` outcome an adapter answers on; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
 ```
 
 DOCS-2 lands beside DOCS-1, after SPEC-1, SPEC-3 and SPEC-5 have landed the contract it mirrors.
@@ -3020,8 +3020,10 @@ addition.
 **The behavioural cases**, one file, carrying CONF-1's case list one for one: a case per numbered
 rule, each titled for its rule, followed by the cases CONF-1 names as stated by no single rule.
 A rule with no case is visible as an absent title. Each case drives the rule's condition over the
-real transport and asserts the status, the `ErrorCode` and the `Shutdown` outcome that rule's
-§15.4 row gives, together with the registry and filesystem effects the rule states:
+real transport and asserts the status, the `ErrorCode` and the `Shutdown` outcome that rule
+states, together with the registry and filesystem effects the rule states. For rules 11 through
+14 the outcome is the one the rule states and the status is the successful one rule 15 fixes for
+every reclaim outcome:
 
 - Rule 1, **the pairing rule**.
 - Rule 2, **the reclaim hold**, with a row per RPC across the two sites that test it.
