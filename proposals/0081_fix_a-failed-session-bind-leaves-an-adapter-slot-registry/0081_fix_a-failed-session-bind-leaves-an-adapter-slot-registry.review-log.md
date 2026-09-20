@@ -159,7 +159,7 @@ delta is `git diff HEAD -- proposals/0081_*/`. Line numbers into the proposal fi
 - **The three staged sites that restated the leaked-cleanup universal are now pointer-only**: the `**Slot cleanup:**` leaked-outcome sentence, the `**Whole-pod replacement trigger:**` parenthetical, and the §6.2 `slot_cleanup ──→ leaked` fence entry. The shipped `See **`leaked` slot semantics**` sentence after the first is unstaged and stays.
 - **DECISION: DOCS-2 makes FOUR edits.** The `Shutdown` row (`adapter-contract.md:75`), the `DemoteSDK` row (:64), the `ReportSessionScrub` row (:81, re-keyed to "for the cleanups the `Shutdown` row states ... and for no other release") and one bind-attempt paragraph. The stale "three edits" count is deleted rather than re-counted.
 - **DECISION: §15.4's hold block closes with a PURE POINTER,** "`Shutdown` is outside this hold, on the terms [§5.2] states, and is answered under the rules [§4.7.1] states for it." §15.4's only statement of its own is rule 2's `ABORTED` status, which its lead-in already declares. Rejected: deleting the sentence; a third declared exception.
-- **DECISION: the §15.4 conformance criterion is fixed by DELETION plus ONE scope sentence, never by a per-rule quantifier.** The answer enumeration ("the gRPC status, the `ErrorCode` and the `Shutdown` outcome ... except in two places") is gone; the criterion reads "answers as it states", and the lead-in states what the rules govern and that a request's own work is §4.7's, per RPC.
+- **DECISION: §15.4's `**Bind attempt token contract:**` block is TWO sentences, a pointer at §4.7.1 and a request-quantified conformance criterion, and carries no domain sentence, no exception clause and no answer enumeration.** The criterion reads "refuses or admits, performs or withholds the acts, and answers as that section states for that request", so it needs no "and no others" universal and no statement of what per-RPC work is outside the rules; none is made in §15.4 or in §4.7.1's `**Admission.**` preamble. Rejected, one per rewrite: the per-rule wire table (fcac6a13c), the rule-quantified criterion with two exceptions (440cde9ec), the round-10 domain sentence. `[redesign.2.fix.1]`.
 - **The two "exceptions" the deleted §15.4 clause named were never exceptions.** Rule 2 cites §15.4 for its status in its own text, and rule 15 sits inside §4.7.1.
 - **DECISION: rule 7 is one sentence, "Any other request is admitted."** Its no-overwrite clause is carried by the stamp-once paragraph. The clause is what makes the admission cascade total, which the §15.4 criterion rests on; do not re-add a token clause.
 - **DECISION: §7.1 keeps only the consequence, "A compensation therefore always names one."** The minting timing and the response-independence live in §4.7.1's token block alone; the same pair was written a third time in the Edge-cases fenced-bind bullet and was swept to a citing form in the same edit.
@@ -217,10 +217,12 @@ delta is `git diff HEAD -- proposals/0081_*/`. Line numbers into the proposal fi
   annotation.** No member of that family is correct, so both `slot_cleanup` fence entries are bare `(see
   §5.2)` pointers; put no trigger back. "Cleanup timeout exceeded" is none of the table's `leaked`
   grounds. Sweep both fence siblings and state-machines.md in one edit.
-- **MISTAKE, THREE attempts at ONE §15.4 paragraph.** A per-rule wire table, then a rule-quantified
-  criterion unsatisfiable when a request meets rules 5 and 6 at once. §15.4 carries no rule number,
-  condition or selection predicate; rule 2 alone delegates its status there. §15.4 completeness findings
-  are refuted six times.
+- **MISTAKE, FOUR attempts at ONE §15.4 paragraph, each answering the last one's defect.** A per-rule
+  wire table, then a rule-quantified criterion unsatisfiable when a request meets rules 5 and 6 at
+  once, then a domain sentence duplicating §4.7.1's preamble in other words. The fifth form is the
+  whole rewrite from the settled decision (two sentences, `[redesign.2.fix.1]`); fix it only as a
+  whole. §15.4 carries no rule number, condition, selection predicate or domain; rule 2 alone
+  delegates its status there. §15.4 completeness findings are refuted six times.
 - **Do NOT enumerate the cleanup's acts anywhere but §5.2's `**Slot cleanup:**` bullet.** A second
   list, even one opened with "includes", goes stale. The failed-cleanup residue is NOT all on disk: a
   failed process-group kill leaves live processes sharing `/tmp`, cgroup and network with co-tenants.
@@ -474,7 +476,6 @@ delta is `git diff HEAD -- proposals/0081_*/`. Line numbers into the proposal fi
 - **Does the whole-pod scrub racing the per-slot cleanup on the removing arm want an ordering statement?** — OPEN: `answerShutdown` fires asynchronous `startPodScrub` while the hold is held and the tree removal runs.
 - **Does the process-group kill fall inside the "every act that cleanup owes the slot" completion predicate?** — UNVERIFIED: nobody traced where the kill runs or whether its failure is observable.
 - **Does CONF-1 owe a failed-cleanup arm for the reclaim-hold rule?** — OPEN: a third-party harness cannot force a failed removal, and the recycle-carrying `Shutdown` scrub has no case for want of a `ReportPodScrub` observer.
-- **Do `docs/reference/execution-modes.md:68` and `docs/operator-guide/security-principles.md:33` need a DOCS-4?** — OPEN: each says the adapter reports every release, which the §5.2 biconditional falsifies; no deliverable opens either.
 - **Neither newly recorded residue has any observability** — OPEN: a dead attempt's stamped entry yields only transient `SLOT_BIND_ATTEMPT_SUPERSEDED` refusals, and the untokened-entry counter is unscraped. For a human.
 - **Open decision 20: do the two new `ErrorCode` values take 28 and 29 or the Phase-2 range?** — OPEN, for a human; the next adjudication owes a recommendation, alternatives and confidence.
 - **Are the two `WIRED` claim-register rows owed at all?** — OPEN: §28.4 obliges a row only for a normative §28 statement and `Shutdown` carries none; dropping them is cheaper than editing the generator.
@@ -498,7 +499,6 @@ delta is `git diff HEAD -- proposals/0081_*/`. Line numbers into the proposal fi
 - **Can a `PrepareWorkspace` frame on an already-admitted call write into a tree `removeSlotTree` is deleting?** — UNVERIFIED [spec.10.review-mechanism.1]: rule 2 does not re-admit a frame; reachability turns on whether the handler honours the cancelled server context.
 - **Do the two SPEC-6 series belong in §16.1.1's "Used on" column?** — UNVERIFIED [spec.10.review-client-surface.1]: the column is prose-descriptive and no gate reads it.
 - **Does `podStateGatewayWrittenSentence` keep its trailing `ReportPodScrub` clause after the re-key?** — UNVERIFIED [spec.9.review-fresh.1]: the implementor should keep the full sentence rather than truncate the constant.
-- **Is "the record of which sessions the pod's shared runtime process holds" the right scope vocabulary in the §15.4 criterion,** or does rule 8's start confirmation fold under "the slot registry" wholesale? — UNVERIFIED [spec.10.fix-design-G2.1].
 - **Should §6.2's projection preamble at spec/06:80 keep enumerating the inputs at all?** — OPEN [spec.10.review-edit-sites.1]: SPEC-4 adds a fourth input to §4.6.1's enumeration and not to §6.2's; the remedy is a reduction ending that clause at the §4.6.1 citation.
 - **Has the "which teardown it asks for" vocabulary leaked into the DOCS-2 `adapter-contract.md` mirror?** — UNVERIFIED [spec.5.review-mechanism.1]: only `spec-changes.md` was reviewed; grep the whole directory before declaring that fix complete.
 - **Is the ten-second graceful window an operator-tunable constant?** — OPEN [spec.10.review-single-source.1]: §10.1 states no close window and the code only comments "best-effort", so the figure is minted here; `code-best-practices.md` requires a non-spec default to be overridable.
@@ -522,15 +522,9 @@ delta is `git diff HEAD -- proposals/0081_*/`. Line numbers into the proposal fi
   The same file's `:104` and `pkg/gateway/runtime/slothealth/slothealth.go:33` additionally carry the
   RETIRED "cleanup timeout exceeded" gloss for `slot_cleanup → leaked`, a fourth and fifth site beside
   the three prose homes the staging fixes. Neither is in any edit list; the code lane owns them.
-- DEFERRED [pkg/agentpodstate/agentpodstate.go, migrations/0167_*.up.sql, the tier-11 scrub-report
-  addressing gate's header]: each keys `sessions_served` or the report on "each session release".
-  SPEC-3's §12.6 re-key falsifies that, and no deliverable names any of the three.
 - DEFERRED [schemas/lenny-adapter.proto, `Shutdown` RPC comment and `ErrorCode` enum header]: the RPC
   comment predates the two-teardown split, and "The catalog below mirrors spec §15.1" is false for
   codes 27, 28, and 29. SCHEMA-1 stages the `ReportSessionScrub` comments only.
-- DEFERRED [docs/reference/execution-modes.md, docs/operator-guide/security-principles.md]: each ends a
-  sentence with "and the adapter reports its outcome to the gateway", the universal SPEC-3 withdraws.
-  The repair deletes that clause. No DOCS deliverable opens either page.
 - DEFERRED [docs/operator-guide/troubleshooting.md, the `setup_command_failed` row]: after SPEC-5 the
   reason has a second cause, a started-session refusal that ran no setup command, for which both
   listed remedies are wrong. No docs deliverable opens the page.
@@ -570,14 +564,6 @@ delta is `git diff HEAD -- proposals/0081_*/`. Line numbers into the proposal fi
   It already omits "disposition", so it is a loose paraphrase that was incomplete before this proposal;
   record only. The authoring source is the Go doc comment plus `make generate`, never the two generated
   YAMLs (`charts/lenny/crds/lenny.dev_sandboxes.yaml`, `pkg/embedded/crds/lenny.dev_sandboxes.yaml`).
-- DEFERRED [non-spec-changes.md, the two tier-11 gate files]: neither appears in a deliverable or in
-  `## Files touched on application (non-spec)`. `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`
-  owes DELETION of its spec/12 substring block (after the read-clause reduction §12.6 states no
-  evaluation point for it to compare; its §5.2, §6.2 and state-machines.md checks are untouched), and
-  `tests/tier11_docs/spec_28_register_writers_test.go` owes a re-key of `podStateGatewayWrittenSentence`
-  from "incremented at each session release (`ReportSessionScrub`)" onto "incremented on each
-  cleanup-outcome report (`ReportSessionScrub`)", the rest of the sentence unchanged. One code-lane
-  deliverable should carry both, landing in the same step that applies SPEC-3.
 - DEFERRED [non-spec-changes.md, CONF-1 case "The reclaim hold against the `Shutdown` cascade"]: it
   attributes the `Shutdown` carve-out to §15.4's reclaim-hold block "rather than by either rule". After
   round 5 reduced that block's closing sentence to a pointer, the stating site is §5.2's reclaim-hold
@@ -624,6 +610,7 @@ Bodies are in the archive file. This list names subjects only.
 - Open, still unclosed and cut for budget (implementor-level or pre-existing; re-derive from the archive when one matters): §29 incomplete-enumeration rule; §29.10 shared list; concurrent resume occupancy and orphan GC reach; §15.1 retry reaching a draining pod and `ClaimSlot` pass 1; resume-path `error_type`; compensation budget pin and `budget/2` margin, `SocketRuntimeProcess.Close` grace, and override; lease hold bound under §4.9; `SLOT_FAILED` undocumented; `configuration.md:99`; `/sessions/` and `/artifacts/` in the action list and §6.4; timer cancellation conditioned on credential removal; handler writing after `removeSlotTree`; hold spanning the scrub report; non-`Shutdown` hold-retention seam; CODE-2 idempotency sentence and `Resume` confirmation reacher; `ensureSlotStateLocked` whole-of-the-rule comment; zero-frame `PrepareWorkspace` senders; `slotResolveError` preserving `ABORTED`; coordinator handoff fencing the reclaim; §28.3 `LNK-POD-GRPC` multiplicity; N8 in proposal rationale; `superseded` producers; `recordSetupCommandFailed` audit; spec/07:208 and §15.1 precondition rows and "fresh pod" sentence; `state-machines.md` released-row actions; DOCS-2 tier-11 pins, annotation widening and audience clause; `metrics.md` gateway row placement; `Client.Shutdown` doc comment; CODE-1 leak-accounting paragraph; `SlotReclaim` hook arity; `slotFailureWorkspaceFinalize`; CODE-4 `Targets:` list and deliverable heading file lists; checklist tier digits; unused `noteCompensationOutcome` at S10; test-file lists (`binder_test.go`, `start_test.go`, `manifest_fields_test.go`, tier-3 file names, `slot` basename credit, `client_test.go` §15.4 credit); §11.4 fan-out test; setup-envelope tier-3 case; `holdstate_test.go` fake runtime; `fakeSDKWarmRuntime` workspace base; `terminal_reclaim_internal_test.go`; 0079 overlap row; summary index third anchor and `summary.md:141` attribution; `Resume` stall leak rate; re-placement onto a held pod.
 - Deferred entries dropped in the 2026-09-20 hard compaction (bodies in the archive): proto `ReportSessionScrub`/`SessionScrubOutcome` comments (discharged, SCHEMA-1); spec/06 `slot_cleanup → released` annotation and its docs mirror (discharged, SPEC-4 and DOCS-1); error-catalog "nothing, deliberately" (mechanism gone, no-retry alternative); docs four sites that stay true (negative record); archive WATCHOUT re-point and ledger "fresh token" sites (log-only targets); CONF-1 per-frame epoch case, precedence note, property count, short-four-cases (discharged, CONF-1 is one case per rule with rule 9); every "RETIRED IN PASS 22" checklist and non-spec entry (discharged); DOCS-3 missing, DOCS-3 index line, summary "four replacements" (discharged, SPEC-5 now stages four); DOCS-1 `state-machines.md` projection clause (discharged); DOCS-2 `ReportSessionScrub` row (discharged); registered-but-unbound credential claim (discharged); §5.2 action list four trees (carried in summary defects); CODE-5 `Targets:` `isTransientPodClaimError`, CODE-6 heading file list, `noteCompensationOutcome` inverted clause, CODE-9 `catalog.go` path, SPEC-6 preamble count, summary CODE-9 bullet, summary "both RPCs", summary SPEC-2/SPEC-3 bullets, summary "Watch out for" connection bullet, summary Decisions file list, "Spec files touched" `Shutdown`-row description, §15.4 table dependants (discharged); SCHEMA-1 gate-text quote and tier-1 wire-rule five-RPC wording (mechanism gone or cosmetic); checklist frame-predicate and S10 negatives (negative records); accepted-residue two-item enumeration (discharged by the disposition table); duplicates of the `Client.Shutdown`, `Binder.drain`, CODE-4 Targets, CODE-9 verbatim, tier-7a, and checklist S1/S15 entries (duplicate).
 - Retired in compaction pass 25, closed by a `CORRECTS` or discharged by the staging: the Open "Does §15.4 state a rule of its own after all?" (round 5 reduced the block's closing sentence to a pointer, leaving rule 2's `ABORTED` status, which the lead-in declares); the Open "Does the staged §15.4 conformance criterion over-reach?" (round 10 deleted the answer enumeration and added the scope sentence, and the related UNVERIFIED entries about "except in two places" no longer describe the staged text); the Deferred on SCHEMA-1's two proto report-trigger sentences (absorbed into SCHEMA-1 in round 10); the Deferred on DOCS-2's `adapter-contract.md` `ReportSessionScrub` row (added as DOCS-2's fourth edit in round 4). Carried unsettled for a later pass: `prune.1.fix.1` corrects a Settled entry, "the 'what can meet the reclaim hold' finding was closed by prose at three sites", saying the non-spec accepted-failure-mode bullet is no longer one of the three; that entry is in neither this section nor the live text, so the correction is recorded here verbatim rather than applied.
+- Retired by `[redesign.2.fix.1]`: the Open "Do `execution-modes.md` and `security-principles.md` need a DOCS-4?" (DOCS-4 now stages both edits); the UNVERIFIED on the §15.4 criterion's scope vocabulary (the scope sentence is deleted); the Deferred entries on `agentpodstate.go`, `migrations/0167_*.up.sql` and the tier-11 addressing gate's header, on the two docs pages, and on the two tier-11 `sessions_served` gate files (each now has one row in the SPEC-3 carrier table, and the §12.6 block states the grep the implementor runs).
 - Retired by earlier passes (1 through 24, `prune.1.fix.1`), bodies in the archive: the `coordination_generation` fence question; the resume-path exclusion; the slothealth-ledger resume question; §29.4 scoping; the tier-7a drain-gate items; Redis rehydration of leaked occupancy (own proposal); `releaseCredentials` and user-source leases; the reclaim-deadline margin; the spec/18 edit question; a fourth `SlotReason`; every bind-epoch, epoch-latch, `bind_epoch` field-number, and `ExcludePod(s)` entry; the fourteen-step checklist; the §10.1.4 and `DemoteSDK` report carve-outs; the "one return-to-pool edge" question; whether `superseded`, a pairing-rule failure, or `absent` still runs the whole-pod scrub.
 
 ## Ledger
@@ -3357,3 +3344,98 @@ defects in the shipped tree, while these are properties of the design staged her
 FACT: `## Deliverable index` was preserved line for line in last position, its closing paragraph on
 tests and CONF-1 included. Nothing in this pass touched a staged change file, the problem statement
 or the implementation checklist.
+
+### [redesign.2.fix.1]
+
+DECISION: the staged §15.4 `**Bind attempt token contract:**` block is rewritten WHOLE from the
+settled decision ("§15.4 is a pointer at §4.7.1 plus the conformance criterion") as exactly two
+sentences, a pointer at §4.7.1 that says the statement there is normative for a third-party
+adapter, and a conformance criterion quantified over requests: "An adapter conforms when, on every
+request, it refuses or admits, performs or withholds the acts, and answers as that section states
+for that request, and an adapter that behaves otherwise on any request does not conform." —
+BECAUSE the criterion quantifies over what §4.7.1 states for the request, so it carries no "and no
+others" universal and therefore needs no statement of what the rules govern or of what per-RPC
+work (setup commands, workspace writes, credential writes) is outside them; the rules that
+withhold an act (rule 13's "performs neither teardown", rule 11's "removes nothing") are reached
+as stated acts, and the critical-section paragraph's own "does not conform" is reached through the
+pointer. No domain statement is added to §4.7.1's `**Admission.**` preamble either, because
+nothing in the criterion needs one — ALTERNATIVES, the four earlier forms, each rejected because
+it answered the previous form's defect rather than restating the decision: the fifteen-row
+per-rule wire table (fcac6a13c), which restated §4.7.1's answers; the rule-quantified criterion
+with the "gRPC status, `ErrorCode` and `Shutdown` outcome ... except in two places" enumeration
+(440cde9ec), unsatisfiable when a request meets rules 5 and 6 and false of rules 4 and 7; the
+round-10 form with "performs the acts it states and no others" plus a domain sentence
+(uncommitted, `[spec.10.fix-G2.1]`, `[spec.10.fix-followup.1]`), which stated the rules' scope a
+second time beside the `**Admission.**` preamble and the block's commentary; and merging the
+domain sentence into the preamble, rejected because the two-sentence criterion makes it
+unnecessary and a scope statement nothing depends on is the next drift site. Swept to the same
+wording or a pointer: `summary.md`'s design summary and SPEC-5 index entry (already pointers,
+unchanged), DOCS-2's bind-attempt paragraph (already a pointer, unchanged), the tier-3 case
+description in non-spec-changes.md (now "asserts the answer and the registry and filesystem
+effects that rule states", the rules-11-through-14 sentence deleted), the §4.7.1 commentary
+(§15.4 "cites the section whole" rather than reaching a rule by number), the Settled entry and
+the Traps entry above. `grep -rn "gRPC status, the" proposals/0081_*/` outside the archive now
+returns ledger history only.
+
+DECISION: the carriers of the withdrawn universal "the adapter reports on every session release"
+have ONE home, the table in SPEC-3's §5.2 commentary in spec-changes.md, produced from one grep
+over spec/, docs/, schemas/, pkg/, migrations/ and tests/ for "every session release", "each
+session release", "on every release" and their paraphrases — BECAUSE the set was being discovered
+one carrier per sweep (rounds 7, 8 and 10) and each discovery produced the next finding. The table
+carries 24 rows: 5 staged in SPEC-3's own blocks, 7 mirrored (DOCS-2 once, DOCS-4 twice, SCHEMA-1
+three times counting the regenerated `pkg/proto` copies, CODE-1 once), 12 deferred to the non-spec
+loop as code-lane comment or tier-11 re-keys. Carriers the introspection pass did not list and the
+grep found: the `RecordSessionScrub` inline comment in `scrubreport_server.go` ("evaluate the
+served-session count on every release"), three doc comments in `scrubreport_server_test.go`, the
+`// diagnosis:` comment on `TestPerSlotCleanupStatedOnEverySessionModeRow`, the two `// spec:`
+annotations in `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the
+`sessions_served` column comment in `migrations/0167_*.up.sql` (previously a Deferred entry, never
+a disposition), and the generated `pkg/proto/adapter/v1/*.pb.go` copies of the two proto comments.
+Sites that describe the CLEANUP alone stay true and are named once, in the sentence above the
+table, so no sweep re-files them; `pkg/adapter/gatewaycontrol/scrubreport.go`'s
+`SessionScrubOutcome` type comment, which the pass listed, is one of those (it is the lifted proto
+enum comment). DOCS-4 is created as a deliverable of exactly the two page edits and is added to
+`summary.md`'s index, the non-spec files-touched list and the tier-11 section; CODE-1's
+`server.go` item gains the `SessionScrubReporter` comment re-key. The `## Testing` and `## Files
+touched` sections list no deferred site, because the code lane owns those and lists them when it
+runs.
+
+CORRECTS [`[spec.7.fix-G1.1]` and `[spec.7.fix-design-G1.1]`, DECISION rejecting "deleting §12.6's
+read clause as a reduction" because "it silently retires a shipped tier-11 gate"]: overturned by
+round 10 (`[spec.10.fix-G3.1]`), which replaced both §12.6 read clauses with citations of §5.2's
+`**Session count limit:**` bullet and deleted the gate's spec/12 substring block, and left no
+CORRECTS naming the round-7 decision. The round-10 outcome STANDS, on this evidence: spec/05's
+`**Session count limit:**` bullet is the home of the concurrent-pool evaluation point and is
+phrased as a definite description ("the session release that drives the served-session count to
+`maxSessionsPerPod`"), so it stays true when a release files no report; spec/12 §12.6's read
+clause was a universal copy of it ("on each session release on a concurrent non-`vm-restart`
+pool"), false for every release that files none; the round-7 re-key onto "on each cleanup-outcome
+report" left one rule in three vocabularies across spec/05, spec/06's fence edge and spec/12; and
+`TestPerReleaseSessionCountDrainAgrees_F5231`'s spec/12 block (`grep -rn sessions_served tests/`
+finds it and `podStateGatewayWrittenSentence` in `spec_28_register_writers_test.go`, nothing else)
+exists to keep a copy in step with §5.2, which a citation needs no gate for; its other three
+checks stand. The round-7 objection was that the retirement would be silent; it is now recorded
+here, in the carrier table's two tier-11 rows, and in SPEC-3's §12.6 block, which no longer
+carries the gate-bookkeeping paragraph (which named the two tests and their substrings across
+twenty-five lines) and instead states the one grep the implementor runs and that the step
+applying SPEC-3 re-keys or deletes every tier-11 assertion it finds. No IMPLEMENTOR'S CHOICE blank
+is opened, because a test's assertion is not blankable.
+
+CORRECTS [`[f1.open-decisions-apply.id21]` and `[f1.open-decisions-cleanup.1]`]: the resolution of
+open decision 21 (does a bind abandoned before `running` count toward `recycle.maxSessionsPerPod`)
+is WITHDRAWN, because the human has reserved decision 21 for themselves. Entry 21 is restored to
+`## Open decisions for human to make` in summary.md as it stood at 440cde9ec (question, ground,
+recommendation with moderate confidence, the two alternatives, and the cost of deciding
+otherwise), the section preamble is restored to its pre-firing wording (21 listed with 27 as
+carrying a recommendation, and removed from the answered-by-the-staging and became-a-defects-row
+lists), and the defects-section bullet "A bind abandoned before `running` primes residual state
+without advancing the pod toward retirement" that the firing added is deleted, since its content
+is entry 21's residual-state half. The `f1` ledger blocks stand as the record of what the firing
+wrote. No change file was edited for 21 in either direction.
+
+WATCHOUT: a newly found carrier of the withdrawn "reports on every session release" universal is
+added as ONE ROW to the SPEC-3 carrier table and nowhere else: not as a Deferred entry here, not
+as an Open item, not as a sentence in a deliverable's rationale. A row's disposition is one of
+"Staged here", "Mirrored by <deliverable>" (and that deliverable must carry the edit) or
+"Deferred to the non-spec loop" with the lane. A sweep that finds a carrier already in the table
+has found nothing.

@@ -597,13 +597,46 @@ Replace it with:
 
 The replacement is the single home of the cleanup-outcome reporting rule, stated as a
 biconditional on the predicate the report's own effect fixes: a `Shutdown` that reclaims a slot
-the pod's shared runtime process was given. Stated that way the rule needs no list of the
-releases that report nothing, and it answers for each of them without naming any. The SDK
+the pod's shared runtime process was given. The SDK
 demotion the §4.7 `DemoteSDK` row states, the §10.1 hold-timeout termination, and the cleanup
 the adapter runs inside a failed start's own handler are all releases outside a `Shutdown`, so
 none of them files a report, and the same session is therefore never counted twice against
-`recycle.maxSessionsPerPod` when a §5.2 retry or a pod-warm bind sequence re-binds it. The
-per-slot cleanup itself still runs on every session release; only the report is conditioned.
+`recycle.maxSessionsPerPod` when a §5.2 retry or a pod-warm bind sequence re-binds it.
+
+The withdrawn universal, that the adapter reports on every session release, is carried at the
+sites in the table below, and the table is the single home of their dispositions: a carrier found
+later is added here and nowhere else. A site that states only that the cleanup runs on every
+release (spec/06 §6.1, spec/07 §7.1's `scrubPolicy` row, the `SessionScrubOutcome` comments in
+the proto and in `pkg/adapter/gatewaycontrol/scrubreport.go`, the residual-state tables of
+`execution-modes.md` and `multi-tenancy.md` and the tier-11 assertion over them) stays true and
+is not a carrier.
+
+| Carrier | Disposition |
+|:--|:--|
+| `spec/05_runtime-registry-and-pool-model.md`, §5.2 `**Scrub model.**` opening sentence | Staged here, the scrub-model replacement above |
+| `spec/05_runtime-registry-and-pool-model.md`, §5.2 `**Slot cleanup:**` reporting sentence | Staged here, the third anchor below |
+| `spec/04_system-components.md`, §4.7 `ReportSessionScrub` row | Staged here, the §4.7 block below |
+| `spec/12_storage-architecture.md`, §12.6 prose write and read clauses on `sessions_served` | Staged here, the §12.6 block below |
+| `spec/12_storage-architecture.md`, §12.6 DDL comment on `sessions_served` | Staged here, the §12.6 block below |
+| `docs/reference/adapter-contract.md`, `ReportSessionScrub` row | Mirrored by DOCS-2 |
+| `docs/reference/execution-modes.md`, the per-slot cleanup sentence after the residual-state table | Mirrored by DOCS-4 |
+| `docs/operator-guide/security-principles.md`, the per-slot cleanup sentence | Mirrored by DOCS-4 |
+| `schemas/lenny-adapter.proto`, `ReportSessionScrub` RPC comment | Mirrored by SCHEMA-1 |
+| `schemas/lenny-adapter.proto`, `ReportSessionScrubRequest` message comment | Mirrored by SCHEMA-1 |
+| `pkg/proto/adapter/v1/lenny-adapter.pb.go` and `lenny-adapter_grpc.pb.go`, the generated copies of those two comments | Mirrored by SCHEMA-1, through regeneration |
+| `pkg/adapter/server.go`, `Server.SessionScrubReporter` field comment | Mirrored by CODE-1 |
+| `migrations/0167_runtime_definitions_execution_mode_service.up.sql`, the `sessions_served` column comment | Deferred to the non-spec loop, code-lane comment re-key; the code lane decides whether a landed migration's comment is edited |
+| `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Deferred to the non-spec loop, code-lane tier-11 re-key in the step that applies SPEC-3 (the §12.6 block below) |
+| `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Deferred to the non-spec loop, code-lane tier-11 deletion in the step that applies SPEC-3 (the §12.6 block below) |
+| `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`, header comment and `// spec:` annotation | Deferred to the non-spec loop, code-lane comment re-key |
+| `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, the `// diagnosis:` comment on `TestPerSlotCleanupStatedOnEverySessionModeRow` | Deferred to the non-spec loop, code-lane comment re-key |
+| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, the `ReportSessionScrub` handler comment, the `SessionCountRetirer` comment and the `RecordSessionScrub` inline comment on evaluating the count on every release | Deferred to the non-spec loop, code-lane comment re-key |
+| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, the three doc comments keyed on every release | Deferred to the non-spec loop, code-lane comment re-key |
+| `pkg/gateway/session/recycle/scrubreporter_seams.go`, the `sessionCountRetirer` comment | Deferred to the non-spec loop, code-lane comment re-key |
+| `pkg/adapter/sessionscrubreporter.go`, the `SessionScrubReporter` interface comment | Deferred to the non-spec loop, code-lane comment re-key |
+| `pkg/adapter/gatewaycontrol/scrubreport.go`, the `Client.ReportSessionScrub` method comment | Deferred to the non-spec loop, code-lane comment re-key |
+| `pkg/agentpodstate/agentpodstate.go`, the `SessionsServed` field comment and the `IncrementSessionsServed` doc comment | Deferred to the non-spec loop, code-lane comment re-key |
+| `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the two `// spec:` annotations | Deferred to the non-spec loop, code-lane comment re-key |
 
 Then append to the same paragraph. The block carries blank lines, so the table, the paragraph
 after it and the `**Slot-identifier reclaim hold.**` paragraph each land as their own block:
@@ -779,14 +812,11 @@ and `sessions_served` is read by the recycle disposition on a single-session poo
 Replace it with:
 
 ```
-and `sessions_served` is read by the recycle disposition on the terms the **Session count limit:** bullet states
+and `sessions_served` is evaluated against `recycle.maxSessionsPerPod` on the terms the **Session count limit:** bullet states
 ```
 
 The trailing [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)
-link after that clause is unchanged, and it is what resolves the bullet the replacement names.
-The replacement states no evaluation point of its own, because the **Session count limit:**
-bullet of §5.2 is the single home of the concurrent-pool `maxSessionsPerPod` evaluation point and
-this clause was a copy of it.
+link after that clause is unchanged and resolves the bullet the replacement names.
 
 The DDL comment on the same column reads, verbatim:
 
@@ -801,41 +831,17 @@ Replace it with:
 ```
 
 The write trigger moves onto the report because that is where the gateway performs the
-increment: in `ScrubReporter.RecordSessionScrub`
-(`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`) the report increments
-`sessions_served` and then evaluates the atomic post-increment count against
-`recycle.maxSessionsPerPod`, and that retirement emit is gated on exact equality with that value.
-A release that files no report therefore performs no increment, and a sentence keyed on the
-release is false for it. The evaluation point is a separate rule whose home is the
-**Session count limit:** bullet of §5.2, so both replacements above cite that bullet in place of
-restating it, and §12.6 keeps the write trigger it owns and states neither an evaluation point
-nor a reporting rule of its own.
-
-These replacements turn two shipped tier-11 gates red, and both gates move in the implementation
-lane rather than here. `TestPerReleaseSessionCountDrainAgrees_F5231` in
-`tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go` requires spec/12 to
-contain one of two substrings, "on a concurrent non-`vm-restart` pool evaluated on each session
-release" or "on each session release on a concurrent non-`vm-restart` pool". The prose clause
-carries the second one today and is the only site that matches either, because the DDL comment
-writes `non-vm-restart` without backticks. After the read-clause replacement §12.6 states no
-evaluation point at all, so the gate's spec/12 substring block is deleted in the same step that
-applies SPEC-3 rather than re-keyed. Widening its accepted substrings onto the citation would
-assert that a citation is a statement of the rule, which is the coupling the reduction removes.
-The gate's other three checks, on §5.2's **Session count limit:** bullet, on §6.2's
-per-release `maxSessionsPerPod` edge and on the `claimed → draining` row of
-`docs/reference/state-machines.md`, are unchanged, and the three sites they read are unedited by
-this proposal. The second gate is `TestSection28RegisterWritersMatchTheSpec_spec_28_3`, subtest "pod
-state writer set", in `tests/tier11_docs/spec_28_register_writers_test.go`. Its
-`podStateGatewayWrittenSentence` constant requires §12.6 to contain the write clause byte-exactly,
-ending "incremented at each session release (`ReportSessionScrub`) and on each failed whole-pod
-scrub (`ReportPodScrub`) respectively", and the write-clause replacement above removes that
-substring. The constant is re-keyed onto "incremented on each cleanup-outcome report
-(`ReportSessionScrub`)" in the same step that applies SPEC-3. The constant ends at the write
-clause, so neither the read-clause replacement nor the DDL-comment replacement reaches it, and
-its §28.3 `REG-PODSTATE` writer-set cell is unchanged by this deliverable. These two are the only
-assertions under `tests/` that read the §12.6 `sessions_served` sentences. No page under `docs/`
-or `charts/` mirrors them, and `schemas/lenny-adapter.proto` carries the mirror on its
-`ReportSessionScrub` surface, which SCHEMA-1 moves.
+increment: `ScrubReporter.RecordSessionScrub`
+(`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`) increments
+`sessions_served` on the report, so a release that files none performs no increment, and a
+sentence keyed on the release is false for it. The evaluation point is a separate rule whose
+home is the **Session count limit:** bullet of §5.2, so both read clauses cite that bullet in
+place of restating it, and §12.6 keeps the write trigger it owns and states neither an evaluation
+point nor a reporting rule of its own. The implementor runs `grep -rn sessions_served tests/`,
+and the step that applies SPEC-3 re-keys or deletes every tier-11 assertion that grep finds
+pinning a §12.6 `sessions_served` sentence: an assertion on the write clause is re-keyed onto the
+replacement, and an assertion on the read clause is deleted, because §12.6 no longer states an
+evaluation point for it to compare.
 
 ### SPEC-4 · the occupancy projection's claim-deletion statements (spec/06_warm-pod-model.md § 6.2, and spec/04_system-components.md § 4.6.1 in the sub-section below)
 
@@ -1066,8 +1072,9 @@ Rules 11 through 15 state no refusal, and rule 10's refusal is on the request's 
 The block sits in §4.7.1 rather than in §4.7.9 because §4.7.9 is a `type: agent`
 orientation list and the token binds every session mode the RPC tables serve. The numbered rules
 are stated here and nowhere else, and the numbering is the reference every other site uses. The
-§4.7 `Shutdown` row, §7.1's reclaim obligation, §15.4's conformance criterion, CONF-1's battery
+§4.7 `Shutdown` row, §7.1's reclaim obligation, CONF-1's battery
 and the conformance case lists each reach a rule by its number and name rather than restating it,
+and §15.4's conformance criterion cites the section whole,
 so a refinement to one rule lands once and no second site can drift from this one. §4.7
 owns the two teardowns and their preconditions; this block owns what the value is, which requests
 carry it, when the adapter stamps it, which entry a request is addressed to, what becomes of that
@@ -1093,31 +1100,22 @@ Insert the two blocks below immediately after the paragraph beginning `**SDK-war
 contract:**` and before the `#### 15.4.1 Message Format and Binary I/O Requirements`
 heading. §15.4 is where the adapter contract is published to third-party adapter authors. It
 states no rule of its own. It points at §4.7.1 for the rules and states what conformance against
-them means, which is what a published contract adds to the rule text:
+them means, which is what a published contract adds to the rule text. The criterion quantifies
+over what §4.7.1 states for each request, so neither block states what the rules govern:
 
 ```
-**Bind attempt token contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token, the requests that carry it, the stamp-once rule, the registry critical section, and the numbered rules an adapter applies to it. Those rules govern whether a request is refused or admitted, what it does to the adapter's slot registry, to the record of which sessions the pod's shared runtime process holds, and to the two teardowns the `Shutdown` row of [Section 4.7](04_system-components.md#47-runtime-adapter) states, and what the adapter answers. The work a request performs for its own sake, such as the setup commands a `RunSetup` runs, the workspace a `PrepareWorkspace` writes, and the credentials an `AssignCredentials` writes, is outside them. That statement is normative for a third-party adapter and is not restated here.
-
-An adapter conforms when, on every request, it behaves as [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states for that request: it refuses or admits as that section states, performs the acts it states and no others, and answers as it states. An adapter that behaves otherwise on any request does not conform.
+**Bind attempt token contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token, the requests that carry it, the stamp-once rule, the registry critical section, and the numbered rules an adapter applies to a request that carries it, and that statement is normative for a third-party adapter. An adapter conforms when, on every request, it refuses or admits, performs or withholds the acts, and answers as that section states for that request, and an adapter that behaves otherwise on any request does not conform.
 ```
 
 ```
 **Slot-identifier reclaim hold:** [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the reclaim hold, its window, and the requests it refuses. This block states what an adapter must exhibit on the wire. While the identifier is held, a request the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) hold refuses is refused with the gRPC status code `ABORTED`, which is the transient classification a caller retries on. An adapter that admits a request that hold refuses does not conform. An adapter that refuses one with a permanent status, or that answers a status the caller cannot retry, does not conform. `Shutdown` is outside this hold, on the terms [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states, and is answered under the rules [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states for it.
 ```
 
-Both blocks state the contract and neither states a Go type, a field number, or a package
-name. The wire form is `schemas/lenny-adapter.proto`, which §15.4 already names as the
-published artifact. The token travels on the request side alone, so the wire edit that lands it
-adds one string field to each of the requests §4.7.1 names as carrying the token, the mid-session marker to
-`PrepareWorkspace`, the unconditional-teardown flag and the outcome to `Shutdown`, and a value
-to the error enum for each of the two refusals. No response reports a token.
-
-The rules are normative for a third-party adapter, and the project has no harness that can run
-one: the conformance battery drives a runtime binary over JSONL against a fake adapter and speaks
-no gRPC. The wire-level enforcement is therefore the tier-3 contract suite, which drives this
-adapter over a real gRPC channel and can exercise every rule above, alongside a descriptor gate
-pinning the field numbers and types. The in-process battery at tier 10 drives the same adapter
-without the wire. The absence of a third-party harness is recorded as a §28.4 claim-register row
+Both blocks state the contract and name no Go type, field number or package. The wire form is
+`schemas/lenny-adapter.proto`, which §15.4 already names as the published artifact and which
+SCHEMA-1 edits; no response reports a token. The project has no harness that can run a
+third-party adapter, so the enforcement is CONF-1's tier-3 suite over a real gRPC channel, with
+the tier-10 battery in process, and the absent harness is recorded as a §28.4 claim-register row
 with status `ABSENT`, following the rows the `coordination_generation` fence already carries.
 
 ### SPEC-5 · spec/15_external-api-surface.md § 15.1 (REST error catalog, `SETUP_COMMAND_FAILED` row)
@@ -1327,6 +1325,8 @@ third-party implementor reads stops asserting what `released` implies and stops 
 report on every session release (SCHEMA-1). `docs/reference/adapter-contract.md`
 takes the rewritten `Shutdown` row, the amended `DemoteSDK` row, the re-keyed
 `ReportSessionScrub` row and the added bind-attempt paragraph (DOCS-2).
+`docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` each lose
+the reporting clause of their per-slot cleanup sentence (DOCS-4).
 `docs/reference/error-catalog.md` takes a sentence replacement mirroring each of SPEC-5's §15.1
 replacements, the retryable-fallback sentence among them, and a replaced remedy cell, all in the
 `SETUP_COMMAND_FAILED` row it already carries rather than in a new row, each stated in the

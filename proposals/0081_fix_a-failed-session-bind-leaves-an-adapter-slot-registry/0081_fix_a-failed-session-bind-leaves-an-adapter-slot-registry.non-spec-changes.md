@@ -182,7 +182,9 @@ Targets:
   comparison, beside `Shutdown`.
 - `Shutdown`'s doc comment.
 - `pkg/adapter/server.go` · the nil-defaulted test-only field
-  `Server.removeSlotTreeFn func(*slotState) error`, declared beside `scrubDone`.
+  `Server.removeSlotTreeFn func(*slotState) error`, declared beside `scrubDone`, and the
+  `SessionScrubReporter` field comment, re-keyed from "on every session release" onto the
+  cleanups §5.2 states the adapter reports.
 - `pkg/adapter/slot.go` · the `Server.removeSlotTreeVia` method that reads it.
 - `pkg/adapter/slotsession.go` · `deregisterSlotLocked`'s doc comment only. No body change: it
   already cancels every armed expiry timer on removal.
@@ -2027,9 +2029,8 @@ conforming one, so the re-cut is a requirement rather than a preference.
 **The rule set under test.** §4.7.1 numbers and names the rules and states, per numbered rule,
 whatever answer an adapter gives, and §15.4
 states what conformance against them means. Neither is restated here. The battery is derived
-from those two by reference: every case below names the rule it drives, and it reads its
-assertion off that rule at the time the test is written. A rule that acquires no case shows up as a missing number in the
-list below, and a case cannot drift from its rule, because the rule text lives in §4.7.1 alone.
+from those two by reference: every case below names the rule it drives and reads its assertion
+off that rule. A rule that acquires no case shows up as a missing number in the list below.
 
 **Tier 3 is the enforcement.** The rules are wire behaviour and the precedent is exact:
 `tests/tier3_contract/adapter_generation_fence/` holds `generation_fence_wire_test.go`, a
@@ -2253,9 +2254,8 @@ becomes:
 The `SESSION_SCRUB_OUTCOME_LEAKED` comment beside it already states its own case as a resource
 that could not be reclaimed and is unedited.
 
-Two further comments on the same surface state that the adapter files the report on every
-session release, which is the universal SPEC-3's §5.2 scrub-model biconditional withdraws. Each
-one loses the universal and cites §5.2 for the cleanups the adapter reports. The opening
+Two further comments on the same surface carry the universal SPEC-3 withdraws; each loses it
+and cites §5.2 for the cleanups the adapter reports. The opening
 sentence of the `ReportSessionScrub` RPC comment reads, verbatim:
 
 ```
@@ -2285,15 +2285,12 @@ becomes:
 // cleanups §5.2 states the adapter reports and for no other release.
 ```
 
-The rest of that comment, which names `pod_id` as the `agent_pod_state` row key the gateway
-increments `sessionsServed` on and `session_id` as the released session, is unedited and stays
-true: the increment rides the report. The `SessionScrubOutcome` enum's own opening comment and
-the `ReportSessionScrubResponse` comment are unedited, the first because it describes the
-cleanup, which still runs on every session release, and the second because it states the
-increment as a gateway-side effect with no trigger of its own.
+The rest of that comment (the `pod_id` and `session_id` sentences), the `SessionScrubOutcome`
+enum comment and the `ReportSessionScrubResponse` comment are unedited: they describe the row
+key, the cleanup and the increment, and none states a trigger for the report.
 
-No enum value, field number or RPC signature moves, so the regenerated package is unchanged by
-these replacements.
+No enum value, field number or RPC signature moves, so these replacements change the regenerated
+package only in the comments it copies from the proto.
 
 **The fields.** Every number below was checked free against the message it lands in, in
 `schemas/lenny-adapter.proto` as the file stands:
@@ -2513,12 +2510,9 @@ precondition and the outcomes, which is the part of the contract a reader of thi
 observe. The `DemoteSDK` row mirrors the registry removal the §4.7 row SPEC-1 amends, together
 with the slot cleanup that row states the demotion runs inside the call, and carries
 the fresh-entry consequence rule 4 (**the create-and-stamp rule**) gives, because this page cannot
-cite the rule. The `ReportSessionScrub` row (`:81`) states the universal SPEC-3 withdraws, so once
-SPEC-3 lands the page would tell an adapter author to report at every session release while the
-specification says a release outside a reclaiming `Shutdown` is reported not at all; that row
-points at this page's own `Shutdown` row for which cleanups are reported rather than restating the
-condition, so the page keeps one home for it, and adds the one clause the `Shutdown` row does not
-carry, which excludes every other release. One added paragraph says what the token is for and where the rules are stated. The
+cite the rule. The `ReportSessionScrub` row (`:81`) carries the universal SPEC-3 withdraws, a row in SPEC-3's
+carrier table; it now points at this page's own `Shutdown` row for which cleanups are reported
+and adds the one clause that row lacks, which excludes every other release. One added paragraph says what the token is for and where the rules are stated. The
 cascade and its wire observables stay in §4.7.1: republishing them here would drop a
 normative cascade into a page whose gRPC section is a one-line orientation table
 (`.claude/rules/doc-content.md`, "Match technical depth to the page"), and a runtime author can
@@ -2643,6 +2637,17 @@ DOCS-3 adds no gate and declares no tier above 0. There is no shipped reconcilia
 touches would leave every other row of the page ungated. The absent reconciliation is a defect
 of the page rather than of this change, and it goes out as its own finding against §15.1.
 Tiers: 0.
+
+### DOCS-4 · docs/reference/execution-modes.md, docs/operator-guide/security-principles.md · the per-slot cleanup sentence on each page loses its reporting clause
+
+Each page carries one sentence stating that the per-slot cleanup runs at each session release
+in session mode, on a pod of any concurrency and any recycle setting, ending ", and the adapter
+reports its outcome to the gateway". That clause is the universal SPEC-3 withdraws, whose carrier
+table assigns both sites here. On each page, delete the clause so the sentence ends at
+"any recycle setting". The residual-state tables and `docs/operator-guide/multi-tenancy.md` state
+the cleanup alone and are unedited. No gate reads either sentence:
+`TestPerSlotCleanupStatedOnEverySessionModeRow` pins the residual-state table rows. DOCS-4 lands
+beside DOCS-2, after SPEC-3. Tiers: 0.
 
 ## Testing
 
@@ -3181,11 +3186,8 @@ addition.
 
 **The behavioural cases**, one file, carrying CONF-1's case list one for one: a case per numbered
 rule, each titled for its rule, followed by the cases CONF-1 names as stated by no single rule.
-A rule with no case is visible as an absent title. Each case drives the rule's condition over the
-real transport and asserts the status, the `ErrorCode` and the `Shutdown` outcome that rule
-states, together with the registry and filesystem effects the rule states. For rules 11 through
-14 the outcome is the one the rule states and the status is the successful one rule 15 fixes for
-every reclaim outcome:
+Each case drives the rule's condition over the real transport and asserts the answer and the
+registry and filesystem effects that rule states:
 
 - Rule 1, **the pairing rule**.
 - Rule 2, **the reclaim hold**, with a row per RPC across the two sites that test it.
@@ -3483,6 +3485,8 @@ link while this page may carry no section number.
 This deliverable adds none, because a gate built for the one row it touches would leave every
 other row of a sixty-row page ungated and would read as coverage the page does not have. The
 deliverable lands beside SPEC-5 in the same step, which is what holds the two texts together.
+
+**For DOCS-4**, no file, for the reason its deliverable states.
 
 **For the counters and SPEC-6**, each series is held by its own gate, and each is stated
 separately below.
@@ -3813,6 +3817,8 @@ of these cases:
   `ReportSessionScrub` row, and the added bind-attempt paragraph.
 - `docs/reference/error-catalog.md` · the `SETUP_COMMAND_FAILED` row's four replaced
   sentences and its replaced remedy cell.
+- `docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` · the
+  reporting clause deleted from each page's per-slot cleanup sentence.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
   `pkg/adapter/slotsession_test.go`, `pkg/adapter/socketruntime_test.go`,
   `pkg/adapter/sdkwarm_test.go`,
