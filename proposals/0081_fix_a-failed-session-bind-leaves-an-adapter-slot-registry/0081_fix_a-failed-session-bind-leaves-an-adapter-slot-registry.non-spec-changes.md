@@ -2438,7 +2438,8 @@ the substrings "end-of-session teardown", "recycle disposition", "ReportSessionS
 
 DOCS-2 makes three edits and republishes no rule. The `Shutdown` row states the two-field
 precondition and the outcomes, which is the part of the contract a reader of this page can
-observe. The `DemoteSDK` row mirrors the registry removal the §4.7 row SPEC-1 amends, and carries
+observe. The `DemoteSDK` row mirrors the registry removal the §4.7 row SPEC-1 amends, together
+with the slot cleanup that row states the demotion runs inside the call, and carries
 the fresh-entry consequence rule 4 (**the create-and-stamp rule**) gives, because this page cannot
 cite the rule. One added paragraph says what the token is for and where the rules are stated. The
 cascade and its wire observables stay in §4.7.1: republishing them here would drop a
@@ -2459,10 +2460,11 @@ physical line, because the gate reads the row through `lineContaining(page, "| \
 | `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for, by carrying either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The response reports what became of the entry the request was addressed to: `reclaimed` when the adapter held that entry and released the slot, `superseded` when the adapter holds an entry the request is not addressed to, so nothing was released, and `absent` when the adapter holds no entry for the session. Every outcome is answered on a successful call, and the two outcomes that remove nothing run neither teardown. The slot release removes the session's slot tree and runs whenever the request removes an entry, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report and then closes the runtime, and the CH-RUNTIMEOPS drain signal precedes that close only when the deregistration leaves the adapter holding no other bound session. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a session the shared runtime process was given, and reports no outcome for a cleanup on a slot the runtime was never given. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
 ```
 
-Amend the `DemoteSDK` row (`:64`) so it states the registry effect rule 4 turns on:
+Amend the `DemoteSDK` row (`:64`) so it states the registry effect rule 4 turns on and the slot
+cleanup the demotion runs inside the call:
 
 ```
-| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry for the session, and return the pod to pod-warm state. The next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
+| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry for the session, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. The next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
 ```
 
 Add the paragraph below immediately after the `**Gateway-to-Adapter RPCs:**` table and before
