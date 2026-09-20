@@ -5385,3 +5385,126 @@ USEFUL [refuted-family index in Standing context]: the eight refuted single-sour
 in the task text saved me from re-filing the reclaim-hold four-site, the leaked-consequences
 two-site, the token-minting two-site and the clean-exit-exception two-site findings. That index is
 the single highest-value thing in this file for this lens.
+
+### [restructure.1.fix.1]
+
+One-pass restructure applied between spec-loop round 11 and the next sweep, against the
+introspection diagnosis in `scratchpad/0081-opt1-introspection.json`. No mechanism changed: the
+caller-minted `bind_attempt`, `unconditional_teardown`, the two refusal codes and rules 1 through
+15 keep their numbers, names and behaviour.
+
+DECISION: The disposition of every per-slot cleanup is ONE TABLE in the staged §5.2
+`**Scrub model.**` append (spec-changes.md:620-631), with rows keyed on what the cleanup reclaims,
+who performs it and which act fails, and columns for the cleanup-outcome report, the clean-exit
+flag, the `leaked` sub-state, the identifier hold and what ends the state left on the pod. The pod
+class is carried by scoping the `leaked` column to a pod serving concurrent sessions in the
+sentence under the table, rather than by doubling the rows. §7.1 (:410) keeps the obligation, its
+window, the cancelled-context rule, the token rule and the definition of a reclaim that did not
+complete; §6.2 (:880) keeps the `running` boundary and the two edges, as one paragraph; the
+reclaim-hold paragraph (:635) keeps the window, the refusal and the close's bounds; the
+`**Slot cleanup:**` leaked-outcome sentence (:703) becomes a citation. BECAUSE four prose sites
+partly restated and partly cited each other, and each local fix was right against one and wrong
+against another. ALTERNATIVES rejected: keeping §6.2's two-exit paragraph as the home of the
+"what ends the residue" column (leaves a second site stating cells, and §5.2 already owns the
+whole-pod scrub the column names); a twenty-row table crossing every case with both pod classes
+(only the `leaked` column differs by pod class); recording an open decision for the recycling
+one-session cell (the cell has an answer: `failPhase` deletes the claim while the pod projects
+`claimed` and the projection drains it on either recycle setting,
+`pkg/gateway/podlifecycle/podsession/binder.go:1072-1082`,
+`pkg/controller/warmpool/occupancy.go:128-140`).
+
+DECISION: Where the old sites disagreed, the table takes these answers. (a) A slot the runtime was
+given that is released OUTSIDE a `Shutdown` (the SDK demotion, the §10.1 hold-timeout termination)
+and whose cleanup fails is NOT `leaked`. The old `**Slot cleanup:**` scoping sentence made every
+failed cleanup of a runtime-given slot `leaked`, while the scrub-model biconditional files no
+report there and no `Shutdown` answers, so nothing carries the outcome to the gateway. Evidence:
+`pkg/adapter/slotsession.go:214-220` and `pkg/adapter/holdstate.go:215-254` discard both errors
+and call no reporter. (b) "Completed" had two senses: the hold's (every act returned without
+error) and §7.1's (answered with a clean exit). A clean close whose directory removal fails is
+complete for §7.1 and incomplete for the hold. The table keys rows on the act that fails and uses
+neither word, and §7.1 keeps its own definition for the reclaim. (c) The residue of a failed
+cleanup was "none of which outlives the pod" in §5.2 and "the whole-pod scrub reaches the tree and
+the credential file, not the entry or the timers" in §6.2. The table takes the §6.2 form, which
+is what `pkg/adapter/podscrub.go` does and what CODE-1's commentary already cites §5.2 for.
+(d) §15.4's hold block restated the window without the life-of-the-pod terminal; it now cites
+§5.2 for the window and keeps only the wire obligation.
+
+DECISION: The adapter's atomicity is ONE paragraph, `**The registry critical section.**`, in the
+staged §4.7.1 block (spec-changes.md:918), listing the four steps performed under the registry
+lock: resolve or create, stamp and rules 1 through 7; the rule 8 resolve, confirmation and
+record; rules 11 through 14 with the deregistration they select; and every deregistration with
+the opening of the §5.2 hold. The stamp-once rule, the cascade preamble, rule 8, the `Shutdown`
+preamble and the §5.2 hold paragraph cite it. ALTERNATIVES rejected: a sixteenth numbered rule
+(§15.4 and CONF-1 key on the numbers); leaving rule 8's own clause and adding a summary (two
+statements).
+
+DECISION: `## Design (as the spec must state it)` is a choice record: one short paragraph per
+choice, each naming its ground and its owning staged block, 64 lines where it was 141. Two
+choices are new to it, the disposition table and the single atomicity statement. ALTERNATIVE
+rejected: deleting the section (the grounds for the over- and under-approximation, the report's
+home and the two-field form live nowhere else).
+
+WATCHOUT: A residue-disposition cell is changed in the §5.2 table and NOWHERE ELSE. A finding
+that §7.1, §6.2, the reclaim-hold paragraph, the `**Slot cleanup:**` bullet, §15.4 or the Design
+section "does not say" what is reported, whether a slot is `leaked`, how long the identifier is
+held or which pod exit ends a residue is answered by the table; check the table before filing,
+and fix a wrong cell in the table. Do not add a sentence stating a cell to any of those sites.
+Likewise, atomicity is changed in `**The registry critical section.**` and nowhere else: a step
+found missing from the adapter's lock scope is a member to add to that paragraph, never a clause
+to add to a rule. — EVIDENCE: spec-changes.md:620-633, :918
+
+CORRECTS [Standing context, Settled, "RESOLVED: a pod serving one session has TWO exits, and
+SPEC-4's §6.2 paragraph is the single home that states both"]: the two-exit FACT and its evidence
+stand, and the home moved. The staged §6.2 block is one paragraph and states no exit; the last
+column of the §5.2 table states what each exit ends. The r11 OPEN about the "one return-to-pool
+edge" framing is closed by the deletion of that sentence.
+
+CORRECTS [Standing context, Settled, "The reclaim hold's window is stated in FOUR places"]: it is
+stated in one, the §5.2 reclaim-hold paragraph. §7.1, §6.2 and §15.4 now cite §5.2 and spell out
+no window. Also corrects "The §5.2 append ... lands as two markdown paragraphs": the append now
+lands as a paragraph, a table, a paragraph and the hold paragraph, and its instruction says so.
+
+CORRECTS [`spec.11.fix-design-G1.1` WATCHOUT, "the one-report sentence is CITED by SPEC-2's §7.1
+paragraph"]: §7.1 no longer cites it; rule 8 still does, so the sentence still survives verbatim.
+
+DEFERRED [implementation-checklist.md]: S3 and S4 were corrected only where this pass falsified
+them. S1 still describes atomicity as the stamp-and-compare step alone and does not name the
+registry critical-section paragraph; S5 still says the §6.2 paragraph "cites the §5.2 sentences".
+The reconciliation pass should re-derive all four spec steps from summary.md's deliverable index.
+
+UNVERIFIED: CONF-1 carries a case for the first critical-section step only (the concurrent
+resolve-create-stamp race). Whether the rule 8 step and the deregister-and-hold step need their
+own CONF-1 cases, beyond the tier-7a hold test and the rule 8 case, was not assessed; adding
+cases is authoring a staged test change and was out of bounds for this pass.
+
+### [restructure.1.fix.2]
+
+Two independent reviews of `restructure.1.fix.1`; every finding checked against the tree and
+applied, none rejected.
+
+CORRECTS [`restructure.1.fix.1`, table row "released outside a `Shutdown` / an act fails"]: the
+row was wrong for an SDK demotion whose RUNTIME CLOSE fails. `Server.DemoteSDK` returns
+`codes.Internal` from `sw.DemoteSDK` before it deregisters anything
+(`pkg/adapter/sdkwarm.go:280-282`; the release is at `:296-298`), so no hold opens and the entry
+stands. Only the hold-timeout pass deregisters first and closes second
+(`pkg/adapter/slotsession.go:389`, `pkg/adapter/holdstate.go:249-254`). The failing rows now read
+"An act fails after the deregistration", and the table gains one row for the demotion whose close
+fails: no report, no hold, entry stands until pod termination. No CODE reorder is staged.
+
+CORRECTS [`restructure.1.fix.1`, table rows "cleaned by the adapter's own handler for a start
+that fails"]: the rows omitted a pre-`running` slot the demotion or the hold-timeout pass
+releases. `deregisterStartedSessions` selects on `st.started`, which the claim sets before
+`Runtime.Start` (`pkg/adapter/slotsession.go:88`, `:383-385`), and `DemoteSDK` releases
+`anyRegisteredSession()`. The rows are re-keyed "cleaned outside a `Shutdown`", cells unchanged.
+
+FIX: the registry critical-section paragraph and the cascade preamble said rules 1 through 7 run
+under the lock; rule 1 is decided on the request's fields before the registry is read, and
+`validateBindFields` sits ahead of `s.mu`. Both now say rules 2 through 7.
+
+FIX: leftover cell copies reduced to citations: the concurrent-pod and one-session accepted-mode
+bullets (the latter retitled, since `failPhase` sends no `Shutdown`), the hold-wait bound, the
+`slot_cleanup → released` fence commentary, the hold paragraph's life-of-the-pod sentence (the
+hold column is its home), rule 15's unclean-exit clause (it contradicted the row where a
+directory removal fails and the flag stays set; CODE-1's `closeErr == nil && (live || treeErr ==
+nil)` agrees with the table), rule 8's and the `Shutdown` preamble's member lists, non-spec's
+reclaim-hold design paragraph and its accepted-mode residue sentence, and checklist S1, S4, S5.

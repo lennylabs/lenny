@@ -49,8 +49,8 @@ they land together rather than in sequence.
 **The atomicity requirement.** The resolve, the create, the stamp and the comparison are one
 step under the lock that guards the registry. Without that clause first-writer-wins is not
 implementable from prose, and a third-party adapter that resolves, releases its lock, and then
-stamps conforms to the letter while being broken in fact. SPEC-5 states the clause and CONF-1
-tests it.
+stamps conforms to the letter while being broken in fact. It is the first of the steps §4.7.1's
+registry critical-section paragraph states, and CONF-1 tests it.
 
 **The mid-session conditioning.** The §7.4 mid-session upload is issued against an entry whose
 token the gateway does not hold, because the binding predates the request and may have been made
@@ -93,9 +93,9 @@ carried beside the address.
 reclaim exclusive while it tears state down. `removeSlotTree` deletes paths derived from the
 slot identifier, `SlotID == SessionID` makes that identifier equal across attempts, and the
 destructive steps read no registry state, so the deregistration alone does not keep a successor
-out of them. The hold is taken in the same critical section as the deregistration, released on the return
-path of a cleanup that completed, retained for the life of the pod where that cleanup did not
-complete, and refuses a bind onto a held identifier as rule 2 (**the reclaim hold**) states. It is retained
+out of them. The hold opens as §4.7.1's registry critical-section paragraph states, ends as §5.2's
+reclaim-hold paragraph and disposition table state, and refuses a bind onto a held identifier as
+rule 2 (**the reclaim hold**) states. It is retained
 from the epoch design, with its release arm keyed on the cleanup's completion, because it closes
 an ordering the token does not.
 
@@ -2133,7 +2133,7 @@ for a rule, and each appears at both tiers:
 - **The indivisibility of the resolve, the create and the stamp.** Two concurrent bind attempts
   at one slot identifier over separate connections, under `-race`, with exactly one admitted and
   the other refused `SLOT_BIND_ATTEMPT_SUPERSEDED`. No numbered rule states it on its own; it is
-  the stamp-once rule's atomicity clause, and an adapter that resolves, releases its lock and
+  the first step of §4.7.1's registry critical-section paragraph, and an adapter that resolves, releases its lock and
   then stamps admits both.
 - **Rule 5 evaluated ahead of rule 6.** A bind-sequence RPC carrying attempt B, with
   `mid_session` false, against an entry stamped A whose session has already started, answered as
@@ -2214,9 +2214,9 @@ enum SlotReclaimOutcome {
 ```
 
 **The scrub-outcome comments.** Two comments on the shipped `ReportSessionScrub` surface state
-what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's `**Slot cleanup:**`
-exception reports `released` for a cleanup that closes the session cleanly and fails only in
-removing the slot's slot tree, so both comments become false when that lands. Each one drops
+what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's §5.2 disposition table
+reports `released` for a cleanup that closes the session cleanly and fails only in a directory
+removal, so both comments become false when that lands. Each one drops
 the effect list and cites §5.2 for the terms. Both comments document the outcome values the RPC
 reports, where naming the report is the right thing to state, so each names the outcome and
 leaves what it implies to the section. In the `ReportSessionScrub` RPC comment, the sentence that reads, verbatim:
@@ -3251,7 +3251,7 @@ each a distinct attempt, race `ensureSlotStateLocked` for one slot identifier un
 Exactly one is admitted on the create branch, every other is refused `superseded`, the entry's
 token equals the winner's afterwards, and no goroutine observes a partially initialized entry.
 This is the case that fails against a resolve that releases the lock between the lookup and the
-stamp, which is the atomicity clause SPEC-5 states and CONF-1 publishes.
+stamp, which is the registry critical-section step SPEC-5 states and CONF-1 publishes.
 
 **Tier 7a, `TestSlotIdentifierReclaimHoldRefusesABindUntilTheCleanupReturns_spec_5_2`**, in a new
 `tests/tier7a_load_local/slot_reclaim_hold_race_test.go`. `tests/spec-map.json` gains the file
@@ -3480,8 +3480,9 @@ treating a failure as this change's.
   rather than with a carrier the gateway can read. The gateway's compensation then finds no
   entry, is answered `ABSENT`, and CODE-4 reads that as a completed reclaim with `sbe.Leaked`
   false, so an incomplete cleanup on this path reaches no leaked sub-state and contributes
-  nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is what §5.2's
-  **Scrub model.** paragraph states it is, bounded at the whole-pod boundary. The residue that goes unaccounted is the leak accounting
+  nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is what the §5.2
+  disposition table states in its row for a pre-`running` slot cleaned outside a `Shutdown`
+  whose act fails. The residue that goes unaccounted is the leak accounting
   rather than the identifier: `releaseSessionSlot` runs under `reclaimSlotLocked`, so a
   `removeSlotTree` that fails there is a cleanup that did not complete and the identifier stays
   held for the life of the pod, which is what keeps a later bind off that tree. What the gateway

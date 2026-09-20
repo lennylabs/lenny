@@ -9,142 +9,64 @@ The specification currently states the defect as the contract. §4.1's derivatio
 and the §4.7 `Shutdown` row both treat the runtime close and the slot release as one act
 gated on the binding, §4.7.9 states the bind sequence with no failure branch, and §6.2's
 per-slot sub-state machine has no edge into `slot_cleanup` from either pre-`running` state.
-Four statements are needed, each on a surface that already owns the subject.
+Each paragraph below records one design choice, its ground, and the staged block that owns
+the rule. The staged blocks are the statement of every rule.
 
-**One teardown becomes two, each with its own precondition.** A `Shutdown` for a session does
-two separable things, the **slot release** and the **runtime teardown**, and the staged §4.7
-`Shutdown` row states each one's precondition. §4.7.1's numbered rules decide whether a given
-request removes an entry, and §5.2 states what the slot release reclaims. Splitting the two is
-what lets a session whose bind never completed give up its slot, and the choice the row encodes
-is which moment each precondition takes; this prose restates neither precondition. The slot's
-`running` sub-state and the cleanup-outcome report both turn on the later moment, the pod's
-shared runtime process having been given the session. §5.2 states the report's own condition,
-which this prose likewise does not restate. The teardown therefore over-approximates
-toward closing and the report under-approximates toward not counting, which is the safe
-direction for each. The §15.4.2 graceful-shutdown signal precedes the close inside the runtime
-teardown and carries a further condition the same row states, because the signal is pod-global
-and names no session while the pod's shared runtime may still be serving a co-tenant. §4.7.1's
-no-entry rule (rule 11) and reclaim-outcome rule (rule 15) are what make the compensation safe
-to send at a stage where the adapter may hold nothing.
+**One teardown becomes two.** A `Shutdown` performs a slot release and a runtime teardown, each
+under its own precondition, so a session whose bind never completed can give up its slot. The
+teardown over-approximates toward closing and the cleanup-outcome report under-approximates
+toward not counting, which is the safe direction for each. Owner: the staged §4.7 `Shutdown`
+row.
 
-**The gateway owes a pod-side reclaim on a failed bind.** §7.1 already states the atomicity of
-session creation and already routes a finalize-block failure to §6.2's pre-attached disposition,
-which governs the pod. It does not state what happens to the state the failed attempt created on
-the pod. SPEC-2's inserted paragraph states that obligation, and this prose gives the choices
-behind it rather than the rule. The obligation is staged as a §7.1 paragraph of its own rather
-than inside the atomicity paragraph, because it binds cases that paragraph does not reach: the
-bind sequence run at the §15.1 start transition onto a slot on a pod serving concurrent
-sessions, whether that slot was reserved at creation or placed by §5.2's slot retry policy, and
-the §7.3 re-attach onto a replacement pod. Each issues the same pod-side RPCs and leaves the
-same residue behind, while the atomicity paragraph is scoped by its own heading to steps 2
-through 8 and closes by stating that the client never receives a `session_id` for a session that
-failed to fully initialize, neither of which holds for a re-attach of a session whose row is
-already persisted. §7.3's resume flow and §6.2's mid-resume cancel edge point at the new
-paragraph and restate nothing. The obligation is scoped from an attempt's first pod-side RPC to
-that attempt's success, because the first such RPC is the first moment the attempt can have left
-state on the pod and success is the moment the session's own lifecycle owns that state. It is
-owed even where the failing RPC's own context is already cancelled or past its deadline, because
-that is the case in which the adapter may have started the session, and its incompleteness
-predicate quantifies over every outcome rather than over `reclaimed` alone, for the fail-closed
-reason the rationale under SPEC-2 gives. On a pod serving concurrent sessions §6.2's existing
-`leaked` disposition is what accounts a reclaim that did not complete, and SPEC-2's paragraph
-cites it. Where the obligation does not reach an attempt the paragraph sends no `Shutdown` and
-states no disposition of its own, because §6.2 already decides it, in the pre-`running` block
-SPEC-4 stages. SPEC-4 re-keys the claim-deletion
-retirement trigger at the landings the shipped duplication already requires, enumerated under
-SPEC-4; neither this paragraph nor SPEC-3's §5.2 append restates that trigger. The `leaked`
-sub-state and the whole-pod
-replacement trigger are how a reclaim that did not complete is accounted on a pod serving
-concurrent sessions. They are not why a one-session pod's residue ends, and stating them as the
-reason is what made three sections answer the same question in three voices. No failure class
-becomes non-retryable: a further attempt at the same session on that pod is refused as a
-transient condition, by the attempt token where a registry entry survives and by §5.2's reclaim
-hold where the slot identifier is still held, so §5.2's slot retry policy and its non-retryable
-categories are unedited, and neither §6.2's pre-attached retry policy nor §15.1's error catalog
-changes any failure's retryability; SPEC-5 edits both, only to name the second deterministic
-producer in the setup window and to re-key the fallback clause on the gRPC code. The
-specification states no deadline for the reclaim; §5.2's per-slot cleanup timeout is the figure
-the gateway reuses and the code cites.
+**The reclaim obligation is a §7.1 paragraph of its own.** It binds bind paths the atomicity
+paragraph's heading and its closing sentence exclude, so it cannot sit inside that paragraph,
+and §7.2, §7.3, §4.7.9 and §6.2's mid-resume cancel edge point at it. No failure class changes
+retryability, and the specification states no reclaim deadline. Owner: SPEC-2's §7.1 paragraph.
 
-**The cleanup-outcome report follows the `running` boundary.** §5.2's scrub model already
-states that a per-slot cleanup runs on every session release. Its opening sentence, as SPEC-3
-replaces it, states as a biconditional the one condition under which that cleanup's outcome is
-reported, and the staged `**Scrub model.**` append states the one-report-per-session-release
-rule; this prose restates neither. Reporting
-for a slot that never ran would advance
-`recycle.maxSessionsPerPod` retirement for a session the pod did not serve and would
-double-count a session a §5.2 retry re-binds. The rule lands in §5.2's scrub-model paragraph
-rather than in its `**Slot cleanup:**` bullet, because that bullet sits under a heading scoped
-to `maxConcurrentSessions > 1` while the rule holds on a pod of either concurrency.
+**The cleanup-outcome report follows the `running` boundary.** A report for a slot the runtime
+was never given would advance `recycle.maxSessionsPerPod` retirement for a session the pod did
+not serve and would count a re-bound session twice. The rule sits in the scrub-model paragraph
+because the `**Slot cleanup:**` bullet is scoped to `maxConcurrentSessions > 1` and the rule is
+not. Owner: the staged §5.2 `**Scrub model.**` opening sentence.
 
-**The state machine gains the edge the window needs.** The staged §6.2 pre-`running` slot
-cleanup paragraph states the `running` boundary, the new `receiving_uploads → slot_cleanup`
-edge and the bind stages the edge covers, and this prose restates none
-of them. The design choice it encodes is where the boundary sits: at the point the pod's
-shared runtime process has been given the session rather than at the gateway's handover of the
-start, because a start still in flight has produced no runtime session for a cleanup to close,
-so the residue it leaves is the residue of the earlier stages. No new state is added, so the
-existing terminals and the existing `leaked` semantics paragraph stay authoritative for the new
-path.
+**The `running` boundary sits where the runtime has been given the session.** A start still in
+flight has produced no runtime session for a cleanup to close, so its residue is that of the
+earlier stages. No state is added, so the existing terminals stay authoritative. Owner: the
+staged §6.2 pre-`running` paragraph and fence edge.
 
-**The reclaim names the attempt it compensates.** The gateway sends the compensation after it
-has stopped waiting for the attempt that failed, so the reclaim can reach the adapter after
-the client's own retry has already bound the slot and started its session. The slot
-identifier is the session identifier, so the retry's registry entry is indistinguishable
-from the abandoned attempt's on identity alone, and an unfenced reclaim tears down a session
-that is serving its client. §4.7.1 states the **bind attempt token** for that reason. The
-gateway mints the token once per bind attempt, from a cryptographically secure random source,
-before that attempt issues its first pod-side RPC, and carries that one value on the requests
-§4.7.1 enumerates and on the compensating `Shutdown`. The adapter treats the token as opaque:
-it compares it for equality and derives no order, no age, and no identity from its bytes. The
-empty string is not a token.
+**Every cleanup's disposition is one table.** What a cleanup reports, what its `Shutdown`
+answers, whether the slot is `leaked`, when the identifier hold ends, and what ends the state
+left on the pod are one matrix, and a table makes a missing cell visible where prose does
+not. §5.2 owns it because §5.2 owns the cleanup and the report, and §6.2, §7.1 and the
+reclaim-hold paragraph cite it. A slot the runtime was given and that is released outside a
+`Shutdown` is not `leaked` when its cleanup fails, because the adapter files no report and
+answers no `Shutdown` there, so nothing carries the outcome to the gateway. Owner: the table
+in the staged §5.2 `**Scrub model.**` append.
 
-**The adapter stamps the token on the entry it creates and never on one it resolves.** The
-staged §4.7.1 block states the write as rule 4, the create-and-stamp rule, and states under the
-stamp-once rule that no other rule writes the field, together with the atomicity the resolve,
-the creation, the stamp and the comparisons are performed under, and this prose restates none
-of them. The design choice it encodes is first-writer-wins, and the atomicity is stated with
-the rule rather than beside it because without it first-writer-wins is not implementable from
-the prose: an adapter that resolved an entry, released its lock, and then stamped would satisfy
-each act separately and still admit two attempts onto one entry.
+**The token is minted by the caller, once per attempt, and the first writer owns the entry.**
+The compensation can reach the adapter after the client's retry has bound the same slot
+identifier, and an entry-scoped fence is inherited by a retry that resolves the surviving
+entry. A caller-minted token is held from before the attempt's first pod-side RPC, so an
+attempt that received no response still names itself. The identity refusal is transient and
+is applied before the permanent started-session refusal, so a stale attempt is retried rather
+than failed. Neither refusal takes a §15.1 row, because the gateway consumes both. Owner: the
+staged §4.7.1 block.
 
-**Admission reads the token and the stage the entry has reached.** The staged §4.7.1 block
-states admission as a named, ordered cascade with one table of which request carries which
-field. The design choices it encodes are three. The identity refusal is transient and the
-started-session refusal is permanent, which is why the attempt identity rule is applied first: a
-bind whose attempt identity is stale is retried, and refusing it as a started session would
-present a transient condition to the client as a permanent one. A mid-session upload asserts no
-attempt identity and, under rule 3 (the mid-session-create rule), never creates an entry, because an entry it created would carry no token,
-admit every attempt, match no compensation, and be permanent. Neither refusal takes a §15.1
-error catalog row, because the gateway consumes both codes and the client receives the envelope
-§15.1 already defines for the endpoint that issued the bind sequence. Nothing here restates a
-rule's condition; the staged block is the statement.
+**The adapter's atomicity is stated once.** First-writer-wins, the start confirmation and the
+opening of the hold are each unimplementable from prose that reads as separable acts. One
+paragraph lists every step the adapter performs under the registry lock, and the rules cite
+it. Owner: the staged §4.7.1 registry critical-section paragraph.
 
-**The `Shutdown` says which teardown it is asking for.** The staged §4.7.1 block states teardown
-as a named, ordered cascade, from the teardown-pairing rule through the attempt-match rule, and
-this prose restates none of their conditions. The one design choice the cascade encodes is the
-two-field form: stating the two teardowns as two fields rather than as the presence and the
-absence of one makes the destructive form the one a caller has to ask for by name, so a caller
-that forgets the token is answered with an error rather than a destroyed session.
+**`Shutdown` names its teardown in two fields.** Stating the unconditional form as its own
+field makes the destructive form the one a caller asks for by name, so a caller that omits the
+token is answered with an error rather than a destroyed session. Owner: the staged §4.7.1
+teardown rules.
 
-**The token names the bind attempt an entry belongs to, and the adapter holds the slot
-identifier while its cleanup runs.**
-An entry belongs to the attempt whose token it carries, so a reclaim naming an attempt
-whose entry was already released performs nothing. The token says
-nothing about a reclaim that is admitted and then races a successor while it tears state
-down, because the destructive steps read no registry state: the workspace directory, the
-credential directory, and the process group are each named from the slot identifier,
-which every attempt at the session shares. §5.2 therefore states the reclaim hold: the
-adapter holds the slot identifier from the critical section that deregisters the
-registry entry until the cleanup that reclaims it has completed, and for the life of the pod
-where that cleanup does not complete, the hold outlasts the deregistration, and while the
-identifier is held the adapter admits no bind onto it and refuses one as a transient condition.
-§6.2's `slot_cleanup` sub-state begins when the gateway observes the failure, earlier than the
-deregistration the hold starts at, so
-§6.2 points at the hold rather than restating its window. The token closes the late reclaim, the
-admission rules close the bind that a foreign attempt would otherwise make onto a live entry,
-and the hold closes the bind that arrives mid-cleanup. Each closes a case the others leave
-open.
+**The adapter holds the slot identifier while its cleanup runs.** The token says nothing about
+an admitted reclaim that races a successor, because the destructive acts are addressed by the
+slot identifier every attempt shares. The hold is a property of the identifier, and a cleanup
+that does not complete keeps it for the life of the pod, because a successor would otherwise
+bind over the residue. Owner: the staged §5.2 reclaim-hold paragraph.
 
 ## Edge cases and accepted failure modes
 
@@ -156,18 +78,13 @@ open.
   accounted transient rather than leaked and adds nothing to the pod's persistent leak
   count. The windowed failure counter still records it, and at `maxConcurrentSessions: 2` a
   single windowed failure already reaches the §5.2 whole-pod replacement threshold.
-- **A reclaim the adapter does not acknowledge on a pod serving concurrent sessions.** The
-  slot is `leaked`. Its occupancy is held, it counts persistently toward the §5.2 threshold,
-  and the pod retires through the shipped trigger. This is §6.2's own disposition applied
-  consistently rather than a new rule, and the pod's retirement through that threshold is
-  what bounds a best-effort compensation's failure. §5.2 does not steer a retry away from
-  the pod holding the leaked slot: the policy places a retry on a new slot on the same pod
-  when one is available, where it names the held slot identifier. That retry is refused on the
-  attempt token while the abandoned attempt's entry survives, on the reclaim hold while a cleanup
-  for the identifier runs, and on the reclaim hold for the rest of the pod's life where that
-  cleanup did not complete. Each refusal is transient and spends one of the request's attempts.
-  Where the cleanup completed and only its answer reached no one, the identifier is free and the
-  retry binds onto a fresh slot on that pod. The retry is placed on another pod
+- **A reclaim the adapter does not acknowledge on a pod serving concurrent sessions.** SPEC-3's
+  §5.2 disposition table states the slot's disposition, in its rows for the §7.1 pod-side
+  reclaim, and the pod's retirement through the whole-pod replacement threshold is what bounds
+  a best-effort compensation's failure. §5.2 does not steer a retry away from that pod: the
+  policy places a retry on a new slot on the same pod when one is available, where it names the
+  same slot identifier and is refused on the attempt token or on the reclaim hold. Each refusal
+  is transient and spends one of the request's attempts. The retry is placed on another pod
   only when this pod is saturated, or when the leaked slot has carried the pod past §5.2's
   `ceil(maxConcurrentSessions / 2)` replacement threshold, which one leak does at
   `maxConcurrentSessions: 2` and does not above it. Steering the retry would need the
@@ -203,9 +120,8 @@ open.
   retry, so a retry refused on that hold is the request's last attempt under the default and the
   client sees §5.2's exhaustion error. On a create-time-reserved slot the client's own retry of
   the §15.1 start meets the hold the same way, consuming one
-  of the retries the client has. The wait is the
-  graceful window the reclaiming request carried when it carried one, that request's own
-  deadline when it carried none, plus the removal of the slot's directories. This is accepted
+  of the retries the client has. The wait is bounded as §5.2's reclaim-hold paragraph bounds the
+  cleanup. This is accepted
   rather than closed: a gateway-side wait-and-retry inside the bind path holds the client's
   request open for the same window and adds a second place where the timeout is stated.
 - **A bind that fails inside its first entry-creating RPC is fenced.** This was a residue while
@@ -216,13 +132,12 @@ open.
   attempt holds its token throughout that window and its compensation names it. The window is
   closed rather than accepted, and closing it needs no change to the gateway-adapter error
   surface.
-- **A reclaim the adapter does not acknowledge on a pod serving one session.** The failed
+- **A failed bind on a pod serving one session, which no reclaim reaches.** The failed
   attempt is disposed of by `failPhase`, which sends no `Shutdown` and deletes the pod's claim
   while the pod projects `claimed` (`pkg/gateway/podlifecycle/podsession/binder.go:867`, `:998`,
-  `:1072-1082`, `:1200-1202`), so §6.2 retires the pod on that deletion, and the residue ends with it
-  (`pkg/controller/warmpool/occupancy.go:132-140`). The `leaked` sub-state and the whole-pod
-  replacement trigger account for an incomplete reclaim under concurrent occupancy and are not
-  the disposition here; SPEC-4 states the disposition in §6.2 and this list does not restate it.
+  `:1072-1082`, `:1200-1202`; `pkg/controller/warmpool/occupancy.go:132-140`). SPEC-3's §5.2 disposition table states the
+  disposition, in its row for a pre-`running` slot no cleanup reclaims, and this list does not
+  restate it.
 - **A start that races the reclaim.** The orderings differ in what they leave behind. When the
   adapter admitted the start before the reclaim removed the entry, the start finds its entry
   gone at the point it would record the runtime as holding the session, takes the session back
@@ -397,7 +312,7 @@ answered `INVALID_ARGUMENT` rather than served a teardown it did not ask for, an
 that refuses a `Shutdown` naming nothing stays conforming.
 
 The row does not enumerate the slot release's actions; §5.2 owns that list. It does not name
-`ReportSessionScrub` either, because §5.2 states both the report and the pre-`running` exception
+`ReportSessionScrub` either, because §5.2 states the report's condition and the disposition table
 after SPEC-3.
 
 ### SPEC-1 · spec/04_system-components.md § 4.7 (Gateway → Adapter RPC table, `DemoteSDK` row)
@@ -416,8 +331,8 @@ Replace that row with:
 
 This row is the single home of the registry removal and of the timing of the cleanup that
 release runs. Two statements elsewhere in this proposal rest on it: the §5.2 slot-identifier
-reclaim hold's closing sentence, which ends the hold a release opens when the cleanup that
-release runs inside its own RPC completes, and §4.7.1 rule 4 (**the
+reclaim hold's sentence on a release that runs its cleanup inside its own RPC, which ends the
+hold that release opens when the cleanup completes, and §4.7.1 rule 4 (**the
 create-and-stamp rule**), under which the bind that follows a demotion creates a fresh entry
 stamped with its attempt's token, only because the demotion left no entry for that identifier.
 Neither is derivable from the row as it stood before this replacement, which named no release
@@ -426,13 +341,15 @@ specification to close it and the pod-warm bind sequence that follows the demoti
 identifier for the life of the pod.
 
 The row names the release and the cleanup's timing and states neither the cleanup's actions nor
-its outcome. §5.2 owns the action list, and the reclaim-hold paragraph owns the conditional and
-the terminal for a cleanup that does not complete, so the row asserts no completion guarantee.
+its outcome. §5.2 owns the action list and the disposition table, which carries the row for a
+release outside a `Shutdown` whose cleanup fails, so the row asserts no completion guarantee.
 The row also pulls in no reporting obligation: under §5.2's scrub-model paragraph as SPEC-3
 replaces its opening sentence, a cleanup-outcome report is filed for a cleanup a `Shutdown`
 performs, and a demotion is not a `Shutdown`. What the next attempt gets is rule 4's.
 
-The row is conditional because the tree is: `pkg/adapter/sdkwarm.go:296-301` releases nothing when
+A demotion whose own teardown fails answers an error before it removes anything
+(`pkg/adapter/sdkwarm.go:280-282`), and the §5.2 disposition table carries that row. The row is
+conditional because the tree is: `pkg/adapter/sdkwarm.go:296-301` releases nothing when
 the registry holds no entry. The removal itself is shipped behaviour at those lines, so no code
 deliverable changes and this edit closes a spec-surface gap.
 
@@ -485,7 +402,7 @@ in the same place, directly below it and before the line resuming `(executionMod
 isolationProfile, scrubPolicy summary)`:
 
 ```
-**Pod-side reclaim on a failed bind.** A gateway bind attempt that fails after the gateway has issued its first pod-side RPC for the session (the [§15.1](15_external-api-surface.md#151-rest-api) start transition onto a slot on a pod serving concurrent sessions, whether that slot was reserved at creation or placed by the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot retry policy, or a [§7.3](#73-retry-and-resume) re-attach onto a replacement pod) also reclaims the state that attempt created on the pod: the gateway sends `Shutdown` for the session on the connection the failed stage still holds, before that connection closes, and releases the slot reservation afterwards. The obligation begins with an attempt's first such RPC and ends when that attempt succeeds. The gateway sends the reclaim even when the failing RPC's own context is already cancelled or past its deadline, because that is the case in which the adapter may have started the session. The reclaim is sent on the connection the failed attempt already holds when that connection is still open, because reusing it costs nothing; the fence does not depend on the connection, and a reclaim sent on a fresh connection is fenced exactly as one sent on the original. The reclaim names the bind attempt it compensates by carrying that attempt's token ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), and it may name no other. The gateway mints that token before the attempt's first pod-side RPC and holds it independently of any response, so every attempt holds its own token for the whole of the obligation and a compensation always names one. The reclaim is answered under the named rules [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states. A reclaim answered `superseded` or `absent` released nothing, as [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) defines those outcomes. Both are completed reclaims, and a reclaim that reports a clean exit does not leave the slot `leaked` on the reclaim's own account, whatever outcome it carries. The clean-exit flag answers for the reclaim, and what it answers for depends on whether the pod's shared runtime process had been given the session. Where it had, the reclaim is a session release like any other: the clean-exit flag and the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) cleanup-outcome report both answer for the close of the session on that process, so a reclaim that closes it cleanly reports a clean exit and reports that cleanup `released`, and a removal of the slot tree that fails there holds the slot identifier under [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) without changing either answer. Where it had not, [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) withholds that report, so the same failed removal is carried on the reclaim's own response, which does not report a clean exit. An untokened entry an abandoned attempt's late start left behind survives a `superseded` reclaim; [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) records it as a residue of the token contract. A reclaim the adapter does not answer, and one whose answer does not report a clean exit, whatever outcome that answer carries, are the reclaims that did not complete. On a pod serving concurrent sessions a reclaim that did not complete leaves the slot `leaked` under the [§6.2](06_warm-pod-model.md#62-pod-state-machine) disposition, which holds the slot's occupancy and counts it toward the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) whole-pod replacement trigger. The slot identifier is the session identifier, and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states that the adapter holds that identifier from the deregistration of its registry entry until the cleanup that reclaims it has completed, and for the life of the pod where that cleanup does not complete, so a further attempt at the same session on that pod meets that hold and is refused as a transient condition. Nothing about the attempt's retryability changes. Where this obligation does not reach an attempt the gateway sends no `Shutdown`, and [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) states what becomes of the slot state that attempt left on the pod. This obligation governs the slot state on a pod that outlives the attempt.
+**Pod-side reclaim on a failed bind.** A gateway bind attempt that fails after the gateway has issued its first pod-side RPC for the session (the [§15.1](15_external-api-surface.md#151-rest-api) start transition onto a slot on a pod serving concurrent sessions, whether that slot was reserved at creation or placed by the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot retry policy, or a [§7.3](#73-retry-and-resume) re-attach onto a replacement pod) also reclaims the state that attempt created on the pod: the gateway sends `Shutdown` for the session and releases the slot reservation afterwards. The obligation begins with an attempt's first such RPC and ends when that attempt succeeds. The gateway sends the reclaim even when the failing RPC's own context is already cancelled or past its deadline, because that is the case in which the adapter may have started the session. It sends the reclaim on the connection the failed attempt holds when that connection is still open; the fence does not depend on the connection, and a reclaim sent on a fresh connection is fenced exactly as one sent on the original. The reclaim names the bind attempt it compensates by carrying that attempt's token ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), and it may name no other. The gateway mints that token before the attempt's first pod-side RPC and holds it independently of any response, so a compensation always names one. The reclaim is answered under the named rules [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states. A reclaim the adapter does not answer, and one whose answer does not report a clean exit, whatever outcome that answer carries, are the reclaims that did not complete. Every other reclaim completed, one answered `superseded` or `absent` included. The disposition table in [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states what each reclaim reports, what becomes of the slot's occupancy and of its identifier, and what ends the state a reclaim that did not complete leaves on the pod. Nothing about the attempt's retryability changes. Where this obligation does not reach an attempt the gateway sends no `Shutdown`, and the same table states what becomes of the slot state that attempt left on the pod. This obligation governs the slot state on a pod that outlives the attempt.
 ```
 
 The paragraph's incompleteness predicate quantifies over every outcome rather than over
@@ -494,6 +411,9 @@ reclaim-outcome rule ties `absent` and `superseded` to a clean exit, so only a r
 `reclaimed` can fail the clean-exit test. Quantifying over every outcome fails closed against an
 adapter that answers otherwise, and it is what lets CODE-4's disposition read the RPC error and
 the clean-exit flag alone rather than branch on the outcome value.
+
+The paragraph states no report, no `leaked` disposition and no hold window. SPEC-3's §5.2
+disposition table owns each, and the paragraph cites it.
 
 The paragraph states no deadline for the reclaim. §5.2's per-slot cleanup timeout is the
 figure the gateway reuses, cited from the code rather than restated here.
@@ -564,8 +484,8 @@ The step takes three things by reference rather than restating them. Its scoping
 a terminal trigger arriving before the attempt has issued its first pod-side RPC for the
 session owes no reclaim and the step reads as a plain release. It states the ordering of the
 reclaim against the release and states no outcome for the pod, because what a pod holds after
-a reclaim the adapter does not acknowledge, and after a start that races it, is §7.1's
-`leaked` disposition and this proposal's record of the failure modes it accepts, which cover
+a reclaim the adapter does not acknowledge, and after a start that races it, is the §5.2
+disposition table's and this proposal's record of the failure modes it accepts, which cover
 the resume path together with every other bind path. The replaced sentence's "no runtime was
 started on it" goes as the same overturned premise as the preamble sentence this block
 deletes, and the surviving no-scrub clause is scoped to the pod, because the per-slot cleanup
@@ -686,29 +606,58 @@ none of them files a report, and the same session is therefore never counted twi
 `recycle.maxSessionsPerPod` when a §5.2 retry or a pod-warm bind sequence re-binds it. The
 per-slot cleanup itself still runs on every session release; only the report is conditioned.
 
-Then append to the same paragraph:
+Then append to the same paragraph. The block carries blank lines, so the table, the paragraph
+after it and the `**Slot-identifier reclaim hold.**` paragraph each land as their own block:
 
 ```
-That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a pod of either concurrency. It also runs on a slot whose bind is abandoned or fails after the slot enters `receiving_uploads` and before it reaches `running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), performed either by the [Section 7.1](07_session-lifecycle.md#71-normal-flow) pod-side reclaim where that obligation reaches the attempt or by the adapter's own handler for a start that fails, and a cleanup on that path files no cleanup-outcome report under this paragraph's opening rule, because that process was never given the slot. A cleanup on that path that a reclaiming `Shutdown` performs and that does not complete is accounted on that request's response, which does not report a clean exit. On a pod serving concurrent sessions the slot is then `leaked` under [Section 6.2](06_warm-pod-model.md#62-pod-state-machine), so it holds its occupancy, counts toward the whole-pod replacement trigger stated below, and is surfaced on the `lenny_adapter_leaked_slots` gauge. On a pod serving one session neither the `leaked` sub-state nor the whole-pod replacement trigger applies. Where no cleanup reclaims the slot at all, nothing is reported, and [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) states what becomes of that slot's state. A cleanup the adapter runs inside the failed start's own handler reports nothing and no response carries its outcome, so one that does not complete reaches neither the `leaked` sub-state nor the whole-pod replacement trigger on a pod of either concurrency. What it leaves is the residue of whichever of the acts the **Slot cleanup:** bullet's action list names did not complete, none of which outlives the pod, and the slot identifier, which the **Slot-identifier reclaim hold.** paragraph below governs. A session release produces at most one cleanup-outcome report, filed by the cleanup that reclaims the slot.
+That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a pod of either concurrency. It also runs on a slot whose bind is abandoned or fails after the slot enters `receiving_uploads` and before it reaches `running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), performed either by the [Section 7.1](07_session-lifecycle.md#71-normal-flow) pod-side reclaim where that obligation reaches the attempt or by a release outside a `Shutdown`, such as the adapter's own handler for a start that fails. A session release produces at most one cleanup-outcome report, filed by the cleanup that reclaims the slot. The table below states the disposition of each per-slot cleanup: what it reports under this paragraph's opening rule, what the `Shutdown` that performs it answers, whether the slot enters the `leaked` sub-state, when the slot-identifier reclaim hold stated below ends, and what ends the state the cleanup leaves on the pod.
 
-**Slot-identifier reclaim hold.** The adapter holds a slot's identifier from the critical section that deregisters the slot's registry entry until the cleanup that reclaims the slot has completed. The hold outlasts the deregistration because the cleanup's remaining acts are addressed by the slot identifier rather than by the entry: the removal of the slot's workspace directory, the removal of its credential directory, the kill of its process group, and the close of the session on the pod's shared runtime process are each resolved from the identifier, and every attempt at the same session names the same identifier. The hold is a property of the identifier rather than of an entry, because the entry is what a later attempt would re-create and because the adapter's other rules read the entry set as the pod's live occupancy. While the identifier is held the adapter admits no request that would create or resolve a registry entry under it, and refuses one as a transient condition so the caller retries. The requests that can create one are the requests [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) enumerates as governed by its admission rules. A request that resolves an entry without creating one is refused on the same terms, which is what refuses a [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload still in flight when the cleanup opens the hold. `Shutdown` is the one request outside the hold, governed by the rule stated for it rather than by this one. A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure. The hold ends when the cleanup it covers has completed, which is when every act that cleanup owes the slot has returned without error. A cleanup that does not complete releases nothing, so the identifier stays held for the life of the pod, and the adapter refuses a bind onto it for the rest of that life on the same terms it refuses one while the cleanup runs. On a pod serving concurrent sessions the hold is the identifier half of the disposition the **Slot cleanup:** bullet below states for a cleanup that fails, and the bullet's `leaked` occupancy is the other half wherever the bullet applies it. The bullet does not apply it to a cleanup that closes the session on the pod's shared runtime process cleanly and fails only in removing the slot's slot tree, which the bullet states as its exception and which holds the identifier and nothing else. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming `Shutdown` carries when it carries one, by that request's own deadline when it carries none, and, for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, which runs under no request, by a graceful window of ten seconds. A cleanup that closes no runtime, which is what a release compensating a bind whose start the adapter never admitted performs, is bounded by the request it runs inside. A release that runs its cleanup inside the RPC that requested it ends the hold before that RPC answers when that cleanup completes, so the pod-warm bind sequence that follows an SDK demotion does not meet it. [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token the adapter stamps on a slot's registry entry and the reclaim that names it.
+| Slot and cleanup | How the cleanup ends | Cleanup-outcome report | Clean-exit flag on the `Shutdown` response | `leaked` sub-state | Slot-identifier reclaim hold | What ends the state left on the pod |
+|:--|:--|:--|:--|:--|:--|:--|
+| Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | Every act returns without error | `released` | Set | Not entered | Ends when the cleanup returns | No state is left |
+| Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | The runtime close fails | `leaked` | Not set | Entered | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
+| Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | The runtime close succeeds and a directory removal fails | `released` | Set | Not entered | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
+| Slot given to that process, released outside a `Shutdown`, such as the [Section 4.7](04_system-components.md#47-runtime-adapter) SDK demotion or the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination | Every act returns without error | None | No `Shutdown` performs the cleanup | Not entered | Ends when the cleanup returns | No state is left |
+| Slot given to that process, released outside a `Shutdown` | An act fails after the deregistration | None | No `Shutdown` performs the cleanup | Not entered, because nothing carries the outcome to the gateway | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
+| Pre-`running` slot, reclaimed by the pod-side reclaim | Every act returns without error | None | Set | Not entered | Ends when the cleanup returns | No state is left |
+| Pre-`running` slot, reclaimed by the pod-side reclaim | An act fails | None | Not set | Entered | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
+| Pre-`running` slot, cleaned outside a `Shutdown`, by the adapter's own handler for a start that fails, the SDK demotion, or the hold-timeout termination | Every act returns without error | None | No `Shutdown` performs the cleanup | Not entered | Ends when the cleanup returns | No state is left |
+| Pre-`running` slot, cleaned outside a `Shutdown` | An act fails after the deregistration | None | No `Shutdown` performs the cleanup | Not entered, because nothing carries the outcome to the gateway | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
+| Slot of either kind that the SDK demotion would release | The demotion's runtime close fails, so the demotion deregisters nothing and runs no cleanup | None | No `Shutdown` performs a cleanup | Not entered | Not opened, because the registry entry stands | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends the registry entry and all else |
+| Pre-`running` slot no cleanup reclaims | No cleanup runs | None | No `Shutdown` performs a cleanup | Not entered | Not opened, because the registry entry stands | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends the registry entry and the armed [Section 4.9](04_system-components.md#49-credential-leasing-service) lease-expiry timers. A pod serving one session whose claim the failed bind deletes retires under the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) occupancy projection |
+
+The `leaked` column applies on a pod serving concurrent sessions, and [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) states what a slot in that sub-state holds and counts toward. A pod serving one session has no `leaked` sub-state, and a pre-`running` slot on it counts toward no whole-pod replacement trigger. The whole-pod scrub ends state only on a pod that reaches one. A slot enters `leaked` on the gateway's reading of the report or of the response, so a [Section 7.1](07_session-lifecycle.md#71-normal-flow) reclaim the adapter does not answer enters it as a reclaim whose act fails does, and its hold ends on the terms of the row the cleanup on the pod met.
+
+**Slot-identifier reclaim hold.** The adapter holds a slot's identifier from the deregistration of the slot's registry entry, which opens the hold in the same step under the registry critical section [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states, until the cleanup that reclaims the slot has completed, which is when every act that cleanup owes the slot has returned without error. The hold outlasts the deregistration because the cleanup's remaining acts are addressed by the slot identifier rather than by the entry, and every attempt at the same session names the same identifier. While the identifier is held the adapter admits no request that would create or resolve a registry entry under it, and refuses one as a transient condition so the caller retries. The requests that can create one are the requests [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) enumerates as governed by its admission rules. A request that resolves an entry without creating one is refused on the same terms, which is what refuses a [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload still in flight when the cleanup opens the hold. `Shutdown` is the one request outside the hold, governed by the rule stated for it rather than by this one. A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming `Shutdown` carries when it carries one, by that request's own deadline when it carries none, and, for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, which runs under no request, by a graceful window of ten seconds. A release that runs its cleanup inside the RPC that requested it ends the hold before that RPC answers when that cleanup completes, so the pod-warm bind sequence that follows an SDK demotion does not meet it. The table above states the hold's outcome for each cleanup, and [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token the adapter stamps on a slot's registry entry and the reclaim that names it.
 ```
+
+The table is the single home of every cleanup's disposition. §6.2, §7.1, the `**Slot cleanup:**`
+bullet and the reclaim-hold paragraph cite it and state no cell, so a disposition changes in one
+place. Its rows are keyed on what the cleanup reclaims and who performs it, and on which act
+fails, because those are what the adapter branches on: the report and the clean-exit flag are
+keyed on the runtime close for a slot the runtime was given and on every act for a slot it was
+not, and the hold is keyed on every act on every row. The `leaked` cells restate no §6.2
+semantics. The cell for a runtime-given slot released outside a `Shutdown` records a choice:
+the shipped handlers for the SDK demotion and the §10.1 hold-timeout termination discard the
+cleanup's errors and file nothing (`pkg/adapter/slotsession.go:214-220`,
+`pkg/adapter/holdstate.go:215-254`), so no `leaked` outcome reaches the gateway and the table
+says so. The same rows cover a pre-`running` slot those two handlers release, because the
+hold-timeout pass selects on the started flag, which the claim sets before the runtime start
+(`pkg/adapter/slotsession.go:88`, `:383-385`), and the demotion releases whatever entry the
+registry holds. The demotion closes the runtime before it deregisters, so a close that fails
+there deregisters nothing and opens no hold, which is the table's own row; the hold-timeout pass
+deregisters first (`pkg/adapter/holdstate.go:249-254`). The last row's retirement clause rests on SPEC-4's re-keyed projection, under which a
+claim deleted while the pod projects `claimed` drains the pod on a pool of either recycle
+setting.
 
 The reclaim-hold paragraph is what makes the reclaim exclusive while it runs. The entry
-deregistration and the destructive steps are not one act: the tree removal, the credential
-directory removal, and the process-group kill each resolve from the slot identifier, which
-every attempt at the same session shares, so a successor admitted between the two would be
-torn down by a reclaim that had already refused nothing. The paragraph states the hold
-as a property of the identifier rather than of the entry for that reason. The paragraph states
-a terminal for a cleanup that does not complete, because the identifier a failed cleanup did not release is
-the identifier a successor would bind onto, over the residue
-the cleanup left in place, and §5.2's fresh-workspace guarantee is unconditional. The terminal is
-the `**Slot cleanup:**` bullet's own: that bullet releases the `slotId` among the cleanup's
-actions and leaves a slot whose cleanup failed unreclaimed until the pod terminates. The bullet
-states that disposition for a pod serving concurrent sessions, and the hold states the identifier
-half of it on a pod of either concurrency, because a failed cleanup leaves the same residue on a
-pod of either concurrency. The identifier hold and the
-`leaked` occupancy are separate objects, and this paragraph states only the former.
+deregistration and the destructive steps are not one act: the directory removals and the
+process-group kill each resolve from the slot identifier, which every attempt at the same
+session shares, so a successor admitted between the two would be torn down by a reclaim that
+had already refused nothing. The paragraph states a terminal for a cleanup that does not
+complete, because a successor would otherwise bind over the residue the cleanup left in place,
+and §5.2's fresh-workspace guarantee is unconditional. The identifier hold and the `leaked`
+occupancy are separate objects, which is why they are separate columns.
 
 The reporting rule and the one-report rule land in the scrub-model paragraph rather than
 in the `**Slot cleanup:**` bullet, because that bullet sits under a heading scoped to
@@ -721,19 +670,9 @@ sentence and its leaked-outcome sentence are the remaining anchors below. Nothin
 bullet changes: its trigger, the `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)`
 formula, and the CRD validation rule all stand as written.
 
-The clause on a cleanup that does not complete states §6.2's existing disposition on the pod
-class that offers it rather than adding a second one. §7.1's reclaim reads the adapter's answer
-to its `Shutdown`, and an answer that does not report a clean exit leaves the slot `leaked` on a
-pod serving concurrent sessions, which §6.2's leaked-slot semantics and §5.2's own whole-pod
-replacement trigger already account for. On a pod serving one session neither the `leaked` sub-state nor the whole-pod replacement
-trigger applies, so the clause points at §6.2, which states what becomes of that slot's state
-on each of the pod's two exits, instead of restating it. §7.1's paragraph and the edge-case
-list cite the same section and restate nothing. The
-clause sits here because §5.2 is where the report is withheld, and a reader of the withholding
-rule alone would otherwise read the leak accounting as withheld with it. The accounting the
-clause names reaches every bind path §7.1 binds: the gateway's slot-failure accounting covers
-the retry-placed bind path today, and the code lane extends the same helper to the create-time
-reserved path and to the §7.3 re-attach, so the clause holds on all three.
+The `leaked` accounting the table names reaches every bind path §7.1 binds: the gateway's
+slot-failure accounting covers the retry-placed bind path today, and the code lane extends the
+same helper to the create-time reserved path and to the §7.3 re-attach.
 
 The third anchor is the `**Slot cleanup:**` bullet's own reporting sentence, which states the
 reporting rule a second time and without qualification. It reads, verbatim:
@@ -762,21 +701,13 @@ If cleanup fails, the slot is leaked — the pod continues but the slot is not r
 Replace it with:
 
 ```
-If cleanup fails, the slot is leaked: the pod continues but the slot is not reclaimed until pod termination. That sentence states the disposition of a cleanup that reclaims a slot the pod's shared runtime process had been given, and the **Scrub model.** paragraph above states the disposition of a cleanup on a slot that process was never given. Within this sentence's own scope there is one exception: a cleanup that closes that session cleanly and fails only in removing the slot's slot tree, which the adapter removes as one act (the slot's workspace directory, its session and artifact directories, and the credential directory this bullet's action list above names). That cleanup reports `released` where the **Scrub model.** paragraph above has it report at all, and holds the slot identifier for the life of the pod under the **Slot-identifier reclaim hold.** paragraph above, and the slot is not `leaked`, so its occupancy is not retained and it does not count toward the unhealthy threshold or appear on the `lenny_adapter_leaked_slots` gauge. [Section 7.1](07_session-lifecycle.md#71-normal-flow) states that disposition for the pod-side reclaim on a failed bind.
+If cleanup fails, the slot is leaked: the pod continues but the slot is not reclaimed until pod termination. The disposition table under the **Scrub model.** paragraph above states which failed cleanups leave a slot `leaked` and which hold the slot's identifier alone.
 ```
 
-The exception is the disposition §7.1 already states for a reclaim that closes the session on the
-pod's shared runtime process cleanly: the clean-exit flag and the cleanup-outcome report both
-answer for the close of that session, and a slot-tree removal that fails changes
-neither. The identifier is still held, because the reclaim-hold paragraph ends the hold only when
-every act the cleanup owes the slot has returned without error, so no successor binds onto the
-directory the removal left in place. What the exception withholds is the occupancy half of the
-`leaked` sub-state, which §6.2 defines for a slot the pod is still serving. The sentence and the
-`leaked` semantics §6.2 states are otherwise unchanged, and the following sentence's pointer at
-§6.2 stands. The scoping clause that precedes the exception keeps the bullet from answering for
-a cleanup on a slot the pod's shared runtime process was never given, whose disposition the
-`**Scrub model.**` append states once, for both pod concurrencies; the bullet states neither
-that disposition nor a second exception to it.
+The sentence becomes a citation of the table, which carries the one failed cleanup of a
+runtime-given slot that is not `leaked`, the clean close whose directory removal fails, and the
+cleanups of a slot the runtime was never given. The `leaked` semantics §6.2 states are
+unchanged, and the following sentence's pointer at §6.2 stands.
 
 ### SPEC-3 · spec/12_storage-architecture.md § 12.6 (`agent_pod_state` table schema)
 
@@ -830,8 +761,8 @@ the claim DELETE" (`pkg/controller/warmpool/occupancy.go:57-59`). A pod its pool
 to inventory through the `reserved → idle` edge, which it reaches only after its claim has been
 patched through `recycling` and its whole-pod scrub has been reported. The replacements below
 re-key every one of those statements on the projected phase at the claim DELETE, which is what
-the return-to-pool sentence of the pre-`running` cleanup paragraph staged after the fence
-relies on for a pod serving one session on a pool that reuses it.
+the last row of SPEC-3's §5.2 disposition table relies on for a pod serving one session whose
+claim a failed bind deletes.
 
 In the fenced `Occupancy projection` block, replace the trigger list of the `claimed ──→
 draining` entry:
@@ -922,11 +853,8 @@ Replace it with:
   slot_cleanup ──→ released             (see §5.2)
 ```
 
-The entry carries a pointer and states no trigger. §5.2 gives the cleanups that traverse this
-edge different outcomes: a cleanup a `Shutdown` performs to reclaim a slot the pod's shared
-runtime process was given reports `released`, a cleanup on the pre-`running` path reports nothing at all, and a
-cleanup that closes the session cleanly and fails only in removing the slot's slot tree reports
-`released` without having completed. A trigger short enough for a fence entry therefore either
+The entry carries a pointer and states no trigger. The §5.2 disposition table gives the cleanups
+that traverse this edge different reports. A trigger short enough for a fence entry therefore either
 restates §5.2 or excludes one of those traversals, so §5.2 stays the single home of the
 predicate and the fence carries the edge alone. §6.2's own warm-fill `sdk_connecting ──→ failed`
 entry is the precedent for a section pointer inside a fence of this section; it pairs its
@@ -947,17 +875,13 @@ Insert the paragraph below immediately after the fenced block closes and before 
 paragraph beginning `**`reserved` hold semantics.**`:
 
 ```
-**Pre-`running` slot cleanup.** A slot reaches `running` when the pod's shared runtime process has been given the session with its session identifier. Every earlier stage of the [§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step-5 bind sequence, credential assignment included, and a start still in flight, whose session has not yet reached the runtime, leave the slot in `receiving_uploads`. What each stage leaves on the pod differs: the workspace-preparation and setup stages leave the slot's registry entry and its per-slot workspace tree; credential assignment additionally binds that entry to the session, writes the slot's credential file and arms the slot's [§4.9](04_system-components.md#49-credential-leasing-service) direct-delivery-mode lease-expiry timers; a start additionally records the entry as started. A bind abandoned or failed at one of those stages takes the `receiving_uploads → slot_cleanup` edge when a cleanup runs on the slot; a session the runtime has already been given is a slot in `running` and takes the `running → slot_cleanup` edge the fence above carries. [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states who performs a cleanup that either edge runs, on what condition, and the acts it performs.
-
-The pod's two exits end pre-`running` slot state on different terms. The entry, the tree, the credential file and the timers are state of the adapter process and of the pod's filesystem, so every exit that terminates the pod ends them all, whichever transition in the fence above took the pod to `draining`. The pod's one return-to-pool edge is `reserved → idle`, which a pod on a pool that reuses it reaches through the `recycling` binding state once its whole-pod scrub has been reported; a `vm-restart` pool's pod retires at that boundary instead. That scrub, its verification, and the disposition of a verification that fails are stated in [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes); it is addressed from disk and independently of what the adapter's registry holds. The slot's registry entry and its armed [§4.9](04_system-components.md#49-credential-leasing-service) lease-expiry timers are not reached by that scrub. The terms on which each of the pod's two exits ends pre-`running` slot state are stated here; [§7.1](07_session-lifecycle.md#71-normal-flow) and [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) cite this paragraph for them.
-
-The cleanup either edge runs, and the report the pre-`running` reclaim withholds, are the ones [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states. [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the reclaim hold, from the adapter's deregistration of the slot's registry entry until the cleanup that reclaims the slot has completed, and for the life of the pod where that cleanup does not complete, which is what refuses a bind onto the slot's identifier in that window. The `slot_cleanup` sub-state is tracked per session and carries no admission rule of its own.
+**Pre-`running` slot cleanup.** A slot reaches `running` when the pod's shared runtime process has been given the session with its session identifier. Every earlier stage of the [§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step-5 bind sequence, credential assignment included, and a start still in flight, whose session has not yet reached the runtime, leave the slot in `receiving_uploads`. A bind abandoned or failed at one of those stages takes the `receiving_uploads → slot_cleanup` edge when a cleanup runs on the slot; a session the runtime has already been given is a slot in `running` and takes the `running → slot_cleanup` edge the fence above carries. [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states who performs the cleanup either edge runs, the acts it performs, the disposition of each cleanup and of a pre-`running` slot no cleanup reclaims, and the reclaim hold that refuses a bind onto the slot's identifier. The `slot_cleanup` sub-state is tracked per session and carries no admission rule of its own.
 ```
 
-The closing sentences add no edge and state no rule. They point a reader of the fence at
-the section that fixes what holds a slot's identifier while its cleanup runs, so `slot_cleanup` is not read as a label on a
-slot anything else may bind, and §6.2 does not become a third statement of a window
-§5.2 and §15.4 already fix.
+The paragraph states the `running` boundary and the two edges into `slot_cleanup`, and nothing
+else. Its closing sentences point a reader of the fence at §5.2, so `slot_cleanup` is not read as
+a label on a slot anything else may bind. What each pod exit ends is a column of the §5.2
+disposition table rather than a statement here.
 
 ### SPEC-5 · spec/04_system-components.md § 4.7.1 (after the Gateway → Adapter and Adapter → Gateway RPC tables)
 
@@ -987,11 +911,13 @@ Which fields each request carries:
 
 A [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload is the marked form. It reuses `PrepareWorkspace` and `FinalizeWorkspace` on the entry the session already holds, asserts no attempt identity, cannot create an entry under rule 3, and is exempt from rule 6, because the session it runs against has started by definition. Because it asserts no attempt identity, the gateway issues one only for a session the issuing replica holds a live binding for, and that admission is what keeps a request asserting no identity away from an entry its sender does not own.
 
-**The stamp-once rule.** The adapter stamps once, and rule 4 below is the only rule that writes an entry's `bind_attempt`. The adapter never writes that field again, in either direction: an entry's token does not change while the entry lives, and a request that resolves an entry the adapter already holds writes nothing. The first attempt to create an entry therefore owns it until the entry is removed, and no later request takes that ownership away. The adapter resolves or creates the entry, stamps the token on an entry it creates, and applies rules 1 through 7 below as one indivisible step, under the same lock that guards the registry. Performing them as separable steps does not conform even when each step is correct on its own, because an adapter that resolved an entry, released its lock, and then stamped admits a second attempt onto that entry in the window between the two.
+**The stamp-once rule.** The adapter stamps once, and rule 4 below is the only rule that writes an entry's `bind_attempt`. The adapter never writes that field again, in either direction: an entry's token does not change while the entry lives, and a request that resolves an entry the adapter already holds writes nothing. The first attempt to create an entry therefore owns it until the entry is removed, and no later request takes that ownership away.
+
+**The registry critical section.** One lock guards the adapter's slot registry, and the adapter performs each of the following as one indivisible step under it. On a request rules 1 through 9 govern, the step is the resolve or the creation of the entry, the stamp on an entry it creates, and the application of rules 2 through 7, the token comparison included. On a request that starts a session, the step is the resolve, the confirmation and the recording of the pod's shared runtime process as holding the session that rule 8 states. On a `Shutdown`, the step is the decision of rules 11 through 14 and the deregistration that decision selects. On every release, a `Shutdown` or otherwise, the step is the deregistration of the entry and the opening of the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot-identifier reclaim hold. Performing the members of one step as separable steps does not conform even when each is correct on its own: an adapter that resolved an entry, released the lock, and then stamped admits a second attempt onto that entry, one that confirmed a start, released the lock, and then recorded it records a session a reclaim has already released, and one that deregistered before it opened the hold admits a successor onto an identifier its cleanup is about to destroy. This paragraph is the only statement of that atomicity.
 
 **Admission.** The rules below are numbered and named, and every other statement of this contract refers to a rule by its number and name rather than restating it. Each rule states its own condition, on the request's fields, on the registry entry it resolves, and, where the rule names an RPC, on that RPC, and it reaches every request meeting that condition. Rules 1 through 9 govern every request on this contract that can create a slot registry entry: `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials`, `StartSession`, `Resume`, and `ConfigureWorkspace`. A `Shutdown` is governed by rules 10 through 15 in place of them. Every other RPC on this contract resolves an entry the session already holds, creates none, and is outside these rules, apart from the reclaim hold of rule 2, which reaches every request that would create or resolve a registry entry under the held identifier.
 
-The adapter applies rules 1 through 7 as an ordered cascade, stopping at the first rule whose condition the request meets, so a request meeting the condition of more than one rule is governed by the earlier rule. It applies them inside the one indivisible step the stamp-once rule states, before it creates anything, stamps anything, or returns. Rule 8 stands outside that order and is applied at the point a request records a started session. Rule 9 states which frame of a client-streaming call the rules above are decided on.
+The adapter applies rules 1 through 7 as an ordered cascade, stopping at the first rule whose condition the request meets, so a request meeting the condition of more than one rule is governed by the earlier rule. It decides rule 1 before it reads the registry and applies rules 2 through 7 inside the registry critical section, before it creates anything, stamps anything, or returns. Rule 8 stands outside that order and is applied at the point a request records a started session. Rule 9 states which frame of a client-streaming call the rules above are decided on.
 
 1. **The pairing rule.** Decided on the request's fields alone, before the adapter reads the registry. A request other than a `Shutdown` that carries `bind_attempt`, whose `bind_attempt` is empty and which is not marked `mid_session`, and one marked `mid_session` whose `bind_attempt` is non-empty, are each answered `INVALID_ARGUMENT`, and the adapter creates, resolves, stamps, and changes nothing, even when it holds no entry for that slot. A `Shutdown` is outside this rule, because rule 10 pairs its fields instead.
 2. **The reclaim hold.** Applied to a request rule 1 admits. Its scope and the refusal it returns are the ones [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states, and the status that refusal is answered on is the one [Section 15.4](15_external-api-surface.md#154-runtime-adapter-specification) publishes for the slot-identifier reclaim hold: the hold reaches every request that would create or resolve a registry entry under the held identifier, and a request it refuses reaches no rule below.
@@ -1000,19 +926,19 @@ The adapter applies rules 1 through 7 as an ordered cascade, stopping at the fir
 5. **The attempt identity rule.** A request whose non-empty `bind_attempt` differs from the non-empty token the resolved entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, answered on `ABORTED` and carried on the adapter's error envelope as `CATEGORY_TRANSIENT`, which a caller retries on. Because this rule is applied before rule 6, such a request is refused here even when the resolved entry's session has already started: a bind whose attempt identity is stale is a transient condition its caller retries, and refusing it as a started session would present a transient condition to the client as a permanent one.
 6. **The started-session rule.** A request that is not marked `mid_session` and that resolves an entry whose session has already started is refused with `SLOT_BIND_ALREADY_STARTED`, answered on `FAILED_PRECONDITION` and carried as `CATEGORY_PERMANENT`. A repeat `ConfigureWorkspace` for the session that started on that pod is exempt and is admitted: [Section 4.7](#47-runtime-adapter) publishes that request as idempotent, and it re-points the pre-connected runtime without restarting it.
 7. **The admit rule.** Any other request is admitted, and an admitted request that resolved an entry leaves that entry's token as it found it, whether the request carried a token or not.
-8. **The start-confirmation rule.** A start confirms the entry is still its own. Before the adapter records the pod's shared runtime process as holding a session, it resolves the registry entry for that slot identifier again and confirms that it still holds an entry for that identifier carrying the same bind attempt token the entry carried when the request that starts the session was admitted. The resolve, the confirmation and the recording are one indivisible step, under the same lock that guards the registry, on the terms the stamp-once rule states for rules 1 through 7. Performing them as separable steps does not conform, because a reclaim admitted between the confirmation and the recording removes the entry the confirmation approved and the start then records the pod's shared runtime process as holding a session that reclaim has already released. The confirmation is required of every request that starts a session, including one that carries no token of its own, for which the token compared is the one the entry carried at admission, so an entry no later attempt replaced compares equal to itself. When the adapter holds no entry for the identifier, or holds one carrying a different token, it records nothing, removes no entry, and reports no cleanup outcome for the slot, because the slot never reached `running` and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) files at most one cleanup-outcome report per session release, from the cleanup that reclaims the slot. It takes the session back off the shared runtime process and refuses the request that started it, answered on `ABORTED`, which is the transient classification a caller retries on. The rule is conditioned on what the request does rather than on the name of the RPC that does it.
+8. **The start-confirmation rule.** A start confirms the entry is still its own. Before the adapter records the pod's shared runtime process as holding a session, it resolves the registry entry for that slot identifier again and confirms that it still holds an entry for that identifier carrying the same bind attempt token the entry carried when the request that starts the session was admitted. These acts are the start step of the registry critical section. The confirmation is required of every request that starts a session, including one that carries no token of its own, for which the token compared is the one the entry carried at admission, so an entry no later attempt replaced compares equal to itself. When the adapter holds no entry for the identifier, or holds one carrying a different token, it records nothing, removes no entry, and reports no cleanup outcome for the slot, because the slot never reached `running` and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) files at most one cleanup-outcome report per session release, from the cleanup that reclaims the slot. It takes the session back off the shared runtime process and refuses the request that started it, answered on `ABORTED`, which is the transient classification a caller retries on. The rule is conditioned on what the request does rather than on the name of the RPC that does it.
 9. **The first-frame rule.** `PrepareWorkspace` is client-streaming. The adapter resolves the slot identifier once per call, from the first frame that carries one, and reads `bind_attempt` and `mid_session` from that same frame. Every rule above is decided on that frame's values, rule 1 included, and the adapter reads neither field on any later frame of the call, so a later frame states nothing about the call's admission.
 
 Neither `SLOT_BIND_ATTEMPT_SUPERSEDED` nor `SLOT_BIND_ALREADY_STARTED` appears in the [Section 15.1](15_external-api-surface.md#151-rest-api) REST error catalog, because the gateway consumes both and the client receives the envelope that section already defines for the endpoint that issued the bind sequence.
 
-**`Shutdown` states which teardown it asks for.** Rules 10 through 15 govern a `Shutdown` in place of the admission rules, applied as an ordered cascade on the same terms: the adapter stops at the first rule whose condition the request meets, so a request meeting the condition of more than one rule is governed by the earlier rule. Rule 10 is decided on the request's fields alone, before the adapter reads the registry. Rules 11 through 14 are decided inside the same critical section as the deregistration and precede it, so an entry the adapter refuses to release is never removed and restored. Each fixes the outcome the response reports and whether the request removes an entry; the two teardowns follow from the removal rather than being decided separately. Rule 15 fixes what each reported outcome means.
+**`Shutdown` states which teardown it asks for.** Rules 10 through 15 govern a `Shutdown` in place of the admission rules, applied as an ordered cascade on the same terms: the adapter stops at the first rule whose condition the request meets, so a request meeting the condition of more than one rule is governed by the earlier rule. Rule 10 is decided on the request's fields alone, before the adapter reads the registry. Rules 11 through 14 are decided inside the registry critical section, so an entry the adapter refuses to release is never removed and restored. Each fixes the outcome the response reports and whether the request removes an entry; the two teardowns follow from the removal rather than being decided separately. Rule 15 fixes what each reported outcome means.
 
 10. **The teardown-pairing rule.** A `Shutdown` carries either a non-empty `bind_attempt`, naming the bind attempt it compensates, or `unconditional_teardown`, and it carries exactly one of the two. A request carrying neither, and a request carrying both, is answered `INVALID_ARGUMENT`: the adapter performs neither teardown, removes no entry, and changes nothing.
 11. **The no-entry rule.** A request for a session the adapter holds no entry for removes nothing, performs neither teardown, and answers `absent`. It reaches a request of either form.
 12. **The unconditional-teardown rule.** A request asking for the unconditional teardown is addressed to whatever entry the adapter holds. It removes that entry, performs both teardowns under their own preconditions, and answers `reclaimed`. It is what every caller other than a compensating reclaim sends.
 13. **The attempt-mismatch rule.** A request naming a bind attempt whose token differs from the token the resolved entry carries, and one whose resolved entry carries no token, removes nothing, performs neither teardown, and answers `superseded`. The entry-carries-no-token arm answers `superseded` so that the rule fails closed. An entry carrying no token is one a `StartSession` or a `ConfigureWorkspace` created, because those two carry none, and such an entry may be the one a successor's own start created for a session now running, which is why a reclaim naming an attempt removes nothing there. No `Shutdown` naming a bind attempt removes such an entry; within this cascade only rule 12 does. That is a residue this contract records rather than one it closes.
 14. **The attempt-match rule.** A request naming a bind attempt whose token equals the token the resolved entry carries removes that entry, performs both teardowns under their own preconditions, and answers `reclaimed`.
-15. **The reclaim-outcome rule.** `reclaimed`, `superseded`, and `absent` are the outcomes a `Shutdown` response reports, and each has one meaning, fixed by the rule that answers it. `reclaimed`, answered by rule 12 and by rule 14, means the adapter held the entry the request was addressed to and released the slot. `superseded`, answered by rule 13, means the adapter holds an entry for the session that the request is not addressed to, so the request's own bind attempt does not own that entry, either because a different attempt owns it or because the entry carries no token and no attempt owns it, and the reclaim released nothing. `absent`, answered by rule 11, means the adapter holds no entry for the session. All of them are successful outcomes and are answered on a successful RPC: a `Shutdown` is never refused for naming an attempt that does not own the entry. Rule 11 and rule 13 remove no entry and perform neither teardown, so a response reporting `absent` or `superseded` reports a clean exit; only a response reporting `reclaimed` can report an unclean exit, which it takes from the runtime close and the cleanup the removing rule performed.
+15. **The reclaim-outcome rule.** `reclaimed`, `superseded`, and `absent` are the outcomes a `Shutdown` response reports, and each has one meaning, fixed by the rule that answers it. `reclaimed`, answered by rule 12 and by rule 14, means the adapter held the entry the request was addressed to and released the slot. `superseded`, answered by rule 13, means the adapter holds an entry for the session that the request is not addressed to, so the request's own bind attempt does not own that entry, either because a different attempt owns it or because the entry carries no token and no attempt owns it, and the reclaim released nothing. `absent`, answered by rule 11, means the adapter holds no entry for the session. All of them are successful outcomes and are answered on a successful RPC: a `Shutdown` is never refused for naming an attempt that does not own the entry. Rule 11 and rule 13 remove no entry and perform neither teardown, so a response reporting `absent` or `superseded` reports a clean exit; only a response reporting `reclaimed` can report an unclean exit, on the terms the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) disposition table states.
 
 Rules 11 through 15 state no refusal, and rule 10's refusal is on the request's own fields rather than onto a slot identifier; the refusal a cleanup in progress imposes is the one rule 2 applies, stated by [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes). The two teardowns a removing rule performs, and the precondition each carries, are stated in the [Section 4.7](#47-runtime-adapter) `Shutdown` row.
 ```
@@ -1028,8 +954,10 @@ carry it, when the adapter stamps it, which entry a request is addressed to, wha
 entry, and what the response reports.
 
 Some of what the block states are obligations this proposal takes on rather than shipped
-behaviour it records. The atomicity clause makes first-writer-wins implementable from the prose,
-which it is not while the resolve, the stamp and the comparison read as three acts. The start
+behaviour it records. The registry critical-section paragraph makes first-writer-wins
+implementable from the prose, which it is not while the resolve, the stamp and the comparison
+read as three acts, and it is the one place the block states atomicity, so a step missing from
+the adapter's critical section is a step missing from that paragraph. The start
 confirmation is the second: the shipped adapter records the session unconditionally, so the rule
 is new behaviour rather than a restatement; rule 8 states the status its failure is answered on
 and §15.4 publishes non-conformance against the rule, so an adapter written from the published
@@ -1048,13 +976,13 @@ states no rule of its own. It points at §4.7.1 for the rules and states what co
 them means, which is what a published contract adds to the rule text:
 
 ```
-**Bind attempt token contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token, the requests that carry it, the stamp-once rule, and the numbered rules an adapter applies to it, together with the gRPC status, the `ErrorCode` and the `Shutdown` outcome each rule answers on, except in two places: the status of the reclaim hold of rule 2 is the one the slot-identifier reclaim-hold block below states, and the status of the reclaim outcomes of rules 11 through 14 is the successful one rule 15 fixes for all of them. That statement is normative for a third-party adapter and is not restated here.
+**Bind attempt token contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token, the requests that carry it, the stamp-once rule, the registry critical section, and the numbered rules an adapter applies to it, together with the gRPC status, the `ErrorCode` and the `Shutdown` outcome each rule answers on, except in two places: the status of the reclaim hold of rule 2 is the one the slot-identifier reclaim-hold block below states, and the status of the reclaim outcomes of rules 11 through 14 is the successful one rule 15 fixes for all of them. That statement is normative for a third-party adapter and is not restated here.
 
 An adapter conforms when, on every request, it behaves as [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states for that request: it refuses or admits as that section states, performs the acts it states and no others, and answers on the gRPC status, the `ErrorCode` and the `Shutdown` outcome it states. An adapter that behaves otherwise on any request does not conform.
 ```
 
 ```
-**Slot-identifier reclaim hold:** [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the reclaim hold: the adapter holds a slot's identifier from the deregistration of that slot's registry entry until the cleanup that reclaims the slot has completed, because the cleanup's remaining acts are addressed by the identifier rather than by the entry. This is what an adapter must exhibit on the wire. While the identifier is held, a request that would create or resolve a registry entry under it is refused with the gRPC status code `ABORTED`, which is the transient classification a caller retries on. An adapter that admits such a request while the identifier is held does not conform. An adapter that refuses one with a permanent status, or that answers a status the caller cannot retry, does not conform. `Shutdown` is not held: a `Shutdown` naming a session whose cleanup is running removes nothing and answers `absent` under the no-entry rule [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states.
+**Slot-identifier reclaim hold:** [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the reclaim hold, its window, and the requests it refuses. This block states what an adapter must exhibit on the wire. While the identifier is held, a request that would create or resolve a registry entry under it is refused with the gRPC status code `ABORTED`, which is the transient classification a caller retries on. An adapter that admits such a request while the identifier is held does not conform. An adapter that refuses one with a permanent status, or that answers a status the caller cannot retry, does not conform. `Shutdown` is not held: a `Shutdown` naming a session whose cleanup is running removes nothing and answers `absent` under the no-entry rule [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states.
 ```
 
 Both blocks state the contract and neither states a Go type, a field number, or a package
@@ -1196,11 +1124,12 @@ Listed so a reviewer can tell scope from oversight.
   table `DemoteSDK` row (opening clause replaced, the registry removal stated as a slot release
   whose §5.2 cleanup runs inside the request), §4.7.1 (the bind attempt
   token block, new, after the RPC tables, stating the admission cascade and the teardown cascade
-  as one numbered rule list), §4.7.9 step 5 (one sentence).
+  as one numbered rule list, with the registry critical-section paragraph as the one statement
+  of the adapter's atomicity), §4.7.9 step 5 (one sentence).
 - `spec/05_runtime-registry-and-pool-model.md`: §5.2 `**Scrub model.**` paragraph (its opening
   sentence replaced so the cleanup-outcome report is stated once, as a biconditional on a
   `Shutdown` that reclaims a slot the pod's shared runtime process was given, and the per-slot
-  cleanup pointer, the pre-`running` disposition, the one-report rule and the slot-identifier
+  cleanup pointer, the one-report rule, the cleanup disposition table and the slot-identifier
   reclaim-hold paragraph appended, whose closing sentence points at the bind attempt token), and
   the §5.2 `**Slot cleanup:**` bullet's action-list sentence, its reporting sentence (which
   becomes a citation of the scrub-model paragraph) and its leaked-outcome sentence (all
@@ -1212,7 +1141,7 @@ Listed so a reviewer can tell scope from oversight.
   trigger list in the fence, and three clauses in the projection prose, each re-keyed on the
   phase the pod projects at the claim DELETE), §6.2 per-slot sub-state fence (one edge added,
   and the `slot_cleanup ──→ released` annotation replaced with a pointer at §5.2), the prose after
-  it (one paragraph, pointing at the §5.2 reclaim hold), the §6.2
+  it (one paragraph, stating the `running` boundary and pointing at §5.2), the §6.2
   `resuming` mid-resume cancel bullet (one clause), and the §6.2 pre-attached retry policy's
   `**Client visibility:**` bullet (one clause re-keyed on the gRPC code).
 - `spec/07_session-lifecycle.md`: §7.1 gains a new paragraph after the atomicity paragraph
