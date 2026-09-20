@@ -3288,3 +3288,72 @@ FACT: the concurrent-pool `maxSessionsPerPod` evaluation point is stated at four
 WATCHOUT: the SPEC-4 §6.2 fence edit for the `claimed ──→ draining` entry gives a replacement block with no quoted "reads, verbatim" original and no "Replace it with:" line — spec-changes.md:853-860. The current text is spec/06_warm-pod-model.md:95-97 ("claim deleted on a pod with recycle.enabled: false"). It is resolvable, but it is the one staged edit in the file that does not follow the quote-then-replace form. Not my lens; a citation or edit-anchor lens should confirm nobody has filed it.
 
 FACT: the ten-second graceful window the staged §5.2 reclaim-hold paragraph assigns to the §10.1 hold-timeout termination appears nowhere in §10.1 (spec/10_gateway-internals.md:58 states `coordinatorHoldTimeoutSeconds`, default 120s, and no close window) and pkg/adapter/holdstate.go:239 only comments "Best-effort graceful runtime termination". So it is a new constant rather than a copy of §10.1. A defaults/overridability lens should check it against code-best-practices.md's operator-tunable rule.
+
+### [f1.open-decisions-apply.id21]
+
+DECISION: item id:21 (does a bind abandoned before `running` count toward
+`recycle.maxSessionsPerPod`) is resolved as staged, answer "no", and its entry left
+`## Open decisions for human to make`. No change file was edited, because the answer is the
+do-nothing answer and the staging already carries it: the §5.2 disposition table files no
+cleanup-outcome report on any pre-`running` row (spec-changes.md:620-622) and the staged
+biconditional scopes the report to a slot the shared runtime process was given
+(spec-changes.md:601). Site: summary.md, entry 21 deleted, and the section preamble updated so
+that 21 is listed with the entries the staging answered and with the entries that became defects
+rows.
+
+DECISION: the entry's residual-state half was not dropped with it. It is now a row under
+`## Defects in the shipped tree that this proposal does not stage`, one bullet naming §5.2's
+retirement predicate, the report-keyed write trigger, and the §4.7.9 `RunSetup` step. The
+entry's other clause, "raise it as its own finding", is recorded in that row as what correcting
+it would take rather than staged as an action.
+
+FACT: every citation in the new defects row re-verified against the tree.
+`spec/05_runtime-registry-and-pool-model.md:488` carries both the served-session-count trigger
+and the deployer-choice sentence; `:473` carries the residual-state vectors the scrub cannot
+address; `spec/04_system-components.md:854` is step 5 of the §4.7.9 startup sequence and names
+`RunSetup`; `pkg/agentpodstate/agentpodstate.go:124-133` is the `IncrementSessionsServed` doc
+comment and declaration; and
+`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go:457` is the one
+production call of it, inside `RecordSessionScrub`.
+
+FACT: no staged change file carries an `## Open decisions for review` section, confirmed again
+this firing, so there was nothing to delete outside the summary.
+
+
+### [f1.open-decisions-cleanup.1]
+
+FACT: `summary.md` already carried exactly the eight required headings, in order, with nothing
+else at heading level: `# Summary: ...`, `## Summary` (a container holding `**Problem
+statement.**`, `**What changes.**`, `**Decisions.**`, `**Watch out for.**` in that order and no
+prose of its own), `## Goals`, `## Non-goals`, `## Open decisions for human to make`,
+`## Defects in the shipped tree that this proposal does not stage`, `## Impacts on other
+proposals`, `## Deliverable index` last. No part needed renaming, no block was relocated, and the
+file is unchanged by this pass.
+
+FACT: `## Open decisions for human to make` carries entries 20 and 27 and nothing else. Both keep
+their stamped identifiers. No `### Retired` or equivalent block stands inside it, and the apply
+pass's deletion of entry 21 left none behind.
+
+DECISION: the section preamble was left exactly as the apply pass wrote it. It is true of the two
+entries the section now carries: 27 carries a recommendation with its ground, its alternatives and
+a confidence, and 20 carries the question and its ground alone. Entry 21 appears in two of its
+lists because both dispositions hold of it, which `[f1.open-decisions-apply.id21]` records as
+deliberate, so there is nothing here for a format pass to correct. ALTERNATIVES: striking 21 from
+the "answered by the staging" list (rejected: no change file was edited for it, so that clause is
+true, and removing it would re-adjudicate the apply pass's recorded choice).
+
+FACT: every out-of-scope marker this firing reported as `no-edit-needed` resolves to an entry
+already standing under `## Defects in the shipped tree that this proposal does not stage`,
+including the one added this firing for id:21's residual-state half. None was promoted, reworded
+or reordered by this pass, and the section holds no decisions.
+
+DECISION: `**Accepted failure modes.**` stays where it stands, inside `## Non-goals`, on the
+ground the earlier cleanup recorded: it is a labelled part rather than a heading, the section list
+constrains labelled parts only under `## Summary`, `## Non-goals` is a listed section whose subject
+covers a residue this proposal declines to close, and four sites in the file cite it from there.
+ALTERNATIVES: moving it under the defects section (rejected: that section is scoped to confirmed
+defects in the shipped tree, while these are properties of the design staged here).
+
+FACT: `## Deliverable index` was preserved line for line in last position, its closing paragraph on
+tests and CONF-1 included. Nothing in this pass touched a staged change file, the problem statement
+or the implementation checklist.

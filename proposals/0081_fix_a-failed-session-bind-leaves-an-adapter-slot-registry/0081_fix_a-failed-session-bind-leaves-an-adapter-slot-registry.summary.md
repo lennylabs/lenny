@@ -472,11 +472,11 @@ deliberately and which is recorded under the defects this proposal does not stag
 
 The decisions below are open for a human. Each keeps the identifier it was stamped with, so the
 numbering does not start at 1: the entries that held the earlier numbers left this section, and
-the review log records where each went. Entries 12, 13, 14, 15, 23, 24 and 25 were answered by
-the staging as it already stood, so no change file was edited for them. Entries 7 and 26 became
-rows under `## Defects in the shipped tree that this proposal does not stage`. The review log's
-`### Settled` and `### Retired` lists carry the remainder, each with its reason. Entries 21 and 27
-carry a recommendation with its ground, its alternatives and a confidence. Entry 20 carries the
+the review log records where each went. Entries 12, 13, 14, 15, 21, 23, 24 and 25 were answered
+by the staging as it already stood, so no change file was edited for them. Entries 7, 21 and 26
+became rows under `## Defects in the shipped tree that this proposal does not stage`. The review
+log's `### Settled` and `### Retired` lists carry the remainder, each with its reason. Entry 27
+carries a recommendation with its ground, its alternatives and a confidence. Entry 20 carries the
 question and its ground alone, because the review loop derived no recommendation for it.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
@@ -485,44 +485,6 @@ question and its ground alone, because the review loop derived no recommendation
     the choice. The decision belongs to whoever owns the adapter's `ErrorCode` enum, and it is
     recorded here rather than taken in the deliverable because the enum's numbering convention
     is not stated anywhere this proposal can cite.
-
-21. **Should a bind that ran the setup commands but never reached `running` count toward
-    `recycle.maxSessionsPerPod`?** §4.7.9 step 5 runs the deployer and client setup commands
-    (`RunSetup`) before `AssignCredentials`, so a bind abandoned at `ready` has already executed
-    code on the pod, priming the residual-state vectors §5.2 says the scrub cannot address
-    (TCP `TIME_WAIT` and conntrack entries, DNS resolver cache, page-cache priming,
-    `inotify`/`fanotify` registrations, and pipes or sockets outside managed paths). Neither the
-    shipped tree nor the spec this proposal stages counts such a bind toward the pod's session
-    limit, and the condition is pre-existing rather than introduced here.
-
-    **Recommendation (moderate confidence): leave the counter as it is, and raise the
-    residual-state argument as its own finding against §5.2's retirement predicate.** The ground
-    is that the counter is defined as a record of sessions served: §5.2 keys the retirement
-    trigger on "the pod's served-session count", the field comment calls it "counts every session
-    served", and §12 records `sessions_served` as gateway-written on each cleanup-outcome report
-    once SPEC-3 re-keys that write trigger. A bind
-    abandoned before `running` is never served and never released, so the shipped definition
-    already excludes it, and SPEC-3's replacement of §5.2's scrub-model opening sentence files no
-    cleanup-outcome report on that path for the same reason.
-
-    The alternatives and why each lost. **Count it**, treating a pod that has executed setup
-    commands as having consumed one of its reuses: this loses on accounting, because the
-    cleanup-outcome report carries no per-session dedup, so a §5.2 slot retry that re-binds the
-    same session onto the same pod would be counted twice, retiring the pod early against a
-    number that no longer measures sessions served and skewing the `lenny_pod_session_reuse_count`
-    p50 the PoolScalingController derives `mode_factor` from (§16 observability, §5.2 scaling).
-    **Withdraw the question as already answered by the staged text**: this loses because the
-    staged text answers only what the counter counts, while §5.2 gives the field a second role
-    when it requires the deployer to choose `maxSessionsPerPod` "based on the workload's
-    sensitivity and the residual state vectors enumerated above". On that role the question is a
-    policy question about how much unscrubbable residue one pod may accumulate, and neither the
-    spec nor the code settles it.
-
-    What deciding otherwise costs. Deciding that it should count commissions work this proposal
-    has not scoped: a §5.2 edit that restates the retirement predicate in terms other than
-    sessions served, a gateway accounting change with a per-session dedup so a retry is not
-    double-counted, and an answer for the leak signal that rides the same report. None of that is
-    staged here, so an affirmative answer is a new proposal rather than an edit to this one.
 
 27. **Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1?**
     The choice is between filing a finding and recording the behaviour as a known shipped-tree
@@ -925,6 +887,28 @@ question and its ground alone, because the review loop derived no recommendation
 - **No spec change. `Server.ReportSessionFailure` has no production caller.** Every reference
   outside `pkg/gateway/sessionserver/failure.go:115` is a test, so no outcome should be rested on
   it. Recorded so a later reader does not route a terminal disposition through it.
+- **A bind abandoned before `running` primes residual state without advancing the pod toward
+  retirement.** `recycle.maxSessionsPerPod` retires a pod when "the pod's served-session count
+  reaches `recycle.maxSessionsPerPod`" (`spec/05_runtime-registry-and-pool-model.md:488`), and
+  that count moves only on a cleanup-outcome report: §12.6 records `sessions_served` as
+  gateway-written on that report, and the shipped writer `IncrementSessionsServed`
+  (`pkg/agentpodstate/agentpodstate.go:124-133`) is reached only from
+  `ScrubReporter.RecordSessionScrub`
+  (`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go:457`). A bind that
+  reached `RunSetup`, step 5 of the §4.7.9 startup sequence
+  (`spec/04_system-components.md:854`), has executed deployer-supplied and client-supplied
+  commands on the pod and primed the residual-state vectors §5.2 says the scrub cannot address
+  (`spec/05_runtime-registry-and-pool-model.md:473`), yet it files no report and so leaves the
+  count where it was. The same §5.2 paragraph makes the field the deployer's lever over that
+  residue, requiring "an explicit choice based on the workload's sensitivity and the residual
+  state vectors enumerated above", so a pod can accumulate arbitrarily many such primings
+  while the lever reads zero. It is a pre-existing property of §5.2's retirement predicate
+  rather than something this proposal introduces, and the staging leaves it as it stands: the
+  disposition table files no cleanup-outcome report on any pre-`running` row. Correcting it
+  means restating the retirement predicate in terms other than sessions served and giving the
+  report a per-session dedup, because the increment is unconditional on the report and a §5.2
+  slot retry that re-binds the same session onto the same pod would otherwise count twice.
+  That is a finding against §5.2 rather than an edit to this proposal.
 
 ## Impacts on other proposals
 
