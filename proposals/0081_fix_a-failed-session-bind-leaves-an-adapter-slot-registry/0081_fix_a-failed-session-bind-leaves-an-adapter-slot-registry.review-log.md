@@ -1651,3 +1651,17 @@ UNVERIFIED: the §5.2 reclaim-hold paragraph does not itself state the "held for
 
 USEFUL [spec.12.review-single-source.1]: its eleven-home inventory and its mechanical fenced-block repeat check let this round be a delta review plus targeted spec/ spot checks instead of a rebuild. Keep it; it has now paid for itself twice.
 USEFUL [A residue-disposition cell is changed in the §5.2 table and NOWHERE ELSE...]: the trap is what told me the re-keyed last column is by construction the single home, so the four sites that name it (§7.1, the `**Slot cleanup:**` bullet, §6.2's pre-`running` paragraph, the `**Whole-pod replacement trigger:**` parenthetical) needed only a pointer check rather than a content comparison.
+
+### [f1.cleanup.1]
+
+FACT: the summary file already carried exactly the eight required sections, in the required order, and the `## Summary` container already held `**Problem statement.**`, `**What changes.**`, `**Decisions.**` and `**Watch out for.**` in that order and no prose of its own. No section was added, removed, reordered or renamed, and no block was relocated. — EVIDENCE: headings at summary.md lines 1, 3, 289, 313, 471, 595, 929, 944; labelled parts at 5, 21, 101, 224.
+
+FACT: this firing's items required no summary edit. Items 20 and 21 were refuted at both the gate and the apply, so nothing was staged for them and both remain listed under `## Open decisions for human to make` with the identifiers 20 and 21. Item 27 and every `marker:unscoped` item were `no-edit-needed`, and the summary already carried each as written: item 27 as decision entry 27, and the unscoped markers as entries of `## Defects in the shipped tree that this proposal does not stage`.
+
+FACT: the `## Open decisions for human to make` preamble is true of the entries the section now carries. Entries 21 and 27 each carry a recommendation with its ground, its alternatives and a stated confidence; entry 20 carries the question and its ground with no recommendation. The review log carries both `### Settled` and `### Retired` lists the preamble points at. No preamble correction was owed, because this pass falsified nothing.
+
+FACT: the section carries no `### Retired` block or equivalent, and no meta-list of staged items with a proposed disposition. There was nothing to check against the staged changes and nothing to drop.
+
+WATCHOUT: `**Accepted failure modes.**` sits as a labelled block at the end of `## Non-goals` (summary.md line 416) rather than under a section of its own. It was left in place: its subject, residues this change deliberately does not close, is covered by `## Non-goals`, and moving it to `## Defects in the shipped tree that this proposal does not stage` would re-file design residues as confirmed shipped-tree defects, which is an adjudication a format pass may not make. A later pass that wants it moved should move it as a decision rather than as a format correction.
+
+WATCHOUT: `## Defects in the shipped tree that this proposal does not stage` has a stray blank line between the entry ending at summary.md line 854 and the entry beginning at line 856, which renders the bullet list loose from that point on. It is cosmetic and was left alone under this pass's change-nothing-else rule.
