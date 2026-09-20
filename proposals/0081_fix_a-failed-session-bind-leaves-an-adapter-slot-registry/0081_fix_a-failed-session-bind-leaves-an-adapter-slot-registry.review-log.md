@@ -2491,3 +2491,309 @@ the status of rules 11 through 14 from rule 15") as a duplication — BECAUSE th
 operative clause of the conformance criterion rather than a second statement of a rule, and the
 loop's material skeptic has refuted three prior findings of exactly this adjacent-clause form —
 ALTERNATIVES: filing it, which on precedent costs two verifiers and closes nothing.
+
+### [spec.3.fix-followup.1]
+
+DECISION: the failed-cleanup residue predicate is now stated the same way at every "successor
+materializing over" site. The round-3 fixer replaced "over the workspace and credential
+directories a failed cleanup left in place" with "over the residue the cleanup left in place" in
+the staged §5.2 reclaim-hold rationale but left the identical closed two-item phrasing at
+non-spec-changes.md (the "A refused retry burns one attempt." accepted failure mode) and at
+summary.md (the "Two further residues are priced and accepted" paragraph). Both now read "over
+the residue a failed cleanup left in place". No other wording in either sentence changed, and the
+cost comparison each clause supports is unaffected.
+EVIDENCE: the corrected counterpart at spec-changes.md ("the identifier a successor would bind
+onto, over the residue / the cleanup left in place"); the §5.2 `**Slot cleanup:**` action list in
+the same file, which names the process-group kill alongside the workspace and credential
+directory removals and so falsifies the two-item closure.
+
+### [spec.3.fix-G1.1]
+DECISION: closed the §5.2 residue-enumeration finding by DELETING the enumeration rather than lengthening it — BECAUSE the cleanup act list already has one normative home (SPEC-3's first anchor, the `**Slot cleanup:**` bullet replacement text) and the residue sentence was a partial third copy that went stale the moment this same deliverable widened that list; a reference cannot omit an act and cannot go stale when the list grows. ALTERNATIVES: the reviewer's literal suggested text (adds a fourth copy of the act list, and its restored "the occupancy-zero whole-pod scrub reaches it" clause is false on a pod that does not recycle); opening the enumeration with "includes" (normative text naming an unclosed residue set is unactionable); moving the statement into the reclaim-hold paragraph or into the `**Slot cleanup:**` bullet (the bullet is scoped to `maxConcurrentSessions > 1` and the rule holds on a pod of either concurrency).
+WATCHOUT: the clause "which do not outlive the pod" is the only bound that is true on BOTH pod classes. Do not replace it with a pointer to the occupancy-zero whole-pod scrub: a pool that retires the pod at the occupancy-zero boundary never runs that scrub. EVIDENCE: spec/05_runtime-registry-and-pool-model.md:540 (retire at the boundary) vs :463 (`kill -9 -1` inside the scrub).
+FACT: the §5.2 per-slot cleanup's act list, as SPEC-3 stages it, is workspace directory, process-group kill, credential directory, §4.9 expiry timers, and `slotId` release. Any prose that names two of those is a stale copy. EVIDENCE: proposals/0081_*/0081_*.spec-changes.md:623.
+WATCHOUT: the failed-cleanup residue is NOT all on disk. A cleanup that fails at the process-group kill leaves a live process group, which on a concurrent pod shares the process namespace, `/tmp`, cgroup memory and network stack with co-tenant slots. Any argument grounded on "the residue is on disk" is false. EVIDENCE: spec/05_runtime-registry-and-pool-model.md:517.
+
+### [spec.3.fix-design-G1.1]
+
+DECISION: close the "residue enumeration omits the process group" finding by DELETING the enumeration from the residue sentence rather than lengthening it — the sentence becomes "What it leaves is the residue of whichever of the acts the **Slot cleanup:** bullet's action list names did not complete, none of which outlives the pod, and the slot identifier, which the **Slot-identifier reclaim hold.** paragraph below governs." — BECAUSE the cleanup's act list already has ONE home (the `**Slot cleanup:**` bullet, spec-changes.md:623) and the residue sentence was a third partial copy of it after the reclaim-hold paragraph's own copy at :646; a reference cannot go stale when the act list gains a fourth act, and the act list already gained two in this same deliverable. ALTERNATIVES: (a) the reviewer's literal patch, adding "and any surviving processes of the slot's process group" plus "each of which the occupancy-zero whole-pod scrub stated below reaches" — rejected, it makes a fourth copy of the act list AND its scrub clause is false on a non-recycling pod (a `vm-restart` pool retires at the occupancy-zero boundary without running the scrub's step 1, spec/05_runtime-registry-and-pool-model.md:540); (b) opening the enumeration with "includes" — rejected, an open enumeration in normative text says nothing a reader can rely on.
+
+FACT: the process group IS bounded by the pod exactly as the two directories are, so the existing clause "which do not outlive the pod" survives the correction unchanged and no new bounding mechanism is needed. On a recycling pod the whole-pod scrub's step 1 is `kill -9 -1` as the sandbox user (spec/05_runtime-registry-and-pool-model.md:463); on a pod that does not recycle the pod retires at the same boundary (spec/05_runtime-registry-and-pool-model.md:540). EVIDENCE: spec/05_runtime-registry-and-pool-model.md:463,540
+
+WATCHOUT: the rationale prose two paragraphs below the staged block carries the SAME two-item enumeration twice and both are falsified by the correction. "over a workspace directory and a credential directory the cleanup left in place" (spec-changes.md:657) and "because the residue a failed cleanup leaves is on disk either way" (spec-changes.md:661-662). A live unkilled process group is not on disk. Both must move in the same edit; the second's argument (concurrency-independence) survives if the ground is restated as "because a failed cleanup leaves the same residue on a pod of either concurrency". EVIDENCE: proposals/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.spec-changes.md:657,661
+
+MISTAKE: round 2 replaced the sentence's pointer at the reaping mechanism ("its residue is accounted at the whole-pod boundary instead: the occupancy-zero whole-pod scrub stated below reaches it") with the bare assertion "which do not outlive the pod", argued only for the two directories it happened to name. Deleting a pointer and substituting an argument that covers a subset of what the pointer covered is how the omission entered. EVIDENCE: scratchpad/cp-snap/0081-opt1/spec-r2-prefix/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.spec-changes.md:644
+
+DEFERRED [proposals/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.non-spec-changes.md]: line 3411 asserts "The residue is the slot's workspace tree and its credential directory, bounded at the whole-pod boundary: on a recycling pod the occupancy-zero whole-pod scrub removes both and verifies their absence, and a pod that does not recycle retires at that boundary." That closed two-item enumeration is false once §5.2's residue statement is corrected, for the same reason: `releaseSessionSlot` runs the same cleanup, whose acts include the process-group kill. What is true instead: the residue is whatever acts of the §5.2 `**Slot cleanup:**` action list did not complete, none of which outlives the pod. The right remedy is a citation of §5.2's corrected residue sentence rather than a third independent enumeration in the non-spec lane. Land it in the non-spec lane if this loop may not write that file.
+
+FACT: the deviations file for 0081 has no entries (3 lines, zero `###` headings), so nothing in the tree has yet won an argument with this proposal. EVIDENCE: proposals/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.deviations.md
+
+
+### [spec.3.review-citations.1]
+
+FACT: The r2→r3 diff is FOUR hunks, all in `spec-changes.md`, and nothing else in the proposal
+directory changed. `diff -rq -x '*.review-log*.md'` confirms one differing file. The hunks are:
+Design :55-57 (claim-deletion landings now deferred to SPEC-4's own enumeration), §5.2 Scrub-model
+append :644 (handler-cleanup residue re-stated in §5.2 instead of delegated to §6.2), §5.2
+`**Slot cleanup:**` bullet :698 plus its commentary :711-714 (scoping clause added), and §15.4's
+conformance criterion :927 (re-quantified over "every request").
+EVIDENCE: proposals/0081_.../0081_....spec-changes.md:55,644,698,927
+
+FACT: SPEC-4's opening paragraph DOES enumerate the three claim-deletion landings ("§6.2's fenced
+`Occupancy projection` block, ... the §6.2 projection prose above it, ... and §4.6.1's
+**Occupancy projection** bullet list"), so the Design hunk's new "enumerated under SPEC-4" pointer
+resolves. Verified; not a finding.
+EVIDENCE: proposals/0081_.../0081_....spec-changes.md:717-720
+
+FACT: The staged §7.1 obligation paragraph restates no claim-deletion retirement trigger; it says
+only "the pre-attached failure disposition deletes the pod's claim, and [Section 6.2] states what
+becomes of the slot state the attempt left there." The Design hunk's "neither this paragraph nor
+SPEC-3's §5.2 append restates that trigger" checks out.
+EVIDENCE: proposals/0081_.../0081_....spec-changes.md:458
+
+DECISION: I did NOT file the §15.4 conformance criterion (:927) against the "except in two places"
+sentence one paragraph above it (:925). BECAUSE the criterion says an adapter conforms when it
+answers on the status §4.7.1 states, and for rule 2 §4.7.1 states that status by reference
+("the status that refusal is answered on is the one [Section 15.4] publishes", :872); the
+reference resolves to `ABORTED` in §15.4's own reclaim-hold block (:931), which additionally
+states its own conformance sentences. No gap and no circularity. ALTERNATIVES: filing it as a
+predicate that imposes nothing on a rule-2 refusal — rejected, because the reclaim-hold block
+imposes it independently.
+
+WATCHOUT: the §5.2 `**Slot cleanup:**` bullet is now SCOPED (as of hunk 3) to "a cleanup that
+reclaims a slot the pod's shared runtime process had been given". Two neighbouring staged
+sentences still speak of "the disposition the **Slot cleanup:** bullet below states for a cleanup
+that fails" (the reclaim-hold paragraph, :646) and "The terminal is the `**Slot cleanup:**`
+bullet's own" (the commentary, :661). Both are hedged ("wherever the bullet applies it", "on a pod
+of either concurrency"), so I judged them summarising clauses rather than defects, but a later
+round re-scoping the bullet again must re-read :646 and :661.
+EVIDENCE: proposals/0081_.../0081_....spec-changes.md:646,661,698
+
+FACT: the shipped adapter's per-slot cleanup on the failed-start handler path is `removeSlotTree`
+alone; there is no per-slot process-group kill anywhere in `pkg/adapter`. The process-group kill
+lives only in the §5.2 bullet's action list, which SPEC-3 widens rather than trims.
+EVIDENCE: pkg/adapter/slotsession.go:214-217; pkg/adapter/session.go:271;
+spec/05_runtime-registry-and-pool-model.md:545
+
+DEFERRED [non-spec-changes.md]: :481 reads "its residue is reclaimed at the occupancy-zero
+whole-pod scrub the staged §5.2 text names". After hunk 2 the staged §5.2 text names no whole-pod
+scrub for that residue; it says only that the residue "do[es] not outlive the pod". The true
+statement is at non-spec-changes.md:3413, which still names the occupancy-zero whole-pod scrub and
+pod retirement as the two bounds. Whoever fixes the §5.2 residue enumeration should re-key :481 on
+whatever §5.2 ends up naming.
+
+
+### [spec.3.review-edit-sites.1]
+
+FACT: the r2→r3 delta in spec-changes.md is exactly four hunks and nothing else in the proposal directory changed: Design :55-57 (SPEC-4 landings generalised to "enumerated under SPEC-4"), the §5.2 scrub-model append's handler-residue sentence (:644), the §5.2 `**Slot cleanup:**` leaked-sentence replacement plus its commentary (:700, :712-714), and the §15.4 conformance criterion (:927) — EVIDENCE: `diff -ru -x '*.review-log*.md' scratchpad/cp-snap/0081-opt1/spec-r2-prefix proposals/0081_.../` is 55 lines.
+
+FACT: the shipped §6.2 per-slot fence has TWO blocks, and the `leaked` terminal lives only in the concurrent-occupancy one: `Per-slot sub-states scoped to concurrent occupancy` at spec/06_warm-pod-model.md:146 carries `running ──→ failed` (:147) and `slot_cleanup ──→ leaked` (:148); the either-concurrency block at :150 carries `slot_assigned ──→ receiving_uploads`, `receiving_uploads ──→ running` (:152), `running ──→ slot_cleanup` (:154) and `slot_cleanup ──→ released` (:155). SPEC-4's fence edit inserts only into the second block (spec-changes.md:801-810), so :148 stays exactly as shipped — EVIDENCE: spec/06_warm-pod-model.md:146-155; spec-changes.md:801-810.
+
+FACT: the whole-pod scrub really does kill processes and remove the slot trees — step 1 `kill -9 -1`, step 2 `rm -rf /workspace/slots/*`, step 0 purges every `/run/lenny/slots/{sessionId}/credentials.json` — so the sentence this round DELETED from §5.2 ("the occupancy-zero whole-pod scrub stated below reaches it") was true of the residue it named, and deleting it falsifies nothing by itself — EVIDENCE: spec/05_runtime-registry-and-pool-model.md:461, :465-468.
+
+MISTAKE (mine, nearly filed, first): that the new "What it leaves is the slot workspace tree and the slot credential directory ... and the slot identifier" enumeration (spec-changes.md:644) omits the slot's process group, which §5.2's staged action list (:623) and the reclaim-hold's four acts (:646) both name. It dies on the staged §6.2 paragraph, which enumerates what each pre-`running` stage leaves on the pod — registry entry, workspace tree, credential file, armed timers, started record — and names no per-slot processes, the runtime being pod-shared (spec-changes.md:824). The enumeration is complete for the pre-`running` class.
+
+MISTAKE (mine, nearly filed, second): that §6.2's "The terms on which each of the pod's two exits ends a one-session pod's pre-`running` residue are stated here; [§7.1] and [§5.2] cite this paragraph for them" (spec-changes.md:826) is over-claimed now that §5.2 states its own terms for the handler-cleanup residue. The paragraph's first sentence scopes it to a bind that "drives neither edge", so the summary sentence inherits that scope. Not filed: the material skeptic has refuted three scope-reading findings on this pair already.
+
+WATCHOUT: the §5.2 hunk added an explicit NEGATIVE — "reaches neither the `leaked` sub-state nor the whole-pod replacement trigger on a pod of either concurrency" — where the old text only said the scrub reached the residue. A negative about `leaked` has to be checked against the §6.2 fence's `slot_cleanup ──→ leaked (cleanup timeout exceeded)` edge, which is unqualified and which SPEC-4 does not touch. That is the finding this round — EVIDENCE: spec-changes.md:644 vs spec/06_warm-pod-model.md:148.
+
+DECISION: filed exactly one finding and nothing else — BECAUSE the delta carries no new identifier, no new field, flag, metric, alert, condition type or error string, so the ordinary edit-site sweep (grep each identifier across spec/, docs/, schemas/, charts/) had nothing to consume; the only surface the delta newly falsifies is the one fence line above. ALTERNATIVES: the §15.4 conformance-criterion rewrite (:927) now says the adapter "answers on the gRPC status ... [§4.7.1] states" while the paragraph immediately above it says §4.7.1 does NOT state rule 2's status ("except in two places"). Rejected: §4.7.1 rule 2 states the status by pointer ("the status that refusal is answered on is the one [Section 15.4] publishes", :868), so the chain resolves and the criterion is satisfiable.
+
+### [spec.3.review-fresh.1]
+
+FACT: round 3's diff against the r2 snapshot touched ONE file, spec-changes.md, in five hunks:
+Design's SPEC-4 landings sentence (:54-56), the §5.2 Scrub-model append's handler-cleanup
+sentence (:644), the §5.2 `**Slot cleanup:**` leaked-outcome replacement (:701, new scoping
+clause), its commentary (:711-714), and the §15.4 conformance criterion (:927).
+EVIDENCE: diff -rq scratchpad/cp-snap/0081-opt1/spec-r2-prefix vs the proposal dir.
+
+MISTAKE: the r3 fix that rewrote §15.4's conformance criterion (:927) deleted the clause
+"reading the status of rule 2 from the block below and the status of rules 11 through 14 from
+rule 15" while leaving :925's "except in two places" lead-in standing. The two sentences now
+disagree about whether §4.7.1 states rule 2's status. Reported this round.
+EVIDENCE: spec-changes.md:925 vs :927; §4.7.1 rule 2 at :871 routes the status to §15.4.
+
+MISTAKE: the r3 fix at :644 replaced "the occupancy-zero whole-pod scrub stated below reaches
+it" with a closed enumeration of the handler cleanup's residue that names only the workspace
+tree and the credential directory. The cleanup's act list (:623, :646) also names the kill of
+the slot's process group, so live processes are a residue class the new enumeration drops, and
+the sentence that used to route them to the whole-pod scrub is the one it replaced.
+EVIDENCE: spec-changes.md:644 vs :623 and :646; spec/05_runtime-registry-and-pool-model.md:463
+step 1 is what reaps them.
+
+DEFERRED [non-spec-changes.md]: non-spec-changes.md:481 reads "residue is reclaimed at the
+occupancy-zero whole-pod scrub the staged §5.2 text names". After the r3 rewrite the staged
+§5.2 text (:644) names no whole-pod scrub for that residue. True instead: the staged §5.2 text
+enumerates the residue and routes the identifier to the reclaim hold. Same for
+non-spec-changes.md:471. The spec-lane fixer propagates this as a consequence of any :644 fix.
+
+FACT: /workspace and /run/lenny are pod-local emptyDir, so "do not outlive the pod" at :644 is
+true of the two directories it names; the defect is the omission, not that claim.
+EVIDENCE: spec/06_warm-pod-model.md:394-395.
+
+FACT: the §5.2 anchors the staging addresses by prose label resolve in the shipped file in the
+order the staged text assumes: `**Scrub model.**` at spec/05_runtime-registry-and-pool-model.md:453,
+the `**Slot cleanup:**` bullet at :545. "above"/"below" in the staged text are correct.
+
+WATCHOUT: :718 says §6.2's projection prose "states it in two clauses" while :746 says "three
+clauses are replaced". Not a defect: the third is the no-claim clause, which is a qualifier
+rather than a claim-deletion clause. Do not file it.
+
+UNVERIFIED: §4.7.1 rule 8 (:877) says an entry whose start-confirmation fails reported no
+cleanup outcome "because the slot never reached `running`", yet the same rule says the adapter
+"takes the session back off the shared runtime process", and staged §6.2 (:824) defines reaching
+`running` as the runtime having been given the session. Whether these are compatible was
+certified in an earlier round and is outside this round's diff; a later full-pool read should
+settle it rather than assume it.
+
+### [spec.3.review-mechanism.1]
+
+FACT: The r2→r3 spec diff is four hunks only: the Design claim-deletion sentence (:54-56), the
+`**Scrub model.**` append's failed-handler-cleanup residue sentence (:644), the `**Slot cleanup:**`
+leaked-outcome replacement gaining a scoping clause (:704) plus its commentary (:710-714), and
+§15.4's conformance criterion rewritten from a per-rule quantifier to "on every request … as
+§4.7.1 states" (:927). — EVIDENCE: 0081...spec-changes.md:54, :644, :704, :927
+
+DECISION: Filed exactly one finding — the `**Slot-identifier reclaim hold.**` paragraph still says
+"the hold is the identifier half of the disposition the **Slot cleanup:** bullet below states for a
+cleanup that fails" (:646) after the same round's hunk scoped that bullet to a cleanup of a slot the
+shared runtime process HAD been given (:704). BECAUSE it is the stale site the scoping hunk should
+have swept: on a concurrent pod a failed adapter-handler cleanup is now inside the hold and outside
+the bullet, and the paragraph's next sentence still presents the clean-close/tree-removal exception
+as the one case where the occupancy half does not follow. ALTERNATIVES: I considered and rejected
+filing (a) the new residue enumeration at :644 ("What it leaves is the slot workspace tree and the
+slot credential directory … and the slot identifier") for omitting the slot's process group, which
+the same append's act list names (:646) and which whole-pod scrub step 1 kills
+(spec/05_runtime-registry-and-pool-model.md:463) — rejected because the staged §6.2 pre-`running`
+paragraph enumerates what each pre-`running` stage leaves as the entry, the tree, the credential
+file and the timers, with no process (:824), so the two-item residue is consistent with the
+proposal's own model; (b) §15.4's new conformance criterion no longer telling the reader to read
+rule 2's status from the reclaim-hold block, because that block states its own non-conformances
+("An adapter that admits such a request while the identifier is held does not conform", :931);
+(c) the fence's `slot_cleanup ──→ leaked` scoping against the new "reaches neither the `leaked`
+sub-state … on a pod of either concurrency" sentence — the standing Traps record three lenses
+refuting that family.
+
+FACT: `exited_cleanly` in the staged CODE-1 response is `closeErr == nil && (live || treeErr == nil)`
+(non-spec-changes.md:489), so a failed tree removal is unclean on the pre-`running` arm and clean on
+the `running` arm. That is exactly what hunk 3's new scoping clause makes the §5.2 bullet say, so the
+spec and the staged code now agree on the exception's scope. — EVIDENCE:
+0081...non-spec-changes.md:474-489 vs 0081...spec-changes.md:704
+
+FACT: The staged §6.2 pre-`running` paragraph is scoped to "a one-session pod's pre-`running`
+residue" and says §7.1 and §5.2 cite it for that; after hunk 2 deleted §5.2's §6.2 pointer for the
+handler-cleanup residue, §5.2's only remaining §6.2 citation in that append is the one-session
+no-cleanup case, so the reciprocal citation is sound. — EVIDENCE: 0081...spec-changes.md:826 vs :644
+
+### [spec.3.review-single-source.1]
+
+DECISION: returned an empty findings list for round 3 — BECAUSE the whole round-2→3 delta is four hunks in `spec-changes.md` (Design :52-57, the §5.2 scrub-model append :644, the §5.2 `**Slot cleanup:**` replacement + its commentary :700-715, and CONF-1's conformance sentence :927), and every one of them is a REDUCTION that leaves exactly one stating site — ALTERNATIVES: I worked up three candidate findings and refuted each myself; they are written out below so nobody re-derives them.
+
+FACT: the round-3 diff is confined to one file. `diff -ru -x '*.review-log*.md' scratchpad/cp-snap/0081-opt1/spec-r2-prefix proposals/0081_.../` is 55 lines, all in `0081_...spec-changes.md`. No other proposal file moved. EVIDENCE: scratchpad/cp-snap/0081-opt1/spec-r2-prefix/0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry.spec-changes.md
+
+FACT: after the §5.2 rewrite, the residue classes still partition cleanly and no site was left stale by the deletion of "the occupancy-zero whole-pod scrub stated below reaches it". I grepped every `whole-pod scrub` / `whole-pod boundary` site in the proposal: the only survivors that touch that claim are in the non-spec staging (non-spec-changes.md:3412 "The residue is the slot's workspace tree and its credential directory, bounded at the whole-pod boundary" and :481), and both are statements about shipped code behaviour, not restatements of the deleted spec clause, so neither is falsified. §6.2's staged claim that "[§7.1] and [§5.2] cite this paragraph for them" (spec-changes.md:826) still holds: §5.2 keeps its citation for the one-session no-cleanup case at :644 ("nothing is reported, and [Section 6.2] states what becomes of that slot's state") and §7.1 keeps its at :463.
+
+MISTAKE: none found this round in the fix text. Every identifier a hunk touched (`**Scrub model.**`, `**Slot cleanup:**`, `**Slot-identifier reclaim hold.**`, rule 2, rule 15, "the landings ... enumerated under SPEC-4") resolves: the Scrub-model paragraph really is above the bullet (spec/05_runtime-registry-and-pool-model.md:453 vs :545), the reclaim-hold append really lands below the scrub-model text, and SPEC-4 really does enumerate its landings in its own opening (spec-changes.md:718).
+
+WATCHOUT: do NOT file the process group as missing residue in the new §5.2 sentence "What it leaves is the slot workspace tree and the slot credential directory ... and the slot identifier" (spec-changes.md:644). §5.2's action list names a process-group kill (spec/05_runtime-registry-and-pool-model.md:545) so the enumeration LOOKS short by one, but the shipped handler cleanup is `releaseSessionSlot` → `deregisterSlot` + `removeSlotTree` and kills no process group at all (pkg/adapter/session.go / pkg/adapter/slotsession.go:203-218), and the non-spec staging already enumerates the same two items (non-spec-changes.md:3412). A skeptic refutes this on both materiality and the tree.
+
+WATCHOUT: do NOT file the §6.2 fence edge `slot_cleanup ──→ leaked (cleanup timeout exceeded ...)` (spec/06_warm-pod-model.md:148) as contradicted by the new universal clause "one that does not complete reaches neither the `leaked` sub-state nor the whole-pod replacement trigger on a pod of either concurrency" (spec-changes.md:644), and do not file the fence as a missing edit site. `leaked` is gateway-side accounting (standing-context entry), it is entered only off a `ReportSessionScrub` leak report or a reclaim response that reports no clean exit, and the handler-cleanup path emits neither, so the edge cannot fire there and needs no qualifier.
+
+WATCHOUT: CONF-1's rewritten criterion (spec-changes.md:927) no longer repeats "reading the status of rule 2 from the block below and the status of rules 11 through 14 from rule 15". That is the intended reduction, not a gap: rule 15 is itself inside §4.7.1 (spec-changes.md:~896), and rule 2's `ABORTED` is carried by §15.4's own reclaim-hold block, which states its own conformance sentences ("An adapter that admits such a request while the identifier is held does not conform.", spec-changes.md:931). The preceding paragraph at :926 still names both carve-outs.
+
+UNVERIFIED: the implementation checklist S1 still says §15.4 will "state the three non-conformances that are not any single rule's condition: a wrong evaluation order, a separable step, and a gRPC error for an outcome the reclaim-outcome rule reports" (implementation-checklist.md:17), while the staged §15.4 text now states only the general criterion. All three are recoverable from §4.7.1 (the cascade order, the stamp-once rule's separable-steps sentence at spec-changes.md:864, and rule 15's "answered on a successful RPC"), so the spec side looks complete; the checklist wording is checklist drift, which this loop does not own. The non-spec/checklist loop should reconcile it.
+
+
+### [spec.4.review-citations.4]
+
+FACT: The round-4 delta is four hunks in three files and `scratchpad/cp-snap/0081-opt1/spec-r4` is byte-identical to the live proposal, so `spec-r3-prefix` is the correct base for this round's diff. EVIDENCE: `diff -rq -x '*.review-log*.md' scratchpad/cp-snap/0081-opt1/spec-r4 proposals/0081_*/` returns nothing.
+FACT: The whole delta replaces one explicit residue enumeration ("the slot workspace tree and the slot credential directory") with a reference to the `**Slot cleanup:**` bullet's action list, at spec-changes.md:644 (normative) and :656 (commentary), plus the mirrored sentences in non-spec-changes.md:3366 and summary.md:468. EVIDENCE: proposals/0081_*/0081_*.spec-changes.md:644.
+FACT: The referent resolves. SPEC-3's first anchor replaces spec/05_runtime-registry-and-pool-model.md:545's action list with five acts (workspace directory, process group kill, credential directory `/run/lenny/slots/{sessionId}/`, §4.9 lease-expiry timer cancellation, `slotId` release), so "the acts the **Slot cleanup:** bullet's action list names" is a live enumeration after the edit and the earlier omission of the process group is closed by reference rather than by a second list. EVIDENCE: spec-changes.md:620-624; spec/05_runtime-registry-and-pool-model.md:545.
+FACT: "none of which outlives the pod" holds act by act: the workspace tree and `/run/lenny/slots/{sessionId}/` are in-pod, the process group dies with the pod, an uncancelled §4.9 timer is adapter-in-process, and the unreleased `slotId` is held "for the life of the pod" by the reclaim-hold paragraph. EVIDENCE: spec-changes.md:646.
+WATCHOUT: The `slotId` release is inside the referenced action list AND named separately in the same sentence ("and the slot identifier"), so the identifier appears on both sides of the enumeration. I weighed this and refused to file it: it is a double-count in wording with no divergent outcome, since the reclaim-hold paragraph is the single home for the identifier's disposition. Do not file it as a duplicated-rule finding. EVIDENCE: spec-changes.md:644.
+FACT: Granularity across the staged sites differs deliberately and is not a citation defect. The `**Slot cleanup:**` action list is five acts and omits the runtime-session close; the reclaim-hold paragraph names four acts including the runtime close and omitting the timer cancellation; staged §6.2 at spec-changes.md:824 says a cleanup "removes all four: the registry entry, the per-slot workspace tree, the slot's credential directory and its armed lease-expiry timers" and omits the process group. Each list is scoped to its own subject (cleanup acts, identifier-addressed acts, per-stage leavings), and all three predate this round's delta. EVIDENCE: spec-changes.md:622, :646, :824.
+DECISION: Returned zero findings for round 4 — BECAUSE the delta is a reduction that removes a stale enumeration and every citation it introduces resolves to text the same proposal stages — ALTERNATIVES: filing the identifier double-count (wording, no outcome divergence) and filing the three-way act-list granularity (pre-existing, each list correctly scoped).
+
+### [spec.4.review-fresh.1]
+
+FACT: Round 4's spec-lane diff against `scratchpad/cp-snap/0081-opt1/spec-r3-prefix` is three wording
+edits only, all replacing a written-out residue enumeration with a reference: spec-changes.md:644
+("What it leaves is the residue of whichever of the acts the **Slot cleanup:** bullet's action list
+names did not complete"), spec-changes.md:656 and :661 (commentary), plus the matching non-spec and
+summary sentences. No new rule, identifier, field or citation was introduced.
+EVIDENCE: 0081_...spec-changes.md:644,656,661
+
+DECISION: returned no findings — BECAUSE the reference the new sentence introduces resolves and is
+complete for its case. The staged action list at spec-changes.md:623 names five acts (workspace
+directory, process-group kill, credential directory `/run/lenny/slots/{sessionId}/`, §4.9
+lease-expiry timer cancellation, `slotId` release); every one of their residues is in-pod, so "none
+of which outlives the pod" holds; the identifier half is carved out to the reclaim-hold paragraph.
+The concurrency-scoping question the reference raises (the bullet sits under
+`**Slot failure and cleanup (maxConcurrentSessions > 1).**`, spec/05_runtime-registry-and-pool-model.md:542)
+is already discharged by the append's own first sentence and by the commentary at
+spec-changes.md:668-675. ALTERNATIVES: filing the §6.2:824 "removes all four" enumeration as a
+second, disagreeing statement of the action list — rejected, see WATCHOUT.
+
+WATCHOUT: spec-changes.md:824 reads "A cleanup either edge runs removes all four: the registry
+entry, the per-slot workspace tree, the slot's credential directory and its armed lease-expiry
+timers ([§5.2])", while the staged §5.2 action list names five acts including the process-group kill
+and the `slotId` release. This LOOKS like a drifted second copy now that the :644 rewrite made the
+action list load-bearing. It is not: "all four" refers back to the four residues the immediately
+preceding sentence enumerates as what the pre-`running` stages leave, not to §5.2's action list. The
+only soft spot is that the sentence also covers the `running → slot_cleanup` edge, where a process
+group exists; that is wording imprecision in a paragraph titled "Pre-`running` slot cleanup" and the
+materiality bar refuses it. Do not spend a round on it.
+EVIDENCE: 0081_...spec-changes.md:824; :623
+
+FACT: `deregisterSlotLocked` cannot fail — it deletes the map entry and cancels every armed timer
+under `s.mu` with no error return — so the reclaim hold's premise that the cleanup's entry
+deregistration is the act that opens the hold, and that only the identifier-addressed acts can leave
+residue, is true on the tree.
+EVIDENCE: pkg/adapter/slotsession.go:174-188
+
+FACT: `slotlayout.RemoveTree` is best-effort across four directories (slot root, sessions,
+artifacts, `CredentialsDir`) and returns the first error while continuing, which is what makes
+"whichever of the acts ... did not complete" a partial-residue predicate rather than an all-or-
+nothing one. The staged text is consistent with that.
+EVIDENCE: pkg/adapter/slotlayout/tree.go:58-70
+
+### [spec.5.fix-followup.1]
+
+FIX: §6.2's pre-`running` residue paragraph is re-keyed on whether a cleanup RAN, not on whether it
+completed. The round-5 widening ("whether because no cleanup ran on the slot at all or because the
+cleanup that ran did not complete") made `leaked` unreachable from the pre-`running` path, which the
+staged §5.2 append and the staged §7.1 paragraph both route to and which the shipped
+`slot_cleanup ──→ leaked` edge is the only route into. The second disjunct is dropped and the
+disposition of an incomplete cleanup is pointed at §5.2. The paragraph's closing sentence and the
+first paragraph's edge condition ("when a cleanup runs on the slot") are re-keyed the same way, and
+so is the new fence annotation, so §6.2 uses "reclaim" in one sense throughout.
+EVIDENCE: spec/06_warm-pod-model.md:148 is the only `leaked` route; spec-changes.md:636 and :451
+are the two staged sites that route to it.
+
+FIX: the `slot_cleanup ──→ released` annotation now reads "the cleanup reported released — see
+§5.2". §5.2 binds "reclaimed" to a cleanup whose every act returned without error, and the
+clean-close exception the replacement was written to survive reports `released` while holding the
+identifier for the life of the pod, so "the cleanup reclaimed the slot" was false for exactly that
+case. The three mirrors take the same wording in the same edit: the `docs/reference/state-machines.md`
+trigger cell, the `ReportSessionScrub` RPC comment, and the `SESSION_SCRUB_OUTCOME_RELEASED` comment.
+EVIDENCE: spec-changes.md:692 (the exception), :638 (the hold's definition of an incomplete cleanup).
+
+FIX: rule 8's hazard sentence is folded into a non-conformance clause, matching the stamp-once
+rule's form, so §4.7.1 no longer forbids a window in one sentence and states what happens in it as a
+fact in the next. §15.4 measures a third-party adapter against rule 8's literal text.
+
+FIX: CODE-4's design rationale drops the false reachability restriction on a `stageWorkspace`
+failure. `rewriteExtractedSources` sets `needsRewrite` for a `gitClone` source as well as an
+`uploadArchive` one, and `extractGitCloneSource`'s error returns straight out of `stageWorkspace`,
+so a plan carrying no upload at all can fail there. The sentence now names the two causes and the
+return point and asserts no reachability.
+EVIDENCE: pkg/gateway/podlifecycle/podsession/binder.go:1290-1293, :1346-1354, :1363-1372.
+
+DEFERRED: the implementation checklist's S5, S7 and S9 still describe the pre-widening scope of
+their deliverables. S5 says "Two fence edits" where SPEC-4 now makes three (the added
+`receiving_uploads → slot_cleanup` edge and the `slot_cleanup ──→ released` annotation
+replacement); S7 names only the new per-slot row and not the `slot_cleanup` → `released` trigger-cell
+replacement; S9's enumeration omits the two `ReportSessionScrub` comment replacements while closing
+"This is the only schema step." The change files, the "Spec files touched" and "Files touched on
+application" lists and the summary's deliverable index all carry the widened scope already. This
+round could not close it: the implementation checklist is outside this lane's writable set. The pass
+between the loops owns it.

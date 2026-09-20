@@ -788,7 +788,7 @@ Scope of the call-site change:
 above it gains the matching line:
 
 ```go
-//	receiving_uploads → slot_cleanup    (a cleanup reclaims the slot after its bind is abandoned before the runtime is given the session)
+//	receiving_uploads → slot_cleanup    (a cleanup runs on the slot after its bind is abandoned before the runtime is given the session)
 ```
 
 `ValidTransitions()` and `TestValidTransitions_spec_6_2`'s `want` list are one statement of the
@@ -1085,8 +1085,10 @@ failure arm, because `assignCredentials` mints outside any such wrapper (`binder
 `:1248`).
 
 Every stage inside `materializeSlotStages` is post-connection, so the compensation is
-unconditional there except on a refusal. A stage whose failure sent no RPC (an upload-free plan
-failing inside `stageWorkspace`) still sends it; the adapter answers `ABSENT` for a session it
+unconditional there except on a refusal. A stage whose failure sent no RPC (a `stageWorkspace`
+failure, through a source-rewrite error or a blob-store failure, which returns before
+`PrepareWorkspace` is sent) still sends it; the
+adapter answers `ABSENT` for a session it
 holds nothing for, `Leaked` is false, and a blob-store outage adds nothing to the pod's
 persistent leak count.
 
@@ -2146,11 +2148,12 @@ for a rule, and each appears at both tiers:
 
 ## Staged schema, chart, and migration changes
 
-### SCHEMA-1 · schemas/lenny-adapter.proto, scripts/seed-claim-register.py, tests/claim-map.json · the bind attempt, the mid-session conditioning, the two-field teardown precondition, the reclaim outcome, and the two refusal codes
+### SCHEMA-1 · schemas/lenny-adapter.proto, scripts/seed-claim-register.py, tests/claim-map.json · the bind attempt, the mid-session conditioning, the two-field teardown precondition, the reclaim outcome, the two refusal codes, and the scrub-outcome comments
 
-One window, and the only schema step in this proposal. The edit is additive: two enum values,
-one enum, and nine fields, no field removed, no field renumbered, no RPC added, no message
-removed. `buf breaking` has nothing to fire on. `make generate-proto` runs in the same commit
+One window, and the only schema step in this proposal. Every declaration the edit makes is
+additive: two enum values, one enum, and nine fields, no field removed, no field renumbered, no
+RPC added, no message removed. Two comment sentences are replaced beside them, which declares
+nothing. `buf breaking` has nothing to fire on. `make generate-proto` runs in the same commit
 and the regenerated `pkg/proto/adapter/v1` package lands with it, so no step compiles against a
 half-generated tree.
 
@@ -2209,6 +2212,45 @@ enum SlotReclaimOutcome {
   SLOT_RECLAIM_OUTCOME_SUPERSEDED = 3;
 }
 ```
+
+**The scrub-outcome comments.** Two comments on the shipped `ReportSessionScrub` surface state
+what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's `**Slot cleanup:**`
+exception reports `released` for a cleanup that closes the session cleanly and fails only in
+removing the slot's slot tree, so both comments become false when that lands. Each one drops
+the effect list and cites the section that fixes the terms, matching the §6.2 fence annotation
+SPEC-4 replaces. In the `ReportSessionScrub` RPC comment, the sentence that reads, verbatim:
+
+```
+  // RELEASED when the slot's runtime, credential timers, and per-slot
+  // directory tree were torn down cleanly, or LEAKED when a resource could
+  // not be reclaimed.
+```
+
+becomes:
+
+```
+  // RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+```
+
+In the `SessionScrubOutcome` enum, the `SESSION_SCRUB_OUTCOME_RELEASED` comment, which reads,
+verbatim:
+
+```
+  // SESSION_SCRUB_OUTCOME_RELEASED — the slot's runtime, credential
+  // timers, and per-slot directory tree were torn down cleanly and the
+  // slot was released. spec: §5.2 (slot_cleanup → released).
+```
+
+becomes:
+
+```
+  // SESSION_SCRUB_OUTCOME_RELEASED — the cleanup reported released, on the
+  // terms §5.2 states. spec: §5.2 (slot_cleanup → released).
+```
+
+The `SESSION_SCRUB_OUTCOME_LEAKED` comment beside it already states its own case as a resource
+that could not be reclaimed and is unedited. No enum value, field number or RPC signature
+moves, so the regenerated package is unchanged by these two replacements.
 
 **The fields.** Every number below was checked free against the message it lands in, in
 `schemas/lenny-adapter.proto` as the file stands:
@@ -2313,16 +2355,34 @@ No chart value and no migration.
 
 ## Staged docs changes
 
-### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row and the pod state machine paragraph takes the projection clause replacements
+### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row and its released row's trigger, and the pod state machine paragraph takes the projection clause replacements
 
-DOCS-1 makes two edits on one page. Both land after SPEC-4.
+DOCS-1 edits the per-slot sub-state table and the pod state machine paragraph on one page. Every
+edit lands after SPEC-4.
 
 **The per-slot sub-state table.** Under `### Per-slot sub-states`, add the row matching the §6.2
 edge, immediately after the `receiving_uploads` → `running` row:
 
 ```
-| `receiving_uploads` | `slot_cleanup` | A cleanup reclaims the slot after its bind is abandoned or fails before the runtime has been given the session, a start still in flight included |
+| `receiving_uploads` | `slot_cleanup` | A cleanup runs on the slot after its bind is abandoned or fails before the runtime has been given the session, a start still in flight included |
 ```
+
+The same table's `slot_cleanup` → `released` row (`docs/reference/state-machines.md:237`) is the
+published mirror of the fence annotation SPEC-4 replaces, and it takes the matching trigger-cell
+replacement. It currently reads:
+
+```
+| `slot_cleanup` | `released` | Slot workspace removed, processes killed, slot released |
+```
+
+Replace it with:
+
+```
+| `slot_cleanup` | `released` | The cleanup reported `released` |
+```
+
+The page carries no specification citation, so the trigger cell states the trigger and leaves
+the cleanup's acts to the pages that document them.
 
 **The pod state machine paragraph.** The paragraph under `## Pod state machine`
 (`docs/reference/state-machines.md:138`) is the published mirror of the projection prose SPEC-4
@@ -2905,9 +2965,10 @@ execution modes); §6.2 (pod state machine)`:
   session-start stages: exactly one `Shutdown` naming the session, carrying a positive
   `deadlineMs` equal to half the budget the case's pool configuration produces and strictly less
   than the RPC deadline that same configuration produces.
-- **The upload-free workspace branch, separately.** `stageWorkspace` with no uploads sends no
-  `PrepareWorkspace`, so the pod holds no entry. Assert that the compensation is still sent, that
-  the adapter answers `ABSENT`, and that `SlotBindError.Leaked` is false.
+- **The pre-`PrepareWorkspace` workspace failure, separately.** A `stageWorkspace` failure on a
+  plan carrying an original `uploadFile` source, injected by leaving `Binder.Blobs` nil, returns
+  before `PrepareWorkspace` is sent, so the pod holds no entry. Assert that the compensation is
+  still sent, that the adapter answers `ABSENT`, and that `SlotBindError.Leaked` is false.
 - **The cancelled-context case.** A failure whose caller context is already cancelled or past its
   deadline still sends the compensation. This is the residue class the compensation exists for
   and the case a naive implementation gets wrong.
@@ -3363,7 +3424,7 @@ treating a failure as this change's.
   is refused `Aborted`, which the classifier treats as transient, so the attempt is placed again
   rather than ended. A refused retry is a cheaper residue than a destroyed session, than a
   successor reaching `running` on an empty workspace, or than a successor materializing over the
-  workspace and credential directories a failed cleanup left in place.
+  residue a failed cleanup left in place.
 - **A compensation lost to a gateway crash leaves the session unstartable on that pod.** The
   entry stands stamped with a dead attempt's token, and every later attempt at that session on
   that pod is refused rather than admitted. That is worse on one axis than the epoch design,
@@ -3408,10 +3469,8 @@ treating a failure as this change's.
   rather than with a carrier the gateway can read. The gateway's compensation then finds no
   entry, is answered `ABSENT`, and CODE-4 reads that as a completed reclaim with `sbe.Leaked`
   false, so an incomplete cleanup on this path reaches no leaked sub-state and contributes
-  nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is the slot's workspace
-  tree and its credential directory, bounded at the whole-pod boundary: on a recycling pod the
-  occupancy-zero whole-pod scrub removes both and verifies their absence, and a pod that does
-  not recycle retires at that boundary. The residue that goes unaccounted is the leak accounting
+  nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is what §5.2's
+  **Scrub model.** paragraph states it is, bounded at the whole-pod boundary. The residue that goes unaccounted is the leak accounting
   rather than the identifier: `releaseSessionSlot` runs under `reclaimSlotLocked`, so a
   `removeSlotTree` that fails there is a cleanup that did not complete and the identifier stays
   held for the life of the pod, which is what keeps a later bind off that tree. What the gateway
@@ -3506,8 +3565,8 @@ treating a failure as this change's.
 
 ## Files touched on application (non-spec)
 
-- `schemas/lenny-adapter.proto` · the two `ErrorCode` values, the `SlotReclaimOutcome` enum and
-  the nine fields SCHEMA-1 states.
+- `schemas/lenny-adapter.proto` · the two `ErrorCode` values, the `SlotReclaimOutcome` enum,
+  the nine fields SCHEMA-1 states, and the two scrub-outcome comment replacements.
 - `pkg/proto/adapter/v1` · regenerated by `make generate-proto` in the same commit as the proto
   edit.
 - `scripts/seed-claim-register.py` · the three rows SCHEMA-1 states, two `WIRED` and one
@@ -3675,8 +3734,9 @@ treating a failure as this change's.
 - `pkg/adapter/metrics.go` · the untokened-entry series.
 - `cmd/lenny-gateway/metricsbackfill.go` · the `SlotReclaim` hook wiring beside the `SlotFailure` wiring.
 - `docs/reference/metrics.md` · the two counter rows.
-- `docs/reference/state-machines.md` · the per-slot sub-state table and the pod state
-  machine paragraph's projection clauses.
+- `docs/reference/state-machines.md` · the per-slot sub-state table's new row and its
+  `slot_cleanup` → `released` trigger cell, and the pod state machine paragraph's projection
+  clauses.
 - `docs/reference/adapter-contract.md` · the `Shutdown` row, the `DemoteSDK` row, and the added
   bind-attempt paragraph.
 - `docs/reference/error-catalog.md` · the `SETUP_COMMAND_FAILED` row's four replaced

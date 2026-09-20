@@ -265,9 +265,8 @@ Where that lands:
   leaving `connected` true and `conn` non-nil (`pkg/adapter/socketruntime.go:398-417`), after
   which any `Close` takes the last-close teardown. The adapter test set pins this; the comment is
   not corrected here.
-- `stageWorkspace` issues `PrepareWorkspace` only when the plan carries uploads, so a
-  workspace-preparation failure on an upload-free plan sends no RPC and leaves no adapter entry.
-  The compensation is still sent, the adapter answers `absent` under rule 11 (the no-entry rule),
+- A `stageWorkspace` failure returns before `PrepareWorkspace` is sent, so it sends no RPC and
+  leaves no adapter entry. The compensation is still sent, the adapter answers `absent` under rule 11 (the no-entry rule),
   and the failure is accounted transient. A test asserting "exactly one `Shutdown`" on that
   branch would pin over-sending as contract.
 - `UnhealthyThreshold(2)` is 1, and `countsLocked` sums windowed failures with persistent leaks.
@@ -465,8 +464,8 @@ Two further residues are priced and accepted. A retry is refused while the previ
 entry stands, and burns one attempt; the window is bounded by the compensation's latency plus
 the §5.2 reclaim hold where the cleanup completes, and by the pod's remaining life where it does
 not, and a refused retry is cheaper than a destroyed session, than a successor reaching `running`
-on an empty workspace, or than a successor materializing over the workspace and credential
-directories a failed cleanup left in place. And an entry that outlives its attempt costs the pod
+on an empty workspace, or than a successor materializing over the residue a failed cleanup left
+in place. And an entry that outlives its attempt costs the pod
 its MCP arming and its unaddressed-frame path for the pod's life, which both gates count
 deliberately and which is recorded under the defects this proposal does not stage.
 
@@ -475,9 +474,8 @@ deliberately and which is recorded under the defects this proposal does not stag
 The decisions below are open for a human. Each keeps the identifier it was stamped with, so the
 numbering does not start at 1: the entries that held the earlier numbers were resolved, their
 answers are staged in the change files, and their record is in the review log. Entries 21 and 27
-carry a recommendation with its ground, its alternatives and a confidence. Entries 20 and 22
-carry the question and its ground alone, because the review loop derived no recommendation for
-them.
+carry a recommendation with its ground, its alternatives and a confidence. Entry 20 carries the
+question and its ground alone, because the review loop derived no recommendation for it.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -522,19 +520,6 @@ them.
     sessions served, a gateway accounting change with a per-session dedup so a retry is not
     double-counted, and an answer for the leak signal that rides the same report. None of that is
     staged here, so an affirmative answer is a new proposal rather than an edit to this one.
-
-22. **Does an incomplete reclaim for a §7.3 re-attach onto a pod serving one session need a
-    stated disposition?** The §7.1 obligation SPEC-2 stages reaches that attempt, because its
-    parenthetical scopes only the §15.1 start by concurrency. §7.1 then states the `leaked`
-    outcome only for a pod serving concurrent sessions, §5.2's staged append states that neither
-    the `leaked` sub-state nor the whole-pod replacement trigger applies on a pod serving one
-    session, and §6.2's staged paragraph covers only a failure at the workspace-preparation,
-    setup or credential-assignment stage there, which a re-attach has none of: `Binder.Resume`
-    sends only `Resume`. So the residue of an unacknowledged reclaim on that path lands in no
-    spec text. The loop declined to file it, because three close variants of "the residue lands
-    in no spec text" had already been refuted as landing-text completeness, and recorded that
-    filing it would have to rest on §5.2 delegating into §6.2 text that does not cover the case.
-    The decision is whether to state the disposition or to accept the gap.
 
 27. **Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1, and
     if so does the fix belong on the gateway side or the controller side?** The occupancy
@@ -945,7 +930,7 @@ them.
 - **SPEC-4** (`spec/06_warm-pod-model.md`, `spec/04_system-components.md`): §6.2's per-slot sub-state machine gains the `receiving_uploads → slot_cleanup` edge and the pre-`running` cleanup paragraph, which points at §5.2's reclaim hold for what refuses a bind onto the slot's identifier while that identifier is held, and every claim-deletion statement of the occupancy projection is re-keyed on the phase the pod projects at the claim DELETE and carries no recycle-setting qualifier, in §6.2's fence, in both claim-deletion clauses of §6.2's projection prose and in both bullets of §4.6.1's projection list, whose false closing sentence is deleted, with §6.2's no-claim clause qualified to a warm-inventory phase so that the widened claim-deletion clause and it do not both answer for a pod whose claim is deleted while it projects `claimed`, so the retirement the pre-`running` paragraph cites is the one the projection computes.
 - **SPEC-5** (`spec/04_system-components.md`, `spec/15_external-api-surface.md`, `spec/06_warm-pod-model.md`): §4.7.1 gains the bind attempt token block after the RPC tables, which states the token, the requests that carry it, the stamp-once rule, and admission and teardown as two ordered cascades of numbered rules, each rule stating the gRPC status, the `ErrorCode` and the `Shutdown` outcome it answers on, with rule 2 taking its status from §15.4's reclaim-hold block and rules 11 through 14 taking theirs from rule 15; §15.4 points at that rule set, states what conformance against the rules means, and carries the slot-identifier reclaim-hold block forward; §15.1's `SETUP_COMMAND_FAILED` row takes the cause, retryability and setup-output replacements, and §6.2's pre-attached client-visibility clause is re-keyed on the setup-command request together with the gRPC code. §15.1's error catalog takes no new row for either code.
 - **SPEC-6** (`spec/16_observability.md`): §16.1's metric catalog gains a row for each counter CODE-9 emits.
-- **SCHEMA-1** (`schemas/lenny-adapter.proto`, `scripts/seed-claim-register.py`, `tests/claim-map.json`): two `ErrorCode` values, `bind_attempt` on the bind-sequence requests and on `ShutdownRequest`, `mid_session` on `PrepareWorkspaceRequest`, `unconditional_teardown` on `ShutdownRequest`, and the `SlotReclaimOutcome` enum with `ShutdownResponse.slot_reclaim`; no response reports a bind attempt; the claim-register rows for the new wire contract.
+- **SCHEMA-1** (`schemas/lenny-adapter.proto`, `scripts/seed-claim-register.py`, `tests/claim-map.json`): two `ErrorCode` values, `bind_attempt` on the bind-sequence requests and on `ShutdownRequest`, `mid_session` on `PrepareWorkspaceRequest`, `unconditional_teardown` on `ShutdownRequest`, and the `SlotReclaimOutcome` enum with `ShutdownResponse.slot_reclaim`; no response reports a bind attempt; the two `ReportSessionScrub` comment replacements that stop asserting what a `RELEASED` outcome implies; the claim-register rows for the new wire contract.
 - **CODE-1** (`pkg/adapter/session.go`, `pkg/adapter/runtimegeneration.go`, `pkg/adapter/server.go`, `pkg/adapter/slot.go`): `Shutdown` applies rules 10 through 15, taking the reclaim hold and deferring a release it takes only when the cleanup completed, releasing the slot for any entry the call removed, running the runtime teardown only for a session whose start the adapter has admitted, and filing a cleanup-outcome report only for a session the shared runtime process was given. Its `exited_cleanly` answer reports the slot-release failure for a reclaim the shared runtime process was never given. The handler gains one exit after the field precondition, and the whole-pod recycle scrub the shipped handler runs as a trailing statement moves into that exit so it runs on every outcome, with the shipped trailing copy deleted in the same edit.
 - **CODE-2** (`pkg/adapter/runtimegeneration.go`, `pkg/adapter/session.go`, `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go`): `noteRuntimeStarted` takes the token its own claim observed and confirms the registry still holds an entry bound to this session carrying it, under rule 8 (the start-confirmation rule). The confirmation binds every request that starts a session: `StartSession` (`pkg/adapter/session.go:163`) and `Resume` (`pkg/adapter/resume.go:144`) take the session back off the runtime and refuse the start when it does not, and the SDK-warm `ConfigureWorkspace` (`pkg/adapter/sdkwarm.go:261`) takes the runtime half of the §6.1 demotion, removes no registry entry, and refuses on `codes.Aborted`.
 - **CODE-3** (`pkg/sandbox/slotstate/slotstate.go`): the per-slot edge list and its doc comment gain the `receiving_uploads → slot_cleanup` edge.
@@ -956,7 +941,7 @@ them.
 - **CODE-8** (`pkg/gateway/podlifecycle/podsession/binder.go`): `Binder.Prepare`'s and `Binder.Launch`'s reclaim closures take the failing error as a parameter and skip `failPhase` on either typed refusal, so the call site returns the refusal and the pod is not drained. `failPhase` drains on every call.
 - **CODE-9** (`pkg/observability/metrics/catalog.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go`, `pkg/adapter/metrics.go`, `docs/reference/metrics.md`, `pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/podlifecycle/podsession/slotbinder.go`, `cmd/lenny-gateway/metricsbackfill.go`, `tests/tier11_docs/slot_compensation_metric_reference_test.go`): the counters for a compensation answered `superseded` and a `Shutdown` that met an entry carrying no token. The superseded series is emitted through a `SlotReclaim` hook on `Binder` beside `SlotFailure`, forwarded by `Binder.noteCompensationOutcome` and wired in the gateway's metrics backfill, and it alone takes a `catalog.go` row and a `spec161Metrics` entry; the adapter series is registered in `pkg/adapter/metrics.go` and gated by the shipped adapter metric-catalog sweep.
 - **CONF-1** (`tests/tier3_contract/adapter_bind_attempt/`, `tests/tier10_conformance/`): a case per named §4.7.1 rule, as a descriptor gate and bufconn handler cases at tier 3 and an in-process battery at tier 10.
-- **DOCS-1** (`docs/reference/state-machines.md`): the per-slot sub-state table gains the row matching the §6.2 edge, and the pod state machine paragraph takes the same three projection clause replacements SPEC-4 makes in §6.2, each re-keyed on the phase the pod projects at the claim DELETE.
+- **DOCS-1** (`docs/reference/state-machines.md`): the per-slot sub-state table gains the row matching the §6.2 edge and takes the trigger-cell replacement matching the §6.2 `slot_cleanup ──→ released` annotation, and the pod state machine paragraph takes the same three projection clause replacements SPEC-4 makes in §6.2, each re-keyed on the phase the pod projects at the claim DELETE.
 - **DOCS-2** (`docs/reference/adapter-contract.md`): the `Shutdown` row states the two teardowns with their two preconditions, the withheld cleanup-outcome report, the drain gate's own condition, the two-field precondition and the clean-exit answer; the `DemoteSDK` row states that the demotion drops the adapter's slot registry entry; and one paragraph points the reader at the §4.7.1 rules and §15.4's conformance criterion for the bind attempt token.
 - **DOCS-3** (`docs/reference/error-catalog.md`): the published `SETUP_COMMAND_FAILED` row mirrors the widened §15.1 row SPEC-5 stages, and its retryable-fallback sentence is re-keyed onto an enumerated set so the superseded refusal falls inside it. The page takes no new row for either adapter error code, and no gate holds it to §15.1.
 
