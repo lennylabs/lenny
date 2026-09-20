@@ -2356,9 +2356,10 @@ No chart value and no migration.
 
 ## Staged docs changes
 
-### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row and its released row's trigger, and the pod state machine paragraph takes the projection clause replacements
+### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row, the released row's trigger and the leaked clause take their replacements, and the pod state machine paragraph takes the projection clause replacements
 
-DOCS-1 edits the per-slot sub-state table and the pod state machine paragraph on one page. Every
+DOCS-1 edits the per-slot sub-state table, the concurrent-occupancy prose that follows it, and
+the pod state machine paragraph on one page. Every
 edit lands after SPEC-4.
 
 **The per-slot sub-state table.** Under `### Per-slot sub-states`, add the row matching the §6.2
@@ -2392,14 +2393,42 @@ leaked slot by the occupancy it retains, so the two outcomes of a cleanup read a
 page's own terms. The cell leaves the cleanup's acts and the terms of each outcome to the
 pages that document them.
 
+The page's `slot_cleanup -> leaked` clause (`docs/reference/state-machines.md:251`) states the
+trigger SPEC-4 withdraws from the sibling fence annotation, and it takes its own replacement on
+the same terms. It currently reads:
+
+```
+`slot_cleanup -> leaked` when the cleanup timeout is exceeded and the slot is not reclaimed until the pod terminates
+```
+
+Replace it with:
+
+```
+`slot_cleanup -> leaked` when the cleanup does not complete and the gateway learns of it, in the outcome the adapter reports, in the answer to the request that asked for the cleanup, or in the absence of an answer to a reclaim the gateway sent, and the slot is not reclaimed until the pod terminates
+```
+
+A timeout is one cause of a failed cleanup rather than the condition, and a cleanup whose
+failure the gateway never learns of leaves the slot's identifier held without entering the
+sub-state, so the page states the condition and leaves the causes to the pages that document
+them. The following
+sentence, on the occupancy a leaked slot retains and the `claimed -> draining` threshold it
+counts toward, is unchanged.
+
 **The pod state machine paragraph.** The paragraph under `## Pod state machine`
-(`docs/reference/state-machines.md:138`) is the published mirror of the projection prose SPEC-4
-rewrites in §6.2, and it carries the three clauses SPEC-4 replaces word for word. Left as it
+(`docs/reference/state-machines.md:138`) is the published restatement of the occupancy
+projection §4.6.1 owns and SPEC-4 re-keys there, and it carries an input enumeration and
+claim-deletion clauses of its own. Left as it
 stands it answers `idle` where the specification answers `draining`, on the input SPEC-4's own
 rationale names: a claim deleted while a `maxConcurrentSessions: 1`, `recycle.enabled: true` pod
-projects `claimed`, which is what a failed bind produces. Apply the same three replacements in
+projects `claimed`, which is what a failed bind produces. Apply the replacements below in
 the page's own voice, carrying no specification section numbers:
 
+- "a level-triggered projection of the per-pod `SandboxClaim`: claim existence, the claim's
+  binding state and disposition, and `sessionPolicy`" becomes "a level-triggered projection of
+  per-pod `SandboxClaim` existence, the claim's binding state and disposition, `sessionPolicy`,
+  and the phase the pod currently projects". The head of the sentence is replaced with the
+  enumeration, because the page reads the list as the claim's own contents and the phase the pod
+  currently projects is the controller's own prior write to `Sandbox.status.phase`.
 - "A pod with no claim projects `idle`" becomes "A pod in a warm-inventory phase with no claim
   projects `idle`".
 - "a claim deleted on a recycling pod under its limits projects `idle`" becomes "a claim deleted
@@ -2408,20 +2437,21 @@ the page's own voice, carrying no specification section numbers:
 - "or a claim deleted on a pod with `recycle.enabled: false`" becomes "or a claim deleted while
   the pod projects `claimed`, on a pool of either recycle setting".
 
-The rest of the sentence is unchanged. Each claim-deletion clause is re-keyed on the phase the
+The remaining clauses of the sentence are unchanged. Each claim-deletion clause is re-keyed on the phase the
 pod projects at the DELETE, which is what keeps the sentence a partition over the projection
-input: exactly one clause answers any claim deletion. The replacement wording matches SPEC-4's
-clause for clause, so the published page and the specification state one rule.
+input: exactly one clause answers any claim deletion. The replacement wording states what
+SPEC-4's re-keyed §4.6.1 bullets state, so the published page and the specification state one
+rule.
 
 No shipped tier-11 gate compares this table's edge rows against the §6.2 block: the tests in
 `tests/tier11_docs/per_slot_substate_scope_doc_reconciliation_test.go` read the specification and
 the reference page separately and never meet. DOCS-1 therefore carries the tier-11 work that
 makes the pair reconcile, specified under `## Testing`. That work covers the per-slot edge
-pairing alone. The pod state machine paragraph takes no gate, because the specification sentence
-carries vm-restart clauses the page deliberately omits and the two are not comparable by
+pairing alone. The pod state machine paragraph takes no gate, because §4.6.1's bullet list
+carries a vm-restart carve-out the page deliberately omits and the two are not comparable by
 substring; the published error catalog DOCS-3 edits is held by no gate for the same reason.
 
-### DOCS-2 · docs/reference/adapter-contract.md · the `Shutdown` row, the `DemoteSDK` row, and one bind-attempt paragraph
+### DOCS-2 · docs/reference/adapter-contract.md · the `Shutdown` row, the `DemoteSDK` row, the `ReportSessionScrub` row, and one bind-attempt paragraph
 
 `docs/reference/adapter-contract.md` states of itself that it is the reference for the protocol
 between the adapter sidecar and the runtime binary, covering the gateway-to-adapter gRPC
@@ -2436,12 +2466,17 @@ outcomes. The shipped gate `TestAdapterContractNamesTheShutdownRPCUnderItsWireNa
 the substrings "end-of-session teardown", "recycle disposition", "ReportSessionScrub" and
 "ReportPodScrub", all of which survive the staged edits, so nothing turns red on the drift.
 
-DOCS-2 makes three edits and republishes no rule. The `Shutdown` row states the two-field
+DOCS-2 republishes no rule. The `Shutdown` row states the two-field
 precondition and the outcomes, which is the part of the contract a reader of this page can
 observe. The `DemoteSDK` row mirrors the registry removal the §4.7 row SPEC-1 amends, together
 with the slot cleanup that row states the demotion runs inside the call, and carries
 the fresh-entry consequence rule 4 (**the create-and-stamp rule**) gives, because this page cannot
-cite the rule. One added paragraph says what the token is for and where the rules are stated. The
+cite the rule. The `ReportSessionScrub` row (`:81`) states the universal SPEC-3 withdraws, so once
+SPEC-3 lands the page would tell an adapter author to report at every session release while the
+specification says a release outside a reclaiming `Shutdown` is reported not at all; that row
+points at this page's own `Shutdown` row for which cleanups are reported rather than restating the
+condition, so the page keeps one home for it, and adds the one clause the `Shutdown` row does not
+carry, which excludes every other release. One added paragraph says what the token is for and where the rules are stated. The
 cascade and its wire observables stay in §4.7.1: republishing them here would drop a
 normative cascade into a page whose gRPC section is a one-line orientation table
 (`.claude/rules/doc-content.md`, "Match technical depth to the page"), and a runtime author can
@@ -2467,6 +2502,17 @@ cleanup the demotion runs inside the call:
 | `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry for the session, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. The next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
 ```
 
+Replace the `ReportSessionScrub` row (`:81`) under `**Adapter-to-Gateway RPCs:**` with the row
+below. It stays one physical line and its addressing sentence is unchanged word for word, because
+the tier-11 gate `TestSessionScrubReportAddressingAgreesBetweenSpecAndContractDoc` reads the row
+through `lineContaining(page, "| \`ReportSessionScrub\` |")` and asserts that this page and the
+§4.7 row open the addressing rule identically. The served-session and leak-ledger sentence is
+unchanged:
+
+```
+| `ReportSessionScrub` | Report a per-slot cleanup's outcome (`released` or `leaked`) for the cleanups the `Shutdown` row states the adapter reports, and for no other release. The request is session-scoped: it is addressed by the identifier of the released session and names no slot. The gateway increments the pod's served-session count and feeds the leak ledger. |
+```
+
 Add the paragraph below immediately after the `**Gateway-to-Adapter RPCs:**` table and before
 the `**Adapter-to-Gateway RPCs:**` heading. It is the whole of what this page says about the
 token:
@@ -2484,20 +2530,19 @@ A started-session refusal reaches the client under the `SETUP_COMMAND_FAILED` en
 where it arrives at the request that runs the session setup commands, which is the stage whose
 deterministic `FailedPrecondition` failure §15.1 already maps to this code. A refusal arriving at
 any other bind-sequence request reaches the client under the envelope that stage already selects.
-SPEC-5 replaces three sentences of the §15.1 row so they no longer state a cause the refusal
-does not have. The published catalog at `docs/reference/error-catalog.md:129` states the same
+SPEC-5 replaces the cause, retryability, setup-output and exclusion sentences of the §15.1 row
+so they no longer state a cause the refusal does not have and no longer leave the refusal's own
+envelope unstated. The published catalog at `docs/reference/error-catalog.md:129` states the same
 row for readers who do not have the specification. Nothing holds the two to one text: no file
 under `tests/`, `scripts/` or `cmd/`, and no `Makefile` target, names
 `docs/reference/error-catalog.md`, so the page drifts from §15.1 silently and this deliverable
 is the only thing that moves it.
 
-This deliverable makes four sentence replacements and one remedy-cell replacement in the
-published row, in the reference page's own column set. Three mirror SPEC-5's three. The fourth
-has no SPEC-5 counterpart, because §15.1's own exclusion sentence is keyed on the gRPC code and
-stays true for a refusal answered `ABORTED`, while the page states the same exclusion by naming
-its causes, and the superseded refusal is neither a crashed pod nor a transport timeout.
-The page's prose names the pod slot rather than the registry entry, and carries no
-specification section number, because the reader is a REST client who has neither term.
+This deliverable makes one sentence replacement for each of SPEC-5's §15.1 replacements, plus
+one remedy-cell replacement, in the reference page's own column set. The page's prose names the
+pod slot rather than the registry entry, states its exclusion by naming its causes rather than
+by naming gRPC codes, and carries no specification section number, because the reader is a REST
+client who has none of those terms.
 
 The description cell's opening sentence, which reads "A session setup command exited non-zero
 (or hit its hard timeout), which the runtime adapter reports as a deterministic failure.",
@@ -2530,11 +2575,14 @@ The description cell's closing sentence, which reads "A non-deterministic setup-
 A non-deterministic setup-window failure (a crashed pod or a transport timeout), and a request refused because a newer start of the same session has superseded this one, surface instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.
 ```
 
-The sentence enumerates its causes rather than quantifying over every other setup-window
-failure, because the superseded refusal is a deterministic refusal that is retryable, and
-because a started-session refusal that arrives at a request other than the one running the
-setup commands reaches a different envelope. §15.1's counterpart needs no such edit: it is keyed
-on the gRPC code, and the superseded refusal is answered `ABORTED`.
+The sentence enumerates the causes a REST client can see under this code rather than
+quantifying over the bind sequence, because the superseded refusal is a deterministic refusal
+that is retryable, and because a started-session refusal that arrives at a request other than
+the one running the setup commands reaches a different envelope. SPEC-5's re-keyed §15.1
+exclusion sentence also sends that refusal to the envelope its own stage selects. The page
+omits that class because a client reaches this row only through the request that runs the setup
+commands, so the refusal at another bind-sequence request is never visible under this code and
+the reader has no name for the requests it would have to be keyed on.
 
 The remedy cell, which reads "Inspect the setup-command output, correct the workspace plan or
 setup script, and create a new session.", is replaced whole, because the clause has to land
@@ -3382,7 +3430,11 @@ the adapter has admitted"`, `"either the bind attempt"`, which pins the two-fiel
 the staged row states, and `"reclaimed"` and `"absent"`, which gate the outcome sentence the
 staged row adds. Add a page-level assertion over the substring `"**Bind attempt token.**"`, which
 gates the added paragraph. Add one clause to the `// diagnosis:` comment naming the two teardowns
-and the two teardown preconditions.
+and the two teardown preconditions. The `ReportSessionScrub` row edit takes no new assertion: the
+shipped `TestSessionScrubReportAddressingAgreesBetweenSpecAndContractDoc` already holds that row's
+addressing sentence and its agreement with the specification row, and the reporting condition
+itself cannot be gated across the two carriers, because §4.7 states it by deferring to §5.2 by
+link while this page may carry no section number.
 
 **For DOCS-3**, no file. No shipped gate compares `docs/reference/error-catalog.md` against
 §15.1: no file under `tests/`, `scripts/` or `cmd/` and no `Makefile` target names the page.
@@ -3746,11 +3798,12 @@ treating a failure as this change's.
 - `pkg/adapter/metrics.go` · the untokened-entry series.
 - `cmd/lenny-gateway/metricsbackfill.go` · the `SlotReclaim` hook wiring beside the `SlotFailure` wiring.
 - `docs/reference/metrics.md` · the two counter rows.
-- `docs/reference/state-machines.md` · the per-slot sub-state table's new row and its
-  `slot_cleanup` → `released` trigger cell, and the pod state machine paragraph's projection
-  clauses.
-- `docs/reference/adapter-contract.md` · the `Shutdown` row, the `DemoteSDK` row, and the added
-  bind-attempt paragraph.
+- `docs/reference/state-machines.md` · the per-slot sub-state table's new row, its
+  `slot_cleanup` → `released` trigger cell and the page's `slot_cleanup -> leaked` clause, and
+  the pod state machine paragraph's projection
+  clauses and the projection input added to that paragraph's opening enumeration.
+- `docs/reference/adapter-contract.md` · the `Shutdown` row, the `DemoteSDK` row, the
+  `ReportSessionScrub` row, and the added bind-attempt paragraph.
 - `docs/reference/error-catalog.md` · the `SETUP_COMMAND_FAILED` row's four replaced
   sentences and its replaced remedy cell.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
