@@ -523,9 +523,12 @@ question and its ground alone, because the review loop derived no recommendation
     double-counted, and an answer for the leak signal that rides the same report. None of that is
     staged here, so an affirmative answer is a new proposal rather than an edit to this one.
 
-27. **Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1, and
-    if so does the fix belong on the gateway side or the controller side?** The occupancy
-    projection decides a released pod's fate from the phase the pod is observed in at the moment
+27. **Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1?**
+    The choice is between filing a finding and recording the behaviour as a known shipped-tree
+    property in the defects section below. Which component carries the eventual fix is material
+    the finding's owner inherits, stated at the end of this entry, and is not part of the
+    question. The occupancy projection decides a released pod's fate from the phase the pod is
+    observed in at the moment
     the claim is gone: `pkg/controller/warmpool/occupancy.go:128-140` returns `Draining` for a
     pod observed as `Claimed`, `Idle` for one observed as `Reserved`, and no phase at all for any
     other value, which leaves the pod where it was. A bind that claims and releases a pod between
@@ -533,9 +536,9 @@ question and its ground alone, because the review loop derived no recommendation
     stays in inventory as an ordinary idle candidate. Nothing in the spec records this, and it is
     a pre-existing platform property rather than something this proposal introduces.
 
-    **Recommendation (moderate confidence): open it as a finding against §4.6.1, and leave the
-    choice of side to whoever owns that finding.** The ground is that the race is mechanically
-    reachable in the shipped tree rather than hypothetical. `observeClaim` is a level read of
+    **Recommendation (moderate confidence): open it as a finding against §4.6.1.** The ground
+    is that the race is mechanically reachable in the shipped tree rather than hypothetical.
+    `observeClaim` is a level read of
     current state, mapping a NotFound to "no claim" with no event history
     (`pkg/controller/warmpool/occupancy.go:217-227`). Nothing holds the claim in existence long
     enough to be observed: `claimToSandbox` maps every claim event to a reconcile request keyed
@@ -553,7 +556,8 @@ question and its ground alone, because the review loop derived no recommendation
     (`pkg/gateway/podlifecycle/podclaim/slotclaimer.go:336-347`), so it is re-offered to the next
     claimant as a fresh idle pod, which is the outcome the `claimed → draining` edge exists to
     prevent. **Stage the fix here**: this loses because both candidate fixes sit in components
-    this proposal does not touch, and neither is derivable from the projection alone.
+    this proposal does not touch, and nothing staged here reads or writes the claim's release
+    path.
     **Treat SPEC-4 as closing it**: this loses because SPEC-4 re-keys the spec's claim-deletion
     prose onto the projected phase at the claim DELETE
     (`spec-changes.md` SPEC-4, §4.6.1, which §6.2 now points at for the rule), which aligns the
@@ -561,13 +565,21 @@ question and its ground alone, because the review loop derived no recommendation
     `occupancy.go` already does. Aligning the description with the mechanism does not change the
     mechanism.
 
-    The second half of the question stays open on its own terms. A **gateway-side** fix holds the
-    claim until the pod projects `claimed` before deleting it, which puts an ordering constraint
-    on the release path and costs latency on every release. A **controller-side** fix records the
-    retirement on the claim durably, so the projection reads a marker rather than an observed
-    phase, which costs a schema field and a migration and changes what the projection is allowed
-    to conclude. Choosing between them commits work in a component this proposal does not touch,
-    and nothing in the tree ranks the two.
+    What the finding's owner inherits. Two candidate fixes exist, and the choice between them
+    belongs to the finding rather than to this decision. A **gateway-side hold** keeps the claim
+    in existence until the pod projects `claimed` before deleting it, which puts an ordering
+    constraint on the release path and costs latency on every release. A **durable disposition**
+    records the retirement on the claim itself, so the projection reads a recorded disposition
+    rather than an observed phase and the coalescing window cannot defeat it. That second route
+    reuses a surface the tree already carries: the claim's status phase holds the terminal
+    dispositions `released` and `failed`, `ProjectOccupancyPhase` already drains a pod on either
+    one (`pkg/controller/warmpool/occupancy.go:99-103`), `podclaim.WriteDispositionStatus` is the
+    writer (`pkg/gateway/podlifecycle/podclaim/bindingstate.go:228-252`), and the gateway already
+    writes it for the analogous retirement at the recycle boundary
+    (`pkg/gateway/session/recycle/recycleboundary.go:223-228`). §4.6.1 names the recorded
+    disposition beside the claim delete as a trigger of the same edge, so this route adds no
+    schema field and no migration. Its cost is an extra status write on the release path and a
+    decision about which dispositions a failed bind may record.
 
     What deciding otherwise costs. This proposal stages nothing on this and is unaffected by the
     answer either way. Deciding not to file loses a latent retirement leak on the recycling path;

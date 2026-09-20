@@ -3412,3 +3412,97 @@ DECISION: I did not file §15.4's `Shutdown` is not held" clause (spec-changes.m
 §5.2's `Shutdown` is the one request outside the hold" (:628) BECAUSE the §15.4 half is four words
 plus a cited rule-11 consequence, which reads as a mention rather than a stating site. It is the
 closest call I left out.
+
+### [f1.open-decisions-apply.id27]
+
+DECISION: item id:27 (the lost claim-DELETE retirement) stays with the human and its summary entry
+27 was rewritten to the narrowed form the phase reached. The question is now half (a) alone,
+"Should the lost claim-DELETE retirement be opened as its own finding against §4.6.1?", with the
+alternative named in the same sentence (file it, or record it in the defects section). The
+gateway-side-versus-controller-side analysis moved out of the question into a new closing
+paragraph, `What the finding's owner inherits.`, so the entry no longer defers the side choice in
+its recommendation and then reopens it two paragraphs later. Identifier 27 is unchanged. Site:
+summary.md, `## Open decisions for human to make`, entry 27.
+
+FACT: the entry's old price for the controller-side fix, "a schema field and a migration", was
+false against the tree and is corrected. The durable-marker surface exists end to end: the claim
+status phase carries the terminal dispositions and `ProjectOccupancyPhase` already drains on
+either (`pkg/controller/warmpool/occupancy.go:99-103`), the writer is
+`podclaim.WriteDispositionStatus` (`pkg/gateway/podlifecycle/podclaim/bindingstate.go:228-252`),
+and the gateway already calls it for the recycle-boundary retirement
+(`pkg/gateway/session/recycle/recycleboundary.go:223-228`). Both the shipped §4.6.1 bullet
+(spec/04_system-components.md:416) and SPEC-4's replacement of it (spec-changes.md:884) name the
+recorded terminal disposition beside the claim delete as a trigger of the same edge, so the route
+adds no schema field and no migration. Its cost is restated as an extra status write on the
+release path plus a decision about which dispositions a failed bind may record.
+
+FACT: every other citation in entry 27 re-verified against the tree and stands. `observeClaim`
+maps NotFound to hasClaim=false (occupancy.go:217), `claimToSandbox` keys every claim event onto
+the one owning Sandbox (occupancy.go:284), `DeleteClaim` is an unconditional delete with no
+pre-delete step (claimer.go:322-331), the only claim finalizer in the tree is the test hold
+(`gc_reclaim_internal_test.go:69`), and `expiredByUptime` (slotclaimer.go:347, called at :433 and
+:491) is the sole used-pod guard on the placement scans.
+
+FACT: the item needed no migration out of a staged change file. `## Open decisions for review`
+exists in neither spec-changes.md nor non-spec-changes.md, and neither file references this
+decision. The `occupancy.go:128-140` cite at spec-changes.md:804 is SPEC-4 rationale rather than a
+pointer to the decision, and it was left alone.
+
+FACT: the `## Stage the fix here` alternative's second clause was reworded from "neither is
+derivable from the projection alone" to "nothing staged here reads or writes the claim's release
+path", because the first clause had become false once the durable-disposition route was shown to
+be derivable from surfaces already in the tree. The alternative still loses for the reason that
+survives: both candidate fixes sit in components this proposal does not touch.
+
+### [f1.open-decisions-cleanup]
+
+FACT: the summary file already carried exactly the eight required sections in the required order,
+so this pass rewrote nothing. The headings are `# Summary: <title>`, `## Summary`, `## Goals`,
+`## Non-goals`, `## Open decisions for human to make`, `## Defects in the shipped tree that this
+proposal does not stage`, `## Impacts on other proposals` and `## Deliverable index`, at
+summary.md:1, :3, :291, :315, :473, :590, :924 and :939. `## Deliverable index` is last and was
+not touched.
+
+FACT: `## Summary` carries no prose of its own and holds the four labelled parts in order:
+`**Problem statement.**` (:5), `**What changes.**` (:21), `**Decisions.**` (:103) and
+`**Watch out for.**` (:226). The two renames this pass owns had already been made, so no part is
+labelled `**Fixed decisions.**` or `**What is fixed.**`.
+
+FACT: no `### Retired` block or equivalent stands inside `## Open decisions for human to make`,
+and no meta-list of staged items with a per-item disposition stands anywhere in the file. There
+was nothing for this pass to drop.
+
+FACT: the three items this firing left with the human are entries 20, 21 and 27, and all three
+stand under `## Open decisions for human to make` with their identifiers verbatim. Entry 20 is at
+:481, entry 21 at :488 and entry 27 at :526. Entry 27 carries the narrowed form the apply pass
+wrote, recorded in `[f1.open-decisions-apply.id27]` above.
+
+FACT: the section's preamble (:475-479) is true of the entries the section now carries. It states
+that entries 21 and 27 carry a recommendation with its ground, its alternatives and a confidence
+and that entry 20 carries the question and its ground alone, and each of the three entries matches
+that description. This pass moved nothing that could falsify it, so it was left as written.
+
+FACT: each of the nineteen out-of-scope markers this firing reported as `no-edit-needed` resolves
+to an entry already standing under `## Defects in the shipped tree that this proposal does not
+stage`, between :592 and :922. None was promoted or reworded, and the section holds no decisions.
+
+DECISION: `**Accepted failure modes.**` (summary.md:418) was left where it stands, inside
+`## Non-goals`. It is a labelled part rather than a heading, the section list constrains labelled
+parts only under `## Summary`, and `## Non-goals` is a listed section whose subject covers a
+residue this proposal declines to close. ALTERNATIVES: moving it under `## Defects in the shipped
+tree that this proposal does not stage`; rejected because that section is scoped to confirmed
+defects in the shipped tree, while these residues are properties of the design staged here, and
+four sites in the file cite it by name from where it stands.
+
+DECISION: the reference to proposals 0078 and 0079 inside the shipped-tree defect at
+summary.md:714-717 was left in place rather than merged into `## Impacts on other proposals`. It
+attributes the two halves of BUILD-GAPS finding F-5.2.33 to those proposals, which is a pointer to
+who owns an unstaged fix rather than an assertion about either proposal's continued validity, and
+it contradicts neither the 0078 row (:931) nor the 0079 row (:933). Verified against
+`BUILD-GAPS.md:4132` and the two proposal files. ALTERNATIVES: merging it into the two rows;
+rejected because the defect entry loses the evidence that no fix is staged here.
+
+DECISION: the reference to proposal 0080 in the file-collision item of `**Decisions.**`
+(summary.md:222-224) was left in place. It is the ground of a fixed decision about how small this
+proposal keeps its adapter edits, and the 0080 row (:928) states the same thing in its own terms,
+so the two agree and no second row was added.

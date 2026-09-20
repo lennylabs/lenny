@@ -22,3 +22,5 @@ On 2026-09-16, the proposal was revised by hand from the fifth determination rec
 On 2026-09-16, an adversarial spec-loop review ran 6 rounds and did not converge, performing 1 full-pool sweep. Forty findings were fixed. The non-spec loop was not run. Findings the spec loop had not closed remain open.
 
 On 2026-09-17, an adversarial review run executed two loops. The spec loop ran 14 rounds and converged, performing 3 full-pool sweeps. The non-spec loop ran 15 rounds and did not converge, performing 5 full-pool sweeps. Across both loops, 89 findings were fixed. Findings the non-spec loop had not closed remain open. The proposal must continue through convergence of the non-spec loop before approval.
+
+On 2026-09-20, an adversarial review run executed the spec loop. The spec loop ran 4 rounds and did not converge, performing 1 full-pool sweep. Thirty-three findings were fixed. The non-spec loop was not run. Findings the spec loop had not closed remain open.
