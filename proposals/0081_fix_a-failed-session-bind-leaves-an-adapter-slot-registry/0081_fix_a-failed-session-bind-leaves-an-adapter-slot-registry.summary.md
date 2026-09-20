@@ -473,8 +473,11 @@ deliberately and which is recorded under the defects this proposal does not stag
 ## Open decisions for human to make
 
 The decisions below are open for a human. Each keeps the identifier it was stamped with, so the
-numbering does not start at 1: the entries that held the earlier numbers were resolved, their
-answers are staged in the change files, and their record is in the review log. Entries 21 and 27
+numbering does not start at 1: the entries that held the earlier numbers left this section, and
+the review log records where each went. Entries 12, 13, 14, 15, 23, 24 and 25 were answered by
+the staging as it already stood, so no change file was edited for them. Entries 7 and 26 became
+rows under `## Defects in the shipped tree that this proposal does not stage`. The review log's
+`### Settled` and `### Retired` lists carry the remainder, each with its reason. Entries 21 and 27
 carry a recommendation with its ground, its alternatives and a confidence. Entry 20 carries the
 question and its ground alone, because the review loop derived no recommendation for it.
 
@@ -569,17 +572,21 @@ question and its ground alone, because the review loop derived no recommendation
     belongs to the finding rather than to this decision. A **gateway-side hold** keeps the claim
     in existence until the pod projects `claimed` before deleting it, which puts an ordering
     constraint on the release path and costs latency on every release. A **durable disposition**
-    records the retirement on the claim itself, so the projection reads a recorded disposition
-    rather than an observed phase and the coalescing window cannot defeat it. That second route
-    reuses a surface the tree already carries: the claim's status phase holds the terminal
+    records the retirement on the claim's status, so the projection reads a recorded disposition
+    rather than an observed phase. The projection reads that status only while the claim exists:
+    `observeClaim` reports a deleted claim as no claim, with no binding state. A status write
+    followed at once by the delete therefore coalesces exactly as the create and the delete do,
+    and this route closes the window only where the claim outlives the projection's read of it.
+    That second route reuses a surface the tree already carries: the claim's status phase holds the terminal
     dispositions `released` and `failed`, `ProjectOccupancyPhase` already drains a pod on either
     one (`pkg/controller/warmpool/occupancy.go:99-103`), `podclaim.WriteDispositionStatus` is the
     writer (`pkg/gateway/podlifecycle/podclaim/bindingstate.go:228-252`), and the gateway already
     writes it for the analogous retirement at the recycle boundary
     (`pkg/gateway/session/recycle/recycleboundary.go:223-228`). §4.6.1 names the recorded
     disposition beside the claim delete as a trigger of the same edge, so this route adds no
-    schema field and no migration. Its cost is an extra status write on the release path and a
-    decision about which dispositions a failed bind may record.
+    schema field and no migration. Its cost is an extra status write on the release path, a
+    decision about which dispositions a failed bind may record, and a decision about what deletes
+    the claim once the pod has drained.
 
     What deciding otherwise costs. This proposal stages nothing on this and is unaffected by the
     answer either way. Deciding not to file loses a latent retirement leak on the recycling path;

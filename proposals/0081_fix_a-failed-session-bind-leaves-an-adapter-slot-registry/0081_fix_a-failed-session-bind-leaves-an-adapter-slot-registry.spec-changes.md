@@ -112,10 +112,17 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   §5.2 retryability. On the §7.3 resume the gateway classifier the non-spec changes amend is
   what holds the row in `awaiting_client_action` for the client's retry. The callers that reach the
   hold are a §7.4 mid-session upload still in flight when the session's own teardown opens it, a
-  client-driven §7.3 resume, and a retry the §5.2 policy places. The slot retry budget defaults
-  to one
-  retry, so a retry refused on that hold is the request's last attempt under the default and the
-  client sees §5.2's exhaustion error. On a create-time-reserved slot the client's own retry of
+  client-driven §7.3 resume, and a retry the §5.2 policy places. An upload that arrives after
+  the teardown pruned the session's pod binding reaches no adapter, so only one that resolved the
+  binding earlier meets the hold. The hold a §5.2 retry meets can be one no reclaim opened: the
+  first attempt's `StartSession` deadline expires at the gateway, the handler runs on to a
+  failure ahead of the runtime start and opens the hold through its own cleanup, and the
+  compensating `Shutdown` finds no entry and is answered `absent`. The cost differs by caller.
+  The resume and the §5.2 retry each cost the pod one windowed failure, and the upload costs the
+  pod nothing and reaches its client as an upstream error. The slot retry budget defaults to one
+  retry (`maxSlotRetries` in `pkg/gateway/sessionserver/start.go`), so a retry refused on that
+  hold is the request's last attempt under the default and the client sees §5.2's exhaustion
+  error. On a create-time-reserved slot the client's own retry of
   the §15.1 start meets the hold the same way, consuming one
   of the retries the client has. How long the hold lasts is stated per cleanup in the hold
   column of SPEC-3's §5.2 disposition table. This is accepted
@@ -131,8 +138,9 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   surface.
 - **A failed bind on a pod serving one session, which no reclaim reaches.** The failed
   attempt is disposed of by `failPhase`, which sends no `Shutdown` and deletes the pod's claim
-  while the pod projects `claimed` (`pkg/gateway/podlifecycle/podsession/binder.go:867`, `:998`,
-  `:1072-1082`, `:1200-1202`; `pkg/controller/warmpool/occupancy.go:132-140`). SPEC-3's §5.2 disposition table states the
+  while the pod projects `claimed` (`failPhase` in
+  `pkg/gateway/podlifecycle/podsession/binder.go`; `ProjectOccupancyPhase` in
+  `pkg/controller/warmpool/occupancy.go`). SPEC-3's §5.2 disposition table states the
   disposition, in its row for a pre-`running` slot no cleanup reclaims, and this list does not
   restate it.
 - **A start that races the reclaim.** The orderings differ in what they leave behind. When the
@@ -251,7 +259,7 @@ The handler runs the per-session teardown when the adapter holds a bound entry f
 Replace it with:
 
 ```
-The handler runs the slot release and the runtime teardown under the preconditions [Section 4.7](#47-runtime-adapter) states, and runs the whole-pod scrub when the recycle disposition is set, so no operation is selected by a field's presence standing in for a scope.
+The handler runs the slot release and the runtime teardown under the preconditions [Section 4.7](#47-runtime-adapter) states, and runs the whole-pod scrub when the recycle disposition is set on a request that passed the teardown-pairing rule [Section 4.7.1](#471-role-and-gateway-rpc-contract) states, whatever outcome that request answers, so no operation is selected by a field's presence standing in for a scope.
 ```
 
 No sentence about the bind attempt token is added here. `bind_attempt` is a bare `string` and
@@ -262,21 +270,21 @@ or a scope: each is a precondition the handler reads on a request whose scope it
 already fixes. The precedent sits on this same message. The shipped comment on
 `ShutdownRequest.recycle` says the field "carries the occupancy-zero recycle disposition beside
 the named session's teardown rather than selecting a scope"
-(`schemas/lenny-adapter.proto:1621-1627`), and both new fields sit beside the address in that
+(`schemas/lenny-adapter.proto`), and both new fields sit beside the address in that
 way. The replacement sentence therefore delegates both teardown preconditions to §4.7, which
-owns them, and states no rule about either field.
+owns them, and states no rule about either field. The scrub clause restates rule 10 and
+CODE-1: a request the pairing rule refuses changes nothing, and every other outcome starts the
+scrub.
 
 The paragraph's first two sentences are untouched and this edit retires no vocabulary. The
 second sentence ("The per-slot teardown and the whole-pod teardown are the same operation on
 the same address, and what remains is the recycle disposition the request carries beside it.")
 states where the work is addressed. That is what the subsection needs from it, because the
-subsection derives a message's scope from its field set
-(`spec/04_system-components.md:151`) and the paragraph's closing clause concludes that no
+subsection derives a message's scope from its field set and the paragraph's closing clause concludes that no
 operation is selected by a field's presence standing in for a scope. The split names each
 operation, leaves each precondition to §4.7, and leaves the address-sharing claim true. The second
 sentence's two names already disagree with the shipped third sentence's "per-session
-teardown" and "whole-pod scrub" before this edit applies
-(`spec/04_system-components.md:157`), so that mismatch belongs to the shipped paragraph and
+teardown" and "whole-pod scrub" before this edit applies, so that mismatch belongs to the shipped paragraph and
 the implementor changes neither sentence here.
 
 ### SPEC-1 · spec/04_system-components.md § 4.7 (Gateway → Adapter RPC table, `Shutdown` row)
@@ -344,8 +352,8 @@ replaces its opening sentence, a cleanup-outcome report is filed for a cleanup a
 performs, and a demotion is not a `Shutdown`. What the next attempt gets is rule 4's.
 
 A demotion whose own teardown fails answers an error before it removes anything
-(`pkg/adapter/sdkwarm.go:280-282`), and the §5.2 disposition table carries that row. The row is
-conditional because the tree is: `pkg/adapter/sdkwarm.go:296-301` releases nothing when
+(the `DemoteSDK` handler in `pkg/adapter/sdkwarm.go`), and the §5.2 disposition table carries that
+row. The row is conditional because the tree is: the same handler releases nothing when
 the registry holds no entry. The removal itself is shipped behaviour at those lines, so no code
 deliverable changes and this edit closes a spec-surface gap.
 
@@ -367,14 +375,12 @@ the same body follows the step's own form.
 
 Step 12 needs no condition of its own and is untouched. §29.4's `**Preconditions.**` paragraph
 scopes the whole trace, the interrupt path and the session-end path alike, to a session that has
-completed the §29.2 startup sequence, "so the runtime is running"
-(`spec/29_communication-scenarios.md:586-588`), and the sentence after it introduces the interrupt
-path's further requirement as an addition to that base (`:589-591`). Every session the trace
+completed the §29.2 startup sequence, "so the runtime is running", and the sentence after it
+introduces the interrupt path's further requirement as an addition to that base. Every session the trace
 carries into step 12 therefore has a start the adapter has admitted, so the step's "the adapter
-closes the session runtime" (`:697`) stays true under the narrower runtime-teardown precondition
+closes the session runtime" stays true under the narrower runtime-teardown precondition
 the §4.7 row states. Step 10's clause that `POST /v1/sessions/{id}/terminate` "is valid in any
-non-terminal state" is a restatement of §15.1's endpoint precondition table, cited as such
-(`:669-674`), and it fixes what the endpoint admits rather than what this trace covers, so it does
+non-terminal state" is a restatement of §15.1's endpoint precondition table, cited as such, and it fixes what the endpoint admits rather than what this trace covers, so it does
 not widen the trace past its own preconditions. The authority for leaving step 12 alone is §29.4's
 own preconditions paragraph.
 
@@ -614,12 +620,10 @@ That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a
 | Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | Every act returns without error | `released` | Set | Not entered | Ends when the cleanup returns | No state is left |
 | Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | The runtime close fails | `leaked` | Not set | Entered | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
 | Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | The runtime close succeeds and any other act fails | `released` | Set | Not entered | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
-| Slot given to that process, released outside a `Shutdown`, such as the [Section 4.7](04_system-components.md#47-runtime-adapter) SDK demotion or the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination | Every act returns without error | None | No `Shutdown` performs the cleanup | Not entered | Ends when the cleanup returns | No state is left |
-| Slot given to that process, released outside a `Shutdown` | An act fails after the deregistration | None | No `Shutdown` performs the cleanup | Not entered, because nothing carries the outcome to the gateway | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
 | Pre-`running` slot, reclaimed by a `Shutdown` | Every act returns without error | None | Set | Not entered | Ends when the cleanup returns | No state is left |
 | Pre-`running` slot, reclaimed by a `Shutdown` | An act fails | None | Not set | Entered | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
-| Pre-`running` slot, cleaned outside a `Shutdown`, by the adapter's own handler for a start that fails, the SDK demotion, or the hold-timeout termination | Every act returns without error | None | No `Shutdown` performs the cleanup | Not entered | Ends when the cleanup returns | No state is left |
-| Pre-`running` slot, cleaned outside a `Shutdown` | An act fails after the deregistration | None | No `Shutdown` performs the cleanup | Not entered, because nothing carries the outcome to the gateway | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
+| Slot of either kind, released outside a `Shutdown`: by the [Section 4.7](04_system-components.md#47-runtime-adapter) SDK demotion, by the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, or, for a pre-`running` slot, by the adapter's own handler for a start that fails | Every act returns without error | None | No `Shutdown` performs the cleanup | Not entered | Ends when the cleanup returns | No state is left |
+| Slot of either kind, released outside a `Shutdown` by a performer the row above names | An act fails after the deregistration | None | No `Shutdown` performs the cleanup | Not entered, because nothing carries the outcome to the gateway | Held for the life of the pod | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends all else |
 | Slot of either kind that the SDK demotion would release | The demotion's runtime close fails, so the demotion deregisters nothing and runs no cleanup | None | No `Shutdown` performs a cleanup | Not entered | Not opened, because the registry entry stands | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends the registry entry and all else |
 | Pre-`running` slot no cleanup reclaims | No cleanup runs | None | No `Shutdown` performs a cleanup | Not entered | Not opened, because the registry entry stands | The whole-pod scrub or pod termination ends the slot's directories; pod termination ends the registry entry and the armed [Section 4.9](04_system-components.md#49-credential-leasing-service) lease-expiry timers. A pod serving one session whose claim the failed bind deletes retires under the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) occupancy projection |
 
@@ -634,16 +638,14 @@ place. Its rows are keyed on what the cleanup reclaims and who performs it, and 
 fails, because those are what the adapter branches on: the report and the clean-exit flag are
 keyed on the runtime close for a slot the runtime was given and on every act for a slot it was
 not, and the hold is keyed on every act on every row. The `leaked` cells restate no §6.2
-semantics. The cell for a runtime-given slot released outside a `Shutdown` records a choice:
-the shipped handlers for the SDK demotion and the §10.1 hold-timeout termination discard the
-cleanup's errors and file nothing (`pkg/adapter/slotsession.go:214-220`,
-`pkg/adapter/holdstate.go:215-254`), so no `leaked` outcome reaches the gateway and the table
-says so. The same rows cover a pre-`running` slot those two handlers release, because the
-hold-timeout pass selects on the started flag, which the claim sets before the runtime start
-(`pkg/adapter/slotsession.go:88`, `:379-382`), and the demotion releases whatever entry the
-registry holds. The demotion closes the runtime before it deregisters, so a close that fails
-there deregisters nothing and opens no hold, which is the table's own row; the hold-timeout pass
-deregisters first (`pkg/adapter/holdstate.go:190`). The last row's retirement clause rests on SPEC-4's re-keyed projection, under which a
+semantics. The cell for a slot released outside a `Shutdown` records a choice: the shipped
+handlers (`releaseSessionSlot` in `pkg/adapter/slotsession.go`, `terminateHeldSession` in
+`pkg/adapter/holdstate.go`) discard the cleanup's errors and file nothing, so no `leaked`
+outcome reaches the gateway and the table says so. The demotion closes the runtime before it
+deregisters, so a close that fails there deregisters nothing and opens no hold, which is the
+table's own row; the hold-timeout pass deregisters first.
+
+The last row's retirement clause rests on SPEC-4's re-keyed projection, under which a
 claim deleted while the pod projects `claimed` drains the pod on a pool of either recycle
 setting.
 
@@ -801,12 +803,11 @@ the precedent for a section pointer inside a fence of this section, and this del
 the same reduction to the two `slot_cleanup` entries below.
 
 The statements as they stand are keyed on the pool's recycle setting or on its retirement
-limits, and the projection reads neither. `pkg/controller/warmpool/occupancy.go:128-140`
-switches on the pod's current phase alone: `state.Reserved` with no claim projects `Idle` and
+limits, and the projection reads neither. `ProjectOccupancyPhase` in
+`pkg/controller/warmpool/occupancy.go` switches on the pod's current phase alone: `state.Reserved` with no claim projects `Idle` and
 `state.Claimed` with no claim projects `Draining`, and the function's own comment states the
 rule the edits below adopt, that "the §6.2 state machine encodes the recycle-versus-one-session
-distinction in the phase the pod sits in at the claim DELETE"
-(`pkg/controller/warmpool/occupancy.go:57-59`). A pod its pool reuses returns to inventory
+distinction in the phase the pod sits in at the claim DELETE". A pod its pool reuses returns to inventory
 through the `reserved → idle` edge, which it reaches only after its claim has been patched
 through `recycling` and its whole-pod scrub has been reported. §4.6.1's bullets are re-keyed on
 the projected phase at the claim DELETE, which is what the last row of SPEC-3's §5.2 disposition
@@ -853,7 +854,7 @@ reaches that boundary.
 §4.6.1's two claim-deletion bullets are keyed on the pool's recycle setting and on its
 retirement limits, and its `draining`, then `terminated` bullet closes with a sentence
 that is false against the controller: `ProjectOccupancyPhase` never returns `idle` from
-`claimed` on any pool (`pkg/controller/warmpool/occupancy.go:134-140`). Both bullets are re-keyed on the projected
+`claimed` on any pool (`pkg/controller/warmpool/occupancy.go`). Both bullets are re-keyed on the projected
 phase and the false sentence is deleted rather than reworded, because the replacement trigger
 clause already states where a pod its pool reuses returns to inventory.
 
@@ -1201,7 +1202,8 @@ Listed so a reviewer can tell scope from oversight.
   envelope §15.1 already defines for the endpoint that issued the bind sequence.
   `PROTOCOL_VERSION_INCOMPATIBLE` is the shipped precedent: it is an adapter `ErrorCode` the
   specification publishes to adapter authors with no §15.1 row
-  (`spec/15_external-api-surface.md:1699`, `schemas/lenny-adapter.proto:585`). What is deliberate
+  (the `INIT` row of §15.4.2's RPC lifecycle state table, and the `ErrorCode` enum in
+  `schemas/lenny-adapter.proto`). What is deliberate
   here is the absence of a new row. The
   section itself is edited under SPEC-5 rather than untouched: the started-session refusal is a
   second deterministic `FAILED_PRECONDITION` producer in the setup window and the existing

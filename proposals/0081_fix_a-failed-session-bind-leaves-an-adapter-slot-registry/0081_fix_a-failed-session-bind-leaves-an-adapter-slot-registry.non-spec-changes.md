@@ -1316,7 +1316,8 @@ No in-gateway wait-and-retry is staged for the hold. The hold is bounded by the 
 the reclaiming request carries when it carries one and by that request's own deadline when it
 carries none, plus the removal of the slot's directories, and a gateway-side wait would hold
 the client's request open for that window and state the timeout in a second place. The attempt
-spends a retry on the refusal instead, which is recorded among the accepted failure modes.
+spends a retry on the refusal instead, which the spec-changes file records among its accepted
+failure modes.
 
 ### CODE-6 · pkg/adapter/bindattempt.go, pkg/adapter/slot.go, pkg/adapter/slotsession.go, pkg/adapter/staging.go, pkg/adapter/slotcreds.go, pkg/adapter/credentials.go, pkg/adapter/resume.go, pkg/adapter/sdkwarm.go, pkg/adapter/holdstate.go, pkg/adapter/server.go · the bind-attempt token, the rule 2-through-7 predicate at the one resolve chokepoint, the reclaim hold, and the shared resolve helper
 
@@ -3481,21 +3482,19 @@ treating a failure as this change's.
 
 ## Edge cases and accepted failure modes
 
-- **A refused retry burns one attempt.** Attempt 2 is refused while attempt 1's entry stands.
-  The window is bounded by the compensation's latency plus the §5.2 reclaim hold where that
-  reclaim's cleanup completes, and by the pod's remaining life where it does not, and the retry
-  is refused `Aborted`, which the classifier treats as transient, so the attempt is placed again
-  rather than ended. A refused retry is a cheaper residue than a destroyed session, than a
-  successor reaching `running` on an empty workspace, or than a successor materializing over the
-  residue a failed cleanup left in place.
-- **A compensation lost to a gateway crash leaves the session unstartable on that pod.** The
-  entry stands stamped with a dead attempt's token, and every later attempt at that session on
-  that pod is refused rather than admitted. That is worse on one axis than the epoch design,
-  which would have let a retry adopt the entry, and better on the axis that matters: adoption is
-  what destroys a live session. The recoveries are a durable compensation record and a reaper
-  for a leaked entry, neither of which is staged here. The recovery primitive both would use
-  ships with SCHEMA-1: a `Shutdown` with `unconditional_teardown = true` removes whatever entry
-  the adapter holds.
+This section carries the cases that concern code alone. The accepted failure modes of the
+contract are in the section of the same name in the spec-changes file, which is the single home
+of these cases:
+
+- A retry refused while the first attempt's entry or hold stands, the callers that can meet the
+  hold, and what each refusal costs: **A retry that meets the reclaim hold spends an attempt on
+  it**.
+- A compensation lost to a gateway crash: **A compensation lost to a gateway crash leaves an
+  entry no attempt can use**.
+- A bind abandoned at the connect stage: **A bind abandoned at the connect stage**. CODE-4's
+  `BindReservedSlot` row and CODE-5's reserved branch state how a failed reservation release on
+  the create-time-reserved path is folded into `Leaked` and accounted.
+
 - **An attempt cannot fence itself.** A non-mid-session `FinalizeWorkspace` may legitimately be
   an attempt's first RPC, on a plan with no uploads, so `allowCreate` is true. If an
   unconditional `Shutdown` removed attempt A's entry while A was still running, A's next RPC
@@ -3533,8 +3532,8 @@ treating a failure as this change's.
   entry, is answered `ABSENT`, and CODE-4 reads that as a completed reclaim with `sbe.Leaked`
   false, so an incomplete cleanup on this path reaches no leaked sub-state and contributes
   nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is what the §5.2
-  disposition table states in its row for a pre-`running` slot cleaned outside a `Shutdown`
-  whose act fails. The residue that goes unaccounted is the leak accounting
+  disposition table states in its row for a slot released outside a `Shutdown` whose act fails
+  after the deregistration. The residue that goes unaccounted is the leak accounting
   rather than the identifier: `releaseSessionSlot` runs under `reclaimSlotLocked`, so a
   `removeSlotTree` that fails there is a cleanup that did not complete and the identifier stays
   held for the life of the pod, which is what keeps a later bind off that tree. What the gateway
@@ -3544,34 +3543,6 @@ treating a failure as this change's.
   dead attempt's token, and every later attempt at that session on that pod is refused. CODE-8
   makes the refusal path skip `failPhase` entirely, so this arises only on an ordinary failure
   whose drain then fails. It is the reaper's subject.
-- **What can meet the reclaim hold, and what it costs.** Three callers can. The §7.4 mid-session
-  upload resolves the session's binding with `podRegistry.Get` and sends `PrepareWorkspace` and
-  `FinalizeWorkspace` on it; the teardown prunes that binding before it tears the slot down, so
-  an upload that arrives after the removal is answered `TARGET_NOT_READY` and reaches no
-  adapter, while one that resolved the binding before it and is still in flight when the
-  `Shutdown` opens the hold meets the hold at the adapter. That is the interleaving that would
-  otherwise resurrect a registry entry after `Shutdown` removed it. The §7.4 pair's
-  `PrepareWorkspace` and `FinalizeWorkspace` meet it at `acquireSlotGuardForResolve`, which
-  refuses them before they wait on the slot's guard; `AssignCredentials`, `StartSession` and
-  `ConfigureWorkspace` take no guard and meet it inside `ensureSlotStateLocked`. Both sites
-  answer the same transient sentinel on `codes.Aborted`. A client-driven §7.3 resume is the second and can re-place the same session
-  on the same pod. A §5.2 retry is the third, and the hold it meets is one no reclaim opened:
-  `StartSession`'s deadline expires, the handler keeps running and reaches a pre-`Runtime.Start`
-  failure branch, and the hold `releaseSessionSlot` opens there is invisible to the gateway; the
-  compensating `Shutdown` is not held, finds no entry, and answers `ABSENT`. In all three cases
-  the refusal is `codes.Aborted`, which the caller can retry on, but what records it differs by
-  caller. The §7.3 resume's bind attempt builds a `SlotBindError`, takes `Reason()`'s transient
-  default, and costs the pod one windowed failure through `accountSlotFailure`'s `resumeOnPod`
-  caller. That branch runs no retry loop, so the error reaches `holdOrFailOnResumeError` on the
-  first refusal, and CODE-5's `codes.Aborted` arm is what reverts the row to
-  `awaiting_client_action` rather than to a terminal `failed`. The
-  mid-session upload builds none: `handleUploadToSession` converts the error into an HTTP 502
-  `UPSTREAM_ERROR` and nothing is counted against the pod. The §5.2 retry's refused attempt
-  costs one windowed `RecordFailure`, and `maxSlotRetries` is 1, so that attempt is the
-  request's last. Nothing else records the hold: no metric and no report distinguishes a hold
-  refusal from any other transient slot failure. Accepted rather than closed, because a
-  gateway-side wait-and-retry would hold the client's request open for the same window and would
-  state that timeout in a second place.
 - **A compensating `Shutdown` can spend its budget waiting on a guarded `Resume`.** CODE-6's
   guard spans `Resume` from ahead of its claim to the end of the call, so the reclaim CODE-4 sends
   on a failed `Binder.Resume` blocks until the handler returns, inside
@@ -3586,7 +3557,7 @@ treating a failure as this change's.
   remainder re-opens the interleaving of the reclaim's `removeSlotTree` against `ExtractTree` that
   the guard exists to order, and a second adapter-side deadline over the restore would state the
   gateway's own timeout in a second place. The unanswered reclaim is the reaper's subject, as it is
-  for the crash case above.
+  for the spec-changes file's gateway-crash case.
 - **A member parked under its own guard can cost the §10.1.4 pass its whole guard-acquisition
   deadline.** A `Resume` inside `workspace.ExtractTree` on a large checkpoint holds that member's
   guard, and `terminateHeldSession` waits for it against the pass's single ten-second
@@ -3607,12 +3578,6 @@ treating a failure as this change's.
   serving concurrent sessions §6.2 then routes to the §5.2 threshold. The state cannot arise in
   a running deployment, because nothing arms the hold; the case becomes live when remediation
   step R12 ships the gateway control-stream consumer.
-- **The connect stage compensates nothing.** The slot is reserved before any workspace RPC, so
-  the adapter holds no entry and no compensation is sent. On the create-time-reserved path
-  `BindReservedSlot`'s own reservation release can still fail, CODE-4 folds that failure into
-  `Leaked`, and CODE-5's reserved branch accounts it persistently, which marks a slot leaked out
-  of `slot_assigned`. §6.2 still has no terminal out of `slot_assigned`; the summary records
-  that hole and why it is not closed here.
 - **Faster pod churn at `maxConcurrentSessions >= 3`.** The leaked disposition withholds the
   counter decrement and counts persistently, so an unacknowledged reclaim moves a pod toward
   retirement sooner than a clean release would. Accepted as §6.2's semantics applied
