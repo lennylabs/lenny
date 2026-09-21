@@ -451,7 +451,12 @@ supplied the recommendation, alternatives, cost and confidence for entries 29 an
 ground, alternatives, cost and confidence for entry 34, which it left without a recommendation.
 Entries 38, 39 and 40 were routed here from the review log's open list by a later index
 reconciliation pass; entry 38 then left this section for the unstaged-defects list below, and
-entries 39 and 40 left it as answered.
+entries 39 and 40 left it as answered. Entries 41 through 45 were routed here from the review
+log's open list by the second index reconciliation pass, which stamped them with those numbers
+because the log never numbered them. Each carries the question and the ground the log entry
+gives and no recommendation, because the review loop derived none; the
+open-decisions-and-impact-review phase supplies the recommendation, alternatives, cost and
+confidence for each.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -587,7 +592,10 @@ entries 39 and 40 left it as answered.
     deployer scrapes by default, because the adapter metrics endpoint is not wired into the
     scrape target set. An operator therefore cannot tell either residue from an ordinary
     refusal. The answer decides whether this proposal owes a scraped signal for them or whether
-    both stay unobservable until the adapter scrape target is wired.
+    both stay unobservable until the adapter scrape target is wired. Answering it by wiring the
+    adapter scrape target has an unexamined consequence: it would also discharge the §28.1 N4
+    deferral and move the §16.1 adapter row that records it, and nobody has checked what that
+    does to CODE-9's staged catalog and collector sites.
 
 34. **Should a failed §7.3 session re-attach be accounted against the pod's whole-pod
     replacement threshold on both of its arms, or only on the arm where the slot actually
@@ -651,6 +659,57 @@ entries 39 and 40 left it as answered.
     observer in the battery. The answer decides whether CONF-1 ships with those arms uncovered
     and records the gap, or whether the battery gains an injection seam that a third-party
     adapter would have to implement.
+
+41. **Should a slot identifier held for the life of the pod be answered as a permanent
+    refusal?** SPEC-3's reclaim hold holds the identifier for the life of the pod when the
+    cleanup does not complete, and rule 2 answers every request that meets the hold with
+    `ABORTED`. §15.4 publishes `ABORTED` as the transient classification a caller retries on,
+    so a caller meeting a life-of-the-pod hold retries a refusal that will never clear on that
+    pod. The staging leaves the answer transient on both arms and routes the remedy, an entry
+    reaper that ends a stranded hold, to remediation position 2 rather than to this proposal.
+    The answer decides whether the permanent arm owes a distinct permanent status, which would
+    split rule 2's answer on a condition the adapter can observe, or whether one transient
+    answer stands for both arms and the reaper carries the remedy. The review loop derived no
+    recommendation.
+
+42. **Is the §4.9 timer cancellation ordered wrongly against the credential-file removal in
+    SPEC-3's action list?** SPEC-3's replacement of §5.2's `**Slot cleanup:**` action list
+    states the removal of the slot's credential directory and the cancellation of the armed
+    §4.9 lease-expiry timers in one sentence, with no order between them. The two acts have
+    different failure characters. The deregistration cancels the timers and cannot fail, while
+    the removal of the file those timers protect is best-effort and may fail after the
+    cancellation has already run, which leaves a credential file on the pod with no expiry
+    timer armed against it. The answer decides whether the action list states an order,
+    whether it states what a removal failure after cancellation leaves, or whether the
+    sentence stands as staged and the condition is recorded as a defect this proposal does not
+    stage. The review loop filed the question and derived no recommendation.
+
+43. **Does SPEC-2's §7.1 obligation owe preemption as a second trigger for an unsent
+    reclaim?** The Edge-cases bullet covers a gateway that dies mid-bind, which leaves the
+    pod-side reclaim unsent. §10.1.5 item 1 forbids a preempted replica from sending it, so a
+    coordinator handoff produces the same unsent reclaim on a replica that is alive and
+    behaving correctly. That trigger is more routine than a crash and the staging names it
+    nowhere. Whether a graceful preStop drain hands a mid-bind session to another replica, or
+    fails the bind on the draining replica, is untraced; if there is no mid-bind handoff the
+    trigger narrows to lease expiry and partition rather than disappearing. The answer decides
+    whether SPEC-2 names preemption beside the crash, or whether the bullet stands as staged.
+    The review loop derived no recommendation.
+
+44. **Does `docs/operator-guide/observability.md` owe rows for the two SPEC-6 counters?**
+    CODE-9 stages `docs/reference/metrics.md` alone. Whether the operator guide's
+    observability page is a full mirror of the §16.1 catalog or a curated subset is untraced,
+    so whether the two new counters belong on it is unsettled. The answer decides whether this
+    proposal gains a fifth docs deliverable or whether the metrics reference is the only
+    published home. The review loop derived no recommendation.
+
+45. **Does `lenny_adapter_leaked_slots` now need a §16.1 catalog row?** The series exists in
+    the adapter and has no §16.1 row and no `docs/reference/metrics.md` row today, which is
+    pre-existing. SPEC-3 withholds the cleanup-outcome report for a pre-`running` reclaim, and
+    whether the `/healthz` `leaked_slots` value moves when the report is withheld is
+    unverified, so the proposal may be changing what an unpublished series counts. The answer
+    decides whether SPEC-6 gains a row for it, or whether the gap stays pre-existing and is
+    recorded as a defect this proposal does not stage. The review loop derived no
+    recommendation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
