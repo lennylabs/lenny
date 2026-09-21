@@ -2562,3 +2562,17 @@ entry discharges it, and named the exact reduction. That is the entire finding; 
 three sites and filed it rather than re-deriving.
 USEFUL [MISTAKE, FIVE edit passes in four rounds on ONE disposition-table column]: killed candidate
 (b)-adjacent residue work before I spent a pass on it.
+
+### [f1.cleanup.2]
+
+FACT: the summary file already carried exactly the eight required sections, in the required order, and needed no edit. `## Summary` holds `**Problem statement.**`, `**What changes.**`, `**Decisions.**` and `**Watch out for.**` in that order and carries no prose of its own; `## Deliverable index` stands last, line for line as the reconciliation pass left it. Nothing was added, removed, renamed, reordered or relocated. — EVIDENCE: headings at summary.md lines 1, 3, 289, 313, 471, 595, 929, 944; labelled parts at 5, 21, 101, 224; `git status` and `git diff HEAD` over the proposal directory are both empty against `992081205`.
+
+FACT: no item of this firing owed a summary edit. Items 20 and 21 were refuted at both the gate and the apply, so nothing was staged for either and both remain listed with their own identifiers. Item 27 and every `marker:unscoped` item came back `no-edit-needed`, and the summary already carried each as written: 27 as decision entry 27, and each unscoped marker as an entry of `## Defects in the shipped tree that this proposal does not stage`. All nineteen markers were matched against that section entry by entry; none is missing and none is unaccounted for.
+
+FACT: the `## Open decisions for human to make` preamble is true of the three entries the section now carries, so no preamble correction was owed. Entries 21 and 27 each carry a recommendation with its ground, its alternatives and a stated confidence; entry 20 carries the question and its ground alone. The `### Settled` and `### Retired` lists the preamble points at both exist in this log.
+
+FACT: the section carries no `### Retired` block or equivalent, and no meta-list of staged items with a proposed disposition, so there was nothing to check against the staged changes and nothing to drop.
+
+FACT: this log's layout differs from the phase's description of it. There is no top-level `## Retired`; `### Retired` is a subsection of `## Standing context` (line 684) and `## Ledger` is the last section of the file. Appending at the end of the file therefore lands at the end of `## Ledger` and buries nothing. A later firing should splice the same way rather than hunting for a `## Retired` heading.
+
+WATCHOUT: the two cosmetic observations `[f1.cleanup.1]` recorded both still stand, unchanged, and were again left alone. `**Accepted failure modes.**` sits as a labelled block at the end of `## Non-goals` (summary.md:416); moving it under `## Defects in the shipped tree that this proposal does not stage` would re-file design residues as confirmed shipped-tree defects, which is an adjudication rather than a format correction. And a stray blank line between summary.md:854 and :856 renders the defects bullet list loose from that point on. Neither is a section-list violation; a pass that wants either changed should take it as a decision.
