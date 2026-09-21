@@ -173,7 +173,12 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   session can then reach `running` on an empty workspace. Closing it needs either a generation
   on the slot's on-disk tree or a bind-scoped lock spanning the whole attempt, each of which is
   a wider change than this proposal stages. It is recorded here and carried as a deferred item
-  rather than closed.
+  rather than closed. The staged §4.7.1 rules state nothing about the emptied tree, and none is
+  added: the create-and-stamp rule already fixes what a conforming adapter does with the
+  recreating request, and the outcome follows from the gateway's own ordering of that request
+  against an unconditional teardown, so no adapter obligation and no client action turns on it.
+  The closure goes out as its own finding against the section that owns it, on the same footing
+  as the two recoveries named in the case below.
 - **A compensation lost to a gateway crash leaves an entry no attempt can use.** The reclaim is
   sent once, from the process that abandoned the attempt, so a gateway that dies between
   abandoning the attempt and sending the reclaim leaves a registry entry stamped with a token
@@ -599,18 +604,22 @@ is not a carrier.
 | `schemas/lenny-adapter.proto`, `ReportSessionScrubRequest` message comment | Mirrored by SCHEMA-1 |
 | `pkg/proto/adapter/v1/lenny-adapter.pb.go` and `lenny-adapter_grpc.pb.go`, the generated copies of those two comments | Mirrored by SCHEMA-1, through regeneration |
 | `pkg/adapter/server.go`, `Server.SessionScrubReporter` field comment | Mirrored by CODE-1 |
-| `migrations/0167_runtime_definitions_execution_mode_service.up.sql`, the `sessions_served` column comment | Deferred to the non-spec loop, code-lane comment re-key; the code lane decides whether a landed migration's comment is edited |
-| `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Deferred to the non-spec loop, code-lane tier-11 re-key in the step that applies SPEC-3 (the §12.6 block below) |
-| `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Deferred to the non-spec loop, code-lane tier-11 deletion in the step that applies SPEC-3 (the §12.6 block below) |
-| `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`, header comment and `// spec:` annotation | Deferred to the non-spec loop, code-lane comment re-key |
-| `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, the `// diagnosis:` comment on `TestPerSlotCleanupStatedOnEverySessionModeRow` | Deferred to the non-spec loop, code-lane comment re-key |
-| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, the `ReportSessionScrub` handler comment, the `SessionCountRetirer` comment and the `RecordSessionScrub` inline comment on evaluating the count on every release | Deferred to the non-spec loop, code-lane comment re-key |
-| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, the three doc comments keyed on every release | Deferred to the non-spec loop, code-lane comment re-key |
-| `pkg/gateway/session/recycle/scrubreporter_seams.go`, the `sessionCountRetirer` comment | Deferred to the non-spec loop, code-lane comment re-key |
-| `pkg/adapter/sessionscrubreporter.go`, the `SessionScrubReporter` interface comment | Deferred to the non-spec loop, code-lane comment re-key |
-| `pkg/adapter/gatewaycontrol/scrubreport.go`, the `Client.ReportSessionScrub` method comment | Deferred to the non-spec loop, code-lane comment re-key |
-| `pkg/agentpodstate/agentpodstate.go`, the `SessionsServed` field comment and the `IncrementSessionsServed` doc comment | Deferred to the non-spec loop, code-lane comment re-key |
-| `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the two `// spec:` annotations | Deferred to the non-spec loop, code-lane comment re-key |
+| `migrations/0167_runtime_definitions_execution_mode_service.up.sql`, the `sessions_served` column comment | Mirrored by CODE-10 |
+| `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Staged by checklist S4's tier-11 sweep, re-key |
+| `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Staged by checklist S4's tier-11 sweep, deletion |
+| `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`, header comment | Mirrored by CODE-10 |
+| `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, the `// diagnosis:` comment on `TestPerSlotCleanupStatedOnEverySessionModeRow` | Mirrored by CODE-10 |
+| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, the `ReportSessionScrub` handler comment, the `SessionCountRetirer` comment and the `RecordSessionScrub` inline comment on evaluating the count on every release | Mirrored by CODE-10 |
+| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, the three doc comments keyed on every release | Mirrored by CODE-10 |
+| `pkg/gateway/session/recycle/scrubreporter_seams.go`, the `sessionCountRetirer` comment | Mirrored by CODE-10 |
+| `pkg/adapter/sessionscrubreporter.go`, the `SessionScrubReporter` interface comment | Mirrored by CODE-10 |
+| `pkg/adapter/gatewaycontrol/scrubreport.go`, the `Client.ReportSessionScrub` method comment | Mirrored by CODE-10 |
+| `pkg/adapter/gatewaylink.go`, the `ConnectGateway` `SessionScrubReporter` retention comment | Mirrored by CODE-10 |
+| `pkg/adapter/gatewaylink_test.go`, the `// spec:` and `// diagnosis:` comments on `TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2` | Mirrored by CODE-10 |
+| `pkg/adapter/sessionscrub_emit_test.go`, the served-count sentence of the `TestShutdownSlotEmitsReleasedOnCleanClose` doc comment | Mirrored by CODE-10 |
+| `pkg/agentpodstate/agentpodstate.go`, the `SessionsServed` clause of the `RecycleCounters` type comment and the `IncrementSessionsServed` doc comment | Mirrored by CODE-10 |
+| `pkg/controller/sandbox/podspec/podspec.go`, the `PodNameEnvVar` doc comment, the sidecar adapter container comment and the `podNameEnv` doc comment | Mirrored by CODE-10 |
+| `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the two `// spec:` annotations | Mirrored by CODE-10 |
 
 Then append to the same paragraph. The block carries blank lines, so the table, the paragraph
 after it and the `**Slot-identifier reclaim hold.**` paragraph each land as their own block:
@@ -670,7 +679,16 @@ cases the sentence states, the §10.1 hold-timeout termination, which runs under
 inherits no caller bound; the other two take the reclaiming `Shutdown`'s carried grace or that
 request's own deadline. No flag, configuration field or operator-tunable note is staged for it.
 The rule in `.claude/rules/code-best-practices.md` that a hard-coded constant carry an override is
-conditioned on a default the spec does not fix, and this paragraph fixes it.
+conditioned on a default the spec does not fix, and this paragraph fixes it. The figure is also
+the graceful window the platform already uses on this SIGTERM-to-SIGKILL pivot, so fixing it here
+introduces no second value: §11.4 step 3 states ten seconds
+(`spec/11_policy-and-controls.md:264`), the gateway sends that window as the `Shutdown`'s
+`deadline_ms` (`pkg/adapter/session.go:219-224`), and the socket runtime's fallback grace matches
+it (`pkg/adapter/socketruntime.go:470-473`). No runtime in the tree runs a longer one: the MCP
+runtime's default grace is five seconds (`pkg/adapter/mcpruntime.go:86`) and its per-runtime
+`ShutdownGrace` override is set nowhere, so the fixed window truncates no configured close. An
+implementor landing CODE-6 who finds a runtime whose graceful stop exceeds ten seconds raises
+that as a finding of its own rather than widening this paragraph.
 
 The reporting rule and the one-report rule land in the scrub-model paragraph rather than
 in the `**Slot cleanup:**` bullet, because that bullet sits under a heading scoped to

@@ -316,6 +316,17 @@ The handler body:
 // and the pod would be handed to the next tenant unscrubbed with no
 // ReportPodScrub for the gateway's armed missing-report timeout to receive.
 //
+// Placing the scrub in this helper also fixes its order against the per-slot
+// cleanup. The helper is the handler's only exit, so on the removing arm
+// Runtime.Close and removeSlotTreeVia have both returned before the scrub
+// goroutine starts, which is the order §5.2 states for the whole-pod
+// boundary: cleanupCommands and the Lenny whole-pod scrub run after every
+// ended session's per-slot tree and credential lease have been removed. The
+// one act still outstanding at that point is the reclaim hold's deferred
+// release, and the hold refuses binds onto the slot identifier while it is
+// held, so the overlap can only withhold the identifier from a successor
+// rather than admit one onto a slot the scrub is about to touch.
+//
 // spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
 answerShutdown := func(outcome adapterv1.SlotReclaimOutcome, exitedCleanly, untokened bool) (*adapterv1.ShutdownResponse, error) {
     if untokened {
@@ -2099,6 +2110,110 @@ scrape target here. `slotFailureFinalize` does not exist: both `stageWorkspace` 
 measurement separating them needs a new stage constant, which this deliverable adds as
 `slotFailureWorkspaceFinalize`.
 
+### CODE-10 · pkg/adapter/sessionscrubreporter.go, pkg/adapter/gatewaycontrol/scrubreport.go, pkg/adapter/gatewaylink.go, pkg/adapter/gatewaylink_test.go, pkg/adapter/sessionscrub_emit_test.go, pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go, pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go, pkg/gateway/session/recycle/scrubreporter_seams.go, pkg/agentpodstate/agentpodstate.go, pkg/controller/sandbox/podspec/podspec.go, migrations/0167_runtime_definitions_execution_mode_service.up.sql, tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go, tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go, tests/tier4_integration/concurrent_delegation_proxy_test.go · the comment carriers of the withdrawn reporting universal take their reduction
+
+SPEC-3 withdraws the universal that the adapter reports a cleanup outcome on every session
+release, and the carrier table in that deliverable is the single home of every carrier's
+disposition. The sites in this deliverable's heading are the ones that table assigns here. Each
+one takes the reduction below and nothing else.
+
+The reduction has two arms. Where a comment states that the adapter reports on every session
+release, delete that trigger clause and leave the rest of the sentence standing. Where a comment
+states that the served-session count is advanced or evaluated per release, re-key the trigger
+onto the cleanup-outcome report, in the words SPEC-3's §12.6 replacement uses, which are "on each
+cleanup-outcome report". One site is an exception to the first arm, because the trigger and the
+reporting rule sit in one sentence there and deleting the trigger alone leaves the universal
+standing; its bullet below states the replacement clause it takes instead. One site is an
+exception to the second arm, `pkg/adapter/sessionscrub_emit_test.go`, because the subject of its
+served-count sentence is the cleanup-outcome report itself, so re-keying the trigger onto that
+report would restate the subject; the trigger clause is deleted there and the sentence stands on
+the served-count advance alone. In every arm each
+existing citation keeps the section numbers it cites, no §5.2 pointer is added to a comment that
+carries none, and no rationale sentence is added. A `// spec:` gloss that attributes the
+per-release evaluation of `sessions_served` to §12 is re-keyed with the rest, onto the write
+§12.6 keeps, because SPEC-3 leaves §12.6 stating no evaluation point; the evaluation point's home
+is §5.2's **Session count limit:** bullet, which each such annotation already cites. The section
+number stays.
+
+The sites and the arm each one takes:
+
+- `pkg/adapter/sessionscrubreporter.go`, the `SessionScrubReporter` interface comment: delete.
+- `pkg/adapter/gatewaycontrol/scrubreport.go`, the `Client.ReportSessionScrub` method comment:
+  delete. The `SessionScrubOutcome` type comment in the same file states only that the cleanup
+  runs on every release, which stays true, and SPEC-3's carrier table names it a non-carrier, so
+  it is untouched.
+- `pkg/adapter/gatewaylink.go`, the `ConnectGateway` `SessionScrubReporter` retention comment:
+  delete. The universal sits in two fragments, `per-session-release` and
+  `on every slot release`; both go and the sentence keeps the connection it names and its
+  `sessions_served` and leaked-ledger tail. The `PodScrubReporter` comment above it states the
+  whole-pod scrub report and is untouched.
+- `pkg/adapter/gatewaylink_test.go`, the `// spec:` and `// diagnosis:` comments on
+  `TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2`: delete. The unit test of the
+  wiring above carries the same universal as the production comment it mirrors, so it takes the
+  same arm. In the `// spec:` comment the quantifier goes, so the seam is the one the §5.2
+  slot-release path reports **a** per-slot cleanup outcome through; in the `// diagnosis:`
+  comment the `per-session-release` fragment goes and the sentence keeps the missing
+  `GatewayControl` link it names together with its `sessions_served`, retirement and leak-ledger
+  tail. The function name, the assertions and the
+  `spec: §4.7 (ReportSessionScrub), §5.2 (maxSessionsPerPod)` annotation are untouched.
+- `pkg/adapter/sessionscrub_emit_test.go`, the served-count sentence of the
+  `TestShutdownSlotEmitsReleasedOnCleanClose` doc comment: delete, as the exception to the second
+  arm named above. The sentence states that the
+  report the case asserts advances `sessions_served` on every clean release; the trigger tail
+  goes and the sentence stands on the advance alone. The `// diagnosis:` comment and the
+  `// spec:` annotation below it state this case's own outcome and are untouched.
+- `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, the
+  `ReportSessionScrub` handler comment: delete. The `SessionCountRetirer` comment and the
+  `RecordSessionScrub` inline comment on evaluating the served-session count: re-key.
+- `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, the comments
+  keyed on every release in `TestReporterSessionScrubIncrementsAndLeaks_spec_4_7`, in that
+  function's body at the per-release retirer assertion, and on
+  `TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount`: re-key. Each of
+  them states that the served-session count is incremented or carried per release, the same fact
+  the `agentpodstate.go` and `scrubreporter_seams.go` comments state, so each takes the same arm.
+  The two function names keep their spelling, because the arm changes comment prose alone.
+- `pkg/gateway/session/recycle/scrubreporter_seams.go`, the `sessionCountRetirer` comment:
+  re-key.
+- `pkg/agentpodstate/agentpodstate.go`, the `SessionsServed` clause of the `RecycleCounters`
+  comment and the `IncrementSessionsServed` doc comment: re-key. Each states that the gateway
+  advances the served-session count at each session release, so the clause reads "on each
+  cleanup-outcome report (the `ReportSessionScrub` RPC)"; the §5.2 evaluation clause and the
+  `IncrementScrubFailureCount` comment beside it are untouched.
+- `pkg/controller/sandbox/podspec/podspec.go`, the `PodNameEnvVar` doc comment, the sidecar
+  adapter container comment and the `podNameEnv` doc comment: delete. Each states that the
+  adapter reports **each** per-slot cleanup outcome; the quantifier goes and each comment keeps
+  the pod-identity statement it exists to make, its Downward API reasoning and its
+  `spec: §4.7, §5.2` annotation. The embedded-runtime comment in the same file states no
+  universal and is untouched.
+- `migrations/0167_runtime_definitions_execution_mode_service.up.sql`, the `sessions_served`
+  clause of the `agent_pod_state` counter comment: re-key. The landed migration's comment is
+  edited in place and no new migration is written, because the file carries no checksum gate and
+  a comment-only edit changes no applied DDL.
+- `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`, the header
+  comment's opening sentence: this is the exception named above. The sentence reads "A per-slot
+  cleanup runs at every session release on a pod of any concurrency, and the adapter reports its
+  outcome through `ReportSessionScrub`", and deleting the trigger would leave a generic over
+  per-slot cleanups that still says every cleanup is reported. Keep the first clause, which
+  states only that the cleanup runs on every release and stays true, and replace the second with
+  "and the adapter reports through `ReportSessionScrub` the outcome of a cleanup a `Shutdown`
+  performs to reclaim a slot that reached `running`". The sentence still names the RPC this case
+  is about, and the "The request is session-scoped" sentence that follows keeps its subject. The
+  file-header `// spec:` annotation is untouched: its §5.2 gloss `per-slot cleanup at each
+  session release` states the half the first clause keeps.
+- `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, the `// diagnosis:`
+  comment on `TestPerSlotCleanupStatedOnEverySessionModeRow`: delete the clause
+  `, and the adapter reports its outcome to the gateway`, which is the same clause DOCS-4 deletes
+  from the execution-modes reference and the security-principles page. That function's header
+  comment and its failure message state only that the cleanup runs at each session release,
+  which stays true and is untouched.
+- `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the §5.2 gloss of each of the
+  two `// spec:` annotations: delete `via ReportSessionScrub on every session release`.
+
+Every site is a comment, and every reduction changes a comment's prose alone, so no `// spec:`
+annotation loses a section number, neither `tests/spec-map.json` nor `tests/claim-map.json` takes
+an edit, and no assertion moves: the two tier-11 files this deliverable touches keep every
+substring and every check they hold today. CODE-10 lands after SPEC-3. Tiers: 0, 11.
+
 ### CONF-1 · tests/tier3_contract/adapter_bind_attempt/, tests/tier10_conformance/slot_bind_attempt_conformance_test.go · the published contract is enforced at the wire and exercised in process
 
 The shipped CONF-1 asserted a one-entry-one-epoch invariant. Under the amended mechanism that
@@ -3623,6 +3738,8 @@ other row of a sixty-row page ungated and would read as coverage the page does n
 
 **For DOCS-4**, no file, for the reason its deliverable states.
 
+**For CODE-10**, no file, for the reason its deliverable states.
+
 **For the counters and SPEC-6**, each series is held by its own gate, and each is stated
 separately below.
 
@@ -3956,6 +4073,19 @@ of these cases:
   sentences and its replaced remedy cell.
 - `docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` · the
   reporting clause deleted from each page's per-slot cleanup sentence.
+- `pkg/adapter/sessionscrubreporter.go`, `pkg/adapter/gatewaycontrol/scrubreport.go`,
+  `pkg/adapter/gatewaylink.go`, `pkg/adapter/gatewaylink_test.go`,
+  `pkg/adapter/sessionscrub_emit_test.go`,
+  `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`,
+  `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`,
+  `pkg/gateway/session/recycle/scrubreporter_seams.go`, `pkg/agentpodstate/agentpodstate.go`,
+  `pkg/controller/sandbox/podspec/podspec.go`,
+  `migrations/0167_runtime_definitions_execution_mode_service.up.sql`,
+  `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`,
+  `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go` and
+  `tests/tier4_integration/concurrent_delegation_proxy_test.go` · the comment reduction CODE-10
+  states. `basic_level_echo_stamp_doc_reconciliation_test.go` also appears in the Tests entry
+  below, for DOCS-2's assertion extension, which is a separate edit to the same file.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
   `pkg/adapter/slotsession_test.go`, `pkg/adapter/socketruntime_test.go`,
   `pkg/adapter/sdkwarm_test.go`,

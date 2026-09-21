@@ -60,3 +60,5 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 3, 10. Depends on: S1, S14, S15, S16.
 - [ ] **S23 · docs** — DOCS-4. The per-slot cleanup sentence in the execution-modes reference and in the operator guide's security-principles page each loses its closing clause that the adapter reports the outcome to the gateway, which SPEC-3 withdraws; each sentence keeps the cleanup, which runs on every release. It carries the step id S23 rather than a position beside S7 because the steps above were numbered before this deliverable was staged, and renumbering them would invalidate every dependency line.
       Tiers 0, 11. Depends on: S4.
+- [ ] **S24 · code** — CODE-10. The comment carriers SPEC-3's carrier table assigns to CODE-10 take the reduction that deliverable states site by site, over the adapter and gateway scrub-report surfaces, the pod-spec pod-identity comments, the pod-state recycle counters, the landed `0167` migration's column comment, which is edited in place, and the tier-4 annotations and the tier-11 comments. No assertion and no cited section number moves.
+      Tiers 0, 11. Depends on: S4.
