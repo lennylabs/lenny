@@ -526,9 +526,9 @@ the cleanup-outcome report. If the reclaim path is left calling
 `removeSlotTree` directly the seam is unreachable, and the tier-1 case that asserts
 `exited_cleanly` false observes true and fails at its assertion, so the miss is loud.
 
-`exited_cleanly` carries one rule, keyed on the same §6.2 running boundary the rest of this
+`exited_cleanly` carries one rule, keyed on the same §4.7.1 `running` boundary the rest of this
 change installs: the response reports a clean exit when the runtime close succeeded and, for a
-slot the pod's shared runtime process was never given, when the slot release also completed.
+slot that did not reach `running`, when the slot release also completed.
 The gate is `live` rather than `st.started` because `st.started` is set inside
 `claimSessionSlotUnderLock` before `Runtime.Start` runs, so a start still in flight is
 `started` and pre-running, and gating on `started` would discard the tree-removal error for
@@ -537,7 +537,7 @@ classification untouched: every path that admits a start reaches `noteRuntimeSta
 unconditionally on success (`pkg/adapter/session.go:163`, `resume.go:144`, `sdkwarm.go:261` on
 the freshness arm), and the two `noteRuntimeClosed` callers outside `Shutdown`
 (`pkg/adapter/holdstate.go:251`, `sdkwarm.go:297`) each remove the registry entry in the same
-pass, so a session the runtime was given and that reaches an ordinary session end is in
+pass, so a session whose slot reached `running` and that reaches an ordinary session end is in
 `runtimeLive` when its `Shutdown` arrives and answers on `closeErr` alone as it does today.
 
 Doc-comment work on `Shutdown`:
@@ -620,9 +620,9 @@ replaced", which the token compare states directly.
 `noteRuntimeStarted` gains the confirmation rather than a fourth entry point beside it:
 
 ```go
-// noteRuntimeStarted records that sessionID has been given to the pod's one
-// shared runtime process, and reports whether the record was taken. It runs
-// immediately after a successful start. It refuses in the two states a §7.1
+// noteRuntimeStarted records the pod's one shared runtime process as holding
+// sessionID, the record at which the slot reaches running, and reports whether
+// the record was taken. It runs immediately after a successful start. It refuses in the two states a §7.1
 // reclaim leaves: the registry holds no entry bound to this session, or it
 // holds one stamped with a different bind attempt. Recording in either would
 // put a session in runtimeLive that the registry does not hold under this
@@ -810,8 +810,8 @@ Four constant doc comments above that list carry the same retired statements, an
 existing `spec: §6.2` citation:
 
 - `Running` reads `Running is the dispatched sub-state: the slot's workspace is ready and the task
-  has been dispatched to the runtime with the slotId.` and becomes `Running is the dispatched
-  sub-state for one slot.`
+  has been dispatched to the runtime with the slotId.` and becomes `Running is the sub-state a
+  slot enters when the adapter records the pod's shared runtime process as holding the session.`
 - `SlotCleanup` reads `SlotCleanup is the post-execution cleanup sub-state (task completed or
   failed, per-slot cleanup runs).` and becomes `SlotCleanup is the cleanup sub-state for one
   slot.`, because the new edge reaches it before the slot has run.
@@ -2513,7 +2513,7 @@ edge, immediately after the `receiving_uploads` → `running` row:
 ```
 
 The same table's `receiving_uploads` → `running` row (`docs/reference/state-machines.md:235`)
-states the boundary in the terms SPEC-4 retires, and it takes its own trigger-cell replacement. It
+states the boundary in the terms the staged §4.7.1 record step retires, and it takes its own trigger-cell replacement. It
 currently reads:
 
 ```
@@ -2525,8 +2525,6 @@ Replace it with:
 ```
 | `receiving_uploads` | `running` | Workspace ready; the adapter records the pod's shared runtime process as holding the session |
 ```
-
-A reader-facing page states the boundary rather than citing the spec section that owns it.
 
 The same table's `slot_cleanup` → `released` row (`docs/reference/state-machines.md:237`) states
 the acts SPEC-4 stops asserting in the fence, and it takes its own trigger-cell replacement. It
@@ -3459,7 +3457,7 @@ confirmation refuses a replaced entry** above, so nothing is lost by this arm no
 a pre-confirmation reclaim. On the `StartSession` arm the RPC returns `Aborted`, `runtimeLive`
 does not hold the raced session, and neither the reclaim nor the rollback files a
 `ReportSessionScrub` for it, because the reclaim lands before `noteRuntimeStarted` runs. On the
-`Resume` arm the reclaim removes an entry the shared runtime process was given, because `Resume`
+`Resume` arm the reclaim removes an entry whose slot reached `running`, because `Resume`
 returned and recorded runtime-live membership before the `Shutdown` proceeded, so that arm asserts
 the opposite disposition: the reclaim closes the runtime and files exactly one `ReportSessionScrub`
 for the raced session, which is what CODE-1's `live := removed && s.runtimeHoldsLocked(sessionID)`
@@ -3698,7 +3696,7 @@ of these cases:
   `Runtime` implementation carries.
 - **A cleanup the adapter runs inside its own start handler reports its failure nowhere.** A
   bind that fails inside a start handler (`StartSession`, `Resume`, or the SDK-warm start) after
-  its slot entered `receiving_uploads` and before the runtime was given the session runs the
+  its slot entered `receiving_uploads` and before the slot reached `running` runs the
   §5.2 per-slot cleanup inside that handler, through `releaseSessionSlot`. A bind that fails at
   the workspace-preparation, setup or credential-assignment stage runs no adapter-side cleanup,
   so its residue is reclaimed by the §7.1 compensation or, where that obligation does not reach,
