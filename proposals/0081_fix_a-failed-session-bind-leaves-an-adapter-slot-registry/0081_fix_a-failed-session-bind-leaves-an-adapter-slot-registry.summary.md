@@ -437,12 +437,15 @@ rows under `## Defects in the shipped tree that this proposal does not stage`. T
 answered by the staging as it already stood, and SPEC-3's commentary now records where the
 ten-second figure comes from. Entry 31 was also answered by the staging as it already stood, and
 SCHEMA-1's claim-register justification now records that the two `WIRED` rows are carried under
-the proposal's own convention rather than obliged by §28.4. Entry 20 and entries 32, 33, 35 and 36
-carry the question and its ground alone, because the review loop derived no
+the proposal's own convention rather than obliged by §28.4. Entry 20 and entries 32, 33, 35, 36,
+38, 39 and 40 carry the question and its ground alone, because the review loop derived no
 recommendation for them. Entries 29, 30 and 32 through 36 were routed here from the review
 log's open list by the index reconciliation pass. The open-decisions-and-impact-review phase
 supplied the recommendation, alternatives, cost and confidence for entries 29 and 30, and the
 ground, alternatives, cost and confidence for entry 34, which it left without a recommendation.
+Entries 38, 39 and 40 were routed here from the review log's open list by a later index
+reconciliation pass. Entry 40 carries the part of entry 28 that the staging's provenance record
+leaves unanswered.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -645,6 +648,44 @@ ground, alternatives, cost and confidence for entry 34, which it left without a 
     observer in the battery. The answer decides whether CONF-1 ships with those arms uncovered
     and records the gap, or whether the battery gains an injection seam that a third-party
     adapter would have to implement.
+
+38. **Does a per-slot cleanup whose runtime close succeeds and whose later act fails owe a
+    leaked signal?** Row 3 of SPEC-3's disposition table reports `released` with the clean-exit
+    flag set when the runtime close succeeds and a later act of the same cleanup fails, which
+    in the staged action list means the removal of the slot's credential directory or of its
+    workspace tree. SPEC-3 also deletes the shipped statement that a failed cleanup leaks the
+    slot, so such a failure reaches no `leaked` disposition, no `lenny_adapter_leaked_slots`
+    series and no drain request. The shipped adapter already behaves this way: the removal
+    error is discarded at `pkg/adapter/session.go:272`, and the scrub reporter keys the outcome
+    on the close error alone (`sessionscrubreporter.go:39-44`), so the staging withdraws a
+    control the code never exercised. The answer decides whether the withdrawal is accepted and
+    recorded as a residue, or whether a cleanup that leaves a credential directory or a
+    workspace tree behind owes a signal of its own. The review loop derived no recommendation.
+    It derived only that the record belongs in this section or under the unstaged defects
+    below, because an earlier decision bars re-keying the report on the joined close and
+    tree-removal errors. One companion question is unverified: whether a leftover
+    `credentials.json` on a pod serving concurrent sessions is reachable by a later session
+    through the shared runtime process.
+
+39. **Should the empty-workspace outcome of a recreated entry be stated where a reader of the
+    specification or the documentation meets it?** The spec-changes file records, under its
+    accepted failure modes, that an attempt which recreates its own entry after an
+    unconditional teardown removed it can reach `running` on an empty workspace. The staged
+    rules admit the recreate and state nothing about the emptied tree, and no staged spec or
+    docs text carries the outcome, so it is visible only inside this proposal. The answer
+    decides whether §4.7.1 or a reference page states the outcome, or whether it stays recorded
+    in the proposal alone.
+
+40. **Is the ten-second graceful close window operator-tunable?** §10.1 fixes no close window
+    and the shipped code describes its own close as best-effort, so the ten-second figure is
+    minted by this proposal. SPEC-3's commentary records where the figure comes from, which is
+    the part of decision 28 the staging answered. CODE-6 makes the window per-member in the
+    §10.1.4 hold-timeout pass, so each member of a held pod takes its own ten seconds, and
+    runtime grace periods differ between runtimes. `code-best-practices.md` requires a default
+    the specification does not fix to be overridable by a flag or a config value and documented
+    as operator-tunable, and nothing staged adds an override. The answer decides whether the
+    staging gains a spec statement and a flag for the window, or whether the figure stays fixed
+    at ten seconds.
 
 ## Defects in the shipped tree that this proposal does not stage
 
