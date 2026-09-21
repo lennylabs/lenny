@@ -788,7 +788,7 @@ Scope of the call-site change:
 above it gains the matching line:
 
 ```go
-//	receiving_uploads → slot_cleanup    (a cleanup runs on the slot after its bind is abandoned before the runtime is given the session)
+//	receiving_uploads → slot_cleanup    (a cleanup runs on the slot after its bind is abandoned before the slot reaches running)
 ```
 
 `ValidTransitions()` and `TestValidTransitions_spec_6_2`'s `want` list are one statement of the
@@ -2358,7 +2358,13 @@ anchor the sibling `AttachRequest.coordination_generation` row uses.
 
 Two rows are `WIRED`, because a production reader ships in the same change: the adapter compares
 the token and the two teardown fields inside `Shutdown`, and the gateway's compensation reads
-the outcome. The third is `ABSENT`, recording that the §15.4 rule set is normative for a
+the outcome. Both are carried under the convention the `## Testing` section below states, that a
+deliverable changing the wire adds its `tests/claim-map.json` rows. §28.4 does not oblige them:
+its obligation at `spec/28_communication-channels.md:163` runs from a normative §28 statement to
+a register row, and `Shutdown` carries no §28 statement to run it from. The obligation is
+one-way, so §28.4 leaves a row it does not require lawful, and the tier-0 validator applies the
+schema rules alone to a row outside the credential set
+(`tests/tier0_static/claim_register_test.go:46`), which both rows satisfy. The third is `ABSENT`, recording that the §15.4 rule set is normative for a
 third-party adapter and that the project has no harness able to run one, per CONF-1. That row
 names `R8`, the remediation plan's reciprocal host-conformance battery, as the step that closes
 it, because a row whose status is not `WIRED` must name a step the plan declares: the tier-0
@@ -2397,7 +2403,7 @@ No chart value and no migration.
 
 ## Staged docs changes
 
-### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row, the released row's trigger and the leaked clause take their replacements, and the pod state machine paragraph takes the projection clause replacements
+### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row, the running row's trigger, the released row's trigger and the leaked clause take their replacements, and the pod state machine paragraph takes the projection clause replacements
 
 DOCS-1 edits the per-slot sub-state table, the concurrent-occupancy prose that follows it, and
 the pod state machine paragraph on one page. Every
@@ -2407,8 +2413,24 @@ edit lands after SPEC-4.
 edge, immediately after the `receiving_uploads` → `running` row:
 
 ```
-| `receiving_uploads` | `slot_cleanup` | A cleanup runs on the slot after its bind is abandoned or fails before the runtime has been given the session, a start still in flight included |
+| `receiving_uploads` | `slot_cleanup` | A cleanup runs on the slot after its bind is abandoned or fails before the slot reaches `running`, a start still in flight included |
 ```
+
+The same table's `receiving_uploads` → `running` row (`docs/reference/state-machines.md:235`)
+states the boundary in the terms SPEC-4 retires, and it takes its own trigger-cell replacement. It
+currently reads:
+
+```
+| `receiving_uploads` | `running` | Workspace ready; the session is dispatched to the runtime with its session identifier |
+```
+
+Replace it with:
+
+```
+| `receiving_uploads` | `running` | Workspace ready; the adapter records the pod's shared runtime process as holding the session |
+```
+
+A reader-facing page states the boundary rather than citing the spec section that owns it.
 
 The same table's `slot_cleanup` → `released` row (`docs/reference/state-machines.md:237`) states
 the acts SPEC-4 stops asserting in the fence, and it takes its own trigger-cell replacement. It
@@ -2530,7 +2552,7 @@ Replace the `Shutdown` row under `**Gateway-to-Adapter RPCs:**` with the row bel
 physical line, because the gate reads the row through `lineContaining(page, "| \`Shutdown\` |")`.
 
 ```
-| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for, by carrying either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The response reports what became of the entry the request was addressed to: `reclaimed` when the adapter held that entry and released the slot, `superseded` when the adapter holds an entry the request is not addressed to, so nothing was released, and `absent` when the adapter holds no entry for the session. Every outcome is answered on a successful call, and the two outcomes that remove nothing run neither teardown. The slot release removes the session's slot tree and runs whenever the request removes an entry, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report and then closes the runtime, and the CH-RUNTIMEOPS drain signal precedes that close only when the deregistration leaves the adapter holding no other bound session. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a session the shared runtime process was given, and reports no outcome for a cleanup on a slot the runtime was never given. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
+| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for, by carrying either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The response reports what became of the entry the request was addressed to: `reclaimed` when the adapter held that entry and released the slot, `superseded` when the adapter holds an entry the request is not addressed to, so nothing was released, and `absent` when the adapter holds no entry for the session. Every outcome is answered on a successful call, and the two outcomes that remove nothing run neither teardown. The slot release removes the session's slot tree and runs whenever the request removes an entry, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report and then closes the runtime, and the CH-RUNTIMEOPS drain signal precedes that close only when the deregistration leaves the adapter holding no other bound session. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a slot that reached `running`, and reports no outcome for a cleanup on a slot that did not. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
 ```
 
 Amend the `DemoteSDK` row (`:64`) so it states the registry effect rule 4 turns on and the slot
@@ -3814,6 +3836,7 @@ of these cases:
 - `cmd/lenny-gateway/metricsbackfill.go` · the `SlotReclaim` hook wiring beside the `SlotFailure` wiring.
 - `docs/reference/metrics.md` · the two counter rows.
 - `docs/reference/state-machines.md` · the per-slot sub-state table's new row, its
+  `receiving_uploads` → `running` trigger cell, its
   `slot_cleanup` → `released` trigger cell and the page's `slot_cleanup -> leaked` clause, and
   the pod state machine paragraph's projection
   clauses and the projection input added to that paragraph's opening enumeration.

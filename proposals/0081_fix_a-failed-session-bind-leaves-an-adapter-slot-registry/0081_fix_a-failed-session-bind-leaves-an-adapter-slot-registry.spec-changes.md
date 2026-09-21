@@ -23,16 +23,18 @@ paragraph's heading and its closing sentence exclude, so it cannot sit inside th
 and §7.2, §7.3, §4.7.9 and §6.2's mid-resume cancel edge point at it. No failure class changes
 retryability, and the specification states no reclaim deadline. Owner: SPEC-2's §7.1 paragraph.
 
-**The cleanup-outcome report follows the `running` boundary.** A report for a slot the runtime
-was never given would advance `recycle.maxSessionsPerPod` retirement for a session the pod did
+**The cleanup-outcome report follows the `running` boundary.** A report for a slot that never
+reached `running` would advance `recycle.maxSessionsPerPod` retirement for a session the pod did
 not serve and would count a re-bound session twice. The rule sits in the scrub-model paragraph
 because the `**Slot cleanup:**` bullet is scoped to `maxConcurrentSessions > 1` and the rule is
 not. Owner: the staged §5.2 `**Scrub model.**` opening sentence.
 
-**The `running` boundary sits where the runtime has been given the session.** A start still in
-flight has produced no runtime session for a cleanup to close, so its residue is that of the
-earlier stages. No state is added, so the existing terminals stay authoritative. Owner: the
-staged §6.2 pre-`running` paragraph and fence edge.
+**The `running` boundary sits where the adapter records the session on the shared runtime
+process.** The record is the one event a later request can read under the registry lock, and the
+start-confirmation rule takes the session back off that process when its confirmation fails, so a
+slot the adapter never recorded is owed no cleanup-outcome report. No state is added, so the
+existing terminals stay authoritative. Owner: the staged §6.2 pre-`running` paragraph and fence
+edge.
 
 **Every cleanup's disposition is one table.** What a cleanup reports, what its `Shutdown`
 answers, whether the slot is `leaked`, and when the identifier hold ends are one matrix, and a
@@ -132,11 +134,9 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   restate it.
 - **A start that races the reclaim.** The orderings differ in what they leave behind. When the
   adapter admitted the start before the reclaim removed the entry, the start finds its entry
-  gone at the point it would record the runtime as holding the session, takes the session back
-  off the shared runtime process, and refuses; the slot never reached `running` and no cleanup
-  outcome is reported. That undo is an obligation SPEC-5 states in §4.7.1 as the
-  start-confirmation rule, against which §15.4 publishes non-conformance, so an adapter written
-  from the published contract performs it. When the reclaim's answer precedes the start, the
+  gone at the point it would record the runtime as holding the session, and the
+  start-confirmation rule of §4.7.1 states what it does then. §15.4 publishes non-conformance
+  against that rule, so an adapter written from the published contract performs it. When the reclaim's answer precedes the start, the
   bullet on an abandoned attempt's start re-creating the entry records what stands there. When a
   successor has already taken the identifier, the abandoned attempt's claim meets the
   successor's entry, and the started-session rule is what answers it, because the claim asserts
@@ -566,12 +566,12 @@ The opening sentence reads, verbatim:
 Replace it with:
 
 ```
-**Scrub model.** The scrub is uniform across session-mode configurations: a per-slot cleanup runs on every session release, and a whole-pod scrub runs whenever occupancy reaches zero on a recycling pod before the pod is reused, reported via `ReportPodScrub`. The adapter reports a per-slot cleanup's outcome to the gateway via `ReportSessionScrub` ([Section 4.7](04_system-components.md#47-runtime-adapter)) when, and only when, that cleanup is one a `Shutdown` performs to reclaim a slot the pod's shared runtime process was given, because the report advances the pod's served-session count and that count records the sessions that process has been given.
+**Scrub model.** The scrub is uniform across session-mode configurations: a per-slot cleanup runs on every session release, and a whole-pod scrub runs whenever occupancy reaches zero on a recycling pod before the pod is reused, reported via `ReportPodScrub`. The adapter reports a per-slot cleanup's outcome to the gateway via `ReportSessionScrub` ([Section 4.7](04_system-components.md#47-runtime-adapter)) when, and only when, that cleanup is one a `Shutdown` performs to reclaim a slot that reached `running` ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), because the report advances the pod's served-session count and that count records the sessions that process served.
 ```
 
 The replacement is the single home of the cleanup-outcome reporting rule, stated as a
 biconditional on the predicate the report's own effect fixes: a `Shutdown` that reclaims a slot
-the pod's shared runtime process was given. The SDK
+that reached `running`. The SDK
 demotion the §4.7 `DemoteSDK` row states, the §10.1 hold-timeout termination, and the cleanup
 the adapter runs inside a failed start's own handler are all releases outside a `Shutdown`, so
 none of them files a report, and the same session is therefore never counted twice against
@@ -620,9 +620,9 @@ That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a
 
 | Slot and cleanup | How the cleanup ends | Cleanup-outcome report | Clean-exit flag on the `Shutdown` response | `leaked` sub-state | Slot-identifier reclaim hold |
 |:--|:--|:--|:--|:--|:--|
-| Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | Every act returns without error | `released` | Set | Not entered | Ends when the cleanup returns |
-| Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | The runtime close fails | `leaked` | Not set | Entered | Held for the life of the pod |
-| Slot given to the pod's shared runtime process, reclaimed by a `Shutdown` | The runtime close succeeds and any other act fails | `released` | Set | Not entered | Held for the life of the pod |
+| Slot that reached `running`, reclaimed by a `Shutdown` | Every act returns without error | `released` | Set | Not entered | Ends when the cleanup returns |
+| Slot that reached `running`, reclaimed by a `Shutdown` | The runtime close fails | `leaked` | Not set | Entered | Held for the life of the pod |
+| Slot that reached `running`, reclaimed by a `Shutdown` | The runtime close succeeds and any other act fails | `released` | Set | Not entered | Held for the life of the pod |
 | Pre-`running` slot, reclaimed by a `Shutdown` | Every act returns without error | None | Set | Not entered | Ends when the cleanup returns |
 | Pre-`running` slot, reclaimed by a `Shutdown` | An act fails | None | Not set | Entered | Held for the life of the pod |
 | Slot of either kind, released outside a `Shutdown`: by the [Section 4.7](04_system-components.md#47-runtime-adapter) SDK demotion, by the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, or, for a pre-`running` slot, by the adapter's own handler for a start that fails | Every act returns without error | None | No `Shutdown` performs the cleanup | Not entered | Ends when the cleanup returns |
@@ -639,7 +639,7 @@ The table is the single home of every cleanup's disposition. §6.2, §7.1, the `
 bullet and the reclaim-hold paragraph cite it and state no cell, so a disposition changes in one
 place. Its rows are keyed on what the cleanup reclaims and who performs it, and on which act
 fails, because those are what the adapter branches on: the report and the clean-exit flag are
-keyed on the runtime close for a slot the runtime was given and on every act for a slot it was
+keyed on the runtime close for a slot that reached `running` and on every act for one that did
 not, and the hold is keyed on every act on every row. The `leaked` cells restate no §6.2
 semantics. The cell for a slot released outside a `Shutdown` records a choice: the shipped
 handlers (`releaseSessionSlot` in `pkg/adapter/slotsession.go`, `terminateHeldSession` in
@@ -660,6 +660,17 @@ had already refused nothing. The paragraph states a terminal for a cleanup that 
 complete, because a successor would otherwise bind over the residue the cleanup left in place,
 and §5.2's fresh-workspace guarantee is unconditional. The identifier hold and the `leaked`
 occupancy are separate objects, which is why they are separate columns.
+
+The ten-second graceful window the paragraph names is the figure the tree already runs, recorded
+here rather than minted. `onHoldTimeout`'s pass-2 close context is
+`context.WithTimeout(context.Background(), 10*time.Second)` at `pkg/adapter/holdstate.go:201`,
+landed by commit `3997f502b` on 2026-08-22, and CODE-6 keeps the same figure while re-scoping it
+from one context shared by the pass to a context per member. The figure bounds one of the three
+cases the sentence states, the §10.1 hold-timeout termination, which runs under no request and so
+inherits no caller bound; the other two take the reclaiming `Shutdown`'s carried grace or that
+request's own deadline. No flag, configuration field or operator-tunable note is staged for it.
+The rule in `.claude/rules/code-best-practices.md` that a hard-coded constant carry an override is
+conditioned on a default the spec does not fix, and this paragraph fixes it.
 
 The reporting rule and the one-report rule land in the scrub-model paragraph rather than
 in the `**Slot cleanup:**` bullet, because that bullet sits under a heading scoped to
@@ -708,7 +719,7 @@ The disposition table under the **Scrub model.** paragraph above states which cl
 
 The sentence is replaced by a pointer at the table and states no disposition of its own. The
 universal it carried is withdrawn rather than qualified: the table gives `Not entered` for a
-runtime-given slot whose runtime close succeeds and whose directory removal fails, and for every
+slot that reached `running` whose runtime close succeeds and whose directory removal fails, and for every
 cleanup that fails outside a `Shutdown`, so a sentence saying that a failed cleanup leaks would
 contradict the table it cites in the same bullet. Qualifying it instead would leave a second
 statement of the `leaked` predicate in the section that holds its home. The `leaked` semantics
@@ -920,9 +931,20 @@ session, not as pod-level phase; a pod of either concurrency):`, insert one edge
 after the `receiving_uploads ──→ running` entry:
 
 ```
-  receiving_uploads ──→ slot_cleanup    (a cleanup runs on the slot after its bind is
-                                         abandoned or fails before the runtime has been given
-                                         the session, a start still in flight included)
+  receiving_uploads ──→ slot_cleanup    (see the pre-`running` slot cleanup paragraph below)
+```
+
+In the same fenced block, the `receiving_uploads ──→ running` entry reads, verbatim:
+
+```
+  receiving_uploads ──→ running         (workspace ready, session dispatched to runtime with its
+                                         session identifier)
+```
+
+Replace it with:
+
+```
+  receiving_uploads ──→ running         (see the pre-`running` slot cleanup paragraph below)
 ```
 
 In the same fenced block, the `slot_cleanup ──→ released` entry reads, verbatim:
@@ -975,7 +997,7 @@ Insert the paragraph below immediately after the fenced block closes and before 
 paragraph beginning `**`reserved` hold semantics.**`:
 
 ```
-**Pre-`running` slot cleanup.** A slot reaches `running` when the pod's shared runtime process has been given the session with its session identifier. Every earlier stage of the [§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step-5 bind sequence, credential assignment included, and a start still in flight, whose session has not yet reached the runtime, leave the slot in `receiving_uploads`. A bind abandoned or failed at one of those stages takes the `receiving_uploads → slot_cleanup` edge when a cleanup runs on the slot; a session the runtime has already been given is a slot in `running` and takes the `running → slot_cleanup` edge the fence above carries. [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states who performs the cleanup either edge runs, the acts it performs, the disposition of each cleanup and of a pre-`running` slot no cleanup reclaims, and the reclaim hold that refuses a bind onto the slot's identifier. The `slot_cleanup` sub-state is tracked per session and carries no admission rule of its own.
+**Pre-`running` slot cleanup.** A slot reaches `running` when the adapter has recorded the pod's shared runtime process as holding the session. Every earlier stage of the [§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step-5 bind sequence, credential assignment included, and a start still in flight leave the slot in `receiving_uploads`. A bind abandoned or failed at one of those stages takes the `receiving_uploads → slot_cleanup` edge when a cleanup runs on the slot; a slot that has reached `running` takes the `running → slot_cleanup` edge the fence above carries. [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states who performs the cleanup either edge runs, the acts it performs, the disposition of each cleanup and of a pre-`running` slot no cleanup reclaims, and the reclaim hold that refuses a bind onto the slot's identifier. The `slot_cleanup` sub-state is tracked per session and carries no admission rule of its own.
 ```
 
 The paragraph states the `running` boundary and the two edges into `slot_cleanup`, and nothing
@@ -1243,7 +1265,7 @@ Listed so a reviewer can tell scope from oversight.
   of the adapter's atomicity), §4.7.9 step 5 (one sentence).
 - `spec/05_runtime-registry-and-pool-model.md`: §5.2 `**Scrub model.**` paragraph (its opening
   sentence replaced so the cleanup-outcome report is stated once, as a biconditional on a
-  `Shutdown` that reclaims a slot the pod's shared runtime process was given, and the per-slot
+  `Shutdown` that reclaims a slot that reached `running`, and the per-slot
   cleanup pointer, the one-report rule, the cleanup disposition table and the slot-identifier
   reclaim-hold paragraph appended, whose closing sentence points at the bind attempt token), and
   the §5.2 `**Slot cleanup:**` bullet's action-list sentence, its reporting sentence (which
@@ -1258,9 +1280,11 @@ Listed so a reviewer can tell scope from oversight.
 - `spec/06_warm-pod-model.md`: §6.2's occupancy projection (the `claimed ──→ draining`
   trigger list in the fence and the claim-existence clauses of the projection prose, each
   reduced to a pointer at §4.6.1, which owns the projection; no input is added to that
-  sentence's enumeration), §6.2 per-slot sub-state fence (one edge added,
-  and the `slot_cleanup ──→ released` and `slot_cleanup ──→ leaked` annotations each replaced
-  with a pointer at §5.2), the prose after
+  sentence's enumeration), §6.2 per-slot sub-state fence (one edge added carrying a pointer
+  at the pre-`running` slot cleanup paragraph, the `receiving_uploads ──→ running` annotation
+  replaced with that same pointer, and the `slot_cleanup ──→ released` and
+  `slot_cleanup ──→ leaked`
+  annotations each replaced with a pointer at §5.2), the prose after
   it (one paragraph, stating the `running` boundary and pointing at §5.2), the §6.2
   `resuming` mid-resume cancel bullet (one clause), and the §6.2 pre-attached retry policy's
   `**Client visibility:**` bullet (one restating clause replaced with a pointer at §15.1's
@@ -1282,9 +1306,9 @@ The edits the non-spec deliverables must carry are these. `docs/reference/metric
 row for each counter, matching the §16.1 rows, so the catalog a reader consults and the catalog
 the specification states stay one list (CODE-9). `docs/reference/state-machines.md` gains the
 per-slot sub-state row matching the §6.2 edge, takes its own trigger replacement for the
-`slot_cleanup` → `released` row and for the page's `slot_cleanup -> leaked` clause, each in the
-page's own voice
-because the page cannot carry the section pointer the §6.2 annotations now carry, and its pod
+`receiving_uploads` → `running` row, for the `slot_cleanup` → `released` row and for the page's
+`slot_cleanup -> leaked` clause, each in the page's own voice
+because the page cannot carry the pointers the §6.2 annotations now carry, and its pod
 state machine paragraph states in the page's own voice what §4.6.1's re-keyed claim-deletion
 bullets state, each clause keyed on the phase the pod projects at the claim DELETE, with the
 same projection input added to that paragraph's own enumeration (DOCS-1). `schemas/lenny-adapter.proto` takes
