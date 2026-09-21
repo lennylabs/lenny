@@ -2094,164 +2094,75 @@ scrape target here. `slotFailureFinalize` does not exist: both `stageWorkspace` 
 measurement separating them needs a new stage constant, which this deliverable adds as
 `slotFailureWorkspaceFinalize`.
 
-### CODE-10 · pkg/adapter/sessionscrubreporter.go, pkg/adapter/gatewaycontrol/scrubreport.go, pkg/adapter/gatewaylink.go, pkg/adapter/gatewaylink_test.go, pkg/adapter/sessionscrub_emit_test.go, pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go, pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go, pkg/gateway/session/recycle/scrubreporter_seams.go, pkg/agentpodstate/agentpodstate.go, pkg/controller/sandbox/podspec/podspec.go, migrations/0167_runtime_definitions_execution_mode_service.up.sql, tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go, tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go, tests/tier4_integration/concurrent_delegation_proxy_test.go · the comment carriers of the withdrawn reporting universal take their reduction
+### CODE-10 · the Go, SQL and test comments its grep returns · the comment carriers of the withdrawn reporting universal take their reduction
 
 SPEC-3 withdraws the universal that the adapter reports a cleanup outcome on every session
-release, and the carrier table in that deliverable is the single home of every carrier's
-disposition. The sites in this deliverable's heading are the ones that table assigns here. Each
-one takes the reduction below and nothing else.
+release. Its carrier table dispositions the carriers in `spec/`, `docs/`, the proto and the
+generated stubs row by row, because each of those rows names a deliverable that stages exact
+replacement text. The Go, SQL and test comment carriers are not enumerated anywhere in this
+proposal: this deliverable defines them by the grep in its blank below, closes the set at
+application time, and applies the reduction below to every hit.
 
-The reduction has two arms. Where a comment states that the adapter reports on every session
-release, delete that trigger clause and leave the rest of the sentence standing. Where a comment
-states that the served-session count is advanced or evaluated per release, re-key the trigger
-onto the cleanup-outcome report, in the words SPEC-3's §12.6 replacement uses, which are "on each
-cleanup-outcome report". One site is an exception to the first arm, because the trigger and the
-reporting rule sit in one sentence there and deleting the trigger alone leaves the universal
-standing; its bullet below states the replacement clause it takes instead. One site is an
-exception to the second arm, `pkg/adapter/sessionscrub_emit_test.go`, because the subject of its
-served-count sentence is the cleanup-outcome report itself, so re-keying the trigger onto that
-report would restate the subject; the trigger clause is deleted there and the sentence stands on
-the served-count advance alone. In every arm each
-existing citation keeps the section numbers it cites, no §5.2 pointer is added to a comment that
-carries none, and no rationale sentence is added. A `// spec:` gloss that attributes the
-per-release evaluation of `sessions_served` to §12 is re-keyed with the rest, onto the write
-§12.6 keeps, because SPEC-3 leaves §12.6 stating no evaluation point; the evaluation point's home
-is §5.2's **Session count limit:** bullet, which each such annotation already cites. The section
-number stays.
+The reduction has two arms, and the sentence's subject chooses between them. Where the subject
+is the report itself, so that the comment states that the adapter reports on every session
+release, delete that trigger clause and leave the rest of the sentence standing. Where the
+subject is the served-session count advancing or being evaluated across releases, re-key the
+trigger onto the cleanup-outcome report, in the words SPEC-3's §12.6 replacement uses, which
+are "on each cleanup-outcome report". A hit that states neither, such as a sentence stating
+only that the cleanup runs on every release, stays true, is not a carrier, and takes no edit.
 
-The sites and the arm each one takes:
+Every arm holds these invariants. No `// spec:` annotation loses a section number. A `// spec:`
+gloss that attributes the per-release evaluation of `sessions_served` to §12 is re-keyed with
+the rest, onto the write §12.6 keeps, because SPEC-3 leaves §12.6 stating no evaluation point;
+the section number stays. No §5.2 pointer is added to a comment that carries none, and no
+rationale sentence is added. No assertion moves, and a tier-11 file this deliverable touches
+keeps every substring and every check it holds today. The landed
+`migrations/0167_runtime_definitions_execution_mode_service.up.sql` comment is edited in place
+and no new migration is written, because the file carries no checksum gate and a comment-only
+edit changes no applied DDL. Neither `tests/spec-map.json` nor `tests/claim-map.json` takes an
+edit, and the two claim-map line surfaces into `pkg/controller/sandbox/podspec/podspec.go` and
+`pkg/adapter/gatewaylink.go` are re-checked after any reflow of those comments.
 
-- `pkg/adapter/sessionscrubreporter.go`, the `SessionScrubReporter` interface comment: delete.
-- `pkg/adapter/gatewaycontrol/scrubreport.go`, the `Client.ReportSessionScrub` method comment:
-  delete. The `SessionScrubOutcome` type comment in the same file states only that the cleanup
-  runs on every release, which stays true, and SPEC-3's carrier table names it a non-carrier, so
-  it is untouched.
-- `pkg/adapter/gatewaylink.go`, the `ConnectGateway` `SessionScrubReporter` retention comment:
-  delete. The universal sits in two fragments, `per-session-release` and
-  `on every slot release`; both go and the sentence keeps the connection it names and its
-  `sessions_served` and leaked-ledger tail. The `PodScrubReporter` comment above it states the
-  whole-pod scrub report and is untouched.
-- `pkg/adapter/gatewaylink_test.go`, the `// spec:` and `// diagnosis:` comments on
-  `TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2`: delete. The unit test of the
-  wiring above carries the same universal as the production comment it mirrors, so it takes the
-  same arm. In the `// spec:` comment the quantifier goes, so the seam is the one the §5.2
-  slot-release path reports **a** per-slot cleanup outcome through; in the `// diagnosis:`
-  comment the `per-session-release` fragment goes and the sentence keeps the missing
-  `GatewayControl` link it names together with its `sessions_served`, retirement and leak-ledger
-  tail. The function name, the assertions and the
-  `spec: §4.7 (ReportSessionScrub), §5.2 (maxSessionsPerPod)` annotation are untouched.
-- `pkg/adapter/sessionscrub_emit_test.go`, the served-count sentence of the
-  `TestShutdownSlotEmitsReleasedOnCleanClose` doc comment: delete, as the exception to the second
-  arm named above. The sentence states that the
-  report the case asserts advances `sessions_served` on every clean release; the trigger tail
-  goes and the sentence stands on the advance alone. The `// diagnosis:` comment and the
-  `// spec:` annotation below it state this case's own outcome and are untouched.
-- `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, the
-  `ReportSessionScrub` handler comment: delete. The `SessionCountRetirer` comment and the
-  `RecordSessionScrub` inline comment on evaluating the served-session count: re-key.
-- `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, the comments
-  keyed on every release in `TestReporterSessionScrubIncrementsAndLeaks_spec_4_7`, in that
-  function's body at the per-release retirer assertion, and on
-  `TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount`: re-key. Each of
-  them states that the served-session count is incremented or carried per release, the same fact
-  the `agentpodstate.go` and `scrubreporter_seams.go` comments state, so each takes the same arm.
-  The two function names keep their spelling, because the arm changes comment prose alone.
-- `pkg/gateway/session/recycle/scrubreporter_seams.go`, the `sessionCountRetirer` comment:
-  re-key.
-- `pkg/agentpodstate/agentpodstate.go`, the `SessionsServed` clause of the `RecycleCounters`
-  comment and the `IncrementSessionsServed` doc comment: re-key. Each states that the gateway
-  advances the served-session count at each session release, so the clause reads "on each
-  cleanup-outcome report (the `ReportSessionScrub` RPC)"; the §5.2 evaluation clause and the
-  `IncrementScrubFailureCount` comment beside it are untouched.
-- `pkg/controller/sandbox/podspec/podspec.go`, the `PodNameEnvVar` doc comment, the sidecar
-  adapter container comment and the `podNameEnv` doc comment: delete. Each states that the
-  adapter reports **each** per-slot cleanup outcome; the quantifier goes and each comment keeps
-  the pod-identity statement it exists to make, its Downward API reasoning and its
-  `spec: §4.7, §5.2` annotation. The embedded-runtime comment in the same file states no
-  universal and is untouched.
-- `migrations/0167_runtime_definitions_execution_mode_service.up.sql`, the `sessions_served`
-  clause of the `agent_pod_state` counter comment: re-key. The landed migration's comment is
-  edited in place and no new migration is written, because the file carries no checksum gate and
-  a comment-only edit changes no applied DDL.
-- `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`, the header
-  comment's opening sentence: this is the exception named above. The sentence reads "A per-slot
-  cleanup runs at every session release on a pod of any concurrency, and the adapter reports its
-  outcome through `ReportSessionScrub`", and deleting the trigger would leave a generic over
-  per-slot cleanups that still says every cleanup is reported. Keep the first clause, which
-  states only that the cleanup runs on every release and stays true, and replace the second with
-  "and the adapter reports through `ReportSessionScrub` the outcome of a cleanup a `Shutdown`
-  performs to reclaim a slot that reached `running`". The sentence still names the RPC this case
-  is about, and the "The request is session-scoped" sentence that follows keeps its subject. The
-  file-header `// spec:` annotation is untouched: its §5.2 gloss `per-slot cleanup at each
-  session release` states the half the first clause keeps.
-- `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, the `// diagnosis:`
-  comment on `TestPerSlotCleanupStatedOnEverySessionModeRow`: delete the clause
-  `, and the adapter reports its outcome to the gateway`, which is the same clause DOCS-4 deletes
-  from the execution-modes reference and the security-principles page. That function's header
-  comment and its failure message state only that the cleanup runs at each session release,
-  which stays true and is untouched.
-- `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the §5.2 gloss of each of the
-  two `// spec:` annotations: delete `via ReportSessionScrub on every session release`.
+**IMPLEMENTOR'S CHOICE:** the carrier set. The constraint is that the set is the output of this
+one command, run at application time from the repository root:
 
-Every site is a comment, and every reduction changes a comment's prose alone, so no `// spec:`
-annotation loses a section number, neither `tests/spec-map.json` nor `tests/claim-map.json` takes
-an edit, and no assertion moves: the two tier-11 files this deliverable touches keep every
-substring and every check they hold today. CODE-10 lands after SPEC-3. Tiers: 0, 11.
+```
+grep -rniE -e 'every (session|slot|clean) release' -e 'each (session|slot|clean) release' -e 'on every release' -e 'per-session-release' -e 'each per-slot cleanup' -e 'evaluated per release' -e '^\s*(//|--).*((sessions_served|SessionsServed).*\b(each|every)\b|\b(each|every)\b.*(sessions_served|SessionsServed))' pkg/ cmd/ tests/ migrations/ schemas/
+```
+
+Every hit is dispositioned by the arm rule above. A hit SPEC-3's carrier table already assigns
+to another deliverable (the proto comments and their generated copies under SCHEMA-1,
+`pkg/adapter/server.go`'s field comment under CODE-1, and the two tier-11 files under checklist
+S4's sweep) is dispositioned there. A hit that fits neither arm is recorded in `deviations.md`
+rather than left in place. The step is done when the grep returns only sites the non-carrier
+criterion admits. A carrier found later is closed by re-running the grep and takes no row
+anywhere in this proposal.
+
+CODE-10 lands after SPEC-3. Tiers: 0, 11.
 
 ### CODE-11 · pkg/gateway/externalapi/errorclassify/errorclassify.go, pkg/gateway/sessionserver/start.go, pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go · the comment carriers of the narrowed SETUP_COMMAND_FAILED cause take their reduction
 
 SPEC-5 replaces the §15.1 `SETUP_COMMAND_FAILED` row's cause and retryability sentences, and
 that row is the single home of what the code covers and whether it is retryable.
 `docs/reference/error-catalog.md` restates the row under DOCS-3, because the documentation rules
-bar a spec citation on a reader-facing page. The Go comments and the test diagnosis enumerated
-below state the row a second time, in the pre-SPEC-5 words, and each of them identifies the code
-with the setup-command exit alone. The reduction is one rule: a comment that restates the row's cause or
-its retryability ground is cut back to a citation of the row and states no cause of its own. No
-comment is re-keyed onto the widened cause, and no `// spec:` annotation loses a section number.
-The classification data, the branch on `status.Code(setupFail.Cause)` and every assertion are
-untouched, so this deliverable moves no behaviour.
+bar a spec citation on a reader-facing page. The reduction is one rule: a comment that restates
+the row's cause or its retryability ground is cut back to a citation of §15.1's row; every
+section number the span cites today, §7.3 included, survives; no assertion moves.
 
-The sites and the text each one takes:
+The sites are the comment block above the `CONFIRMATION_REQUIRED` and `SETUP_COMMAND_FAILED`
+pair in `pkg/gateway/externalapi/errorclassify/errorclassify.go`, the `writeSetupCommandError`
+and `isTransientPodClaimError` doc comments in `pkg/gateway/sessionserver/start.go`, and the
+`// diagnosis:` comment on `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3` in
+`pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`. The classification data,
+the branch on `status.Code(setupFail.Cause)` and every assertion are untouched, so this
+deliverable moves no behaviour. The retired-form line citations on `errorclassify.go`'s map
+entries are pre-existing debt with its own migration; this edit neither converts one nor adds
+one. CODE-5's `codes.Aborted` arm in `isTransientPodClaimError` carries its own inline comment,
+so the two deliverables take different hunks of that function.
 
-- `pkg/gateway/externalapi/errorclassify/errorclassify.go`, the comment block above the
-  `CONFIRMATION_REQUIRED` and `SETUP_COMMAND_FAILED` pair
-  (`pkg/gateway/externalapi/errorclassify/errorclassify.go:463-474`). Replace everything from
-  `SETUP_COMMAND_FAILED` to the end of the block, which is the cause sentence, its retryability
-  clause and the closing `The retryable complement` sentence, with one sentence: the code is
-  permanent and not retryable, §15.1's catalog row states the failures it covers and the
-  retryable fallback every other failure of the setup-command request takes, and §7.3 puts
-  `setup_command_failed` in `retryPolicy.nonRetryableFailures`. The §7.3 citation carries over
-  from the replaced span, so the block keeps both section numbers it cites today. The `F-CS6.` tag
-  stays, so the finding trace survives. The block's opening `spec: §15.1` heading-form line and
-  the `CONFIRMATION_REQUIRED` sentences are untouched. Both map entries keep their
-  `{CategoryPermanent, false}` values. The `// spec: 15:1105`-style line citations on the map
-  entries are the retired citation form and are pre-existing debt with its own migration; this
-  edit neither converts one nor adds one.
-- `pkg/gateway/sessionserver/start.go`, the `writeSetupCommandError` doc comment
-  (`pkg/gateway/sessionserver/start.go:218-235`). Replace the cause sentence, which reads,
-  verbatim, `A deterministic non-zero exit (or hard timeout) is reported by the adapter as
-  codes.FailedPrecondition (pkg/adapter/staging.go), which the gateway surfaces as the
-  non-retryable 422 SETUP_COMMAND_FAILED with no Retry-After: per §7.3 setup_command_failed is
-  in retryPolicy.nonRetryableFailures, so a retry against the same workspace plan fails
-  identically.`, with a sentence keyed on the gRPC code alone: a deterministic
-  `codes.FailedPrecondition` from the adapter takes the non-retryable 422
-  `SETUP_COMMAND_FAILED` with no `Retry-After`, §15.1's catalog row states the failures that
-  code covers, and §7.3 puts `setup_command_failed` in `retryPolicy.nonRetryableFailures`. The
-  enumeration of the complement codes and the closing sentence that this boundary is shared with
-  `isTransientPodClaimError` stay, because they are what this site alone knows. The `// spec:`
-  annotation below the comment is untouched.
-- `pkg/gateway/sessionserver/start.go`, the `isTransientPodClaimError` doc comment
-  (`pkg/gateway/sessionserver/start.go:3628-3632`). Delete the words `setup-command exit` and
-  read the article off the code, so the sentence states that only a deterministic
-  `codes.FailedPrecondition` (the non-retryable 422 `SETUP_COMMAND_FAILED`) demotes the row to
-  terminal `failed`. Nothing else in that comment moves. CODE-5's `codes.Aborted` arm in the
-  same function carries its own inline comment, so the two deliverables take different hunks.
-- `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`, the `// diagnosis:`
-  comment on `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3`
-  (`pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go:39-41`). The same deletion:
-  the clause reads `exactly when the cause is a deterministic codes.FailedPrecondition (the
-  non-retryable 422 SETUP_COMMAND_FAILED)`. The rest of the diagnosis and the `// spec:`
-  annotation above it are untouched, so `tests/spec-map.json` takes no edit.
+**IMPLEMENTOR'S CHOICE:** the replacement text at each site. The constraint is that the
+replacement at each site is one sentence, cites §15.1 by heading, keeps §7.3 where the replaced
+span cited it, and names no gRPC code as the cause.
 
 Every edit is a comment, so this deliverable creates no case, adds no assertion and takes no
 `tests/spec-map.json` or `tests/claim-map.json` row. CODE-11 lands after SPEC-5. Tiers: 0.
@@ -4112,24 +4023,16 @@ of these cases:
   sentences and its replaced remedy cell.
 - `docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` · the
   reporting clause deleted from each page's per-slot cleanup sentence.
-- `pkg/adapter/sessionscrubreporter.go`, `pkg/adapter/gatewaycontrol/scrubreport.go`,
-  `pkg/adapter/gatewaylink.go`, `pkg/adapter/gatewaylink_test.go`,
-  `pkg/adapter/sessionscrub_emit_test.go`,
-  `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`,
-  `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`,
-  `pkg/gateway/session/recycle/scrubreporter_seams.go`, `pkg/agentpodstate/agentpodstate.go`,
-  `pkg/controller/sandbox/podspec/podspec.go`,
-  `migrations/0167_runtime_definitions_execution_mode_service.up.sql`,
-  `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`,
-  `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go` and
-  `tests/tier4_integration/concurrent_delegation_proxy_test.go` · the comment reduction CODE-10
-  states. `basic_level_echo_stamp_doc_reconciliation_test.go` also appears in the Tests entry
-  below, for DOCS-2's assertion extension, which is a separate edit to the same file.
-- `pkg/gateway/externalapi/errorclassify/errorclassify.go`,
-  `pkg/gateway/sessionserver/start.go` and
-  `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` · the comment reduction
-  CODE-11 states. The latter two also appear above and in the Tests entry below, for CODE-5's
-  edits, which are separate edits to the same files.
+- The comment carriers CODE-10's grep returns · the comment reduction CODE-10 states. The set
+  is closed by that grep at application time and is not enumerated here. A file this entry
+  alone opens is opened for comment prose only, so it does not count toward any impact row's
+  file-collision ground in the summary; a file another entry also opens is listed under that
+  entry for its own edit.
+- The `SETUP_COMMAND_FAILED` cause restatements in `pkg/gateway` · the comment reduction
+  CODE-11 states, at the four sites that deliverable names. The same rule holds: a file this
+  entry alone opens is opened for comment prose only and counts toward no impact row's
+  file-collision ground, and a file another entry also opens is listed under that entry for its
+  own edit.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
   `pkg/adapter/slotsession_test.go`, `pkg/adapter/socketruntime_test.go`,
   `pkg/adapter/sdkwarm_test.go`,

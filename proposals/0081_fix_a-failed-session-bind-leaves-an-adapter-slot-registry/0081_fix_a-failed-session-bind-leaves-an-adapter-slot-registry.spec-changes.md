@@ -584,7 +584,8 @@ none of them files a report, and the same session is therefore never counted twi
 
 The withdrawn universal, that the adapter reports on every session release, is carried at the
 sites in the table below, and the table is the single home of their dispositions: a carrier found
-later is added here and nowhere else. A site that states only that the cleanup runs on every
+later in `spec/`, `docs/` or the proto is added here and nowhere else, and a Go, SQL or test
+comment carrier found later is closed by CODE-10's grep and takes no row. A site that states only that the cleanup runs on every
 release (spec/06 §6.1, spec/07 §7.1's `scrubPolicy` row, the `SessionScrubOutcome` comments in
 the proto and in `pkg/adapter/gatewaycontrol/scrubreport.go`, the residual-state tables of
 `execution-modes.md` and `multi-tenancy.md` and the tier-11 assertion over them) stays true and
@@ -604,22 +605,9 @@ is not a carrier.
 | `schemas/lenny-adapter.proto`, `ReportSessionScrubRequest` message comment | Mirrored by SCHEMA-1 |
 | `pkg/proto/adapter/v1/lenny-adapter.pb.go` and `lenny-adapter_grpc.pb.go`, the generated copies of those two comments | Mirrored by SCHEMA-1, through regeneration |
 | `pkg/adapter/server.go`, `Server.SessionScrubReporter` field comment | Mirrored by CODE-1 |
-| `migrations/0167_runtime_definitions_execution_mode_service.up.sql`, the `sessions_served` column comment | Mirrored by CODE-10 |
 | `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Staged by checklist S4's tier-11 sweep, re-key |
 | `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Staged by checklist S4's tier-11 sweep, deletion |
-| `tests/tier11_docs/session_scrub_report_addressing_doc_reconciliation_test.go`, header comment | Mirrored by CODE-10 |
-| `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`, the `// diagnosis:` comment on `TestPerSlotCleanupStatedOnEverySessionModeRow` | Mirrored by CODE-10 |
-| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, the `ReportSessionScrub` handler comment, the `SessionCountRetirer` comment and the `RecordSessionScrub` inline comment on evaluating the count on every release | Mirrored by CODE-10 |
-| `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, the three doc comments keyed on every release | Mirrored by CODE-10 |
-| `pkg/gateway/session/recycle/scrubreporter_seams.go`, the `sessionCountRetirer` comment | Mirrored by CODE-10 |
-| `pkg/adapter/sessionscrubreporter.go`, the `SessionScrubReporter` interface comment | Mirrored by CODE-10 |
-| `pkg/adapter/gatewaycontrol/scrubreport.go`, the `Client.ReportSessionScrub` method comment | Mirrored by CODE-10 |
-| `pkg/adapter/gatewaylink.go`, the `ConnectGateway` `SessionScrubReporter` retention comment | Mirrored by CODE-10 |
-| `pkg/adapter/gatewaylink_test.go`, the `// spec:` and `// diagnosis:` comments on `TestConnectGatewayWithAddrWiresSessionScrubReporter_spec_5_2` | Mirrored by CODE-10 |
-| `pkg/adapter/sessionscrub_emit_test.go`, the served-count sentence of the `TestShutdownSlotEmitsReleasedOnCleanClose` doc comment | Mirrored by CODE-10 |
-| `pkg/agentpodstate/agentpodstate.go`, the `SessionsServed` clause of the `RecycleCounters` type comment and the `IncrementSessionsServed` doc comment | Mirrored by CODE-10 |
-| `pkg/controller/sandbox/podspec/podspec.go`, the `PodNameEnvVar` doc comment, the sidecar adapter container comment and the `podNameEnv` doc comment | Mirrored by CODE-10 |
-| `tests/tier4_integration/concurrent_delegation_proxy_test.go`, the two `// spec:` annotations | Mirrored by CODE-10 |
+| every Go, SQL and test comment CODE-10's grep returns | CODE-10 |
 
 Then append to the same paragraph. The block carries blank lines, so the table, the paragraph
 after it and the `**Slot-identifier reclaim hold.**` paragraph each land as their own block:
