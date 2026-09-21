@@ -101,14 +101,7 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   registry state. That refusal consumes one of the client's own retries. The lagging reclaim
   then names the token the entry does carry, compares equal, and removes the entry, so the
   attempt after it creates a fresh entry and owns it under its own token. A retry that arrives
-  after the cleanup finished materializes the slot afresh and owns it the same way. In every
-  ordering the abandoned attempt's reclaim can only remove the entry its own attempt created:
-  where the retry created a fresh entry the reclaim is answered `superseded` or `absent` and
-  performs neither teardown, and where the retry was refused the entry the reclaim removes is
-  the one its own attempt left behind. Neither the tree a retry staged nor the session a retry
-  started can be taken down by a previous attempt's reclaim, which a fence scoped to the
-  registry entry could not guarantee and which is why the fence is minted per attempt by the
-  caller.
+  after the cleanup finished materializes the slot afresh and owns it the same way.
 - **A retry that meets the reclaim hold spends an attempt on it.** The refusal carries the
   `ABORTED` status §15.4 publishes as the transient classification, so the attempt keeps its
   §5.2 retryability. On the §7.3 resume the gateway classifier the non-spec changes amend is
@@ -130,14 +123,6 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   column of SPEC-3's §5.2 disposition table. This is accepted
   rather than closed: a gateway-side wait-and-retry inside the bind path holds the client's
   request open for the same window and adds a second place where the timeout is stated.
-- **A bind that fails inside its first entry-creating RPC is fenced.** This was a residue while
-  the fence travelled on a response: an attempt whose first entry-touching RPC failed could have
-  created the registry entry and still have received no response carrying the fence, so it held
-  none and had to send the unconditional form. On the terms the staged §4.7.1 bind attempt
-  token block states, an attempt holds its token throughout that window and its compensation
-  names it. The window is
-  closed rather than accepted, and closing it needs no change to the gateway-adapter error
-  surface.
 - **A failed bind on a pod serving one session, which no reclaim reaches.** The failed
   attempt is disposed of by `failPhase`, which sends no `Shutdown` and deletes the pod's claim
   while the pod projects `claimed` (`failPhase` in
@@ -160,17 +145,6 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   not. An entry a token-carrying request created belongs to the attempt that created it until
   the entry is removed, so two such attempts never share one entry. A start asserts no identity
   and is outside that guarantee.
-- **A compensation still on the wire when a retry reaches the same slot is fenced.** An
-  entry-scoped fence separated a reclaim addressed to a released entry from one addressed to the
-  entry that replaced it, and did not separate two attempts sharing one surviving entry: a retry
-  that resolved the surviving entry inherited that entry's fence value, so a teardown running
-  after the retry had answered its client compared equal and tore down a serving session. The
-  attempt token is the per-attempt discriminator that case needed. A retry never inherits the
-  surviving entry's token, because the token is minted by the caller per attempt and the adapter
-  writes it only on the entry it creates, so a retry that meets a surviving entry is refused and
-  the lagging teardown removes only what its own attempt left. The residue is closed for the
-  requests that carry a token. An entry a `StartSession` or a `ConfigureWorkspace` created
-  carries none, and the bullet below records what stands there.
 - **An abandoned attempt's start whose claim runs after the reclaim completed re-creates the
   entry.** The cleanup has completed and the hold is released, so the late `StartSession` claim
   creates a fresh entry and starts the session. `StartSession` carries no bind attempt token, so
@@ -1175,16 +1149,13 @@ Any other failure of the setup-command request (every failure of that request ot
 ```
 
 The exclusion is re-keyed the same way as the cause sentence above it, on the request the
-adapter answered as well as on the gRPC code, because the refusal makes the setup window carry a
-second deterministic `FailedPrecondition` producer. Keyed on the code alone, the exclusion would
-sweep a `FailedPrecondition` the adapter answers to a bind-sequence request other than the
-setup-command request into the retryable fallback, which is not the envelope that stage selects:
-a credential-assignment failure at `/finalize` surfaces as `CREDENTIAL_POOL_EXHAUSTED`, per the
-§15.1 finalize precondition note. After the replacement the row is total over failures of the
-setup-command request, it sends a `FailedPrecondition` at any other bind-sequence request to that stage's own
-envelope rather than assigning it one here, the superseded refusal answered `Aborted` stays
-excluded and retryable, and the row is the single home of the mapping for the setup-command
-request. `details.reason` keeps its one value, so no client contract changes.
+adapter answered as well as on the gRPC code, because the started-session refusal is a second
+deterministic `FailedPrecondition` producer at the setup-command request. Keyed on the code
+alone, the exclusion would sweep a `FailedPrecondition` the adapter answers to a bind-sequence
+request other than the setup-command request into the retryable fallback, which is not the
+envelope that stage selects; which envelope each stage's refusal reaches is stated in the
+Edge-cases bullet `**A bind-sequence refusal reaches the client under the envelope its stage
+already selects.**` `details.reason` keeps its one value, so no client contract changes.
 
 ### SPEC-5 · spec/06_warm-pod-model.md § 6.2 (pre-attached retry policy, client visibility)
 

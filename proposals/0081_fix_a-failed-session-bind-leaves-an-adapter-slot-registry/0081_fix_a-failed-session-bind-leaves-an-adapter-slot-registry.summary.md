@@ -158,7 +158,7 @@ Where that lands:
   `Prepare` legitimately created. Rule 6 (the started-session rule) and the reclaim
   short-circuit govern them instead, with the exemption rule 6 states for
   `ConfigureWorkspace`'s published idempotent repeat. An entry either of them creates carries no
-  token, which the accepted failure modes below record.
+  token, which the spec-changes file's Edge-cases section records.
 - The two refusals are distinct error codes, because `adapterv1.Error` carries no reason field
   and every gateway consumer of a bind failure matches on Go types. Rule 5 (the attempt identity
   rule) and rule 6 (the started-session rule) fix the status and the category each carries. The
@@ -415,49 +415,8 @@ Where that lands:
 
 **Accepted failure modes.**
 
-The token closes two residues the earlier design recorded as unclosable. A bind that fails
-inside its first entry-creating RPC is fenced, because the caller holds its token before that
-RPC rather than latching it off a response. Two attempts that share one entry are told apart whenever both
-carry a token, because the entry carries the token of the attempt that created it and the later
-attempt is refused rather than admitted.
-
-Further residues stand, and each is accepted as recorded rather than closed here.
-
-- An attempt's own later RPC can recreate the entry an unconditional teardown removed
-  mid-sequence. A non-mid-session finalize may legitimately be an attempt's first RPC, on a plan
-  with no uploads, so creation is permitted, and the attempt recreates its own entry under its
-  own token and can materialize from an empty staging tree. A token cannot fence an attempt
-  against itself. Closing it needs either a generation on the tree or a bind-scoped lock
-  spanning the attempt.
-- An abandoned attempt's late `StartSession` creates an entry carrying no token, because neither
-  `StartSession` nor `ConfigureWorkspace` carries one. A `Shutdown` naming an attempt answers
-  `superseded` against that entry and removes nothing, and nothing else the failed attempt sends
-  removes it either. It stands until an unconditional teardown, an SDK demotion, or the §10.1
-  hold-timeout termination runs, or until the pod retires, and a later bind attempt at that
-  session on that pod meets the started-session rule while it stands.
-- A compensation lost to a gateway crash leaves an entry stamped with a dead attempt's token,
-  and every later attempt at that session on that pod is refused, so the session is unstartable
-  there until the pod is replaced. This is the direction the token trades for: the earlier design
-  would have let a retry adopt that entry, which is how a live session got destroyed.
-- A bind-sequence refusal reaches the client under the envelope its stage already selects. The
-  gateway consumes both refusal codes and this proposal leaves its envelope selection alone, so
-  a workspace-stage refusal reaches the client under the transient session-start envelope. In
-  the setup window the gateway renders only the setup-command request's failure into that
-  envelope, and there it branches on the gRPC code rather than on the window, so an
-  already-started refusal at that request, answered on `FAILED_PRECONDITION`, reaches the client
-  as the non-retryable `SETUP_COMMAND_FAILED` that §15.1 defines for a deterministic
-  setup-window failure, while a superseded refusal, answered on `ABORTED`, reaches it as the
-  retryable session-start fallback carrying `Retry-After`. The client-visible code names the stage the
-  refusal arrived in rather than the refusal itself. The category and the retryability the
-  client reads are correct in every case, and narrowing the code is outside this proposal.
-
-Recovery for the self-recreated entry, the entry a tokenless start created, and the entry a
-lost compensation stranded is routed to position 2 of the gateway-runtime-comms remediation
-plan, which is where the durable compensation record that survives a gateway crash and is
-re-driven from a startup sweep, the reaper for a registry entry nothing collects, and the rule
-that narrows which RPC may create an entry at all are staged. None is in this proposal. The
-envelope-naming residue has no position-2 work and is left as recorded, because the category and
-the retryability the client reads are already correct.
+The accepted failure modes of the contract are stated in the spec-changes file's
+`## Edge cases and accepted failure modes` section, which is their single carrier.
 
 Two further residues are priced and accepted. A retry is refused while the previous attempt's
 entry stands, and burns one attempt; the window is bounded by the compensation's latency plus
@@ -607,7 +566,7 @@ question and its ground alone, because the review loop derived no recommendation
   slot count passes one is the same kind of rule and is deliberate for the same reason. Out of
   scope by the problem statement, the finding that owns it is whether the arming gate should
   count bound entries rather than registry entries, and the persistence of an entry nothing
-  collects belongs to the reaper named under the accepted failure modes.
+  collects belongs to the reaper named in the spec-changes file's Edge-cases section.
 - **Concurrent `POST /v1/sessions/{id}/start` for one session is not serialized.** `handleStart`
   validates the precondition against the row it read and writes no `starting` state before
   launching, so two concurrent calls both reach `BindReservedSlot` on the same pod with the same
@@ -771,8 +730,8 @@ question and its ground alone, because the review loop derived no recommendation
   release compares no token, because it is a session-scoped release rather than a compensation,
   and the tree paths derive from the identifier both attempts share. No fix is staged because
   separating an attempt from its own lagging rollback needs either a generation on the tree or a
-  bind-scoped lock spanning the attempt, which is the same ground the accepted failure modes
-  record for an attempt recreating the entry its own teardown removed. This proposal
+  bind-scoped lock spanning the attempt, which is the same ground the spec-changes file's
+  Edge-cases section records for an attempt recreating the entry its own teardown removed. This proposal
   opens none of those branches, and CODE-2's rollback
   drops its own instance of the pattern rather than making the class identity-checked.
 - **The exclusive path leaves the same residue by a different trigger.** `Binder.Prepare`
