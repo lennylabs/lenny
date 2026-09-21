@@ -23,8 +23,8 @@ match an entry its own attempt created.
 
 **The chokepoint.** `ensureSlotStateLocked` (`pkg/adapter/slot.go`) is the adapter's only
 resolve-or-create step and has three production callers, `ensureSlotPaths`,
-`assignCredentialsSlot` and `claimSessionSlotUnderLock`. Those three cover every RPC that can
-create or resolve an entry: `PrepareWorkspace`, `FinalizeWorkspace` and `RunSetup` through the
+`assignCredentialsSlot` and `claimSessionSlotUnderLock`. Those three cover the seven requests
+§4.7.1's admission rules govern: `PrepareWorkspace`, `FinalizeWorkspace` and `RunSetup` through the
 first, `AssignCredentials` through the second, and `StartSession`, `Resume` and
 `ConfigureWorkspace` through the third. One predicate at that function covers all seven. A
 predicate placed in the handlers instead would leave the three claim callers ungated, and a
@@ -782,7 +782,7 @@ Scope of the call-site change:
   (`pkg/adapter/runtimegeneration.go:83-88`), so a refused record empties the stamp the test
   asserts.
 
-### CODE-3 · pkg/sandbox/slotstate/slotstate.go, pkg/gateway/runtime/slothealth/slothealth.go · the per-slot comment surfaces follow the fence's reduction and the edge list gains the pre-running cleanup edge
+### CODE-3 · pkg/sandbox/slotstate/slotstate.go, pkg/sandbox/slotstate/registry.go, pkg/gateway/runtime/slothealth/slothealth.go, pkg/gateway/sessionserver/sessionserver.go, pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go · the per-slot comment surfaces follow the fence's reduction and the edge list gains the pre-running cleanup edge
 
 `ValidTransitions()` gains `{ReceivingUploads, SlotCleanup}`, and the doc comment's edge list
 above it gains the matching line:
@@ -832,6 +832,41 @@ termination).` becomes `RecordLeak records that a slot on pod transitioned to le
 is not reclaimed until pod termination.` That file's statements about persistence, in the package
 doc, on `DefaultWindow` and on `Tracker`, are untouched, and so is `OccupiesSlot`'s quoted §6.2
 sentence in `slotstate.go`.
+
+Three further files state the same withdrawn trigger, and each statement takes the same
+reduction the two above take: the retired ground is deleted, the consequence clause stands, and
+the existing §6.2 citation is kept verbatim. No §5.2 pointer is added, because the §5.2 pointers
+this deliverable writes belong to the edge list that transcribes the §6.2 fence, and §6.2 still
+states what a leaked slot holds.
+
+- `pkg/sandbox/slotstate/registry.go` · `MarkLeaked`'s doc comment opens `MarkLeaked records a
+  slot whose cleanup timed out, so it remains counted in the pod's active_slots and leaked_slots
+  until the pod terminates (spec §6.2).` and becomes `MarkLeaked records a leaked slot, so it
+  remains counted in the pod's active_slots and leaked_slots until the pod terminates (spec
+  §6.2).` The rest of that comment, which states the seeding behaviour and the returned count,
+  is unchanged.
+- `pkg/gateway/sessionserver/sessionserver.go` · the unexported `slotLeakGauge` field comment
+  reads `the count of the pod's slots whose cleanup timed out and remain counted in active_slots
+  until the pod terminates` and becomes `the count of the pod's leaked slots, which remain
+  counted in active_slots until the pod terminates`. The exported `SlotLeakGauge` field comment
+  reads `a pod's concurrent-workspace slots whose cleanup timed out and remain counted in
+  active_slots until the pod terminates` and becomes `a pod's leaked concurrent-workspace slots,
+  which remain counted in active_slots until the pod terminates`, keeping its trailing `spec:
+  §6.2.`
+- `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` · the `adapterLeakedSlots`
+  field comment reads `adapterLeakedSlots is the §6.2 per-pod count of concurrent-workspace
+  slots whose cleanup timed out and are leaked (not reclaimed until pod termination).` and
+  becomes `adapterLeakedSlots is the §6.2 per-pod count of leaked concurrent-workspace slots
+  (not reclaimed until pod termination).` The comment above the gauge's construction reads
+  `§6.2 — lenny_adapter_leaked_slots is the per-pod count of concurrent-workspace slots whose
+  cleanup timed out and remain counted in active_slots until the pod terminates.` and becomes
+  `§6.2 — lenny_adapter_leaked_slots is the per-pod count of leaked concurrent-workspace slots,
+  which remain counted in active_slots until the pod terminates.` Each keeps its `Labels`
+  sentence, and the gauge's `Help` string names no trigger and is unchanged.
+
+Every site in this list is a doc comment that no gate reads, so the step's tiers are unchanged.
+CODE-9 opens `gatewaymetrics_credential.go` for the superseded collector, which sits elsewhere
+in the file, so the two deliverables do not collide.
 
 `ValidTransitions()` and `TestValidTransitions_spec_6_2`'s `want` list are one statement of the
 edge set, so CODE-3 moves both in its own step. Nothing compares either against
@@ -1525,8 +1560,8 @@ identifier has no entry to return:
 //
 // This function is the adapter's only resolve-or-create step. Its three
 // production callers, ensureSlotPaths, assignCredentialsSlot and
-// claimSessionSlotUnderLock, cover all seven RPCs that can create or resolve an
-// entry, so the predicate here is the whole of the admission rules that read
+// claimSessionSlotUnderLock, cover the seven requests §4.7.1's admission rules
+// govern, so the predicate here is the whole of the admission rules that read
 // the registry and no handler carries a second copy of them. Well-formedness of
 // bind_attempt against mid_session is a property of the request alone, checked
 // by validateBindFields at each handler that carries the fields, before the
@@ -2260,10 +2295,10 @@ enum SlotReclaimOutcome {
 ```
 
 **The scrub-outcome and report-trigger comments.** Comments on the shipped `ReportSessionScrub`
-surface state what a `RELEASED` outcome implies about the cleanup's acts, and SPEC-3's §5.2 disposition table
+surface state what a `RELEASED` outcome and a `LEAKED` outcome imply about the cleanup's acts, and SPEC-3's §5.2 disposition table
 reports `released` for a cleanup that closes the session cleanly and fails only in a directory
-removal, so both comments become false when that lands. Each one drops
-the effect list and cites §5.2 for the terms. Both comments document the outcome values the RPC
+removal, so each of those comments becomes false when that lands. Each one drops
+the effect list and cites §5.2 for the terms. These comments document the outcome values the RPC
 reports, where naming the report is the right thing to state, so each names the outcome and
 leaves what it implies to the section. In the `ReportSessionScrub` RPC comment, the text that reads, verbatim:
 
@@ -2295,8 +2330,26 @@ becomes:
   // terms §5.2 states. spec: §5.2 (slot_cleanup → released).
 ```
 
-The `SESSION_SCRUB_OUTCOME_LEAKED` comment beside it already states its own case as a resource
-that could not be reclaimed and is unedited.
+In the same enum, the `SESSION_SCRUB_OUTCOME_LEAKED` comment, which reads, verbatim:
+
+```
+  // SESSION_SCRUB_OUTCOME_LEAKED — a resource could not be reclaimed at
+  // the session release. The gateway feeds the outcome into the
+  // unhealthy-threshold ledger behind the lenny.dev/drain-request
+  // annotation. spec: §5.2 (leaked slot semantics); §4.6.3.
+```
+
+becomes:
+
+```
+  // SESSION_SCRUB_OUTCOME_LEAKED — the cleanup reported leaked, on the
+  // terms §5.2 states. The gateway feeds the outcome into the
+  // unhealthy-threshold ledger behind the lenny.dev/drain-request
+  // annotation. spec: §5.2 (leaked slot semantics); §4.6.3.
+```
+
+The drain-ledger sentence states what the gateway does with the outcome, on §4.6.3's terms, which
+nothing in this change touches, so it stands as it is.
 
 Two further comments on the same surface carry the universal SPEC-3 withdraws; each loses it
 and cites §5.2 for the cleanups the adapter reports. The opening
@@ -2795,9 +2848,10 @@ Then the thread and the surrounding mechanism:
   `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup`, `AssignCredentials` and `Resume`. After
   each refusal the registry holds no entry for the slot identifier and no tree exists on disk
   for it, which is what pins `validateBindFields` ahead of the create rule.
-- **The hold refuses admission until the teardown returns having completed**, across every entry point that
-  resolves a slot identifier, and it refuses each at the site the guard's scope puts it at. Park
-  the reclaim inside `Runtime.Close` on the §10.1.4 hold termination, which is the one site
+- **The hold refuses admission until the teardown returns having completed**, across the seven
+  requests §4.7.1's admission rules govern, and it refuses each at the site the guard's scope
+  puts it at. Park the reclaim inside `Runtime.Close` on the §10.1.4 hold termination, which is
+  the one site
   CODE-6 routes that closes a runtime: `releaseSessionSlot` closes none
   (`pkg/adapter/slotsession.go:214-220`), and `Shutdown` is routed through the helper only once
   CODE-1 lands. Drive every admission entry point. `PrepareWorkspace`, `FinalizeWorkspace`,
@@ -3033,8 +3087,23 @@ as CODE-1. The set is the one `grep -rn "ShutdownRequest{" --include=*_test.go p
 names, and it reaches tiers 1, 2, 3, 4, 7a, 9 and 10. The failure mode of a skipped sweep is
 silent: both added fields are proto scalars with zero values, so nothing fails to compile and
 those tiers go red together with no build error to point at.
-`TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` is one member of that set
-whose own path is otherwise unaffected and must keep passing unchanged. CODE-2 changes
+CODE-6's rule 1 is a mandatory-field change of the same class with the same silent failure
+mode, on the bind-sequence RPCs `validateBindFields` guards, so it carries the same kind of
+sweep. Every in-tree construction of one of those requests gains a non-empty `BindAttempt` in
+the same commit as CODE-6, and a literal standing for a §7.4 mid-session call instead gains
+`MidSession: true` and carries no token. One in-tree literal is a mid-session one already: the
+`FinalizeWorkspaceRequest` in `TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433`
+(`pkg/adapter/files_updated_test.go`) sets the shipped `mid_session` field and carries no
+token, so rule 1 admits it unchanged and the sweep leaves it alone. Every other literal the
+grep names takes the token. The set is the one `grep -rn
+"adapterv1\.\(FinalizeWorkspaceRequest\|RunSetupRequest\|AssignCredentialsRequest\|ResumeRequest\|PrepareWorkspaceRequest\){"
+--include=*_test.go pkg/ tests/` names, and the `adapterv1.` qualifier is load-bearing: without
+it the pattern also matches `tokensv1.AssignCredentialsRequest` and `podsession.ResumeRequest`,
+which belong to other services and carry no such field. That sweep reaches tiers 1, 3, 4, 7a,
+8, 9 and 10.
+`TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` is one member of the
+`ShutdownRequest` set whose own path is otherwise unaffected and must keep passing
+unchanged. CODE-2 changes
 the fixtures of the two shipped adapter tests named in its call-site scope, both in
 `adapterevents_test.go`; only `TestAdapterEventsEmitsControlEvents_spec_4_7` goes red without
 that change.
@@ -3847,8 +3916,12 @@ of these cases:
   `allowStarted` from `idempotentRepeat`, and the `noteRuntimeStarted` call site.
 - `pkg/sandbox/slotstate/slotstate.go` · `ValidTransitions()`, its edge-list doc comment, and the
   `Running`, `SlotCleanup`, `Released` and `Leaked` constant docs.
+- `pkg/sandbox/slotstate/registry.go` · the retired cleanup-timeout trigger in `MarkLeaked`'s
+  doc comment.
 - `pkg/gateway/runtime/slothealth/slothealth.go` · the retired cleanup-timeout trigger in the
   `event` and `RecordLeak` doc comments.
+- `pkg/gateway/sessionserver/sessionserver.go` · the retired cleanup-timeout trigger in the
+  `slotLeakGauge` and `SlotLeakGauge` doc comments.
 - `pkg/gateway/podlifecycle/podsession/bindattempt.go` · new: `newBindAttempt`.
 - `pkg/gateway/podlifecycle/podsession/slotfailure.go` · `SlotBindError.Leaked` and the new
   `slotFailureWorkspaceFinalize` stage constant.
@@ -3870,7 +3943,7 @@ of these cases:
 - `pkg/gateway/sessionserver/upload_to_session.go` · the §7.4 pair sets `mid_session` true and
   carries no token.
 - `pkg/observability/metrics/catalog.go` and the `spec161Metrics` list in its `catalog_test.go` · the superseded series alone.
-- `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` and `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics.go` · the superseded collector and its `IncSlotCompensationSuperseded` accessor.
+- `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` and `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics.go` · the superseded collector and its `IncSlotCompensationSuperseded` accessor, and in `gatewaymetrics_credential.go` alone the retired cleanup-timeout trigger in the `adapterLeakedSlots` field and construction-site comments, which CODE-3 reduces.
 - `pkg/adapter/metrics.go` · the untokened-entry series.
 - `cmd/lenny-gateway/metricsbackfill.go` · the `SlotReclaim` hook wiring beside the `SlotFailure` wiring.
 - `docs/reference/metrics.md` · the two counter rows.
@@ -3924,5 +3997,13 @@ of these cases:
   the mechanical `UnconditionalTeardown: true` edit alone. They are not enumerated here, because
   that grep defines the set and each edit is one field on an ordinary teardown call. The edit
   adds a field to an existing literal, creates no case and adds no call into the slot claim
+  surface, so a swept file enters no row in `slotAddressCaseFiles` and takes no
+  `tests/spec-map.json` entry.
+- Every other file that `grep -rn
+  "adapterv1\.\(FinalizeWorkspaceRequest\|RunSetupRequest\|AssignCredentialsRequest\|ResumeRequest\|PrepareWorkspaceRequest\){"
+  --include=*_test.go pkg/ tests/` names · the mechanical non-empty `BindAttempt` edit alone,
+  or `MidSession: true` and no token where the literal stands for a §7.4 mid-session call.
+  They are not enumerated here, because that grep defines the set and each edit is one field
+  on an existing literal. The edit creates no case and adds no call into the slot claim
   surface, so a swept file enters no row in `slotAddressCaseFiles` and takes no
   `tests/spec-map.json` entry.
