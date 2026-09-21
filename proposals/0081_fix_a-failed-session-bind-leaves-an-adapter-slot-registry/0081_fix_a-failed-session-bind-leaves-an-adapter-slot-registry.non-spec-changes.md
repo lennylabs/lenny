@@ -54,11 +54,8 @@ registry critical-section paragraph states, and CONF-1 tests it.
 
 **The mid-session conditioning.** The §7.4 mid-session upload is issued against an entry whose
 token the gateway does not hold, because the binding predates the request and may have been made
-by another replica. The wire rule is therefore conditioned rather than absolute: on
-`PrepareWorkspace` and `FinalizeWorkspace`, the two requests that carry both fields,
-`bind_attempt` is non-empty exactly when `mid_session` is false, while `RunSetup`,
-`AssignCredentials` and `Resume` carry no `mid_session` marker and always carry a non-empty
-token. A mid-session request carrying a token, and a non-mid-session request carrying none, are
+by another replica. The wire rule is therefore conditioned rather than absolute, on the
+terms §4.7.1's carriage table fixes for each request. A mid-session request carrying a token, and a non-mid-session request carrying none, are
 both `INVALID_ARGUMENT`, refused by `validateBindFields` before the handler resolves anything. A
 mid-session request asserts no identity under rule 1 (the pairing rule), cannot create under the
 mid-session-create rule, and is exempt from the phase gate. What keeps that safe is the shipped
@@ -480,7 +477,7 @@ failed tree removal is accounted where it distorts neither: on the pre-`running`
 carried on the response's `exited_cleanly`, which the unchanged disjunct below already does; on
 the `running` arm it is recorded by the `slog.Warn` above, whose event name and fields are the
 ones CODE-6 fixes for this same failure so that every site reads as one convention, and its
-residue is reclaimed at the occupancy-zero whole-pod scrub the staged §5.2 text names. The warn
+residue is reclaimed at the occupancy-zero whole-pod scrub. The warn
 uses the `log/slog` import this handler's `slot_guard_not_acquired` warning already adds to
 `pkg/adapter/session.go`. The `exited_cleanly` predicate below is unchanged and stays keyed on
 `closeErr == nil && (live || treeErr == nil)`, because it answers the reclaiming request's own
@@ -502,9 +499,10 @@ Deriving it a second time from `removed` would put the outcome rule in two place
 reads one field on every answer and never has to infer an outcome from the request it sent.
 
 The same helper answers the two refusal arms, so `slot_reclaim` and the whole-pod recycle scrub
-are each stated once and cannot diverge between the arms. The one return that does not go
-through it is the two-field precondition's `INVALID_ARGUMENT`, which performs nothing, the scrub
-included, because a malformed request performs nothing.
+are each stated once and cannot diverge between the arms. The two returns that do not go
+through it are the empty-session-identifier rejection and the two-field precondition's
+`INVALID_ARGUMENT`, each of which performs nothing, the scrub included, because a malformed
+request performs nothing.
 
 `treeErr` is the result of `s.removeSlotTreeVia(st)` rather than of `removeSlotTree(st)` directly.
 `removeSlotTreeVia` is a new method on `Server` in `pkg/adapter/slot.go` that returns
@@ -804,6 +802,9 @@ Targets:
 
 - `bindattempt.go` (new in `pkg/gateway/podlifecycle/podsession`) · `newBindAttempt`.
 - `slotfailure.go` · `SlotBindError` gains a `Leaked bool` field.
+- `pkg/gateway/sessionserver/upload_to_session.go` (outside this package) · the §7.4
+  mid-session pair sets `mid_session` true on `PrepareWorkspace` and `FinalizeWorkspace` and
+  carries an empty `bind_attempt`.
 - `slotbinder.go` · a new `slotCleanupBudget` helper and a new `compensateFailedSlotBind`
   method; `materializeSlot` splits into a stage runner and a compensating wrapper, and mints
   the attempt's token at the top; `ReleaseSlotReservation` takes the disposition;
@@ -1416,8 +1417,9 @@ below is an addition.
   `removeSlotTree`'s error and logs it as
   `slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", err)`, because nothing
   else records that cleanup's failure. That event and those field names are the form every site
-  this deliverable stops discarding a tree-removal error at uses, and `runtime_close_failed`
-  carries the identical fields for a discarded runtime close, so the records read as one
+  this deliverable records a tree-removal error at uses, and `runtime_close_failed`
+  carries the identical fields for a runtime close whose error this deliverable stops
+  discarding, so the records read as one
   convention rather than as one per site. That same error is what decides the
   hold: `releaseSessionSlot` closes no runtime, so the tree removal is the whole cleanup, and it
   takes the release when the removal returned nil and leaves the identifier held otherwise.
@@ -1505,8 +1507,8 @@ func (s *Server) ensureSlotStateLocked(slotID string, r slotResolve) (*slotState
         return nil, status.Errorf(codes.FailedPrecondition,
             "slot %s has no registry entry for a mid-session request", slotID)
     case !ok:
-        // The create-and-stamp rule. The create branch, and the only writer of
-        // bindAttempt. The shipped create body stands whole and the stamp is
+        // The create-and-stamp rule. The create branch; §4.7.1's stamp-once
+        // rule is what makes it the only writer of bindAttempt. The shipped create body stands whole and the stamp is
         // appended to it, so the resolve descriptor adds a predicate ahead of
         // the create rather than replacing the create.
         if s.slots == nil {
@@ -1996,8 +1998,8 @@ the §16.1 rows that carry the adapter scrape deferral (`spec/16_observability.m
 absent from both, while the adapter-emitted metrics that do carry `catalog.go` rows,
 `lenny_adapter_coordinator_hold` (`pkg/adapter/metrics.go:108`, `catalog.go:271`) and
 `lenny_credential_rotation_inflight_ceiling_hit_total` (`pkg/adapter/metrics.go:50`,
-`catalog.go:146`), carry no deferral. SPEC-6's row for this series carries the deferral wording
-verbatim, so it follows the §16.1 rows that already carry it. `spec161Metrics` in
+`catalog.go:146`), carry no deferral. SPEC-6's row for this series records the same scrape
+deferral, so it follows the §16.1 rows that already carry one. `spec161Metrics` in
 `pkg/observability/metrics/catalog_test.go` therefore gains `lenny_slot_compensation_superseded_total`
 alone: that list is reconciled both ways against `MetricCatalog()`
 (`catalog_test.go:188-211`), so entering the adapter series there fails
@@ -2608,7 +2610,7 @@ The description cell's closing sentence, which reads "A non-deterministic setup-
 `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.", becomes:
 
 ```
-A non-deterministic setup-window failure (a crashed pod or a transport timeout), and a request refused because a newer start of the same session has superseded this one, surface instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.
+A non-deterministic setup-window failure (a crashed pod or a transport timeout), and a request refused because the adapter's entry for the session belongs to a different bind attempt, surface instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.
 ```
 
 The sentence enumerates the causes a REST client can see under this code rather than
@@ -3119,8 +3121,10 @@ execution modes); §6.2 (pod state machine)`:
   compensation, and when its own reservation release errors it takes the same leaked arm.
 - **The resume path.** A failed `Resume` sends the compensation naming its own minted token on
   the still-open connection, releases the resume slot with the outcome, and releases no
-  gateway-side credential lease: the `fakeAssigner` records every `ReleaseSession` call in
-  `released` (`binder_test.go:301,:322`), so the assertion is that the list stays empty. At
+  gateway-side credential lease: the assertion is on the `fakeAssigner` field recording the
+  attempt-scoped `Release(leaseID)` calls this deliverable adds, which stays empty, because
+  `released` records `ReleaseSession` alone (`binder_test.go:301,:322`) and `Binder.Resume`
+  calls that on no path, so an assertion on it discriminates nothing. At
   `maxConcurrentSessions: 4`, an unacknowledged reclaim reaches `MarkLeaked`, the leak gauge and
   `RecordLeak` through `resumeOnPod`'s accounting call and releases with `leaked=true`; a cleanly
   reclaimed one takes the windowed `RecordFailure`; and one whose compensation was acknowledged
