@@ -300,7 +300,7 @@ The handler body:
 // its resolve.
 // answerShutdown is the handler's only exit after the two-field
 // precondition, so every outcome is built in one place. It counts the
-// fail-closed row, runs clause three, and builds the response.
+// fail-closed arm, runs clause three, and builds the response.
 //
 // The whole-pod recycle scrub is outside both teardowns and both refusals,
 // and it runs on every outcome. Two gateway callers carry the recycle
@@ -319,7 +319,7 @@ The handler body:
 // spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
 answerShutdown := func(outcome adapterv1.SlotReclaimOutcome, exitedCleanly, untokened bool) (*adapterv1.ShutdownResponse, error) {
     if untokened {
-        // The fail-closed row. Nothing a compensated path produces reaches
+        // The fail-closed arm. Nothing a compensated path produces reaches
         // it; the counter exists so that stops being true loudly.
         s.noteShutdownMetUntokenedEntry(sessionID)
     }
@@ -594,8 +594,8 @@ Doc-comment work on `Shutdown`:
   senders of that disposition reach it on different arms: the concurrent release answers
   `absent`, its separate unconditional `Shutdown` having already torn the last slot down, and
   the session-mode release answers `reclaimed` on the removing arm, its recycle request being
-  the session's only teardown. Name the single exception: the
-  two-field precondition's `INVALID_ARGUMENT` return performs nothing, the scrub included.
+  the session's only teardown. Name the returns that bypass it, the ones the `answerShutdown`
+  paragraph above enumerates, each of which performs nothing, the scrub included.
 - Note that `cancelPodMCPIfRuntimeIdle` under `removed` is safe: it is double-guarded by
   `runtimeIdleLocked` and `mcpArmingHeldLocked` (`pkg/adapter/slotsession.go:238-260`), so a
   shutdown of an unbound entry on a pod whose armed session still holds a slot cancels nothing.
@@ -782,14 +782,56 @@ Scope of the call-site change:
   (`pkg/adapter/runtimegeneration.go:83-88`), so a refused record empties the stamp the test
   asserts.
 
-### CODE-3 · pkg/sandbox/slotstate/slotstate.go · the per-slot edge list gains the pre-running cleanup edge
+### CODE-3 · pkg/sandbox/slotstate/slotstate.go, pkg/gateway/runtime/slothealth/slothealth.go · the per-slot comment surfaces follow the fence's reduction and the edge list gains the pre-running cleanup edge
 
 `ValidTransitions()` gains `{ReceivingUploads, SlotCleanup}`, and the doc comment's edge list
 above it gains the matching line:
 
 ```go
-//	receiving_uploads → slot_cleanup    (a cleanup runs on the slot after its bind is abandoned before the slot reaches running)
+//	receiving_uploads → slot_cleanup    (see §6.2 "Pre-running slot cleanup")
 ```
+
+The glosses in that edge list are transcriptions of the §6.2 fence entries, and SPEC-4 reduces
+three of the entries they transcribe to pointers, so the transcriptions become pointers to the
+same homes. In `pkg/sandbox/slotstate/slotstate.go`:
+
+- `receiving_uploads → running             (workspace ready, task dispatched)` becomes
+  `receiving_uploads → running             (see §6.2 "Pre-running slot cleanup")`.
+- `slot_cleanup      → released            (slot reclaimed)` becomes
+  `slot_cleanup      → released            (see §5.2)`.
+- `slot_cleanup      → leaked              (cleanup timeout exceeded)` becomes
+  `slot_cleanup      → leaked              (see §5.2)`.
+
+The three glosses SPEC-4 leaves alone, `slot_assigned → receiving_uploads`, `running →
+slot_cleanup` and `running → failed`, stay verbatim, so the comment remains a faithful
+transcription of the fence after SPEC-4 lands.
+
+Four constant doc comments above that list carry the same retired statements, and each keeps its
+existing `spec: §6.2` citation:
+
+- `Running` reads `Running is the dispatched sub-state: the slot's workspace is ready and the task
+  has been dispatched to the runtime with the slotId.` and becomes `Running is the dispatched
+  sub-state for one slot.`
+- `SlotCleanup` reads `SlotCleanup is the post-execution cleanup sub-state (task completed or
+  failed, per-slot cleanup runs).` and becomes `SlotCleanup is the cleanup sub-state for one
+  slot.`, because the new edge reaches it before the slot has run.
+- `Released` reads `Released is the terminal sub-state for a slot whose workspace was removed,
+  processes killed, and slotId released.` and becomes `Released is the terminal sub-state for a
+  reclaimed slot.`
+- `Leaked` reads `Leaked is the terminal sub-state for a slot whose cleanup timed out: the slot is
+  not reclaimed until pod termination and remains counted in active_slots.` and becomes `Leaked is
+  the terminal sub-state for a slot that is not reclaimed until pod termination and remains counted
+  in active_slots.`
+
+`pkg/gateway/runtime/slothealth/slothealth.go` states the same withdrawn trigger twice, and each
+sentence keeps its consequence clause. In the `event` doc comment, `a §6.2 leaked slot (cleanup
+timeout exceeded) persists until pod termination` becomes `a §6.2 leaked slot persists until pod
+termination`. In the `RecordLeak` doc comment, `RecordLeak records that a slot on pod transitioned
+to leaked (the §6.2 cleanup timeout was exceeded so the slot is not reclaimed until pod
+termination).` becomes `RecordLeak records that a slot on pod transitioned to leaked, so the slot
+is not reclaimed until pod termination.` That file's statements about persistence, in the package
+doc, on `DefaultWindow` and on `Tracker`, are untouched, and so is `OccupiesSlot`'s quoted §6.2
+sentence in `slotstate.go`.
 
 `ValidTransitions()` and `TestValidTransitions_spec_6_2`'s `want` list are one statement of the
 edge set, so CODE-3 moves both in its own step. Nothing compares either against
@@ -1315,12 +1357,12 @@ that CODE-4 makes `Binder.Resume` return. The wire envelope needs no change:
 `Retry-After` for a cause it does not recognise, so the row-state classifier was the only half
 that disagreed with it.
 
-No in-gateway wait-and-retry is staged for the hold. The hold is bounded by the graceful window
-the reclaiming request carries when it carries one and by that request's own deadline when it
-carries none, plus the removal of the slot's directories, and a gateway-side wait would hold
-the client's request open for that window and state the timeout in a second place. The attempt
-spends a retry on the refusal instead, which the spec-changes file records among its accepted
-failure modes.
+No in-gateway wait-and-retry is staged for the hold. SPEC-3's §5.2
+`**Slot-identifier reclaim hold.**` paragraph and the disposition table above it state when the
+hold ends, and where the cleanup does not complete it does not end before the pod does. A
+gateway-side wait would hold the client's request open for an interval nothing bounds and would
+state a timeout in a second place. The attempt spends a retry on the refusal instead, which the
+spec-changes file records among its accepted failure modes.
 
 ### CODE-6 · pkg/adapter/bindattempt.go, pkg/adapter/slot.go, pkg/adapter/slotsession.go, pkg/adapter/staging.go, pkg/adapter/slotcreds.go, pkg/adapter/credentials.go, pkg/adapter/resume.go, pkg/adapter/sdkwarm.go, pkg/adapter/holdstate.go, pkg/adapter/server.go · the bind-attempt token, the rule 2-through-7 predicate at the one resolve chokepoint, the reclaim hold, and the shared resolve helper
 
@@ -2012,7 +2054,7 @@ default scrape set" phrasing its siblings there already use.
 | Counter | Fires when | Expected value |
 |:--|:--|:--|
 | `lenny_slot_compensation_superseded_total` | a compensation answered `superseded`, meaning the adapter held an entry the compensation was not addressed to | no expected rate; the series records the outcome, whose meaning SPEC-6's §16.1 row states |
-| `lenny_slot_shutdown_untokened_entry_total` | the adapter met an entry carrying no token, incremented from CODE-1's fail-closed row | zero on the bind paths, and non-zero when an abandoned attempt's late `StartSession` left an untokened entry behind, which SPEC-5 records as a residue |
+| `lenny_slot_shutdown_untokened_entry_total` | the adapter met an entry carrying no token, incremented from CODE-1's fail-closed arm | zero on the bind paths, and non-zero when an abandoned attempt's late `StartSession` left an untokened entry behind, which SPEC-5 records as a residue |
 
 The superseded series is gateway-side. The untokened-entry series is adapter-side, and the
 adapter process emits nothing scrapeable today, so its catalog row carries the same deferral the
@@ -2223,7 +2265,7 @@ reports `released` for a cleanup that closes the session cleanly and fails only 
 removal, so both comments become false when that lands. Each one drops
 the effect list and cites §5.2 for the terms. Both comments document the outcome values the RPC
 reports, where naming the report is the right thing to state, so each names the outcome and
-leaves what it implies to the section. In the `ReportSessionScrub` RPC comment, the sentence that reads, verbatim:
+leaves what it implies to the section. In the `ReportSessionScrub` RPC comment, the text that reads, verbatim:
 
 ```
   // RELEASED when the slot's runtime, credential timers, and per-slot
@@ -2258,12 +2300,13 @@ that could not be reclaimed and is unedited.
 
 Two further comments on the same surface carry the universal SPEC-3 withdraws; each loses it
 and cites §5.2 for the cleanups the adapter reports. The opening
-sentence of the `ReportSessionScrub` RPC comment reads, verbatim:
+sentence of the `ReportSessionScrub` RPC comment, together with the words that open the sentence
+after it on the same physical line, reads, verbatim:
 
 ```
   // ReportSessionScrub reports the outcome of the per-slot cleanup the
   // adapter runs on every session release (§5.2), across the
-  // `maxConcurrentSessions > 1` and recycling cases alike.
+  // `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
 ```
 
 becomes:
@@ -2544,9 +2587,7 @@ neither issue a request those rules govern nor observe a refusal they produce
 (`docs/reference/adapter-contract.md:53`).
 
 The staged prose carries no specification section number, because reader-facing documentation
-states the behavior and links rather than citing a number (`.claude/rules/doc-content.md`). The
-two links follow the form this page already uses for a specification reference (`:393`), which
-names the heading and carries no number in its own text.
+states the behavior and links rather than citing a number (`.claude/rules/doc-content.md`).
 
 Replace the `Shutdown` row under `**Gateway-to-Adapter RPCs:**` with the row below. It stays one
 physical line, because the gate reads the row through `lineContaining(page, "| \`Shutdown\` |")`.
@@ -2883,10 +2924,12 @@ execution modes)`:
   one carrying only `unconditional_teardown`, are each admitted; one carrying neither and one
   carrying both are each `InvalidArgument` and remove nothing. The last two are the fail-closed
   rows and are written first.
-- **`Shutdown`'s six-row rule table**, one case per row of CODE-1's table, asserting the outcome,
-  whether the entry was removed, and on every non-removing row that the entry, its `current`
-  directory and its `credentials.json` all survive the call.
-- **The untokened-entry row fires its counter.** A `Shutdown` naming a token against an entry
+- **`Shutdown`'s teardown cascade, one case per arm of `shutdownReclaimOutcome`** (rule 11's
+  no-entry arm on each request form, rule 12, rule 13's entry-carries-no-token and
+  differing-token arms, and rule 14), asserting the outcome, whether the entry was removed, and
+  on every non-removing arm that the entry, its `current` directory and its `credentials.json`
+  all survive the call.
+- **The untokened-entry arm fires its counter.** A `Shutdown` naming a token against an entry
   carrying none answers `superseded`, removes nothing, and increments
   `lenny_slot_shutdown_untokened_entry_total`.
 - **The unconditional teardown is still the unconditional teardown.** This is the regression guard
@@ -3509,8 +3552,7 @@ link while this page may carry no section number.
 **For DOCS-3**, no file. No shipped gate compares `docs/reference/error-catalog.md` against
 §15.1: no file under `tests/`, `scripts/` or `cmd/` and no `Makefile` target names the page.
 This deliverable adds none, because a gate built for the one row it touches would leave every
-other row of a sixty-row page ungated and would read as coverage the page does not have. The
-deliverable lands beside SPEC-5 in the same step, which is what holds the two texts together.
+other row of a sixty-row page ungated and would read as coverage the page does not have.
 
 **For DOCS-4**, no file, for the reason its deliverable states.
 
@@ -3565,14 +3607,8 @@ of these cases:
 - A bind abandoned at the connect stage: **A bind abandoned at the connect stage**. CODE-4's
   `BindReservedSlot` row and CODE-5's reserved branch state how a failed reservation release on
   the create-time-reserved path is folded into `Leaked` and accounted.
-
-- **An attempt cannot fence itself.** A non-mid-session `FinalizeWorkspace` may legitimately be
-  an attempt's first RPC, on a plan with no uploads, so `allowCreate` is true. If an
-  unconditional `Shutdown` removed attempt A's entry while A was still running, A's next RPC
-  recreates its own entry stamped A, materializes from an empty staging tree, and can reach
-  `running` on an empty workspace. The token discriminates attempts and this is one attempt
-  against itself. Closing it needs either a generation on the on-disk tree or a bind-scoped lock
-  spanning the whole attempt, both wider than this proposal.
+- An attempt that recreates the entry its own unconditional teardown removed: **An attempt that
+  recreates its own entry after an unconditional teardown removed it**.
 - **A leaked entry costs the pod its MCP arming and its unaddressed-frame path for the pod's
   life.** `claimPodMCPStartLocked` returns `startMCP` false whenever `len(s.slots) != 1`, and
   `deliverToSession` rejects unaddressed session-scoped frames once `slotCount() > 1`. Both are
@@ -3809,7 +3845,10 @@ of these cases:
   `releaseSessionSlotUnderGuard`, the `noteRuntimeStarted` call site and the token it passes.
 - `pkg/adapter/sdkwarm.go` · `ConfigureWorkspace`'s resolve, which carries no token and sets
   `allowStarted` from `idempotentRepeat`, and the `noteRuntimeStarted` call site.
-- `pkg/sandbox/slotstate/slotstate.go` · `ValidTransitions()` and its doc comment.
+- `pkg/sandbox/slotstate/slotstate.go` · `ValidTransitions()`, its edge-list doc comment, and the
+  `Running`, `SlotCleanup`, `Released` and `Leaked` constant docs.
+- `pkg/gateway/runtime/slothealth/slothealth.go` · the retired cleanup-timeout trigger in the
+  `event` and `RecordLeak` doc comments.
 - `pkg/gateway/podlifecycle/podsession/bindattempt.go` · new: `newBindAttempt`.
 - `pkg/gateway/podlifecycle/podsession/slotfailure.go` · `SlotBindError.Leaked` and the new
   `slotFailureWorkspaceFinalize` stage constant.

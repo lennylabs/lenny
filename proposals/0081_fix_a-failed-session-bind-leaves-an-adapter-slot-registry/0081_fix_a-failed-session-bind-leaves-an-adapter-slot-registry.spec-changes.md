@@ -1298,7 +1298,7 @@ Listed so a reviewer can tell scope from oversight.
   the slot-identifier reclaim-hold contract beside it), and §15.1's `SETUP_COMMAND_FAILED` row (the cause sentence, the retryability
   sentence, the setup-output sentence and the exclusion sentence replaced).
 - `spec/16_observability.md`: §16.1's metric catalog (one row for each counter
-  the compensation's caller and the adapter's fail-closed row emit).
+  the compensation's caller and the adapter's fail-closed arm emit).
 - `spec/29_communication-scenarios.md`: §29.4 session-end step 13 (one sentence appended).
 
 Each reader-facing reference page that mirrors these sections moves with the section it mirrors.
