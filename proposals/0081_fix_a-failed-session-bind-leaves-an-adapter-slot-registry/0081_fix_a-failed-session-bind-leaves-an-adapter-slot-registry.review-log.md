@@ -3566,3 +3566,92 @@ EVIDENCE: `diff -ru -x '*.review-log*.md' scratchpad/cp-snap/0081-opt2/non-spec-
 USEFUL [prune.3.fix.1 / Standing context]: the Settled line "the metric-gate topology, settled and
 re-derived by six shards" saved a full re-derivation of why the adapter counter takes no
 `catalog.go` row; CODE-9's text (non-spec-changes.md:2076-2091) matches it exactly.
+
+### [redesign.7.fix.1]
+
+DECISION: restaged the comment-carrier reduction as ONE mechanism under a new non-spec heading
+`### Comment-carrier reduction: shared invariants`, placed directly before CODE-10, with CODE-10
+(SPEC-3's reporting universal), CODE-11 (SPEC-5's `SETUP_COMMAND_FAILED` cause) and CODE-12
+(SPEC-4's claim-deletion keying) reduced to sub-blocks that each carry only a carrier definition,
+a grep command or site list, and an arm rule — BECAUSE the round-7 introspection found the
+invariant block triplicated across the three deliverables, the files-touched bullets copied
+verbatim, and CODE-12's non-carrier criterion narrower than its own command, so an implementor
+would file deviations for adapter-side hits the deliverable never meant to catch — ALTERNATIVES:
+prune alone (rejected: it deletes the duplicate sentences but adds no general non-carrier arm to
+CODE-12 and leaves the class open, so the next sweep discovers the next member and copies the
+form a fourth time); healthy rounds (rejected: two more sweeps to discover what the class already
+names); merging the three into one deliverable id (rejected: S24, S25 and S26 have different
+`Depends on` lines and different tiers, and the summary's 0079 impact row cites the three ids).
+The shared block states, once: the invariants (no `// spec:` annotation loses a section number;
+no assertion moves and no case or assertion is added; a touched tier-11 file keeps every substring
+and check; `tests/spec-map.json` and `tests/claim-map.json` take no edit; no pointer or rationale
+sentence is added to a comment that carries none; a landed migration's comment is edited in place;
+the `podspec.go` and `gatewaylink.go` claim-map line surfaces are re-checked after reflow), the
+general non-carrier arm (a hit that neither states the retired proposition nor restates it in
+other words stays true, is not a carrier, and takes no edit; only a hit that states the retired
+proposition and fits no arm is recorded in `deviations.md`), the routing of hits SPEC-3's carrier
+table assigns elsewhere, the closure rule, the comment-prose-only file rule, and the sweep record
+below. The Testing section's three "no file" lines collapsed into one, and the three files-touched
+bullets into one citing the block. Checklist S24–S26 each cite the block and lost the restated
+invariants and the duplicated step-id sentence. The summary index entries for the three are
+predicate descriptions consistent with the sub-blocks; CODE-11's names its four sites as the set.
+
+FACT: every command in the three sub-blocks runs from the repository root and returns the sites
+its sub-block describes. CODE-10's grep returns 46 lines (the Settled entry says 45 and a later round counted 47; the
+tree moves and the set is the command's output, so none of the three counts is load-bearing),
+including `migrations/0167_...up.sql:102`, `pkg/adapter/server.go:169`, the two `*.pb.go` copies
+and the three tier-11 files. CODE-12's perl command returns 20 sites, among them
+`pkg/gateway/podlifecycle/podsession/binder.go:1187`, `pkg/podregistry/crd.go:249` and
+`pkg/adapter/resume.go:19`; under the general non-carrier arm, `pkg/adapter/session.go:134`,
+`pkg/adapter/resume.go:19` and `pkg/adapter/podscrub_test.go:230` are adapter-side statements
+about the adapter's own pod state rather than WarmPoolController projections, so they take no
+edit and no deviation, and the five `reserved → idle` hold-expiry comments stay non-carriers
+under the same arm without a criterion of their own. CODE-11's four sites exist by name:
+`errorclassify.go:465-476`, `start.go:218` (`writeSetupCommandError`), `start.go:3622-3648`
+(`isTransientPodClaimError`), `resume_setup_demotion_internal_test.go:39-48`.
+EVIDENCE: the three commands run on 2026-09-21 at the working tree of `c4bf83811`.
+
+FACT: the one-time sweep across the other retired statements, over `pkg/ cmd/ tests/ migrations/
+schemas/ docs/`, found no comment carriers. SPEC-1 (`per-session teardown`, `holds a bound
+entry`, `bound entry for the named`, `selected by a field`, `field's presence`, `presence standing
+in for`): 12 hits, every one naming the teardown as an operation or a proto field's wire presence
+(`tests/tier10_conformance/recycle_scrub_conformance_test.go:249` and
+`tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go:288` were read in full and
+state the recycle disposition riding beside the teardown, which SPEC-1 keeps as precedent), none
+stating that an entry's presence selects the teardown. SPEC-2 (`half-claimed`, `no live
+workspace`, `nothing to seal`, `no runtime (was|has been) started`, `not yet reached attached`):
+3 hits, all sealer statements about a session the replica holds no binding for
+(`pkg/gateway/sessionserver/seal.go:95`, `pkg/gateway/checkpoint/checkpointer/checkpointer.go:383`,
+`checkpointer_test.go:237`); a joined-comment pass for `replacement pod` beside any of those
+phrases returned nothing. SPEC-6 adds rows only and retires no statement; its two series names
+occur 0 times in the tree, which is CODE-9's to add. The record is in the shared block, one line
+per statement, so no later pass re-derives it.
+
+WATCHOUT: the shared block is the ONLY home for the invariants and for the non-carrier arm. A
+sub-block that restates either is a duplicate to remove, and a new comment-reduction deliverable
+for a later retired statement is a fourth sub-block under that heading, in the same three-part
+form (carrier definition, command or site list, arm rule), rather than a copy of CODE-10. A
+finding shaped "CODE-n lacks the invariant X" is filed against text that lives in the shared block
+by design.
+
+CORRECTS Standing context "How to use" (the line "CODE-10 and CODE-11 as PREDICATE-DEFINED
+comment-reduction deliverables that enumerate no files anywhere") and the Settled DECISION from
+`[prune.5.fix.1]` ("CODE-10 and CODE-11 are PREDICATE-DEFINED and enumerate no carrier files
+anywhere"): CODE-11 names four sites by design and always did; CODE-10 and CODE-12 are the
+predicate-defined pair. All three are now sub-blocks of the shared block.
+
+CORRECTS Settled "The report predicate has ONE home ... Adding a §5.2 pointer to a comment that
+carries none breaks CODE-10's own invariant": the invariant is the shared block's, stated once
+for all three sub-blocks.
+
+CORRECTS `[non-spec.7.fix.1]` WATCHOUT "the deliverable's done-condition is the command's output
+under the carrier definition and the non-carrier criterion": CODE-12 carries no non-carrier
+criterion of its own; the done-condition is the shared block's closure rule under its general
+non-carrier arm.
+
+CORRECTS `[non-spec.7.fix-G1.1]` WATCHOUT "CODE-10 explicitly excludes the two tier-11 files under
+S4's sweep": the exclusion is the shared block's routing sentence in its non-carrier arm, and it
+still holds for CODE-10's hits.
+
+CORRECTS Open "Should checklist S24 be reduced to CODE-10's predicate form?": S24 now cites the
+sub-block and the shared block and states no carrier category; the entry is closed.

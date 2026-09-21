@@ -60,9 +60,9 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 3, 10. Depends on: S1, S14, S15, S16.
 - [ ] **S23 · docs** — DOCS-4. The per-slot cleanup sentence in the execution-modes reference and in the operator guide's security-principles page each loses its closing clause that the adapter reports the outcome to the gateway, which SPEC-3 withdraws; each sentence keeps the cleanup, which runs on every release. It carries the step id S23 rather than a position beside S7 because the steps above were numbered before this deliverable was staged, and renumbering them would invalidate every dependency line.
       Tiers 0, 11. Depends on: S4.
-- [ ] **S24 · code** — CODE-10. Every comment carrier CODE-10's grep returns takes the reduction that deliverable states, under its arm rule; the landed `0167` migration's column comment is edited in place. No assertion and no cited section number moves.
+- [ ] **S24 · code** — CODE-10. Every hit CODE-10's grep returns is dispositioned under that sub-block's carrier definition and arm rule and the invariants and non-carrier arm of the non-spec `### Comment-carrier reduction: shared invariants` block.
       Tiers 0, 11. Depends on: S4.
-- [ ] **S25 · code** — CODE-11. The four comment sites CODE-11 names take the reduction that deliverable states, under its rule and its IMPLEMENTOR'S CHOICE constraint. It carries the step id S25 rather than a position beside S20 because the steps above were numbered before this deliverable was staged, and renumbering them would invalidate every dependency line.
+- [ ] **S25 · code** — CODE-11. The four sites CODE-11 names take the reduction its arm rule states, under its IMPLEMENTOR'S CHOICE constraint and the invariants of the non-spec `### Comment-carrier reduction: shared invariants` block.
       Tiers 0. Depends on: S1.
-- [ ] **S26 · code** — CODE-12. Every comment carrier CODE-12's grep returns takes the reduction that deliverable states, under its carrier definition and its non-carrier criterion. No assertion and no cited section number moves. It carries the step id S26 rather than a position beside S6 because the steps above were numbered before this deliverable was staged, and renumbering them would invalidate every dependency line.
+- [ ] **S26 · code** — CODE-12. Every hit CODE-12's command returns is dispositioned under that sub-block's carrier definition and arm rule and the invariants and non-carrier arm of the non-spec `### Comment-carrier reduction: shared invariants` block.
       Tiers 0, 11. Depends on: S5.

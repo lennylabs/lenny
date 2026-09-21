@@ -2099,42 +2099,62 @@ scrape target here. `slotFailureFinalize` does not exist: both `stageWorkspace` 
 measurement separating them needs a new stage constant, which this deliverable adds as
 `slotFailureWorkspaceFinalize`.
 
+### Comment-carrier reduction: shared invariants
+
+Each statement the spec lane retires has carriers outside `spec/`. Those in `docs/`, the proto
+and the generated stubs are dispositioned by the deliverables the spec-lane carrier tables
+name. The Go, SQL and test comment carriers are dispositioned by the three sub-blocks below
+(CODE-10, CODE-11 and CODE-12), one per retired statement, each carrying only its carrier
+definition, its grep command or site list, and its arm rule. Everything the three share is
+stated here, once.
+
+**Invariants.** Every arm of every sub-block holds these.
+
+- No `// spec:` annotation loses a section number.
+- No assertion moves, and no sub-block creates a test case or adds an assertion.
+- A tier-11 file a sub-block touches keeps every substring and every check it holds today.
+- Neither `tests/spec-map.json` nor `tests/claim-map.json` takes an edit.
+- No pointer to a spec section is added to a comment that carries none, and no rationale
+  sentence is added. Where an arm replaces a restatement with a citation, the citation stands
+  in the span the restatement occupied.
+- A landed migration's comment is edited in place and no new migration is written, because
+  `migrations/` carries no checksum gate and a comment-only edit changes no applied DDL.
+- The two claim-map line surfaces into `pkg/controller/sandbox/podspec/podspec.go` and
+  `pkg/adapter/gatewaylink.go` are re-checked after any reflow of those comments.
+
+**Non-carrier arm.** A hit that neither states the retired proposition nor restates it in
+other words stays true, is not a carrier, and takes no edit. A hit that another deliverable
+already dispositions (for SPEC-3, the proto comments and their generated copies under
+SCHEMA-1, `pkg/adapter/server.go`'s field comment under CODE-1, and the two tier-11 files under
+checklist S4's sweep) is dispositioned there. Only a hit that states the retired proposition
+and fits no arm of its sub-block is recorded in `deviations.md` rather than left in place.
+
+**Closure.** A sub-block's step is done when every remaining hit of its command, or every site
+on its list, is either edited under its arm rule or admitted by the non-carrier arm. A carrier
+found later is closed by re-running the command and takes no row anywhere in this proposal.
+A file a sub-block alone opens is opened for comment prose only, so it counts toward no impact
+row's file-collision ground in the summary; a file another entry of the files-touched list
+also opens is listed under that entry for its own edit.
+
+**Sweep across the other retired statements.** SPEC-1, SPEC-2 and SPEC-6 were swept once,
+from the repository root over `pkg/ cmd/ tests/ migrations/ schemas/ docs/`, with a grep for
+each retired statement's distinctive phrasing:
+
+- SPEC-1 (§4.1's rule that a bound entry's presence selects the per-session teardown, and the
+  §4.7 `Shutdown` row's restated `superseded` outcome): no comment carriers.
+- SPEC-2 (§7.2's premise that a replacement pod short of `attached` holds no started runtime
+  and nothing to seal): no comment carriers.
+- SPEC-6 adds catalog rows and retires no statement, so it has no carrier class.
+
+A later spec-lane edit that retires a statement adds a sub-block in the same three-part form
+under this heading rather than a fourth copy of the invariants.
+
 ### CODE-10 · the Go, SQL and test comments its grep returns · the comment carriers of the withdrawn reporting universal take their reduction
 
-SPEC-3 withdraws the universal that the adapter reports a cleanup outcome on every session
-release. Its carrier table dispositions the carriers in `spec/`, `docs/`, the proto and the
-generated stubs row by row, because each of those rows names a deliverable that stages exact
-replacement text. The Go, SQL and test comment carriers are not enumerated anywhere in this
-proposal: this deliverable defines them by the grep in its blank below, closes the set at
-application time, and applies the reduction below to every hit.
-
-The reduction has two arms, and the sentence's subject chooses between them. Where the subject
-is the report itself, so that the comment states that the adapter reports on every session
-release, the edited sentence must neither state nor imply that a report follows every release
-or every per-slot cleanup. Deleting the trigger clause meets that test when the trigger is a
-separable phrase and nothing left in the sentence carries the universal. When it does not,
-because the quantifier modifies what is reported (such as "reports each per-slot cleanup
-outcome") or because the report clause is coordinated with a clause that stays true (such as
-"a per-slot cleanup runs at every session release, and the adapter reports its outcome"),
-replace the report's own scoping words with the predicate SPEC-3's `**Scrub model.**`
-replacement states, written as "the outcome of a cleanup a `Shutdown` performs to reclaim a
-slot that reached `running`", and leave the clause that stays true standing. Where the
-subject is the served-session count advancing or being evaluated across releases, re-key the
-trigger onto the cleanup-outcome report, in the words SPEC-3's §12.6 replacement uses, which
-are "on each cleanup-outcome report". A hit that states neither, such as a sentence stating
-only that the cleanup runs on every release, stays true, is not a carrier, and takes no edit.
-
-Every arm holds these invariants. No `// spec:` annotation loses a section number. A `// spec:`
-gloss that attributes the per-release evaluation of `sessions_served` to §12 is re-keyed with
-the rest, onto the write §12.6 keeps, because SPEC-3 leaves §12.6 stating no evaluation point;
-the section number stays. No §5.2 pointer is added to a comment that carries none, and no
-rationale sentence is added. No assertion moves, and a tier-11 file this deliverable touches
-keeps every substring and every check it holds today. The landed
-`migrations/0167_runtime_definitions_execution_mode_service.up.sql` comment is edited in place
-and no new migration is written, because the file carries no checksum gate and a comment-only
-edit changes no applied DDL. Neither `tests/spec-map.json` nor `tests/claim-map.json` takes an
-edit, and the two claim-map line surfaces into `pkg/controller/sandbox/podspec/podspec.go` and
-`pkg/adapter/gatewaylink.go` are re-checked after any reflow of those comments.
+**Carrier.** SPEC-3 withdraws the universal that the adapter reports a cleanup outcome on every
+session release. A carrier is a comment whose subject is the report itself, stating that the
+adapter reports on every session release or on every per-slot cleanup, or whose subject is the
+served-session count advancing or being evaluated across releases.
 
 **IMPLEMENTOR'S CHOICE:** the carrier set. The constraint is that the set is the output of this
 one command, run at application time from the repository root:
@@ -2143,72 +2163,55 @@ one command, run at application time from the repository root:
 grep -rniE -e 'every (session|slot|clean) release' -e 'each (session|slot|clean) release' -e 'on every release' -e 'per-session-release' -e 'each per-slot cleanup' -e 'evaluated per release' -e '^\s*(//|--).*((sessions_served|SessionsServed).*\b(each|every)\b|\b(each|every)\b.*(sessions_served|SessionsServed))' pkg/ cmd/ tests/ migrations/ schemas/
 ```
 
-Every hit is dispositioned by the arm rule above. A hit SPEC-3's carrier table already assigns
-to another deliverable (the proto comments and their generated copies under SCHEMA-1,
-`pkg/adapter/server.go`'s field comment under CODE-1, and the two tier-11 files under checklist
-S4's sweep) is dispositioned there. A hit that fits neither arm is recorded in `deviations.md`
-rather than left in place. The step is done when the grep returns only sites the non-carrier
-criterion admits. A carrier found later is closed by re-running the grep and takes no row
-anywhere in this proposal.
+**Arm rule.** The sentence's subject chooses the arm. Where the subject is the report itself,
+the edited sentence must neither state nor imply that a report follows every release or every
+per-slot cleanup. Deleting the trigger clause meets that test when the trigger is a separable
+phrase and nothing left in the sentence carries the universal. When it does not, because the
+quantifier modifies what is reported (such as "reports each per-slot cleanup outcome") or
+because the report clause is coordinated with a clause that stays true (such as "a per-slot
+cleanup runs at every session release, and the adapter reports its outcome"), replace the
+report's own scoping words with the predicate SPEC-3's `**Scrub model.**` replacement states,
+written as "the outcome of a cleanup a `Shutdown` performs to reclaim a slot that reached
+`running`", and leave the clause that stays true standing. Where the subject is the
+served-session count advancing or being evaluated across releases, re-key the trigger onto the
+cleanup-outcome report, in the words SPEC-3's §12.6 replacement uses, which are "on each
+cleanup-outcome report"; a `// spec:` gloss that attributes the per-release evaluation of
+`sessions_served` to §12 is re-keyed with the rest, onto the write §12.6 keeps, and its
+section number stays.
 
 CODE-10 lands after SPEC-3. Tiers: 0, 11.
 
 ### CODE-11 · pkg/gateway/externalapi/errorclassify/errorclassify.go, pkg/gateway/sessionserver/start.go, pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go · the comment carriers of the narrowed SETUP_COMMAND_FAILED cause take their reduction
 
-SPEC-5 replaces the §15.1 `SETUP_COMMAND_FAILED` row's cause and retryability sentences, and
-that row is the single home of what the code covers and whether it is retryable.
-`docs/reference/error-catalog.md` restates the row under DOCS-3, because the documentation rules
-bar a spec citation on a reader-facing page. The reduction is one rule: a comment that restates
-the row's cause or its retryability ground is cut back to a citation of §15.1's row; every
-section number the span cites today, §7.3 included, survives; no assertion moves.
+**Carrier.** SPEC-5 replaces the §15.1 `SETUP_COMMAND_FAILED` row's cause and retryability
+sentences, and that row is the single home of what the code covers and whether it is
+retryable. A carrier is a comment that restates the row's cause or its retryability ground.
 
-The sites are the comment block above the `CONFIRMATION_REQUIRED` and `SETUP_COMMAND_FAILED`
-pair in `pkg/gateway/externalapi/errorclassify/errorclassify.go`, the `writeSetupCommandError`
-and `isTransientPodClaimError` doc comments in `pkg/gateway/sessionserver/start.go`, and the
+**Sites.** The comment block above the `CONFIRMATION_REQUIRED` and `SETUP_COMMAND_FAILED` pair
+in `pkg/gateway/externalapi/errorclassify/errorclassify.go`, the `writeSetupCommandError` and
+`isTransientPodClaimError` doc comments in `pkg/gateway/sessionserver/start.go`, and the
 `// diagnosis:` comment on `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3` in
-`pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`. The classification data,
-the branch on `status.Code(setupFail.Cause)` and every assertion are untouched, so this
-deliverable moves no behaviour. The retired-form line citations on `errorclassify.go`'s map
-entries are pre-existing debt with its own migration; this edit neither converts one nor adds
-one. CODE-5's `codes.Aborted` arm in `isTransientPodClaimError` carries its own inline comment,
-so the two deliverables take different hunks of that function.
+`pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`.
 
-**IMPLEMENTOR'S CHOICE:** the replacement text at each site. The constraint is that the
-replacement at each site is one sentence, cites §15.1 by heading, keeps §7.3 where the replaced
-span cited it, and names no gRPC code as the cause.
+**Arm rule.** Each site is cut back to a citation of §15.1's row. **IMPLEMENTOR'S CHOICE:** the
+replacement text at each site. The constraint is that the replacement at each site is one
+sentence, cites §15.1 by heading, keeps §7.3 where the replaced span cited it, and names no
+gRPC code as the cause. The classification data and the branch on
+`status.Code(setupFail.Cause)` are untouched. The retired-form line citations on
+`errorclassify.go`'s map entries are neither converted nor added to. CODE-5's `codes.Aborted`
+arm in `isTransientPodClaimError` carries its own inline comment, so the two deliverables take
+different hunks of that function.
 
-Every edit is a comment, so this deliverable creates no case, adds no assertion and takes no
-`tests/spec-map.json` or `tests/claim-map.json` row. CODE-11 lands after SPEC-5. Tiers: 0.
+CODE-11 lands after SPEC-5. Tiers: 0.
 
 ### CODE-12 · the Go, SQL and test comments its grep returns · the comment carriers of the re-keyed claim-deletion projection take their reduction
 
-SPEC-4 re-keys §4.6.1's two claim-deletion bullets off the pool's recycle setting and its
-retirement limits and onto the phase the pod projects at the DELETE, and deletes the closing
-sentence that made the recycle-setting reading normative. Those bullets are the single home of
-what the WarmPoolController projects when a claim is deleted; nothing below restates them. The
-Go, SQL and test comment carriers of the retired keying are enumerated nowhere in this
-proposal: this deliverable defines them by the grep in its blank below, closes the set at
-application time, and applies the reduction below to every hit.
-
-A carrier is a comment under `pkg/`, `cmd/`, `tests/` or `migrations/` that states what the
-WarmPoolController projects at a claim DELETE and keys that outcome on the pool's recycle
-setting or on its retirement limits, or that asserts without qualification that the deletion
-returns the pod to `idle`. The reduction is one rule with a fallback arm. Such a comment loses
-its statement of the projected outcome and keeps the rest of its sentence, which leaves the
-outcome to §4.6.1, where the WarmPoolController is the sole writer of the coarse occupancy
-phase and projects it from the claim and from the phase the pod projects at the DELETE. Where
-the projection statement is the sentence's only content, the sentence instead states what its
-own subject does, which is that the gateway deletes the claim or that the adapter releases the
-slot.
-
-A comment stating the `reserved → idle` hold-expiry edge is not a carrier and takes no edit,
-because SPEC-4 keeps that bullet and re-keys it onto the `reserved` phase, so the comment stays
-true.
-
-Every arm holds these invariants. No `// spec:` annotation loses a section number. No §5.2 or
-§6.2 pointer is added to a comment that carries none, and no rationale sentence is added. No
-assertion moves, and a tier-11 file this deliverable touches keeps every substring and every
-check it holds today. Neither `tests/spec-map.json` nor `tests/claim-map.json` takes an edit.
+**Carrier.** SPEC-4 re-keys §4.6.1's two claim-deletion bullets off the pool's recycle setting
+and its retirement limits and onto the phase the pod projects at the DELETE, and those bullets
+are the single home of what the WarmPoolController projects when a claim is deleted. A carrier
+is a comment that states what the WarmPoolController projects at a claim DELETE and keys that
+outcome on the pool's recycle setting or on its retirement limits, or that asserts without
+qualification that the deletion returns the pod to `idle`.
 
 **IMPLEMENTOR'S CHOICE:** the carrier set. The constraint is that the set is the output of this
 one command, run at application time from the repository root. Some carriers wrap their sentence
@@ -2219,10 +2222,12 @@ the way the §28.1 N3 matcher joins two consecutive comment lines:
 perl -0777 -ne 'while (/((?:^[ \t]*(?:\/\/|--)[^\n]*\n)+)/gm){$b=$1;$p=$`;$ln=1+($p=~tr/\n//);$j=$b;$j=~s/\n[ \t]*(\/\/|--) ?/ /g;$j=~s/\s+/ /g; print "$ARGV:$ln\n" if $j=~/(returns?|returned|projects?) (the pod|a pod|it) (back )?to `?idle|(is|are|was|were) returned (back )?to `?idle|projects `?idle|claim (DELETE|deleted) on a `?recycle\.enabled/i}' $(git ls-files '*.go' '*.sql' | grep -E '^(pkg|cmd|tests|migrations)/')
 ```
 
-Every hit is dispositioned by the carrier definition and the non-carrier criterion above. A hit
-that fits neither is recorded in `deviations.md` rather than left in place. The step is done
-when every remaining hit meets the non-carrier criterion. A carrier found later is closed by
-re-running the command and takes no row anywhere in this proposal.
+**Arm rule.** A carrier loses its statement of the projected outcome and keeps the rest of its
+sentence, which leaves the outcome to §4.6.1, where the WarmPoolController is the sole writer of
+the coarse occupancy phase and projects it from the claim and from the phase the pod projects
+at the DELETE. Where the projection statement is the sentence's only content, the sentence
+instead states what its own subject does, which is that the gateway deletes the claim or that
+the adapter releases the slot.
 
 CODE-12 lands after SPEC-4. Tiers: 0, 11.
 
@@ -3767,11 +3772,8 @@ other row of a sixty-row page ungated and would read as coverage the page does n
 
 **For DOCS-4**, no file, for the reason its deliverable states.
 
-**For CODE-10**, no file, for the reason its deliverable states.
-
-**For CODE-11**, no file, for the same reason: every edit is a comment, and no assertion moves.
-
-**For CODE-12**, no file, for the same reason: every edit is a comment, and no assertion moves.
+**For CODE-10, CODE-11 and CODE-12**, no file: every edit is a comment and no assertion moves,
+under the invariants `### Comment-carrier reduction: shared invariants` states.
 
 **For the counters and SPEC-6**, each series is held by its own gate, and each is stated
 separately below.
@@ -4107,19 +4109,11 @@ of these cases:
   sentences and its replaced remedy cell.
 - `docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` · the
   reporting clause deleted from each page's per-slot cleanup sentence.
-- The comment carriers CODE-10's grep returns · the comment reduction CODE-10 states. The set
-  is closed by that grep at application time and is not enumerated here. A file this entry
-  alone opens is opened for comment prose only, so it does not count toward any impact row's
-  file-collision ground in the summary; a file another entry also opens is listed under that
-  entry for its own edit.
-- The `SETUP_COMMAND_FAILED` cause restatements in `pkg/gateway` · the comment reduction
-  CODE-11 states, at the four sites that deliverable names. The same rule holds: a file this
-  entry alone opens is opened for comment prose only and counts toward no impact row's
-  file-collision ground, and a file another entry also opens is listed under that entry for its
-  own edit.
-- The comment carriers CODE-12's grep returns · the comment reduction CODE-12 states. The set
-  is closed by that grep at application time and is not enumerated here. A file this entry
-  alone opens is opened for comment prose only, so it does not count toward any impact row's
+- The comment carriers CODE-10's grep returns, the four sites CODE-11 names, and the comment
+  carriers CODE-12's command returns · the reduction each sub-block states under
+  `### Comment-carrier reduction: shared invariants`. The CODE-10 and CODE-12 sets are closed by
+  their commands at application time and are not enumerated here. A file one of these entries
+  alone opens is opened for comment prose only, so it counts toward no impact row's
   file-collision ground in the summary; a file another entry also opens is listed under that
   entry for its own edit.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
