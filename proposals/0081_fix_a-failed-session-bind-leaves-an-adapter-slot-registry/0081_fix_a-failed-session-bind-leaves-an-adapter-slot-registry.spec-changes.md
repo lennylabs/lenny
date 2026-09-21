@@ -218,9 +218,9 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   change brings on the create-time-reserved path, and why neither is closed here.
 - **The graceful-shutdown signal on a co-tenanted pod.** A bound-but-unstarted co-tenant is a
   bind about to issue `StartSession` against the shared runtime, so the signal stays gated on
-  the binding rather than on `started`. A pod that keeps a bound co-tenant sends no signal for
-  the session being reclaimed. This is the shipped behaviour, restated so the two teardowns
-  do not read as sharing one precondition.
+  the binding rather than on `started`. The §4.7 `Shutdown` row states the condition; this case
+  records why it is keyed on the binding, so the two teardowns do not read as sharing one
+  precondition.
 - **A bind-sequence refusal reaches the client under the envelope its stage already selects.**
   The gateway consumes both refusal codes, and this proposal leaves its envelope selection
   alone, so a workspace-stage refusal reaches the client under the transient session-start
@@ -238,9 +238,7 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   refusal. DOCS-3 mirrors those same replacements into the `SETUP_COMMAND_FAILED` row of
   `docs/reference/error-catalog.md`, so the page a reader consults states the setup-command
   refusal cause, its non-retryability, and the setup-output remedy qualified to the cause that
-  ran a command. It makes one replacement §15.1 does not need,
-  because the page states the retryable-fallback exclusion keyed on the cause class where §15.1
-  keys it on the gRPC code.
+  ran a command.
 
 ## Staged edits
 
@@ -362,7 +360,7 @@ ending "([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),
 The sentence to add reads:
 
 ```
-On a pod serving concurrent sessions this step occurs only under the condition the [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states for the graceful-shutdown signal; an end that leaves a bound co-tenant writes no frame and this step does not occur.
+On a pod serving concurrent sessions this step occurs only under the condition the [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states for the graceful-shutdown signal.
 ```
 
 Nothing else in the step changes. The condition stays in the §4.7 `Shutdown` row, which owns
@@ -660,7 +658,7 @@ That per-slot cleanup is the one the **Slot cleanup:** bullet below states, on a
 
 The `leaked` column applies on a pod serving concurrent sessions, and [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) states what a slot in that sub-state holds and counts toward. A pod serving one session has no `leaked` sub-state, and a pre-`running` slot on it counts toward no whole-pod replacement trigger. A slot enters `leaked` on the gateway's reading of the report or of the response, so a [Section 7.1](07_session-lifecycle.md#71-normal-flow) reclaim the adapter does not answer enters it as a reclaim whose act fails does, and its hold ends on the terms of the row the cleanup on the pod met. A cleanup act that fails or does not run leaves on the pod what it would have removed or ended, the acts being those the **Slot cleanup:** bullet below states and the close of the session on the pod's shared runtime process; a cleanup that did not deregister the entry also leaves the registry entry and its armed [Section 4.9](04_system-components.md#49-credential-leasing-service) lease-expiry timers. Pod termination ends all of it, and the whole-pod scrub, on a pod that reaches one under this section's scrub model, ends the slot's workspace tree and credential file. A pod serving one session whose claim the failed bind deletes retires under the [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) occupancy projection.
 
-**Slot-identifier reclaim hold.** The adapter holds a slot's identifier from the deregistration of the slot's registry entry, which opens the hold in the same step under the registry critical section [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states, until the cleanup that reclaims the slot has completed, which is when every act that cleanup owes the slot has returned without error. The hold outlasts the deregistration because the cleanup's remaining acts are addressed by the slot identifier rather than by the entry, and every attempt at the same session names the same identifier. While the identifier is held the adapter admits no request that would create or resolve a registry entry under it, and refuses one as a transient condition so the caller retries. The requests that can create one are the requests [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) enumerates as governed by its admission rules. A request that resolves an entry without creating one is refused on the same terms, which is what refuses a [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload still in flight when the cleanup opens the hold. `Shutdown` is the one request outside the hold, governed by the rule stated for it rather than by this one. A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming `Shutdown` carries when it carries one, by that request's own deadline when it carries none, and, for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, which runs under no request, by a graceful window of ten seconds. A release that runs its cleanup inside the RPC that requested it ends the hold before that RPC answers when that cleanup completes, so the pod-warm bind sequence that follows an SDK demotion does not meet it. The table above states the hold's outcome for each cleanup, and [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token the adapter stamps on a slot's registry entry and the reclaim that names it.
+**Slot-identifier reclaim hold.** The adapter holds a slot's identifier from the deregistration of the slot's registry entry, which opens the hold in the same step under the registry critical section [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states, until the cleanup that reclaims the slot has completed, which is when every act that cleanup owes the slot has returned without error. The hold outlasts the deregistration because the cleanup's remaining acts are addressed by the slot identifier rather than by the entry, and every attempt at the same session names the same identifier. While the identifier is held the adapter admits no request that would create or resolve a registry entry under it, and refuses one as a transient condition so the caller retries. The requests that can create one are the requests [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) enumerates as governed by its admission rules. A request that resolves an entry without creating one is refused on the same terms, which is what refuses a [Section 7.4](07_session-lifecycle.md#74-upload-safety) mid-session upload still in flight when the cleanup opens the hold. `Shutdown` is the one request outside the hold, governed by the rule stated for it rather than by this one. A refusal is the only record the adapter makes of the hold: no report and no counter names it, and a bind refused this way is accounted by the gateway as an ordinary transient slot failure. The cleanup's close of the session on the pod's shared runtime process is bounded by the graceful window the reclaiming `Shutdown` carries when it carries one, by that request's own deadline when it carries none, and, for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, which runs under no request, by a graceful window of ten seconds. A release that runs its cleanup inside the RPC that requested it ends the hold before that RPC answers when that cleanup completes. The table above states the hold's outcome for each cleanup, and [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token the adapter stamps on a slot's registry entry and the reclaim that names it.
 ```
 
 The table is the single home of every cleanup's disposition. §6.2, §7.1, the `**Slot cleanup:**`
@@ -1181,10 +1179,9 @@ adapter answered as well as on the gRPC code, because the refusal makes the setu
 second deterministic `FailedPrecondition` producer. Keyed on the code alone, the exclusion would
 sweep a `FailedPrecondition` the adapter answers to a bind-sequence request other than the
 setup-command request into the retryable fallback, which is not the envelope that stage selects:
-a credential-assignment failure at `/finalize` surfaces as `CREDENTIAL_POOL_EXHAUSTED` and a
-workspace-materialization failure as the workspace-validation error, per the §15.1 finalize
-precondition note. After the replacement the row is total over failures of the setup-command
-request, it sends a `FailedPrecondition` at any other bind-sequence request to that stage's own
+a credential-assignment failure at `/finalize` surfaces as `CREDENTIAL_POOL_EXHAUSTED`, per the
+§15.1 finalize precondition note. After the replacement the row is total over failures of the
+setup-command request, it sends a `FailedPrecondition` at any other bind-sequence request to that stage's own
 envelope rather than assigning it one here, the superseded refusal answered `Aborted` stays
 excluded and retryable, and the row is the single home of the mapping for the setup-command
 request. `details.reason` keeps its one value, so no client contract changes.

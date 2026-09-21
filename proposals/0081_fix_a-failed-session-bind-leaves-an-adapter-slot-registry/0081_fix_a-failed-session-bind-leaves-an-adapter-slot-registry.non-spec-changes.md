@@ -2535,7 +2535,7 @@ Amend the `DemoteSDK` row (`:64`) so it states the registry effect rule 4 turns 
 cleanup the demotion runs inside the call:
 
 ```
-| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry for the session, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. The next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
+| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry for the session, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. When that cleanup completes, the next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
 ```
 
 Replace the `ReportSessionScrub` row (`:81`) under `**Adapter-to-Gateway RPCs:**` with the row
