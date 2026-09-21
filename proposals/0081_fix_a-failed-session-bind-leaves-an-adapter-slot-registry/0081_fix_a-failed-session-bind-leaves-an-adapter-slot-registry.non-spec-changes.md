@@ -947,7 +947,7 @@ add a default arm that is fail-open on version skew:
 ```go
 // spec: §6.2 (pod state machine); §7.1 (normal flow). A reclaim the adapter
 // did not answer, and one that ran a teardown whose close failed, are the
-// reclaims that did not complete. Every §4.7.1 teardown rule that removes no
+// reclaims not acknowledged clean. Every §4.7.1 teardown rule that removes no
 // entry answers exited_cleanly true, so `superseded` and `absent` land here as
 // not leaked without a branch, and an outcome value this build does not
 // recognize is judged on the same two fields rather than on a default arm that
@@ -971,7 +971,7 @@ of which a package-level function can reach. It fires only on
 `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch lives in one place, and nothing else consumes
 the value. CODE-9 states the hook, its forwarder and its wiring.
 
-`SUPERSEDED` and `ABSENT` are completed reclaims that correctly performed nothing. On `ABSENT`
+`SUPERSEDED` and `ABSENT` are reclaims acknowledged clean that correctly performed nothing. On `ABSENT`
 the adapter holds nothing for the session; on `SUPERSEDED` another attempt owns the slot
 identifier and everything under it, or the entry carries no token at all, which is what a
 `StartSession` or a `ConfigureWorkspace` creates. Either way this attempt owns nothing the
@@ -1020,7 +1020,7 @@ func (b *Binder) materializeSlot(
                 req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, sandboxName, slotID)
             // spec: §6.2 (pod state machine); §7.1 (normal flow). A reclaim the
             // adapter did not answer, and one that ran a teardown whose close
-            // failed, are the reclaims that did not complete. Under §4.7.1
+            // failed, are the reclaims not acknowledged clean. Under §4.7.1
             // rule 15 (the reclaim-outcome rule) `superseded` and `absent`
             // report a clean exit, so they land here as not leaked without a
             // branch, and an outcome value this build does not recognize is
@@ -1766,7 +1766,7 @@ touches this table not at all. Deleting an entry cannot block a goroutine that h
 named: the holder keeps the old channel, and the next acquirer finds no entry, mints a second
 channel and sends into it immediately, so mutual exclusion would be gone at the moment it is
 needed. The path that reaches it is the ordinary one, because `SlotID == SessionID` and a
-reclaim that completed leaves the attempt's failure clean, so a §5.2 retry re-binds the same
+reclaim whose cleanup completed releases the identifier, so a §5.2 retry re-binds the same
 session onto the same pod under the same identifier. The table's bound is one channel per distinct session
 the pod has served, and `recycle.maxSessionsPerPod` retires the pod at that count.
 
@@ -2443,7 +2443,7 @@ the same terms. It currently reads:
 Replace it with:
 
 ```
-`slot_cleanup -> leaked` when the cleanup does not complete and the gateway learns of it, in the outcome the adapter reports, in the answer to the request that asked for the cleanup, or in the absence of an answer to a reclaim the gateway sent, and the slot is not reclaimed until the pod terminates
+`slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates
 ```
 
 A timeout is one cause of a failed cleanup rather than the condition, and a cleanup whose
@@ -3574,7 +3574,7 @@ of these cases:
   at the pod boundary. That function discards `removeSlotTree`'s error
   (`pkg/adapter/slotsession.go:217`), and CODE-6 replaces the discard with a warning log line
   rather than with a carrier the gateway can read. The gateway's compensation then finds no
-  entry, is answered `ABSENT`, and CODE-4 reads that as a completed reclaim with `sbe.Leaked`
+  entry, is answered `ABSENT`, and CODE-4 reads that as a reclaim acknowledged clean with `sbe.Leaked`
   false, so an incomplete cleanup on this path reaches no leaked sub-state and contributes
   nothing to the `ceil(maxConcurrentSessions/2)` trigger. The residue is what the §5.2
   disposition table states in its row for a slot released outside a `Shutdown` whose act fails
