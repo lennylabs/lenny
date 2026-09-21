@@ -15,11 +15,9 @@ The mechanism is one predicate at one chokepoint on the adapter, one two-field p
 **The token.** A bind attempt mints an opaque string from `crypto/rand` before it issues its
 first RPC, carries that string on every request of that attempt that can create or resolve the
 pod's slot registry entry, and names it again on the compensating `Shutdown` it sends when the
-attempt fails. The adapter treats the value as opaque and never parses or orders it. The
-adapter writes it onto the entry it creates and never onto an entry it resolved, in either
-direction, so the first attempt to create an entry owns that entry until the entry is removed.
-That write rule is what makes the mechanism monotone without a counter: a compensation can only
-match an entry its own attempt created.
+attempt fails. How the adapter treats the value is §4.7.1's, under **Bind attempt token** and
+**the stamp-once rule**. That rule is what makes the mechanism monotone without a counter: a
+compensation can only match an entry its own attempt created.
 
 **The chokepoint.** `ensureSlotStateLocked` (`pkg/adapter/slot.go`) is the adapter's only
 resolve-or-create step and has three production callers, `ensureSlotPaths`,
@@ -54,11 +52,10 @@ registry critical-section paragraph states, and CONF-1 tests it.
 
 **The mid-session conditioning.** The §7.4 mid-session upload is issued against an entry whose
 token the gateway does not hold, because the binding predates the request and may have been made
-by another replica. The wire rule is therefore conditioned rather than absolute, on the
-terms §4.7.1's carriage table fixes for each request. A mid-session request carrying a token, and a non-mid-session request carrying none, are
-both `INVALID_ARGUMENT`, refused by `validateBindFields` before the handler resolves anything. A
-mid-session request asserts no identity under rule 1 (the pairing rule), cannot create under the
-mid-session-create rule, and is exempt from the phase gate. What keeps that safe is the shipped
+by another replica. The wire rule is therefore conditioned rather than absolute, on the terms
+§4.7.1's carriage table fixes for each request. A mid-session request asserts no identity under
+rule 1 (the pairing rule), cannot create under the mid-session-create rule, and is exempt from
+the phase gate. What keeps that safe is the shipped
 admission guard: a mid-session upload is admitted only for a session with a live binding in the
 replica's `podRegistry` (`pkg/gateway/sessionserver/upload_to_session.go`), which a foreign
 attempt cannot obtain. Reading that guard is a precondition of landing CODE-6's
@@ -1028,23 +1025,10 @@ func (b *Binder) compensateFailedSlotBind(
 
 `ShutdownReclaim` returns the outcome, `exited_cleanly` and the error, in that order.
 
-**The leaked disposition, at the caller.** The outcome does not enter it. Every rule that
-removes no entry answers `exited_cleanly` true, so the disposition is the one the shipped
-compensation call site at `slotbinder.go:543` already computes, and an outcome arm would only
-add a default arm that is fail-open on version skew:
-
-```go
-// spec: §6.2 (pod state machine); §7.1 (normal flow). A reclaim the adapter
-// did not answer, and one that ran a teardown whose close failed, are the
-// reclaims not acknowledged clean. Every §4.7.1 teardown rule that removes no
-// entry answers exited_cleanly true, so `superseded` and `absent` land here as
-// not leaked without a branch, and an outcome value this build does not
-// recognize is judged on the same two fields rather than on a default arm that
-// would treat a failed close as clean. The drain hazard the six-arm form was
-// written against is an unknown outcome judged leaked when nothing failed;
-// that case reports a clean exit and is not leaked here either.
-sbe.Leaked = cerr != nil || !cleanly
-```
+**The leaked disposition, at the caller.** The outcome does not enter it. Under §4.7.1 rule 15
+the disposition is the one the shipped compensation call site at `slotbinder.go:543` already
+computes, and an outcome arm would only add a default arm that is fail-open on version skew.
+The staged `materializeSlot` body below carries the expression and its comment.
 
 The expression is written at the compensation's call site rather than as a free function, which
 is why the staged `materializeSlot` body changes with it.
@@ -2213,6 +2197,64 @@ Every site is a comment, and every reduction changes a comment's prose alone, so
 annotation loses a section number, neither `tests/spec-map.json` nor `tests/claim-map.json` takes
 an edit, and no assertion moves: the two tier-11 files this deliverable touches keep every
 substring and every check they hold today. CODE-10 lands after SPEC-3. Tiers: 0, 11.
+
+### CODE-11 · pkg/gateway/externalapi/errorclassify/errorclassify.go, pkg/gateway/sessionserver/start.go, pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go · the comment carriers of the narrowed SETUP_COMMAND_FAILED cause take their reduction
+
+SPEC-5 replaces the §15.1 `SETUP_COMMAND_FAILED` row's cause and retryability sentences, and
+that row is the single home of what the code covers and whether it is retryable.
+`docs/reference/error-catalog.md` restates the row under DOCS-3, because the documentation rules
+bar a spec citation on a reader-facing page. The Go comments and the test diagnosis enumerated
+below state the row a second time, in the pre-SPEC-5 words, and each of them identifies the code
+with the setup-command exit alone. The reduction is one rule: a comment that restates the row's cause or
+its retryability ground is cut back to a citation of the row and states no cause of its own. No
+comment is re-keyed onto the widened cause, and no `// spec:` annotation loses a section number.
+The classification data, the branch on `status.Code(setupFail.Cause)` and every assertion are
+untouched, so this deliverable moves no behaviour.
+
+The sites and the text each one takes:
+
+- `pkg/gateway/externalapi/errorclassify/errorclassify.go`, the comment block above the
+  `CONFIRMATION_REQUIRED` and `SETUP_COMMAND_FAILED` pair
+  (`pkg/gateway/externalapi/errorclassify/errorclassify.go:463-474`). Replace everything from
+  `SETUP_COMMAND_FAILED` to the end of the block, which is the cause sentence, its retryability
+  clause and the closing `The retryable complement` sentence, with one sentence: the code is
+  permanent and not retryable, §15.1's catalog row states the failures it covers and the
+  retryable fallback every other failure of the setup-command request takes, and §7.3 puts
+  `setup_command_failed` in `retryPolicy.nonRetryableFailures`. The §7.3 citation carries over
+  from the replaced span, so the block keeps both section numbers it cites today. The `F-CS6.` tag
+  stays, so the finding trace survives. The block's opening `spec: §15.1` heading-form line and
+  the `CONFIRMATION_REQUIRED` sentences are untouched. Both map entries keep their
+  `{CategoryPermanent, false}` values. The `// spec: 15:1105`-style line citations on the map
+  entries are the retired citation form and are pre-existing debt with its own migration; this
+  edit neither converts one nor adds one.
+- `pkg/gateway/sessionserver/start.go`, the `writeSetupCommandError` doc comment
+  (`pkg/gateway/sessionserver/start.go:218-235`). Replace the cause sentence, which reads,
+  verbatim, `A deterministic non-zero exit (or hard timeout) is reported by the adapter as
+  codes.FailedPrecondition (pkg/adapter/staging.go), which the gateway surfaces as the
+  non-retryable 422 SETUP_COMMAND_FAILED with no Retry-After: per §7.3 setup_command_failed is
+  in retryPolicy.nonRetryableFailures, so a retry against the same workspace plan fails
+  identically.`, with a sentence keyed on the gRPC code alone: a deterministic
+  `codes.FailedPrecondition` from the adapter takes the non-retryable 422
+  `SETUP_COMMAND_FAILED` with no `Retry-After`, §15.1's catalog row states the failures that
+  code covers, and §7.3 puts `setup_command_failed` in `retryPolicy.nonRetryableFailures`. The
+  enumeration of the complement codes and the closing sentence that this boundary is shared with
+  `isTransientPodClaimError` stay, because they are what this site alone knows. The `// spec:`
+  annotation below the comment is untouched.
+- `pkg/gateway/sessionserver/start.go`, the `isTransientPodClaimError` doc comment
+  (`pkg/gateway/sessionserver/start.go:3628-3632`). Delete the words `setup-command exit` and
+  read the article off the code, so the sentence states that only a deterministic
+  `codes.FailedPrecondition` (the non-retryable 422 `SETUP_COMMAND_FAILED`) demotes the row to
+  terminal `failed`. Nothing else in that comment moves. CODE-5's `codes.Aborted` arm in the
+  same function carries its own inline comment, so the two deliverables take different hunks.
+- `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`, the `// diagnosis:`
+  comment on `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3`
+  (`pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go:39-41`). The same deletion:
+  the clause reads `exactly when the cause is a deterministic codes.FailedPrecondition (the
+  non-retryable 422 SETUP_COMMAND_FAILED)`. The rest of the diagnosis and the `// spec:`
+  annotation above it are untouched, so `tests/spec-map.json` takes no edit.
+
+Every edit is a comment, so this deliverable creates no case, adds no assertion and takes no
+`tests/spec-map.json` or `tests/claim-map.json` row. CODE-11 lands after SPEC-5. Tiers: 0.
 
 ### CONF-1 · tests/tier3_contract/adapter_bind_attempt/, tests/tier10_conformance/slot_bind_attempt_conformance_test.go · the published contract is enforced at the wire and exercised in process
 
@@ -3740,6 +3782,8 @@ other row of a sixty-row page ungated and would read as coverage the page does n
 
 **For CODE-10**, no file, for the reason its deliverable states.
 
+**For CODE-11**, no file, for the same reason: every edit is a comment, and no assertion moves.
+
 **For the counters and SPEC-6**, each series is held by its own gate, and each is stated
 separately below.
 
@@ -3875,11 +3919,6 @@ of these cases:
   consistently. At `maxConcurrentSessions: 2` the disposition changes nothing on the retry path,
   because the threshold there is already 1. The reserved branch and the §7.3 re-attach change at
   every concurrency because they reach the accounting at all for the first time.
-- **The reclaim outcome does not decide the leak.** Every teardown rule that removes no entry
-  answers a clean exit, so the disposition reads the error and the clean-exit flag alone. An
-  outcome this build does not recognize, answered with a clean exit, is not leaked, which is the
-  drain hazard the enum arm was written against. One answered with an unclean exit is leaked,
-  which is fail-closed and is the one case this differs from an outcome-first mapping on.
 - **`slotCount` still counts a registered-but-unbound entry.** The §28.5.3 count fails closed on
   purpose and its comment says so. The predicate is left exactly as it is.
 
@@ -4086,6 +4125,11 @@ of these cases:
   `tests/tier4_integration/concurrent_delegation_proxy_test.go` · the comment reduction CODE-10
   states. `basic_level_echo_stamp_doc_reconciliation_test.go` also appears in the Tests entry
   below, for DOCS-2's assertion extension, which is a separate edit to the same file.
+- `pkg/gateway/externalapi/errorclassify/errorclassify.go`,
+  `pkg/gateway/sessionserver/start.go` and
+  `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` · the comment reduction
+  CODE-11 states. The latter two also appear above and in the Tests entry below, for CODE-5's
+  edits, which are separate edits to the same files.
 - Tests: `pkg/adapter/bindattempt_test.go`, `pkg/adapter/bindattempt_orderings_test.go`,
   `pkg/adapter/slotsession_test.go`, `pkg/adapter/socketruntime_test.go`,
   `pkg/adapter/sdkwarm_test.go`,
