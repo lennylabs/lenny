@@ -24,7 +24,7 @@ Each conversation on this surface has one canonical identifier, chosen for the c
 
 **N7.** A flag, environment variable, or manifest key naming a channel carries that channel's identifier in the form its carrier already fixes: a flag uses lowercase kebab, an environment variable uses upper snake, and a manifest key uses the camelCase convention the §4.7 adapter manifest field set establishes.
 
-**N8.** A specification citation names a heading rather than a line. Citing a specification line number is retired and may not be written, in any spelling. The prohibition is on the line number rather than on one form of words, so a spelling a matcher does not yet recognize is a gap in the matcher rather than a permitted citation. A section that gives up content carries a permanent successor pointer naming the heading that now owns the content and the identifiers that moved. The citation resolver and the line-citation ratchet are the gates that hold this rule. The prohibition on line numbers in a `// spec:` citation, stated in `code-best-practices.md`, is the code-side half of N8.
+**N8.** A specification citation names a heading rather than a line. N8 is not a naming rule: it governs every specification citation in every carrier, and it sits in §28.1 because the migration that retired line citations was the same one that renamed the channels. `spec-citations.md` states the rule, the domain the citation gates enforce, and how a proposal cites the specification.
 
 ## Reserved spellings
 
@@ -53,7 +53,7 @@ None of these phrases is a name. Each one names a conversation without saying wh
 2. Choose a stem that is a mnemonic for the conversation, under N1, N2, and N5, and check it against the reserved spellings above and against the terms the specification already binds.
 3. Write the identifier in each carrier in the form N4 and N7 fix for that carrier.
 4. Add the register row in §28.3 for a new link, channel, or register, and the claim-register row in §28.4 for any part of the contract that does not yet hold in code.
-5. Cite the specification by heading, under N8. Do not write a specification line number in a citation, a comment, or prose.
+5. Cite the specification by heading, as `spec-citations.md` states.
 
 ## Escape hatches
 

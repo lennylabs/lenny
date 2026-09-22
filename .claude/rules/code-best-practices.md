@@ -54,7 +54,7 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 
 - Use idiomatic Go names; avoid stutter (`session.Session`, not `session.SessionStruct`). Document every exported identifier.
 - Comments generously explain why, not what. Delete commented-out code. Include contextual information that may be helpful to future AI agents reviewing or modifying the code.
-- Cite the spec on spec-derived logic with `// spec: §X.Y`. Do not include line numbers since they can shift frequently. A reviewer should be able to trace a behavior to its spec section.
+- Cite the spec on spec-derived logic with `// spec: §X.Y`. Do not include line numbers since they can shift frequently (`spec-citations.md`). A reviewer should be able to trace a behavior to its spec section.
 
 ## Configuration and compatibility
 
