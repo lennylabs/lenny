@@ -173,6 +173,31 @@ step ran in firings that applied nothing. So:
   review log's standing context, and on a later firing are pointed at the diff first.
 - Cleanup and the read-only verify run only when an Apply landed, or on the first firing.
 
+**The phase state outlives the run.** After each firing the item records, the impact-row digest and the last
+baseline commit are written to `scratchpad/cp-state/<runTag>/decisions-state.json`, so a relaunch with
+`resumeState` does not re-collect and re-falsify what earlier runs settled. A workflow script cannot touch a
+file, and an agent moves text only by generating it, so the state is kept small and moved without generation
+wherever it can be:
+
+- **Record text lives in record files.** An Apply agent writes what it wrote and where to
+  `scratchpad/cp-state/<runTag>/records/<digest>.md` in the same turn it makes the edit, and the reversal
+  check, the verify pass and the operator open that file. The state keeps only whether the file exists, a
+  120-character question, and an impact row's digest. On 0081 that text was about 70% of a 117 KB state.
+- **A relaunch reads the state from a launch copy.** Run
+  `node .claude/tools/cp-state.mjs launch-copy scratchpad/cp-state/<runTag>/decisions-state.json .claude/workflows/change-proposal.js scratchpad/cp-launch/<runTag>/change-proposal.js`
+  and launch the copy it writes, with `resumeState: true`. The copy carries the saved state in place of the
+  `CP_EMBEDDED_DECISIONS_STATE` line, so no agent reads it. Launching the workflow itself still works; its
+  load reads the file back in verified chunks.
+- **Saves move in verified chunks.** The control state is split into chunks of 20,000 code points, one small
+  agent each, through `.claude/tools/cp-state.mjs`. Every chunk is checked against a length and a
+  code-point checksum the script computes, and a chunk that does not match is moved again. A save that cannot
+  be verified leaves the previous file in place, and a load that cannot be verified starts the phase fresh.
+  The save runs beside the rest of the run, and the run waits for it before it returns.
+
+A single-agent save of the 117 KB state measured on 0081 hit the output limit twice per attempt, held the run
+for eleven to sixteen minutes, and then wrote 2 of 72 records unchecked. A state saved before record files
+existed is converted with `node .claude/tools/cp-state.mjs migrate-records <state> <records dir>`.
+
 **Where it fires.** Every review loop is followed by a firing, subject to the skip above: the spec loop, the
 non-spec loop, and every recheck of either lane. The firing after the spec loop sits before the non-spec loop starts and runs on the paths where the
 spec loop never ran and on the paths where the non-spec loop does not run, so a run that stops early is

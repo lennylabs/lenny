@@ -126,7 +126,7 @@
     "label": "f2:apply:0",
     "phase": "Apply",
     "model": "opus",
-    "schema": "note+outcome+where+wrote",
+    "schema": "note+outcome+recordWritten+where",
     "blocks": [
       "file-ownership",
       "log-shard",
@@ -147,7 +147,7 @@
     "label": "f2:apply:1",
     "phase": "Apply",
     "model": "opus",
-    "schema": "note+outcome+where+wrote",
+    "schema": "note+outcome+recordWritten+where",
     "blocks": [
       "file-ownership",
       "log-shard",
@@ -168,7 +168,7 @@
     "label": "f2:apply:2",
     "phase": "Apply",
     "model": "opus",
-    "schema": "note+outcome+where+wrote",
+    "schema": "note+outcome+recordWritten+where",
     "blocks": [
       "file-ownership",
       "log-shard",
@@ -189,7 +189,7 @@
     "label": "f2:apply:3",
     "phase": "Apply",
     "model": "opus",
-    "schema": "note+outcome+where+wrote",
+    "schema": "note+outcome+recordWritten+where",
     "blocks": [
       "file-ownership",
       "log-shard",
@@ -210,7 +210,7 @@
     "label": "f2:apply:4",
     "phase": "Apply",
     "model": "opus",
-    "schema": "note+outcome+where+wrote",
+    "schema": "note+outcome+recordWritten+where",
     "blocks": [
       "file-ownership",
       "log-shard",

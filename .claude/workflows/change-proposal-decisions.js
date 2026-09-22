@@ -633,6 +633,34 @@ function records() {
   return phaseState.itemRecords;
 }
 
+// A RECORD'S TEXT LIVES ON DISK, WRITTEN BY THE AGENT THAT PRODUCED IT. The
+// phase state crosses the workflow sandbox only through agents, and an agent
+// moves text only by generating it, so every byte the state carries is paid for
+// again at every save and every resume. Most of it was text this script never
+// branches on: what an Apply wrote and where, copied again into a contested
+// record, and an impact row's full text kept for one equality check. Measured on
+// one proposal, that text was about 70% of a 117 KB state. The Apply agent now
+// writes what it wrote to the item's record file in the same turn it makes the
+// edit, and every later reader (the reversal check, the verify pass, the
+// operator) opens the file. The state keeps whether the file exists, a short
+// question to name the item by, and a digest of an impact row. The file is
+// named by a digest of the item's identifier, because identifiers are marker
+// lines that are not file names; .claude/tools/cp-state.mjs computes
+// the same name.
+const RECORDS_DIR = repo + "/scratchpad/cp-state/" + runTag + "/records";
+// FNV-1a over code points, twice with different offsets, as 16 hex digits.
+function textDigest(text) {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ 0x5bd1e995;
+  for (const ch of String(text)) {
+    const c = ch.codePointAt(0);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x01000193) >>> 0;
+  }
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
+const recordPath = (id) => RECORDS_DIR + "/" + textDigest(id) + ".md";
+
 // Whether the text an earlier firing wrote is still in the tree. It is a
 // mechanical read, like the commit and the delta above, rather than a judgment:
 // the question is whether a string is present, and an agent asked to judge
@@ -672,7 +700,7 @@ const REVERSAL_CHECK = {
 // review loop deleted outright is the reversal that leaves nothing to collect.
 async function checkReversals() {
   const pending = Object.values(records()).filter(
-    (r) => r.applyStatus === "applied" && r.wrote && !r.contested,
+    (r) => r.applyStatus === "applied" && r.hasRecord && !r.contested,
   );
   if (pending.length === 0) return [];
   const contestedNow = [];
@@ -681,7 +709,9 @@ async function checkReversals() {
     "Report whether each recorded piece of text is still in the proposal. Do not edit anything and do " +
       "not judge whether it should be there.\n\n" +
       "The proposal is at " + P.root + " in " + repo + ".\n\n" +
-      "For each item below, search that directory for the recorded text. Match on the text itself " +
+      "Each item below names a record file. Its WHERE lines say where the text was written and the text " +
+      "under WROTE is what was written. A record file that is missing or unreadable is undecidable.\n\n" +
+      "For each item, search the proposal directory for the recorded text. Match on the text itself " +
       "rather than on the location: a passage moved to another section of the same file is PRESENT. " +
       "Search for a distinctive sentence from it when the whole passage is long, and read the file the " +
       "location names first.\n\n" +
@@ -690,7 +720,7 @@ async function checkReversals() {
       "nowCarries, verbatim and short. Undecidable is an honest answer and is treated as such; do not " +
       "report absent because you did not find it quickly.\n\n" +
       JSON.stringify(
-        pending.map((r) => ({ id: r.id, where: r.where, text: String(r.wrote).slice(0, 1200) })),
+        pending.map((r) => ({ id: r.id, record: recordPath(r.id) })),
         null,
         1,
       ),
@@ -716,11 +746,11 @@ async function checkReversals() {
     // Only "absent" contests a record. A missing row and an undecidable read
     // are the same answer as the dead agent above.
     if (!v || v.state !== "absent") continue;
+    // What was written and where stays in the record file; the contest adds
+    // only what the location carries now.
     rec.contested = {
       appliedAtFiring: rec.firing,
       contestedAtFiring: firing,
-      wrote: rec.wrote,
-      where: rec.where,
       nowCarries: String(v.nowCarries || "").slice(0, 400),
     };
     rec.disposition = "human";
@@ -841,7 +871,7 @@ function matchToRecords(list) {
     // like anything else. One that came back different is a new claim about
     // another proposal, so it goes through the gate and the write path afresh
     // rather than leaving the earlier firing's row standing.
-    if (item.disposition === "impact-row" && rowText(item) !== (rec.rowText || "")) {
+    if (item.disposition === "impact-row" && textDigest(rowText(item)) !== (rec.rowTextDigest || "")) {
       fresh.push(item);
       continue;
     }
@@ -857,7 +887,7 @@ function matchToRecords(list) {
       status: rec.applyStatus,
       reason: "carried forward from firing " + rec.firing,
       carriedFrom: rec.firing,
-      claim: { wrote: rec.wrote, where: rec.where },
+      claim: { where: [], recordWritten: !!rec.hasRecord },
     };
     carried.push(item);
   }
@@ -886,7 +916,9 @@ function recordItems() {
     all[item.id] = {
       id: item.id,
       subTask: item.subTask,
-      question: String(item.question || "").slice(0, 300),
+      // Enough to name the item in a report; the collector returns the whole
+      // question with the item at every firing that sees it.
+      question: String(item.question || "").slice(0, 120),
       disposition: item.disposition,
       gate: item.gate || "none",
       // Slim on purpose: the record travels through every later firing, and the
@@ -899,14 +931,12 @@ function recordItems() {
         : null,
       firing: item.carried ? item.carried.fromFiring : firing,
       applyStatus: a.status || "not-attempted",
-      // For an applied item, what was written and where. It is what the
-      // reversal check above greps the tree for, and it is the only reason the
-      // record holds text at all.
-      wrote: String(claim.wrote || "").slice(0, 1200),
-      where: Array.isArray(claim.where) ? claim.where : [],
-      // Only an impact row needs its text on the record: it is what tells the
-      // next firing whether the sweep re-derived the same row or a new one.
-      rowText: item.disposition === "impact-row" ? rowText(item) : "",
+      // For an applied item, whether its record file holds what was written
+      // and where. The file is what the reversal check greps the tree for.
+      hasRecord: a.status === "applied" && !!claim.recordWritten,
+      // An impact row is compared by digest: what tells the next firing whether
+      // the sweep re-derived the same row or a new one is equality, not text.
+      rowTextDigest: item.disposition === "impact-row" ? textDigest(rowText(item)) : "",
       contested: null,
       unmatchedAt: (prior && prior.unmatchedAt) || [],
       lastSeen: firing,
@@ -937,8 +967,8 @@ function recordItems() {
   return unmatched;
 }
 
-// Every contested record, with BOTH positions on it: the text this phase wrote
-// and where, and what that location carries now. `seenThisFiring` says whether a
+// Every contested record, with BOTH positions on it: the record file holding the
+// text this phase wrote and where, and what that location carries now. `seenThisFiring` says whether a
 // collector saw the item again, which is how an operator tells a reversal that
 // rewrote the entry from one that deleted it.
 function contestedReport() {
@@ -949,8 +979,7 @@ function contestedReport() {
       question: r.question,
       appliedAtFiring: r.contested.appliedAtFiring,
       contestedAtFiring: r.contested.contestedAtFiring,
-      wrote: String(r.contested.wrote || "").slice(0, 400),
-      where: r.contested.where || [],
+      record: r.hasRecord ? recordPath(r.id) : "",
       nowCarries: r.contested.nowCarries || "",
       seenThisFiring: r.lastSeen === firing,
     }));
@@ -2416,7 +2445,7 @@ const PHASE_EDITABLE = () =>
 // are required rather than optional.
 const APPLY_RESULT = {
   type: "object",
-  required: ["outcome", "wrote", "where"],
+  required: ["outcome", "where", "recordWritten"],
   properties: {
     outcome: {
       type: "string",
@@ -2424,10 +2453,10 @@ const APPLY_RESULT = {
       description:
         '"edited" when you wrote the resolution into the proposal, "already-correct" when the proposal already carries it exactly as this item states it, "blocked" when writing it needs a file this phase may not edit',
     },
-    wrote: {
-      type: "string",
+    recordWritten: {
+      type: "boolean",
       description:
-        "the text you wrote, verbatim, so a later firing can tell whether it is still there. Empty when you edited nothing.",
+        "true when you edited and wrote the record file this prompt names; false when you edited nothing",
     },
     where: {
       type: "array",
@@ -2631,6 +2660,16 @@ function applyPrompt(item, spec, earlier) {
     "GIT IS THE EVIDENCE. What this firing changed is read from the diff under the proposal directory " +
     "rather than from this report, and an `edited` outcome whose diff is empty fails this item. Report " +
     "what you actually wrote.\n\n" +
+    "WRITE THE ITEM'S RECORD FILE when you edited, at the path named at the end of this prompt, creating " +
+    "its directory and replacing any file already there. A later firing reads it to tell whether the " +
+    "review loop has since reversed your edit, by searching the proposal for the text under WROTE, so " +
+    "that text must be exactly what now stands in the proposal. It holds exactly:\n" +
+    "  ID: <the item's identifier>\n" +
+    "  WHERE:\n" +
+    "  - <one line per edit, `file — the section or anchor you wrote it at`, as in your `where`>\n" +
+    "  WROTE:\n" +
+    "  <the text you wrote, verbatim; for several edits, each passage after the WHERE line it belongs to>\n" +
+    "Set `recordWritten` true once the file is written. When you edited nothing, write no file.\n\n" +
     "Follow " + repo + "/.claude/rules/doc-style.md.\n\n" +
     FIRING_LINE + " The item's " +
     "disposition is `" + item.disposition + "` and it has been through the phase's gate.\n\n" +
@@ -2639,7 +2678,8 @@ function applyPrompt(item, spec, earlier) {
     (spec.designBlock ? spec.designBlock(item) : "") + "\n\n" +
     "THE ITEM, with every reading behind it:\n" + itemBlock(item) +
     gateBlock(item) +
-    earlierAppliesBlock(earlier)
+    earlierAppliesBlock(earlier) +
+    "\n\nTHIS ITEM'S RECORD FILE: " + recordPath(item.id)
   );
 }
 
@@ -2784,7 +2824,6 @@ async function applyAll(list) {
         question: item.question,
         status: "recorded",
         reason: res.note || "the edit this resolution needs is out of bounds for this phase",
-        wrote: res.wrote || "",
       };
       item.apply = rec;
       recordedForOperator.push(rec);
@@ -2823,8 +2862,8 @@ async function applyAll(list) {
           (res.where || []).join("; ").slice(0, 160) + ")",
       );
       earlier.push(
-        item.id + " (" + item.disposition + "): wrote at " + (res.where || []).join("; ") + " — " +
-          String(res.wrote || "").slice(0, 400),
+        item.id + " (" + item.disposition + "): wrote at " + (res.where || []).join("; ") +
+          (res.recordWritten ? "; the text is in " + recordPath(item.id) : ""),
       );
       continue;
     }
@@ -3197,7 +3236,8 @@ function buildDecisionPayloads() {
         ...base,
         kind: resolved ? "resolved" : "withdrawn",
         where: (item.apply && item.apply.claim && item.apply.claim.where) || [],
-        wrote: String((item.apply && item.apply.claim && item.apply.claim.wrote) || "").slice(0, 400),
+        // What was written is in the record file rather than repeated here.
+        record: item.apply && item.apply.claim && item.apply.claim.recordWritten ? recordPath(item.id) : "",
       });
       continue;
     }
@@ -3246,7 +3286,7 @@ function buildDecisionPayloads() {
       id: rec.id,
       question: rec.question,
       disposition: "human",
-      citation: rec.where || [],
+      citation: rec.hasRecord ? [recordPath(rec.id)] : [],
       authority: "",
       gate: "contested",
       reason:
@@ -3367,7 +3407,8 @@ function verifyPrompt(cleanup) {
     "empty, and an empty `defects` list you did not earn is worse than a long one.\n\n" +
     FIRING_LINE + "\n\n" +
     "WHAT THE PHASE SAYS IT DID. Check the files against it rather than trusting it, and a claim the " +
-    "files do not carry is itself a defect:\n" + claimsBlock(cleanup)
+    "files do not carry is itself a defect. A `record` names a file holding the text an Apply wrote " +
+    "and where; open it when a claim needs the text:\n" + claimsBlock(cleanup)
   );
 }
 

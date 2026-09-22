@@ -5883,4 +5883,163 @@ t.section("N16. each prompt family has a byte-stable head, and its per-call text
     matching(small.calls, "r2:review:").every((c) => /Already found and fixed in earlier rounds[^\n]*T1; T2\./.test(c.prompt) && !/history\.md/.test(c.prompt)));
 }
 
+
+t.section("B36. the open-decisions state crosses the sandbox in verified chunks");
+{
+  // The code-point length and checksum the workflow and cp-state.mjs compute.
+  const sig = (str) => {
+    let len = 0;
+    let sum = 0;
+    for (const ch of str) {
+      len++;
+      sum = (sum + ch.codePointAt(0)) % 4294967296;
+    }
+    return { len, sum };
+  };
+  const partBody = (c) => (c.prompt.match(/<<'CP_PART_EOF'\n([\s\S]*)\nCP_PART_EOF\n/) || [])[1];
+  const partName = (c) => (c.prompt.match(/\/(part-\d+) <<'CP_PART_EOF'/) || [])[1];
+  // A state well past one chunk, with non-ASCII text, and a corpus that is not persisted.
+  const records = {};
+  for (let i = 0; i < 60; i++) records["id:" + i] = { id: "id:" + i, question: "§" + "q".repeat(900) + i, disposition: "human" };
+  const STATE = { firings: 3, itemRecords: records, corpus: [{ proposal: "0001.md", status: "Draft" }], lastBaseline: "abc1234" };
+  const persisted = JSON.stringify({ firings: 3, itemRecords: records, lastBaseline: "abc1234" });
+  // A check stub that reports what the part writers actually wrote, optionally corrupting one.
+  const checkFrom = (calls, corrupt = () => false) => (call) =>
+    [...call.prompt.matchAll(/\/(part-\d+)/g)].map((m) => {
+      const last = calls.filter((c) => /^save-state:decisions:\d+/.test(c.label) && partName(c) === m[1]).pop();
+      const g = sig(partBody(last) || "");
+      return m[1] + " " + g.len + " " + (corrupt(m[1], call) ? g.sum + 1 : g.sum);
+    }).join("\n");
+  // runWorkflow returns the calls only at the end, so the check stub reads the
+  // part writers as they happen.
+  const driveLive = async (corrupt, joinStub = "OK 1 1") => {
+    const seen = [];
+    const stubs = loopStubs({
+      "save-state:decisions:check*": (call) => checkFrom(seen, corrupt)(call),
+      "save-state:decisions:join": joinStub,
+      "save-state:decisions:*": (call) => { seen.push(call); return "DONE"; },
+    });
+    return runWorkflow(WF, REVIEW_ARGS, stubs, withChild({ ...CHILD_RETURN, phaseState: STATE }));
+  };
+
+  const ok = await driveLive(() => false);
+  const writers = ok.calls.filter((c) => /^save-state:decisions:\d+$/.test(c.label));
+  const perSave = Math.ceil(Array.from(persisted).length / 20000);
+  t.check("the state is written in 20k-code-point chunks, one small agent each",
+    writers.length > 0 && writers.length % perSave === 0 && writers.every((c) => Array.from(partBody(c) || "").length <= 20000),
+    writers.length + " writer(s), " + perSave + " per save");
+  const firstSave = writers.slice(0, perSave).sort((a, b) => partName(a).localeCompare(partName(b)));
+  t.check("the chunks join back to the state exactly", firstSave.map(partBody).join("") === persisted);
+  t.check("the corpus inventory is not persisted", !/0001\.md/.test(firstSave.map(partBody).join("")));
+  const joins = matching(ok.calls, "save-state:decisions:join");
+  const want = sig(persisted);
+  t.check("the join is told the length and checksum to verify", joins.length > 0 && joins[0].prompt.includes(" " + want.len + " " + want.sum + " "));
+  t.check("and the save says it was verified", ok.logs.some((l) => /Saved the open-decisions phase state in \d+ verified chunk/.test(l)));
+  t.check("every save finished before the run returned", ok.result && joins.length === Math.round(writers.length / perSave));
+
+  let once = true;
+  const bad = await driveLive((name) => {
+    if (name === "part-01" && once) { once = false; return true; }
+    return false;
+  });
+  const retried = bad.calls.filter((c) => /:retry2$/.test(c.label) && /^save-state:decisions:\d/.test(c.label));
+  t.check("a chunk that fails its check is written again, and only that chunk",
+    retried.length === 1 && partName(retried[0]) === "part-01", retried.map((c) => c.label).join(","));
+
+  const never = await driveLive(() => true);
+  t.check("a save that never verifies runs no join", matching(never.calls, "save-state:decisions:join").length === 0);
+  t.check("and says the previous file stands", never.logs.some((l) => /NOT saved: \d+ of \d+ chunk\(s\) failed verification/.test(l)));
+
+  const refused = await driveLive(() => false, "ERR mismatch 1 2");
+  t.check("a join the tool refuses is reported as not saved", refused.logs.some((l) => /NOT saved: the join reported/.test(l)));
+
+  // Load: the meta line, then one verified slice per chunk.
+  const onDisk = persisted;
+  const chunks = [];
+  const cps = Array.from(onDisk);
+  for (let i = 0; i < cps.length; i += 20000) chunks.push(cps.slice(i, i + 20000).join(""));
+  const meta = JSON.stringify({ ...sig(onDisk), chunks: chunks.map(sig) });
+  const loadRun = async (slice) =>
+    runWorkflow(WF, { ...REVIEW_ARGS, resumeState: true }, loopStubs({
+      "resume-state:spec": "{}",
+      "resume-state:non-spec": "{}",
+      "resume-state:decisions:meta": meta,
+      "resume-state:decisions:*": slice,
+      "save-state:decisions:*": "DONE",
+    }), withChild());
+  const idx = (c) => Number((c.prompt.match(/ slice \S+ (\d+) /) || [])[1]);
+  const good = await loadRun((c) => "CP_SLICE_BEGIN" + chunks[idx(c)] + "CP_SLICE_END\n");
+  const fired = firedWith(good.calls);
+  t.check("a resumed run reads the state back in verified slices",
+    fired.length > 0 && JSON.stringify(fired[0].phaseState) === onDisk, fired.length ? JSON.stringify(fired[0].phaseState).slice(0, 80) : "no firing");
+  t.check("and logs how it read it", good.logs.some((l) => /60 item record\(s\), 3 firing\(s\) so far, last baseline abc1234, read in \d+ verified chunk/.test(l)));
+
+  const tries = {};
+  const flaky = await loadRun((c) => {
+    const i = idx(c);
+    tries[i] = (tries[i] || 0) + 1;
+    const body = i === 1 && tries[i] === 1 ? chunks[i].slice(0, 100) : chunks[i];
+    return "CP_SLICE_BEGIN" + body + "CP_SLICE_END\n";
+  });
+  t.check("a slice that comes back altered is read again", JSON.stringify(firedWith(flaky.calls)[0].phaseState) === onDisk && tries[1] === 2);
+
+  const broken = await loadRun((c) => "CP_SLICE_BEGIN" + (idx(c) === 0 ? "{}" : chunks[idx(c)]) + "CP_SLICE_END\n");
+  t.check("a state that never reads back intact is not used",
+    Object.keys(firedWith(broken.calls)[0].phaseState || {}).length === 0 &&
+      broken.logs.some((l) => /could not be read back intact \(1 of \d+ chunk\(s\) failed verification\)/.test(l)));
+}
+
+
+t.section("B37. a relaunch reads the decisions state from a launch copy, with no agent");
+{
+  const { launchCopy, migrateRecords, textDigest, recordName, EMBED_SENTINEL } = await import("../tools/cp-state.mjs");
+  const { REPO } = await import("./harness.mjs");
+  const { mkdtempSync, writeFileSync, readFileSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const src = readFileSync(join(REPO, WF), "utf8");
+  t.check("the workflow carries the embedding line exactly once", src.split(EMBED_SENTINEL).length === 2);
+  let threw = false;
+  try { launchCopy("const x = 1;", {}); } catch (e) { threw = true; }
+  t.check("a copy of a script with no embedding line is refused", threw);
+
+  const STATE = { firings: 4, itemRecords: { "id:OD-1": { id: "id:OD-1", disposition: "human", gate: "stands", hasRecord: false } }, lastBaseline: "abc1234" };
+  const dir = mkdtempSync(join(tmpdir(), "cp-launch-"));
+  const copy = join(dir, "change-proposal.js");
+  writeFileSync(copy, launchCopy(src, STATE));
+  const resumed = await runWorkflow(copy, { ...REVIEW_ARGS, resumeState: true }, loopStubs({
+    "resume-state:spec": "{}",
+    "resume-state:non-spec": "{}",
+  }), withChild());
+  const fired = firedWith(resumed.calls);
+  t.check("the first firing receives the embedded state", fired.length > 0 && JSON.stringify(fired[0].phaseState) === JSON.stringify(STATE),
+    fired.length ? JSON.stringify(fired[0].phaseState).slice(0, 80) : "no firing");
+  t.check("and no agent reads it", never(resumed.calls, "resume-state:decisions"));
+  t.check("which the log says", resumed.logs.some((l) => /Resuming the open-decisions phase state from the launch copy: 1 item record\(s\), 4 firing\(s\) so far, last baseline abc1234/.test(l)));
+  const fresh = await runWorkflow(copy, REVIEW_ARGS, loopStubs(), withChild());
+  t.check("without resumeState the embedded state is ignored",
+    Object.keys(firedWith(fresh.calls)[0].phaseState || {}).length === 0 && fresh.logs.some((l) => /embeds a decisions state, and resumeState is not set/.test(l)));
+
+  // A state written before record files existed.
+  const legacy = {
+    firings: 2,
+    corpus: [{ proposal: "0001.md" }],
+    itemRecords: {
+      "id:OD-1": { id: "id:OD-1", question: "q".repeat(300), applyStatus: "applied", wrote: "The adapter waits thirty seconds.", where: ["spec-changes.md — SPEC-1"], rowText: "", contested: null },
+      "marker:0080:row": { id: "marker:0080:row", applyStatus: "applied", wrote: "Row text.", where: ["summary.md — impacts"], rowText: "0080 — nothing", contested: { appliedAtFiring: 1, contestedAtFiring: 2, wrote: "Row text.", where: ["summary.md — impacts"], nowCarries: "x" } },
+      "id:OD-2": { id: "id:OD-2", applyStatus: "not-attempted", wrote: "", where: [], rowText: "" },
+    },
+  };
+  const recDir = join(dir, "records");
+  const moved = migrateRecords(legacy, recDir);
+  const r1 = legacy.itemRecords["id:OD-1"];
+  const r2 = legacy.itemRecords["marker:0080:row"];
+  t.check("migration moves each applied record's text to its file", moved === 2 &&
+    readFileSync(join(recDir, recordName("id:OD-1")), "utf8") === "ID: id:OD-1\nWHERE:\n- spec-changes.md — SPEC-1\nWROTE:\nThe adapter waits thirty seconds.\n");
+  t.check("and leaves no text on the state", !("wrote" in r1) && !("where" in r1) && !("rowText" in r2) && !("wrote" in r2.contested) && !("where" in r2.contested));
+  t.check("keeping whether a file exists", r1.hasRecord === true && legacy.itemRecords["id:OD-2"].hasRecord === false && !existsSync(join(recDir, recordName("id:OD-2"))));
+  t.check("an impact row's digest, and a short question", r2.rowTextDigest === textDigest("0080 — nothing") && r1.question.length === 120);
+  t.check("and dropping the corpus inventory", !("corpus" in legacy));
+}
+
 t.done();

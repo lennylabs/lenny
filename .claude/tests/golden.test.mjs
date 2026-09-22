@@ -134,8 +134,7 @@ const CASES = [
           "id:OD-9": {
             id: "id:OD-9", subTask: "human-decisions", question: "an earlier firing's question",
             disposition: "resolve", gate: "stands", falsification: null, firing: 1,
-            applyStatus: "applied", wrote: "the answer firing 1 staged",
-            where: ["summary.md — ## Summary"], contested: null, unmatchedAt: [], lastSeen: 1,
+            applyStatus: "applied", hasRecord: true, contested: null, unmatchedAt: [], lastSeen: 1,
           },
         },
       },
@@ -184,7 +183,7 @@ const CASES = [
           home: "other-proposal", deliverable: "0074", marker: "proposals/0074_x", decision: "does this staging invalidate 0074?", disposition: "impact-row",
         })),
         "*:falsify:*": stands,
-        "*:apply:*": { outcome: "edited", wrote: "the text this item staged", where: ["summary.md — ## Open decisions for human to make"] },
+        "*:apply:*": { outcome: "edited", recordWritten: true, where: ["summary.md — ## Open decisions for human to make"] },
         "*:cleanup": { outcome: "rewritten", sections: [], relocated: [] },
         "*:verify": { conforms: true, sections: [], defects: [] },
         default: {},

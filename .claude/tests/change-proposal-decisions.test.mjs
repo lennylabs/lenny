@@ -12,6 +12,7 @@
 // item's falsifier differently from another's.
 
 import { loadWorkflow, runWorkflow, suite, matching, never, firstIndex } from "./harness.mjs";
+import { recordName } from "../tools/cp-state.mjs";
 
 const WF = ".claude/workflows/change-proposal-decisions.js";
 const t = suite("change-proposal-decisions");
@@ -89,7 +90,7 @@ const base = () => ({
   "*:out-of-scope-defects": EMPTY,
   "*:other-proposals": EMPTY,
   "*:falsify:*": STANDS,
-  "*:apply:*": { outcome: "edited", wrote: "the text this item staged", where: [P.summary + " — the section"] },
+  "*:apply:*": { outcome: "edited", recordWritten: true, where: [P.summary + " — the section"] },
   "*:cleanup": { outcome: "rewritten", sections: [], relocated: [] },
   "*:verify": { conforms: true, sections: [], defects: [] },
 });
@@ -426,7 +427,7 @@ t.section("D2c. the brief's rules on confidence, staging, and decision reference
   // The staged files state what is built, never the question behind it.
   const { calls } = await fire({}, {
     "f1:human-decisions:*": found(entry({ id: "OD-1", disposition: "resolve", answer: "equality", summaryAction: "withdrawn", ...SURE })),
-    "f1:apply:0": { outcome: "edited", wrote: "The gate compares for equality.", where: [P.spec + " — SPEC-1"] },
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — SPEC-1"] },
   });
   const ap = promptOf(calls, "f1:apply:0");
   t.check("the Apply brief bars referencing an open decision", /NEVER REFERENCE AN OPEN DECISION IN A STAGED CHANGE FILE/.test(ap));
@@ -758,7 +759,7 @@ t.section("D4. the gate: one falsifier per item, asymmetric defaults, a script-s
     "f1:falsify:0": REFUTES,
     "f1:apply:*": {
       outcome: "edited",
-      wrote: "I also resolved OD-1 while I was in the file",
+      recordWritten: true,
       where: [P.summary + " — the section"],
       note: "the survivors are OD-1, OD-2 and both markers",
     },
@@ -832,7 +833,7 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
     "f1:human-decisions:*": found(H),
     "f1:falsify:0": REFUTE("resolve"),
     "f1:answer-design:0": design,
-    "f1:apply:0": { outcome: "edited", wrote: "The gate compares for equality.", where: ["spec-changes.md — SPEC-1"] },
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: ["spec-changes.md — SPEC-1"] },
   });
   t.check("a refuted human the evidence calls answerable reaches the designer",
     matching(toRes.calls, "f1:answer-design:").length === 1,
@@ -882,8 +883,8 @@ t.section("D5. the write path: sequential, each after the first told what the ea
 
   const run = await fire({}, {
     ...population,
-    "f1:apply:0": { outcome: "edited", wrote: "Thirty seconds, from the chart default.", where: [P.spec + " — SPEC-1"] },
-    "f1:apply:1": { outcome: "edited", wrote: "The CLI question, stated for the human.", where: [P.summary + " — open decisions"] },
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — SPEC-1"] },
+    "f1:apply:1": { outcome: "edited", recordWritten: true, where: [P.summary + " — open decisions"] },
   });
   const order = run.calls.map((c) => c.label).filter((l) => /^f1:(apply|delta:apply):/.test(l));
   t.check(
@@ -895,7 +896,7 @@ t.section("D5. the write path: sequential, each after the first told what the ea
   const second = promptOf(run.calls, "f1:apply:1");
   t.check("the first Apply is told of no earlier one", !first.includes("WHAT THE EARLIER APPLIES IN THIS FIRING ALREADY DID"));
   t.check("the second is", second.includes("WHAT THE EARLIER APPLIES IN THIS FIRING ALREADY DID"));
-  t.check("and is told what the first wrote", second.includes("Thirty seconds, from the chart default."), "the earlier Apply's own text");
+  t.check("and is pointed at the file holding what the first wrote", /the text is in \S+\/scratchpad\/cp-state\/\S+\/records\/[0-9a-f]{16}\.md/.test(second), "no record path");
   t.check("and where it wrote it", second.includes(P.spec + " — SPEC-1"));
   t.check("each holds one item", first.includes("YOU HOLD ONE ITEM"));
   t.check("and both are applied", (run.result.applied || []).length === 2, ids(run.result.applied));
@@ -990,12 +991,16 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
   const RESOLVED = entry({ ...OD, disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const first = await fire({ firing: 1 }, {
     "f1:human-decisions:*": found(RESOLVED),
-    "f1:apply:0": { outcome: "edited", wrote: "The adapter waits thirty seconds.", where: [P.spec + " — SPEC-1"] },
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — SPEC-1"] },
   });
   const rec = first.result.phaseState.itemRecords["id:OD-1"];
   t.check("firing 1 records what it applied", rec && rec.applyStatus === "applied", rec && rec.applyStatus);
-  t.check("with the text it wrote", rec && rec.wrote === "The adapter waits thirty seconds.", rec && rec.wrote);
-  t.check("and where", rec && (rec.where || []).join(",") === P.spec + " — SPEC-1", rec && (rec.where || []).join(","));
+  t.check("with its record file marked written", rec && rec.hasRecord === true, JSON.stringify(rec));
+  t.check("and no text of its own on the state", rec && !("wrote" in rec) && !("where" in rec) && !("rowText" in rec), JSON.stringify(rec));
+  t.check("the question it keeps is short", rec && rec.question.length <= 120);
+  const applyPromptText = promptOf(first.calls, "f1:apply:0");
+  t.check("the Apply is told to write the record file", /WRITE THE ITEM'S RECORD FILE/.test(applyPromptText));
+  t.check("at the path cp-state.mjs names for the item", applyPromptText.endsWith("/records/" + recordName("id:OD-1")), applyPromptText.slice(-120));
 
   const carriedState = () => JSON.parse(JSON.stringify(first.result.phaseState));
 
@@ -1023,6 +1028,23 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
     "f2:reversal-check": { items: [{ id: "id:OD-1", state: "absent", nowCarries: "the question, open again" }] },
     "f2:human-decisions:*": found(RESOLVED),
   });
+  const rcPrompt = promptOf(reverted.calls, "f2:reversal-check");
+  t.check("the reversal check is handed the record file, not the text",
+    rcPrompt.includes("/records/" + recordName("id:OD-1")) && !/"text":/.test(rcPrompt), rcPrompt.slice(-200));
+  const cRec = reverted.result.phaseState.itemRecords["id:OD-1"];
+  t.check("the contest adds only what the location carries now",
+    cRec && cRec.contested && !("wrote" in cRec.contested) && !("where" in cRec.contested) && /open again/.test(cRec.contested.nowCarries),
+    JSON.stringify(cRec && cRec.contested));
+  // An Apply that edited without writing its record file leaves nothing to check.
+  const noFile = await fire({ firing: 1 }, {
+    "f1:human-decisions:*": found(RESOLVED),
+    "f1:apply:0": { outcome: "edited", recordWritten: false, where: [P.spec + " — SPEC-1"] },
+  });
+  const nfState = JSON.parse(JSON.stringify(noFile.result.phaseState));
+  t.check("an Apply that wrote no record file is recorded as having none",
+    nfState.itemRecords["id:OD-1"] && nfState.itemRecords["id:OD-1"].hasRecord === false);
+  const nfNext = await runWorkflow(WF, ARGS({ firing: 2, phaseState: nfState }), { ...base(), "f2:human-decisions:*": found(RESOLVED) });
+  t.check("and no reversal check runs for it", never(nfNext.calls, "f2:reversal-check"));
   const rv = itemById(reverted.result, "id:OD-1");
   t.check("an applied item the loop reverted is CONTESTED", rv && rv.gate === "contested", rv && rv.gate);
   t.check("routed to the human", rv && rv.disposition === "human", rv && rv.disposition);
@@ -1031,7 +1053,8 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
   t.check(
     "with both positions recorded",
     (reverted.result.contested || []).some(
-      (c) => c.id === "id:OD-1" && c.appliedAtFiring === 1 && c.contestedAtFiring === 2 && /open again/.test(c.nowCarries),
+      (c) => c.id === "id:OD-1" && c.appliedAtFiring === 1 && c.contestedAtFiring === 2 && /open again/.test(c.nowCarries) &&
+        c.record.endsWith("/records/" + recordName("id:OD-1")),
     ),
     JSON.stringify(reverted.result.contested),
   );
@@ -1105,7 +1128,7 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
   const REWORDED = { ...DRAIN, marker: "out of scope for now: the drain race" };
   const markerFirst = await fire({ firing: 1 }, {
     "f1:out-of-scope-defects": found(DRAIN),
-    "f1:apply:0": { outcome: "edited", wrote: "The drain order is specified.", where: [P.spec + " — CODE-4"] },
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — CODE-4"] },
   });
   t.check(
     "an unstamped item is keyed on its deliverable and marker",
@@ -1157,7 +1180,7 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
     ...base(),
     "f2:reversal-check": { items: [{ id: "id:OD-1", state: "present", nowCarries: "" }] },
     "f2:human-decisions:*": found(RESOLVED),
-    "f2:apply:0": { outcome: "edited", wrote: "The adapter waits thirty seconds.", where: [P.spec + " — SPEC-1"] },
+    "f2:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — SPEC-1"] },
   });
   const rt = itemById(retried.result, "id:OD-1");
   t.check("the next firing gates it rather than carrying the non-verdict", matching(retried.calls, "f2:falsify:").length === 1, String(matching(retried.calls, "f2:falsify:").length));
@@ -1382,7 +1405,7 @@ t.section("D11. what leaves the summary, and what a withdrawal must name");
   const A = entry({ id: "OD-1", decision: "which timeout?", disposition: "resolve", answer: "thirty seconds", summaryAction: "withdrawn", ...SURE });
   const run = await fire({}, {
     "f1:human-decisions:*": found(A),
-    "f1:apply:0": { outcome: "edited", wrote: "The adapter waits thirty seconds.", where: [P.spec + " — SPEC-1"] },
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — SPEC-1"] },
   });
   const r = run.result;
   const closed = (r.decisionsResolved || []).find((d) => d.id === "id:OD-1");
@@ -1483,7 +1506,7 @@ t.section("D12. lockSpecChanges: a resolution needing the spec staging is record
     "f1:human-decisions:*": found(A),
     "f1:apply:0": {
       outcome: "blocked",
-      wrote: "",
+      recordWritten: false,
       where: [],
       note: "the answer belongs in the staged spec edits, which are locked for this run",
     },
@@ -1632,7 +1655,7 @@ t.section("D-rowText. a moved line anchor is not a new claim about another propo
   );
   t.check(
     "and the carry-forward test is the one that uses it",
-    /rowText\(item\)\s*!==\s*\(rec\.rowText/.test(src),
+    /textDigest\(rowText\(item\)\)\s*!==\s*\(rec\.rowTextDigest/.test(src),
     "rowText is no longer the impact-row carry-forward comparison",
   );
 }
@@ -1996,7 +2019,7 @@ t.section("D18. triage: a later firing runs only the collectors the diff could f
   const keptRec = noHuman.result.phaseState.itemRecords["id:OD-1"];
   t.check("the skipped collector's record is kept", !!keptRec && keptRec.disposition === "resolve" && keptRec.applyStatus === "applied", JSON.stringify(keptRec));
   t.check("marked seen at this firing", keptRec && keptRec.lastSeen === 2, String(keptRec && keptRec.lastSeen));
-  t.check("with the text the reversal check reads", keptRec && keptRec.wrote === "the text this item staged", keptRec && keptRec.wrote);
+  t.check("with the record file the reversal check reads", keptRec && keptRec.hasRecord === true, JSON.stringify(keptRec));
   t.check("and is not reported as unmatched", !(noHuman.result.unmatchedRecords || []).some((u) => u.id === "id:OD-1"), ids(noHuman.result.unmatchedRecords));
   t.check("a skip is not an unadjudicated population", (noHuman.result.unadjudicated || []).length === 0, (noHuman.result.unadjudicated || []).join(","));
   t.check("the skip and its reason are logged", noHuman.logs.some((l) => /^Triage: human-decisions skipped, out-of-scope-defects RUNS — only the impacts table moved/.test(l)),
@@ -2175,7 +2198,7 @@ t.section("D-guard. every agent prompt begins with the relay guard");
     "an empty firing": await fire3({}, {}),
     "a firing that applies a resolved decision": await fire({}, {
       "f1:human-decisions:*": found(entry({ id: "OD-1", disposition: "resolve", answer: "equality", summaryAction: "withdrawn", ...SURE })),
-      "f1:apply:0": { outcome: "edited", wrote: "The gate compares for equality.", where: [P.spec + " — SPEC-1"] },
+      "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — SPEC-1"] },
     }),
   };
   const seen = new Set();
@@ -2325,8 +2348,8 @@ t.section("D21. every prompt puts its stable text first, so two calls of one fam
     const LONG = "x".repeat(3000);
     const run = await fire({}, {
       "f1:human-decisions:*": found(A, B),
-      "f1:apply:0": { outcome: "edited", wrote: "Thirty seconds, from the chart default.", where: [P.spec + " — " + LONG] },
-      "f1:apply:1": { outcome: "edited", wrote: "The CLI question, stated for the human.", where: [P.summary + " — open decisions"] },
+      "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — " + LONG] },
+      "f1:apply:1": { outcome: "edited", recordWritten: true, where: [P.summary + " — open decisions"] },
     });
     const a = promptOf(run.calls, "f1:apply:0");
     const b = promptOf(run.calls, "f1:apply:1");

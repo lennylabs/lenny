@@ -4602,22 +4602,99 @@ let decisionsState = {};
 // edited a spec staging its own lane had converged. The state is written to
 // the run tag's state directory after each firing and read back on resume.
 const DECISIONS_STATE_PATH = repo + "/scratchpad/cp-state/" + runTag + "/decisions-state.json";
+// A RELAUNCH READS THE STATE WITH NO AGENT. Reading it back through agents means
+// generating it again, chunk by chunk. The launching session instead runs
+// `node .claude/tools/cp-state.mjs launch-copy <state> <this file> <copy>`,
+// which writes a copy of this script with the saved state in place of the null
+// below, and launches the copy. The chunked read stays as the path for a launch
+// of this file itself. The line is replaced verbatim, so it keeps this exact
+// form.
+const CP_EMBEDDED_DECISIONS_STATE = null;
 let decisionsStateLoaded = false;
+// THE STATE MOVES IN VERIFIED CHUNKS. A script cannot touch a file, so the
+// state crosses the sandbox only through an agent, and an agent moves text only
+// by generating it. The state had grown to about 120 KB, about 40k output
+// tokens: the single-agent save hit the output limit twice per attempt, spent
+// eleven and sixteen minutes on the critical path, and then wrote a 2-record
+// summary of a 72-record state that nothing checked. The load had the same
+// ceiling, because its agent had to echo the whole file back. Each transfer is
+// now split into chunks one small agent can carry, and every chunk is checked
+// against a length and a code-point checksum computed here, through
+// .claude/tools/cp-state.mjs. A chunk that does not match is moved again;
+// a save that cannot be verified leaves the previous file in place, and a load
+// that cannot be verified starts the phase fresh rather than from a corrupt one.
+const STATE_CHUNK = 20000;
+const STATE_TOOL = "node " + repo + "/.claude/tools/cp-state.mjs";
+const STATE_PARTS_DIR = repo + "/scratchpad/cp-state/" + runTag + "/decisions-state.parts";
+const STATE_TRIES = 3;
+function stateSig(s) {
+  let len = 0;
+  let sum = 0;
+  for (const ch of s) {
+    len++;
+    sum = (sum + ch.codePointAt(0)) % 4294967296;
+  }
+  return { len, sum };
+}
+function stateChunks(s) {
+  const all = Array.from(s);
+  const out = [];
+  for (let i = 0; i < all.length; i += STATE_CHUNK) out.push(all.slice(i, i + STATE_CHUNK).join(""));
+  return out;
+}
+const runExactly = (cmd) =>
+  "Run exactly this command and reply with its stdout and nothing else:\n\n" + cmd +
+  "\n\nDo nothing else. Do not read, summarise, or edit any file.";
 async function loadDecisionsState() {
   decisionsStateLoaded = true;
-  if (!input.resumeState) return;
-  const raw = await robustAgent(
-    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
-      "cat " + DECISIONS_STATE_PATH + " 2>/dev/null || echo '{}'" +
-      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
-    { label: "resume-state:decisions", model: "haiku", effort: "high", phase: "Decisions" },
+  if (!input.resumeState) {
+    if (CP_EMBEDDED_DECISIONS_STATE) log("This launch copy embeds a decisions state, and resumeState is not set; it is ignored");
+    return;
+  }
+  if (CP_EMBEDDED_DECISIONS_STATE && typeof CP_EMBEDDED_DECISIONS_STATE === "object") {
+    decisionsState = CP_EMBEDDED_DECISIONS_STATE;
+    decisionFirings = Number(decisionsState.firings) || 0;
+    log(
+      "Resuming the open-decisions phase state from the launch copy: " +
+        Object.keys(decisionsState.itemRecords || {}).length + " item record(s), " + decisionFirings +
+        " firing(s) so far" + (decisionsState.lastBaseline ? ", last baseline " + decisionsState.lastBaseline : ""),
+    );
+    return;
+  }
+  const metaRaw = await robustAgent(runExactly(STATE_TOOL + " meta " + DECISIONS_STATE_PATH + " " + STATE_CHUNK), {
+    label: "resume-state:decisions:meta", model: "haiku", effort: "high", phase: "Decisions",
+  });
+  let meta = null;
+  try {
+    const m = String(metaRaw || "").match(/\{[\s\S]*\}/);
+    if (m) meta = JSON.parse(m[0]);
+  } catch (e) {
+    meta = null;
+  }
+  if (!meta || !Array.isArray(meta.chunks) || meta.chunks.length === 0) {
+    log("resumeState was set but no open-decisions phase state was readable; the first firing collects everything");
+    return;
+  }
+  const parts = await parallel(
+    meta.chunks.map((want, i) => async () => {
+      for (let t = 1; t <= STATE_TRIES; t++) {
+        const raw = await robustAgent(runExactly(STATE_TOOL + " slice " + DECISIONS_STATE_PATH + " " + i + " " + STATE_CHUNK), {
+          label: "resume-state:decisions:" + i + (t > 1 ? ":retry" + t : ""), model: "haiku", effort: "high", phase: "Decisions",
+        });
+        const m = String(raw || "").match(/CP_SLICE_BEGIN([\s\S]*)CP_SLICE_END/);
+        const got = m ? stateSig(m[1]) : null;
+        if (got && got.len === want.len && got.sum === want.sum) return m[1];
+      }
+      return null;
+    }),
   );
   let st = null;
-  try {
-    const m = String(raw || "").match(/\{[\s\S]*\}/);
-    if (m) st = JSON.parse(m[0]);
-  } catch (e) {
-    st = null;
+  if (parts.every((p) => typeof p === "string")) {
+    try {
+      st = JSON.parse(parts.join(""));
+    } catch (e) {
+      st = null;
+    }
   }
   if (st && typeof st === "object" && Object.keys(st).length > 0) {
     decisionsState = st;
@@ -4625,22 +4702,78 @@ async function loadDecisionsState() {
     log(
       "Resuming the open-decisions phase state: " +
         Object.keys(st.itemRecords || {}).length + " item record(s), " + decisionFirings +
-        " firing(s) so far" + (st.lastBaseline ? ", last baseline " + st.lastBaseline : ""),
+        " firing(s) so far" + (st.lastBaseline ? ", last baseline " + st.lastBaseline : "") +
+        ", read in " + meta.chunks.length + " verified chunk(s)",
     );
   } else {
-    log("resumeState was set but no open-decisions phase state was recorded; the first firing collects everything");
+    log(
+      "The open-decisions phase state on disk could not be read back intact (" +
+        parts.filter((p) => typeof p !== "string").length + " of " + meta.chunks.length +
+        " chunk(s) failed verification); the first firing collects everything",
+    );
   }
 }
-async function saveDecisionsState() {
-  const json = JSON.stringify(decisionsState);
-  const ok = await robustAgent(
-    "Write a file. Run exactly this, and reply with the single word DONE:\n\n" +
-      "mkdir -p " + repo + "/scratchpad/cp-state/" + runTag + " && cat > " + DECISIONS_STATE_PATH +
-      " <<'CP_STATE_EOF'\n" + json + "\nCP_STATE_EOF\n\n" +
-      "Do nothing else. Do not read, summarise, or edit any other file.",
-    { label: "save-state:decisions", model: "haiku", effort: "high", phase: "Decisions" },
+// The save runs beside the rest of the run rather than in front of it: nothing
+// in this run reads the file, which exists for the next relaunch. A save waits
+// for the one before it, because both write the same parts directory, and the
+// run waits for the last one before it returns.
+let pendingStateSave = null;
+function saveDecisionsState() {
+  const prior = pendingStateSave;
+  // The corpus inventory is left out: a relaunch rebuilds it with one cheap
+  // agent, and it keys nothing a firing compares.
+  const { corpus, ...persisted } = decisionsState;
+  const json = JSON.stringify(persisted);
+  pendingStateSave = (async () => {
+    if (prior) await prior;
+    await writeStateChunks(json);
+  })();
+  return pendingStateSave;
+}
+async function writeStateChunks(json) {
+  const chunks = stateChunks(json);
+  const name = (i) => "part-" + String(i).padStart(2, "0");
+  const path = (i) => STATE_PARTS_DIR + "/" + name(i);
+  const want = chunks.map(stateSig);
+  const writePart = (i, t) =>
+    robustAgent(
+      "Write a file. Run exactly this, and reply with the single word DONE:\n\n" +
+        "mkdir -p " + STATE_PARTS_DIR + " && cat > " + path(i) + " <<'CP_PART_EOF'\n" + chunks[i] + "\nCP_PART_EOF\n\n" +
+        "Copy the text between the two CP_PART_EOF lines exactly. Do nothing else. Do not read, summarise, or " +
+        "edit any other file.",
+      { label: "save-state:decisions:" + i + (t > 1 ? ":retry" + t : ""), model: "haiku", effort: "high", phase: "Decisions" },
+    );
+  let pending = chunks.map((_, i) => i);
+  for (let t = 1; t <= STATE_TRIES && pending.length > 0; t++) {
+    await parallel(pending.map((i) => () => writePart(i, t)));
+    const raw = await robustAgent(runExactly(STATE_TOOL + " sig " + pending.map(path).join(" ")), {
+      label: "save-state:decisions:check" + (t > 1 ? ":" + t : ""), model: "haiku", effort: "high", phase: "Decisions",
+    });
+    const seen = {};
+    for (const line of String(raw || "").split("\n")) {
+      const m = line.trim().match(/^(part-\d+) (\d+) (\d+)$/);
+      if (m) seen[m[1]] = { len: Number(m[2]), sum: Number(m[3]) };
+    }
+    pending = pending.filter((i) => !(seen[name(i)] && seen[name(i)].len === want[i].len && seen[name(i)].sum === want[i].sum));
+  }
+  if (pending.length > 0) {
+    log(
+      "The open-decisions phase state was NOT saved: " + pending.length + " of " + chunks.length +
+        " chunk(s) failed verification after " + STATE_TRIES + " attempt(s). The previous file stands; a relaunch " +
+        "resumes from it",
+    );
+    return;
+  }
+  const total = stateSig(json);
+  const joined = await robustAgent(
+    runExactly(STATE_TOOL + " join " + DECISIONS_STATE_PATH + " " + total.len + " " + total.sum + " " + chunks.map((_, i) => path(i)).join(" ")),
+    { label: "save-state:decisions:join", model: "haiku", effort: "high", phase: "Decisions" },
   );
-  if (!ok) log("The open-decisions phase state could not be written; a relaunch will re-collect");
+  if (/\bOK \d+ \d+/.test(String(joined || ""))) {
+    log("Saved the open-decisions phase state in " + chunks.length + " verified chunk(s)");
+  } else {
+    log("The open-decisions phase state was NOT saved: the join reported " + JSON.stringify(String(joined || "").trim().slice(0, 120)) + ". The previous file stands");
+  }
 }
 let decisionFirings = 0;
 const decisionRuns = [];
@@ -4773,7 +4906,7 @@ async function fireDecisionsPhase(trigger) {
   // The state the child leaves behind is what makes a later firing carry an
   // untouched item's disposition forward and see a reversal of one it applied.
   if (res.phaseState && typeof res.phaseState === "object") decisionsState = res.phaseState;
-  await saveDecisionsState();
+  saveDecisionsState();
   const record = {
     firing: n,
     trigger,
@@ -7574,6 +7707,9 @@ log(
     : "Review log: the unclosed OPEN and DEFERRED counts could not be read",
 );
 
+// The last state save runs beside the rest of the run; wait for it, so a
+// relaunch finds the state this run ended with.
+if (pendingStateSave) await pendingStateSave;
 return {
   mode,
   // A run stopped by the spec gate says so, rather than reporting "reviewed"

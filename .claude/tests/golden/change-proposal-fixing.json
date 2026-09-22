@@ -41,13 +41,6 @@
     "blocks": []
   },
   {
-    "label": "save-state:decisions",
-    "phase": "Decisions",
-    "model": "haiku",
-    "schema": "",
-    "blocks": []
-  },
-  {
     "label": "hash:firing:after:1",
     "phase": "Review",
     "model": "haiku",
@@ -57,6 +50,13 @@
     ]
   },
   {
+    "label": "save-state:decisions:0",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
+  },
+  {
     "label": "hash:spec:after-first-firing",
     "phase": "Review",
     "model": "haiku",
@@ -64,6 +64,22 @@
     "blocks": [
       "one-command"
     ]
+  },
+  {
+    "label": "save-state:decisions:check",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
+    "label": "save-state:decisions:0:retry2",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": []
   },
   {
     "label": "r1:review:single-source",
@@ -248,10 +264,26 @@
     ]
   },
   {
+    "label": "save-state:decisions:check:2",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
+    ]
+  },
+  {
     "label": "r1:dedup",
     "phase": "non-spec R1: review",
     "model": "opus",
     "schema": "findings",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions:0:retry3",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
     "blocks": []
   },
   {
@@ -262,6 +294,15 @@
     "blocks": [
       "read-only",
       "evidence"
+    ]
+  },
+  {
+    "label": "save-state:decisions:check:3",
+    "phase": "Decisions",
+    "model": "haiku",
+    "schema": "",
+    "blocks": [
+      "one-command"
     ]
   },
   {
