@@ -104,7 +104,7 @@ const CASES = [
         "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
         "*:fix-plan": { groups: [{ id: "G1", title: "g", rationale: "r", findings: [0], order: 1 }], notes: "" },
         "*:fix-design:*": { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" } }], groupNote: "", newMechanisms: [] },
-        "*:fix:*": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [] },
+        "*:fix:*": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
         "*:post-fix-review": { findings: [] },
         "*:round-boundary": '{"merged":0,"ledgerLines":1,"compactionDue":false,"changedFiles":[],"hunks":1,"snapshot":"/s","overrides":{}}',
         "introspect*": null, growth: { documentWas: 1, documentNow: 1, grew: [] }, default: {},

@@ -74,7 +74,7 @@ const STUBS = {
   "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
   "*:fix-plan": { groups: [], notes: "" },
   "*:fix-design:*": { designs: [] },
-  "*:fix:*": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [] },
+  "*:fix:*": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
   "*:post-fix-review": { findings: [] },
   "verify-checklist": "ok",
   "status:set-reviewed": "DONE",

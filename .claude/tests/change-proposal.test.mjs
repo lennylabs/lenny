@@ -293,7 +293,7 @@ const loopStubs = (over = {}) => {
     "*:expand:*": { proposal: [], tree: [], searched: "grepped the tree" },
     "*:fix-plan": { groups: [], notes: "" },
     "*:fix-design:*": { designs: [] },
-    "*:fix:*": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [], escalated: [], designRejected: [] },
+    "*:fix:*": { summary: "fixed it in 0081_fix_x.non-spec-changes.md", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
     "*:post-fix-review": { findings: [] },
     "verify-checklist": "ok",
     "status:set-reviewed": "DONE",
@@ -2628,7 +2628,7 @@ t.section("PS2. the parallel designs are reconciled before any of them is applie
       { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
     ]),
     "*:fix-design-reconcile": { conflicts: [], revised: [] },
-    "*:fix:*": { summary: "rewrote the predicate in section 4", newMechanisms: [], escalated: [], designRejected: [] },
+    "*:fix:*": { summary: "rewrote the predicate in section 4", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
   }));
   const g1 = calls.find((c) => c.label === "r1:fix:G1");
   const g2 = calls.find((c) => c.label === "r1:fix:G2");
@@ -3102,9 +3102,9 @@ t.section("X21. signals that reach a prompt are pinned, not just computed");
       : { findings: [{ ...about, lenses: ["citations"] }] },
     "*:expand:*": sites(),
     "*:fix:*": ({ label }) => /^r1:/.test(label)
-      ? { summary: "s", escalated: [], designRejected: [],
+      ? { summary: "s", escalated: [], designRejected: [], citersChecked: [],
           newMechanisms: [{ name: MECH, why: "w", state: "s", callers: "c", failureMode: "f", test: "t" }] }
-      : { summary: "s", escalated: [], designRejected: [], newMechanisms: [] },
+      : { summary: "s", escalated: [], designRejected: [], citersChecked: [], newMechanisms: [] },
   }));
   const r3fix = matching(calls, "r3:fix:")[0];
   t.check("a declared mechanism becomes a strike a later fixer sees", !!r3fix && /MECHANISMS THIS LOOP INVENTED THAT KEEP FAILING/.test(r3fix.prompt));
@@ -3241,7 +3241,7 @@ t.section("R42. a fix claim the tree does not support is withdrawn");
   const { logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
     "*:round-boundary": noChange,
     "*:fix:*": { summary: "No edit was needed; the text already says this.",
-      newMechanisms: [], escalated: [], designRejected: [] },
+      newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
   }));
   t.check("the empty claim is withdrawn",
     logs.some((l) => /the tree did not change; the claim is withdrawn/.test(l)));
@@ -3253,7 +3253,7 @@ t.section("R42. a fix claim the tree does not support is withdrawn");
   // findings are no longer SUPPRESSED, so a later lens is free to re-find them.
   const { calls: c2 } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
     "*:round-boundary": noChange,
-    "*:fix:*": { summary: "No edit was needed.", newMechanisms: [], escalated: [], designRejected: [] },
+    "*:fix:*": { summary: "No edit was needed.", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
     "*:review:*": ({ label }) => (/^r[12]:/.test(label)
       ? { coverage: "c", findings: fs(2) } : { coverage: "c", findings: [] }),
   }));
@@ -5850,7 +5850,7 @@ t.section("N16. each prompt family has a byte-stable head, and its per-call text
       { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
     ]),
     "*:fix-design-reconcile": { conflicts: [], revised: [] },
-    "*:fix:*": { summary: long, newMechanisms: [], escalated: [], designRejected: [] },
+    "*:fix:*": { summary: long, newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
   }));
   const g2 = calls.find((c) => c.label === "r1:fix:G2").prompt;
   t.check("the earlier summary is capped", /\(truncated\)/.test(g2) && !/ END/.test(g2));
@@ -6042,6 +6042,47 @@ t.section("B37. a relaunch reads the decisions state from a launch copy, with no
   t.check("keeping whether a file exists", r1.hasRecord === true && legacy.itemRecords["id:OD-2"].hasRecord === false && !existsSync(join(recDir, recordName("id:OD-2"))));
   t.check("an impact row's digest, and a short question", r2.rowTextDigest === textDigest("0080 — nothing") && r1.question.length === 120);
   t.check("and dropping the corpus inventory", !("corpus" in legacy));
+}
+
+
+t.section("B38. a fix names what it changed and checks every site that names or describes it");
+{
+  const postFix = { findings: [{ title: "PF1", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "contradiction", introducedBy: "this-run" }] };
+  const run = await runWorkflow(WF, REVIEW_ARGS, fixStubs(3, {
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1, 2], order: 1, effort: "deep" }]),
+    "r1:post-fix-review": postFix,
+    "*:follow-up-fix": "corrected",
+  }));
+  const fixer = matching(run.calls, "r1:fix:")[0];
+  t.check("the fixer is told to close with a citer sweep", fixer && /CLOSE WITH A CITER SWEEP/.test(fixer.prompt));
+  t.check("which reads descriptions of the changed text, not only its quotes",
+    fixer && /describes what the changed text says, credits it with content, counts it, lists its parts, or attributes an assertion to it/.test(fixer.prompt));
+  t.check("and must return the sweep as a receipt", fixer && (fixer.opts.schema.required || []).includes("citersChecked"),
+    fixer && JSON.stringify(fixer.opts.schema.required));
+  const follow = matching(run.calls, "r1:follow-up-fix")[0];
+  t.check("the follow-up fixer runs the sweep over the first fixer's names too",
+    follow && /CLOSE WITH A CITER SWEEP/.test(follow.prompt) && /names the previous fixer changed/.test(follow.prompt));
+  const designer = matching(run.calls, "r1:fix-design:")[0];
+  t.check("the designer searches for citers itself", designer && /FIND THE CITERS YOURSELF, AND RECORD THE SEARCH IN citerSearch/.test(designer.prompt));
+  t.check("and every design must record that search",
+    designer && (designer.opts.schema.properties.designs.items.required || []).includes("citerSearch"),
+    designer && JSON.stringify(designer.opts.schema.properties.designs.items.required));
+  t.check("even a trivial finding owes the search when its fix removes or renames named text",
+    designer && /which a trivial fix still owes when it removes or renames named text/.test(designer.prompt));
+  for (const [who, c] of [["designer", designer], ["fixer", fixer]]) {
+    t.check("the " + who + " carries the pointer rule", c && /A POINTER NAMES ITS TARGET AND NOTHING ELSE/.test(c.prompt));
+  }
+  // A fixer that returns no receipt is treated as one that returned nothing usable.
+  const noReceipt = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0], order: 1, effort: "deep" }]),
+    "*:fix:*": { summary: "fixed", newMechanisms: [], escalated: [], designRejected: [] },
+  }));
+  t.check("a fixer without its citer receipt is retried", matching(noReceipt.calls, "r1:fix:G1").length > 1,
+    String(matching(noReceipt.calls, "r1:fix:G1").length));
+  const newRun = await runWorkflow(WF, NEW_ARGS, newStubs({ "hash:*": HASH }));
+  const writer = newRun.calls.find((c) => c.label === "write");
+  t.check("the writer carries the pointer rule", writer && /A POINTER NAMES ITS TARGET AND NOTHING ELSE/.test(writer.prompt));
+  t.check("and writes checklist steps as pointers", writer && /A STEP LINE IS A POINTER/.test(writer.prompt));
 }
 
 t.done();

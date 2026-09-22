@@ -756,6 +756,7 @@ const FORMAT_CHECKLIST =
   "Rules for the list:\n" +
   "  Name the staged deliverables by their ids (SPEC-1, CODE-2, SCHEMA-1, MIG-1, REG-1). Every staged deliverable appears in exactly one step, and no step names one that does not exist.\n" +
   "  Prefer one deliverable per step. Bundle two only when separating them gains nothing, which means they touch the same file and the same reader would review them together.\n" +
+  "  A STEP LINE IS A POINTER. It cites its deliverables by id and names the part it lands, and restates none of a deliverable's mechanism, conditions, counts, anchors or site lists: the deliverable is the home, and a step that describes it goes stale whenever the deliverable changes.\n" +
   "  ONE LANE PER STEP. The lane after the step id is spec, code, schema, migration, test, or docs, and a step names deliverables of that lane ONLY. A step naming both a spec deliverable and a non-spec one is a defect: the lane selects which handler the implementation pipeline runs for that step, and a step with two lanes has no handler.\n  SPEC STEPS LEAD. The standard pattern is every spec step first, in a leading block, then the rest. Interleaving a code step before a remaining spec step is allowed where it is genuinely necessary, and a step that does so states why on its line, so an interleave is a deliberate and reviewable act rather than an accident. It is necessary only when the spec text cannot be written or applied until the earlier step lands: the staged edit is the output of a tool this proposal builds, or its content depends on a fact only the built artifact fixes. Efficiency, convenience, and a preference for building before writing do not qualify.\n  Whatever the lane order, every code step's Depends-on names the spec steps staging the statements its work implements.\n" +
   '  "Tiers" lists the test tiers that step must run, per .claude/rules/test-coverage.md. "Depends on" lists earlier step ids, or an em dash when the step has none.\n' +
   "  Keep every box unchecked. The implementation pipeline ticks them as it lands each step.\n";
@@ -769,7 +770,26 @@ const FORMAT_CHECKLIST =
 // converged only after a hand edit reduced the five to one numbered list that
 // everything else cited.
 const SINGLE_SOURCE_RULE =
-  "- STATE EACH RULE ONCE. A predicate, an ordered cascade, a contract, an outcome table or an invariant has ONE normative home: the staged spec text when the rule is normative, otherwise the deliverable that owns it. Number the rules there when there are several. Every other site (the design prose, the summary, the checklist, a conformance or test list, a docs deliverable, a code block's commentary) CITES the home by heading and rule number and adds only what that site alone knows: the rationale, the lock discipline, which test drives it. Do not write a second full statement, in any vocabulary, however convenient for that section's reader. A test or conformance list is one case per rule asserting what the rule's home gives, never a re-description of the rule. The same holds against spec/ itself: staged spec text cites what another spec section already states rather than writing it out again. The one licensed restatement is a reader-facing docs page, where the documentation rules bar a spec citation.\n";
+  "- STATE EACH RULE ONCE. A predicate, an ordered cascade, a contract, an outcome table or an invariant has ONE normative home: the staged spec text when the rule is normative, otherwise the deliverable that owns it. Number the rules there when there are several. Every other site (the design prose, the summary, the checklist, a conformance or test list, a docs deliverable, a code block's commentary) CITES the home by heading and rule number and adds only what that site alone knows: the rationale, the lock discipline, which test drives it. Do not write a second full statement, in any vocabulary, however convenient for that section's reader. A test or conformance list is one case per rule asserting what the rule's home gives, never a re-description of the rule. The same holds against spec/ itself: staged spec text cites what another spec section already states rather than writing it out again. The one licensed restatement is a reader-facing docs page, where the documentation rules bar a spec citation.\n" +
+  "- A POINTER NAMES ITS TARGET AND NOTHING ELSE. A site that refers to another says where to look (`see CODE-6's **Disposition of an expired acquisition**`) and does not say what the target contains, how many parts it has, which cases it covers, or what its rows assert. A description of another site's content is a second statement of it that no edit to the target updates: when the target changes, the description goes stale without quoting a word of it. A checklist step is a pointer of this kind: it names its deliverables and the part it lands, and restates none of a deliverable's mechanism, conditions, counts, anchors or site lists.\n";
+
+// The check a fixer closes with. Measured across one proposal's runs, most of
+// what the post-fix review caught was a site that described or cited text a
+// fix had just changed, not a site that restated it: in one round a reduction
+// of a block left a doc comment saying what the block states, a test bullet
+// asserting "what its cell states" of cells that had lost their columns, and a
+// checklist step owning a row that had moved. None quoted the changed words, so
+// site expansion, which searches by relatedness, read one of them and judged it
+// true. A grep on the changed NAMES finds all of them.
+const CITER_SWEEP =
+  "- CLOSE WITH A CITER SWEEP. For every heading, bold label, table or table column, defined term, rule number, " +
+  "or distinctive phrase whose content, scope or meaning your edits changed, reduced, renamed or removed, grep " +
+  "every file of the proposal (the summary and the checklist included) for that name, and read each hit that " +
+  "is not text you just wrote. A hit that describes what the changed text says, credits it with content, counts " +
+  "it, lists its parts, or attributes an assertion to it (\"X states A, B and C\", \"each row asserts what its " +
+  "cell states\", a checklist step's account of what a deliverable lands) is falsified by your edit even though " +
+  "it never quotes the changed words. Fix it in this edit when your grant covers its file, and otherwise record " +
+  "it as a `DEFERRED` line naming the file. A hit that only names the target stays true.\n";
 
 const FORMAT_BLANKS =
   "A proposal may leave a detail to the implementor rather than specifying it, which keeps the document shorter and removes a place for two sections to drift apart. Every such gap is marked explicitly, in this form:\n" +
@@ -957,7 +977,7 @@ const DEDUP_FINDINGS = {
 // same round, while the fixer's reasoning is still recoverable.
 const FIX_RESULT = {
   type: "object",
-  required: ["summary", "newMechanisms"],
+  required: ["summary", "newMechanisms", "citersChecked"],
   properties: {
     summary: {
       type: "string",
@@ -990,6 +1010,35 @@ const FIX_RESULT = {
       items: { type: "string" },
       description:
         "One entry per finding whose supplied design you judged wrong, naming what you did instead and why. Silently substituting your own design is the failure the design stage exists to remove, so an empty array is the expected answer and a non-empty one is reported.",
+    },
+    citersChecked: {
+      type: "array",
+      description:
+        "The citer sweep you closed with: one entry per heading, label, table, column, term, rule number or phrase whose content, scope or meaning your edits changed. Empty only when your edits changed nothing another site could name or describe.",
+      items: {
+        type: "object",
+        required: ["anchor", "searched", "hits"],
+        properties: {
+          anchor: { type: "string", description: "the name whose content or meaning changed" },
+          searched: { type: "string", description: "the patterns you grepped for, and the files" },
+          hits: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["site", "disposition"],
+              properties: {
+                site: { type: "string", description: "file:line" },
+                disposition: {
+                  type: "string",
+                  enum: ["edited", "still-true", "deferred", "separate-finding"],
+                  description: "edited: your edit falsified it and you fixed it. still-true: it only names the target, or what it says still holds. deferred: falsified, in a file your grant does not cover, recorded as DEFERRED. separate-finding: already wrong for a reason of its own.",
+                },
+                why: { type: "string" },
+              },
+            },
+          },
+        },
+      },
     },
   },
 };
@@ -1155,9 +1204,19 @@ const FIX_DESIGN = {
       type: "array",
       items: {
         type: "object",
-        required: ["findingTitle", "effort", "chosen"],
+        required: ["findingTitle", "effort", "chosen", "citerSearch"],
         properties: {
           findingTitle: { type: "string", description: "copied verbatim from the finding you are designing for" },
+          citerSearch: {
+            type: "object",
+            required: ["anchors", "searched"],
+            description:
+              "the names whose content the chosen fix removes, reduces, renames or re-scopes, and the search you ran for the sites that name or describe them. Every hit is adjudicated in siteDispositions. Empty anchors state that the fix changes nothing another site can name.",
+            properties: {
+              anchors: { type: "array", items: { type: "string" } },
+              searched: { type: "string", description: "the patterns you grepped for, and the files" },
+            },
+          },
           effort: {
             type: "string",
             enum: ["trivial", "moderate", "deep"],
@@ -2937,7 +2996,8 @@ function fixDesignPrompt(group, confirmed, round) {
     "finding is a defect in your work, not thoroughness: a group of eight trivial findings should cost a " +
     "fraction of what a single deep one costs.\n" +
     "  trivial — the reviewer's suggested fix is unambiguous, lands in one place, and changes nothing " +
-    "another section states. Output one line: apply as suggested. Read nothing. Most citation, " +
+    "another section states. Output one line: apply as suggested. Read nothing beyond the citer search " +
+    "below, which a trivial fix still owes when it removes or renames named text. Most citation, " +
     "bookkeeping, and attribution findings are trivial.\n" +
     "  moderate — clear, but touching more than one statement or choosing between two obvious options. " +
     "Output the choice, the sites, and one sentence of why.\n" +
@@ -2988,7 +3048,15 @@ function fixDesignPrompt(group, confirmed, round) {
     "PRESSURE RUNS BOTH WAYS. Do not treat the list as a work order: an empty or wholly rejected list " +
     "is a normal outcome. Equally, do not reject a `high` confidence IN SCOPE site because honouring " +
     "it enlarges the edit. An incomplete fix that leaves a parallel stale is exactly what the next " +
-    "round files." +
+    "round files.\n\n" +
+    "FIND THE CITERS YOURSELF, AND RECORD THE SEARCH IN citerSearch. The pass above searches by relatedness, " +
+    "and it misses a sentence that describes text without restating it: measured on one round, it read a doc " +
+    "comment saying what a block states, judged it true, and the fix then removed half of what the comment " +
+    "credited to the block. So whenever the chosen fix removes, reduces, renames or re-scopes text that other " +
+    "sites can name (a heading, a bold label, a table or a column, a defined term, a rule number), grep every " +
+    "file of the proposal for each such name and read each hit outside the text being edited. Adjudicate every " +
+    "hit in siteDispositions with the three dispositions above: a hit that describes, counts, lists, or " +
+    "attributes content the fix changes is IN SCOPE. Record the names and the patterns in citerSearch." +
     DEVIATIONS_BLOCK() +
     LOG_RULES() +
     directiveBlock() +
@@ -3123,6 +3191,8 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
       : "Record it under `## Open decisions for human to make` in " + P.summary + ".\n") +
     "- NEVER WRITE A COUNT of staged edits, sites, statements, rewrites, or files. Name the set, or point at the enumeration that carries it. A count goes stale the moment another fix adds one, and in this loop a stale count becomes a finding, a round, and two verification agents. The documentation rules ban counts for the same reason.\n" +
     "- AFTER YOUR EDITS, reconcile every enumeration and cross-reference that names a section you touched. A fix that corrects one section and leaves another section's list of that section's contents stale is two findings rather than one.\n" +
+    CITER_SWEEP +
+    "  Record the sweep in citersChecked: each changed name, what you searched, and each hit's disposition. The design's siteDispositions are where this starts, not where it ends: your edit is what actually landed.\n" +
     SINGLE_SOURCE_RULE +
     "- When a fix changes a trigger predicate or invariant, change it in its ONE normative home, then visit every other site that mentions it. A site that only cites the rule needs nothing. A site that states the rule in full is a copy: replace it with a citation of the home rather than editing it to match, because a copy you re-synchronise today is the next round's finding. Staged CODE is the exception: a code block must be correct as code, so it carries the predicate and a `// spec:` comment naming the rule it implements.\n" +
     "- Keep the proposed-changes section (however the proposal titles it) and any files-touched section consistent with your edits.\n" +
@@ -3246,7 +3316,9 @@ function followUpFixPrompt(findings, round) {
     CONTEXT +
     "\n\nHARD CONSTRAINT. " + LOOP.editable() +
     "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
-    "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. When a defect is drift between a changed statement and its parallels, make every statement agree rather than reverting the original fix. Append your corrections as bullets to the SAME numbered pass subsection the previous fixer created in the proposal's adversarial-review-history section, rather than opening a new pass, because these are corrections to that pass and not a separate round. Follow " +
+    "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. When a defect is drift between a changed statement and its parallels, make every statement agree rather than reverting the original fix.\n" +
+    CITER_SWEEP +
+    "Most defects a post-fix review finds are sites the first fixer's edit falsified without quoting it, so run the sweep over the names the previous fixer changed as well as your own, and say in your summary what it found.\nAppend your corrections as bullets to the SAME numbered pass subsection the previous fixer created in the proposal's adversarial-review-history section, rather than opening a new pass, because these are corrections to that pass and not a separate round. Follow " +
     repo +
     "/.claude/rules/doc-style.md.\n\nDefects to correct (JSON):\n" +
     JSON.stringify(findings, null, 2) +

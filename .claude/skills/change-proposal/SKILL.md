@@ -182,7 +182,8 @@ wherever it can be:
 - **Record text lives in record files.** An Apply agent writes what it wrote and where to
   `scratchpad/cp-state/<runTag>/records/<digest>.md` in the same turn it makes the edit, and the reversal
   check, the verify pass and the operator open that file. The state keeps only whether the file exists, a
-  120-character question, and an impact row's digest. On 0081 that text was about 70% of a 117 KB state.
+  120-character question, and an impact row's digest. Measured on one proposal, that text was about 70% of the
+  state.
 - **A relaunch reads the state from a launch copy.** Run
   `node .claude/tools/cp-state.mjs launch-copy scratchpad/cp-state/<runTag>/decisions-state.json .claude/workflows/change-proposal.js scratchpad/cp-launch/<runTag>/change-proposal.js`
   and launch the copy it writes, with `resumeState: true`. The copy carries the saved state in place of the
@@ -196,8 +197,8 @@ wherever it can be:
   be verified leaves the previous file in place, and a load that cannot be verified starts the phase fresh.
   The save runs beside the rest of the run, and the run waits for it before it returns.
 
-A single-agent save of the 117 KB state measured on 0081 hit the output limit twice per attempt, held the run
-for eleven to sixteen minutes, and then wrote 2 of 72 records unchecked. A state saved before record files
+A single-agent save of a 117 KB state, measured on one run, hit the output limit twice per attempt, held the
+run for eleven to sixteen minutes, and then wrote 2 of 72 records unchecked. A state saved before record files
 existed is converted with `node .claude/tools/cp-state.mjs migrate-records <state> <records dir>`.
 
 **Where it fires.** Every review loop is followed by a firing, subject to the skip above: the spec loop, the
@@ -320,6 +321,14 @@ The designs are produced in parallel and none sees the others, so **one reconcil
 **fix** runs once per group, sequentially, applying a design rather than inventing one. Each fixer after the first is told what the earlier groups in that round actually did, which the design stage could not know because it ran before any edit landed. It receives the alternatives so it neither re-derives them nor quietly picks one already ruled out, and a fixer that judges a design wrong declares it rather than substituting its own silently.
 
 One **post-fix review** runs per round over every group's edits, which catches the risk the split introduces: drift between two groups that each edited correctly.
+
+**A fix checks every site that names what it changed, before the post-fix review does.** Measured across one proposal's runs, 29 of 43 post-fix reviews found something, and most of it was one pattern: a site that described or cited text a fix had just changed, without quoting it. In one round a reduction of a block left a doc comment saying what the block states, a test bullet asserting "what its cell states" of cells that had lost their columns, and a checklist step owning a row that had moved. Site expansion searches by relatedness and read one of the three as true. So three stages now search by name:
+
+- **fix-design** greps the proposal for every heading, label, table, column, term or rule number whose content the chosen fix removes, reduces, renames or re-scopes, adjudicates each hit in `siteDispositions`, and records the search in each design's required `citerSearch`. A trivial finding owes this search too when its fix removes or renames named text.
+- **fix** closes with the same sweep over what its edits actually changed, fixes each hit its grant covers and records the rest as `DEFERRED`, and returns the sweep in the required `citersChecked` receipt. A fixer that returns no receipt is retried.
+- **follow-up-fix** runs the sweep over the previous fixer's names as well as its own.
+
+**A pointer names its target and nothing else.** `SINGLE_SOURCE_RULE`, which the writer, the bootstrap, the prune pass, the designer and the fixer all carry, now says that a site referring to another does not describe what the target contains, how many parts it has, or what its rows assert, and that a checklist step is such a pointer: it names its deliverables and the part it lands and restates none of their content. A description of another site's content is the copy no edit to the target updates.
 
 ### A run's history lives in the review log
 
@@ -534,8 +543,8 @@ A number of agents name their own model and effort, and those names are **absolu
 the base**. On `haiku` at high effort: the snapshot, diff-count, resume-state, round-boundary, spec-changes
 probe, both status writers, and the growth measurement. On `opus` at low effort: `init`, the conventions
 pass, the checklist verifier, site expansion, and in the open-decisions phase the triage and the two single
-collectors. Everything else takes the base. Those agents ran on `sonnet` until 2026-09-22, when a replay of
-their real prompts from 0081's runs measured `opus` at low effort as faster, cheaper, and no worse on them.
+collectors. Everything else takes the base. Those agents ran on `sonnet` at high effort until a replay of their
+real prompts from earlier runs measured `opus` at low effort as faster, cheaper, and no worse on them.
 
 The pairing is deliberate. A cheap model is not the same request as a shallow one: these agents sit on a
 small model because their work is mechanical and well specified, and on high effort because getting it
@@ -597,9 +606,9 @@ Invoke by **path**, never by name: a name resolves to a cached copy, so a run la
   "mode": "review",
   "baseModel": "opus",
   "baseEffort": "high",
-  "proposalPath": "proposals/0081_fix_slug",
+  "proposalPath": "proposals/NNNN_fix_slug",
   "date": "2026-08-31",
-  "exemplar": "proposals/0080_fix_other",
+  "exemplar": "proposals/MMMM_fix_other",
   "repoRoot": "/abs/path",
   "context": "…"
 }

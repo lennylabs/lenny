@@ -341,7 +341,7 @@
     "label": "r1:fix:G1",
     "phase": "non-spec R1: fix",
     "model": "opus",
-    "schema": "designRejected+escalated+newMechanisms+summary",
+    "schema": "citersChecked+designRejected+escalated+newMechanisms+summary",
     "blocks": [
       "file-ownership",
       "log-shard",
