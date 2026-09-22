@@ -456,7 +456,10 @@ log's open list by the second index reconciliation pass, which stamped them with
 because the log never numbered them. Entries 42, 43 and 44 have since left this section, as the
 two lists above record. Entries 41 and 45 carry the question and the ground the log entry gives
 and no recommendation, because the review loop derived none and the
-open-decisions-and-impact-review phase derived none either.
+open-decisions-and-impact-review phase derived none either. Entry 46 was routed here from the
+review log's open list by the third index reconciliation pass, which stamped it with that number
+because the log never numbered it, and it carries the question and the ground the log entry
+gives and no recommendation, because the review loop derived none.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -681,6 +684,16 @@ open-decisions-and-impact-review phase derived none either.
     decides whether SPEC-6 gains a row for it, or whether the gap stays pre-existing and is
     recorded as a defect this proposal does not stage. The review loop derived no
     recommendation.
+
+46. **Is the queue wait the synchronous compensating `Shutdown` adds acceptable?** CODE-4 sends
+    the compensating `Shutdown` inside the bind attempt that failed, on a detached context, so
+    the compensation is not cancellable and the attempt holds its place in the session queue
+    until the compensation returns. Two attempts of fifteen seconds each therefore consume the
+    default `maxQueueWaitSeconds`, and the sessions queued behind them wait that long before
+    their own bind starts. Whether the transport keepalive shortens the compensation in
+    practice is unverified. The answer decides whether the added wait is accepted as the cost of
+    a synchronous reclaim, or whether the compensation moves off the attempt's own path, which
+    is a mechanism the proposal does not stage. The review loop derived no recommendation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
