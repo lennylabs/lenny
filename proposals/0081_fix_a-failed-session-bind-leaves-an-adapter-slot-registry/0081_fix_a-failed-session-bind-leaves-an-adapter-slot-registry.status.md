@@ -25,4 +25,4 @@ On 2026-09-17, an adversarial review run executed two loops. The spec loop ran 1
 
 On 2026-09-20, an adversarial review run executed the spec loop. The spec loop ran 15 rounds and did not converge, performing 5 full-pool sweeps. Eleven findings were fixed. The non-spec loop was not run. Findings the spec loop had not closed remain open.
 
-On 2026-09-21, an adversarial review run executed both loops. The spec loop ran 25 rounds and converged, performing 11 full-pool sweeps. The non-spec loop ran 7 rounds and did not converge, performing 3 full-pool sweeps. Across both loops, 16 findings were fixed. Findings the non-spec loop had not closed remain open. The run did not converge.
+On 2026-09-21, an adversarial review run executed both loops. The spec loop ran 26 rounds and converged, performing 12 full-pool sweeps. The non-spec loop ran 13 rounds and did not converge, performing 5 full-pool sweeps. Across both loops, 12 findings were fixed. Findings the non-spec loop had not closed remain open. The run did not converge.

@@ -461,7 +461,8 @@ review log's open list by the third index reconciliation pass, which stamped it 
 because the log never numbered it; the open-decisions-and-impact-review phase then answered it by
 accepting the compensation's queue hold as staged, and the non-spec changes record the hold, the
 budget that bounds it and the exhaustion envelope a displaced waiter meets among the accepted
-failure modes.
+failure modes. The shipped queue behaviour the hold extends, a wait bound that is tested only
+after admission, has its own entry in the unstaged-defects list below.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -1107,6 +1108,42 @@ failure modes.
   CODE-11 lands green with them standing. The spelling occurs 125 times across `pkg/`, `cmd/` and
   `tests/`, so converting the two lines in this file would open a tree-wide sweep that no
   deliverable here is scoped to.
+- **A queued waiter's wait bound does not cover the time it spends behind the FIFO head.**
+  `waitInQueue` admits only the FIFO head and blocks every other waiter on its ticket
+  (`pkg/gateway/sessionserver/queue.go:185-192`), and it tests `maxQueueWaitSeconds` after the
+  ticket is received rather than while the waiter is behind the head
+  (`pkg/gateway/sessionserver/queue.go:195-202`, default 30 seconds at
+  `pkg/gateway/sessionserver/queue.go:18`), so a waiter's wall-clock wait is its own bound plus
+  the duration of every attempt ahead of it. The head's attempt is the closure `runWithQueue`
+  runs (`pkg/gateway/sessionserver/start.go:2606-2608`), and on the shipped path that attempt can
+  already occupy the head for an uncapped setup phase, because `SetupPolicy.timeout_seconds` of
+  zero means no aggregate cap (`schemas/lenny-adapter.proto:941-943`). CODE-4's compensating
+  `Shutdown` runs inside the same closure and adds an increment bounded by its own deadline,
+  `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` seconds
+  (`spec/05_runtime-registry-and-pool-model.md:545`). A waiter the increment displaces past its
+  bound leaves through the envelope §5.2 already publishes for a saturated pool,
+  `WARM_POOL_EXHAUSTED` with a `Retry-After` header
+  (`spec/05_runtime-registry-and-pool-model.md:440`). No fix is staged. Making the bound cover the
+  whole wait is a change to queue admission on a path this proposal does not open, and moving the
+  compensation off the attempt's own path would need a worker, a retry policy, its own residue
+  when the process dies mid-compensation and a home for the attempt token. The increment the
+  compensation adds is recorded among the accepted failure modes in the non-spec changes file.
+- **A failed compensating drain leaves the pod holding the dead attempt's registry entry.**
+  `Binder.failPhase` logs the error and continues when `b.drain` fails
+  (`pkg/gateway/podlifecycle/podsession/binder.go:1079-1081`), and that drain is the only act on
+  the path that retires the pod, so a pod whose claim DELETE failed survives carrying the slot
+  registry entry the failed bind created. Under the staged design that entry is stamped with the
+  dead attempt's token, so the attempt-identity refusal `SLOT_BIND_ATTEMPT_SUPERSEDED` turns away
+  every later attempt at the same session on the same pod until something removes it. CODE-8
+  makes both typed refusals return before `failPhase`, so the residue requires an ordinary bind
+  failure whose own drain then fails as well. The window is bounded rather than permanent: the
+  §4.6.1 orphan-claim collector drains a `Bound` claim aged past the orphan timeout once Postgres
+  reports no live session on the pod (`pkg/controller/warmpool/gc.go:227-246`,
+  `pkg/controller/warmpool/gc.go:274-289`), so the pod retires and the entry goes with it, and on
+  a pod still serving a co-tenant that wait lasts as long as the co-tenant does. No fix is
+  staged. Collecting the entry sooner means a reaper on the adapter's own side that removes a
+  registry entry no live attempt owns, a mechanism this proposal states nowhere and one whose
+  remedy owner is named among the accepted failure modes in the non-spec changes file.
 
 ## Impacts on other proposals
 
