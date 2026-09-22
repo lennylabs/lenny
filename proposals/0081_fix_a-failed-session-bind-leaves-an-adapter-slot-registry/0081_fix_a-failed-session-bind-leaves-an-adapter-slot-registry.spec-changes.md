@@ -1222,7 +1222,7 @@ it, so it takes a row here as well.
 ```
 | Slot compensation superseded (`lenny_slot_compensation_superseded_total`, labeled by `pool`, `k8s_pod_name` — a compensating `Shutdown` answered `superseded`: the adapter holds an entry for the session that the compensation is not addressed to, so the reclaim released nothing and the slot is not leaked. See [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract).) | Counter |
 | Slot shutdown met an untokened entry (`lenny_slot_shutdown_untokened_entry_total`, unlabeled, the pod label being the one the scrape target attaches — a `Shutdown` carrying an attempt token met a registry entry that carries none, which counts the reclaims that met an entry no attempt owns: an entry a start created and a non-conforming adapter's entry alike. Adapter-side; not scraped until the adapter metrics endpoint is wired) | Counter |
-| Leaked session slots (`lenny_adapter_leaked_slots`, labeled by `pod_id`, `pool` — the per-pod count of slots in the `leaked` sub-state, which stay counted until the pod terminates. See [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).) | Gauge |
+| Leaked session slots (`lenny_adapter_leaked_slots`, labeled by `pod_id`, `pool`; `pod_id` carries the pod name and is a local-only extension of the `k8s.pod.name` attribute ([Section 16.1.1](#1611-attribute-naming)) — the per-pod count of slots in the `leaked` sub-state, which stay counted until the pod terminates. See [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).) | Gauge |
 ```
 
 ## Spec sections deliberately untouched
