@@ -166,10 +166,10 @@ step ran in firings that applied nothing. So:
   digest left by the last firing that ran.
 - Sub-task 4 is skipped, and its rows carried forward, when its inputs are unchanged: this proposal's
   files-touched sections and deliverable index, and the state of every other proposal.
-- On a firing after the first, a Sonnet triage agent reads the diff since the last firing and says which of
+- On a firing after the first, a triage agent (`opus` at low effort) reads the diff since the last firing and says which of
   the human-decisions and out-of-scope collectors have anything new to read. A collector it rules out keeps
   its earlier records. A triage agent that dies runs everything.
-- Collectors run on `collectorModel` (Sonnet), read only the `### Open` and `### Deferred` sections of the
+- Collectors run on `collectorModel` at `collectorEffort` (`opus` at low effort), read only the `### Open` and `### Deferred` sections of the
   review log's standing context, and on a later firing are pointed at the diff first.
 - Cleanup and the read-only verify run only when an Apply landed, or on the first firing.
 
@@ -268,17 +268,23 @@ Materiality runs first and evidence only if it survives. Materiality reads only 
 
 **One agent asks both questions** (`verifyMode: "merged"`, the default), in that order, and stops at the first refusal. Measured on one run, every agent opened at 41k to 60k tokens before it read its task, so the second skeptic cost more in fixed context than in work. The two answers are still separate fields and the script still decides what they add up to. What the merge gives up is independence, since the agent that judged a finding material then checks its evidence; `verifyMode: "split"` restores two agents. A merged verifier that confirms the first question and says nothing on the second is treated as a dead verifier rather than as a refusal.
 
+**A verifier reads the finding once, without the run's leads.** The prompt is the two rubrics, then the finding, stripped of the script's own metadata (area, kind, lenses). The evidence rubric carries the repository and the reading discipline and nothing else: the orchestrator context and the standing reference points are written for a lens deciding what to look at, and a verifier checking citations against files has no use for them. Everything before the finding is byte-identical across a run's verifier calls. Measured before this, a large finding opened at 25k characters, twice its size, before the agent read a file.
+
+**A structural pre-filter refuses some findings with no agent** (`verifyPrefilter`), in the classify-diff pattern: authoritative where it fires, silent otherwise. It fires only when every condition holds: the kind is bookkeeping, citation, or other; the site is commentary and not a staged block, a rule, a table, or a test; the ground is a prose-style rule; the remedy is a rewording that adds and removes no claim; and no single-source lens filed it. A refusal it makes enters the refuted memory as `structural` and is listed in the result's `structuralRefusals` for audit. Its failure mode is a wasted verifier call rather than a suppressed finding, and its rules are widened only from audited refusals.
+
 A verifier that **died** is not a refusal. The finding reaches neither verdict, is not added to the refuted memory where an outage would suppress it permanently, and the round cannot certify convergence.
 
 ### Fixing
 
 Three stages replace one fixer.
 
-**site expansion** runs first, one Sonnet agent per confirmed finding, in parallel. It starts from the sites the finding already names and answers one question about the rest of the repository: if this fix lands, which other text becomes wrong? The test is falsification rather than relatedness, so a site that discusses the same subject and stays true is not reported; consistent restatement is excluded by the review bar. Results land in `potentiallyRelatedSites` on the finding, never merged into `where` or `evidence`, because those two survived two verifiers and these did not. Proposal sites and tree sites are kept apart: the fixer edits the first and may not touch the second, where a falsified site means the proposal is missing an edit site.
+**site expansion** runs first, one agent per confirmed finding (`opus` at low effort), in parallel. It starts from the sites the finding already names and answers one question about the rest of the repository: if this fix lands, which other text becomes wrong? The test is falsification rather than relatedness, so a site that discusses the same subject and stays true is not reported; consistent restatement is excluded by the review bar. Results land in `potentiallyRelatedSites` on the finding, never merged into `where` or `evidence`, because those two survived two verifiers and these did not. Proposal sites and tree sites are kept apart: the fixer edits the first and may not touch the second, where a falsified site means the proposal is missing an edit site.
 
 **One rule, one home.** The writer, the designer, and the fixer all work to the same rule: a rule, predicate, or contract is stated once, in its normative home, which is the staged spec text when there is one, and every other site cites it by heading and number. A fix that changes a rule changes it in its home; a fix that finds a second full statement replaces it with a citation. The fixer was previously told to propagate a changed predicate to every section that states it, which maintained the copies: on one measured run a cascade stated at five sites absorbed 49 rounds, each fix re-synchronising four copies and drifting the fifth. Staged code and test text is the exception, since code cannot cite prose, and it references the rule by number in a comment.
 
 **fix-plan** splits the round's confirmed findings into cohesive groups. The only cap is on the number of groups; **group size is uncapped**, because size is the wrong axis. Forty trivial citation corrections that share a subject belong in one group where one fixer applies them consistently, while three deep design findings belong in three groups however few they are. A partition that drops, duplicates, or invents an index is rejected in favour of one group of everything.
+
+**A trivial finding never gets its own group.** The planner tags each group `trivial` or `deep`. Every trivial finding of a round (a citation correction, a count, a rename, a one-sentence rewording, a pointer re-target, where the reviewer's suggested fix is the fix) goes into one group ordered last, whether or not the findings share a subject, and that group is designed in shallow mode. Measured on one round: five findings became four groups, two of them single trivial findings, and each group costs a design agent and a fixer. A trivial finding whose text a deep group edits joins that deep group instead.
 
 **fix-design** designs each group, read-only, in parallel. It adjudicates every potentially related site into `in-scope` (this fix makes it wrong, so it changes in the same edit), `separate-finding` (already wrong for a reason of its own, and fixing it here would be an unreviewed edit), or `not-a-site`. The designer bounds the fixer, which is what keeps expansion from inflating an edit that is already the likeliest source of the next round's findings. A location an earlier round already rewrote arrives with each previous attempt and why it was rejected, and the design must say how this attempt differs in kind rather than in degree. It triages each finding by effort *before* investigating, and spending deep effort on a trivial finding is named a defect in its work rather than thoroughness. On a deep finding it establishes ground truth in the repository before reading what the proposal says, and is asked whether an existing surface already carries the thing, whether one change closes several findings, and whether the strongest answer is to delete rather than specify. It carries an explicit mandate against the proposal growing hair, and records the tempting wrong fix by name.
 
@@ -327,29 +333,26 @@ The pass edits rather than rewriting the whole file. It was told to write the fi
 
 A **warrant gate** runs before the full pass. The counters that wake it are crude and wrong in both directions, so the pass first asks cheaply whether the pattern is really there; an unwarranted counter wake returns healthy without paying for a pass. A **cadence** wake ignores the gate, because the cadence exists to look when no counter has fired.
 
-**The pass diagnoses and does not act** (`introspectMode: "advisory"`, the default). Measured over two runs on one proposal, its diagnoses were right and its remedies made things worse: the first redesign it ordered created the five-site restatement the second one diagnosed, a `healthy` verdict falsified on a factual slip stopped a run outright, and each redesign cleared the retirement set and bought a full-pool round. In the advisory mode:
+**The pass is a tripwire** (`introspectMode: "advisory"`, the default). `healthy` continues, with no panel. **Any other verdict stops the run at once**, with status `stopped-redesign`, `stopped-prune`, `stopped-reframe`, or `stopped-halt`, carrying the pass's reasoning and its proposed next steps. The pass does not act, no panel second-guesses it, and nothing is carried forward inside the run. Measured over three runs, the remedies the loop executed on its own diagnoses made things worse: the first redesign it ordered created the five-site restatement the second one diagnosed, and each one cleared the retirement set and bought a full-pool round. A directive carried to the fixers could not deliver a restructure either, because fixers act on findings and a restructure is nobody's finding. Correcting course belongs to this skill, which holds the whole conversation, can restructure and review the result, and can ask a person. A wrong stop costs one relaunch with `resumeState`; a wrong continue costs every remaining round.
 
-- `healthy` continues with no panel.
-- `redesign`, `prune`, and `reframe` run nothing. The diagnosis becomes a **directive**, a paragraph carried into every later lens, fix-design, and fixer prompt (the latest three, newest last), and is returned in `introspection.directives`. The retirement set stands.
-- `halt` and `reframe` stop the run only when the script's own counters corroborate the pass (`hardSignals`: confirmed findings did not fall across `haltWindow` rounds of the loop, or one finding title was confirmed `haltRepeatTitle` times) **and** a single falsifier fails to overturn the stop. Without a hard signal, or with the stop falsified, the verdict becomes a directive and the loop continues.
-- The pass and its falsifier run on `introspectModel` (`fable`) at `introspectEffort` (`high`). It is a handful of calls per run and the one stage whose judgement spans the whole run.
+The script's own counters (`hardSignals`: confirmed findings that did not fall across `haltWindow` rounds, or one finding title confirmed `haltRepeatTitle` times) ride along on the stop as information and decide nothing. The pass runs on `introspectModel` (`opus`) at `introspectEffort` (`high`): it is a handful of calls per run and the one stage whose judgement spans the whole run.
+
+The warrant gate applies only to a churn-counter wake. A wake from a sweep that confirmed findings carries no counter output and, like a cadence wake, runs the full pass; a gated skip does not reset the cadence clock. The first pass of a run measures growth from the run's first pre-fix snapshot.
 
 `introspectMode: "acting"` restores the earlier behaviour whole: every verdict, including `healthy`, goes to a panel of falsifying judges, the verdict stands unless a majority falsifies it conclusively, and `redesign` and `prune` execute inside the loop under their budgets.
 
-A stopping verdict carries **proposed next steps** and the hard signals behind it. The remedy a stop calls for is applied by this skill, in the main session, which holds the whole conversation and can ask a person; see the next section.
-
 ## Remedy and restart on a stop
 
-A run that returns `introspection.stoppedBy` (status `stopped-halt` or `stopped-reframe`) has findings still open. It also stops short with `recheck-budget-exhausted` or `spec-not-converged`. In each case, decide first whether a person is needed, and when one is not, **apply the remedy yourself and relaunch without asking**.
+A run that returns `introspection.stoppedBy` (status `stopped-redesign`, `stopped-prune`, `stopped-reframe`, or `stopped-halt`) has findings still open, and the verdict names the kind of remedy the pass asked for. It also stops short with `recheck-budget-exhausted` or `spec-not-converged`. In each case, decide first whether a person is needed, and when one is not, **apply the remedy yourself and relaunch without asking**.
 
 **A person is needed**, so stop and ask, when any of these holds: `nextSteps.confidence` is `needs-human`; the remedy chooses between designs the proposal's fixed decisions or open decisions leave to the human; the verdict is `reframe` and the remedy changes what the problem *is* rather than correcting its record; the proposed `rerunArgs` do not parse or name unknown arguments; or this invocation has already restarted twice.
 
 **Otherwise:**
 
-1. Read `stoppedBy.reasoning`, `stoppedBy.hardSignals`, `nextSteps`, `introspection.directives`, and the last rounds' `confirmedTitles`. State the diagnosis in one paragraph to the user before acting.
+1. Read `stoppedBy.verdict`, `stoppedBy.reasoning`, `stoppedBy.hardSignals`, `nextSteps`, and the last rounds' `confirmedTitles`. State the diagnosis in one paragraph to the user before acting.
 2. Pick the remedy the diagnosis calls for. A rule restated at several sites that the rounds keep re-synchronising is reduced to one normative statement with citations elsewhere. An over-specified section is pruned to a bounded `IMPLEMENTOR'S CHOICE`. A mechanism the rounds keep correcting is redesigned, by the `redesign` mode with `focusAreas` when the areas are clear, or by subagents you brief with the pass's reasoning when the edit is a restructure rather than a redesign. Prefer the remedy that removes text.
 3. Apply it to the proposal directory only, review the edit with a fresh subagent that did not make it, and fix what it finds. Commit the proposal directory with a message naming the remedy, so the relaunched run's snapshots start from it.
-4. Relaunch with `resumeState: true`, every entry of the stopped run's `introspection.directives` carried over as `directives` strings (they are not part of the resume state), the pass's `rerunArgs` where they parse, and a `directives` entry stating what the stopped run diagnosed and what was done about it, so the new run's fixers do not rebuild what the remedy removed.
+4. Relaunch with `resumeState: true`, the `directives` this run was itself launched with, the pass's `rerunArgs` where they parse, and a `directives` entry stating what the stopped run diagnosed and what was done about it, so the new run's fixers do not rebuild what the remedy removed.
 5. Report what was diagnosed, what was changed, and the arguments used.
 
 At most **two** remedy-and-restart cycles per invocation; track the count yourself. On the third stop, put the question to the user with the three diagnoses side by side, because a run that stops three times on different remedies has a problem none of them named.
@@ -377,7 +380,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `maxReviewRounds` | forward | none | a fallback budget for the non-spec loop, used only when `maxNonSpecReviewRounds` is absent |
 | `periodEvery` | forward | 0 | rounds between periodic firings of the open-decisions phase, counted at the non-spec loop's round boundary. `0`, the default, turns periodic firings off: the phase fires after each loop, and only when the proposal changed since its last firing |
 | `humanReadings` | forward | 1 | independent readings of each open decision in the phase's sub-task 1. The falsifier is the adversarial check; `3` restores the unanimity join |
-| `collectorModel` | launch | `sonnet` | the model the phase's single collectors run at. The falsifier stays on the base tier |
+| `collectorModel`, `collectorEffort` | launch | `opus`, `low` | the model and effort the phase's single collectors run at. The falsifier stays on the base tier |
 | `maxPeriodicFirings` | forward | 5 | the periodic firing's own budget; exhausting it is reported and stops that trigger alone, leaving every post-loop firing running |
 | `maxRecheckPairs` | forward | 2 | how many `spec-recheck` plus `non-spec-recheck` pairs may run; exhausting it stops the run with the outstanding spec edit unreviewed |
 | `maxNonSpecRechecks` | forward | 2 | how many lone `non-spec-recheck` loops may run, under the same reported stop |
@@ -387,6 +390,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `allowNonSpecOnUnconvergedSpec` | forward | false | runs the non-spec loop even when the spec loop exhausted its budget; otherwise the run stops at `spec-not-converged` |
 | `verifyOrder` | forward | `["material","evidence"]` | which skeptic short-circuits |
 | `verifySequential` | forward | true | false restores both skeptics in parallel, as two agents |
+| `verifyPrefilter` | forward | true | refutes a style-grounded rewording of commentary without a verifier; `false` sends every finding to the verifier |
 | `verifyMode` | forward | `merged` | `merged`: one agent answers both skeptics' questions in `verifyOrder`, stopping at the first refusal. `split`: two agents |
 | `deltaReads` | forward | true | in a partial round, a lens that read the whole proposal last round reads only what changed. `false` restores a full read every round |
 | `maxFixGroups` | forward | 7 | the only cap on the fix split; group size is uncapped by design |
@@ -395,9 +399,9 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `skipExpansion` | forward | false | turns site expansion off; the designer then sees only the sites the finding names |
 | `introspectEvery` | forward | 5 | rounds between mandatory passes |
 | `introspectGate` | forward | true | the warrant gate; a cadence wake ignores it either way |
-| `introspectMode` | forward | `advisory` | `advisory`: the pass diagnoses, its non-healthy verdicts become directives, and a stop needs a hard signal and one falsifier. `acting`: panels on every verdict, redesign and prune executed in the loop |
-| `introspectModel`, `introspectEffort` | launch | `fable`, `high` | what the pass and its judges run at |
-| `haltWindow`, `haltRepeatTitle` | forward | 4, 3 | the hard signals a stop needs: rounds over which confirmed findings did not fall, and confirmations of one title |
+| `introspectMode` | forward | `advisory` | `advisory`: `healthy` continues and any other verdict stops the run for the caller to correct. `acting`: panels on every verdict, redesign and prune executed in the loop |
+| `introspectModel`, `introspectEffort` | launch | `opus`, `high` | what the pass and its judges run at |
+| `haltWindow`, `haltRepeatTitle` | forward | 4, 3 | the informational hard signals a stop carries: rounds over which confirmed findings did not fall, and confirmations of one title |
 | `directives` | anchored | none | strings carried into every lens, fix-design, and fixer prompt from round 1; how a relaunch carries what the stopped run learned |
 | `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts, in the `acting` mode |
 | `judgesHealthy` | forward | 2 | panel size for `healthy`, in the `acting` mode |
@@ -501,14 +505,16 @@ the run at launch rather than being silently ignored.
 
 A number of agents name their own model and effort, and those names are **absolute rather than relative to
 the base**. On `haiku` at high effort: the snapshot, diff-count, resume-state, round-boundary, spec-changes
-probe, both status writers, and the growth measurement. On `sonnet` at high effort: `init`, the conventions
-pass, the checklist verifier, and site expansion. Everything else takes the base.
+probe, both status writers, and the growth measurement. On `opus` at low effort: `init`, the conventions
+pass, the checklist verifier, site expansion, and in the open-decisions phase the triage and the two single
+collectors. Everything else takes the base. Those agents ran on `sonnet` until 2026-09-22, when a replay of
+their real prompts from 0081's runs measured `opus` at low effort as faster, cheaper, and no worse on them.
 
 The pairing is deliberate. A cheap model is not the same request as a shallow one: these agents sit on a
 small model because their work is mechanical and well specified, and on high effort because getting it
 wrong corrupts a round's bookkeeping quietly rather than loudly. The consequence of keeping the names
-absolute is that the tiering is only coherent while the base sits at or above `sonnet`: lowering the base
-under a hard-coded model would raise that agent above the base rather than below it.
+absolute is that the tiering is only coherent while the base sits at or above `opus` at low effort: lowering
+the base under a hard-coded tier would raise that agent above the base rather than below it.
 
 The retry path is the one place a model changes on its own. After two failures an agent is retried on
 `sonnet`, because a 529 is usually capacity-pool-specific and a lens completing on a lower tier beats a lens
@@ -552,6 +558,8 @@ Report the `runTag` and the override path when you launch, so the user has the a
 2. Compute `repoRoot`, `date`, and `exemplar` (the highest-numbered other proposal).
 3. New mode: read the spec sections and code the problem names, so `context` carries concrete citations, and compute `nextNumber` from the highest existing `NNNN`.
 4. Review mode: gather a short `context` of the spec sections and packages the proposal touches, by grepping for its main identifiers.
+
+5. Review and redesign modes: **measure the review log's standing context before launching.** Every reviewing, designing, and fixing agent reads that section, so its size is paid once per agent. Run `awk '/^## Standing context/{s=1} /^## Ledger/{s=0} s' <stem>.review-log.md | wc -lw`. Above about 600 lines, hard-compact it first, because the in-run compaction pass cannot: it may not drop an `OPEN`, an `UNVERIFIED`, or a `MISTAKE`, and when it misses its target the target rises to the size it found, so a log inherited at 2,300 lines (measured on one proposal: 124,000 words, about 165k tokens per agent, most of it about mechanisms the proposal no longer staged) stays that size for the whole run. The hard compaction is one subagent: append the whole section verbatim to `<stem>.review-log-archive.md` under a dated heading, then rewrite the section against the CURRENT staging to at most 450 lines, keeping the traps, the verified code facts, the single-home rules, the decisions with their rejected alternatives, and the entries still open or deferred against the current text, preserving entry ids, and leaving `## Ledger` untouched. Commit the result with the proposal before launching.
 
 ### Step 2: run the workflow
 

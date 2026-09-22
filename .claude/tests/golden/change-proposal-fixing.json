@@ -11,7 +11,7 @@
   {
     "label": "conventions",
     "phase": "",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -37,6 +37,13 @@
     "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
     "phase": "",
     "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions",
+    "phase": "Decisions",
+    "model": "haiku",
     "schema": "",
     "blocks": []
   },
@@ -269,7 +276,7 @@
   {
     "label": "r1:expand:0",
     "phase": "non-spec R1: fix",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "proposal+searched+tree",
     "blocks": [
       "read-only",
@@ -581,7 +588,7 @@
   {
     "label": "verify-checklist",
     "phase": "Review",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"

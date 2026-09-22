@@ -9,7 +9,7 @@
   {
     "label": "f2:out-of-scope-defects",
     "phase": "Collect",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "coverage+decisions",
     "blocks": [
       "read-only",
@@ -49,7 +49,7 @@
   {
     "label": "f2:other-proposals",
     "phase": "Collect",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "coverage+decisions",
     "blocks": [
       "read-only",

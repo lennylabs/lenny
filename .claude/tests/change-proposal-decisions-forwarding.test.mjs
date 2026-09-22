@@ -39,6 +39,7 @@ const ARGS = {
   impactWindow: 9,
   humanReadings: 3,
   collectorModel: "haiku",
+  collectorEffort: "medium",
 };
 
 // The refuted premise the run-wide list carries. `rejected` is the one argument
@@ -123,6 +124,7 @@ const EXPECTED = {
   impactWindow: 9,
   humanReadings: 3,
   collectorModel: "haiku",
+  collectorEffort: "medium",
 };
 
 for (const [key, value] of Object.entries(EXPECTED)) {

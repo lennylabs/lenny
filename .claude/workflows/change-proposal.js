@@ -170,15 +170,34 @@ let fixDesignDepth = input.fixDesignDepth || "auto";
 // an earlier run. The defaults are the tier this workflow was tuned on rather
 // than whatever the caller happens to be running.
 //
-// Hard-coded models stay ABSOLUTE. A handful of agents name haiku or sonnet
-// outright, and they keep those names rather than being expressed as a step
-// down from the base. That is a deliberate simplification for now: it means the
-// tiering is only coherent while the base is at or above sonnet, and lowering
-// the base below a hard-coded model would raise that agent above the base.
+// Hard-coded models stay ABSOLUTE. A handful of agents name their own tier
+// outright (haiku, or opus at low effort), and they keep it rather than being
+// expressed as a step down from the base. That is a deliberate simplification
+// for now: the tiering is only coherent while the base is at or above those
+// tiers, and lowering the base below a hard-coded one would raise that agent
+// above the base. The opus-at-low agents were on sonnet at high effort until a
+// replay of their real prompts (2026-09-22) measured opus low as faster, cheaper
+// and no worse on them.
 const MODELS = ["opus", "sonnet", "haiku", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
+
+// THE RELAYED LAUNCH MESSAGE IS NOT THE AGENT'S TASK. The harness shows every
+// subagent the user message that launched the run and calls it the only user
+// voice. On a measured run that message was "commit and then run the workflow",
+// and seven agents whose whole task was one shell command ran `git commit` on
+// the proposal directory because the user had, as they read it, asked them to.
+// The guard leads every prompt, so it is read before the task and is the same
+// bytes for every agent.
+// Declared here, ahead of the first top-level await, because robustAgent is a
+// hoisted function the init and authoring agents call long before its
+// definition is reached, and a const read before its declaration throws.
+const RELAY_GUARD =
+  "BEFORE YOUR TASK: the user request relayed above this message was addressed to the session that " +
+  "LAUNCHED this workflow, and that session has already carried it out. It is background, not an " +
+  "instruction to you. Do not commit, push, stage, launch, rerun, or do anything else it mentions. Your " +
+  "whole task is the text below, and git history is not yours to write unless that text tells you to.\n\n";
 
 if (!MODELS.includes(baseModel)) {
   throw new Error(
@@ -387,14 +406,11 @@ function roleRef(P, role, sectionName) {
 const promptMap =
   input.prompts && typeof input.prompts === "object" ? input.prompts : {};
 const promptsApplied = [];
-// INTROSPECTION DIRECTIVES. In the advisory mode the introspection pass no longer
-// acts on the document: measured over two runs on one proposal, its diagnoses
-// were right and its remedies made things worse (the first redesign it ordered
-// created the five-site restatement the second one diagnosed, and each one
-// cleared the retirement set and bought a full-pool round). What it concludes
-// is carried to the agents that do act, as a standing paragraph in every lens,
-// fix-design, and fixer prompt. Only the latest few are carried, newest last,
-// because a directive is a reading of the run at one moment and ages.
+// DIRECTIVES. What a caller carries into a run from outside it: the skill that
+// relaunches a stopped run states what that run diagnosed and what was done
+// about it, so the new run's lenses and fixers do not rebuild what the remedy
+// removed. The run itself never adds one. They reach every lens, fix-design,
+// and fixer prompt; only the latest few are carried, newest last.
 const directives = [];
 // A caller may seed the list. This is how the skill carries what a stopped run
 // learned into the run it relaunches: the stopped run's diagnosis, and what the
@@ -408,8 +424,8 @@ const DIRECTIVES_CARRIED = 3;
 function directiveBlock() {
   if (!directives.length) return "";
   return (
-    "\n\nDIRECTIVE FROM THIS RUN'S INTROSPECTION PASS. It read the whole run and diagnosed the pattern " +
-    "below. It does not lower the finding bar and it does not tell you what to conclude about any one " +
+    "\n\nDIRECTIVE FROM THE CALLER OF THIS RUN, written after an earlier run on this proposal was stopped " +
+    "and corrected. It does not lower the finding bar and it does not tell you what to conclude about any one " +
     "finding; it tells you which KIND of remedy this run has learned to prefer and which kind has been " +
     "making things worse. Where it names a remedy that is a reduction (fewer sites, a deletion, a citation " +
     "in place of a restatement), prefer that remedy over one that adds text.\n" +
@@ -500,6 +516,7 @@ const ARG_CLASS = {
   impactWindow: "forward",
   humanReadings: "forward",
   collectorModel: "launch",
+  collectorEffort: "launch",
   maxRecheckPairs: "forward",
   maxNonSpecRechecks: "forward",
   maxRecheckRounds: "forward",
@@ -509,6 +526,7 @@ const ARG_CLASS = {
   verifyOrder: "forward",
   verifySequential: "forward",
   verifyMode: "forward",
+  verifyPrefilter: "forward",
   deltaReads: "forward",
   maxFixGroups: "forward",
   fixDesignDepth: "forward",
@@ -600,22 +618,18 @@ function shellQuote(s) {
   return "'" + String(s).replace(/'/g, "'\\''") + "'";
 }
 
-function logBlock(label, round) {
-  // The round is in the shard name because two rounds of the same lens would
-  // otherwise write the same path and the second would overwrite the first.
-  const rnd = round === undefined ? "0" : String(round);
-  const shard =
-    repo + "/scratchpad/cp-log/" + runTag + "/" +
-    (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
-    label.replace(/[^A-Za-z0-9._-]/g, "-") + ".md";
+// The log instructions are two pieces. LOG_RULES is byte-identical across every
+// agent of a run (it names only the log file and the tag vocabulary), so a
+// prompt builder places it in its stable head where a prefix cache can reuse
+// it. shardLine names the per-agent shard path and block heading, which change
+// with the label and the round, so it belongs in the per-call tail. logBlock
+// keeps the old single-call form for the builders that were not restructured.
+function LOG_RULES() {
   return (
     "\n\nTHE REVIEW LOG carries what earlier agents on this proposal learned. Read the " +
     "`## Standing context` section of " + P.log + " BEFORE you start: it is curated, it is short, and it " +
     "is where a trap someone already fell into is recorded.\n" +
-    "BEFORE YOU RETURN, append what a future agent on this proposal would need, to " + shard +
-    " (create it; write to no other log file, because a dozen agents write in parallel and appending to " +
-    "the log itself loses entries). Head your block `### [" + (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
-    label + ".<n>]` and use these tags, one per line, so the compaction pass can act on them:\n" +
+    "Use these tags in your log block, one per line, so the compaction pass can act on them:\n" +
     "  DECISION: what you chose — BECAUSE why — ALTERNATIVES: what you rejected and why\n" +
     "  WATCHOUT: a trap the next agent will hit — EVIDENCE: file:line\n" +
     "  FACT: something durable about the tree that cost you effort — EVIDENCE: file:line\n" +
@@ -635,6 +649,26 @@ function logBlock(label, round) {
     "CORRECTS and USEFUL are the two that matter most: they are what lets compaction tell an entry worth " +
     "promoting from one worth deleting."
   );
+}
+
+function shardLine(label, round) {
+  // The round is in the shard name because two rounds of the same lens would
+  // otherwise write the same path and the second would overwrite the first.
+  const rnd = round === undefined ? "0" : String(round);
+  const shard =
+    repo + "/scratchpad/cp-log/" + runTag + "/" +
+    (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
+    label.replace(/[^A-Za-z0-9._-]/g, "-") + ".md";
+  return (
+    "\n\nBEFORE YOU RETURN, append what a future agent on this proposal would need, to " + shard +
+    " (create it; write to no other log file, because a dozen agents write in parallel and appending to " +
+    "the log itself loses entries). Head your block `### [" + (LOOP ? LOOP.name : "pre") + "." + rnd + "." +
+    label + ".<n>]` and use the tags listed above."
+  );
+}
+
+function logBlock(label, round) {
+  return LOG_RULES() + shardLine(label, round);
 }
 const EVIDENCE =
   "Verify every claim directly against spec/, schemas/, pkg/, cmd/, charts/, and git history in " +
@@ -1097,6 +1131,11 @@ const FIX_PLAN = {
             description: "indices into the confirmed-findings array. Every index appears in exactly one group, and every finding appears.",
           },
           risk: { type: "string", enum: ["low", "medium", "high"], description: "how likely fixing this group is to cascade" },
+          effort: {
+            type: "string",
+            enum: ["trivial", "deep"],
+            description: "trivial: every finding in the group is a citation, count, rename, one-sentence rewording, or pointer re-target whose suggested fix IS the fix. deep: anything else.",
+          },
           order: { type: "integer", description: "1-based; the order the groups are fixed in, so no group's edits destroy a later group's anchors" },
         },
       },
@@ -1511,7 +1550,7 @@ if (mode === "new") {
       "this file and it stays empty until an implementation records a departure from what the proposal " +
       "states.\n\n" +
       "Follow " + repo + "/.claude/rules/doc-style.md for any sentence you author.",
-    { label: "init", model: "sonnet", effort: "high", phase: "Init" },
+    { label: "init", model: "opus", effort: "low", phase: "Init" },
   );
   log("Created " + P.dir + " with its eight skeleton files");
 
@@ -1906,7 +1945,7 @@ await robustAgent(
     "/.claude/rules/doc-style.md (read it first). " +
     "Fix structural deviations and doc-style violations (fragments, missing list conjunctions, decorative em-dashes, marketing language). Do not change technical content, citations, or design decisions. If the files already conform, change nothing and say so." +
     promptFor("conventions"),
-  { label: "conventions", model: "sonnet", effort: "high" },
+  { label: "conventions", model: "opus", effort: "low" },
 );
 }
 
@@ -2299,29 +2338,84 @@ function diffInstruction(snapPath) {
 // every lens of the pool ran, and in such a round no lens is delta-scoped, so
 // the drift a rewrite leaves in text nobody touched is still owned by a full
 // read before the loop may converge.
-function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap, deltaOnly) {
+// THE HISTORY LISTS. The lenses are told what earlier rounds fixed and refuted
+// so they neither re-litigate nor re-report. Past a few rounds the two lists
+// are most of a lens prompt's per-call tail and they grow every round, so once
+// they pass HISTORY_INLINE_CAP entries the round writes them in full to one
+// file, once, before its lenses launch, and each lens is given the path plus
+// the most recent entries inline. Under the cap everything stays inline.
+//
+// The file lives in a `history/` subdirectory of the shard directory rather
+// than beside the shards: the round boundary merges every `<loop>.*.md` at the
+// top level of that directory into the review log, and a history file named
+// there would be spliced into the ledger as if an agent had written it.
+const HISTORY_INLINE_CAP = 12;
+const refutedLine = (r) =>
+  "- " + r.title + ": refuted by the " + (r.refutedBy || "unknown") + " skeptic because " + r.reason;
+function historyFilePath(round) {
+  return repo + "/scratchpad/cp-log/" + runTag + "/history/" + LOOP.name + ".r" + round + ".history.md";
+}
+function historyOverCap(fixedTitles, rejected) {
+  return rejected.length + fixedTitles.length > HISTORY_INLINE_CAP;
+}
+// Writes the full lists for one round and returns the path, or null when the
+// lists fit inline or the write failed (the caller then inlines everything, so
+// a lens is never pointed at a file that does not exist).
+async function writeRoundHistory(round, fixedTitles, rejected) {
+  if (!historyOverCap(fixedTitles, rejected)) return null;
+  const file = historyFilePath(round);
+  const body =
+    "# Already fixed and already refuted, as of " + LOOP.name + " round " + round + "\n\n" +
+    "## Already found and fixed in earlier rounds\n\n" +
+    "The current proposal text reflects these fixes; do not re-litigate them.\n\n" +
+    (fixedTitles.length ? fixedTitles.map((t) => "- " + t).join("\n") : "(none)") +
+    "\n\n## Already examined and refuted in earlier rounds\n\n" +
+    "Do not re-report these or close variants.\n\n" +
+    (rejected.length ? rejected.map(refutedLine).join("\n") : "(none)") + "\n";
+  const ok = await robustAgent(
+    "Write a file. Run exactly this, and reply with the single word DONE:\n\n" +
+      "mkdir -p " + file.slice(0, file.lastIndexOf("/")) + " && cat > " + file +
+      " <<'CP_HISTORY_EOF'\n" + body + "\nCP_HISTORY_EOF\n\n" +
+      "Do nothing else. Do not read, summarise, or edit any other file.",
+    { label: "r" + round + ":history", model: "haiku", effort: "high", phase: LOOP.name + " R" + round + ": review" },
+  );
+  if (!ok) {
+    log("Round " + round + ": the history file could not be written; the lists go inline in full");
+    return null;
+  }
+  return file;
+}
+
+function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap, deltaOnly, historyPath) {
   let history = "";
-  if (fixedTitles.length > 0) {
+  let fixedShown = fixedTitles;
+  let rejectedShown = rejected;
+  if (historyPath) {
+    // The most recent entries stay inline, split between the two lists, with
+    // the budget one list does not need given to the other.
+    const rejN = Math.min(rejected.length, Math.max(HISTORY_INLINE_CAP / 2, HISTORY_INLINE_CAP - fixedTitles.length));
+    const fixN = Math.min(fixedTitles.length, HISTORY_INLINE_CAP - rejN);
+    fixedShown = fixedTitles.slice(fixedTitles.length - fixN);
+    rejectedShown = rejected.slice(rejected.length - rejN);
+    history +=
+      "\n\nThe full already-fixed and already-refuted lists are at " + historyPath +
+      "; read it before reporting. The most recent entries follow.";
+  }
+  if (fixedShown.length > 0) {
     history +=
       "\n\nAlready found and fixed in earlier rounds (the current proposal text reflects these fixes; do not re-litigate them): " +
-      fixedTitles.join("; ") +
+      fixedShown.join("; ") +
       ".";
   }
-  if (rejected.length > 0) {
+  if (rejectedShown.length > 0) {
     history +=
       "\n\nAlready examined and refuted in earlier rounds (do not re-report these or close variants):\n" +
-      rejected
-        .map(
-          (r) =>
-            "- " + r.title + ": refuted by the " + (r.refutedBy || "unknown") +
-            " skeptic because " + r.reason,
-        )
-        .join("\n");
+      rejectedShown.map(refutedLine).join("\n");
   }
+  // STABLE HEAD, byte-identical across every lens call of one lens in a run:
+  // no round, no history, no snapshot path. The per-call tail follows.
   return (
-    "You are an adversarial reviewer in round " +
-    round +
-    " of an iterative convergence loop for a change proposal.\n\n" +
+    "You are an adversarial reviewer in an iterative convergence loop for a change proposal.\n\n" +
     CONTEXT +
     "\n\n" +
     READ_ONLY_LOGGED +
@@ -2331,8 +2425,7 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap, deltaOnly) {
     lens.text +
     LOOP.scopeNote() +
     DEVIATIONS_BLOCK() +
-    logBlock("review-" + lens.key, round) +
-    history +
+    LOG_RULES() +
     directiveBlock() +
     (lensPrompt
       ? "\n\nAdditional instruction from the caller of this run. It adds context or " +
@@ -2340,6 +2433,8 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap, deltaOnly) {
         "something a finding that the bar excludes:\n" +
         lensPrompt
       : "") +
+    "\n\nThis is round " + round + " of the " + LOOP.name + " loop." +
+    history +
     (prevSnap && deltaOnly
       ? "\n\nYOU READ THIS WHOLE PROPOSAL LAST ROUND, AND THIS ROUND YOU READ WHAT CHANGED. " +
         diffInstruction(prevSnap) +
@@ -2365,6 +2460,7 @@ function reviewPrompt(lens, round, fixedTitles, rejected, prevSnap, deltaOnly) {
         "touched is exactly the drift this loop exists to catch.\n"
       : "") +
     cacheBlock(lens.key, round) +
+    shardLine("review-" + lens.key, round) +
     "\n\nWork method: " + (prevSnap && deltaOnly ? "read the changed text as the block above directs" : "read the proposal fully") + ", then investigate the repository with Grep and targeted Reads to verify or refute its claims under your lens. Report your findings via the structured output (empty array if you find nothing that meets the bar)."
   );
 }
@@ -2431,32 +2527,73 @@ function dedupPrompt(findings) {
   );
 }
 
+// WHAT A VERIFIER READS. The finding, stripped of script metadata (`area`,
+// `kind`, `introducedBy`, `lenses` steer grouping and retirement, and tell a
+// skeptic nothing), embedded ONCE. Measured on one run, the merged prompt
+// carried the finding twice and the whole orchestrator context, so a large
+// finding opened at 25k characters before the agent read a file.
+const VERIFIER_FIELDS = ["title", "where", "claim", "why_wrong", "evidence", "suggested_fix"];
+function sliceFinding(f, fields) {
+  const out = {};
+  for (const k of fields) if (f[k] !== undefined) out[k] = f[k];
+  return out;
+}
+function verifierFinding(f) {
+  return JSON.stringify(sliceFinding(f, VERIFIER_FIELDS), null, 2);
+}
+// The expansion pass also reads `kind`: a bookkeeping or citation finding is
+// usually local, and the pass is told so.
+const EXPAND_FIELDS = VERIFIER_FIELDS.concat(["kind"]);
+// What a designer or fixer reads of a finding. `potentiallyRelatedSites` is
+// stripped because sitesBlock carries the sites once, framed as candidates;
+// embedded here as well, every site reached each agent twice.
+function withoutSites(f) {
+  const { potentiallyRelatedSites, ...rest } = f;
+  return rest;
+}
+
+// The evidence question checks citations against files. It needs the
+// repository and the reading discipline; it does not need the standing
+// reference points or the orchestrator's leads, which are written for a lens
+// deciding what to look at.
+const VERIFY_CONTEXT =
+  "Repository: " + repo + " (your working directory). The technical spec lives in spec/ (files are " +
+  "large; use Grep and targeted Read offsets, never read a whole spec file), implementation in pkg/ and " +
+  "cmd/, Helm chart in charts/, operator docs in docs/. The proposal under review: " + path + ".\n" +
+  EVIDENCE;
+
+const EVIDENCE_RUBRIC =
+  "You are a skeptical evidence verifier. A reviewer claims an error in the proposal. Independently " +
+  "re-derive it: read the proposal at the claimed location and read every cited source file at the cited " +
+  "lines.\n\nConfirm ONLY if all three hold: (1) the proposal really says what the finding claims it says; " +
+  "(2) the cited sources really say what the finding claims they say; (3) the contradiction or " +
+  "infeasibility actually follows from (1) and (2). If any citation is wrong, a quote is out of context, " +
+  "the proposal already handles the issue elsewhere in its text, or the conclusion does not follow, refute " +
+  "with the specific reason.\n\n" +
+  VERIFY_CONTEXT +
+  "\n\n" +
+  READ_ONLY;
+
+const MATERIALITY_RUBRIC =
+  "You are a skeptical materiality judge for review findings on the proposal " +
+  path +
+  ". Assume the finding's evidence is factually accurate. Decide ONLY whether fixing it is required for correctness: confirm if leaving it unfixed would make the applied spec internally inconsistent, make a stated citation or attribution false, make the described implementation not work, or leave a behavior the proposal changes without the tests that behavior requires (a missing Testing section, an omitted reached tier, a changed behavior with no listed test, or a happy-path-only test where the change introduces an error, concurrent, boundary, security, or spec-named-failure path, per .claude/rules/test-coverage.md). ALSO confirm a finding that one rule (a predicate, an ordered cascade, a contract, an outcome table, an invariant) is stated in full at more than one site, even when the copies agree today: duplicated statements of one rule are what drift apart, a measured run spent most of 49 rounds re-synchronising five of them, and the fix is a reduction to one home that the other sites cite. Refute THAT kind of finding only when the second site merely cites, summarises in a clause, or gives the rationale, or is a reader-facing docs page. Refute if it is style or wording, documentation polish, an optional improvement or hardening, redundancy of any other kind, a preference between workable designs, an additional nice-to-have test beyond the coverage the change requires, or anything else whose absence does not make the spec or implementation wrong. Default to refuted when uncertain. You may read " +
+  path +
+  " for context.";
+
 function evidencePrompt(f) {
-  return (
-    "You are a skeptical evidence verifier. A reviewer claims the following error in the proposal " +
-    path +
-    ". Independently re-derive it: read the proposal at the claimed location and read every cited source file at the cited lines.\n\nConfirm ONLY if all three hold: (1) the proposal really says what the finding claims it says; (2) the cited sources really say what the finding claims they say; (3) the contradiction or infeasibility actually follows from (1) and (2). If any citation is wrong, a quote is out of context, the proposal already handles the issue elsewhere in its text, or the conclusion does not follow, refute with the specific reason.\n\n" +
-    CONTEXT +
-    "\n\n" +
-    READ_ONLY +
-    "\n\nFinding:\n" +
-    JSON.stringify(f, null, 2)
-  );
+  return EVIDENCE_RUBRIC + "\n\nFinding:\n" + verifierFinding(f);
 }
 
 function materialityPrompt(f) {
-  return (
-    "You are a skeptical materiality judge for review findings on the proposal " +
-    path +
-    ". Assume the finding's evidence is factually accurate. Decide ONLY whether fixing it is required for correctness: confirm if leaving it unfixed would make the applied spec internally inconsistent, make a stated citation or attribution false, make the described implementation not work, or leave a behavior the proposal changes without the tests that behavior requires (a missing Testing section, an omitted reached tier, a changed behavior with no listed test, or a happy-path-only test where the change introduces an error, concurrent, boundary, security, or spec-named-failure path, per .claude/rules/test-coverage.md). ALSO confirm a finding that one rule (a predicate, an ordered cascade, a contract, an outcome table, an invariant) is stated in full at more than one site, even when the copies agree today: duplicated statements of one rule are what drift apart, a measured run spent most of 49 rounds re-synchronising five of them, and the fix is a reduction to one home that the other sites cite. Refute THAT kind of finding only when the second site merely cites, summarises in a clause, or gives the rationale, or is a reader-facing docs page. Refute if it is style or wording, documentation polish, an optional improvement or hardening, redundancy of any other kind, a preference between workable designs, an additional nice-to-have test beyond the coverage the change requires, or anything else whose absence does not make the spec or implementation wrong. Default to refuted when uncertain. You may read " +
-    path +
-    " for context.\n\nFinding:\n" +
-    JSON.stringify(f, null, 2)
-  );
+  return MATERIALITY_RUBRIC + "\n\nFinding:\n" + verifierFinding(f);
 }
 
+// Everything before `Finding:` is byte-identical across the run's verifier
+// calls: no round number, no finding text. That is the precondition for any
+// prefix reuse the harness may do, and it costs nothing.
 function mergedVerifyPrompt(f) {
-  const q = { material: materialityPrompt(f), evidence: evidencePrompt(f) };
+  const q = { material: MATERIALITY_RUBRIC, evidence: EVIDENCE_RUBRIC };
   return (
     "You verify ONE review finding by answering two questions IN ORDER, as two different skeptics would. " +
     "Answer QUESTION ONE completely, on its own terms, before you read QUESTION TWO's instructions as " +
@@ -2466,7 +2603,54 @@ function mergedVerifyPrompt(f) {
     "different things and a finding routinely passes one and fails the other. Do not let the work you did " +
     "for the first make you reluctant to refute on the second.\n\n" +
     "===== QUESTION ONE =====\n" + q[verifyOrder[0]] +
-    "\n\n===== QUESTION TWO (only if QUESTION ONE confirmed) =====\n" + q[verifyOrder[1]]
+    "\n\n===== QUESTION TWO (only if QUESTION ONE confirmed) =====\n" + q[verifyOrder[1]] +
+    "\n\n===== THE FINDING, for both questions =====\n" + verifierFinding(f)
+  );
+}
+
+// ---- The structural pre-filter --------------------------------------------
+//
+// A refusal no agent is needed for, in the classify-diff pattern: authoritative
+// where it fires, silent otherwise. It refutes a finding only when every one of
+// these holds, so its failure mode is a wasted verifier call rather than a
+// suppressed finding:
+//   - the kind is one the rubric already places in the refute categories when
+//     the site is commentary (bookkeeping, citation, other; never a
+//     contradiction, a design defect, an unstaged site, or a test kind);
+//   - the finding names only commentary, never a staged block, a rule, a
+//     table, or a test;
+//   - its ground is a prose-style rule, or its remedy is a rewording that adds
+//     and removes no claim;
+//   - no single-source lens filed it, because restatement is the class the
+//     rubric explicitly confirms.
+// Measured: the refuting verifier's own reason for the example this was built
+// from was "a count-free rewording ... the finding's own supporting rule is a
+// style rule", which is exactly the test below.
+const PREFILTER_KINDS = new Set(["bookkeeping", "citation", "other"]);
+const STAGED_SITE = /\b(staged|rule \d+|rules \d+|table|row|column|§\s*\d|section \d|test|tier|block|\bpkg\/|\bspec\/|\bschemas\/)/i;
+const COMMENTARY_SITE = /\b(lead-in|opening paragraph|commentary|rationale|design section|## design|summary\.md|deliverable index|narrative|preamble|prose)\b/i;
+const STYLE_GROUND = /doc-style\.md|doc-content\.md|explicit count|count-free|wording|reword|rephras|hedg|em-dash|tricolon|marketing/i;
+const CLAIM_BEARING_FIX = /\b(add|delete|remove|stage|re-key|rekey|cite|citation|move|rename|rule \d+|row|column|test|assert|field|RPC|§)\b/i;
+const verifyPrefilter = input.verifyPrefilter !== false;
+function structuralRefusal(f) {
+  if (!verifyPrefilter) return null;
+  if (!PREFILTER_KINDS.has(String(f.kind || ""))) return null;
+  const lenses = Array.isArray(f.lenses) ? f.lenses : f.lens ? [f.lens] : [];
+  if (lenses.includes("single-source")) return null;
+  const where = String(f.where || "");
+  if (!COMMENTARY_SITE.test(where) || STAGED_SITE.test(where)) return null;
+  const fix = String(f.suggested_fix || "").trim();
+  const ground = String(f.why_wrong || "") + " " + fix;
+  // Both halves are required: a prose-style ground AND a remedy that names no
+  // claim-bearing thing. A short or empty remedy is not read as a rewording:
+  // with nothing stated, there is no remedy to judge claim-free, so the
+  // finding goes to a verifier.
+  if (!fix) return null;
+  if (!STYLE_GROUND.test(ground)) return null;
+  if (CLAIM_BEARING_FIX.test(fix)) return null;
+  return (
+    "structural: kind " + f.kind + " at a commentary site, grounded in a prose-style rule, with a " +
+    "remedy that adds and removes no claim; the materiality bar refutes wording and documentation polish"
   );
 }
 
@@ -2479,16 +2663,15 @@ function mergedVerifyPrompt(f) {
 // own panel. The question here is narrower and decidable: not "what else talks
 // about this" but "what else does this fix BREAK".
 function expandSitesPrompt(finding, round) {
+  // STABLE HEAD first (no round, no finding), then the per-call tail.
   return (
-    "You are the site-expansion pass for ONE confirmed finding in round " + round + " of the " +
-    LOOP.name + " loop.\n\n" +
+    "You are the site-expansion pass for ONE confirmed finding.\n\n" +
     "Two independent verifiers already confirmed this finding at the sites it names. Do not re-examine it. " +
     "Answer one question about the rest of the repository:\n\n" +
     "  IF THIS FINDING'S FIX LANDS AS SUGGESTED, WHICH OTHER SITES BECOME WRONG?\n\n" +
     CONTEXT +
     "\n\nYou are a read-only investigator. Do not create, edit, or delete any file, including a log " +
     "shard. Cite evidence as file:line.\n\n" +
-    "THE FINDING (JSON):\n" + JSON.stringify(finding, null, 2) + "\n\n" +
     "THE STARTING SET is the finding's `where` and every citation in its `evidence`. Everything you return " +
     "is reached outward from there. You are not surveying the proposal.\n\n" +
     "THE TEST IS BINARY. For each candidate, ask whether landing this fix makes that text wrong, stale, or " +
@@ -2517,7 +2700,9 @@ function expandSitesPrompt(finding, round) {
     "round nothing. Do not manufacture a site in order to have something to report.\n\n" +
     "DO NOT re-litigate the finding, judge whether it was worth filing, propose a fix, design anything, or " +
     "edit any file." +
-    promptFor("expand-sites")
+    promptFor("expand-sites") +
+    "\n\nRound " + round + " of the " + LOOP.name + " loop.\n\n" +
+    "THE FINDING (JSON):\n" + JSON.stringify(sliceFinding(finding, EXPAND_FIELDS), null, 2)
   );
 }
 
@@ -2564,8 +2749,8 @@ async function expandSites(confirmedFindings, round) {
       robustAgent(expandSitesPrompt(confirmedFindings[i], round), {
         label: "r" + round + ":expand:" + i,
         phase: LOOP.name + " R" + round + ": fix",
-        model: "sonnet",
-        effort: "high",
+        model: "opus",
+        effort: "low",
         schema: POTENTIALLY_RELATED_SITES,
       }),
     ),
@@ -2693,7 +2878,16 @@ function fixPlanPrompt(confirmed, round) {
     "- Alone: a finding whose fix will cascade into other sections. It needs the design stage's full " +
     "attention and it will move text the other groups are editing.\n" +
     "- FEWER than the cap when the findings genuinely cluster into fewer subjects. Every group costs a " +
-    "design agent and a fix agent, so an unnecessary group is pure waste.\n\n" +
+    "design agent and a fix agent, so an unnecessary group is pure waste.\n" +
+    "- A TRIVIAL FINDING NEVER GETS ITS OWN GROUP. Trivial means a citation correction, a count, a " +
+    "rename, a one-sentence rewording, or a pointer re-target: the reviewer's suggested fix IS the fix " +
+    "and no investigation is needed (the kinds `bookkeeping`, `citation` and `attribution` are usually " +
+    "trivial; `design-defect` and `contradiction` are not). Put every trivial finding of the round into " +
+    "ONE group tagged `effort: \"trivial\"`, ordered LAST, whether or not they share a subject: " +
+    "independence is not a reason to pay for two designs and two fixers to make two one-line edits. " +
+    "The one exception: a trivial finding whose text a deep group edits in the same round joins that " +
+    "deep group instead, so the ordering rule below still holds. Tag every other group `effort: " +
+    "\"deep\"`.\n\n" +
     "ORDER the groups so that no group's edits destroy an anchor a later group needs. Fixing happens in " +
     "the order you give.\n\n" +
     "EVERY finding index appears in EXACTLY ONE group, and every finding appears. A partition that drops " +
@@ -2718,21 +2912,21 @@ function fixDesignPrompt(group, confirmed, round) {
   const picked = (group.findings || []).map((i) => confirmed[i]).filter(Boolean);
   const SB_DESIGN = sitesBlock(picked);
   const forced =
-    fixDesignDepth === "shallow"
-      ? "\n\nTHE CALLER HAS FORCED SHALLOW MODE. Treat every finding as trivial: apply the reviewer's " +
+    fixDesignDepth === "shallow" || (fixDesignDepth === "auto" && group.effort === "trivial")
+      ? "\n\nTHIS GROUP IS SHALLOW. Treat every finding as trivial: apply the reviewer's " +
         "suggested fix and do no investigation. Use this budget even where you would otherwise dig.\n"
       : fixDesignDepth === "deep"
         ? "\n\nTHE CALLER HAS FORCED DEEP MODE. Treat every finding as deep and give each the architect " +
           "treatment below, including the ones that look trivial.\n"
         : "";
+  // STABLE HEAD (byte-identical across the run's design calls: the role, the
+  // rules, the triage, the site adjudication rules, the log rules, the caller's
+  // text), then the per-call tail (group, findings, sites, history, shard).
   return (
     "Decide HOW each finding in one group should be fixed, before anything is edited.\n\n" +
     READ_ONLY_LOGGED +
     " You produce a design; a different agent applies it.\n\n" +
     CONTEXT +
-    "\n\nLoop: " + LOOP.name + ". Round " + round + ". Group " + group.id + " — " + (group.title || "") +
-    "\nWhy these are together: " + (group.rationale || "not stated") +
-    (group.sharedSubject ? "\nWhat they share: " + group.sharedSubject : "") +
     "\n\n" +
     "ONE RULE BEFORE ANY OTHER, because it decides what kind of design you write:\n" + SINGLE_SOURCE_RULE +
     "  So when a finding is that two sites disagree about one rule, the design is NOT to make them agree. " +
@@ -2773,35 +2967,41 @@ function fixDesignPrompt(group, confirmed, round) {
     "RECORD WHAT YOU REJECTED. The fixer is given your alternatives so it neither re-derives them nor " +
     "quietly picks one you already ruled out. And fill doNotDo with the tempting wrong fix: this loop's " +
     "recorded failure mode is a fixer taking the obvious local edit that a later round then has to undo.\n\n" +
-    "THE FINDINGS IN THIS GROUP:\n" +
-    JSON.stringify(picked, null, 2) +
+    // The adjudication rules are constant and sit here unconditionally; the
+    // sites they govern arrive in the tail, under POTENTIALLY RELATED SITES,
+    // when the expansion pass found any.
+    "HOW TO THINK ABOUT THE POTENTIALLY RELATED SITES, listed below when the pass found any. ADJUDICATE " +
+    "each site into exactly one of three dispositions and " +
+    "record it in siteDispositions. The fixer does only what you decide here, so a site you leave out " +
+    "is a site it has no instruction about.\n" +
+    "  IN SCOPE — landing this fix MAKES this site wrong. It changes in the SAME edit. Leaving it is " +
+    "the drift this stage exists to prevent: one site corrected and its parallels left asserting what " +
+    "was just withdrawn.\n" +
+    "  SEPARATE FINDING — the site is ALREADY wrong, for a reason of its own that this fix neither " +
+    "causes nor repairs. NOT in scope. Say what the finding would be so a later round can file it. " +
+    "Fixing it here is an unreviewed edit: nothing verified it, and whatever you get wrong comes back " +
+    "as next round's finding.\n" +
+    "  NOT A SITE — it stays true after the fix. Drop it in one line.\n\n" +
+    "THE DISTINCTION THAT MATTERS is between text this fix BREAKS and text that is independently " +
+    "wrong. The first is part of this edit by necessity. The second is next round's work, and pulling " +
+    "it in enlarges an edit that is already the likeliest source of the next round's findings.\n\n" +
+    "PRESSURE RUNS BOTH WAYS. Do not treat the list as a work order: an empty or wholly rejected list " +
+    "is a normal outcome. Equally, do not reject a `high` confidence IN SCOPE site because honouring " +
+    "it enlarges the edit. An incomplete fix that leaves a parallel stale is exactly what the next " +
+    "round files." +
+    DEVIATIONS_BLOCK() +
+    LOG_RULES() +
+    directiveBlock() +
+    promptFor("fix-design") +
+    "\n\nLoop: " + LOOP.name + ". Round " + round + ". Group " + group.id + " — " + (group.title || "") +
+    "\nWhy these are together: " + (group.rationale || "not stated") +
+    (group.sharedSubject ? "\nWhat they share: " + group.sharedSubject : "") +
+    "\n\nTHE FINDINGS IN THIS GROUP:\n" +
+    JSON.stringify(picked.map(withoutSites), null, 2) +
     SB_DESIGN.capped +
     SB_DESIGN.sites +
-    (SB_DESIGN.sites
-      ? "\n\nHOW TO THINK ABOUT THEM. ADJUDICATE each site into exactly one of three dispositions and " +
-        "record it in siteDispositions. The fixer does only what you decide here, so a site you leave out " +
-        "is a site it has no instruction about.\n" +
-        "  IN SCOPE — landing this fix MAKES this site wrong. It changes in the SAME edit. Leaving it is " +
-        "the drift this stage exists to prevent: one site corrected and its parallels left asserting what " +
-        "was just withdrawn.\n" +
-        "  SEPARATE FINDING — the site is ALREADY wrong, for a reason of its own that this fix neither " +
-        "causes nor repairs. NOT in scope. Say what the finding would be so a later round can file it. " +
-        "Fixing it here is an unreviewed edit: nothing verified it, and whatever you get wrong comes back " +
-        "as next round's finding.\n" +
-        "  NOT A SITE — it stays true after the fix. Drop it in one line.\n\n" +
-        "THE DISTINCTION THAT MATTERS is between text this fix BREAKS and text that is independently " +
-        "wrong. The first is part of this edit by necessity. The second is next round's work, and pulling " +
-        "it in enlarges an edit that is already the likeliest source of the next round's findings.\n\n" +
-        "PRESSURE RUNS BOTH WAYS. Do not treat the list as a work order: an empty or wholly rejected list " +
-        "is a normal outcome. Equally, do not reject a `high` confidence IN SCOPE site because honouring " +
-        "it enlarges the edit. An incomplete fix that leaves a parallel stale is exactly what the next " +
-        "round files."
-      : "") +
     siteHistoryBlock(picked, round) +
-    DEVIATIONS_BLOCK() +
-    logBlock("fix-design-" + group.id, round) +
-    directiveBlock() +
-    promptFor("fix-design")
+    shardLine("fix-design-" + group.id, round)
   );
 }
 
@@ -2817,8 +3017,23 @@ const NO_DECISION_REFS_IN_STAGING =
   "be built. A decision that is answered becomes a requirement in its own terms with no trace of the " +
   "question; one that is not answered lives in the summary and is absent from the staged files.";
 
+// A summary from an earlier group in the same round is carried whole up to this
+// many characters; past it the tail is cut and marked. A fixer that wrote at
+// length otherwise hands its whole essay to every group after it.
+const EARLIER_SUMMARY_CAP = 1500;
+function capSummary(sx) {
+  const t = String(sx);
+  return t.length > EARLIER_SUMMARY_CAP ? t.slice(0, EARLIER_SUMMARY_CAP) + " (truncated)" : t;
+}
+
 function fixPrompt(confirmed, round, strikes, group, design, earlier) {
-  const SB_FIX = sitesBlock(confirmed);
+  // The design's `siteDispositions` is the adjudicated site list. When the
+  // design carries one, the fixer follows it and the candidate list is not
+  // sent again; the raw candidates go only to a fixer whose design did not
+  // adjudicate them (a designless group, or a design that ignored the sites).
+  const designHasSites =
+    !!design && (design.designs || []).some((d) => d && (d.siteDispositions || []).length > 0);
+  const SB_FIX = designHasSites ? { sites: "", capped: sitesBlock(confirmed).capped } : sitesBlock(confirmed);
   // What the groups before this one in THIS round actually did. Costs no agent
   // -- the run already has it -- and it is the one thing the design stage could
   // not know, because it ran before any edit landed. A design written against
@@ -2830,7 +3045,7 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "of this landed. Check your anchors against the CURRENT text rather than against the design's " +
         "quotation of it, and if an earlier group has already made the change your design calls for, say " +
         "so and do not make it twice.\n" +
-        earlier.map((sx, i) => i + 1 + ". " + sx).join("\n")
+        earlier.map((sx, i) => i + 1 + ". " + capSummary(sx)).join("\n")
       : "";
   // The strike table. It reached this function as a parameter and was never
   // referenced, so the one consumer that could actually change an edit read
@@ -2857,12 +3072,35 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     : "\n\nNo design was produced for this group, so decide the fix yourself, with the care the design " +
       "stage would have applied: establish ground truth in the repository before you specify a mechanism, " +
       "and prefer deleting something to specifying it.";
+  // The site rules keep their gate: they say "the sweep has been done for you",
+  // which is false for a finding the expansion cap skipped, so they are sent
+  // only when there are sites (raw, or adjudicated by the design) to follow.
+  const siteRules =
+    SB_FIX.sites || designHasSites
+      ? "\n\nTHE SITES YOU EDIT ARE FIXED BY THE DESIGN. The finding's own location is your mandate and " +
+        "you fix it. Beyond that, a pass searched for other text this fix would falsify and the design " +
+        "adjudicated what it found in `siteDispositions`. A finding's named sites are a starting set " +
+        "rather than the sweep, and the sweep has been done for you. Follow the adjudication:\n" +
+        "  - Every site marked `in-scope` changes in this edit. Skipping one leaves precisely the drift " +
+        "the design predicted.\n" +
+        "  - No site marked `separate-finding` or `not-a-site` is edited here, whatever you think of it. " +
+        "Editing one is an unreviewed change: nothing verified it.\n" +
+        "  - A `tree` site, meaning any site outside " + P.dir + ", is NOT yours to edit. Its remedy is to " +
+        "add the site to the proposal's edit list.\n" +
+        "RE-READ BEFORE YOU EDIT. Each site carries a quote and a line number taken before this round's " +
+        "edits landed, and line numbers drift. Open each one and confirm it still says what the quote " +
+        "says.\n" +
+        "IF THE DESIGN IS WRONG about a site — it marked `in-scope` something already correct, or ruled " +
+        "out something your edit plainly breaks — say so in your summary and say what you did. Do not " +
+        "deviate silently."
+      : "";
+  // STABLE HEAD (byte-identical across the run's fixer calls: role, constraints,
+  // every standing instruction, the log rules, the caller's text), then the
+  // per-call tail (round and group, strikes, findings, design, sites, earlier
+  // groups, shard).
   return (
-    "You are the fixer for round " +
-    round +
-    " of the " + LOOP.name + " convergence loop on the proposal at " +
+    "You are the fixer in the convergence loop on the proposal at " +
     P.dir +
-    (group ? ", working on group " + group.id + " of this round's findings" : "") +
     ".\n\n" +
     CONTEXT +
     "\n\nHARD CONSTRAINT. " + LOOP.editable() +
@@ -2914,36 +3152,24 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     "section, which is uncapped and is the part of the budget the compaction pass is told to protect.\n" +
     "- Follow the documentation style rules in " +
     repo +
-    '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.\n\nConfirmed findings (JSON):\n' +
-    JSON.stringify(confirmed, null, 2) +
-    designBlock +
-    strikeBlock +
-    SB_FIX.capped +
-    (SB_FIX.sites
-      ? "\n\nTHE SITES YOU EDIT ARE FIXED BY THE DESIGN. The finding's own location is your mandate and " +
-        "you fix it. Beyond that, a pass searched for other text this fix would falsify and the design " +
-        "adjudicated what it found in `siteDispositions`. A finding's named sites are a starting set " +
-        "rather than the sweep, and the sweep has been done for you. Follow the adjudication:\n" +
-        "  - Every site marked `in-scope` changes in this edit. Skipping one leaves precisely the drift " +
-        "the design predicted.\n" +
-        "  - No site marked `separate-finding` or `not-a-site` is edited here, whatever you think of it. " +
-        "Editing one is an unreviewed change: nothing verified it.\n" +
-        "  - A `tree` site, meaning any site outside " + P.dir + ", is NOT yours to edit. Its remedy is to " +
-        "add the site to the proposal's edit list.\n" +
-        "RE-READ BEFORE YOU EDIT. Each site carries a quote and a line number taken before this round's " +
-        "edits landed, and line numbers drift. Open each one and confirm it still says what the quote " +
-        "says.\n" +
-        "IF THE DESIGN IS WRONG about a site — it marked `in-scope` something already correct, or ruled " +
-        "out something your edit plainly breaks — say so in your summary and say what you did. Do not " +
-        "deviate silently."
-      : "") +
-    SB_FIX.sites +
-    earlierBlock +
-    logBlock("fix-" + (group ? group.id : "all"), round) +
+    '/.claude/rules/doc-style.md: complete declarative sentences, no "X, not Y" rhythm, no decorative em-dashes, no marketing language, conjunctions in lists.' +
+    LOG_RULES() +
     "\n\nReturn a short summary listing each finding and the exact edit you made for it." +
     directiveBlock() +
-    promptFor("fix")
-    + NO_DECISION_REFS_IN_STAGING
+    promptFor("fix") +
+    NO_DECISION_REFS_IN_STAGING +
+    "\n\nThis is round " + round + " of the " + LOOP.name + " convergence loop" +
+    (group ? ", working on group " + group.id + " of this round's findings" : "") +
+    "." +
+    strikeBlock +
+    "\n\nConfirmed findings (JSON):\n" +
+    JSON.stringify(confirmed.map(withoutSites), null, 2) +
+    designBlock +
+    SB_FIX.capped +
+    siteRules +
+    SB_FIX.sites +
+    earlierBlock +
+    shardLine("fix-" + (group ? group.id : "all"), round)
   );
 }
 
@@ -2961,18 +3187,13 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
 // alone. Predicate drift is by definition an inconsistency between changed text
 // and text that did not change, so a reviewer confined to the edit cannot see it.
 function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap, inScope) {
+  // STABLE HEAD (role, context, the three questions, the report rule), then
+  // the per-call tail (round, mechanisms, in-scope sites, diff, findings,
+  // summary). The findings are the verifier slice: `potentiallyRelatedSites`
+  // and the script's own metadata tell this reviewer nothing, and the in-scope
+  // list below already carries the sites the design adopted.
   return (
-    (mechanisms && mechanisms.length
-      ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
-        + "check against the tree that the state it reads is actually set AND cleared at the sites named; that "
-        + "the caller list is complete, including every type satisfying a changed interface; that the failure "
-        + "mode is observable; and that the named test would fail without it. A mechanism that fails any of "
-        + "these is a finding now, while its author's reasoning is still on the page, rather than three rounds "
-        + "from now when a sweep finds one facet of it.\n" + JSON.stringify(mechanisms, null, 2) + "\n\n"
-      : "") +
-    "You are the post-fix reviewer for round " +
-    round +
-    ". A fixer has just edited the proposal " +
+    "You are the post-fix reviewer. A fixer has just edited the proposal " +
     path +
     " to correct the confirmed findings below. Your job is narrow: verify the fixer's own work.\n\n" +
     CONTEXT +
@@ -2981,16 +3202,26 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap, inS
     "\n\nAnswer exactly three questions about the edits, and report only what fails:\n" +
     "1. LANDED. For each confirmed finding, does the current text actually correct it? A fix that restates the problem, corrects one of two occurrences, or edits a neighbouring sentence instead of the wrong one has not landed.\n" +
     "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
+    "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
+    "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer." +
+    "\n\nThis is round " + round + " of the " + LOOP.name + " loop.\n\n" +
+    (mechanisms && mechanisms.length
+      ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
+        + "check against the tree that the state it reads is actually set AND cleared at the sites named; that "
+        + "the caller list is complete, including every type satisfying a changed interface; that the failure "
+        + "mode is observable; and that the named test would fail without it. A mechanism that fails any of "
+        + "these is a finding now, while its author's reasoning is still on the page, rather than three rounds "
+        + "from now when a sweep finds one facet of it.\n" + JSON.stringify(mechanisms, null, 2) + "\n\n"
+      : "") +
     (inScope && inScope.length
-      ? "   THE SITES BELOW WERE HANDED TO THE FIXER AS IN SCOPE by the design. Check each one: did the " +
+      ? "FOR QUESTION 2, THE SITES BELOW WERE HANDED TO THE FIXER AS IN SCOPE by the design. Check each one: did the " +
         "fixer change it, and does it now agree with the corrected text? A site marked in scope and left " +
         "unedited is a CONFIRMED drift finding rather than a suspicion.\n" +
         JSON.stringify(inScope, null, 2) + "\n" +
-        "   Then do the open-ended sweep anyway. That list is what one pass predicted BEFORE the edit " +
+        "Then do the open-ended sweep anyway. That list is what one pass predicted BEFORE the edit " +
         "existed; the parallels nobody predicted are still where this question earns most of its " +
-        "findings.\n"
+        "findings.\n\n"
       : "") +
-    "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
     (preFixSnap
       ? "THE EDITS THIS ROUND ACTUALLY MADE. " +
         diffInstruction(preFixSnap) +
@@ -2999,9 +3230,8 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap, inS
         "edit the fixer did not mention making is the one most likely to have left a parallel statement " +
         "stale.\n\n"
       : "Locating the edits: the fixer's summary below names them, and no snapshot was available this round.\n\n") +
-    "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer.\n\n" +
     "Findings the fixer was asked to correct (JSON):\n" +
-    JSON.stringify(confirmed, null, 2) +
+    JSON.stringify(confirmed.map((f) => sliceFinding(f, VERIFIER_FIELDS)), null, 2) +
     "\n\nThe fixer's own summary of the edits it made:\n" +
     (fixSummary || "(the fixer returned no summary)")
   );
@@ -3261,6 +3491,8 @@ let stoppedByIntrospection = null;
 // Stops the introspection pass proposed and the panel did not uphold. Fed back to
 // the pass so it does not re-reach the same verdict on the same evidence.
 const overruledStops = [];
+// Findings the structural pre-filter refused without a verifier, for audit.
+const structuralRefusals = [];
 // What each lens cost and bought, over the whole run: times it ran, findings it
 // filed, and findings of its that survived verification. It is how the choice
 // of DISABLED_LENSES is checked against a run rather than argued, and a lens
@@ -3776,15 +4008,9 @@ const PANELS = {
 
 const DISRUPTION = ["healthy", "prune", "redesign", "reframe", "halt"];
 
-async function judgePanel(rnd, verdict, growth, churn, only) {
+async function judgePanel(rnd, verdict, growth, churn) {
   const panel = PANELS[verdict.verdict] || PANELS.halt;
-  // `only` names one judge by index. The advisory mode puts a stop to a single
-  // falsifier, the SELF-HELP judge, because the script has already checked the
-  // numbers and what is left to attack is whether a move remains.
-  const judges =
-    only !== undefined
-      ? [panel[only] || panel[0]]
-      : panel.slice(0, verdict.verdict === "healthy" ? judgesHealthy : judgesPerVerdict);
+  const judges = panel.slice(0, verdict.verdict === "healthy" ? judgesHealthy : judgesPerVerdict);
   log(
     "Round " + rnd + ": introspection returned " + verdict.verdict + "; putting it to " + judges.length +
       " judge(s) who will try to falsify it",
@@ -3893,19 +4119,15 @@ async function judgePanel(rnd, verdict, growth, churn, only) {
 }
 
 // HOW MUCH THE INTROSPECTION PASS MAY DO. `advisory`, the default, makes it a
-// diagnostician: it never redesigns, prunes, or reframes, a falsified or
-// unfalsified `healthy` costs no panel, and what it concludes reaches the
-// acting agents as a directive (see directiveBlock). It may still stop the run,
-// and only when the script's own counters corroborate it (hardSignals) and one
-// falsifier fails to overturn it. The remedy a stop calls for is then applied
-// by the calling skill, which holds the whole conversation and can ask a
-// person, rather than by a subagent mid-loop. `acting` is the earlier
-// behaviour, kept whole: every verdict to a panel, and redesign and prune
-// executed in the loop.
+// tripwire: `healthy` continues with no panel, and any other verdict stops the
+// run at once with the pass's diagnosis and proposed next steps (see adviseOn).
+// Correcting course is the caller's job, not the loop's. `acting` is the
+// earlier behaviour, kept whole: every verdict to a panel of falsifying judges,
+// and redesign and prune executed in the loop.
 //
-// The pass and its falsifier run on the strongest model at high effort. It is a
-// handful of calls per run, under 1% of the tokens, and it is the one stage
-// whose judgement spans the whole run.
+// The pass runs on Opus at high effort by default. It is a handful of calls per
+// run, under 1% of the tokens, and it is the one stage whose judgement spans
+// the whole run.
 const INTROSPECT_MODES = ["advisory", "acting"];
 const introspectMode = input.introspectMode || "advisory";
 if (!INTROSPECT_MODES.includes(introspectMode)) {
@@ -3913,7 +4135,7 @@ if (!INTROSPECT_MODES.includes(introspectMode)) {
     "args.introspectMode must be one of " + INTROSPECT_MODES.join(", ") + '; got "' + introspectMode + '"',
   );
 }
-const introspectModel = input.introspectModel || "fable";
+const introspectModel = input.introspectModel || "opus";
 const introspectEffort = input.introspectEffort || "high";
 if (!MODELS.includes(introspectModel)) {
   throw new Error('args.introspectModel must be one of ' + MODELS.join(", ") + '; got "' + introspectModel + '"');
@@ -3960,68 +4182,27 @@ function hardSignals() {
   return signals;
 }
 
-// The advisory mode's handling of a pass. Returns the verdict the loop acts on,
-// which is `healthy` for everything but a corroborated, unfalsified stop, so
-// the redesign, prune, and stop branches below it need no mode of their own.
-async function adviseOn(rnd, pass, churn) {
-  const entry = history[history.length - 1];
+// The advisory mode's handling of a pass, which is as little as possible. A
+// `healthy` verdict continues. ANY other verdict stops the run where it stands
+// and hands the pass's diagnosis and proposed next steps to the caller. The
+// pass does not act, no panel second-guesses it, and nothing is carried forward
+// inside the run: measured over three runs, the remedies this loop executed on
+// its own diagnoses made things worse, a directive cannot deliver a restructure
+// because a restructure is nobody's finding, and the calling skill holds the
+// whole conversation, can restructure and review the result, and can ask a
+// person. A wrong stop costs one relaunch with `resumeState`; a wrong continue
+// costs every remaining round.
+//
+// The script's own counters ride along as information for whoever reads the
+// stop. They no longer decide anything.
+function adviseOn(rnd, pass) {
   if (pass.verdict === "healthy") return pass;
-  const text = [
-    pass.reasoning,
-    (pass.areas || []).length ? "Areas named: " + pass.areas.join("; ") + "." : "",
-    (pass.sections || []).length ? "Sections named: " + pass.sections.join("; ") + "." : "",
-    pass.nextSteps && pass.nextSteps.summary ? "What it would do next: " + pass.nextSteps.summary : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 1600);
-  const asDirective = (why) => {
-    directives.push({ loop: LOOP.name, round: rnd, diagnosis: pass.verdict, text });
-    entry.directive = { diagnosis: pass.verdict, why };
-    log("Round " + rnd + ": introspection diagnosed " + pass.verdict + "; " + why);
-    return { ...pass, verdict: "healthy", diagnosed: pass.verdict };
-  };
-  if (pass.verdict !== "halt" && pass.verdict !== "reframe") {
-    return asDirective("carried to the lenses and fixers as a directive, and the loop continues");
-  }
   const signals = hardSignals();
-  if (!signals.length) {
-    return asDirective(
-      "no hard signal corroborates a stop (counts falling, no finding confirmed " + haltRepeatTitle +
-        " times), so it is carried as a directive",
-    );
-  }
-  entry.hardSignals = signals;
-  // Index 2 is the SELF-HELP judge on the halt panel and the EVIDENCE judge on
-  // the reframe panel: in both the one whose question the counters cannot answer.
-  const panel = await judgePanel(rnd, pass, await growthSince(lastGrowthSnap), churn, 2);
-  entry.panel = {
-    proposed: pass.verdict,
-    decision: panel.decision,
-    upheld: panel.upheld,
-    undirected: !!panel.undirected,
-    votes: panel.votes.map((v) => ({
-      falsified: v.falsified,
-      howConclusive: v.howConclusive,
-      reasoning: String(v.reasoning || "").slice(0, 400),
-    })),
-  };
-  if (!panel.quorum) {
-    // The falsifier died. judgePanel lets an unexamined verdict stand, which is
-    // right for the panels of the acting mode and wrong here: a stop is the
-    // expensive direction to get wrong, and this mode's whole claim is that no
-    // stop goes unexamined. The next pass sees the same counters and may ask again.
-    return asDirective("its falsifier did not return, and an unexamined stop does not stand");
-  }
-  if (!panel.upheld) {
-    overruledStops.push({
-      round: rnd,
-      proposed: pass.verdict,
-      decidedInstead: "healthy",
-      panelReasoning: panel.votes.filter((v) => v.falsified).map((v) => v.howConclusive + ": " + v.reasoning),
-    });
-    return asDirective("its falsifier overturned the stop, so it is carried as a directive");
-  }
+  history[history.length - 1].hardSignals = signals;
+  log(
+    "Round " + rnd + ": introspection diagnosed " + pass.verdict +
+      "; stopping so the caller can correct course and relaunch",
+  );
   return { ...pass, hardSignals: signals };
 }
 
@@ -4072,7 +4253,13 @@ async function introspect(rnd, reason, churn, byCadence) {
   // A CADENCE wake runs regardless. The cadence exists precisely to look when
   // no counter has fired, and letting the gate suppress it would remove the one
   // pass that is not reacting to something.
-  if (introspectGate && !byCadence) {
+  // A SWEEP wake runs regardless as well. It carries no counter output: it is
+  // woken by a full sweep that confirmed findings, not by the churn counter, and
+  // the gate was handed `COUNTER OUTPUT: []` for it. Measured on three runs, the
+  // gate read the empty list as "the counter emitted nothing" and ruled every
+  // sweep wake unwarranted, so the wake the loop learns most from never ran.
+  const counterWake = Array.isArray(churn) && churn.length > 0;
+  if (introspectGate && !byCadence && counterWake) {
     const gate = await robustAgent(
       "Decide whether an introspection pass is warranted right now, before one runs.\n\n" +
         READ_ONLY +
@@ -4101,7 +4288,10 @@ async function introspect(rnd, reason, churn, byCadence) {
           String(gate.why || "").slice(0, 120) + "); skipping the full pass",
       );
       introspections.push({ round: rnd, verdict: "healthy", gated: true, why: gate.why });
-      lastIntrospectRound = rnd;
+      // The cadence clock is NOT reset. The gate's own brief says erring toward
+      // unwarranted is cheap because the cadence pass runs within a few rounds;
+      // resetting the clock here made that false, and a gate that kept saying
+      // no pushed the cadence pass back every time it spoke.
       return { verdict: "healthy", gated: true, reasoning: gate.why };
     }
   }
@@ -4280,6 +4470,7 @@ function missingRequired(r, schema) {
 // budget is exhausted) propagates immediately and is not retried, since retrying
 // cannot help it.
 async function robustAgent(prompt, opts, attempts = 4) {
+  prompt = RELAY_GUARD + prompt;
   // Every agent runs at the configured base unless it names its own model. This
   // is the single point where that is applied: there is exactly one agent() call
   // in this workflow and it is below, so an agent cannot escape the base by
@@ -4402,6 +4593,55 @@ const history = [];
 // refuted the ground it rested on. The standing context is not passed; the
 // child reads it from the review log, as every other agent does.
 let decisionsState = {};
+// THE PHASE STATE OUTLIVES THE RUN. The item records, the impact-row digest and
+// the last baseline commit are what let a firing carry an untouched item
+// forward, triage on the delta, and skip an unchanged sweep. Held in memory
+// only, they died with every run, so the first firing of every relaunch
+// re-collected and re-falsified everything: measured on one relaunch, 41
+// falsifiers over items earlier runs had settled, and an Apply stage that
+// edited a spec staging its own lane had converged. The state is written to
+// the run tag's state directory after each firing and read back on resume.
+const DECISIONS_STATE_PATH = repo + "/scratchpad/cp-state/" + runTag + "/decisions-state.json";
+let decisionsStateLoaded = false;
+async function loadDecisionsState() {
+  decisionsStateLoaded = true;
+  if (!input.resumeState) return;
+  const raw = await robustAgent(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "cat " + DECISIONS_STATE_PATH + " 2>/dev/null || echo '{}'" +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "resume-state:decisions", model: "haiku", effort: "high", phase: "Decisions" },
+  );
+  let st = null;
+  try {
+    const m = String(raw || "").match(/\{[\s\S]*\}/);
+    if (m) st = JSON.parse(m[0]);
+  } catch (e) {
+    st = null;
+  }
+  if (st && typeof st === "object" && Object.keys(st).length > 0) {
+    decisionsState = st;
+    decisionFirings = Number(st.firings) || 0;
+    log(
+      "Resuming the open-decisions phase state: " +
+        Object.keys(st.itemRecords || {}).length + " item record(s), " + decisionFirings +
+        " firing(s) so far" + (st.lastBaseline ? ", last baseline " + st.lastBaseline : ""),
+    );
+  } else {
+    log("resumeState was set but no open-decisions phase state was recorded; the first firing collects everything");
+  }
+}
+async function saveDecisionsState() {
+  const json = JSON.stringify(decisionsState);
+  const ok = await robustAgent(
+    "Write a file. Run exactly this, and reply with the single word DONE:\n\n" +
+      "mkdir -p " + repo + "/scratchpad/cp-state/" + runTag + " && cat > " + DECISIONS_STATE_PATH +
+      " <<'CP_STATE_EOF'\n" + json + "\nCP_STATE_EOF\n\n" +
+      "Do nothing else. Do not read, summarise, or edit any other file.",
+    { label: "save-state:decisions", model: "haiku", effort: "high", phase: "Decisions" },
+  );
+  if (!ok) log("The open-decisions phase state could not be written; a relaunch will re-collect");
+}
 let decisionFirings = 0;
 const decisionRuns = [];
 // The periodic trigger's own counters. periodicTails counts the rounds that
@@ -4440,6 +4680,7 @@ async function firingDigest(at) {
 }
 
 async function fireDecisionsPhase(trigger) {
+  if (!decisionsStateLoaded) await loadDecisionsState();
   if (lastFiringDigest !== null) {
     const now = await firingDigest("before:" + trigger);
     if (now !== null && now === lastFiringDigest && rejected.length === lastFiringRejected) {
@@ -4489,6 +4730,7 @@ async function fireDecisionsPhase(trigger) {
         impactWindow,
         humanReadings: input.humanReadings,
         collectorModel: input.collectorModel,
+        collectorEffort: input.collectorEffort,
       },
     );
   } catch (e) {
@@ -4531,6 +4773,7 @@ async function fireDecisionsPhase(trigger) {
   // The state the child leaves behind is what makes a later firing carry an
   // untouched item's disposition forward and see a reversal of one it applied.
   if (res.phaseState && typeof res.phaseState === "object") decisionsState = res.phaseState;
+  await saveDecisionsState();
   const record = {
     firing: n,
     trigger,
@@ -5354,6 +5597,11 @@ async function runReviewLoop(cfg) {
             " lenses retired)"),
     );
 
+    // The round's history file, written once here rather than per lens, so a
+    // dozen lens prompts carry a path and the recent entries instead of the
+    // whole lists each.
+    const historyPath = await writeRoundHistory(round, fixedTitles, rejected);
+
     // Barrier: the dedup step needs every reviewer's findings at once.
     const lensResults = await parallel(
       lenses.map(
@@ -5362,6 +5610,7 @@ async function runReviewLoop(cfg) {
             reviewPrompt(
               l, round, fixedTitles, rejected, lensDiffAnchor,
               deltaReads && lenses.length < POOL.length && readLastRound.has(l.key),
+              historyPath,
             ), {
             label: "r" + round + ":review:" + l.key,
             phase: LOOP.name + " R" + round + ": review",
@@ -5513,6 +5762,11 @@ async function runReviewLoop(cfg) {
     };
     const verdicts = await parallel(
       deduped.map((f) => async () => {
+        const structural = structuralRefusal(f);
+        if (structural) {
+          structuralRefusals.push({ round, title: f.title, reason: structural });
+          return { f, vs: [{ confirmed: false, reason: structural }], refutedBy: "structural" };
+        }
         if (!verifySequential) {
           const vs = await parallel([
             () => verifySteps[verifyOrder[0]](f),
@@ -5769,6 +6023,11 @@ async function runReviewLoop(cfg) {
       .join("\n");
     const preFixSnap = await snapshot("r" + round + "-prefix");
     if (preFixSnap) lensDiffAnchor = preFixSnap;
+    // The first introspection pass of a run had no earlier snapshot to measure
+    // growth from and was told the document grew "from 0 to 0 lines". The first
+    // pre-fix snapshot is the document before this run changed anything, which
+    // is the baseline that pass needs, and it costs no agent.
+    if (preFixSnap && !lastGrowthSnap) lastGrowthSnap = preFixSnap;
 
     // ---- What else each fix would falsify ---------------------------------
     //
@@ -6228,7 +6487,7 @@ async function runReviewLoop(cfg) {
       // made no argument, so there is nothing to falsify.
       let verdict = pass;
       if (introspectMode === "advisory" && pass && !pass.gated) {
-        verdict = await adviseOn(round, pass, churn);
+        verdict = adviseOn(round, pass);
       } else if (pass && !pass.gated) {
         const panel = await judgePanel(round, pass, await growthSince(lastGrowthSnap), churn);
         history[history.length - 1].panel = {
@@ -6268,7 +6527,7 @@ async function runReviewLoop(cfg) {
         }
       }
 
-      if (verdict && verdict.verdict === "redesign" && redesignsRun < redesignsAllowed) {
+      if (introspectMode === "acting" && verdict && verdict.verdict === "redesign" && redesignsRun < redesignsAllowed) {
         const named = (verdict.areas || []).map((a) => {
           const hit = churn.find((c) => c.area === String(a).toLowerCase().trim());
           return (
@@ -6290,14 +6549,14 @@ async function runReviewLoop(cfg) {
             history[history.length - 1].redesignApplied = true;
           }
         }
-      } else if (verdict && verdict.verdict === "redesign") {
+      } else if (introspectMode === "acting" && verdict && verdict.verdict === "redesign") {
         log(
           "Round " + round + ": introspection asked for a redesign but the budget of " +
             redesignsAllowed + " is spent; recording instead",
         );
       }
 
-      if (verdict && verdict.verdict === "prune" && (verdict.sections || []).length) {
+      if (introspectMode === "acting" && verdict && verdict.verdict === "prune" && (verdict.sections || []).length) {
         // Over-specification is a defect in its own right: it is where two sections
         // drift apart, and detail an implementor does not need costs more to keep
         // true than it is worth. The cure is deletion with a stated constraint,
@@ -6377,7 +6636,9 @@ async function runReviewLoop(cfg) {
         }
       }
 
-      if (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe")) {
+      const advisoryStop =
+        introspectMode === "advisory" && verdict && !verdict.gated && verdict.verdict !== "healthy";
+      if (advisoryStop || (verdict && (verdict.verdict === "halt" || verdict.verdict === "reframe"))) {
         // The panel above has already had its chance to falsify this and could
         // not, so the stop stands.
         stoppedByIntrospection = {
@@ -6812,6 +7073,11 @@ async function runRecheckPair() {
       recheckPairs + " of " + maxRecheckPairs,
   );
   recheckLoops.push(await runSpecRecheck());
+  // A stop inside the recheck is a stop. Measured on one run, an introspection
+  // stop at spec-recheck round 4 was followed by the pair's firing, its
+  // non-spec half, a second pair, and two more firings (33M tokens) before the
+  // run reported the stop it had already taken.
+  if (stoppedByIntrospection) return;
   await fireDecisionsPhase("post-spec-recheck");
   // Doubt resolves toward reviewing: an unreadable digest, or no converged
   // non-spec review to compare against, runs the recheck.
@@ -6844,6 +7110,7 @@ async function runRecheckPair() {
     return;
   }
   recheckLoops.push(await runNonSpecRecheck());
+  if (stoppedByIntrospection) return;
   await fireDecisionsPhase("post-non-spec-recheck");
 }
 
@@ -6855,6 +7122,7 @@ async function runLoneNonSpecRecheck() {
       maxNonSpecRechecks,
   );
   recheckLoops.push(await runNonSpecRecheck());
+  if (stoppedByIntrospection) return;
   await fireDecisionsPhase("post-non-spec-recheck");
 }
 
@@ -6874,6 +7142,7 @@ async function driveRechecks(at, allowLone) {
   // loops; what it does not do is take another recheck.
   if (recheckStop) return;
   for (let pass = 1; ; pass++) {
+    if (stoppedByIntrospection) return;
     const tag = at + (pass > 1 ? ":" + pass : "");
     // Under lockSpecChanges no post-convergence spec edit happens: neither
     // fixer may write the staged spec edits, and the phase reports the edit it
@@ -7185,7 +7454,7 @@ if (converged) {
       "round, and the design is settled. Follow " +
       repo +
       "/.claude/rules/doc-style.md.",
-    { label: "verify-checklist", model: "sonnet", effort: "high", phase: "Review" },
+    { label: "verify-checklist", model: "opus", effort: "low", phase: "Review" },
   );
   log("Checklist and Summary verified against the converged proposal");
 }
@@ -7445,6 +7714,7 @@ return {
     stop: recheckStop,
   },
   lensYield,
+  structuralRefusals,
   introspection: {
     passes: introspections,
     mode: introspectMode,

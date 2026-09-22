@@ -127,10 +127,11 @@ const impactWindow = Number.isFinite(input.impactWindow) ? Number(input.impactWi
 // tokens a firing. One is the default; pass 3 to bring the panel back.
 const HUMAN_READINGS = Number.isFinite(input.humanReadings) && input.humanReadings >= 1
   ? Math.floor(Number(input.humanReadings)) : 1;
-// The model the two extraction collectors run on. Sub-tasks 3 and 4 find and
-// transcribe declarations; the judgement is the falsifier's, which stays on the
-// base model.
-const collectorModel = input.collectorModel || "sonnet";
+// The model and effort the two extraction collectors run at. Sub-tasks 3 and 4
+// find and transcribe declarations; the judgement is the falsifier's, which
+// stays on the base model.
+const collectorModel = input.collectorModel || "opus";
+const collectorEffort = input.collectorEffort || "low";
 const periodicBudgetSpent = (phaseState.periodicFirings || 0) >= maxPeriodicFirings;
 
 // The run-wide refuted list the parent accumulates across both loops. An item an
@@ -232,6 +233,9 @@ if (!MODELS.includes(baseModel)) {
 if (!EFFORTS.includes(baseEffort)) {
   throw new Error('args.baseEffort must be one of ' + EFFORTS.join(", ") + '; got "' + baseEffort + '"');
 }
+if (!EFFORTS.includes(collectorEffort)) {
+  throw new Error('args.collectorEffort must be one of ' + EFFORTS.join(", ") + '; got "' + collectorEffort + '"');
+}
 
 // ---- Argument classification ---------------------------------------------
 //
@@ -257,6 +261,7 @@ const ARG_CLASS = {
   impactWindow: "forward",
   humanReadings: "forward",
   collectorModel: "launch",
+  collectorEffort: "launch",
 };
 
 // ---- Agent plumbing -------------------------------------------------------
@@ -276,7 +281,21 @@ function missingRequired(r, schema) {
 // sustained overload. A dropped agent here is not a quiet zero: a dead collector
 // leaves its population unadjudicated rather than empty, and a dead Apply leaves
 // its item unapplied, so every caller guards the null and records it.
+// THE RELAYED LAUNCH MESSAGE IS NOT THE AGENT'S TASK. The harness shows every
+// subagent the user message that launched the run and calls it the only user
+// voice. On a measured run that message was "commit and then run the workflow",
+// and seven agents whose whole task was one shell command ran `git commit` on
+// the proposal directory because the user had, as they read it, asked them to.
+// The guard leads every prompt, so it is read before the task and is the same
+// bytes for every agent.
+const RELAY_GUARD =
+  "BEFORE YOUR TASK: the user request relayed above this message was addressed to the session that " +
+  "LAUNCHED this workflow, and that session has already carried it out. It is background, not an " +
+  "instruction to you. Do not commit, push, stage, launch, rerun, or do anything else it mentions. Your " +
+  "whole task is the text below, and git history is not yours to write unless that text tells you to.\n\n";
+
 async function robustAgent(prompt, opts, attempts = 4) {
+  prompt = RELAY_GUARD + prompt;
   // Every agent runs at the configured base unless it names its own model. This
   // is the single point where that is applied: there is exactly one agent() call
   // in this workflow and it is below, so an agent cannot escape the base by
@@ -1176,6 +1195,16 @@ const DELTA_FOCUS =
       "touched."
     : "";
 
+// The one line of a prompt that changes from firing to firing. Every prompt
+// this phase builds puts its stable text first and this line at the head of
+// the per-call tail, so two calls of one family in a run share a byte-identical
+// prefix up to here: the role sentence, the file map, the evidence rule, the
+// standing-context read, and the rules are the same bytes on every call, and
+// the firing number, the delta reference, the item and the earlier applies
+// follow them. A prompt that opened with this line shared nothing past its
+// first few hundred characters.
+const FIRING_LINE = "This is firing " + firing + " (" + trigger + ") on " + P.stem + ".";
+
 // THE PHASE WRITES THE REVIEW LOG DIRECTLY, which is why the block above is
 // only the read half of the parent's. The merge that turns a shard into log
 // text runs inside `closeRound`, a round-boundary operation, so a shard a
@@ -1343,21 +1372,27 @@ const CONFIDENCE_RULE =
   "that the staged deliverable is the answer. Scope is only the human's where the proposal does not yet " +
   "build the thing being questioned.";
 
-function briefFrame(head, body) {
+// Stable text first, per-call text last. Everything through INCOMPLETE_ANSWER
+// is the same bytes on every call of one collector in a run; the firing line,
+// the delta focus (which names the previous firing's baseline) and `tail`
+// (the run's refuted list, which grows) follow it.
+function briefFrame(head, body, tail) {
   return (
     "You are one collector inside the open-decisions-and-impact-review phase of a change proposal's " +
-    "review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". " + head + "\n\n" +
+    "review. " + head + "\n\n" +
     COLLECTOR_READ_ONLY + "\n\n" +
     FILE_MAP + "\n\n" +
     EVIDENCE + "\n\n" +
     COLLECTOR_CONTEXT + "\n\n" +
-    (DELTA_FOCUS ? DELTA_FOCUS + "\n\n" : "") +
     (LOCK_NOTE ? LOCK_NOTE + "\n\n" : "") +
     body + "\n\n" +
     IDENTIFIER_RULE + "\n\n" +
     PREAMBLE_RULE + "\n\n" +
     ENTRY_FIELDS + "\n\n" +
-    INCOMPLETE_ANSWER
+    INCOMPLETE_ANSWER + "\n\n" +
+    FIRING_LINE +
+    (DELTA_FOCUS ? "\n\n" + DELTA_FOCUS : "") +
+    (tail ? "\n\n" + tail : "")
   );
 }
 
@@ -1471,8 +1506,8 @@ function humanDecisionsBrief() {
       "\n\n" + NOT_A_LIVE_DECISION_RULE +
       "\n\n" + ANSWER_KEY_RULE +
       "\n\n" + CONFIDENCE_RULE +
-      "\n\n" + STAGED_ALIGNMENT_RULE +
-      (refutedBlock() ? "\n\n" + refutedBlock() : ""),
+      "\n\n" + STAGED_ALIGNMENT_RULE,
+    refutedBlock(),
   );
 }
 
@@ -1850,7 +1885,7 @@ async function collectSingle(cfg) {
     schema: OPEN_DECISIONS_FINDINGS,
     phase: "Collect",
     model: collectorModel,
-    effort: "high",
+    effort: collectorEffort,
   });
   if (!r) {
     recordDead(label);
@@ -2023,6 +2058,21 @@ function postureNote(needsSupport) {
 // readings of a long decision run to thousands of characters -- and the brief
 // tells the falsifier the documents are the subject rather than this summary
 // of them.
+// A reading as readingOf() keeps it carries every field twice: the
+// disposition, the recommendation, the answer and the staging fields lifted to
+// the top for the join, and the whole entry beside them. The prompt gets one
+// copy: the lifted fields, then whatever the entry holds beyond them.
+function readingForPrompt(r) {
+  const out = {};
+  for (const [k, v] of Object.entries(r || {})) {
+    if (k !== "entry") out[k] = v;
+  }
+  for (const [k, v] of Object.entries((r && r.entry) || {})) {
+    if (!Object.prototype.hasOwnProperty.call(out, k)) out[k] = v;
+  }
+  return out;
+}
+
 function itemBlock(item) {
   return JSON.stringify(
     {
@@ -2033,26 +2083,25 @@ function itemBlock(item) {
       disposition: item.disposition,
       agreement: item.agreement,
       alternatives: item.alternatives,
-      readings: item.readings,
+      readings: (item.readings || []).map(readingForPrompt),
     },
     null,
     2,
   ).slice(0, 12000);
 }
 
+// Stable text first: the role sentence, the read-only rule, the file map, the
+// evidence rule, the standing-context read and the rules that hold for every
+// disposition are the same bytes on every falsifier in a run. The firing line,
+// the disposition, its lens and posture, and the item follow them.
 function falsifyPrompt(item, spec) {
   return (
     "You are the falsifier for ONE item in the open-decisions-and-impact-review phase of a change " +
-    "proposal's review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". The phase has " +
-    "disposed of this item as `" + item.disposition + "`. YOUR JOB IS TO FALSIFY THAT, not to vote on " +
-    "it. Reach for the evidence that would show the disposition wrong, and report honestly whether you " +
-    "found it.\n\n" +
+    "proposal's review.\n\n" +
     COLLECTOR_READ_ONLY + "\n\n" +
     FILE_MAP + "\n\n" +
     EVIDENCE + "\n\n" +
     STANDING_CONTEXT + "\n\n" +
-    "YOUR LENS. " + spec.brief + "\n\n" +
-    postureNote(spec.needsSupport) + "\n\n" +
     "RATIFYING IS THE OTHER FAILURE. You have been handed a conclusion and asked to check it, which is " +
     "the situation in which reviewers agree most and examine least. Attack the case the phase actually " +
     "made, which is why you must restate it in your own words in `theDispositionIAttacked` before you " +
@@ -2070,6 +2119,12 @@ function falsifyPrompt(item, spec) {
     "acts on no substitute and orders these values in no way, so a falsification naming nothing is set " +
     "aside exactly as one naming something is. Name it for the record a later firing reads, and leave it " +
     "empty when you did not falsify.\n\n" +
+    FIRING_LINE + " The phase has " +
+    "disposed of this item as `" + item.disposition + "`. YOUR JOB IS TO FALSIFY THAT, not to vote on " +
+    "it. Reach for the evidence that would show the disposition wrong, and report honestly whether you " +
+    "found it.\n\n" +
+    "YOUR LENS. " + spec.brief + "\n\n" +
+    postureNote(spec.needsSupport) + "\n\n" +
     "THE ITEM, with every reading behind it, including the case each made against its own " +
     "disposition:\n" + itemBlock(item)
   );
@@ -2211,27 +2266,18 @@ const ANSWER_DESIGN = {
   },
 };
 
+// Stable text first; the firing line and the decision follow the rules.
 function answerDesignPrompt(item) {
   const v = item.verdict || {};
   return (
     "You design the ANSWER to one open decision in the open-decisions-and-impact-review phase of a change " +
-    "proposal's review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". Another agent " +
+    "proposal's review. Another agent " +
     "already judged that this decision is answerable from the repository rather than by a human. Your job " +
     "is to say WHAT the answer is and WHERE it lands. You do not write it: a later agent applies your " +
     "design.\n\n" +
     COLLECTOR_READ_ONLY + "\n\n" +
     FILE_MAP + "\n\n" +
     EVIDENCE + "\n\n" +
-    "THE DECISION: " + String(item.question || "") + "\n" +
-    "WHAT THE PROPOSAL STAGES ON IT TODAY: " +
-    (item.readings || []).map((r) => r.whatIsStaged).filter(Boolean)[0] + "\n" +
-    "WHY IT IS ANSWERABLE: " +
-    (v.reasoning || "the gate refuted the claim that this is the reviewer's and named the evidence") + "\n" +
-    ((item.readings || []).length
-      ? "WHAT THE READINGS SAID:\n" +
-        item.readings.map((r) => "  - " + (r.disposition || "?") + ": " + (r.answer || r.recommendation || "")).join("\n") + "\n"
-      : "") +
-    "\n" +
     "GROUND IT OR REFUSE IT. Open the files and quote the sentence the answer rests on: the specification " +
     "as it stands, the code as it stands, a landed proposal, or this proposal's own settled decisions. An " +
     "answer resting on what would be reasonable rather than on what a source says is not an answer, and " +
@@ -2241,7 +2287,17 @@ function answerDesignPrompt(item) {
     NO_DECISION_REFS_RULE + "\n\n" +
     "NAME THE SITES in `where`, one per staged location the answer changes, each as the file and the " +
     "section. The applier edits exactly these and nothing else, so a site you omit is a place the " +
-    "proposal keeps saying the question is open."
+    "proposal keeps saying the question is open.\n\n" +
+    FIRING_LINE + "\n\n" +
+    "THE DECISION: " + String(item.question || "") + "\n" +
+    "WHAT THE PROPOSAL STAGES ON IT TODAY: " +
+    (item.readings || []).map((r) => r.whatIsStaged).filter(Boolean)[0] + "\n" +
+    "WHY IT IS ANSWERABLE: " +
+    (v.reasoning || "the gate refuted the claim that this is the reviewer's and named the evidence") + "\n" +
+    ((item.readings || []).length
+      ? "WHAT THE READINGS SAID:\n" +
+        item.readings.map((r) => "  - " + (r.disposition || "?") + ": " + (r.answer || r.recommendation || "")).join("\n") + "\n"
+      : "")
   );
 }
 
@@ -2485,6 +2541,15 @@ const CHECKLIST_DEFERRAL =
 // What the earlier Applies in THIS firing actually did. It costs no agent, the
 // firing already has it, and it is the one thing this agent's item could not
 // carry: the item was collected and gated before any edit landed.
+// Each summary is capped: the block grows by one line per earlier item, and an
+// Apply late in a long queue was carrying every earlier `where` list and
+// excerpt in full.
+const EARLIER_APPLY_CAP = 1500;
+function capSummary(line) {
+  const s = String(line);
+  return s.length > EARLIER_APPLY_CAP ? s.slice(0, EARLIER_APPLY_CAP) + " (truncated)" : s;
+}
+
 function earlierAppliesBlock(earlier) {
   if (earlier.length === 0) return "";
   return (
@@ -2492,7 +2557,7 @@ function earlierAppliesBlock(earlier) {
     "files, and their edits are in the text you are about to read. Check the current text rather than " +
     "your item's account of it, and where an earlier one has already written what your item calls for, " +
     "say so and do not write it twice.\n" +
-    earlier.map((line, i) => i + 1 + ". " + line).join("\n")
+    earlier.map((line, i) => i + 1 + ". " + capSummary(line)).join("\n")
   );
 }
 
@@ -2533,11 +2598,15 @@ function withdrawalNote(item) {
   );
 }
 
+// Stable text first: the hard constraint, the file map, the evidence rule, the
+// standing-context read and every rule that holds for any disposition are the
+// same bytes on every Apply in a run. The firing line, the log-splice rule
+// (whose heading names the firing), the disposition's own brief, the item, the
+// gate's verdict and the earlier applies follow them.
 function applyPrompt(item, spec, earlier) {
   return (
     "You are the Apply agent for ONE item in the open-decisions-and-impact-review phase of a change " +
-    "proposal's review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". The item's " +
-    "disposition is `" + item.disposition + "` and it has been through the phase's gate. YOUR JOB IS TO " +
+    "proposal's review. YOUR JOB IS TO " +
     "WRITE IT INTO THE PROPOSAL.\n\n" +
     "HARD CONSTRAINT. " + PHASE_EDITABLE() + "\n" +
     "Never modify anything under spec/, docs/, pkg/, charts/, or schemas/: this proposal STAGES its " +
@@ -2545,8 +2614,6 @@ function applyPrompt(item, spec, earlier) {
     FILE_MAP + "\n\n" +
     EVIDENCE + "\n\n" +
     STANDING_CONTEXT + "\n\n" +
-    "WHAT YOU WRITE FOR THIS ITEM. " + spec.brief + withdrawalNote(item) +
-    (spec.designBlock ? spec.designBlock(item) : "") + "\n\n" +
     IDENTIFIER_STAMP + "\n\n" +
     CHECKLIST_DEFERRAL + "\n\n" +
     "YOU HOLD ONE ITEM. Make the smallest edit that lands it, re-verify every citation you write or " +
@@ -2561,14 +2628,18 @@ function applyPrompt(item, spec, earlier) {
     "RECORD WHAT YOU WROTE IN THE REVIEW LOG, never as a pass history inside a change file: a history " +
     "appended to the staged changes stages nothing and is read in full by every lens every round. One " +
     "line under this firing naming the item, what you wrote, and where.\n\n" +
-    LOG_WRITE_RULE + "\n\n" +
     "GIT IS THE EVIDENCE. What this firing changed is read from the diff under the proposal directory " +
     "rather than from this report, and an `edited` outcome whose diff is empty fails this item. Report " +
     "what you actually wrote.\n\n" +
+    "Follow " + repo + "/.claude/rules/doc-style.md.\n\n" +
+    FIRING_LINE + " The item's " +
+    "disposition is `" + item.disposition + "` and it has been through the phase's gate.\n\n" +
+    LOG_WRITE_RULE + "\n\n" +
+    "WHAT YOU WRITE FOR THIS ITEM. " + spec.brief + withdrawalNote(item) +
+    (spec.designBlock ? spec.designBlock(item) : "") + "\n\n" +
     "THE ITEM, with every reading behind it:\n" + itemBlock(item) +
     gateBlock(item) +
-    earlierAppliesBlock(earlier) +
-    "\n\nFollow " + repo + "/.claude/rules/doc-style.md."
+    earlierAppliesBlock(earlier)
   );
 }
 
@@ -2928,10 +2999,12 @@ function firingRecapBlock() {
     .slice(0, 8000);
 }
 
+// Stable text first; the firing line, this firing's recap and the log-splice
+// rule (whose heading names the firing) follow the rules.
 function cleanupPrompt() {
   return (
     "You are the cleanup agent for the open-decisions-and-impact-review phase of a change proposal's " +
-    "review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". The adjudication, the " +
+    "review. The adjudication, the " +
     "gate and the write path have already run. YOUR JOB IS TO LEAVE " + P.summary + " CARRYING EXACTLY " +
     "THE SECTIONS BELOW, IN THIS ORDER, AND NOTHING ELSE.\n\n" +
     "HARD CONSTRAINT. " + CLEANUP_EDITABLE + "\n\n" +
@@ -2967,10 +3040,11 @@ function cleanupPrompt() {
     "THIS IS A FORMAT PASS, NOT A REVIEW. Do not re-adjudicate an item, do not answer an open decision, " +
     "do not add a decision the phase did not reach, and do not soften or sharpen an entry's " +
     "recommendation. Move text and correct a statement your own move falsifies, and change nothing else.\n\n" +
+    "Follow " + repo + "/.claude/rules/doc-style.md.\n\n" +
+    FIRING_LINE + "\n\n" +
     "WHAT THIS FIRING DID TO EACH ITEM, which is what says whether an entry belongs in the human's " +
     "section:\n" + firingRecapBlock() + "\n\n" +
-    LOG_WRITE_RULE + "\n\n" +
-    "Follow " + repo + "/.claude/rules/doc-style.md."
+    LOG_WRITE_RULE
   );
 }
 
@@ -3240,10 +3314,11 @@ function claimsBlock(cleanup) {
   ).slice(0, 12000);
 }
 
+// Stable text first; the firing line and the phase's claims follow the checks.
 function verifyPrompt(cleanup) {
   return (
     "You are the verify pass for the open-decisions-and-impact-review phase of a change proposal's " +
-    "review. This is firing " + firing + " (" + trigger + ") on " + P.stem + ". Every other stage has " +
+    "review. Every other stage has " +
     "run and written what it was going to write. YOUR JOB IS TO CHECK THE RESULT for factual accuracy " +
     "and format conformance, and to REPORT what is wrong rather than to fix it.\n\n" +
     COLLECTOR_READ_ONLY + "\n\n" +
@@ -3286,12 +3361,13 @@ function verifyPrompt(cleanup) {
     "`## Impacts on other proposals` names that proposal's actual status. Open what you check: a " +
     "citation travels between agents without its context, which is the failure this pass exists to " +
     "catch.\n\n" +
-    "WHAT THE PHASE SAYS IT DID. Check the files against it rather than trusting it, and a claim the " +
-    "files do not carry is itself a defect:\n" + claimsBlock(cleanup) + "\n\n" +
     "REPORT, DO NOT FIX. You edit nothing, the review log included. Write each entry of `defects` as " +
     "`<the check number, or `factual`> — what is wrong — file:line — what is true or required instead`, " +
     "so the operator can act on it without re-deriving it. `conforms` is true only when `defects` is " +
-    "empty, and an empty `defects` list you did not earn is worse than a long one."
+    "empty, and an empty `defects` list you did not earn is worse than a long one.\n\n" +
+    FIRING_LINE + "\n\n" +
+    "WHAT THE PHASE SAYS IT DID. Check the files against it rather than trusting it, and a claim the " +
+    "files do not carry is itself a defect:\n" + claimsBlock(cleanup)
   );
 }
 
@@ -3411,14 +3487,14 @@ async function triageCollectors() {
   if (firing <= 1) return { humanDecisions: true, outOfScopeDefects: true, why: "first firing" };
   if (!DELTA_REF) return { humanDecisions: true, outOfScopeDefects: true, why: "no earlier baseline to diff against" };
   const label = "f" + firing + ":triage";
+  // Stable text first: the diff command names the previous firing's baseline,
+  // so it goes in the per-call tail with the firing line.
   const r = await robustAgent(
     "You are the triage step of the open-decisions-and-impact-review phase of a change proposal's " +
-      "review. You are READ-ONLY: edit nothing. This is firing " + firing + " on " + P.stem + ".\n\n" +
+      "review. You are READ-ONLY: edit nothing.\n\n" +
       "An earlier firing already swept this whole proposal, and everything it found is on record. " +
       "Your one job is to say whether what has CHANGED since could hold anything new for each of two " +
       "collectors, so a collector with nothing new to read is not run.\n\n" +
-      "Run `git -C " + repo + " diff " + DELTA_REF + " -- " + PATHSPEC + "` and read the hunks. Exclude the review " +
-      "log and its archive from your judgement: they are this run's own bookkeeping.\n\n" +
       "humanDecisions: true when any hunk adds, removes, rewords or answers an entry under " +
       "`## Open decisions for human to make`, adds an open question or an unresolved choice anywhere " +
       "in the staged changes, or changes staged text that an open decision's question or recommendation " +
@@ -3427,8 +3503,11 @@ async function triageCollectors() {
       "of scope, deferred, a non-goal, a known residue, an accepted failure mode, or a defect in the " +
       "shipped tree this proposal does not fix. False when the hunks touch none of that.\n\n" +
       "When you are unsure about one, answer true for it. A collector that runs for nothing costs " +
-      "tokens; one that is skipped wrongly loses an item. An empty diff is false for both.",
-    { label, schema: TRIAGE, model: "sonnet", effort: "medium", phase: "Collect" },
+      "tokens; one that is skipped wrongly loses an item. An empty diff is false for both.\n\n" +
+      "This is firing " + firing + " on " + P.stem + ".\n\n" +
+      "Run `git -C " + repo + " diff " + DELTA_REF + " -- " + PATHSPEC + "` and read the hunks. Exclude the review " +
+      "log and its archive from your judgement: they are this run's own bookkeeping.",
+    { label, schema: TRIAGE, model: "opus", effort: "low", phase: "Collect" },
   );
   if (!r) {
     recordDead(label);
@@ -3466,7 +3545,12 @@ function owesWork(subTask) {
       rec.subTask === subTask &&
       !rec.contested &&
       ((rec.gate !== "stands" && rec.gate !== "refuted") ||
-        (rec.gate === "stands" && (rec.applyStatus === "failed" || rec.applyStatus === "not-attempted"))),
+        // A standing `human` record owes nothing: its entry already sits in the
+        // summary, and an Apply for it only rewords that entry. Measured on one
+        // relaunch, a seeded human record marked not-attempted re-ran an Apply
+        // that appended a sentence to an entry nobody had touched.
+        (rec.gate === "stands" && rec.disposition !== "human" &&
+          (rec.applyStatus === "failed" || rec.applyStatus === "not-attempted"))),
   );
 }
 const SUB_TASKS = ["human-decisions", "out-of-scope-defects", "other-proposals"];

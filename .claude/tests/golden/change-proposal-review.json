@@ -11,7 +11,7 @@
   {
     "label": "conventions",
     "phase": "",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
@@ -223,6 +223,13 @@
     "label": "workflow:/repo/.claude/workflows/change-proposal-decisions.js",
     "phase": "",
     "model": "",
+    "schema": "",
+    "blocks": []
+  },
+  {
+    "label": "save-state:decisions",
+    "phase": "Decisions",
+    "model": "haiku",
     "schema": "",
     "blocks": []
   },
@@ -483,7 +490,7 @@
   {
     "label": "verify-checklist",
     "phase": "Review",
-    "model": "sonnet",
+    "model": "opus",
     "schema": "",
     "blocks": [
       "file-ownership"
