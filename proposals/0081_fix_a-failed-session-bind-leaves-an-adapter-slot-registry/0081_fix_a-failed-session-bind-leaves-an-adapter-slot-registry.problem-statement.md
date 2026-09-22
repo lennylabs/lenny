@@ -226,8 +226,8 @@ window to R1b and states that "a later step needing a field the plan did not enu
 window, and that window requires every in-flight `pkg/adapter` handler edit to have merged first". R1b's end
 state is in the tree and the file has already been reopened once, for proposal 0076's comment-only edit, so
 the second window is available — verified against the rule's own text. The precondition binds this proposal's
-step ordering rather than its scope, because it opens three of S-2's covered handler files (`session.go`,
-`slotcreds.go`, `sdkwarm.go`): the schema step and its regenerated stubs land before those handler steps.
+step ordering rather than its scope, because it opens `session.go`, `credentials.go`, `slotcreds.go` and
+`sdkwarm.go` from S-2's covered list: the schema step and its regenerated stubs land before those handler steps.
 
 **Testing surface.** `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` exercises the drain gate this
 residue suppresses, and `pkg/adapter/slotsession_test.go:308`
