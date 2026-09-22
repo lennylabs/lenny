@@ -1749,12 +1749,18 @@ inserted by `reclaimSlotLocked` inside the reclaiming handler's own critical sec
 
 `Server.slotGuards map[string]chan struct{}` is the remedy. Each entry is a capacity-one channel
 used as a semaphore: an acquisition sends into it and the release receives from it, which is what
-lets an acquisition wait on the caller's context rather than without bound. It is handed out in two
-forms, both declared in `pkg/adapter/bindattempt.go`, and what separates them is whether the caller
+lets an acquisition wait on the caller's context rather than without bound. **The acquisition
+step.** An acquisition first attempts the send without waiting, and it holds the guard whenever
+the channel is empty, whatever state the caller's context is in. Only when the channel is full does
+it select the send against `ctx.Done()`, so an acquisition expires only when the guard is contended
+past the caller's context. The non-blocking attempt comes first because a `select` whose cases are
+both ready chooses between them at random, and the `StartSession` and SDK-warm rollback sites call
+the guard-acquiring `releaseSessionSlot` on the very context whose expiry failed `Runtime.Start`
+(`pkg/adapter/session.go:156-157`). The guard is handed out in two forms, both declared in `pkg/adapter/bindattempt.go`, and what separates them is whether the caller
 is subject to the reclaim hold:
 
 - `lockSlotGuard(ctx context.Context, slotID string) (func(), bool)` takes `s.mu`, reads or creates
-  the slot's channel, releases `s.mu`, and selects the send against `ctx.Done()`. On a send it
+  the slot's channel, releases `s.mu`, and acquires it by the acquisition step above. On a send it
   returns the release and `true`; when the acquisition outlives `ctx` it sends nothing and returns
   a no-op release and `false`. It never refuses. The destructive sections take this form, because
   a reclaim may not be refused by a hold: a `Shutdown` naming a session whose cleanup is
@@ -1763,8 +1769,8 @@ is subject to the reclaim hold:
   pass opened.
 - `acquireSlotGuardForResolve(ctx context.Context, slotID string) (func(), error)` takes `s.mu`; when
   `s.reclaiming[slotID]` is set it releases `s.mu` and returns `errSlotReclaimInProgress` with no
-  guard and no wait; otherwise it reads or creates the slot's channel, releases `s.mu`, and selects
-  the send against `ctx.Done()`, returning the release on a send and `ctx.Err()` when the
+  guard and no wait; otherwise it reads or creates the slot's channel, releases `s.mu`, and acquires
+  it by the acquisition step above, returning the release on a send and `ctx.Err()` when the
   acquisition outlives `ctx`. Every admission RPC that takes a guard takes this form, at the
   point that RPC runs `validateBindFields` and before its resolve, which for `PrepareWorkspace`
   is the frame that resolves the slot identifier and for the rest is the handler's entry, so the
@@ -3127,6 +3133,12 @@ Then the thread and the surrounding mechanism:
   reclaimed` with `exited_cleanly` false. This turns red against an implementation that abandons
   the removal on an expired acquisition, against one that waits for the holder regardless of the
   context, and against one that releases the hold on an unguarded removal that returned nil.
+- **An uncontended acquisition on a cancelled context holds the guard.** This case pins CODE-6's
+  acquisition step. With the slot's guard free and the caller's context already cancelled, in a
+  loop of at least 64 iterations, `lockSlotGuard` returns `true` and `acquireSlotGuardForResolve`
+  returns a nil error. The guard-acquiring `releaseSessionSlot` on that context emits no
+  `slot_guard_not_acquired` warning, and a later bind naming the same session is admitted because
+  the hold was released. This turns red against an acquisition that is a bare two-case `select`.
 - **An admission RPC whose guard acquisition expires is refused.** With the guard held and the
   caller's context already cancelled, `acquireSlotGuardForResolve` returns the context's own error
   for `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup` and `Resume`; no registry entry is
