@@ -1216,10 +1216,13 @@ failure count. The superseded series is emitted from the compensation's caller, 
 pool and the pod name. The adapter series carries the adapter metrics endpoint's existing
 deferral (the adapter process exposes no scrape target today), so its row records the series for
 the register and names the deferral.
+The leaked-slots gauge is shipped and uncatalogued; this proposal changes which failures reach
+it, so it takes a row here as well.
 
 ```
 | Slot compensation superseded (`lenny_slot_compensation_superseded_total`, labeled by `pool`, `k8s_pod_name` — a compensating `Shutdown` answered `superseded`: the adapter holds an entry for the session that the compensation is not addressed to, so the reclaim released nothing and the slot is not leaked. See [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract).) | Counter |
-| Slot shutdown met an untokened entry (`lenny_slot_shutdown_untokened_entry_total`, labeled by `k8s_pod_name` — a `Shutdown` carrying an attempt token met a registry entry that carries none, which counts the reclaims that met an entry no attempt owns: an entry a start created and a non-conforming adapter's entry alike. Adapter-side; not scraped until the adapter metrics endpoint is wired) | Counter |
+| Slot shutdown met an untokened entry (`lenny_slot_shutdown_untokened_entry_total`, unlabeled, the pod label being the one the scrape target attaches — a `Shutdown` carrying an attempt token met a registry entry that carries none, which counts the reclaims that met an entry no attempt owns: an entry a start created and a non-conforming adapter's entry alike. Adapter-side; not scraped until the adapter metrics endpoint is wired) | Counter |
+| Leaked session slots (`lenny_adapter_leaked_slots`, labeled by `pod_id`, `pool` — the per-pod count of slots in the `leaked` sub-state, which stay counted until the pod terminates. See [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).) | Gauge |
 ```
 
 ## Spec sections deliberately untouched

@@ -334,7 +334,7 @@ answerShutdown := func(outcome adapterv1.SlotReclaimOutcome, exitedCleanly, unto
     if untokened {
         // The fail-closed arm. Nothing a compensated path produces reaches
         // it; the counter exists so that stops being true loudly.
-        incSlotShutdownUntokenedEntry(s.podID)
+        incSlotShutdownUntokenedEntry()
     }
     if rc := req.GetRecycle(); rc != nil {
         s.startPodScrub(rc)
@@ -2131,13 +2131,13 @@ series carries `pool` and `k8s_pod_name` and only the call site holds those valu
   site is named here and in the files-touched list.
 
 The untokened-entry series is registered in `pkg/adapter/metrics.go` as
-`slotShutdownUntokenedEntry`, a `mustCounterVec` over the single label SPEC-6's §16.1 row names,
-and this deliverable is the only one that declares it. Its accessor is the package-level `func
-incSlotShutdownUntokenedEntry(podID string)`, declared beside `incUnaddressedFrameRejected`
-(`pkg/adapter/metrics.go:215-220`), which is the form every in-package accessor in that file
-already takes; the file declares no method on `*Server`. The caller passes the adapter's cached
-pod identity `s.podID` (`pkg/adapter/server.go:196`), which is the label value the §16.1 row
-names. That file is the surface the tier-11 adapter sweep reads. The series takes no `catalog.go`
+`slotShutdownUntokenedEntry`, a `mustCounter` with no label, as SPEC-6's §16.1 row states, and
+this deliverable is the only one that declares it. It carries no pod label because every series
+the adapter emits takes the pod label its scrape target attaches, and an emitted `k8s_pod_name`
+would be renamed `exported_k8s_pod_name` at scrape. Its accessor is the package-level `func
+incSlotShutdownUntokenedEntry()`, declared beside `incSetTracingContextDropped`
+(`pkg/adapter/metrics.go`), which is the form every in-package accessor in that file already
+takes; the file declares no method on `*Server`. That file is the surface the tier-11 adapter sweep reads. The series takes no `catalog.go`
 row and no `spec161Metrics` entry, because
 the §16.1 rows that carry the adapter scrape deferral (`spec/16_observability.md:186-189`) are
 absent from both, while the adapter-emitted metrics that do carry `catalog.go` rows,
@@ -2146,13 +2146,21 @@ absent from both, while the adapter-emitted metrics that do carry `catalog.go` r
 `catalog.go:146`), carry no deferral. SPEC-6's row for this series records the same scrape
 deferral, so it follows the §16.1 rows that already carry one. `spec161Metrics` in
 `pkg/observability/metrics/catalog_test.go` therefore gains `lenny_slot_compensation_superseded_total`
-alone: that list is reconciled both ways against `MetricCatalog()`
+and `lenny_adapter_leaked_slots` alone: that list is reconciled both ways against `MetricCatalog()`
 (`catalog_test.go:188-211`), so entering the adapter series there fails
 `TestMetricCatalogIsCompleteAgainstSpec161` on this deliverable's own step.
 
 Both series take a `docs/reference/metrics.md` row matching the §16.1 row SPEC-6 stages, the
 untokened-entry row under that page's `## Adapter metrics` table with the same "outside the
 default scrape set" phrasing its siblings there already use.
+
+The leaked-slots gauge `lenny_adapter_leaked_slots` is already registered and set by the gateway
+(the `adapterLeakedSlots` collector in `gatewaymetrics_credential.go`), and this deliverable
+changes no code that emits it. Because SPEC-6 gives it a §16.1 row, it takes a `catalog.go` entry
+of type `TypeGauge` beside `lenny_slot_failure_total` and an entry in `spec161Metrics`, whose
+reconciliation is two-way, and a `docs/reference/metrics.md` row beside the
+`lenny_slot_failure_total` row naming the `pod_id` and `pool` labels and the SPEC-6 meaning. It
+belongs in the gateway rows rather than under `## Adapter metrics`, because the gateway emits it.
 
 | Counter | Fires when | Expected value |
 |:--|:--|:--|
@@ -3895,7 +3903,8 @@ held by a new file, `tests/tier11_docs/slot_compensation_metric_reference_test.g
 shipped one-metric-per-file precedent `tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go`:
 it reads the reference page, locates the single table row naming the counter, and asserts that the
 row names the `pool` and `k8s_pod_name` labels and the superseded semantics SPEC-6's §16.1 row
-states. It carries the `// spec:` annotation and the `// diagnosis:` comment tier 11 requires.
+states, and it asserts the same of the `lenny_adapter_leaked_slots` row, with the `pod_id` and
+`pool` labels. It carries the `// spec:` annotation and the `// diagnosis:` comment tier 11 requires.
 
 That file's name states the slot as its subject, so the tier-0 inventory gate derives it into the
 inventory through `slotSubjectFileRE`
@@ -4225,11 +4234,11 @@ of these cases:
   `rollbackClaim`, and `isTransientPodClaimError`'s `codes.Aborted` arm.
 - `pkg/gateway/sessionserver/upload_to_session.go` · the §7.4 pair sets `mid_session` true and
   carries no token.
-- `pkg/observability/metrics/catalog.go` and the `spec161Metrics` list in its `catalog_test.go` · the superseded series alone.
+- `pkg/observability/metrics/catalog.go` and the `spec161Metrics` list in its `catalog_test.go` · the superseded series and the leaked-slots gauge.
 - `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` and `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics.go` · the superseded collector and its `IncSlotCompensationSuperseded` accessor, and in `gatewaymetrics_credential.go` alone the retired cleanup-timeout trigger in the `adapterLeakedSlots` field and construction-site comments, which CODE-3 reduces.
 - `pkg/adapter/metrics.go` · the untokened-entry series and its `incSlotShutdownUntokenedEntry` accessor.
 - `cmd/lenny-gateway/metricsbackfill.go` · the `SlotReclaim` hook wiring beside the `SlotFailure` wiring.
-- `docs/reference/metrics.md` · the two counter rows.
+- `docs/reference/metrics.md` · the two counter rows and the leaked-slots gauge row.
 - `docs/reference/state-machines.md` · the per-slot sub-state table's new row, its
   `receiving_uploads` → `running` trigger cell, its
   `slot_cleanup` → `released` trigger cell and the page's `slot_cleanup -> leaked` clause, and
