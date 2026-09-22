@@ -3174,3 +3174,11 @@ that file as the home has not given the symbol a home. EVIDENCE: pkg/adapter/met
 
 OPEN: the `### Open` entry "Does S23's tier list '0, 11' agree with DOCS-4's own 'Tiers: 0'?" is
 STALE and can be retired: DOCS-4 now reads "Tiers: 0, 11" (non-spec-changes.md:2958).
+
+### [operator.47]
+
+DECISION: open decision 47 answered by the operator on 2026-09-22 with option A. SPEC-3's `**Slot-identifier reclaim hold.**` paragraph now carries one sentence after the definition of **completed**: a removal of the slot's workspace directory performed before every request still writing under the slot's identifier (a `Resume` restoring a checkpoint among them) has stopped writing is an act that did not return without error, whatever the removal returns, and the disposition table's failed-act rows apply to it. The sentence names the ordering rather than the per-slot guard, because the guard is CODE-6's device and the spec states the requirement it discharges. ALTERNATIVES: (B) drop the `guarded` conjunct from the three completion predicates, rejected because a released identifier admits a successor onto a directory a parked `Resume` extraction is still re-creating, which is the residue the hold was staged to close.
+
+CORRECTS [`[f7.apply]`, its OPEN on entry 47]: answered; entry 47 left `## Open decisions for human to make`, and the section preamble records the answer.
+CORRECTS [`[f7.apply]` and `[redesign.8.fix.1]`, their DEFERRED on SPEC-3's reclaim-hold paragraph]: applied; the clause is staged, and CODE-6's closing paragraph after the expired-acquisition site table now cites it instead of recording it as owed.
+WATCHOUT: the spec lane was unlocked for this edit. A fix that rewrites the reclaim-hold paragraph keeps this sentence, and the disposition table stays the single home of each row's outcome; the sentence adds no row and no cell.

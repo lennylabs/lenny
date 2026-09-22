@@ -1861,13 +1861,11 @@ residue the hold was staged to close. The cost of retention is the failed-remova
 identifier withheld for the pod's remaining life, and on the compensation path it adds nothing
 observable: the acquisition expires only when the compensation's own deadline has, so the gateway
 has already recorded the RPC error and the `leaked` disposition before the answer is built.
-§5.2 states the completion predicate over the acts the cleanup owes and does not name the
-ordering the guard provides, so the reading that an expired acquisition is a failed act is this
-deliverable's and the spec lane states it nowhere. The clause that would state it is owed by
-SPEC-3's own `**Slot-identifier reclaim hold.**` paragraph rather than by a later proposal, and it
-is unstaged because the spec lane of this proposal is locked by the operator. The summary carries
-it as open decision 47, which decides whether that clause lands beside this deliverable or whether
-the `guarded` conjunct below is dropped.
+SPEC-3's `**Slot-identifier reclaim hold.**` paragraph states that a removal performed before
+every request still writing under the identifier has stopped writing is an act that did not
+return without error, whatever the removal itself returns. The per-slot guard is how this
+deliverable provides that ordering, so an expired acquisition is the case that sentence names, and
+the `guarded` conjunct is its implementation.
 
 `Resume`'s guard covers a network-bound extraction, so the compensating `Shutdown` CODE-4 sends on
 a failed `Binder.Resume` waits on that guard while the handler is still running, and takes the

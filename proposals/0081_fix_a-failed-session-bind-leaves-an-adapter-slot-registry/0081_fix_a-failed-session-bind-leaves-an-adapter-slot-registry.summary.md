@@ -458,11 +458,11 @@ because the log never numbered it; the open-decisions-and-impact-review phase th
 accepting the compensation's queue hold as staged, and the non-spec changes record the hold, the
 budget that bounds it and the exhaustion envelope a displaced waiter meets among the accepted
 failure modes. The shipped queue behaviour the hold extends, a wait bound that is tested only
-after admission, has its own entry in the unstaged-defects list below. Entry 47 was stamped by a
-later open-decisions-and-impact-review firing, which moved its subject out of the unstaged-defects
-list below: the §5.2 clause CODE-6's expired-acquisition disposition rests on is a disagreement
-between this proposal's two lanes rather than a defect of the shipped tree, so it is an operator
-decision rather than a follow-up owed by a later proposal.
+after admission, has its own entry in the unstaged-defects list below. Entry 47 was stamped by a later open-decisions-and-impact-review firing and answered by the
+operator on 2026-09-22: SPEC-3's `**Slot-identifier reclaim hold.**` paragraph now states that a
+removal performed before every request still writing under the slot's identifier has stopped
+writing is an act that did not return without error, which is the sentence CODE-6's `guarded`
+conjunct implements, and the entry left this section.
 
 20. **Do the two new error codes take the next two values in the `ErrorCode` enum, or the
     Phase-2 range?** The proto comment reserves 1000 through 1999 in prose and declares no
@@ -688,29 +688,6 @@ decision rather than a follow-up owed by a later proposal.
     decides whether SPEC-6 gains a row for it, or whether the gap stays pre-existing and is
     recorded as a defect this proposal does not stage. The review loop derived no
     recommendation.
-
-47. **Does this proposal's own §5.2 paragraph take the clause CODE-6's expired-acquisition
-    disposition rests on?** SPEC-3's `**Slot-identifier reclaim hold.**` paragraph ends the hold
-    when every act the cleanup owes the slot has returned without error, and the §5.2 disposition
-    table gives `Held for the life of the pod` only to a cleanup one of whose acts failed. CODE-6's
-    **Disposition of an expired acquisition at a removing site** retains the hold whenever a
-    removing site's guard acquisition expires and the removal runs unguarded, including when every
-    act the paragraph names returns nil, and its own text records that the per-slot guard is a
-    device the spec does not name. The two lanes of this proposal therefore disagree on an
-    observable outcome. While the identifier is held the adapter refuses every governed request
-    under it as a transient condition, so a caller meets refusals for the pod's remaining life on a
-    cleanup whose acts §5.2 reads as completed, and an implementor has no spec sentence to cite for
-    the `guarded` conjunct in the completion predicate. The disagreement is reachable on a
-    co-tenanted pod, where `slotlayout.RemoveTree` takes no context
-    (`pkg/adapter/slotlayout/tree.go:58-69`) and `SocketRuntimeProcess.Close` returns immediately
-    while a sibling slot is active (`pkg/adapter/socketruntime.go:441-446`), so both acts return nil
-    whatever the caller's deadline did. The clause that would close it is one sentence on that
-    paragraph, stating that a removal performed without the ordering the adapter's per-slot guard
-    provides against a section still writing under the slot's identifier is an act that did not
-    return without error. It is not staged, because the spec lane of this proposal is locked by the
-    operator. The answer decides whether the spec lane reopens long enough to take that clause
-    beside CODE-6, or whether CODE-6 drops the `guarded` conjunct and lets a nil-returning
-    unguarded removal end the hold as §5.2 reads today.
 
 ## Defects in the shipped tree that this proposal does not stage
 
