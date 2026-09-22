@@ -279,12 +279,13 @@ The handler body:
 // The removing arm releases s.mu, takes the guard through the raw hand-out
 // form, which no reclaim hold refuses and which reports a failure to acquire
 // inside the request's own context rather than blocking past it; the arm
-// proceeds either way, and CODE-6's disposition of an expired acquisition
-// at a removing site states what an acquisition that did not complete
-// does to the removal, to the hold and to the response: the removal runs
-// unguarded after a slot_guard_not_acquired warning, and the acquisition
-// counts as a failed act, which the guarded term in the predicates below
-// carries. It then re-takes s.mu and decides again. The
+// proceeds either way. CODE-6's disposition of an expired acquisition at
+// a removing site states what an acquisition that did not complete does
+// to the removal: the removal runs unguarded after a
+// slot_guard_not_acquired warning. The acquisition counts as a failed
+// act, so the §5.2 disposition table's failed-act rows give its hold and
+// its response, and the guarded term in the predicates below carries the
+// acquisition result. It then re-takes s.mu and decides again. The
 // re-decision is required rather than defensive: s.mu is not held while the
 // guard is being acquired, so the entry can be removed or replaced in that
 // interval, and a handler that deregistered on the first decision would
@@ -897,8 +898,13 @@ Targets:
   those by identifier; `Binder.Resume` mints, carries, and
   compensates before `cl.Close()`; `releaseResumeSlot` takes the disposition and returns its
   release error; `Binder.shutdownAdapter` and the recycle path set `unconditional_teardown`.
-- `pkg/gateway/runtime/adapterclient/client.go` · the six requests carry `bind_attempt`,
-  `PrepareWorkspace` carries `mid_session`, and the two `Shutdown` forms become two methods.
+- `pkg/gateway/runtime/adapterclient/client.go` · the two `Shutdown` forms become two methods,
+  and the bind-sequence methods take the token and the mid-session flag as explicit arguments:
+  `AssignCredentials` and `RunSetup` each gain a trailing `bindAttempt string` parameter,
+  `FinalizeWorkspace` gains `bindAttempt string` before its shipped `midSession bool`,
+  `PrepareWorkspace` gains a trailing `bindAttempt string, midSession bool`, and `ResumeParams`
+  gains a `BindAttempt string` field. The `Client` sets each argument on its request as given
+  and derives neither field from the other.
 
 **The mint.**
 
@@ -1062,8 +1068,7 @@ every pool configuration. A reclaim of a bound-but-unstarted session sends no fr
 because the drain sits inside CODE-1's `started` block.
 
 **The wrapper.** `materializeSlot` becomes a wrapper so no stage can be added later without the
-compensation, and the wrapper is where the token is minted, where the refusal is read, and
-where the lease release runs:
+compensation, and the wrapper is where the token is minted and where the lease release runs:
 
 ```go
 func (b *Binder) materializeSlot(
@@ -1074,17 +1079,10 @@ func (b *Binder) materializeSlot(
     attempt := newBindAttempt()
     res, minted, err := b.materializeSlotStages(ctx, req, sandboxName, slotID, podIP, workspaceBase, cl, attempt)
     if err != nil {
-        // spec: §4.7.1 (role and gateway RPC contract). A typed refusal means
-        // this pod is serving the session correctly under another attempt's
-        // identity, or the session has already started. This attempt created
-        // nothing on the pod and owns nothing there, so it sends no
-        // compensation: a compensation naming this attempt's token would
-        // answer SUPERSEDED and remove nothing, and one naming nothing would
-        // be the unconditional teardown of a live session.
-        refused := errors.Is(err, adapterclient.ErrSlotBindAttemptSuperseded) ||
-            errors.Is(err, adapterclient.ErrSlotBindAlreadyStarted)
+        // spec: §7.1 (normal flow). A typed refusal is compensated too; §4.7.1
+        // rule 13 answers it superseded.
         var sbe *SlotBindError
-        if errors.As(err, &sbe) && !refused {
+        if errors.As(err, &sbe) {
             outcome, cleanly, cerr := b.compensateFailedSlotBind(
                 ctx, cl, req.SessionID, attempt,
                 req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, sandboxName, slotID)
@@ -1144,15 +1142,6 @@ the adapter side replaces (`slotcreds.go:40-48`); under the identity gate a fore
 `AssignCredentials` is refused, so the double-count arises only from a retry of an attempt's
 own request and is recorded among the accepted failure modes.
 
-**Why the suppression needs `errors.Is` on a translated sentinel rather than `errors.As` on
-`*SlotBindError`.** The refusal arrives as a gRPC status carrying an `adapterv1.Error` detail.
-`errors.As(err, &sbe)` matches the gateway's own wrapper, which is present on a refusal and on
-an ordinary stage failure alike, so it cannot tell them apart. CODE-7's translation is what
-makes the two sentinels matchable, and `SlotBindError.Unwrap` returns the cause, so
-`errors.Is` walks to the sentinel through the wrapper. A build in which CODE-7 has not landed
-matches neither sentinel and compensates every failure, which is the shipped behaviour and is
-why CODE-7 precedes this deliverable rather than accompanying it.
-
 The two obligations sit at different levels because they reclaim different state. The
 compensation is pod-side, so both bind paths and the resume path take it. The lease release is
 gateway-side and belongs to the attempt that minted the lease, so each bind path takes it at its
@@ -1162,7 +1151,7 @@ failure arm, because `assignCredentials` mints outside any such wrapper (`binder
 `:1248`).
 
 Every stage inside `materializeSlotStages` is post-connection, so the compensation is
-unconditional there except on a refusal. A stage whose failure sent no RPC (a `stageWorkspace`
+unconditional there. A stage whose failure sent no RPC (a `stageWorkspace`
 failure, through a source-rewrite error or a blob-store failure, which returns before
 `PrepareWorkspace` is sent) still sends it; the
 adapter answers `ABSENT` for a session it
@@ -1210,8 +1199,8 @@ refusal drains the winner's pod. The abandoned
 entry-touching RPC of its attempt and creates the entry through its own claim
 (`pkg/adapter/resume.go:50`, ahead of every path-resolving step), so `ResumeRequest` carries
 `bind_attempt` and the compensation names the same value. Its adapter-RPC failure branch
-currently calls `cl.Close()` and then `releaseResumeSlot`; it becomes the refusal check, then
-the compensation on the still-open connection, taking `req.SessionID`,
+currently calls `cl.Close()` and then `releaseResumeSlot`; it becomes the compensation on the
+still-open connection, taking `req.SessionID`,
 `req.CleanupTimeoutSeconds` and `req.MaxConcurrentSessions` off the `ResumeRequest`, then
 `b.noteCompensationOutcome(outcome, req.Pool, sb.Name)`, then the close, then the release
 carrying the outcome. It releases no credential lease: `Binder.Resume`
@@ -1382,7 +1371,7 @@ The gateway reads the status code rather than CODE-6's adapter-local sentinel be
 sentinel is minted in the adapter process and no production file under `pkg/gateway` imports
 `pkg/adapter`; the code is the part of the refusal that survives the wire. CODE-7's typed
 sentinels are the other half and are matched where the distinction between the two new codes
-matters, which is the compensation suppression and the reclaim closures; this classifier needs
+matters, which is the reclaim closures; this classifier needs
 only the code, so one arm covers all three producers. `status.Code` resolves through a wrapper
 with `errors.As`, so the arm fires on the bare status and equally through the `*SlotBindError`
 that CODE-4 makes `Binder.Resume` return. The wire envelope needs no change:
@@ -1490,7 +1479,10 @@ below is an addition.
   separately at that site. `deregisterSlotLocked` keeps its signature because
   `reclaimSlotLocked` calls it; after CODE-6 every production caller goes through that helper and
   no caller takes the deregistration without a destroy. `deregisterSlot` is retired into the
-  helper. In the same rewrite `releaseSessionSlot` calls `s.removeSlotTreeVia(st)` in place of
+  helper. Its two test callers, `pkg/adapter/podmcp_arming_internal_test.go:88` and `:245`,
+  become `s.mu.Lock(); _, removed, _ := s.deregisterSlotLocked("alice"); s.mu.Unlock()`, and
+  each keeps its `!removed` assertion; they do not go through `reclaimSlotLocked`, because the
+  reclaim hold it opens on `"alice"` is released nowhere in either test. In the same rewrite `releaseSessionSlot` calls `s.removeSlotTreeVia(st)` in place of
   the discarded `removeSlotTree(st)` at `pkg/adapter/slotsession.go:217`, reads its result, and
   logs a non-nil error as
   `slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", err)`, because nothing
@@ -1781,8 +1773,7 @@ is subject to the reclaim hold:
 neither waits past it, so no section waits on this guard longer than the work it belongs to is
 itself allowed to run. This rule states nothing about any caller's budget; each caller's budget
 is stated where that caller is described.
-What a destructive section does to its removal, to the reclaim hold and to its report when its
-acquisition expires is stated once, under **Disposition of an expired acquisition at a removing
+What a destructive section does when its acquisition expires is stated once, under **Disposition of an expired acquisition at a removing
 site** below the derivation table. An admission RPC whose acquisition expires is refused with the
 context's own error, because proceeding unguarded is how a materialization re-creates the tree a
 reclaim has just removed, which is the race the guard exists to close. Neither clause reaches the
@@ -1835,43 +1826,32 @@ section that grows unlocked path work is caught by reading the predicate against
 | §10.1.4 pass 1, `deregisterStartedSessions` | none | none: it holds `s.mu` across every member and does no path work, and each member's guard is taken by the pass-2 call that destroys that member |
 
 **Disposition of an expired acquisition at a removing site.** The three removing sites in the
-table take the raw `lockSlotGuard` form on their caller's context, and what each does when that
-acquisition expires is stated here and nowhere else; CODE-1, CODE-4, the Testing section and the
-accepted failure modes cite this statement rather than restating it. The rule has three parts. The
-removal runs unguarded: the site logs the `slot_guard_not_acquired` warning naming the slot
-identifier and the caller and then performs every act it would have performed under the guard,
-because that is what the shipped code does today and abandoning the removal would leave a worse
-residue than an unordered one. The reclaim hold is retained: an acquisition that expired is, for
-every column of the §5.2 disposition table keyed on the cleanup's acts, an act that did not return
-without error, whatever the unguarded removal itself returns, because a removal performed without
-its ordering against a section that may still be writing under the identifier has not established
-that the tree is gone, and §5.2 ends the hold only on a cleanup that completed. The report follows
-the row that a failed act selects: the cleanup-outcome report on `Shutdown`'s `running` arm stays
-keyed on the runtime close alone, so it is `released` when the close returned nil, and the
-`exited_cleanly` flag on the pre-`running` arm is not set. Per site:
+table take the raw `lockSlotGuard` form on their caller's context, and the removal on an expired
+acquisition is stated here; CODE-1, CODE-4, the Testing section and the accepted failure modes
+cite this statement rather than restating it. The removal runs unguarded: the site logs the
+`slot_guard_not_acquired` warning naming the slot identifier and the caller and then performs
+every act it would have performed under the guard, because that is what the shipped code does
+today and abandoning the removal would leave a worse residue than an unordered one. An expired
+acquisition is the removal performed before every request still writing under the identifier has
+stopped writing that SPEC-3's `**Slot-identifier reclaim hold.**` paragraph names, so the §5.2
+disposition table's rows keyed on a failed act give its reclaim hold and its report, and
+`guarded`, the boolean `lockSlotGuard` returns, is the conjunct each site's own `completed`
+predicate carries for it. Per site:
 
-| Removing site | Removal on an expired acquisition | Reclaim hold | Report |
-|:--|:--|:--|:--|
-| `Shutdown`'s removing arm | the deregistration, the runtime close and `removeSlotTreeVia` run unguarded, on the request's own context | retained for the life of the pod: the deferred release is not taken | `slot_reclaim: reclaimed`; `exited_cleanly` false on a slot that did not reach `running`, and on one that did the flag and the cleanup-outcome report read the runtime close alone |
-| `releaseSessionSlot`, guard-acquiring form | the deregistration and `removeSlotTreeVia` run unguarded | retained for the life of the pod | none; the function returns nothing and its caller returns its own error |
-| `terminateHeldSession` | the final usage report, the runtime close and `removeSlotTreeVia` run unguarded, on the member's own close context | retained for the life of the pod | none; the §10.1.4 pass files no report |
+| Removing site | Removal on an expired acquisition |
+|:--|:--|
+| `Shutdown`'s removing arm | the deregistration, the runtime close and `removeSlotTreeVia` run unguarded, on the request's own context |
+| `releaseSessionSlot`, guard-acquiring form | the deregistration and `removeSlotTreeVia` run unguarded |
+| `terminateHeldSession` | the final usage report, the runtime close and `removeSlotTreeVia` run unguarded, on the member's own close context |
 
-Under this rule the `completed` predicate at each site carries the acquisition's result beside
-the act results: `guarded && closeErr == nil && treeErr == nil` at `Shutdown` and at
-`terminateHeldSession`, and `guarded && treeErr == nil` at the guard-acquiring
-`releaseSessionSlot`, where `guarded` is the boolean `lockSlotGuard` returns. Releasing the hold
-instead was rejected: an unguarded removal can run beside a `Resume` whose `workspace.ExtractTree`
-is still writing under the identifier, so a released identifier admits a successor onto a tree
-the extraction is re-creating, on the pod §5.2 placement prefers for the retry, which is the
-residue the hold was staged to close. The cost of retention is the failed-removal row's cost, an
-identifier withheld for the pod's remaining life, and on the compensation path it adds nothing
-observable: the acquisition expires only when the compensation's own deadline has, so the gateway
-has already recorded the RPC error and the `leaked` disposition before the answer is built.
-SPEC-3's `**Slot-identifier reclaim hold.**` paragraph states that a removal performed before
-every request still writing under the identifier has stopped writing is an act that did not
-return without error, whatever the removal itself returns. The per-slot guard is how this
-deliverable provides that ordering, so an expired acquisition is the case that sentence names, and
-the `guarded` conjunct is its implementation.
+Releasing the hold instead was rejected: an unguarded removal can run beside a `Resume` whose
+`workspace.ExtractTree` is still writing under the identifier, so a released identifier admits a
+successor onto a tree the extraction is re-creating, on the pod §5.2 placement prefers for the
+retry, which is the residue the hold was staged to close. The cost of retention is the
+failed-removal row's cost, an identifier withheld for the pod's remaining life, and on the
+compensation path it adds nothing observable: the acquisition expires only when the
+compensation's own deadline has, so the gateway has already recorded the RPC error and the
+`leaked` disposition before the answer is built.
 
 `Resume`'s guard covers a network-bound extraction, so the compensating `Shutdown` CODE-4 sends on
 a failed `Binder.Resume` waits on that guard while the handler is still running, and takes the
@@ -1922,11 +1902,11 @@ the pod has served, and `recycle.maxSessionsPerPod` retires the pod at that coun
 ### CODE-7 · pkg/gateway/runtime/adapterclient · the gRPC status detail becomes a Go typed error
 
 Nothing in the gateway can match the two new refusals without this deliverable, which is why it
-precedes CODE-4 and CODE-8 rather than accompanying them. Two facts fix its design.
+precedes CODE-8 rather than accompanying it. Two facts fix its design.
 `adapterv1.Error` declares `code`, `category`, `message`, `retryable` and `docs_url` and has no
 reason field, so the distinction between the two refusals has to be carried by two `ErrorCode`
 values rather than by a string. And every gateway consumer of a bind failure matches on Go
-types: `isTransientPodClaimError` (`start.go:3648-3681`), CODE-4's suppression guard, and both
+types: `isTransientPodClaimError` (`start.go:3648-3681`) and both
 reclaim closures. `status.Convert` appears nowhere in `pkg/gateway`, and the only status-detail
 reader in the whole gateway is `client.go:333-341`, which recovers `RunSetup` partial outputs.
 
@@ -2655,8 +2635,8 @@ messages SCHEMA-1 opens. The other tier-3 descriptor pin,
 `tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go`, carries closed sets of
 its own over messages SCHEMA-1 does not open.
 
-**Claim register.** Three rows are staged below, under the seeding convention the implementation
-checklist's preamble states. The two `WIRED` rows land with this step. The `ABSENT` row lands
+**Claim register.** Three rows are staged below, under the seeding convention the `## Testing`
+preamble below states. The two `WIRED` rows land with this step. The `ABSENT` row lands
 with CONF-1's tier-10 file at S22, because the surfaces it names do not exist until then.
 `tests/claim-map.json` is generator output
 rather than an authoring source: the tier-0 gate `TestClaimRegisterIsReproducibleFromItsGenerator`
@@ -2669,8 +2649,7 @@ anchor the sibling `AttachRequest.coordination_generation` row uses.
 
 Two rows are `WIRED`, because a production reader ships in the same change: the adapter compares
 the token and the two teardown fields inside `Shutdown`, and the gateway's compensation reads
-the outcome. Both are carried under the convention the `## Testing` section below states, that a
-deliverable changing the wire adds its `tests/claim-map.json` rows. §28.4 does not oblige them:
+the outcome. Both are carried under that same seeding convention. §28.4 does not oblige them:
 its obligation at `spec/28_communication-channels.md:163` runs from a normative §28 statement to
 a register row, and `Shutdown` carries no §28 statement to run it from. The obligation is
 one-way, so §28.4 leaves a row it does not require lawful, and the tier-0 validator applies the
@@ -2989,7 +2968,7 @@ function declaration. Every deliverable runs tier 0 and tier 1 on every package 
 tiers named per section below are the additional ones. Every new file registers in
 `tests/spec-map.json` under the sections its annotations cite, and every deliverable that
 changes the wire or adds a normative claim adds its `tests/claim-map.json` rows by editing the
-`EXPLICIT` list in `scripts/seed-claim-register.py` and regenerating.
+`EXPLICIT` list in `scripts/seed-claim-register.py` and regenerating from it in the same commit.
 
 ### Adapter tests for CODE-6, tier 1
 
@@ -3123,11 +3102,12 @@ Then the thread and the surrounding mechanism:
   expired acquisition at a removing site.** With a second goroutine holding the slot's guard and
   the caller's context already cancelled, `lockSlotGuard` returns a no-op release and `false`.
   Table-driven over the three rows of that disposition's table, `Shutdown`'s removing arm, the
-  guard-acquiring `releaseSessionSlot` and `terminateHeldSession`: each row asserts what its cell
-  states, that the entry and its tree are removed, that the call returns without waiting for the
-  parked holder, that the `slot_guard_not_acquired` warning names the slot identifier and that
-  caller through the structured-log seam, asserted on the event name and its fields rather than
-  the message text, that a later bind naming the same session is refused with the reclaim-hold
+  guard-acquiring `releaseSessionSlot` and `terminateHeldSession`. Each row asserts the removal
+  its cell states: that the entry and its tree are removed, that the call returns without waiting
+  for the parked holder, and that the `slot_guard_not_acquired` warning names the slot identifier
+  and that caller through the structured-log seam, asserted on the event name and its fields
+  rather than the message text. Each row also asserts the hold and report that the §5.2
+  failed-act rows give it: that a later bind naming the same session is refused with the reclaim-hold
   sentinel after the parked holder releases, because the hold is retained, and, on the `Shutdown`
   row against a slot that did not reach `running`, that the response carries `slot_reclaim:
   reclaimed` with `exited_cleanly` false. This turns red against an implementation that abandons
@@ -3305,10 +3285,10 @@ execution modes)`:
   `exited_cleanly` false, removes the entry and its tree, and leaves a later bind naming the
   session refused with the reclaim-hold sentinel after the holder releases. The same request
   against a session in `runtimeLive` answers `exited_cleanly` on the runtime close alone and
-  files `released`, and still leaves the later bind refused. Both rows are the `Shutdown` cells of
-  CODE-6's disposition of an expired acquisition at a removing site, which the destructive-expiry
-  case in the CODE-6 section also drives; this pair pins the response and the hold apart on the
-  `running` boundary.
+  files `released`, and still leaves the later bind refused. Both rows drive CODE-6's disposition of an
+  expired acquisition at `Shutdown`'s removing arm, and assert the hold and report that the §5.2
+  failed-act rows give it; this pair pins the response and the hold apart on the `running`
+  boundary.
 - **The runtime's own answer still decides for a started session.** The same injected tree-removal
   error, against a session the fixture has driven through `noteRuntimeStarted` so it is in
   `runtimeLive`, answers `exited_cleanly` true. This is what pins the `live ||` half of the
@@ -3360,7 +3340,10 @@ grep names takes the token. The set is the one `grep -rn
 --include=*_test.go pkg/ tests/` names, and the `adapterv1.` qualifier is load-bearing: without
 it the pattern also matches `tokensv1.AssignCredentialsRequest` and `podsession.ResumeRequest`,
 which belong to other services and carry no such field. That sweep reaches tiers 1, 3, 4, 7a,
-8, 9 and 10.
+8, 9 and 10. A test that reaches these RPCs through an `adapterclient.Client` method builds no
+literal the grep sees; it is carried by the signature change CODE-4's `client.go` target
+states, which fails to compile until the test is edited, and the Tests list under
+`## Files touched on application (non-spec)` names those files.
 `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` is one member of the
 `ShutdownRequest` set whose own path is otherwise unaffected and must keep passing
 unchanged. CODE-2 changes
@@ -3387,7 +3370,7 @@ set covers one adoption ordering each:
 | The symmetric `StartSession` race | attempt 1 creates the entry, attempt 2's first RPC is refused and never reaches `StartSession` |
 | Mid-session finalize after an unconditional `Shutdown` removed the entry | `allowCreate` false, absent entry is `FailedPrecondition`, no unstamped entry created |
 | Attempt A's own `FinalizeWorkspace` after an unconditional `Shutdown` removed A's entry | A recreates its own entry stamped A and materializes from an empty staging tree. This pins an accepted residue rather than a refusal, and its comment names the accepted-failure-mode bullet it records |
-| Attempt 2 against a live started session | refused on the identity gate, which the cascade evaluates ahead of the phase gate; no workspace, credential, setup or staging damage and no compensation sent |
+| Attempt 2 against a live started session | refused on the identity gate, which the cascade evaluates ahead of the phase gate; no workspace, credential, setup or staging damage, and its compensation, naming attempt 2's token, answers `superseded` under §4.7.1 rule 13 and removes nothing |
 | Resume onto a replacement pod | the resume mints, its claim stamps the entry it creates, its compensation matches; a stale compensation from an earlier attempt answers `superseded` |
 | §7.4 mid-session upload onto a live session | empty token and `mid_session` true, admitted by the admit rule, barred from creating by the mid-session-create rule, exempt from the phase gate |
 | Adapter process restart between the attempt and its compensation | a fresh process holds no entry the stale compensation can match, so it answers `absent`, and any entry a later attempt creates carries that attempt's own token, so it answers `superseded` |
@@ -3447,11 +3430,10 @@ execution modes); §6.2 (pod state machine)`:
   whatever outcome the answer carries; an RPC error is leaked. Table-driven across `reclaimed`,
   `superseded`, `absent` and a value this build does not recognize, each paired with a clean and
   an unclean exit, asserting that the outcome never changes the disposition.
-- **The compensation is suppressed on either typed refusal.** Two arms, one per sentinel: no
-  `Shutdown` is recorded at all, and the session-wide `ReleaseSession` is not called. This is
-  the case that fails against a guard written as `errors.As` on
-  `*SlotBindError` alone, because that type is present on a refusal and on an ordinary failure
-  alike.
+- **A typed refusal is compensated.** Two arms, one per sentinel. Each asserts that a
+  `Shutdown` carrying this attempt's token is recorded, that the fake answers `superseded`, that
+  `Leaked` is false, and that the session-wide `ReleaseSession` is not called. The case fails
+  against any reintroduced suppression of the compensation on a refusal.
 - **The credential release is scoped to the attempt.** A failed attempt releases exactly the
   lease identifiers it minted, and a successor's leases for the same session survive
   it. Assert the identifiers rather than the count. The session-wide `ReleaseSession` is asserted
@@ -4170,8 +4152,8 @@ of these cases:
 - `pkg/adapter/slotcreds.go` · the resolve site's `slotResolve` argument.
 - `pkg/adapter/credentials.go` · `AssignCredentials`'s wire-rule check and the resolve it passes.
 - `pkg/gateway/runtime/adapterclient/client.go` · the two error sentinels and
-  `translateSlotBindRefusal` with its call sites, `bind_attempt` on the six requests,
-  `mid_session` on `PrepareWorkspace`, `unconditional_teardown` set inside `Shutdown` and
+  `translateSlotBindRefusal` with its call sites, the bind-sequence method signatures CODE-4's
+  `client.go` target states, `unconditional_teardown` set inside `Shutdown` and
   `ShutdownRecycle`, and the new `ShutdownReclaim`.
 - `pkg/adapter/session.go` · `Shutdown`'s two-field precondition, its bind-attempt comparison
   under `s.mu` and the `shutdownReclaimOutcome` function that decides it, its context-bounded
@@ -4238,7 +4220,7 @@ of these cases:
   `SlotFailure`; `Binder.Prepare`'s mint, carry and reclaim
   closure; `assignCredentials`'s return of the lease identifiers it minted, the
   `CredentialAssigner` interface's new `Release(leaseID string)` member, and the
-  attempt-scoped release on `Binder.Prepare`'s credential-assignment failure arm; `Binder.Launch`'s reclaim closure; `Binder.Resume`'s mint, carry, refusal check,
+  attempt-scoped release on `Binder.Prepare`'s credential-assignment failure arm; `Binder.Launch`'s reclaim closure; `Binder.Resume`'s mint, carry,
   compensation and failure branch; `releaseResumeSlot`; and `Binder.shutdownAdapter`'s two
   teardown calls.
 - `pkg/gateway/sessionserver/start.go` · the `slotBinder` interface, `accountSlotFailure`,
@@ -4275,6 +4257,8 @@ of these cases:
   `pkg/adapter/export_test.go`, `pkg/adapter/usage_test.go`,
   `pkg/adapter/adapterevents_test.go`, `pkg/adapter/podmcp_arming_internal_test.go`,
   `pkg/adapter/exportpaths_test.go`, `pkg/adapter/one_session_only_test.go`,
+  `pkg/adapter/manifest_fields_test.go` (`setSessionLeasesForTest` at `:220` takes the mechanical
+  `slotResolve{allowCreate: true}` widening),
   `pkg/adapter/integrationlevel_test.go`, `pkg/adapter/credexpiry_test.go`,
   `pkg/adapter/checkpoint_stream_test.go`, `pkg/adapter/tracingcontext_addressing_test.go`
   (these four and `one_session_only_test.go` hold every `ReleaseSlotForTest` call site the tree
@@ -4295,6 +4279,9 @@ of these cases:
   `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go`,
   `tests/tier4_integration/concurrent_workspace_test.go`,
   `tests/tier4_integration/recycle_scrub_path_test.go`,
+  `tests/tier4_integration/token_service_unavailability_guard_test.go` and
+  `tests/tier8_chaos/token_service_unavailability_guard_test.go` (each passes a non-empty bind
+  attempt to `AssignCredentials`, landing at S13 with the signature change),
   `tests/tier7a_load_local/slot_bind_attempt_race_test.go`,
   `tests/tier7a_load_local/slot_reclaim_hold_race_test.go`,
   `tests/tier7a_load_local/shutdown_drain_gate_race_test.go`,
