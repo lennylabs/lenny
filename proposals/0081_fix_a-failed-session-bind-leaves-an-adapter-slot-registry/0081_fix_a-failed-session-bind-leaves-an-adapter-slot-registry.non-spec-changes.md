@@ -276,10 +276,12 @@ The handler body:
 // The removing arm releases s.mu, takes the guard through the raw hand-out
 // form, which no reclaim hold refuses and which reports a failure to acquire
 // inside the request's own context rather than blocking past it; the arm
-// proceeds either way, because removing unguarded is the shipped behaviour,
-// and an acquisition that did not complete is logged as a
-// slot_guard_not_acquired warning naming the slot and this caller.
-// It then re-takes s.mu and decides again. The
+// proceeds either way, and CODE-6's disposition of an expired acquisition
+// at a removing site states what an acquisition that did not complete
+// does to the removal, to the hold and to the response: the removal runs
+// unguarded after a slot_guard_not_acquired warning, and the acquisition
+// counts as a failed act, which the guarded term in the predicates below
+// carries. It then re-takes s.mu and decides again. The
 // re-decision is required rather than defensive: s.mu is not held while the
 // guard is being acquired, so the entry can be removed or replaced in that
 // interval, and a handler that deregistered on the first decision would
@@ -437,10 +439,11 @@ if removed {
 }
 // spec: §5.2 (pool configuration and execution modes). The cleanup completed
 // when every act it owed the slot returned without error, which is what ends
-// the reclaim hold. The cleanup-outcome report below is keyed separately,
-// because it is §6.2 occupancy accounting rather than a statement about the
-// slot identifier.
-completed = closeErr == nil && treeErr == nil
+// the reclaim hold. An acquisition that expired counts as a failed act, per
+// CODE-6's disposition of an expired acquisition at a removing site. The
+// cleanup-outcome report below is keyed separately, because it is §6.2
+// occupancy accounting rather than a statement about the slot identifier.
+completed = guarded && closeErr == nil && treeErr == nil
 
 if live {
     s.reportSessionScrub(ctx, sessionID, closeErr)
@@ -479,23 +482,26 @@ shipped design absorbs inside the occupancy-zero whole-pod scrub and its budgete
 `onScrubFailure` and `maxScrubFailures` policy (§5.2).
 
 The reclaim hold and the cleanup-outcome report answer different questions and therefore differ
-on this arm. `completed` is keyed on both errors because the hold is a property of the slot
-identifier and makes no occupancy claim, while the report is §6.2 occupancy accounting. The
+on this arm. `completed` is keyed on both errors and on the guard acquisition because the hold is
+a property of the slot identifier and makes no occupancy claim, while the report is §6.2 occupancy
+accounting; what the `guarded` term carries is CODE-6's disposition of an expired acquisition at
+a removing site, which this handler cites rather than restates. The
 failed tree removal is accounted where it distorts neither: on the pre-`running` arm it is
 carried on the response's `exited_cleanly`, which the unchanged disjunct below already does; on
 the `running` arm it is recorded by the `slog.Warn` above, whose event name and fields are the
 ones CODE-6 fixes for this same failure so that every site reads as one convention, and its
 residue is reclaimed at the occupancy-zero whole-pod scrub. The warn
 uses the `log/slog` import this handler's `slot_guard_not_acquired` warning already adds to
-`pkg/adapter/session.go`. The `exited_cleanly` predicate below is unchanged and stays keyed on
-`closeErr == nil && (live || treeErr == nil)`, because it answers the reclaiming request's own
-question rather than the cleanup-outcome question, and the reason it reads `live` is stated with
-it.
+`pkg/adapter/session.go`. The `exited_cleanly` predicate below stays keyed on the runtime close
+and, for a slot that did not reach `running`, on the slot release, because it answers the
+reclaiming request's own question rather than the cleanup-outcome question, and the reason it
+reads `live` is stated with it; the slot-release half carries the `guarded` term for the reason
+the `completed` predicate does.
 
 The response becomes:
 
 ```go
-return answerShutdown(outcome, closeErr == nil && (live || treeErr == nil), false)
+return answerShutdown(outcome, closeErr == nil && (live || (guarded && treeErr == nil)), false)
 ```
 
 `outcome` is the value the second decision returned, which is `RECLAIMED` on every path that
@@ -519,7 +525,9 @@ than of `removeSlotTree(st)` directly. If the reclaim path is left calling
 
 `exited_cleanly` carries one rule, keyed on the same §4.7.1 `running` boundary the rest of this
 change installs: the response reports a clean exit when the runtime close succeeded and, for a
-slot that did not reach `running`, when the slot release also completed.
+slot that did not reach `running`, when the slot release also completed, an expired guard
+acquisition counting as a failed act under CODE-6's disposition of an expired acquisition at a
+removing site.
 The gate is `live` rather than `st.started` because `st.started` is set inside
 `claimSessionSlotUnderLock` before `Runtime.Start` runs, so a start still in flight is
 `started` and pre-running, and gating on `started` would discard the tree-removal error for
@@ -552,8 +560,10 @@ Doc-comment work on `Shutdown`:
   that a panic out of `Runtime.Close` or `removeSlotTree` reads as a cleanup that did not
   complete rather than as a release written at a return the panic skipped. State the arm the
   release is taken on: §5.2 ends the hold when the cleanup completes, so the deferred closure
-  releases only when the runtime close and the tree removal both returned without error, and
-  an identifier a failed cleanup did not release stays held for the life of the pod.
+  releases only when the guard was acquired and the runtime close and the tree removal both
+  returned without error, and an identifier a failed cleanup did not release stays held for the
+  life of the pod. Cite CODE-6's disposition of an expired acquisition at a removing site for
+  the guard term rather than restating it.
 - State the handler as two teardowns with two preconditions, matching the §4.7 row, and name
   `releaseSessionSlot` (`pkg/adapter/slotsession.go:214-220`) as the shipped statement of the
   unstarted branch's semantics, so the two compensating paths read as one rule.
@@ -1211,12 +1221,13 @@ outcome as the other two release sites do. The branch also returns its error wit
 and a `Leaked` set to the same `compensation leaked || relErr != nil` discriminator
 `applySlotRetryPolicy` and `BindReservedSlot` use, wrapped inside the message the branch returns
 today. When the failure is the client's own deadline and the adapter's `Resume` handler is still
-running, that compensation waits on the slot guard CODE-6 gives `Resume`, so its removal follows
-the checkpoint extraction rather than interleaving with it. That wait is charged against the
-compensation's own budget, and what bounds it is the `Resume` handler's context: the chunk fetches
-run on it (`checkpointtransport.go:99-116`), so the deadline that triggered this compensation has
-already cancelled them, the pipe closes with that error and `workspace.ExtractTree` returns. The
-residue the wait can still cost is recorded among the accepted failure modes. That is what carries the disposition to the accounting in CODE-5; `SlotBindError.Unwrap`
+running, that compensation waits on the slot guard CODE-6 gives `Resume`, charged against the
+compensation's own budget, and what bounds the wait is the `Resume` handler's context: the chunk
+fetches run on it (`checkpointtransport.go:99-116`), so the deadline that triggered this
+compensation has already cancelled them, the pipe closes with that error and
+`workspace.ExtractTree` returns. When the budget expires before that, the removing arm takes the
+disposition CODE-6 states under **Disposition of an expired acquisition at a removing site**, and
+the residue is recorded among the accepted failure modes. That is what carries the disposition to the accounting in CODE-5; `SlotBindError.Unwrap`
 returns the cause, so the wrapping leaves `isTransientPodClaimError`'s classification as it is
 and resolves the `codes.Aborted` arm CODE-5 adds the same way, because `status.Code` walks the
 chain with `errors.As`. On an exclusive pool `reserveResumeSlot` returns an empty slot id, so
@@ -1458,7 +1469,9 @@ below is an addition.
   inside `terminateHeldSession` after the guard acquisition returns rather than the pass context
   `ctx` the function is handed, replacing the `_ =` discard at `pkg/adapter/holdstate.go:249`,
   and binds `treeErr := s.removeSlotTreeVia(m.state)`, replacing the discard at `:254`. It takes the release
-  only on `closeErr == nil && treeErr == nil`, which is the predicate `Shutdown` states above.
+  only on `guarded && closeErr == nil && treeErr == nil`, which is the predicate `Shutdown` states
+  above, the `guarded` term being the one the per-slot guard's disposition of an expired
+  acquisition at a removing site states below.
   A non-nil `closeErr` is logged as `slog.Warn("runtime_close_failed", "slot_id", m.sessionID,
   "error", closeErr)`, the sibling record of the tree-removal warning stated below, because
   nothing else records that failure. The close stays best-effort in control flow: neither error
@@ -1483,8 +1496,10 @@ below is an addition.
   carries the identical fields for a runtime close whose error this deliverable stops
   discarding, so the records read as one
   convention rather than as one per site. That same error is what decides the
-  hold: `releaseSessionSlot` closes no runtime, so the tree removal is the whole cleanup, and it
-  takes the release when the removal returned nil and leaves the identifier held otherwise.
+  hold: `releaseSessionSlot` closes no runtime, so the tree removal is the whole cleanup, and its
+  guard-acquiring form takes the release on `guarded && treeErr == nil` and leaves the identifier
+  held otherwise, the `guarded` term being the one the per-slot guard's disposition of an
+  expired acquisition at a removing site states below.
   `pkg/adapter/slotsession.go` gains
   a `log/slog` import for it, matching the structured adapter events `pkg/adapter/podscrub.go`
   already emits. The function still returns nothing and every caller still returns its own
@@ -1755,17 +1770,16 @@ is subject to the reclaim hold:
 
 **No guard acquisition outlives its caller's context.** Both forms take the caller's context and
 neither waits past it, so no section waits on this guard longer than the work it belongs to is
-itself allowed to run. What a section does with the remainder of its own budget once an
-acquisition expires is a property of that call site and is stated where that site is described,
-so this rule states nothing about any caller's budget.
-A destructive section whose acquisition expires performs its removal unguarded and logs a
-`slot_guard_not_acquired` warning naming the slot identifier and the caller, because removing
-unguarded is exactly what the shipped code does today and abandoning the removal would leave a
-worse residue than an unordered one. An admission RPC whose acquisition expires is refused with the
+itself allowed to run. This rule states nothing about any caller's budget; each caller's budget
+is stated where that caller is described.
+What a destructive section does to its removal, to the reclaim hold and to its report when its
+acquisition expires is stated once, under **Disposition of an expired acquisition at a removing
+site** below the derivation table. An admission RPC whose acquisition expires is refused with the
 context's own error, because proceeding unguarded is how a materialization re-creates the tree a
 reclaim has just removed, which is the race the guard exists to close. Neither clause reaches the
-wire: the destructive side is observed through that warning, and the admission side through the
-handler's own context error, which the gateway already classifies.
+wire: the destructive side is observed through the `slot_guard_not_acquired` warning that
+disposition states, and the admission side through the handler's own context error, which the
+gateway already classifies.
 
 **The reclaim hold has one predicate and two test points.** The predicate is the one §5.2 states,
 and the sites that test it are `acquireSlotGuardForResolve` and `ensureSlotStateLocked`. A caller
@@ -1811,9 +1825,46 @@ section that grows unlocked path work is caught by reading the predicate against
 | `Shutdown` | `Runtime.Close` and `removeSlotTree`, on the removing arm | on the removing arm alone; the arms answering `absent` and `superseded` acquire none |
 | §10.1.4 pass 1, `deregisterStartedSessions` | none | none: it holds `s.mu` across every member and does no path work, and each member's guard is taken by the pass-2 call that destroys that member |
 
+**Disposition of an expired acquisition at a removing site.** The three removing sites in the
+table take the raw `lockSlotGuard` form on their caller's context, and what each does when that
+acquisition expires is stated here and nowhere else; CODE-1, CODE-4, the Testing section and the
+accepted failure modes cite this statement rather than restating it. The rule has three parts. The
+removal runs unguarded: the site logs the `slot_guard_not_acquired` warning naming the slot
+identifier and the caller and then performs every act it would have performed under the guard,
+because that is what the shipped code does today and abandoning the removal would leave a worse
+residue than an unordered one. The reclaim hold is retained: an acquisition that expired is, for
+every column of the §5.2 disposition table keyed on the cleanup's acts, an act that did not return
+without error, whatever the unguarded removal itself returns, because a removal performed without
+its ordering against a section that may still be writing under the identifier has not established
+that the tree is gone, and §5.2 ends the hold only on a cleanup that completed. The report follows
+the row that a failed act selects: the cleanup-outcome report on `Shutdown`'s `running` arm stays
+keyed on the runtime close alone, so it is `released` when the close returned nil, and the
+`exited_cleanly` flag on the pre-`running` arm is not set. Per site:
+
+| Removing site | Removal on an expired acquisition | Reclaim hold | Report |
+|:--|:--|:--|:--|
+| `Shutdown`'s removing arm | the deregistration, the runtime close and `removeSlotTreeVia` run unguarded, on the request's own context | retained for the life of the pod: the deferred release is not taken | `slot_reclaim: reclaimed`; `exited_cleanly` false on a slot that did not reach `running`, and on one that did the flag and the cleanup-outcome report read the runtime close alone |
+| `releaseSessionSlot`, guard-acquiring form | the deregistration and `removeSlotTreeVia` run unguarded | retained for the life of the pod | none; the function returns nothing and its caller returns its own error |
+| `terminateHeldSession` | the final usage report, the runtime close and `removeSlotTreeVia` run unguarded, on the member's own close context | retained for the life of the pod | none; the §10.1.4 pass files no report |
+
+Under this rule the `completed` predicate at each site carries the acquisition's result beside
+the act results: `guarded && closeErr == nil && treeErr == nil` at `Shutdown` and at
+`terminateHeldSession`, and `guarded && treeErr == nil` at the guard-acquiring
+`releaseSessionSlot`, where `guarded` is the boolean `lockSlotGuard` returns. Releasing the hold
+instead was rejected: an unguarded removal can run beside a `Resume` whose `workspace.ExtractTree`
+is still writing under the identifier, so a released identifier admits a successor onto a tree
+the extraction is re-creating, on the pod §5.2 placement prefers for the retry, which is the
+residue the hold was staged to close. The cost of retention is the failed-removal row's cost, an
+identifier withheld for the pod's remaining life, and on the compensation path it adds nothing
+observable: the acquisition expires only when the compensation's own deadline has, so the gateway
+has already recorded the RPC error and the `leaked` disposition before the answer is built.
+§5.2 states the completion predicate over the acts the cleanup owes and does not name the
+ordering the guard provides, so the reading that an expired acquisition is a failed act is this
+deliverable's; the review log records the §5.2 clause that would state it as a spec follow-up.
+
 `Resume`'s guard covers a network-bound extraction, so the compensating `Shutdown` CODE-4 sends on
-a failed `Binder.Resume` waits on that guard while the handler is still running rather than
-interleaving its removal with the extraction. Every `releaseSessionSlot` call on `Resume`'s own
+a failed `Binder.Resume` waits on that guard while the handler is still running, and takes the
+disposition stated above when that wait outlasts the compensation's context. Every `releaseSessionSlot` call on `Resume`'s own
 rollback paths (`resume.go:69`, `:73`, `:89`, `:107`, `:126`, `:134`, `:141`) is inside that
 guard, and a second acquisition of the same guard blocks on the capacity-one channel rather
 than re-entering it, so `releaseSessionSlot` splits in two:
@@ -1833,9 +1884,8 @@ Those five are every call site the tree holds today. The start-versus-reclaim ro
 and CODE-2 add to `pkg/adapter/slotsession_test.go` calls the seam through the new signature as
 well, and it is the one caller that does not supply `t.Context()` uniformly: its `Resume` row
 supplies an already-cancelled context, for the reason that case states.
-The guard-acquiring form logs a `slot_guard_not_acquired` warning naming the slot identifier and
-the caller when its acquisition does not complete, and removes unguarded, on the same terms as
-`Shutdown`'s removing arm.
+When the guard-acquiring form's acquisition does not complete it takes the disposition stated
+above, in its own row.
 
 *Lock order.* Two locks with one order between them: `s.mu` is never held at the moment a slot
 guard is acquired, which both hand-out helpers' own order guarantees, and no path holds two slot
@@ -3042,16 +3092,20 @@ Then the thread and the surrounding mechanism:
 - **The token is never in a message.** Every refusal's message and every log line the resolve
   path emits is asserted not to contain the token value, because the token is a capability over a
   live session's teardown.
-- **A destructive section whose guard acquisition expires removes unguarded.** With a second
-  goroutine holding the slot's guard and the caller's context already cancelled, `lockSlotGuard`
-  returns a no-op release and `false` and the caller proceeds anyway. Table-driven over `Shutdown`'s
-  removing arm, the guard-acquiring `releaseSessionSlot` and `terminateHeldSession`: each removes
-  the entry and its tree, reports the outcome its own arm decided, returns without waiting for the
-  parked holder, and emits the `slot_guard_not_acquired` warning naming the slot identifier and that
-  caller, observed through the structured-log seam. The assertion is on the event name and the fields it
-  names rather than on the message text. This turns red against an implementation that abandons
-  the removal on an expired acquisition, which leaves the worse residue, and against one that waits
-  for the holder regardless of the context.
+- **A destructive section whose guard acquisition expires takes CODE-6's disposition of an
+  expired acquisition at a removing site.** With a second goroutine holding the slot's guard and
+  the caller's context already cancelled, `lockSlotGuard` returns a no-op release and `false`.
+  Table-driven over the three rows of that disposition's table, `Shutdown`'s removing arm, the
+  guard-acquiring `releaseSessionSlot` and `terminateHeldSession`: each row asserts what its cell
+  states, that the entry and its tree are removed, that the call returns without waiting for the
+  parked holder, that the `slot_guard_not_acquired` warning names the slot identifier and that
+  caller through the structured-log seam, asserted on the event name and its fields rather than
+  the message text, that a later bind naming the same session is refused with the reclaim-hold
+  sentinel after the parked holder releases, because the hold is retained, and, on the `Shutdown`
+  row against a slot that did not reach `running`, that the response carries `slot_reclaim:
+  reclaimed` with `exited_cleanly` false. This turns red against an implementation that abandons
+  the removal on an expired acquisition, against one that waits for the holder regardless of the
+  context, and against one that releases the hold on an unguarded removal that returned nil.
 - **An admission RPC whose guard acquisition expires is refused.** With the guard held and the
   caller's context already cancelled, `acquireSlotGuardForResolve` returns the context's own error
   for `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup` and `Resume`; no registry entry is
@@ -3169,10 +3223,12 @@ execution modes)`:
   through `ReleaseSlotForTest`. The rows differ only in the context that removal carries. The
   `StartSession` row passes `t.Context()`, because `StartSession` holds no per-slot guard and the
   acquisition completes. The `Resume` row passes an already-cancelled context, so the acquisition
-  expires at once and the destructive section removes unguarded, which is the only interleaving
-  production admits: CODE-6's derivation table holds `Resume`'s guard from ahead of its
-  `claimSessionSlot` to the end of the call, so a `Shutdown` issued from a second goroutine
-  blocks on that guard rather than removing. The `Resume` row is driven as a conversation-only
+  expires at once and the removal takes CODE-6's disposition of an expired acquisition at a
+  removing site, which is the only ordering production admits: CODE-6's derivation table holds
+  `Resume`'s guard from ahead of its `claimSessionSlot` to the end of the call, so a `Shutdown`
+  issued from a second goroutine blocks on that guard rather than removing. Under that
+  disposition the row's removal retains the hold; the row asserts the rollback alone and creates
+  no successor. The `Resume` row is driven as a conversation-only
   resume, carrying a session identifier and a checkpoint identifier and no chunks, so
   `restoreChunks` returns on its empty-set guard (`pkg/adapter/resume.go:169-172`) and the row
   reaches `Runtime.Start` with no extraction.
@@ -3210,6 +3266,16 @@ execution modes)`:
   answers `slot_reclaim: reclaimed` with `exited_cleanly` false. This is the one arm CODE-1's
   disjunct newly makes false, and the staged §5.2 and §7.1 text keys the `leaked` disposition on
   it.
+- **An expired guard acquisition keeps the hold and fails the clean exit.** A `Shutdown` naming
+  the entry's own token against a bound-but-unstarted entry, sent on an already-cancelled context
+  while a second goroutine holds the slot's guard, answers `slot_reclaim: reclaimed` with
+  `exited_cleanly` false, removes the entry and its tree, and leaves a later bind naming the
+  session refused with the reclaim-hold sentinel after the holder releases. The same request
+  against a session in `runtimeLive` answers `exited_cleanly` on the runtime close alone and
+  files `released`, and still leaves the later bind refused. Both rows are the `Shutdown` cells of
+  CODE-6's disposition of an expired acquisition at a removing site, which the destructive-expiry
+  case in the CODE-6 section also drives; this pair pins the response and the hold apart on the
+  `running` boundary.
 - **The runtime's own answer still decides for a started session.** The same injected tree-removal
   error, against a session the fixture has driven through `noteRuntimeStarted` so it is in
   `runtimeLive`, answers `exited_cleanly` true. This is what pins the `live ||` half of the
@@ -3894,26 +3960,22 @@ of these cases:
   whose drain then fails. It is the reaper's subject.
 - **A compensating `Shutdown` can spend its budget waiting on a guarded `Resume`.** CODE-6's
   guard spans `Resume` from ahead of its claim to the end of the call, so the reclaim CODE-4 sends
-  on a failed `Binder.Resume` blocks until the handler returns, inside
-  `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)` seconds. The wait
-  is bounded rather than open: `CheckpointTransport.GetChunk` builds each fetch on the handler's
-  own context, so the client deadline that triggered the compensation cancels the fetch, the pipe
-  closes with that error and `ExtractTree` returns. What is not bounded by that cancellation is the
-  copy of a chunk body already in flight and the extraction of bytes already in the pipe, so a
-  restore whose remaining chunk is large enough can outlast the budget. The reclaim then answers
-  nothing in time, the RPC error sets the bind's leaked disposition, and the pod holds that slot's
-  counter occupancy. CODE-4 sends the reclaim under a context whose deadline is that same budget,
-  so the handler's own context and its guard acquisition expire at the instant the gateway gives
-  up, and the removing arm takes the expired-acquisition disposition CODE-6 states under **No
-  guard acquisition outlives its caller's context**: it performs its deregistration, its runtime
-  close and its tree removal unguarded beside the extraction that is still running. Accepted
-  rather than closed: the residue is the unordered `removeSlotTree` against `ExtractTree` that
-  CODE-6's *Lock order.* paragraph names, together with the slot identifier that CODE-1's
-  completion predicate frees when the close and the tree removal both return nil while the
-  extraction is still writing under it. Abandoning the removal instead is the option CODE-6
-  rejects where it fixes that disposition, and a second adapter-side deadline over the restore
-  would state the gateway's own timeout in a second place. The unanswered reclaim is the reaper's
-  subject, as it is for the spec-changes file's gateway-crash case.
+  on a failed `Binder.Resume` blocks until the handler returns, inside the compensation's own
+  budget. The wait is bounded rather than open: `CheckpointTransport.GetChunk` builds each fetch
+  on the handler's own context, so the client deadline that triggered the compensation cancels the
+  fetch, the pipe closes with that error and `ExtractTree` returns. What is not bounded by that
+  cancellation is the copy of a chunk body already in flight and the extraction of bytes already
+  in the pipe, so a restore whose remaining chunk is large enough can outlast the budget. The
+  reclaim then answers nothing in time, the RPC error sets the bind's leaked disposition, and the
+  pod holds that slot's counter occupancy. The compensation's deadline is the handler's own
+  deadline, so the removing arm's guard acquisition expires with it and the arm takes CODE-6's
+  **Disposition of an expired acquisition at a removing site**. Accepted rather than closed: the
+  residue is the unordered `removeSlotTree` against `ExtractTree` that CODE-6's *Lock order.*
+  paragraph names, with the identifier held for the pod's remaining life under that disposition
+  rather than released over a tree the extraction is still writing into. Abandoning the removal
+  instead is the option that disposition rejects, and a second adapter-side deadline over the
+  restore would state the gateway's own timeout in a second place. The unanswered reclaim is the
+  reaper's subject, as it is for the spec-changes file's gateway-crash case.
 - **A compensating `Shutdown` holds the pool's queue head for its own budget.** CODE-4 sends the
   reclaim inside the bind attempt that failed, and that attempt is the closure `runWithQueue`
   runs (`pkg/gateway/sessionserver/start.go:2606-2608`, reaching `binder.BindSlot` at `:2810`),
@@ -3943,10 +4005,11 @@ of these cases:
   deadline.** A `Resume` inside `workspace.ExtractTree` on a large checkpoint holds that member's
   guard, and `terminateHeldSession` waits for it against the pass's single ten-second
   guard-acquisition context. A park that outlasts that context leaves every remaining member
-  removing unguarded. Accepted rather than closed, because removing unguarded is the shipped
-  behaviour of that pass, the fall-through is the disposition CODE-6 already specifies for an
-  acquisition that expires, and each member closes on its own live ten-second context, so no final
-  usage report is lost and §8.3 `budget_return.lua` still runs on complete token totals.
+  taking CODE-6's **Disposition of an expired acquisition at a removing site**, in its
+  `terminateHeldSession` row. Accepted rather than closed, because that disposition is the
+  shipped removal with the hold retained, and each member closes on its own live ten-second
+  context, so no final usage report is lost and §8.3 `budget_return.lua` still runs on complete
+  token totals.
 - **A retry of an attempt's own `AssignCredentials` double-counts leases.** The lease store is
   keyed by lease identifier and each mint produces a fresh one, so a second assignment for one
   session adds leases rather than replacing them, while the adapter side replaces. Under the
@@ -4078,8 +4141,9 @@ of these cases:
   `ShutdownRecycle`, and the new `ShutdownReclaim`.
 - `pkg/adapter/session.go` · `Shutdown`'s two-field precondition, its bind-attempt comparison
   under `s.mu` and the `shutdownReclaimOutcome` function that decides it, its context-bounded
-  slot-guard acquisition, its `slot_guard_not_acquired` warning on an acquisition that did not
-  complete (the file gains a `log/slog` import) and its re-decision on the removing arm, its reclaim
+  slot-guard acquisition, which on an acquisition that did not complete takes CODE-6's disposition
+  of an expired acquisition at a removing site (the file gains a `log/slog` import for its
+  warning) and its re-decision on the removing arm, its reclaim
   hold, its `slot_tree_removal_failed` warning on a failed tree removal, its split gates, its single exit helper (which carries the response construction and the
   whole-pod recycle scrub the shipped handler runs as a trailing statement, that trailing copy
   being deleted), its doc comment, and the `StartSession` rollback.
@@ -4089,8 +4153,8 @@ of these cases:
   that function's doc comment, `releaseSessionSlot` rerouted through the helper and its discarded
   `removeSlotTree` error turned into a logged warning (the file gains a `log/slog` import),
   `deregisterSlot` retired into it, the split of `releaseSessionSlot` into the guard-acquiring
-  form, which gains a `context.Context` first parameter and logs the same
-  `slot_guard_not_acquired` warning when its acquisition does not complete, and
+  form, which gains a `context.Context` first parameter and takes CODE-6's disposition of an
+  expired acquisition at a removing site when its acquisition does not complete, and
   `releaseSessionSlotUnderGuard`, the `release` field on `heldSession`,
   `claimSessionSlotUnderLock`'s `slotResolve` parameter and typed `!idempotentRepeat` refusal,
   and the token the two claim functions report.
@@ -4111,9 +4175,8 @@ of these cases:
   the shared close context, is rewritten to state the split; its observation that a non-last close
   on a shared runtime process returns without touching the child, so only the last member's close
   consumes real grace, stays true under per-member contexts. On an
-  acquisition that expires it emits the final usage report, closes the runtime and removes the slot
-  tree unguarded, which is the shipped behaviour, and logs a `slot_guard_not_acquired` warning
-  naming the member's slot identifier and this caller.
+  acquisition that expires it takes CODE-6's disposition of an expired acquisition at a removing
+  site, in its own row.
   `deregisterStartedSessions`, pass 1, acquires no guard.
 - `pkg/adapter/resume.go` · the `bind_attempt` read and its resolve, the per-slot guard acquired
   ahead of the claim and held across the checkpoint restore, its rollback calls moved to

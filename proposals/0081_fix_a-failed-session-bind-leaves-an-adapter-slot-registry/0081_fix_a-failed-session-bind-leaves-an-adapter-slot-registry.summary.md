@@ -1144,6 +1144,18 @@ after admission, has its own entry in the unstaged-defects list below.
   staged. Collecting the entry sooner means a reaper on the adapter's own side that removes a
   registry entry no live attempt owns, a mechanism this proposal states nowhere and one whose
   remedy owner is named among the accepted failure modes in the non-spec changes file.
+- **Spec follow-up, not staged here. §5.2's completion predicate does not name the ordering a
+  removal needs.** The staged §5.2 reclaim-hold paragraph ends the hold when every act the cleanup
+  owes the slot has returned without error, and names the acts and the runtime close. CODE-6's
+  per-slot guard is an implementation device the spec does not name, so when a removing site's
+  guard acquisition expires against its caller's context and the removal runs unguarded, §5.2 on
+  its own reads a nil-returning removal as an act that completed. CODE-6's **Disposition of an
+  expired acquisition at a removing site** reads it as a failed act, so the hold is retained and
+  the pre-`running` `Shutdown` response reports no clean exit, which keeps the identifier off a
+  tree a `Resume` extraction may still be writing into. A later proposal owes §5.2 one clause
+  stating that a removal performed without the ordering the adapter's guard provides against a
+  section still writing under the identifier is an act that did not return without error. The
+  spec lane of this proposal is locked and does not carry it.
 
 ## Impacts on other proposals
 
