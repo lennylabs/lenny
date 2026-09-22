@@ -187,6 +187,9 @@ Targets:
   and the two per-slot guard hand-out helpers are CODE-6's, which lands first. This
   deliverable inserts into them and defines none of them. It takes the raw `lockSlotGuard`,
   because a `Shutdown` is never refused by a hold.
+- `pkg/adapter/metrics.go` is not edited here. The untokened-entry counter and its
+  `incSlotShutdownUntokenedEntry` accessor are CODE-9's, which lands first (S10 precedes S16).
+  This deliverable calls the accessor and declares nothing.
 
 **The two-field precondition, checked before the lock is taken.** `Shutdown` performs only the
 empty-session-id check before `s.mu.Lock()` today, and the precondition joins it there:
@@ -331,7 +334,7 @@ answerShutdown := func(outcome adapterv1.SlotReclaimOutcome, exitedCleanly, unto
     if untokened {
         // The fail-closed arm. Nothing a compensated path produces reaches
         // it; the counter exists so that stops being true loudly.
-        s.noteShutdownMetUntokenedEntry(sessionID)
+        incSlotShutdownUntokenedEntry(s.podID)
     }
     if rc := req.GetRecycle(); rc != nil {
         s.startPodScrub(rc)
@@ -1860,7 +1863,11 @@ observable: the acquisition expires only when the compensation's own deadline ha
 has already recorded the RPC error and the `leaked` disposition before the answer is built.
 §5.2 states the completion predicate over the acts the cleanup owes and does not name the
 ordering the guard provides, so the reading that an expired acquisition is a failed act is this
-deliverable's; the review log records the §5.2 clause that would state it as a spec follow-up.
+deliverable's and the spec lane states it nowhere. The clause that would state it is owed by
+SPEC-3's own `**Slot-identifier reclaim hold.**` paragraph rather than by a later proposal, and it
+is unstaged because the spec lane of this proposal is locked by the operator. The summary carries
+it as open decision 47, which decides whether that clause lands beside this deliverable or whether
+the `guarded` conjunct below is dropped.
 
 `Resume`'s guard covers a network-bound extraction, so the compensating `Shutdown` CODE-4 sends on
 a failed `Binder.Resume` waits on that guard while the handler is still running, and takes the
@@ -2125,8 +2132,15 @@ series carries `pool` and `k8s_pod_name` and only the call site holds those valu
   case below sets the hook directly and so cannot observe the omission, which is why the wiring
   site is named here and in the files-touched list.
 
-The untokened-entry series is registered in `pkg/adapter/metrics.go`, which is the surface the
-tier-11 adapter sweep reads. It takes no `catalog.go` row and no `spec161Metrics` entry, because
+The untokened-entry series is registered in `pkg/adapter/metrics.go` as
+`slotShutdownUntokenedEntry`, a `mustCounterVec` over the single label SPEC-6's §16.1 row names,
+and this deliverable is the only one that declares it. Its accessor is the package-level `func
+incSlotShutdownUntokenedEntry(podID string)`, declared beside `incUnaddressedFrameRejected`
+(`pkg/adapter/metrics.go:215-220`), which is the form every in-package accessor in that file
+already takes; the file declares no method on `*Server`. The caller passes the adapter's cached
+pod identity `s.podID` (`pkg/adapter/server.go:196`), which is the label value the §16.1 row
+names. That file is the surface the tier-11 adapter sweep reads. The series takes no `catalog.go`
+row and no `spec161Metrics` entry, because
 the §16.1 rows that carry the adapter scrape deferral (`spec/16_observability.md:186-189`) are
 absent from both, while the adapter-emitted metrics that do carry `catalog.go` rows,
 `lenny_adapter_coordinator_hold` (`pkg/adapter/metrics.go:108`, `catalog.go:271`) and
@@ -2287,7 +2301,7 @@ the adapter releases the slot.
 
 CODE-12 lands after SPEC-4. Tiers: 0, 11.
 
-### CONF-1 · tests/tier3_contract/adapter_bind_attempt/, tests/tier10_conformance/slot_bind_attempt_conformance_test.go · the published contract is enforced at the wire and exercised in process
+### CONF-1 · tests/tier3_contract/adapter_bind_attempt/, tests/tier10_conformance/slot_bind_attempt_conformance_test.go, scripts/seed-claim-register.py, tests/claim-map.json · the published contract is enforced at the wire and exercised in process
 
 The shipped CONF-1 asserted a one-entry-one-epoch invariant. Under the amended mechanism that
 invariant does not exist, and a battery asserting it would pass a defective adapter and fail a
@@ -2629,9 +2643,10 @@ messages SCHEMA-1 opens. The other tier-3 descriptor pin,
 `tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go`, carries closed sets of
 its own over messages SCHEMA-1 does not open.
 
-**Claim register.** Three rows, added to the `EXPLICIT` list in
-`scripts/seed-claim-register.py` and regenerated with `python3 scripts/seed-claim-register.py
---out tests/claim-map.json` in the same commit. `tests/claim-map.json` is generator output
+**Claim register.** Three rows are staged below, under the seeding convention the implementation
+checklist's preamble states. The two `WIRED` rows land with this step. The `ABSENT` row lands
+with CONF-1's tier-10 file at S22, because the surfaces it names do not exist until then.
+`tests/claim-map.json` is generator output
 rather than an authoring source: the tier-0 gate `TestClaimRegisterIsReproducibleFromItsGenerator`
 (`tests/tier0_static/claim_register_generator_test.go`) re-runs the generator and fails unless
 the committed file is byte-identical, so a row hand-written into the file is dropped by the next
@@ -3601,8 +3616,7 @@ names the internal state that produced it rather than a wire answer.
 `slotAddressCaseFiles` in `tests/tier0_static/spec_map_slot_address_registration_test.go` gains
 it in its sorted position, in the same step, because that gate derives inventory membership from
 a `slot*_test.go` file name over a walk that includes `tests/` and fails tier 0 for any such file
-the inventory omits. The `ABSENT` claim-register row SCHEMA-1 states lands with it, recording that the rules are normative for a
-third-party adapter and that no harness runs one.
+the inventory omits. The `ABSENT` claim-register row SCHEMA-1 stages lands with it.
 
 ### Edge-list test for CODE-3, tier 1
 
@@ -4038,8 +4052,9 @@ of these cases:
   replacements SCHEMA-1 states.
 - `pkg/proto/adapter/v1` · regenerated by `make generate-proto` in the same commit as the proto
   edit.
-- `scripts/seed-claim-register.py` · the three rows SCHEMA-1 states, two `WIRED` and one
-  `ABSENT`, added to the `EXPLICIT` list that is their row source.
+- `scripts/seed-claim-register.py` · the three rows SCHEMA-1 stages, added to the `EXPLICIT`
+  list that is their row source: the two `WIRED` rows with SCHEMA-1, the `ABSENT` row with
+  CONF-1.
 - `tests/claim-map.json` · regenerated from `scripts/seed-claim-register.py` in the same commit
   as the row edit.
 - `tests/spec-map.json` · every section a new or edited case's own `// spec:` annotation names is
@@ -4214,7 +4229,7 @@ of these cases:
   carries no token.
 - `pkg/observability/metrics/catalog.go` and the `spec161Metrics` list in its `catalog_test.go` · the superseded series alone.
 - `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` and `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics.go` · the superseded collector and its `IncSlotCompensationSuperseded` accessor, and in `gatewaymetrics_credential.go` alone the retired cleanup-timeout trigger in the `adapterLeakedSlots` field and construction-site comments, which CODE-3 reduces.
-- `pkg/adapter/metrics.go` · the untokened-entry series.
+- `pkg/adapter/metrics.go` · the untokened-entry series and its `incSlotShutdownUntokenedEntry` accessor.
 - `cmd/lenny-gateway/metricsbackfill.go` · the `SlotReclaim` hook wiring beside the `SlotFailure` wiring.
 - `docs/reference/metrics.md` · the two counter rows.
 - `docs/reference/state-machines.md` · the per-slot sub-state table's new row, its
