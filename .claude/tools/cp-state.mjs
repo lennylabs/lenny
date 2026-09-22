@@ -11,13 +11,14 @@
 // workflow computes on its side with `for (const ch of s)`.
 //
 //   sig <file>...                       per file: "<name> <len> <sum>", trailing newline stripped
-//   join <out> <len> <sum> <part>...    concatenate the parts, verify length, checksum and JSON,
+//   join <out> <len> <sum> <part>...    join the parts with newlines, verify length, checksum and JSON,
 //                                       then write <out> atomically; prints "OK <len> <sum>" or "ERR <why>"
 //   meta <file> <chunkSize>             JSON: {len, sum, chunks:[{len, sum}]}, or "MISSING"
 //   slice <file> <index> <chunkSize>    the chunk between CP_SLICE_BEGIN and CP_SLICE_END markers
 //   record-name <id>                    the record file name the decisions workflow uses for an item
 //   migrate-records <state> <dir>       move record text out of a state written before record files
 //                                       existed, into <dir>, and slim the state in place
+//   format <state>                      rewrite a state file one entry to a line, in place
 //   launch-copy <state> <workflow> <out>
 //                                       write <workflow> to <out> with the saved decisions state
 //                                       embedded, so a relaunch reads it with no agent at all
@@ -42,10 +43,43 @@ export function sig(s) {
   return { len, sum };
 }
 
-export function chunks(s, size) {
-  const all = Array.from(s);
+// The workflow writes the state one entry to a line, and a chunk is whole lines
+// joined by newlines, so a chunk never ends mid-token: an agent copying a
+// fragment that stopped inside a key completed the key. Parts rejoin with a
+// newline. These two functions are the ones change-proposal.js carries.
+export function stateText(obj) {
+  const keys = Object.keys(obj);
+  const lines = ["{"];
+  keys.forEach((k, i) => {
+    const v = obj[k];
+    const comma = i < keys.length - 1 ? "," : "";
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0) {
+      const ek = Object.keys(v);
+      lines.push(JSON.stringify(k) + ":{");
+      ek.forEach((e, j) => lines.push(JSON.stringify(e) + ":" + JSON.stringify(v[e]) + (j < ek.length - 1 ? "," : "")));
+      lines.push("}" + comma);
+    } else {
+      lines.push(JSON.stringify(k) + ":" + JSON.stringify(v) + comma);
+    }
+  });
+  lines.push("}");
+  return lines.join("\n");
+}
+export function chunks(text, size) {
   const out = [];
-  for (let i = 0; i < all.length; i += size) out.push(all.slice(i, i + size).join(""));
+  let cur = [];
+  let n = 0;
+  for (const line of text.split("\n")) {
+    const len = Array.from(line).length + 1;
+    if (cur.length > 0 && n + len > size) {
+      out.push(cur.join("\n"));
+      cur = [];
+      n = 0;
+    }
+    cur.push(line);
+    n += len;
+  }
+  if (cur.length > 0) out.push(cur.join("\n"));
   return out;
 }
 
@@ -123,7 +157,7 @@ function main([cmd, ...args]) {
     const [out, wantLen, wantSum, ...parts] = args;
     const missing = parts.filter((p) => !existsSync(p));
     if (missing.length) return console.log("ERR missing " + missing.map((p) => basename(p)).join(","));
-    const text = parts.map(read).join("");
+    const text = parts.map(read).join("\n");
     const s = sig(text);
     if (String(s.len) !== wantLen || String(s.sum) !== wantSum) return console.log("ERR mismatch " + s.len + " " + s.sum);
     try {
@@ -149,9 +183,13 @@ function main([cmd, ...args]) {
     const state = JSON.parse(read(file));
     const before = JSON.stringify(state).length;
     const moved = migrateRecords(state, dir);
-    const text = JSON.stringify(state);
+    const text = stateText(state);
     writeAtomic(file, text);
     console.log("moved " + moved + " record(s) to " + dir + "; state " + before + " -> " + text.length + " chars");
+  } else if (cmd === "format") {
+    const text = stateText(JSON.parse(read(args[0])));
+    writeAtomic(args[0], text);
+    console.log(args[0] + " " + text.split("\n").length + " line(s)");
   } else if (cmd === "launch-copy") {
     const [stateFile, workflow, out] = args;
     const state = existsSync(stateFile) ? JSON.parse(read(stateFile)) : null;
@@ -162,7 +200,7 @@ function main([cmd, ...args]) {
     writeAtomic(out, launchCopy(readFileSync(workflow, "utf8"), state));
     console.log(out + " (" + Object.keys(state.itemRecords || {}).length + " record(s) embedded)");
   } else {
-    console.error("usage: cp-state.mjs sig|join|meta|slice|record-name|migrate-records|launch-copy ...");
+    console.error("usage: cp-state.mjs sig|join|meta|slice|record-name|migrate-records|format|launch-copy ...");
     process.exit(2);
   }
 }

@@ -4636,10 +4636,46 @@ function stateSig(s) {
   }
   return { len, sum };
 }
-function stateChunks(s) {
-  const all = Array.from(s);
+// The state is written one entry to a line, and a chunk is whole lines joined by
+// newlines, so every chunk ends at a natural stop: after a comma or a brace. A
+// chunk cut at a fixed width ended mid-key (`"unmatchedAt":[],"las`), and the
+// agent copying it completed the key from the pattern around it on all three
+// attempts; the checksum refused each one. The lines rejoin with a newline,
+// which JSON reads as whitespace. .claude/tools/cp-state.mjs holds the same two
+// functions, and B36 holds them equal.
+function stateText(obj) {
+  const keys = Object.keys(obj);
+  const lines = ["{"];
+  keys.forEach((k, i) => {
+    const v = obj[k];
+    const comma = i < keys.length - 1 ? "," : "";
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0) {
+      const ek = Object.keys(v);
+      lines.push(JSON.stringify(k) + ":{");
+      ek.forEach((e, j) => lines.push(JSON.stringify(e) + ":" + JSON.stringify(v[e]) + (j < ek.length - 1 ? "," : "")));
+      lines.push("}" + comma);
+    } else {
+      lines.push(JSON.stringify(k) + ":" + JSON.stringify(v) + comma);
+    }
+  });
+  lines.push("}");
+  return lines.join("\n");
+}
+function stateChunks(text) {
   const out = [];
-  for (let i = 0; i < all.length; i += STATE_CHUNK) out.push(all.slice(i, i + STATE_CHUNK).join(""));
+  let cur = [];
+  let size = 0;
+  for (const line of text.split("\n")) {
+    const n = Array.from(line).length + 1;
+    if (cur.length > 0 && size + n > STATE_CHUNK) {
+      out.push(cur.join("\n"));
+      cur = [];
+      size = 0;
+    }
+    cur.push(line);
+    size += n;
+  }
+  if (cur.length > 0) out.push(cur.join("\n"));
   return out;
 }
 const runExactly = (cmd) =>
@@ -4691,7 +4727,7 @@ async function loadDecisionsState() {
   let st = null;
   if (parts.every((p) => typeof p === "string")) {
     try {
-      st = JSON.parse(parts.join(""));
+      st = JSON.parse(parts.join("\n"));
     } catch (e) {
       st = null;
     }
@@ -4723,7 +4759,7 @@ function saveDecisionsState() {
   // The corpus inventory is left out: a relaunch rebuilds it with one cheap
   // agent, and it keys nothing a firing compares.
   const { corpus, ...persisted } = decisionsState;
-  const json = JSON.stringify(persisted);
+  const json = stateText(persisted);
   pendingStateSave = (async () => {
     if (prior) await prior;
     await writeStateChunks(json);
@@ -4739,8 +4775,9 @@ async function writeStateChunks(json) {
     robustAgent(
       "Write a file. Run exactly this, and reply with the single word DONE:\n\n" +
         "mkdir -p " + STATE_PARTS_DIR + " && cat > " + path(i) + " <<'CP_PART_EOF'\n" + chunks[i] + "\nCP_PART_EOF\n\n" +
-        "Copy the text between the two CP_PART_EOF lines exactly. Do nothing else. Do not read, summarise, or " +
-        "edit any other file.",
+        "Copy the text between the two CP_PART_EOF lines exactly, character for character. It is one fragment " +
+        "of a larger file, so it may start or stop in the middle of a structure: add nothing to complete it and " +
+        "drop nothing. Do nothing else. Do not read, summarise, or edit any other file.",
       { label: "save-state:decisions:" + i + (t > 1 ? ":retry" + t : ""), model: "haiku", effort: "high", phase: "Decisions" },
     );
   let pending = chunks.map((_, i) => i);

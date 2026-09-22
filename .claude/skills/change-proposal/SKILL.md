@@ -188,8 +188,10 @@ wherever it can be:
   and launch the copy it writes, with `resumeState: true`. The copy carries the saved state in place of the
   `CP_EMBEDDED_DECISIONS_STATE` line, so no agent reads it. Launching the workflow itself still works; its
   load reads the file back in verified chunks.
-- **Saves move in verified chunks.** The control state is split into chunks of 20,000 code points, one small
-  agent each, through `.claude/tools/cp-state.mjs`. Every chunk is checked against a length and a
+- **Saves move in verified chunks.** The control state is written one entry to a line and split into chunks
+  of whole lines, up to 20,000 code points each, one small agent each, through `.claude/tools/cp-state.mjs`.
+  A chunk cut at a fixed width once ended mid-key, and the agent copying it completed the key on every
+  attempt. Every chunk is checked against a length and a
   code-point checksum the script computes, and a chunk that does not match is moved again. A save that cannot
   be verified leaves the previous file in place, and a load that cannot be verified starts the phase fresh.
   The save runs beside the rest of the run, and the run waits for it before it returns.

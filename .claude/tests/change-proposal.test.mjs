@@ -5902,7 +5902,8 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
   const records = {};
   for (let i = 0; i < 60; i++) records["id:" + i] = { id: "id:" + i, question: "§" + "q".repeat(900) + i, disposition: "human" };
   const STATE = { firings: 3, itemRecords: records, corpus: [{ proposal: "0001.md", status: "Draft" }], lastBaseline: "abc1234" };
-  const persisted = JSON.stringify({ firings: 3, itemRecords: records, lastBaseline: "abc1234" });
+  const { stateText, chunks: toolChunks } = await import("../tools/cp-state.mjs");
+  const persisted = stateText({ firings: 3, itemRecords: records, lastBaseline: "abc1234" });
   // A check stub that reports what the part writers actually wrote, optionally corrupting one.
   const checkFrom = (calls, corrupt = () => false) => (call) =>
     [...call.prompt.matchAll(/\/(part-\d+)/g)].map((m) => {
@@ -5924,12 +5925,15 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
 
   const ok = await driveLive(() => false);
   const writers = ok.calls.filter((c) => /^save-state:decisions:\d+$/.test(c.label));
-  const perSave = Math.ceil(Array.from(persisted).length / 20000);
+  const perSave = toolChunks(persisted, 20000).length;
   t.check("the state is written in 20k-code-point chunks, one small agent each",
     writers.length > 0 && writers.length % perSave === 0 && writers.every((c) => Array.from(partBody(c) || "").length <= 20000),
     writers.length + " writer(s), " + perSave + " per save");
   const firstSave = writers.slice(0, perSave).sort((a, b) => partName(a).localeCompare(partName(b)));
-  t.check("the chunks join back to the state exactly", firstSave.map(partBody).join("") === persisted);
+  t.check("the chunks join back to the state exactly, one entry to a line", firstSave.map(partBody).join("\n") === persisted && persisted.split("\n").length > 60);
+  t.check("every chunk ends at the end of a line, never inside a key",
+    firstSave.every((c) => /[{},]$/.test(partBody(c))), firstSave.map((c) => partBody(c).slice(-12)).join(" | "));
+  t.check("the workflow and cp-state.mjs cut the same chunks", JSON.stringify(firstSave.map(partBody)) === JSON.stringify(toolChunks(persisted, 20000)));
   t.check("the corpus inventory is not persisted", !/0001\.md/.test(firstSave.map(partBody).join("")));
   const joins = matching(ok.calls, "save-state:decisions:join");
   const want = sig(persisted);
@@ -5955,9 +5959,7 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
 
   // Load: the meta line, then one verified slice per chunk.
   const onDisk = persisted;
-  const chunks = [];
-  const cps = Array.from(onDisk);
-  for (let i = 0; i < cps.length; i += 20000) chunks.push(cps.slice(i, i + 20000).join(""));
+  const chunks = toolChunks(onDisk, 20000);
   const meta = JSON.stringify({ ...sig(onDisk), chunks: chunks.map(sig) });
   const loadRun = async (slice) =>
     runWorkflow(WF, { ...REVIEW_ARGS, resumeState: true }, loopStubs({
@@ -5971,7 +5973,7 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
   const good = await loadRun((c) => "CP_SLICE_BEGIN" + chunks[idx(c)] + "CP_SLICE_END\n");
   const fired = firedWith(good.calls);
   t.check("a resumed run reads the state back in verified slices",
-    fired.length > 0 && JSON.stringify(fired[0].phaseState) === onDisk, fired.length ? JSON.stringify(fired[0].phaseState).slice(0, 80) : "no firing");
+    fired.length > 0 && stateText(fired[0].phaseState) === onDisk, fired.length ? JSON.stringify(fired[0].phaseState).slice(0, 80) : "no firing");
   t.check("and logs how it read it", good.logs.some((l) => /60 item record\(s\), 3 firing\(s\) so far, last baseline abc1234, read in \d+ verified chunk/.test(l)));
 
   const tries = {};
@@ -5981,7 +5983,7 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
     const body = i === 1 && tries[i] === 1 ? chunks[i].slice(0, 100) : chunks[i];
     return "CP_SLICE_BEGIN" + body + "CP_SLICE_END\n";
   });
-  t.check("a slice that comes back altered is read again", JSON.stringify(firedWith(flaky.calls)[0].phaseState) === onDisk && tries[1] === 2);
+  t.check("a slice that comes back altered is read again", stateText(firedWith(flaky.calls)[0].phaseState) === onDisk && tries[1] === 2);
 
   const broken = await loadRun((c) => "CP_SLICE_BEGIN" + (idx(c) === 0 ? "{}" : chunks[idx(c)]) + "CP_SLICE_END\n");
   t.check("a state that never reads back intact is not used",
