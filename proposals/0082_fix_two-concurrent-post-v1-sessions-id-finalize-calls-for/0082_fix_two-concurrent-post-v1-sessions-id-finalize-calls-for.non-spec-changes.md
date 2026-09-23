@@ -217,8 +217,10 @@ This proposal stages no schema, chart, or migration change.
 (a) `docs/api/rest.md`, section `### POST /v1/sessions/{id}/finalize`: insert the paragraph below after the line "**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409)." and before `### POST /v1/sessions/{id}/start`.
 
 ```markdown
-A finalize call that is still running when the session ends, for example through `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, an administrator force-terminate, or the gateway's finalizing timeout (`maxFinalizingTimeoutSeconds`), returns `INVALID_STATE_TRANSITION` (409), even when its own setup also failed. The session keeps the terminal state in `details.currentState`, and the gateway releases any credential lease the call assigned.
+A finalize call that is still running when the session ends, for example through `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, an administrator force-terminate, or the gateway's finalizing timeout (`maxFinalizingTimeoutSeconds`), returns `INVALID_STATE_TRANSITION` (409), even when its own setup also failed. The session stays in the state it ended in, and the error's `details.currentState` names that state.
 ```
+
+Do not add a credential-lease sentence. No session-endpoint section of the REST reference states lease behavior, a client cannot observe a lease release, and a sentence promising that every lease the call assigned is released would be false for the **Token-Service-only lease** the summary records.
 
 Do not add an overlapping-calls sentence. The section's precondition line and the page's Error Handling envelope already cover it, and a sentence saying every other call returns 409 would misstate same-`Idempotency-Key` replay.
 
