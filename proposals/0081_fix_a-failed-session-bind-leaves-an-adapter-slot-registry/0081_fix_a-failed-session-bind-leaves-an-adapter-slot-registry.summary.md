@@ -87,9 +87,8 @@ Where that lands:
   `receiving_uploads → slot_cleanup` edge.
 - The rules are stated in §4.7.1 and nowhere else, each rule stating whatever answer it fixes.
   §15.4 points at them and states what conformance against the rules means.
-  §15.1's REST error catalog takes no row for either code, because the gateway consumes both and
-  the client receives the envelope §15.1 already defines for the endpoint that issued the bind
-  sequence; its `SETUP_COMMAND_FAILED` row is widened to state both deterministic
+  §15.1's REST error catalog takes no row for either code (see SPEC-5's §4.7.1 paragraph after
+  rule 9); its `SETUP_COMMAND_FAILED` row is widened to state both deterministic
   `FAILED_PRECONDITION` causes and its exclusion sentence is re-keyed the same way, so the row
   is the single home of the mapping for the setup-command request, and §6.2's client-visibility
   clause is reduced to a citation of that row.
@@ -478,7 +477,10 @@ which failures reach the series; §6.2's attribution of the series to the adapte
 below as a defect this proposal does not stage. Entry 50 was routed here from the review log's
 open list by the fifth index reconciliation pass, which stamped it with that number because the
 log never numbered it. It carries the question and its ground alone, because the review loop
-derived no recommendation for it.
+derived no recommendation for it. Entries 51, 52 and 53 were routed here from the review log's
+open list by the sixth index reconciliation pass, which stamped them with those numbers because
+the log never numbered them. Each carries the question and its ground alone, because the review
+loop derived no recommendation for any of them.
 
 29. **Should a bind refusal that means "another start already holds this slot" be returned to
     the client as permanent when it arrives at the setup-command request, while the same
@@ -692,6 +694,52 @@ derived no recommendation for it.
     rather than to another review round. Adding the pin is one more assertion in the staged
     descriptor gate file and touches no other deliverable. Leaving it out keeps the gate as
     staged.
+
+    Recommendation: none. The review loop derived no recommendation; the
+    open-decisions-and-impact-review phase supplies one.
+
+51. **Should §5.2 name the error code value and the HTTP status a client receives when a slot
+    on a pool serving concurrent sessions fails and is not retried?** §5.2's
+    `**Client error on exhaustion:**` bullet states the fields of that error (`error.category`,
+    `error.retryable: false` and `error.sessionId`) and names neither a code value nor a status.
+    The gateway returns HTTP 422 with the code `SLOT_FAILED` on that path
+    (`pkg/gateway/sessionserver/start.go:312-320`, as entry 29's ground records), and no spec
+    section defines either value. The staging names neither, because naming them in staged spec
+    text would also settle entry 29, which turns on the envelope a bind refusal reaches on that
+    path. The review loop recorded the omission as a spec gap that predates this proposal and
+    overlaps entry 29. The answer decides whether this proposal names the code value and the
+    status in §5.2 or leaves the gap to a separate proposal.
+
+    Recommendation: none. The review loop derived no recommendation; the
+    open-decisions-and-impact-review phase supplies one.
+
+52. **Should SPEC-6's §16.1 row for `lenny_adapter_leaked_slots` describe the series the gateway
+    actually emits?** Entry 45 gave the gauge a §16.1 row. The staged row describes the series as
+    "the per-pod count of slots in the `leaked` sub-state, which stay counted until the pod
+    terminates". The review log records that the gauge moves only when `applySlotRetryPolicy`
+    sets it and that each gateway replica sets its own copy. One review lens filed the row as not
+    defining the series the tree emits; a second lens declined the finding because the row
+    restates §6.2's **`leaked` slot semantics** paragraph, and no fix was staged. That §6.2
+    paragraph's attribution of the series to the adapter is already recorded below as a defect
+    this proposal does not stage. The answer decides whether SPEC-6's row keeps the §6.2
+    description as staged or states the series as the gateway emits it, which would then differ
+    from §6.2 until a separate change corrects that paragraph.
+
+    Recommendation: none. The review loop derived no recommendation; the
+    open-decisions-and-impact-review phase supplies one.
+
+53. **Should CODE-1, CODE-4 and CODE-6 each land in one implementation step?** The checklist
+    rule for this proposal is that every staged deliverable appears in exactly one step. CODE-1
+    appears in S16, S17 and S21, CODE-4 in S13 and S19, and CODE-6 in S14, S15 and S21. The split
+    carries an ordering the checklist's preamble states: the gateway must send the new fields
+    (CODE-4 at S13) before the adapter requires them (CODE-6 at S14 and CODE-1 at S16), and the
+    gateway's compensating `Shutdown` (CODE-4 at S19) depends on the adapter's teardown rules
+    (CODE-1 at S16). A single step per deliverable therefore cannot keep that order without
+    merging all three deliverables into one step, or without re-cutting them into smaller
+    deliverables that each land in one step. The reconciliation passes may not rewrite non-spec
+    steps or their order, so the question has been carried in the review log unanswered. The
+    answer decides whether the split stands as staged, whether the three deliverables are re-cut
+    so each step names deliverables of its own, or whether the steps are merged.
 
     Recommendation: none. The review loop derived no recommendation; the
     open-decisions-and-impact-review phase supplies one.
@@ -1216,7 +1264,7 @@ derived no recommendation for it.
 - **CODE-8** (`pkg/gateway/podlifecycle/podsession/binder.go`): `Binder.Prepare`'s and `Binder.Launch`'s reclaim closures take the failing error as a parameter and skip `failPhase` on either typed refusal, so the call site returns the refusal and the pod is not drained. `failPhase` drains on every call.
 - **CODE-9** (`pkg/observability/metrics/catalog.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go`, `pkg/adapter/metrics.go`, `docs/reference/metrics.md`, `pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/podlifecycle/podsession/slotbinder.go`, `cmd/lenny-gateway/metricsbackfill.go`, `tests/tier11_docs/slot_compensation_metric_reference_test.go`): the counters for a compensation answered `superseded` and a `Shutdown` that met an entry carrying no token. The superseded series is emitted through a `SlotReclaim` hook on `Binder` beside `SlotFailure`, forwarded by `Binder.noteCompensationOutcome` and wired in the gateway's metrics backfill, and it takes a `catalog.go` row and a `spec161Metrics` entry; the adapter series is registered in `pkg/adapter/metrics.go` with no label and gated by the shipped adapter metric-catalog sweep. The shipped `lenny_adapter_leaked_slots` gauge, whose emitting code is unchanged, takes a `catalog.go` entry, a `spec161Metrics` entry and a `docs/reference/metrics.md` row naming its `pod_id` and `pool` labels.
 - **CODE-10** (the comment carriers the CODE-10 grep returns): the Go, SQL and test comments stating that the adapter reports a cleanup outcome on every session release, or that the served-session count advances or is evaluated per release, take the reduction CODE-10's arm rule states. The carrier set is closed by the grep at application time and enumerated nowhere. CODE-10, CODE-11 and CODE-12 are sub-blocks of the non-spec `### Comment-carrier reduction: shared invariants` block, which states their shared invariants and non-carrier arm once.
-- **CODE-11** (the four sites CODE-11 names in `pkg/gateway`): the Go comments that restate the §15.1 `SETUP_COMMAND_FAILED` row's cause or retryability ground are cut back to a citation of that row, which SPEC-5 rewrites. No classification value, branch or assertion moves.
+- **CODE-11** (`pkg/gateway/externalapi/errorclassify/errorclassify.go`, `pkg/gateway/sessionserver/start.go`, `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`): the Go comments at the four sites CODE-11 names that restate the §15.1 `SETUP_COMMAND_FAILED` row's cause or retryability ground are cut back to a citation of that row, which SPEC-5 rewrites. No classification value, branch or assertion moves.
 - **CODE-12** (the comment carriers the CODE-12 command returns): the Go, SQL and test comments that state what a claim DELETE projects, keyed on the pool's recycle setting or on its retirement limits, or asserting without qualification that it returns the pod to `idle`, lose that outcome and leave it to the §4.6.1 bullets SPEC-4 re-keys. The carrier set is closed by the command at application time and enumerated nowhere.
 - **CONF-1** (`tests/tier3_contract/adapter_bind_attempt/`, `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`, `scripts/seed-claim-register.py`, `tests/claim-map.json`): a case per named §4.7.1 rule, as a descriptor gate and bufconn handler cases at tier 3 and an in-process battery at tier 10, with the `ABSENT` claim-register row SCHEMA-1 stages landing beside the tier-10 file.
 - **DOCS-1** (`docs/reference/state-machines.md`): the per-slot sub-state table gains the row matching the §6.2 edge and takes its own trigger replacement for the `receiving_uploads` → `running` row, for the `slot_cleanup` → `released` row and for the page's `slot_cleanup -> leaked` clause, each stated in the page's own voice because the page cannot carry the pointers SPEC-4 leaves in the fence, and the pod state machine paragraph states in the page's own voice what SPEC-4's re-keyed §4.6.1 bullets state, each clause keyed on the phase the pod projects at the claim DELETE, with that phase added to the paragraph's own input enumeration.
