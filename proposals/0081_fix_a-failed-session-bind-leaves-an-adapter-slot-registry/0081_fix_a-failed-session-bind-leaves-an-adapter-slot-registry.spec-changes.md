@@ -58,10 +58,7 @@ opening of the hold are each unimplementable from prose that reads as separable 
 paragraph lists every step the adapter performs under the registry lock, and the rules cite
 it. Owner: the staged §4.7.1 registry critical-section paragraph.
 
-**`Shutdown` names its teardown in two fields.** Stating the unconditional form as its own
-field makes the destructive form the one a caller asks for by name, so a caller that omits the
-token is answered with an error rather than a destroyed session. Owner: the staged §4.7.1
-teardown rules.
+**`Shutdown` names its teardown in two fields.** Owner: the staged §4.7.1 teardown rules.
 
 **The adapter holds the slot identifier while its cleanup runs.** The token says nothing about
 an admitted reclaim that races a successor, because the destructive acts are addressed by the
@@ -214,13 +211,7 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   retryable session-start fallback carrying `Retry-After`. The client-visible code therefore
   names the stage the refusal arrived in rather than the refusal itself. The category and the
   retryability the client reads are correct in every case, and narrowing the code is outside
-  this proposal. SPEC-5 states both of the setup-command request's deterministic
-  `FAILED_PRECONDITION` causes in the §15.1 `SETUP_COMMAND_FAILED` row and qualifies that row's
-  setup-output remedy to the cause that ran a command, so §15.1's catalog is true for this
-  refusal. DOCS-3 mirrors those same replacements into the `SETUP_COMMAND_FAILED` row of
-  `docs/reference/error-catalog.md`, so the page a reader consults states the setup-command
-  refusal cause, its non-retryability, and the setup-output remedy qualified to the cause that
-  ran a command.
+  this proposal. SPEC-5's §15.1 block and DOCS-3 carry the row's replacements.
 
 ## Staged edits
 
@@ -240,16 +231,10 @@ Replace it with:
 The handler runs the slot release and the runtime teardown under the preconditions [Section 4.7](#47-runtime-adapter) states, and runs the whole-pod scrub when the recycle disposition is set on a request that passed the teardown-pairing rule [Section 4.7.1](#471-role-and-gateway-rpc-contract) states, whatever outcome that request answers, so no operation is selected by a field's presence standing in for a scope.
 ```
 
-No sentence about the bind attempt token is added here. `bind_attempt` is a bare `string` and
-`unconditional_teardown` a bare `bool`, each carried beside the address on the requests the
-carriage table in [Section 4.7.1](#471-role-and-gateway-rpc-contract) names.
-Neither is declared `optional`, so neither has wire presence, and neither selects an operation
-or a scope: each is a precondition the handler reads on a request whose scope its own address
-already fixes. The precedent sits on this same message. The shipped comment on
-`ShutdownRequest.recycle` says the field "carries the occupancy-zero recycle disposition beside
-the named session's teardown rather than selecting a scope"
-(`schemas/lenny-adapter.proto`), and both new fields sit beside the address in that
-way. The replacement sentence therefore delegates both teardown preconditions to §4.7, which
+No sentence about the bind attempt token is added here: `bind_attempt` and
+`unconditional_teardown` are bare scalars carried beside the address on the requests the
+carriage table in [Section 4.7.1](#471-role-and-gateway-rpc-contract) names, for the reason the
+summary's `unconditional_teardown` decision gives. The replacement sentence delegates both teardown preconditions to §4.7, which
 owns them, and states no rule about either field. The scrub clause restates rule 10 and
 CODE-1: a request the pairing rule refuses changes nothing, and every other outcome starts the
 scrub.
@@ -287,11 +272,7 @@ setting `unconditional_teardown`, and only a compensating reclaim names a bind a
 names the two fields and points at the named rules rather than restating them. Its neighbours in
 that table are one-line RPC descriptions, and the restatement it carried had already drifted: it
 stated `superseded` as the outcome for an entry a different bind attempt owns, two sentences
-after correctly stating that an entry carrying no token answers `superseded` as well. Stating
-the unconditional form as its own field rather than as the absence of a token is what makes the
-destructive form the one a caller has to ask for by name: a caller that omits the token is
-answered `INVALID_ARGUMENT` rather than served a teardown it did not ask for, and an adapter
-that refuses a `Shutdown` naming nothing stays conforming.
+after correctly stating that an entry carrying no token answers `superseded` as well.
 
 The row does not enumerate the slot release's actions; §5.2 owns that list. It does not name
 `ReportSessionScrub` either, because §5.2 states the report's condition and the disposition table
@@ -389,7 +370,7 @@ The paragraph's acknowledged-clean predicate quantifies over every outcome rathe
 `reclaimed` alone. On a conforming adapter the two forms select the same slots, because SPEC-5's
 reclaim-outcome rule ties `absent` and `superseded` to a clean exit, so only a response reporting
 `reclaimed` can fail the clean-exit test. Quantifying over every outcome fails closed against an
-adapter that answers otherwise, and it is what lets CODE-4's disposition read the RPC error and
+adapter that answers otherwise, and it is what lets CODE-13's disposition read the RPC error and
 the clean-exit flag alone rather than branch on the outcome value.
 
 The paragraph states no report, no `leaked` disposition and no hold window. SPEC-3's §5.2
@@ -397,13 +378,6 @@ disposition table owns each, and the paragraph cites it.
 
 The paragraph states no deadline for the reclaim. §5.2's per-slot cleanup timeout is the
 figure the gateway reuses, cited from the code rather than restated here.
-
-The paragraph states the connection preference and no correctness rule about it. A caller holds
-its own attempt token from before its first pod-side RPC, independently of any connection and of
-any response, so a compensation sent on a fresh connection carries the same token and is fenced
-the same way. Reusing the open connection is the cheaper path rather than the correct one, which
-is what makes a durable re-drive of the compensation, after the connection or the process that
-sent it has gone, buildable as its own change.
 
 ### SPEC-2 · spec/07_session-lifecycle.md § 7.2 (Mid-resume terminal transitions — snapshot-close semantics)
 
@@ -582,8 +556,7 @@ biconditional on the predicate the report's own effect fixes: a `Shutdown` that 
 that reached `running`. The SDK
 demotion the §4.7 `DemoteSDK` row states, the §10.1 hold-timeout termination, and the cleanup
 the adapter runs inside a failed start's own handler are all releases outside a `Shutdown`, so
-none of them files a report, and the same session is therefore never counted twice against
-`recycle.maxSessionsPerPod` when a §5.2 retry or a pod-warm bind sequence re-binds it.
+none of them files a report.
 
 The withdrawn universal, that the adapter reports on every session release, is carried at the
 sites in the table below, and the table is the single home of their dispositions: a carrier found
@@ -607,7 +580,7 @@ is not a carrier.
 | `schemas/lenny-adapter.proto`, `ReportSessionScrub` RPC comment | Mirrored by SCHEMA-1 |
 | `schemas/lenny-adapter.proto`, `ReportSessionScrubRequest` message comment | Mirrored by SCHEMA-1 |
 | `pkg/proto/adapter/v1/lenny-adapter.pb.go` and `lenny-adapter_grpc.pb.go`, the generated copies of those two comments | Mirrored by SCHEMA-1, through regeneration |
-| `pkg/adapter/server.go`, `Server.SessionScrubReporter` field comment | Mirrored by CODE-1 |
+| `pkg/adapter/server.go`, `Server.SessionScrubReporter` field comment | Mirrored by CODE-15 |
 | `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Staged by checklist S4's tier-11 sweep, re-key |
 | `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Staged by checklist S4's tier-11 sweep, deletion |
 | every Go, SQL and test comment CODE-10's grep returns | CODE-10 |
@@ -652,16 +625,10 @@ The scrub-model paragraph's retirement clause rests on SPEC-4's re-keyed project
 claim deleted while the pod projects `claimed` drains the pod on a pool of either recycle
 setting.
 
-The reclaim-hold paragraph is what makes the reclaim exclusive while it runs. The entry
-deregistration and the destructive steps are not one act: the directory removals and the
-process-group kill each resolve from the slot identifier, which every attempt at the same
-session shares, so a successor admitted between the two would be torn down by a reclaim that
-had already refused nothing. The paragraph states a terminal for a cleanup that does not
-complete, because a successor would otherwise bind over the residue the cleanup left in place,
-and §5.2's fresh-workspace guarantee is unconditional. The identifier hold and the `leaked`
-occupancy are separate objects, which is why they are separate columns.
+The identifier hold and the `leaked` occupancy are separate objects, which is why they are
+separate columns.
 
-The ten-second graceful window the paragraph names is the figure the tree already runs, recorded
+The ten-second graceful window the reclaim-hold paragraph names is the figure the tree already runs, recorded
 here rather than minted. `onHoldTimeout`'s pass-2 close context is
 `context.WithTimeout(context.Background(), 10*time.Second)` at `pkg/adapter/holdstate.go:201`,
 landed by commit `3997f502b` on 2026-08-22, and CODE-6 keeps the same figure while re-scoping it
@@ -681,14 +648,8 @@ runtime's default grace is five seconds (`pkg/adapter/mcpruntime.go:86`) and its
 implementor landing CODE-6 who finds a runtime whose graceful stop exceeds ten seconds raises
 that as a finding of its own rather than widening this paragraph.
 
-The reporting rule and the one-report rule land in the scrub-model paragraph rather than
-in the `**Slot cleanup:**` bullet, because that bullet sits under a heading scoped to
-`maxConcurrentSessions > 1` while both rules hold on a pod of either concurrency, and because
-the scrub-model paragraph is where §5.2 already states the per-slot cleanup uniformly across
-session-mode configurations. That same uniformity sentence is what carries the bullet's action
-list across the concurrency boundary, so the appended pointer clause discharges the scoping
-question for both anchors without stating a second action list. The bullet's own reporting
-sentence and its leaked-outcome sentence are the remaining anchors below. Nothing else in the
+The `**Slot cleanup:**` bullet's own
+reporting sentence and its leaked-outcome sentence are the remaining anchors below. Nothing else in the
 bullet changes: its trigger, the `max(cleanupTimeoutSeconds / maxConcurrentSessions, 5)`
 formula, and the CRD validation rule all stand as written.
 
@@ -994,7 +955,7 @@ in that sub-state holds and counts toward, and states no trigger.
 No edge is added out of `slot_assigned`. The connect stage reserves the slot before any
 workspace RPC and the adapter holds nothing there, so it is not one of this proposal's
 residue classes. The gateway can still mark such a slot `leaked` when the reservation
-release fails, on the shipped retry path and, once CODE-4 folds `BindReservedSlot`'s own
+release fails, on the shipped retry path and, once CODE-13 folds `BindReservedSlot`'s own
 release error into the disposition, on the create-time-reserved path as well. That terminal
 is a pre-existing hole this proposal widens rather than closes, recorded in the summary.
 
@@ -1017,7 +978,7 @@ Insert the block below immediately after the `*Adapter → Gateway RPCs:*` table
 before the `#### 4.7.2 Checkpoint and Interrupt Mutual Exclusion` heading. The block states
 the bind attempt token once, on the section that owns the gateway-adapter RPC contract, so the
 §4.7 `Shutdown` row and §7.1 each point at one statement rather than carrying two. §4.1 states
-nothing about either new field, for the reason the SPEC-1 commentary above gives:
+nothing about either new field, for the reason the summary's `unconditional_teardown` decision gives:
 
 ```
 **Bind attempt token.** A **bind attempt** is one gateway attempt to bind a session onto a pod, running from that attempt's first pod-side RPC for the session until the attempt succeeds or is abandoned. The gateway mints a **bind attempt token** for each attempt: one opaque string value, drawn from a cryptographically secure random source, minted once, before the attempt issues its first pod-side RPC. The adapter compares the token for equality and does nothing else with it. It parses no structure out of it, derives no order and no age from it, and never mints one of its own. The empty string is not a token, so a request whose `bind_attempt` is empty names no attempt. A token belongs to an attempt rather than to a session, so two attempts at one session hold different tokens, and it is never derived from the session identifier, from the slot identifier, or from a `coordination_generation`. It is not a coordination generation and carries none of that field's semantics. The two answer different questions: the generation names the gateway replica that speaks for the session ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and is validated on the RPCs that carry it, while the token names the bind attempt a registry entry belongs to. Where both appear on one message, as on `Shutdown`, each is checked on its own terms.
@@ -1177,15 +1138,6 @@ with:
 Any other failure of the setup-command request (every failure of that request other than a deterministic `FailedPrecondition`, including a crashed pod surfaced as `Unavailable` or `DeadlineExceeded`, a wrapped cause reported as `Unknown`, and a superseded bind answered as `Aborted`) is not this code; it stays the retryable `SESSION_CREATION_FAILED`/`STARTING_FAILED`/`RESUME_FAILED` fallback and is recovered with a fresh pod per [Section 6.2](06_warm-pod-model.md#62-pod-state-machine). A deterministic `FailedPrecondition` the adapter answers to any other bind-sequence request is not this code either, and reaches the client under the envelope that stage selects.
 ```
 
-The exclusion is re-keyed the same way as the cause sentence above it, on the request the
-adapter answered as well as on the gRPC code, because the started-session refusal is a second
-deterministic `FailedPrecondition` producer at the setup-command request. Keyed on the code
-alone, the exclusion would sweep a `FailedPrecondition` the adapter answers to a bind-sequence
-request other than the setup-command request into the retryable fallback, which is not the
-envelope that stage selects; which envelope each stage's refusal reaches is stated in the
-Edge-cases bullet `**A bind-sequence refusal reaches the client under the envelope its stage
-already selects.**` `details.reason` keeps its one value, so no client contract changes.
-
 ### SPEC-5 · spec/06_warm-pod-model.md § 6.2 (pre-attached retry policy, client visibility)
 
 The `**Client visibility:**` bullet under the pre-attached retry policy restates the
@@ -1252,10 +1204,7 @@ Listed so a reviewer can tell scope from oversight.
   (the `INIT` row of §15.4.2's RPC lifecycle state table, and the `ErrorCode` enum in
   `schemas/lenny-adapter.proto`). What is deliberate
   here is the absence of a new row. The
-  section itself is edited under SPEC-5 rather than untouched: the started-session refusal is a
-  second deterministic `FAILED_PRECONDITION` producer in the setup window and the existing
-  `SETUP_COMMAND_FAILED` row states its cause as the setup command alone, so SPEC-5 widens that
-  row's cause, retryability and setup-output sentences.
+  section itself is edited under SPEC-5's §15.1 block.
 
 ## Spec files touched
 
