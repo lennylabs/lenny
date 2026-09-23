@@ -5938,8 +5938,10 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
   const records = {};
   for (let i = 0; i < 60; i++) records["id:" + i] = { id: "id:" + i, question: "§" + "q".repeat(900) + i, disposition: "human" };
   const STATE = { firings: 3, itemRecords: records, corpus: [{ proposal: "0001.md", status: "Draft" }], lastBaseline: "abc1234" };
-  const { stateText, chunks: toolChunks } = await import("../tools/cp-state.mjs");
-  const persisted = stateText({ firings: 3, itemRecords: records, lastBaseline: "abc1234" });
+  const { stateText, transferText, fromTransfer, chunks: toolChunks } = await import("../tools/cp-state.mjs");
+  const persistedObj = { firings: 3, itemRecords: records, lastBaseline: "abc1234" };
+  const persisted = stateText(persistedObj);
+  const transfer = transferText(persistedObj);
   // A check stub that reports what the part writers actually wrote, optionally corrupting one.
   const checkFrom = (calls, corrupt = () => false) => (call) =>
     [...call.prompt.matchAll(/\/(part-\d+)/g)].map((m) => {
@@ -5961,15 +5963,18 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
 
   const ok = await driveLive(() => false);
   const writers = ok.calls.filter((c) => /^save-state:decisions:\d+$/.test(c.label));
-  const perSave = toolChunks(persisted, 20000).length;
+  const perSave = toolChunks(transfer, 20000).length;
   t.check("the state is written in 20k-code-point chunks, one small agent each",
     writers.length > 0 && writers.length % perSave === 0 && writers.every((c) => Array.from(partBody(c) || "").length <= 20000),
     writers.length + " writer(s), " + perSave + " per save");
   const firstSave = writers.slice(0, perSave).sort((a, b) => partName(a).localeCompare(partName(b)));
-  t.check("the chunks join back to the state exactly, one entry to a line", firstSave.map(partBody).join("\n") === persisted && persisted.split("\n").length > 60);
-  t.check("every chunk ends at the end of a line, never inside a key",
-    firstSave.every((c) => /[{},]$/.test(partBody(c))), firstSave.map((c) => partBody(c).slice(-12)).join(" | "));
-  t.check("the workflow and cp-state.mjs cut the same chunks", JSON.stringify(firstSave.map(partBody)) === JSON.stringify(toolChunks(persisted, 20000)));
+  t.check("the chunks are the transfer lines, one complete JSON array each",
+    firstSave.map(partBody).join("\n") === transfer && transfer.split("\n").length > 60 &&
+      transfer.split("\n").every((l) => Array.isArray(JSON.parse(l))));
+  t.check("and they rebuild the state exactly", stateText(fromTransfer(firstSave.map(partBody).join("\n"))) === persisted);
+  t.check("so no chunk ends inside a structure",
+    firstSave.every((c) => /\]$/.test(partBody(c))), firstSave.map((c) => partBody(c).slice(-12)).join(" | "));
+  t.check("the workflow and cp-state.mjs cut the same chunks", JSON.stringify(firstSave.map(partBody)) === JSON.stringify(toolChunks(transfer, 20000)));
   t.check("the corpus inventory is not persisted", !/0001\.md/.test(firstSave.map(partBody).join("")));
   const joins = matching(ok.calls, "save-state:decisions:join");
   const want = sig(persisted);
@@ -6003,7 +6008,7 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
     const path = await import("node:path");
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-state-indent-"));
     const tool = new URL("../tools/cp-state.mjs", import.meta.url).pathname;
-    const parts = toolChunks(persisted, 20000);
+    const parts = toolChunks(transfer, 20000);
     const files = parts.map((body, i) => {
       const f = path.join(dir, "part-0" + i);
       // Indented as the harness renders it, on every line but the first of one part.
@@ -6018,9 +6023,14 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
     const out = path.join(dir, "state.json");
     const joinOut = execFileSync("node", [tool, "join", out, String(whole.len), String(whole.sum), ...files], { encoding: "utf8" });
     t.check("and join rebuilds the state exactly", /^OK /.test(joinOut) && fs.readFileSync(out, "utf8") === persisted, joinOut);
-    fs.writeFileSync(files[0], fs.readFileSync(files[0], "utf8").replace('"firings":3', '"firings":4'));
+    fs.writeFileSync(files[0], fs.readFileSync(files[0], "utf8").replace('["firings",3]', '["firings",4]'));
     const tampered = execFileSync("node", [tool, "join", out + ".2", String(whole.len), String(whole.sum), ...files], { encoding: "utf8" });
-    t.check("while any other change still fails the checksum", /^ERR mismatch/.test(tampered) && parts[0].includes('"firings":3'), tampered);
+    t.check("while any other change still fails the checksum", /^ERR mismatch/.test(tampered) && parts[0].includes('["firings",3]'), tampered);
+    // The failure the transfer format exists to end: a writer that closes the
+    // structure at the end of a part is refused rather than joined.
+    fs.writeFileSync(files[0], parts[0].replace(/\]$/, "]\n}\n}") + "\n");
+    const closed = execFileSync("node", [tool, "join", out + ".3", String(whole.len), String(whole.sum), ...files], { encoding: "utf8" });
+    t.check("and a part the writer closed with braces is refused", /^ERR /.test(closed), closed);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 

@@ -11,8 +11,9 @@
 // workflow computes on its side with `for (const ch of s)`.
 //
 //   sig <file>...                       per part file: "<name> <len> <sum>", read as `part` reads it
-//   join <out> <len> <sum> <part>...    join the parts with newlines, verify length, checksum and JSON,
-//                                       then write <out> atomically; prints "OK <len> <sum>" or "ERR <why>"
+//   join <out> <len> <sum> <part>...    rebuild the state from the parts' transfer lines, verify the
+//                                       length and checksum of its state text, then write <out>
+//                                       atomically; prints "OK <len> <sum>" or "ERR <why>"
 //   meta <file> <chunkSize>             JSON: {len, sum, chunks:[{len, sum}]}, or "MISSING"
 //   slice <file> <index> <chunkSize>    the chunk between CP_SLICE_BEGIN and CP_SLICE_END markers
 //   record-name <id>                    the record file name the decisions workflow uses for an item
@@ -75,6 +76,37 @@ export function stateText(obj) {
   });
   lines.push("}");
   return lines.join("\n");
+}
+// The transfer format the part writers copy: one complete JSON array a line,
+// `[key, value]` or `[key, entry, value]`. change-proposal.js carries the same
+// function. `fromTransfer` is its inverse and throws on a line that is not one.
+export function transferText(obj) {
+  const lines = [];
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0) {
+      for (const e of Object.keys(v)) lines.push(JSON.stringify([k, e, v[e]]));
+    } else {
+      lines.push(JSON.stringify([k, v]));
+    }
+  }
+  return lines.join("\n");
+}
+export function fromTransfer(text) {
+  const obj = {};
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const a = JSON.parse(line);
+    if (!Array.isArray(a) || (a.length !== 2 && a.length !== 3) || typeof a[0] !== "string") {
+      throw new Error("not a transfer line: " + line.slice(0, 60));
+    }
+    if (a.length === 2) obj[a[0]] = a[1];
+    else {
+      if (!obj[a[0]] || typeof obj[a[0]] !== "object" || Array.isArray(obj[a[0]])) obj[a[0]] = {};
+      obj[a[0]][a[1]] = a[2];
+    }
+  }
+  return obj;
 }
 export function chunks(text, size) {
   const out = [];
@@ -188,14 +220,14 @@ function main([cmd, ...args]) {
     const [out, wantLen, wantSum, ...parts] = args;
     const missing = parts.filter((p) => !existsSync(p));
     if (missing.length) return console.log("ERR missing " + missing.map((p) => basename(p)).join(","));
-    const text = parts.map(part).join("\n");
-    const s = sig(text);
-    if (String(s.len) !== wantLen || String(s.sum) !== wantSum) return console.log("ERR mismatch " + s.len + " " + s.sum);
+    let text;
     try {
-      JSON.parse(text);
+      text = stateText(fromTransfer(parts.map(part).join("\n")));
     } catch (e) {
       return console.log("ERR json " + e.message);
     }
+    const s = sig(text);
+    if (String(s.len) !== wantLen || String(s.sum) !== wantSum) return console.log("ERR mismatch " + s.len + " " + s.sum);
     writeAtomic(out, text);
     console.log("OK " + s.len + " " + s.sum);
   } else if (cmd === "meta") {

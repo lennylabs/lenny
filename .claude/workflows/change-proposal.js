@@ -4940,6 +4940,25 @@ function stateText(obj) {
   lines.push("}");
   return lines.join("\n");
 }
+// What the part writers copy. Every line is a complete JSON array, `[key, value]`
+// or `[key, entry, value]` for an entry of a nested object, so no part ends
+// inside a structure. A part cut from `stateText` ended mid-object, and the
+// agent copying it closed the object with `}\n}\n}` in place of the trailing
+// comma on every attempt, however the prompt told it to add nothing.
+// .claude/tools/cp-state.mjs rebuilds the state from these lines and holds the
+// same function; B36 holds them equal.
+function transferText(obj) {
+  const lines = [];
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 0) {
+      for (const e of Object.keys(v)) lines.push(JSON.stringify([k, e, v[e]]));
+    } else {
+      lines.push(JSON.stringify([k, v]));
+    }
+  }
+  return lines.join("\n");
+}
 function stateChunks(text) {
   const out = [];
   let cur = [];
@@ -5039,14 +5058,15 @@ function saveDecisionsState() {
   // agent, and it keys nothing a firing compares.
   const { corpus, ...persisted } = decisionsState;
   const json = stateText(persisted);
+  const transfer = transferText(persisted);
   pendingStateSave = (async () => {
     if (prior) await prior;
-    await writeStateChunks(json);
+    await writeStateChunks(json, transfer);
   })();
   return pendingStateSave;
 }
-async function writeStateChunks(json) {
-  const chunks = stateChunks(json);
+async function writeStateChunks(json, transfer) {
+  const chunks = stateChunks(transfer);
   const name = (i) => "part-" + String(i).padStart(2, "0");
   const path = (i) => STATE_PARTS_DIR + "/" + name(i);
   const want = chunks.map(stateSig);
@@ -5054,9 +5074,9 @@ async function writeStateChunks(json) {
     robustAgent(
       "Write a file. Run exactly this, and reply with the single word DONE:\n\n" +
         "mkdir -p " + STATE_PARTS_DIR + " && cat > " + path(i) + " <<'CP_PART_EOF'\n" + chunks[i] + "\nCP_PART_EOF\n\n" +
-        "Copy the text between the two CP_PART_EOF lines exactly, character for character. It is one fragment " +
-        "of a larger file, so it may start or stop in the middle of a structure: add nothing to complete it and " +
-        "drop nothing. Do nothing else. Do not read, summarise, or edit any other file.",
+        "Copy the text between the two CP_PART_EOF lines exactly, character for character. Every line is one " +
+        "complete JSON array: add nothing, drop nothing, and change no line. Do nothing else. Do not read, " +
+        "summarise, or edit any other file.",
       { label: "save-state:decisions:" + i + (t > 1 ? ":retry" + t : ""), model: "haiku", effort: "high", phase: "Decisions" },
     );
   let pending = chunks.map((_, i) => i);

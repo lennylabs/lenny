@@ -152,8 +152,11 @@ wherever it can be:
   and launch the copy it writes, with `resumeState: true`. The copy carries the saved state in place of the
   `CP_EMBEDDED_DECISIONS_STATE` line, so no agent reads it. Launching the workflow itself still works; its
   load reads the file back in verified chunks.
-- **Saves move in verified chunks.** The control state is written one entry to a line and split into chunks
-  of whole lines, up to 20,000 code points each, one small agent each, through `.claude/tools/cp-state.mjs`.
+- **Saves move in verified chunks.** The control state is written as transfer lines, each one complete JSON
+  array (`[key, value]` or `[key, entry, value]`), and split into chunks of whole lines, up to 20,000 code
+  points each, one small agent each, through `.claude/tools/cp-state.mjs`, whose `join` rebuilds the state and
+  checks its text. A chunk cut from the state text itself ended mid-object, and the copying agent closed the
+  object with braces on every attempt.
   A chunk cut at a fixed width once ended mid-key, and the agent copying it completed the key on every
   attempt. The Workflow harness indents every line of a script-computed prompt, and the agent copying a
   chunk wrote that indentation into the file on every attempt, so the tool drops each line's leading
