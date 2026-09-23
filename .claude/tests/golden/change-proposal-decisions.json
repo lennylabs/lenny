@@ -194,7 +194,8 @@
       "file-ownership",
       "log-shard",
       "evidence",
-      "log-write"
+      "log-write",
+      "lean-edit"
     ]
   },
   {

@@ -848,6 +848,18 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
   t.check("with the authority it rests on", /spec\/10_gateway-internals\.md:41/.test(ap));
   t.check("and the sites it lands in", /SPEC-1 §10\.1\.2/.test(ap));
   t.check("and is told not to re-derive it", /Apply it; do not re-derive it/.test(ap));
+  // The staging ladder: an answer lands at the lowest rung that holds, and its
+  // ground goes to the log rather than into the staged text.
+  t.check("the applier climbs the staging ladder", /WRITE THE LEAST STAGED TEXT THAT LANDS IT/.test(ap));
+  t.check("and names the authority in its log line rather than the staged text",
+    /Name the authority the answer rests on, as file:line, in your review-log line/.test(ap) &&
+      !/Cite the ground as file:line/.test(ap));
+  const ad = promptOf(toRes.calls, "f1:answer-design:0");
+  t.check("the answer designer climbs the ladder and records the rung",
+    /WRITE THE LEAST STAGED TEXT THAT LANDS IT/.test(ad) && /Record the rung in `rung`/.test(ad));
+  const adCall = matching(toRes.calls, "f1:answer-design:")[0];
+  t.check("the design schema offers the rung without requiring it",
+    !!(adCall && adCall.opts.schema.properties.rung) && !(adCall.opts.schema.required || []).includes("rung"));
   // The designer is not the falsifier.
   t.check("the designer is a different agent from the falsifier",
     promptOf(toRes.calls, "f1:answer-design:0") !== promptOf(toRes.calls, "f1:falsify:0"));
@@ -1130,6 +1142,9 @@ t.section("D7. cross-firing state: contested, carried forward, reworded");
     "f1:out-of-scope-defects": found(DRAIN),
     "f1:apply:0": { outcome: "edited", recordWritten: true, where: [P.spec + " — CODE-4"] },
   });
+  const drainApply = promptOf(markerFirst.calls, "f1:apply:0");
+  t.check("an out-of-scope-wrong applier specifies the fix whole but climbs the ladder",
+    /Whole is complete rather than long: WRITE THE LEAST STAGED TEXT THAT LANDS IT/.test(drainApply));
   t.check(
     "an unstamped item is keyed on its deliverable and marker",
     !!markerFirst.result.phaseState.itemRecords[DRAIN_KEY],

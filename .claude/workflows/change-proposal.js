@@ -769,8 +769,44 @@ const FORMAT_CHECKLIST =
 // round was to re-synchronise them, and a redesign pass added a sixth. The run
 // converged only after a hand edit reduced the five to one numbered list that
 // everything else cited.
+// The edit ladder every agent that writes staged text climbs, after the
+// Ponytail skill's "ladder of laziness" (github.com/DietrichGebert/ponytail).
+// Measured on one proposal after sixteen review rounds, about a quarter of its
+// staged non-spec file could go without changing what gets built: the same
+// reasoning restated at three to five sites, history of a design the tree never
+// had, file:line evidence proving a choice safe, and paragraphs written so a
+// reviewer would not raise a point again. Each was a fixer answering a finding
+// by adding text where the reviewer was looking. The ladder makes addition the
+// last resort, and the reader test sends the defences to the log, where the
+// refuted-findings memory and the standing context already do that job.
+const LEAN_EDIT =
+  "- CLOSE EACH FINDING WITH THE LEAST TEXT. Understand the finding fully first: the ladder shortens the " +
+  "edit, never the reading. Then take the FIRST rung that closes it and stop there:\n" +
+  "    1. NO STAGED CHANGE. A finding that the proposal does not justify a choice, does not explain why an " +
+  "alternative lost, or could be misread by a reviewer is answered by a `DECISION` or `WATCHOUT` in your log " +
+  "shard. Staged text changes only when an implementor would otherwise build something different.\n" +
+  "    2. DELETE. Remove the wrong sentence, the stale copy, or the obsolete history.\n" +
+  "    3. REPLACE IN PLACE, at the same length or shorter.\n" +
+  "    4. POINT. When the proposal, the spec, or the tree already states it, cite that by heading or symbol.\n" +
+  "    5. ONE SENTENCE.\n" +
+  "    6. Only then ADD the minimum text, in the one home it belongs to.\n" +
+  "  Two rungs that both close it: take the lower number.\n" +
+  "- THE STAGED FILES TELL THE IMPLEMENTOR WHAT TO BUILD. Before writing a sentence into them, name who " +
+  "acts on it and what they do differently because of it. A sentence written so a reviewer does not raise " +
+  "a point again, to explain why an earlier revision was wrong, or to prove with file:line evidence that a " +
+  "choice is safe belongs in your log shard: the refuted-findings memory and the review log are this loop's " +
+  "defence against a finding returning, and the proposal is not. A paragraph that defends a choice is a " +
+  "defect in a staged file. Locate code in staged text by symbol and file; line numbers go stale as other " +
+  "proposals land and belong with the evidence in the log.\n" +
+  "- NEVER CUT, whatever the ladder suggests: a fail-closed or security predicate, a wire contract or field " +
+  "name, an ordering another step depends on, a trap an implementor would plausibly fall into (stated once, " +
+  "where they will meet it), a note naming which assertion is the one that discriminates, a constraint a gate " +
+  "enforces (such as a row that must stay one physical line), and a deliberate divergence from the staged " +
+  "spec text.\n";
+
 const SINGLE_SOURCE_RULE =
-  "- STATE EACH RULE ONCE. A predicate, an ordered cascade, a contract, an outcome table or an invariant has ONE normative home: the staged spec text when the rule is normative, otherwise the deliverable that owns it. Number the rules there when there are several. Every other site (the design prose, the summary, the checklist, a conformance or test list, a docs deliverable, a code block's commentary) CITES the home by heading and rule number and adds only what that site alone knows: the rationale, the lock discipline, which test drives it. Do not write a second full statement, in any vocabulary, however convenient for that section's reader. A test or conformance list is one case per rule asserting what the rule's home gives, never a re-description of the rule. The same holds against spec/ itself: staged spec text cites what another spec section already states rather than writing it out again. The one licensed restatement is a reader-facing docs page, where the documentation rules bar a spec citation.\n" +
+  "- STATE EACH RULE ONCE. A predicate, an ordered cascade, a contract, an outcome table or an invariant has ONE normative home: the staged spec text when the rule is normative, otherwise the deliverable that owns it. Number the rules there when there are several. Every other site (the design prose, the summary, the checklist, a conformance or test list, a docs deliverable, a code block's commentary) CITES the home by heading and rule number and adds only what that site alone knows: the lock discipline, which test drives it.\n" +
+  "- STATE EACH REASON ONCE. The reasoning behind a decision has one home: its entry in the summary's decisions, or the deliverable that owns the decision when the summary does not list it. Another site gives the reason in one clause at most, or cites the home. Do not write a second full statement, in any vocabulary, however convenient for that section's reader. A test or conformance list is one case per rule asserting what the rule's home gives, never a re-description of the rule. The same holds against spec/ itself: staged spec text cites what another spec section already states rather than writing it out again. The one licensed restatement is a reader-facing docs page, where the documentation rules bar a spec citation.\n" +
   "- A POINTER NAMES ITS TARGET AND NOTHING ELSE. A site that refers to another says where to look (`see CODE-6's **Disposition of an expired acquisition**`) and does not say what the target contains, how many parts it has, which cases it covers, or what its rows assert. A description of another site's content is a second statement of it that no edit to the target updates: when the target changes, the description goes stale without quoting a word of it. A checklist step is a pointer of this kind: it names its deliverables and the part it lands, and restates none of a deliverable's mechanism, conditions, counts, anchors or site lists.\n";
 
 // The check a fixer closes with. Measured across one proposal's runs, most of
@@ -887,7 +923,11 @@ const FINDINGS = {
             description:
               "Exact file:line citations with short quotes for both the proposal claim and the contradicting source",
           },
-          suggested_fix: { type: "string" },
+          suggested_fix: {
+            type: "string",
+            description:
+              "The smallest edit that closes the finding. Prefer deleting the wrong or redundant text, or replacing it in place at the same length or shorter, over adding text; suggest new text only when no deletion or replacement closes it.",
+          },
           area: {
             type: "string",
             description:
@@ -983,6 +1023,20 @@ const FIX_RESULT = {
       type: "string",
       description: "Each finding and the exact edit made for it.",
     },
+    netLines: {
+      type: "array",
+      description:
+        "One entry per proposal file your edits changed: the lines your own edits added and removed there, not counting your log shard. The best outcome of a fix is a shorter proposal, and the round reports the total.",
+      items: {
+        type: "object",
+        required: ["file", "added", "removed"],
+        properties: {
+          file: { type: "string" },
+          added: { type: "integer", minimum: 0 },
+          removed: { type: "integer", minimum: 0 },
+        },
+      },
+    },
     newMechanisms: {
       type: "array",
       description:
@@ -1030,8 +1084,8 @@ const FIX_RESULT = {
                 site: { type: "string", description: "file:line" },
                 disposition: {
                   type: "string",
-                  enum: ["edited", "still-true", "deferred", "separate-finding"],
-                  description: "edited: your edit falsified it and you fixed it. still-true: it only names the target, or what it says still holds. deferred: falsified, in a file your grant does not cover, recorded as DEFERRED. separate-finding: already wrong for a reason of its own.",
+                  enum: ["edited", "deleted-obsolete", "still-true", "deferred", "separate-finding"],
+                  description: "edited: your edit falsified it and you fixed it. deleted-obsolete: it stayed true but your edit made it unnecessary, and you deleted it or cut it to a pointer. still-true: it only names the target, or what it says still holds. deferred: falsified, in a file your grant does not cover, recorded as DEFERRED. separate-finding: already wrong for a reason of its own.",
                 },
                 why: { type: "string" },
               },
@@ -1062,13 +1116,19 @@ const SITE = {
   required: ["file", "line", "quote", "why", "confidence"],
   properties: {
     file: { type: "string", description: "repo-relative path" },
+    effect: {
+      type: "string",
+      enum: ["falsified", "obsolete"],
+      description:
+        "falsified (the default when absent): landing the fix makes this text wrong. obsolete: it stays true but the fix makes it unnecessary; proposal sites only.",
+    },
     line: { type: "integer" },
     quote: {
       type: "string",
       description:
         "the sentence VERBATIM. Line numbers drift as the round's edits land, so the quote is what a later pass finds the site by.",
     },
-    why: { type: "string", description: "one line: why landing this finding's fix makes this text wrong" },
+    why: { type: "string", description: "one line: why landing this finding's fix makes this text wrong, or unnecessary" },
     confidence: {
       type: "string",
       enum: ["high", "medium", "low"],
@@ -1148,6 +1208,13 @@ function classifySites(r, where) {
       continue;
     }
     const actual = isProposalSite(s.file) ? "proposal" : "tree";
+    // An obsolete site is text the fix makes unnecessary, and its remedy is a
+    // deletion in the same edit. Nothing in this loop deletes text outside the
+    // proposal, so an obsolete tree site has no remedy here and is dropped.
+    if (actual === "tree" && s.effect === "obsolete") {
+      dropped++;
+      continue;
+    }
     if (actual !== entry.stated) moved++;
     (actual === "proposal" ? proposal : tree).push(s);
   }
@@ -1155,7 +1222,7 @@ function classifySites(r, where) {
     log(where + ": " + moved + " site(s) reclassified by path against the class the expansion pass assigned");
   }
   if (dropped) {
-    log(where + ": " + dropped + " site(s) dropped for carrying no path");
+    log(where + ": " + dropped + " site(s) dropped for carrying no path or as obsolete text outside the proposal");
   }
   return { proposal: proposal, tree: tree };
 }
@@ -1207,6 +1274,12 @@ const FIX_DESIGN = {
         required: ["findingTitle", "effort", "chosen", "citerSearch"],
         properties: {
           findingTitle: { type: "string", description: "copied verbatim from the finding you are designing for" },
+          rung: {
+            type: "string",
+            enum: ["no-staged-change", "delete", "replace", "point", "one-sentence", "add"],
+            description:
+              "the lowest rung of the edit ladder that closes the finding. `add` requires `chosen.why` to say why each lower rung fails.",
+          },
           citerSearch: {
             type: "object",
             required: ["anchors", "searched"],
@@ -1264,9 +1337,9 @@ const FIX_DESIGN = {
                 quote: { type: "string", description: "copied from the site, so the fixer can find it after line numbers drift" },
                 disposition: {
                   type: "string",
-                  enum: ["in-scope", "separate-finding", "not-a-site"],
+                  enum: ["in-scope", "obsolete", "separate-finding", "not-a-site"],
                   description:
-                    "in-scope: landing this fix MAKES this site wrong, so it changes in the SAME edit. separate-finding: the site is already wrong for a reason of its own that this fix neither causes nor repairs; name what the finding would be and leave it for a later round. not-a-site: it stays true after the fix.",
+                    "in-scope: landing this fix MAKES this site wrong, so it changes in the SAME edit. obsolete: the site stays true after the fix but this fix makes it unnecessary (history of a mechanism the fix replaces, a defence of an option no longer in play, a restatement of text the fix makes the one home), so it is deleted, or cut to a pointer, in the SAME edit. separate-finding: the site is already wrong for a reason of its own that this fix neither causes nor repairs; name what the finding would be and leave it for a later round. not-a-site: it stays true after the fix.",
                 },
                 why: { type: "string" },
               },
@@ -2048,7 +2121,7 @@ const barFor = () =>
   "(d) The proposal misses an edit site: a spec/, docs/, schemas/, or charts/ surface that would become wrong after the proposed edits are applied and that is absent from the proposal's edit lists. Editing a generated artifact instead of its authoring source counts.\n" +
   "(e) A described mechanism cannot work: race conditions, bypassable mandatory gates, unreachable trigger states, wrong defaults, mismatched granularity, predicate drift between sections, or ordering problems.\n" +
   "(f) The proposal changes behavior but does not list the tests that behavior requires: the Testing section is absent, omits a tier the change plainly reaches, names no concrete test for a behavior the proposal changes, or lists only a happy-path test where the change introduces an error, concurrent, boundary, security or fail-closed, or spec-named-failure path (see .claude/rules/test-coverage.md). A proposal must list the specific, insightful, relevant new tests to add during implementation.\n" +
-  "(g) One rule is stated IN FULL at more than one site: a predicate, an ordered cascade, a contract, an outcome table, or an invariant written out at two or more places in the proposal, or staged into spec/ at a place that restates what another spec section already states. This qualifies even when every copy agrees today, because copies are what drift: one measured run spent most of 49 rounds re-synchronising five statements of one cascade, each round repairing one copy against another. The remedy is always a REDUCTION: one normative statement in its home, and every other site citing it by heading and rule number. A site that cites, summarises in a clause, or gives the rationale for a rule is not a copy.\n\n" +
+  "(g) One rule is stated IN FULL at more than one site: a predicate, an ordered cascade, a contract, an outcome table, or an invariant written out at two or more places in the proposal, or staged into spec/ at a place that restates what another spec section already states. This qualifies even when every copy agrees today, because copies are what drift: one measured run spent most of 49 rounds re-synchronising five statements of one cascade, each round repairing one copy against another. The remedy is always a REDUCTION: one normative statement in its home, and every other site citing it by heading and rule number. A site that cites, summarises in a clause, or gives the reason for a rule in one clause is not a copy. The same holds for a decision's reasoning: a justification, a rejected alternative, or a safety argument written out beyond one clause at two sites is a copy of it, and its remedy is the same reduction to one home.\n\n" +
   "A PROPERLY MARKED BLANK IS NOT A FINDING. A proposal may delegate a detail to the implementor with an explicit \"IMPLEMENTOR'S CHOICE:\" marker that names what is open AND the constraint any answer must satisfy. Do not report such a marker as an underspecified target, a missing edit site, or an unresolvable anchor: it is the format working as intended. Three things about a blank ARE findings, and you should report them. A marker with no constraint, because that delegates without bounding. A blank over something the format bars from delegation, which is a wire contract or field name, a security or fail-closed predicate, which component performs an action, an ordering another step depends on, a name appearing in more than one place, or anything a test must assert. And a gap that is left unmarked, which is the ordinary underspecified-target finding and is unaffected by this rule. The symmetry holds in the other direction as well: over-specification is itself a defect, so a finding that would convert a bounded blank into specified text needs to clear the same bar as any other finding.\n\n" +
   "DO NOT report: style or wording, documentation polish, optional improvements, additional nice-to-have tests beyond the coverage the change requires, hypothetical hardening, redundancy other than the restated rule (g) names, preferences between workable designs, or anything whose absence does not make the applied spec or implementation wrong. If you are unsure whether something meets the bar, do not report it. An empty findings list is a fully acceptable answer and is the expected answer for a converged proposal.\n\n" +
   'The proposal\'s "Resolved in adversarial review" section is a historical record of earlier passes; its descriptions of earlier drafts are not findings. ' +
@@ -2071,7 +2144,8 @@ const LENSES = [
       "Step 3, report under (g) every rule with more than one stating site, naming every site and naming which one should be the normative home (the staged spec text when the rule is normative; otherwise the deliverable that owns it). Check the conformance and test lists in particular: a test list that re-describes each rule's conditions and answers is a copy, and the form that cannot drift is one case per rule that asserts what the rule's home gives. Check reader-facing doc deliverables: a docs page may restate in reader vocabulary where the documentation rules bar a spec citation, and that one restatement is not a finding. " +
       "Step 4, where two stating sites DISAGREE today, report the disagreement under (c) or (e) as well, and say in the finding that the fix is to reduce the sites rather than to re-synchronise them. " +
       "Also check the staged spec text against spec/ itself: a staged edit that writes out in full what another spec section already states is a copy of that section; it should cite it. " +
-      "Do not report two sites that state DIFFERENT rules about one subject, a rule and its rationale, or a summary's one-line description of a deliverable.",
+      "Step 5, reasons: a decision's reasoning has one home too, its entry in the summary's decisions or the deliverable that owns the decision. Report under (g) a reason written out beyond one clause at a second site (the same justification, alternative rejected, or safety argument, in any vocabulary), naming the home; the fix deletes the copy or cuts it to a one-clause citation. " +
+      "Do not report two sites that state DIFFERENT rules about one subject, a rule beside a one-clause reason for it, or a summary's one-line description of a deliverable.",
   },
   {
     key: "citations",
@@ -2636,7 +2710,7 @@ const EVIDENCE_RUBRIC =
 const MATERIALITY_RUBRIC =
   "You are a skeptical materiality judge for review findings on the proposal " +
   path +
-  ". Assume the finding's evidence is factually accurate. Decide ONLY whether fixing it is required for correctness: confirm if leaving it unfixed would make the applied spec internally inconsistent, make a stated citation or attribution false, make the described implementation not work, or leave a behavior the proposal changes without the tests that behavior requires (a missing Testing section, an omitted reached tier, a changed behavior with no listed test, or a happy-path-only test where the change introduces an error, concurrent, boundary, security, or spec-named-failure path, per .claude/rules/test-coverage.md). ALSO confirm a finding that one rule (a predicate, an ordered cascade, a contract, an outcome table, an invariant) is stated in full at more than one site, even when the copies agree today: duplicated statements of one rule are what drift apart, a measured run spent most of 49 rounds re-synchronising five of them, and the fix is a reduction to one home that the other sites cite. Refute THAT kind of finding only when the second site merely cites, summarises in a clause, or gives the rationale, or is a reader-facing docs page. Refute if it is style or wording, documentation polish, an optional improvement or hardening, redundancy of any other kind, a preference between workable designs, an additional nice-to-have test beyond the coverage the change requires, or anything else whose absence does not make the spec or implementation wrong. Default to refuted when uncertain. You may read " +
+  ". Assume the finding's evidence is factually accurate. Decide ONLY whether fixing it is required for correctness: confirm if leaving it unfixed would make the applied spec internally inconsistent, make a stated citation or attribution false, make the described implementation not work, or leave a behavior the proposal changes without the tests that behavior requires (a missing Testing section, an omitted reached tier, a changed behavior with no listed test, or a happy-path-only test where the change introduces an error, concurrent, boundary, security, or spec-named-failure path, per .claude/rules/test-coverage.md). ALSO confirm a finding that one rule (a predicate, an ordered cascade, a contract, an outcome table, an invariant) is stated in full at more than one site, even when the copies agree today: duplicated statements of one rule are what drift apart, a measured run spent most of 49 rounds re-synchronising five of them, and the fix is a reduction to one home that the other sites cite. Confirm on the same terms a finding that one decision's reasoning is written out beyond one clause at more than one site, because a restated justification drifts like a restated rule and every copy is read by every lens every round. Refute either kind only when the second site merely cites, summarises in a clause, or gives the reason in one clause, or is a reader-facing docs page. Refute if it is style or wording, documentation polish, an optional improvement or hardening, redundancy of any other kind, a preference between workable designs, an additional nice-to-have test beyond the coverage the change requires, or anything else whose absence does not make the spec or implementation wrong. Default to refuted when uncertain. You may read " +
   path +
   " for context.";
 
@@ -2728,13 +2802,21 @@ function expandSitesPrompt(finding, round) {
     "Two independent verifiers already confirmed this finding at the sites it names. Do not re-examine it. " +
     "Answer one question about the rest of the repository:\n\n" +
     "  IF THIS FINDING'S FIX LANDS AS SUGGESTED, WHICH OTHER SITES BECOME WRONG?\n\n" +
+    "and, inside the proposal only, a second one:\n\n" +
+    "  WHICH TEXT DOES THE FIX MAKE UNNECESSARY?\n\n" +
+    "Report such a site with `effect` set to `obsolete`: text that stays true after the fix but exists only " +
+    "because of what the fix removes or replaces, such as the history or defence of a mechanism the fix " +
+    "replaces, the case against an alternative the fix takes out of play, or a restatement of text the fix " +
+    "turns into the one home. Every other site is `falsified`. Text that was unnecessary before the fix is " +
+    "neither.\n\n" +
     CONTEXT +
     "\n\nYou are a read-only investigator. Do not create, edit, or delete any file, including a log " +
     "shard. Cite evidence as file:line.\n\n" +
     "THE STARTING SET is the finding's `where` and every citation in its `evidence`. Everything you return " +
     "is reached outward from there. You are not surveying the proposal.\n\n" +
     "THE TEST IS BINARY. For each candidate, ask whether landing this fix makes that text wrong, stale, or " +
-    "inconsistent. A site that discusses the same subject and STAYS TRUE is not a site. Consistent " +
+    "inconsistent, or, for a proposal site, unnecessary. A site that discusses the same subject, STAYS TRUE, " +
+    "and is still needed is not a site. Consistent " +
     "restatement is not a defect and the review bar excludes it: report a site only when the fix makes it " +
     "wrong.\n\n" +
     "TWO METHODS. Use both; neither alone is sufficient.\n" +
@@ -2991,12 +3073,16 @@ function fixDesignPrompt(group, confirmed, round) {
     "  So when a finding is that two sites disagree about one rule, the design is NOT to make them agree. " +
     "It is to pick the home, fix the rule there, and turn the other site into a citation. When a finding " +
     "needs a rule the proposal does not yet state, the design names the ONE place it goes.\n\n" +
+    "THE EDIT LADDER. Record in `rung` the rung your chosen fix stands on, and when it is `add`, say in " +
+    "`chosen.why` why each lower rung fails. The fixer applies your design, so a design that adds text where " +
+    "a deletion would close the finding is where the proposal grows.\n" + LEAN_EDIT + "\n" +
     "TRIAGE FIRST, AND LET THE TRIAGE GOVERN YOUR BUDGET. Classify each finding as trivial, moderate, or " +
     "deep BEFORE you investigate anything, and then spend accordingly. Spending deep effort on a trivial " +
     "finding is a defect in your work, not thoroughness: a group of eight trivial findings should cost a " +
     "fraction of what a single deep one costs.\n" +
     "  trivial — the reviewer's suggested fix is unambiguous, lands in one place, and changes nothing " +
-    "another section states. Output one line: apply as suggested. Read nothing beyond the citer search " +
+    "another section states. Output one line: apply it at the lowest rung that closes it, which is often " +
+    "smaller than the reviewer's suggestion. Read nothing beyond the citer search " +
     "below, which a trivial fix still owes when it removes or renames named text. Most citation, " +
     "bookkeeping, and attribution findings are trivial.\n" +
     "  moderate — clear, but touching more than one statement or choosing between two obvious options. " +
@@ -3031,12 +3117,18 @@ function fixDesignPrompt(group, confirmed, round) {
     // sites they govern arrive in the tail, under POTENTIALLY RELATED SITES,
     // when the expansion pass found any.
     "HOW TO THINK ABOUT THE POTENTIALLY RELATED SITES, listed below when the pass found any. ADJUDICATE " +
-    "each site into exactly one of three dispositions and " +
+    "each site into exactly one of the dispositions below and " +
     "record it in siteDispositions. The fixer does only what you decide here, so a site you leave out " +
     "is a site it has no instruction about.\n" +
     "  IN SCOPE — landing this fix MAKES this site wrong. It changes in the SAME edit. Leaving it is " +
     "the drift this stage exists to prevent: one site corrected and its parallels left asserting what " +
     "was just withdrawn.\n" +
+    "  OBSOLETE — the site stays TRUE after the fix, but this fix makes it unnecessary: the history or " +
+    "defence of a mechanism the fix replaces, the case for an option the fix takes out of play, or a " +
+    "restatement of text the fix makes the one home. It is deleted, or cut to a pointer, in the SAME edit, " +
+    "because nothing else removes it and every lens reads it every round. Text that was already " +
+    "unnecessary before this fix is not obsolete here: that is a SEPARATE FINDING, for the same reason as " +
+    "below.\n" +
     "  SEPARATE FINDING — the site is ALREADY wrong, for a reason of its own that this fix neither " +
     "causes nor repairs. NOT in scope. Say what the finding would be so a later round can file it. " +
     "Fixing it here is an unreviewed edit: nothing verified it, and whatever you get wrong comes back " +
@@ -3055,8 +3147,9 @@ function fixDesignPrompt(group, confirmed, round) {
     "credited to the block. So whenever the chosen fix removes, reduces, renames or re-scopes text that other " +
     "sites can name (a heading, a bold label, a table or a column, a defined term, a rule number), grep every " +
     "file of the proposal for each such name and read each hit outside the text being edited. Adjudicate every " +
-    "hit in siteDispositions with the three dispositions above: a hit that describes, counts, lists, or " +
-    "attributes content the fix changes is IN SCOPE. Record the names and the patterns in citerSearch." +
+    "hit in siteDispositions with the dispositions above: a hit that describes, counts, lists, or " +
+    "attributes content the fix changes is IN SCOPE, and a hit that only defends or narrates what the fix " +
+    "removes is OBSOLETE. Record the names and the patterns in citerSearch." +
     DEVIATIONS_BLOCK() +
     LOG_RULES() +
     directiveBlock() +
@@ -3151,6 +3244,8 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
         "rather than the sweep, and the sweep has been done for you. Follow the adjudication:\n" +
         "  - Every site marked `in-scope` changes in this edit. Skipping one leaves precisely the drift " +
         "the design predicted.\n" +
+        "  - Every site marked `obsolete` is deleted in this edit, or cut to a pointer where another site " +
+        "still needs to find the text it named. Record each in citersChecked as `deleted-obsolete`.\n" +
         "  - No site marked `separate-finding` or `not-a-site` is edited here, whatever you think of it. " +
         "Editing one is an unreviewed change: nothing verified it.\n" +
         "  - A `tree` site, meaning any site outside " + P.dir + ", is NOT yours to edit. Its remedy is to " +
@@ -3174,10 +3269,12 @@ function fixPrompt(confirmed, round, strikes, group, design, earlier) {
     "\n\nHARD CONSTRAINT. " + LOOP.editable() +
     "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/: this proposal STAGES its " +
     "changes and never applies them.\n\nApply EXACTLY the confirmed findings below using Edit (or Write for large restructures). Requirements:\n" +
-    "- Before each edit, re-verify the relevant spec/code citations yourself with Grep/Read; every claim that remains in the proposal must be accurate and carry file:line evidence. Re-verify every citation in text you touch, including stale line numbers.\n" +
+    "- Before each edit, re-verify the relevant spec/code citations yourself with Grep/Read; every claim that remains in the proposal must be accurate. Re-verify every citation in text you touch, including stale line numbers. The evidence that proves a claim goes in your log shard; the staged text carries a citation only where the implementor needs it to find what to change.\n" +
     "- Make the smallest change that corrects each finding. Do not expand scope. Do not change design decisions beyond what the findings require; when a finding forces a design choice, pick the option most consistent with the cited spec precedent and the project principles (" +
     PRINCIPLES +
-    "), and record the rationale in the proposal.\n" +
+    "), and record the rationale as a `DECISION` in your log shard. The proposal carries a reason only where an implementor would otherwise choose wrongly, and then in one clause at that site, or in the summary's decisions when the choice is one a reader of the summary needs.\n" +
+    LEAN_EDIT +
+    "  The design names the rung it chose. Apply it at that rung or a lower one; climbing higher than the design is a departure you report in designRejected. Report the lines your edits added and removed in netLines.\n" +
     "- READ EVERY FINDING BEFORE YOU EDIT ANYTHING. Group the findings that touch the same text, the same section, or the same mechanism, and fix each group as one change. Findings that look independent often share a root, and closing them separately produces edits that contradict each other and become findings of their own in a later round.\n" +
     "- INVENTING A MECHANISM IS ALLOWED AND IS SOMETIMES THE ONLY CORRECT FIX, BUT IT IS THE MOST DANGEROUS EDIT YOU CAN MAKE. This loop has measured that a mechanism introduced to close one finding goes on to produce several more over later rounds, because it lands unspecified and nothing reviews it as a design. So when a finding cannot be closed by correcting existing text, and you must add a field, a flag, a report, a compensating action, an RPC, a frame, or an interface change, specify it WHOLE in the same edit, before you write it: the state it reads and EVERY site that sets and clears that state; every caller and every type that satisfies an interface you change; what happens when it does not fire and what observes that; and the test that pins it. Then declare it in newMechanisms with those same four properties filled in. An unspecified mechanism is a defect you are handing to a later round.\n" +
     "- Where a finding genuinely needs a decision rather than an edit, record it as an open decision with " +
@@ -3316,14 +3413,20 @@ function followUpFixPrompt(findings, round) {
     CONTEXT +
     "\n\nHARD CONSTRAINT. " + LOOP.editable() +
     "\nNever modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
-    "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. When a defect is drift between a changed statement and its parallels, make every statement agree rather than reverting the original fix.\n" +
+    "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. Keep the original fix. When a defect is drift between a changed statement and a parallel one, first ask whether the parallel should exist at all: a site that restates the changed rule or its reasoning is reduced to a citation of the one home, or deleted, and only a site that must keep its own statement is edited into agreement.\n" +
+    LEAN_EDIT +
+    SINGLE_SOURCE_RULE +
     CITER_SWEEP +
-    "Most defects a post-fix review finds are sites the first fixer's edit falsified without quoting it, so run the sweep over the names the previous fixer changed as well as your own, and say in your summary what it found.\nAppend your corrections as bullets to the SAME numbered pass subsection the previous fixer created in the proposal's adversarial-review-history section, rather than opening a new pass, because these are corrections to that pass and not a separate round. Follow " +
+    "Most defects a post-fix review finds are sites the first fixer's edit falsified without quoting it, so run the sweep over the names the previous fixer changed as well as your own, and say in your summary what it found. A hit the previous fix left true but unnecessary is deleted as well.\n" +
+    "RECORD WHAT YOU CORRECTED IN YOUR LOG SHARD, never in the change files: a pass history inside a staged file stages nothing and is read by every lens every round.\n" +
+    LOG_RULES() +
+    "\nFollow " +
     repo +
     "/.claude/rules/doc-style.md.\n\nDefects to correct (JSON):\n" +
     JSON.stringify(findings, null, 2) +
     "\n\nReturn a short summary of each edit you made."
     + NO_DECISION_REFS_IN_STAGING
+    + shardLine("follow-up-fix", round)
   );
 }
 
@@ -3790,6 +3893,12 @@ async function runRedesign(areas, rnd, why) {
       "implementation checklist's steps and their dependencies, the files-touched section, and the testing " +
       "section. A redesign that deletes a mechanism leaves its steps, its tests, and its files behind unless " +
       "you remove them.\n\n" +
+      "Then sweep for the design this redesign replaced. Grep every file of the proposal, the summary and " +
+      "the checklist included, for its names: identifiers, headings, defined terms, and field names. A hit " +
+      "that narrates the replaced design, explains why it failed, defends the new one against it, or " +
+      "states what no longer exists is obsolete: delete it, because the staged files describe what to " +
+      "build and the history belongs in the log. Keep a hit only where the implementor must act on it, such " +
+      "as a field the tree still carries that the change removes.\n\n" +
       "Record what this redesign did in your log shard rather than in the change files: which areas were " +
       "redesigned, why, what it deleted, and any open decision it recorded. A mechanism you replaced is a " +
       "`WATCHOUT` naming the old one and why it lost, so a later round does not re-derive it; the traps " +
@@ -4116,7 +4225,7 @@ async function judgePanel(rnd, verdict, growth, churn) {
     JSON.stringify(introducedMechanisms.filter((m) => m.loop === LOOP.name), null, 2) +
     "\n\nROUND HISTORY:\n" +
     JSON.stringify(
-      history.map((h) => ({ loop: h.loop, round: h.round, sweep: h.sweep, confirmed: h.confirmed, newMechanisms: h.newMechanisms })),
+      history.map((h) => ({ loop: h.loop, round: h.round, sweep: h.sweep, confirmed: h.confirmed, newMechanisms: h.newMechanisms, fixLines: h.fixLines })),
       null,
       2,
     ).slice(0, 8000) +
@@ -6523,6 +6632,8 @@ async function runReviewLoop(cfg) {
     const roundMechanisms = [];
     const escalatedAll = [];
     const designRejected = [];
+    let linesAdded = 0;
+    let linesRemoved = 0;
     for (let gi = 0; gi < groups.length; gi++) {
       const g = groups[gi];
       const picked = (g.findings || []).map((i) => confirmed[i]).filter(Boolean);
@@ -6588,7 +6699,18 @@ async function runReviewLoop(cfg) {
       }
       for (const e of out.escalated || []) escalatedAll.push(e);
       for (const d of out.designRejected || []) designRejected.push(g.id + ": " + d);
+      for (const n of out.netLines || []) {
+        linesAdded += Math.max(0, Number(n && n.added) || 0);
+        linesRemoved += Math.max(0, Number(n && n.removed) || 0);
+      }
     }
+    // The fixers' own count of what the round's edits added and removed. The
+    // best outcome of a fix is a shorter proposal, so a round that closes its
+    // findings by growing the text is visible here, in the round history the
+    // introspection pass reads, rather than only in the section growth it
+    // measures once the damage has accumulated.
+    log("Round " + round + ": fixes added " + linesAdded + " and removed " + linesRemoved + " line(s)");
+    history[history.length - 1].fixLines = { added: linesAdded, removed: linesRemoved };
     const fixOut = {
       summary: fixSummaries.join("\n\n"),
       newMechanisms: roundMechanisms,

@@ -1341,6 +1341,27 @@ const NO_DECISION_REFS_RULE =
   "requirement, in its own terms, with no trace of the question. When a decision is NOT answered, the " +
   "staged files say nothing about it at all and the question lives in the summary alone.";
 
+// The edit ladder for text this phase writes into the staged change files, the
+// decisions-phase counterpart of LEAN_EDIT in change-proposal.js, after the
+// Ponytail skill's "ladder of laziness" (github.com/DietrichGebert/ponytail).
+// An answered decision used to land with its ground cited as file:line and its
+// authority named beside it, which put a justification into the staged files
+// for every item this phase resolved. The staged files say what to build; the
+// ground goes to the review log, where the phase already records each item.
+const LEAN_STAGING =
+  "WRITE THE LEAST STAGED TEXT THAT LANDS IT. Take the FIRST rung that holds and stop there:\n" +
+  "  1. ALREADY STAGED. The staged text already builds this answer: write nothing into the staged files.\n" +
+  "  2. REPLACE IN PLACE the staged sentence the item concerns, at the same length or shorter.\n" +
+  "  3. POINT at a statement the proposal, the spec, or the tree already makes, by heading or symbol.\n" +
+  "  4. ONE SENTENCE beside the text it concerns.\n" +
+  "  5. Only then ADD the minimum text, in the one home it belongs to.\n" +
+  "The staged files tell the implementor what to build. Before writing a sentence into them, name who acts " +
+  "on it and what they do differently because of it. The ground an answer rests on, the alternatives it " +
+  "beat, and the evidence that it is safe go in your review-log line, not in the staged text; the staged " +
+  "text cites the tree only where the implementor needs the citation to find what to change, and locates " +
+  "code by symbol rather than by line number. Never cut a fail-closed predicate, a wire contract, an " +
+  "ordering another step depends on, or a trap an implementor would plausibly fall into.";
+
 const STAGED_ALIGNMENT_RULE =
   "WHAT THE PROPOSAL ALREADY STAGES IS PART OF THE ANSWER. For every decision, read what the staged " +
   "spec and non-spec changes build TODAY on that question and put it in `whatIsStaged`, quoting the " +
@@ -2291,6 +2312,12 @@ const ANSWER_DESIGN = {
     answerKey: { type: "string", description: "two or three words naming the answer" },
     authority: { type: "string", description: "the file:line the answer rests on, quoted" },
     where: { type: "array", items: { type: "string" }, description: "the staged sites the answer lands in" },
+    rung: {
+      type: "string",
+      enum: ["already-staged", "replace", "point", "one-sentence", "add", "not-answerable"],
+      description:
+        "the lowest rung of the staging ladder that lands the answer; `add` requires `why` to say why each lower rung fails",
+    },
     why: { type: "string", description: "why the ground settles it, or why nothing does" },
   },
 };
@@ -2314,6 +2341,8 @@ function answerDesignPrompt(item) {
     "which is worth more than an invented answer that reaches the staged text.\n\n" +
     STAGED_ALIGNMENT_RULE + "\n\n" +
     NO_DECISION_REFS_RULE + "\n\n" +
+    LEAN_STAGING + " Record the rung in `rung`: the applier writes what you design, so an answer designed " +
+    "as new text where a replacement would land it is where the proposal grows.\n\n" +
     "NAME THE SITES in `where`, one per staged location the answer changes, each as the file and the " +
     "section. The applier edits exactly these and nothing else, so a site you omit is a place the " +
     "proposal keeps saying the question is open.\n\n" +
@@ -2482,8 +2511,9 @@ const APPLIERS = {
       "You are staging an ANSWER. Write it into the staged changes where the decision lives: a decision " +
       "about the spec staging lands in the staged spec edits and one about the code, schema, chart, " +
       "migration, docs or test staging lands in the staged non-spec changes, beside the text it concerns " +
-      "and in the form that file states its other staged changes in. Cite the ground as file:line, and " +
-      "name the authority the answer rests on so a reader can tell a derived answer from an asserted one. " +
+      "and in the form that file states its other staged changes in. Name the authority the answer rests " +
+      "on, as file:line, in your review-log line so a reader can tell a derived answer from an asserted one; " +
+      "the staged text states the requirement. " + LEAN_STAGING + "\n" +
       "Then REMOVE the item's entry from `## Open decisions for human to make` in the summary: a resolved " +
       "decision leaves that list, and no `### Retired` or equivalent block replaces it. Where the item " +
       "was found in a staged change file's `## Open decisions for review` section, delete its entry " +
@@ -2530,7 +2560,8 @@ const APPLIERS = {
     brief:
       "The call was wrong and this proposal must solve the defect. Specify the solution in the staged " +
       "changes for the lane it lands in, WHOLE: the change, every site it touches, and the test that pins " +
-      "it, because nothing else in this run designs it. Then correct or remove the declaration that said " +
+      "it, because nothing else in this run designs it. Whole is complete rather than long: " + LEAN_STAGING +
+      "\nThen correct or remove the declaration that said " +
       "the proposal would not solve it, and remove its entry from `## Defects in the shipped tree that " +
       "this proposal does not stage` where one is there, so the proposal does not both stage the fix and " +
       "say it does not.",
@@ -2656,7 +2687,8 @@ function applyPrompt(item, spec, earlier) {
     "edit you would have made. Both are honest answers; substituting your own resolution is not.\n\n" +
     "RECORD WHAT YOU WROTE IN THE REVIEW LOG, never as a pass history inside a change file: a history " +
     "appended to the staged changes stages nothing and is read in full by every lens every round. One " +
-    "line under this firing naming the item, what you wrote, and where.\n\n" +
+    "line under this firing naming the item, what you wrote, and where, and for a staged answer the " +
+    "authority it rests on as file:line.\n\n" +
     "GIT IS THE EVIDENCE. What this firing changed is read from the diff under the proposal directory " +
     "rather than from this report, and an `edited` outcome whose diff is empty fails this item. Report " +
     "what you actually wrote.\n\n" +

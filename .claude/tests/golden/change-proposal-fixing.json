@@ -334,18 +334,20 @@
       "log-shard",
       "evidence",
       "deviations",
-      "rules"
+      "rules",
+      "lean-edit"
     ]
   },
   {
     "label": "r1:fix:G1",
     "phase": "non-spec R1: fix",
     "model": "opus",
-    "schema": "citersChecked+designRejected+escalated+newMechanisms+summary",
+    "schema": "citersChecked+designRejected+escalated+netLines+newMechanisms+summary",
     "blocks": [
       "file-ownership",
       "log-shard",
-      "evidence"
+      "evidence",
+      "lean-edit"
     ]
   },
   {

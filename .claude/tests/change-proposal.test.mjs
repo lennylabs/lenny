@@ -5115,8 +5115,10 @@ t.section("N4b. the single-source rule reaches every agent that could write a se
   const vm = mergedVerifies(run.calls)[0];
   t.check("the materiality skeptic confirms a restated-rule finding",
     /ALSO confirm a finding that one rule .* is stated in full at more than one site, even when the copies agree today/.test(vm.prompt));
-  t.check("and refutes it only for a citation, a clause, a rationale, or a docs page",
-    /Refute THAT kind of finding only when the second site merely cites/.test(vm.prompt));
+  t.check("and refutes it only for a citation, a clause, a one-clause reason, or a docs page",
+    /Refute either kind only when the second site merely cites, summarises in a clause, or gives the reason in one clause/.test(vm.prompt));
+  t.check("it confirms a reason written out beyond one clause at more than one site",
+    /Confirm on the same terms a finding that one decision's reasoning is written out beyond one clause at more than one site/.test(vm.prompt));
   t.check("other redundancy is still refuted", /redundancy of any other kind/.test(vm.prompt));
 
   const pruned = await runWorkflow(WF, { ...REVIEW_ARGS, ...ACTING, introspectEvery: 1 }, introStubs({
@@ -6087,6 +6089,86 @@ t.section("B38. a fix names what it changed and checks every site that names or 
   const writer = newRun.calls.find((c) => c.label === "write");
   t.check("the writer carries the pointer rule", writer && /A POINTER NAMES ITS TARGET AND NOTHING ELSE/.test(writer.prompt));
   t.check("and writes checklist steps as pointers", writer && /A STEP LINE IS A POINTER/.test(writer.prompt));
+}
+
+t.section("B39. fixers close each finding with the least text, and delete what a fix makes obsolete");
+{
+  const OBS = { ...SITE_P, effect: "obsolete", why: "defends the design the fix replaces" };
+  const OBS_T = { ...SITE_T, effect: "obsolete" };
+  const design = {
+    designs: [{
+      findingTitle: "F1", effort: "moderate", rung: "delete",
+      chosen: { approach: "delete the stale copy", why: "the home already states it" },
+      citerSearch: { anchors: [], searched: "none" },
+      siteDispositions: [{ file: OBS.file, line: OBS.line, quote: OBS.quote, disposition: "obsolete", why: "history" }],
+    }],
+  };
+  const postFix = { findings: [{ title: "PF1", where: "w", claim: "c", why_wrong: "w", evidence: "e", suggested_fix: "f", area: "a", kind: "contradiction", introducedBy: "this-run" }] };
+  const run = await runWorkflow(WF, REVIEW_ARGS, fixStubs(2, {
+    "*:expand:*": sites([OBS], [OBS_T]),
+    "*:fix-plan": plan([{ id: "G1", title: "g", rationale: "r", findings: [0, 1], order: 1, effort: "deep" }]),
+    "*:fix-design:*": design,
+    "*:fix:*": {
+      summary: "fixed", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [],
+      netLines: [{ file: "proposals/0081_fix_x/0081_fix_x.non-spec-changes.md", added: 3, removed: 10 }],
+    },
+    "r1:post-fix-review": postFix,
+    "*:follow-up-fix": "corrected",
+  }));
+
+  const lens = matching(run.calls, "r1:review:")[0];
+  t.check("a reviewer's suggested fix prefers deletion or replacement",
+    lens && /Prefer deleting the wrong or redundant text, or replacing it in place/.test(lens.opts.schema.properties.findings.items.properties.suggested_fix.description));
+  const ss = matching(run.calls, "r1:review:single-source")[0];
+  t.check("the single-source lens reports a reason written out at a second site",
+    ss && /Step 5, reasons: a decision's reasoning has one home too/.test(ss.prompt));
+
+  const exp = matching(run.calls, "r1:expand:")[0];
+  t.check("site expansion asks which text the fix makes unnecessary", exp && /WHICH TEXT DOES THE FIX MAKE UNNECESSARY/.test(exp.prompt));
+
+  const designer = matching(run.calls, "r1:fix-design:")[0];
+  t.check("the designer climbs the edit ladder", designer && /CLOSE EACH FINDING WITH THE LEAST TEXT/.test(designer.prompt));
+  t.check("and records its rung, without the schema requiring it",
+    designer && !!designer.opts.schema.properties.designs.items.properties.rung &&
+      !(designer.opts.schema.properties.designs.items.required || []).includes("rung"));
+  t.check("a trivial finding is applied at the lowest rung, not as suggested",
+    designer && /apply it at the lowest rung that closes it/.test(designer.prompt) && !/Output one line: apply as suggested/.test(designer.prompt));
+  t.check("the designer can mark a site obsolete",
+    designer && /OBSOLETE — the site stays TRUE after the fix, but this fix makes it unnecessary/.test(designer.prompt) &&
+      designer.opts.schema.properties.designs.items.properties.siteDispositions.items.properties.disposition.enum.includes("obsolete"));
+  const payload = designer && sitesPayload(designer.prompt);
+  const flat = JSON.stringify(payload || []);
+  t.check("an obsolete proposal site reaches the designer", flat.includes(OBS.file));
+  t.check("an obsolete tree site is dropped, since nothing here deletes tree text", !flat.includes(OBS_T.file), flat);
+
+  const fixer = matching(run.calls, "r1:fix:")[0];
+  t.check("the fixer climbs the ladder", fixer && /CLOSE EACH FINDING WITH THE LEAST TEXT/.test(fixer.prompt));
+  t.check("and is told the staged files say what to build", fixer && /THE STAGED FILES TELL THE IMPLEMENTOR WHAT TO BUILD/.test(fixer.prompt));
+  t.check("a forced design choice's rationale goes to the log shard, not the proposal",
+    fixer && /record the rationale as a `DECISION` in your log shard/.test(fixer.prompt) && !/record the rationale in the proposal/.test(fixer.prompt));
+  t.check("evidence proving a claim goes to the log", fixer && /The evidence that proves a claim goes in your log shard/.test(fixer.prompt));
+  t.check("every obsolete site is deleted in the same edit", fixer && /Every site marked `obsolete` is deleted in this edit/.test(fixer.prompt));
+  t.check("the fixer reports its net lines, without the schema requiring them",
+    fixer && !!fixer.opts.schema.properties.netLines && !(fixer.opts.schema.required || []).includes("netLines"));
+  t.check("the round logs what the fixes added and removed", run.logs.some((l) => /Round 1: fixes added 3 and removed 10 line\(s\)/.test(l)),
+    run.logs.filter((l) => /fixes added/.test(l)).join(" | "));
+
+  const follow = matching(run.calls, "r1:follow-up-fix")[0];
+  t.check("the follow-up fixer climbs the ladder", follow && /CLOSE EACH FINDING WITH THE LEAST TEXT/.test(follow.prompt));
+  t.check("and reduces a drifted parallel rather than re-synchronising it",
+    follow && /first ask whether the parallel should exist at all/.test(follow.prompt) && !/make every statement agree/.test(follow.prompt));
+  t.check("and records its corrections in a log shard, not the change files",
+    follow && !/adversarial-review-history section/.test(follow.prompt) && /BEFORE YOU RETURN, append what a future agent/.test(follow.prompt));
+}
+{
+  // A redesign that replaces a mechanism deletes the replaced design's history.
+  const { calls } = await runWorkflow(WF, {
+    ...REVIEW_ARGS, mode: "redesign", focusAreas: ["teardown"],
+    maxSpecReviewRounds: 1, maxNonSpecReviewRounds: 1, allowNonSpecOnUnconvergedSpec: true,
+  }, loopStubs({ "redesign*:review:*": { findings: [] }, "redesign*": "done" }));
+  const apply = matching(calls, "redesign").find((c) => /:apply$/.test(c.label));
+  t.check("the redesign apply sweeps for the replaced design's names",
+    apply && /Then sweep for the design this redesign replaced/.test(apply.prompt));
 }
 
 t.done();

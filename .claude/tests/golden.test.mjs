@@ -49,6 +49,10 @@ const BLOCKS = [
   ["log-write", /WHERE IN THE LOG YOUR BLOCK GOES/],
   ["pathspec-scope", /THE PATHSPEC IS THE WHOLE SCOPE/],
   ["commands", /Run these commands in|Run this in /],
+  // The edit ladder every agent that writes staged text climbs. Dropping it
+  // from a fixer's prompt is the regression that lets the staged files grow
+  // back into a record of defences, so its presence is part of the contract.
+  ["lean-edit", /CLOSE EACH FINDING WITH THE LEAST TEXT|WRITE THE LEAST STAGED TEXT THAT LANDS IT/],
 ];
 
 function digest(calls) {
