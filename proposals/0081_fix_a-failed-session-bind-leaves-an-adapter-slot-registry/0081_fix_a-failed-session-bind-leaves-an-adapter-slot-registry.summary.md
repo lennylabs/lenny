@@ -72,7 +72,8 @@ Where that lands:
 - One accounting helper serves every bind path the reclaim obligation binds, so the create-time
   reserved path and the §7.3 re-attach reach the §5.2 unhealthy threshold neither has ever
   reached, and `isTransientPodClaimError` gains the `codes.Aborted` arm that serves the reclaim
-  hold's refusal, the identity refusal and the start rollback alike
+  hold's refusal, the identity refusal and the start rollback alike, and an arm for the
+  started-session refusal of a resume
   (`pkg/gateway/sessionserver/start.go`).
 - The specification states the obligation. §7.1 gains the failed-bind pod-side reclaim duty and
   its `leaked` disposition as a paragraph of its own, binding the creation, start, and re-attach
@@ -971,9 +972,14 @@ derived no recommendation for it.
 - **§7.3, §6.2. A `Resume` refused with `codes.Unavailable` takes the row terminal.** The refusal
   is wrapped by `fmt.Errorf` (`pkg/gateway/podlifecycle/podsession/binder.go:1629`) and matches
   no arm of `isTransientPodClaimError`, so `holdOrFailOnResumeError` calls `failSession` while
-  the workspace and the checkpoint are intact. Adding the arm needs a §7.3 statement. CODE-5's
-  `Aborted` arm covers the refusals this proposal introduces and converges with that fix rather
-  than replacing it.
+  the workspace and the checkpoint are intact. `writePodClaimError`'s default arm meanwhile
+  answers the client a retryable 503 `RESUME_FAILED`. §7.2's session state machine and §6.2's
+  `resuming` failure transitions return a failed re-attach to `awaiting_client_action`, so the
+  classifier, rather than the spec, is what disagrees. CODE-5's
+  arms cover the refusals this proposal introduces, including the started-session refusal, which
+  CODE-6 moves off `codes.Unavailable`; what remains is `codes.Unavailable` from the SDK-warm
+  different-session arm and every other resume cause no arm recognises. CODE-5 converges with
+  that fix rather than replacing it.
 - **§5.2, §12.4. The `active_slots` reservation is released on a failure the client will retry.**
   Retaining the create-time reservation across such a failure needs the classifier corrected
   first: `SlotBindError.Reason()` returns `SlotReasonTransient` on its `default` arm by
@@ -1161,6 +1167,21 @@ derived no recommendation for it.
   series without naming its emitter, so it does not repeat the attribution. Correcting §6.2 is a
   separate spec change.
 
+- **§7.1, §6.1. Two concurrent `/finalize` calls for one session both run, and on an SDK-warm pod
+  the loser's `DemoteSDK` can end the winner's live session.** `handleFinalize` checks its
+  precondition against a row it read before any lock, `transitionFinalizing` writes `finalizing`
+  without checking the current state (`pkg/gateway/sessionserver/sessionserver.go`), and
+  `pgstore.Update` locks the row without validating the transition, so both calls run
+  `Binder.Prepare` against the session's pod, each on its own adapter connection. `DemoteSDK`
+  names no session and releases whichever entry the registry holds (the `DemoteSDK` handler in
+  `pkg/adapter/sdkwarm.go`). `Binder.Prepare` sends it when the request sets `PreConnect` and the
+  plan touches one of the SDK-warm blocking paths, so a losing call whose demotion reaches the pod
+  after the winner's
+  `Prepare`, its `ready` commit and its launch closes the live session's runtime and releases its
+  entry. The losing call can also overwrite the row's state, fail the session, or drain the shared
+  pod. The remedy is a compare-and-swap on the transition into `finalizing`, which proposal 0082
+  stages.
+
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
@@ -1189,7 +1210,7 @@ derived no recommendation for it.
 - **CODE-2** (`pkg/adapter/runtimegeneration.go`, `pkg/adapter/session.go`, `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go`): `noteRuntimeStarted` takes the token its own claim observed and confirms the registry still holds an entry bound to this session carrying it, under rule 8 (the start-confirmation rule). The confirmation binds every request that starts a session: `StartSession` (`pkg/adapter/session.go:163`) and `Resume` (`pkg/adapter/resume.go:144`) take the session back off the runtime and refuse the start when it does not, and the SDK-warm `ConfigureWorkspace` (`pkg/adapter/sdkwarm.go:261`) takes the runtime half of the §6.1 demotion, removes no registry entry, and refuses on `codes.Aborted`.
 - **CODE-3** (`pkg/sandbox/slotstate/slotstate.go`, `pkg/sandbox/slotstate/registry.go`, `pkg/gateway/runtime/slothealth/slothealth.go`, `pkg/gateway/sessionserver/sessionserver.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go`): the per-slot edge list and its doc comment gain the `receiving_uploads → slot_cleanup` edge, the glosses SPEC-4 retires are re-keyed onto §6.2 and §5.2 pointers, and the doc comments that state the withdrawn cleanup-timeout trigger for `leaked` lose that ground and keep their §6.2 citations.
 - **CODE-4** (`pkg/gateway/podlifecycle/podsession/slotbinder.go`, `binder.go`, `slotfailure.go`, `bindattempt.go`, `pkg/gateway/sessionserver/upload_to_session.go`): the gateway mints an opaque token per bind attempt at `materializeSlot`, `Binder.Prepare` and `Binder.Resume`, carries it on every request that takes one, sets `unconditional_teardown` at every non-compensating `Shutdown` caller, sends the compensating `Shutdown` at every post-connection bind failure and at a failed `Resume`, computes the leaked disposition from the RPC error and the clean-exit flag, which the teardown rules make sufficient, and releases the lease identifiers its own attempt minted.
-- **CODE-5** (`pkg/gateway/sessionserver/start.go`): one accounting helper serves every bind path the §7.1 obligation binds, so the create-time reserved path and the §7.3 re-attach reach the §5.2 threshold, and `isTransientPodClaimError` gains the `codes.Aborted` arm that serves the reclaim hold's refusal, the identity refusal and the start rollback alike.
+- **CODE-5** (`pkg/gateway/sessionserver/start.go`): one accounting helper serves every bind path the §7.1 obligation binds, so the create-time reserved path and the §7.3 re-attach reach the §5.2 threshold, and `isTransientPodClaimError` gains the `codes.Aborted` arm that serves the reclaim hold's refusal, the identity refusal and the start rollback alike, and an arm for CODE-7's `ErrSlotBindAlreadyStarted`, so a resume refused under rule 6 holds the row.
 - **CODE-6** (`pkg/adapter/bindattempt.go`, `pkg/adapter/slot.go`, `pkg/adapter/slotsession.go`, `pkg/adapter/server.go`, `pkg/adapter/staging.go`, `pkg/adapter/slotcreds.go`, `pkg/adapter/credentials.go`, `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go`, `pkg/adapter/holdstate.go`): `slotState.bindAttempt`, the resolve descriptor its callers pass, the `validateBindFields` check each handler carrying the fields runs at its entry under rule 1, the predicate that applies rules 2 through 7 at the one resolve chokepoint under `s.mu`, the per-slot guard over every section that writes or destroys a slot's tree outside `s.mu`, derived section by section rather than enumerated, and rule 2's reclaim hold with the `reclaimSlotLocked` helper every deregister-then-destroy site routes through, each site removing the slot tree through `Server.removeSlotTreeVia`, whose nil-defaulted `Server.removeSlotTreeFn` field is the test seam, so a failed removal can be injected. In `holdstate.go` the §10.1.4 pass's single ten-second context becomes its guard-acquisition deadline alone and each member mints its own ten-second close context, so one member's guard wait cannot spend a later member's final usage report or runtime close. The hold is tested at the guard acquisition, so a guarded admission RPC is refused rather than left to block for the whole cleanup, and inside the resolve, which is where the unguarded RPCs meet it.
 - **CODE-7** (`pkg/gateway/runtime/adapterclient/client.go`): the translation from the gRPC status detail to the two sentinel errors the gateway matches with `errors.Is`.
 - **CODE-8** (`pkg/gateway/podlifecycle/podsession/binder.go`): `Binder.Prepare`'s and `Binder.Launch`'s reclaim closures take the failing error as a parameter and skip `failPhase` on either typed refusal, so the call site returns the refusal and the pod is not drained. `failPhase` drains on every call.

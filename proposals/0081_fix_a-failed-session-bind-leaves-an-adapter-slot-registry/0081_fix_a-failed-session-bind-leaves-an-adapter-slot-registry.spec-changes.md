@@ -155,7 +155,10 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   either. The entry stands until a request that removes an entry without naming a bind attempt
   runs, which is an unconditional teardown, an SDK demotion, or the §10.1 hold-timeout
   termination, or until the pod retires, and a later bind attempt at that session on that pod
-  meets the started-session rule while it stands. Closing it would need
+  meets the started-session rule while it stands. A recycle does not end it, because the
+  whole-pod scrub works on the slot directories and releases no registry entry, so a §7.3 resume
+  of that session placed on the pod after the recycle meets the same rule and is refused for that
+  pod. Closing it would need
   the adapter to hold the slot identifier until the gateway's reclaim has been answered, which
   keeps an identifier held across a network round trip on every failed bind and refuses the
   client's own retry for that whole window, or the narrower rule that bars a start from creating
@@ -305,7 +308,7 @@ Replace the `DemoteSDK` row's opening clause. The row currently reads, verbatim:
 Replace that row with:
 
 ```
-| `DemoteSDK`          | Tear down the pre-connected SDK process, remove the adapter's slot registry entry for the session the pod holds if it holds one, and return the pod to pod-warm state (see [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). The request names no session, and [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) admits `preConnect` only at `maxConcurrentSessions: 1`, so the entry it removes is the registry's single entry, and the removal is a slot release whose [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) per-slot cleanup the adapter runs inside this request, before it answers. Required for runtimes that declare `preConnect: true`. |
+| `DemoteSDK`          | Tear down the pre-connected SDK process, remove the adapter's slot registry entry for the session the pod holds if it holds one, and return the pod to pod-warm state (see [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). The request names no session, and [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) admits `preConnect` only at `maxConcurrentSessions: 1`, so the entry it removes is the registry's single entry, whichever session holds it, and the removal is a slot release whose [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) per-slot cleanup the adapter runs inside this request, before it answers. Required for runtimes that declare `preConnect: true`. |
 ```
 
 This row is the single home of the registry removal and of the timing of the cleanup that
@@ -1220,7 +1223,7 @@ The leaked-slots gauge is shipped and uncatalogued; this proposal changes which 
 it, so it takes a row here as well.
 
 ```
-| Slot compensation superseded (`lenny_slot_compensation_superseded_total`, labeled by `pool`, `k8s_pod_name` — a compensating `Shutdown` answered `superseded`: the adapter holds an entry for the session that the compensation is not addressed to, so the reclaim released nothing and the slot is not leaked. See [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract).) | Counter |
+| Slot compensation superseded (`lenny_slot_compensation_superseded_total`, labeled by `pool`, `k8s_pod_name`, `cause` — a compensating `Shutdown` answered `superseded`: the adapter holds an entry for the session that the compensation is not addressed to, so the reclaim released nothing and the slot is not leaked. `cause` is `refusal` when the compensated attempt failed on a `SLOT_BIND_ATTEMPT_SUPERSEDED` or `SLOT_BIND_ALREADY_STARTED` refusal, which such a compensation answers routinely, and `failure` for any other failure, where the answer marks a race between attempts. See [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract).) | Counter |
 | Slot shutdown met an untokened entry (`lenny_slot_shutdown_untokened_entry_total`, unlabeled, the pod label being the one the scrape target attaches — a `Shutdown` carrying an attempt token met a registry entry that carries none, which counts the reclaims that met an entry no attempt owns: an entry a start created and a non-conforming adapter's entry alike. Adapter-side; not scraped until the adapter metrics endpoint is wired) | Counter |
 | Leaked session slots (`lenny_adapter_leaked_slots`, labeled by `pod_id`, `pool`; `pod_id` carries the pod name and is a local-only extension of the `k8s.pod.name` attribute ([Section 16.1.1](#1611-attribute-naming)) — the per-pod count of slots in the `leaked` sub-state, which stay counted until the pod terminates. See [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).) | Gauge |
 ```

@@ -888,8 +888,8 @@ Targets:
 - `pkg/gateway/sessionserver/upload_to_session.go` (outside this package) · the §7.4
   mid-session pair sets `mid_session` true on `PrepareWorkspace` and `FinalizeWorkspace` and
   carries an empty `bind_attempt`.
-- `slotbinder.go` · a new `slotCleanupBudget` helper and a new `compensateFailedSlotBind`
-  method; `materializeSlot` splits into a stage runner and a compensating wrapper, and mints
+- `slotbinder.go` · a new `slotCleanupBudget` helper, a new `compensationCause` helper, and a
+  new `compensateFailedSlotBind` method; `materializeSlot` splits into a stage runner and a compensating wrapper, and mints
   the attempt's token at the top; `ReleaseSlotReservation` takes the disposition;
   `BindReservedSlot` and `ClaimSlot`'s connect-stage release pass it; `Binder.ReleaseSlot`'s
   `Shutdown` and `ShutdownRecycle` calls set `unconditional_teardown`.
@@ -1040,10 +1040,15 @@ This differs from the six-arm form in one case, and the difference is fail-close
 answering `superseded`, `absent`, or a value this build does not recognize together with
 `exited_cleanly` false is leaked here, where the six-arm form called it clean.
 
-The outcome is read for observability alone. `Binder.noteCompensationOutcome(outcome, pool,
-podName)` is a method on `Binder` rather than a free function, because the series SPEC-6's §16.1
-row states is labeled by `pool` and `k8s_pod_name` and is emitted through a `Binder` hook, both
-of which a package-level function can reach. It fires only on
+The outcome is read for observability alone. The label's value comes from
+`compensationCause(err error) string`, declared in `slotbinder.go` beside the wrapper, which
+returns `refusal` when `err` matches CODE-7's `ErrSlotBindAttemptSuperseded` or
+`ErrSlotBindAlreadyStarted` under `errors.Is` and `failure` otherwise. It is the one statement of
+that value, and both compensating call sites pass it the attempt's error.
+`Binder.noteCompensationOutcome(outcome, cause, pool, podName)` is a method on `Binder` rather
+than a free function, because the series SPEC-6's
+§16.1 row states is labeled by `pool`, `k8s_pod_name` and `cause` and is emitted through a
+`Binder` hook, both of which a package-level function can reach. It fires only on
 `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch lives in one place, and nothing else consumes
 the value. CODE-9 states the hook, its forwarder and its wiring.
 
@@ -1095,7 +1100,7 @@ func (b *Binder) materializeSlot(
             // judged on the same two fields rather than on a default arm that
             // would treat a failed close as clean.
             sbe.Leaked = cerr != nil || !cleanly
-            b.noteCompensationOutcome(outcome, req.Pool, sandboxName)
+            b.noteCompensationOutcome(outcome, compensationCause(err), req.Pool, sandboxName)
         }
         // spec: §7.1 (normal flow); §4.9 (credential leasing service). Every
         // stage that mints a §4.9 lease runs inside materializeSlotStages, so
@@ -1202,7 +1207,7 @@ entry-touching RPC of its attempt and creates the entry through its own claim
 currently calls `cl.Close()` and then `releaseResumeSlot`; it becomes the compensation on the
 still-open connection, taking `req.SessionID`,
 `req.CleanupTimeoutSeconds` and `req.MaxConcurrentSessions` off the `ResumeRequest`, then
-`b.noteCompensationOutcome(outcome, req.Pool, sb.Name)`, then the close, then the release
+`b.noteCompensationOutcome(outcome, compensationCause(err), req.Pool, sb.Name)`, then the close, then the release
 carrying the outcome. It releases no credential lease: `Binder.Resume`
 mints none, its §7.3 retry re-mints none, and the session may still hold the leases its
 original bind minted, so returning them on a retryable failure would leave every later resume
@@ -1234,7 +1239,7 @@ unconditional form.
 
 The counters this compensation feeds are CODE-9's.
 
-### CODE-5 · pkg/gateway/sessionserver/start.go · one accounting helper serves every bind path the reclaim obligation binds, and the resume classifier learns the adapter's transient code
+### CODE-5 · pkg/gateway/sessionserver/start.go · one accounting helper serves every bind path the reclaim obligation binds, and the resume classifier learns the adapter's transient code and the started-session refusal
 
 The placement constraint the earlier revision carried is withdrawn whole, and with it the
 per-request pod-exclusion field on `podsession.SlotBindRequest` and `podclaim.SlotRequest`,
@@ -1338,17 +1343,24 @@ same switch maps to `SlotReasonWorkspaceValidation` and `NonRetryable()` reports
 
 The phase gate is the exception and is correctly signed. `SLOT_BIND_ALREADY_STARTED` answers
 `codes.FailedPrecondition`, which `Reason()` maps to `policy_rejection` outside the workspace
-stages and which `NonRetryable()` reports true for. That is the right classification: the
-session has already started on this pod, and a retry of the same bind is not going to change
-that.
+stages and which `NonRetryable()` reports true for. That is the right classification on this
+path: the session has already started on this pod, and a retry of the same bind onto the same
+slot is not going to change that. It is not the right classification on the §7.3 resume path,
+where each retry makes a new claim, which may land on another pod, and the refusal is a fact
+about the pod holding the stale entry rather than about the session, so the resume classifier
+below treats it as transient. The spec basis is §7.2's session state machine and §6.2's
+`resuming` failure transitions, which return a `resuming` session whose re-attach fails, a
+non-retryable failure included, to `awaiting_client_action`, and §15.1's `RESUME_FAILED` row, under which the row stays there for
+the client's explicit resume. Rule 6's `CATEGORY_PERMANENT` classifies the refused request on that
+pod rather than the session's state.
 
-**The §7.3 resume path reads a second classifier, and that one gains an arm.**
+**The §7.3 resume path reads a second classifier, and that one is extended.**
 `isTransientPodClaimError` (`pkg/gateway/sessionserver/start.go:3648-3681`) is what
 `holdOrFailOnResumeError` reads to decide whether a failed resume reverts the row to
 `awaiting_client_action` for the client's `POST /v1/sessions/{id}/resume` or demotes it to
 terminal `failed`. Every arm it carries today is a typed error or a sentinel, so a bare
 `codes.Aborted` status matches none of them and falls through to `return false`, which demotes
-a session the refusal says to retry. Add one arm after the existing switch and before that
+a session the refusal says to retry. Add these arms after the existing switch and before that
 final `return false`:
 
 ```go
@@ -1364,20 +1376,33 @@ final `return false`:
 		// retry rather than going terminal.
 		return true
 	}
+	if errors.Is(err, adapterclient.ErrSlotBindAlreadyStarted) {
+		// spec: §4.7.1 (role and gateway RPC contract), rule 6; §7.3 (retry and
+		// resume). The started-session refusal is a refusal of this pod rather
+		// than of the session: a resume retry makes a new claim, which may land
+		// on another pod, and the entry that refused it is a residue on this
+		// one. Other resume causes keep the shipped classification, which the
+		// summary records as a defect this proposal does not stage.
+		return true
+	}
 	return false
 ```
 
-The gateway reads the status code rather than CODE-6's adapter-local sentinel because that
+The first arm reads the status code rather than CODE-6's adapter-local sentinel because that
 sentinel is minted in the adapter process and no production file under `pkg/gateway` imports
-`pkg/adapter`; the code is the part of the refusal that survives the wire. CODE-7's typed
+`pkg/adapter`; the code is the part of the refusal that survives the wire. The second arm reads
+CODE-7's gateway-side sentinel rather than the `FailedPrecondition` code, because this proposal
+reclassifies only the refusals it introduces, and a `FailedPrecondition` workspace-root mismatch
+is not one of them. CODE-7's typed
 sentinels are the other half and are matched where the distinction between the two new codes
-matters, which is the reclaim closures; this classifier needs
-only the code, so one arm covers all three producers. `status.Code` resolves through a wrapper
+matters, which is the reclaim closures and this second arm; the first arm needs
+only the code, so it covers all three `Aborted` producers. `status.Code` resolves through a wrapper
 with `errors.As`, so the arm fires on the bare status and equally through the `*SlotBindError`
 that CODE-4 makes `Binder.Resume` return. The wire envelope needs no change:
 `writePodClaimError`'s default arm already answers the retryable 503 `RESUME_FAILED` with a
-`Retry-After` for a cause it does not recognise, so the row-state classifier was the only half
-that disagreed with it.
+`Retry-After` for a cause it does not recognise, so for these refusals the row-state classifier
+was the half that disagreed with it. Every other resume cause no arm recognises keeps that
+disagreement, which the summary records as a defect this proposal does not stage.
 
 No in-gateway wait-and-retry is staged for the hold. SPEC-3's §5.2
 `**Slot-identifier reclaim hold.**` paragraph and the disposition table above it state when the
@@ -1914,9 +1939,7 @@ reader in the whole gateway is `client.go:333-341`, which recovers `RunSetup` pa
 // ErrSlotBindAttemptSuperseded is returned when the adapter refused a
 // bind-sequence RPC because the pod's slot registry entry for the session
 // carries a non-empty bind attempt token different from this attempt's.
-// Another attempt owns the entry and everything under it. The caller must not
-// compensate: a Shutdown naming this attempt's token would answer superseded
-// and remove nothing, and one naming nothing would tear down a live session.
+// Another attempt owns the entry and everything under it.
 //
 // spec: §4.7.1 (role and gateway RPC contract)
 var ErrSlotBindAttemptSuperseded = errors.New("adapterclient: slot bind attempt superseded")
@@ -2095,20 +2118,23 @@ The superseded series is registered in `pkg/observability/metrics/catalog.go`, a
 Prometheus collector sits with the other gateway slot series in
 `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go` beside the
 `lenny_slot_failure_total` collector at `gatewaymetrics_credential.go:185-193`, exported as
-`Metrics.IncSlotCompensationSuperseded` in the form `IncSlotFailure`
-(`gatewaymetrics.go:1170-1175`) already takes.
+`Metrics.IncSlotCompensationSuperseded(outcome, cause, pool, podName string)`, the signature of
+the `SlotReclaim` hook below, so the hook is assigned directly the way `IncSlotFailure`
+(`gatewaymetrics.go:1170-1175`) is assigned to `SlotFailure`.
 
 The collector reaches the binder through a hook of the same form as `SlotFailure`, because the
-series carries `pool` and `k8s_pod_name` and only the call site holds those values:
+series carries `pool`, `k8s_pod_name` and `cause` and only the call site holds those values:
 
-- `pkg/gateway/podlifecycle/podsession/binder.go` declares `SlotReclaim func(outcome, pool,
+- `pkg/gateway/podlifecycle/podsession/binder.go` declares `SlotReclaim func(outcome, cause, pool,
   podName string)` beside `SlotFailure` (`binder.go:137`), with a doc comment naming the §16.1
   series. A nil field is the no-op default and the field is never cleared.
 - `pkg/gateway/podlifecycle/podsession/slotbinder.go` carries the forwarder `func (b *Binder)
-  noteCompensationOutcome(outcome adapterv1.SlotReclaimOutcome, pool, podName string)` beside
-  `recordSlotFailure` (`slotbinder.go:353-361`), which it copies. It returns without calling the
-  hook when `b.SlotReclaim` is nil and when the outcome is anything other than
-  `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch exists once.
+  noteCompensationOutcome(outcome adapterv1.SlotReclaimOutcome, cause, pool, podName string)`
+  beside `recordSlotFailure` (`slotbinder.go:353-361`), which it copies. It returns without
+  calling the hook when `b.SlotReclaim` is nil and when the outcome is anything other than
+  `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch exists once. It takes the `cause` label's
+  value as a string, so this deliverable does not depend on CODE-7; CODE-4's
+  `compensationCause` supplies it.
 - `cmd/lenny-gateway/metricsbackfill.go` sets the hook on the line below `w.podBinder.SlotFailure
   = gwMetrics.IncSlotFailure` (`metricsbackfill.go:149`). That is the hook's only production
   wiring site, and without it the forwarder no-ops while the §16.1 row and the
@@ -2150,7 +2176,7 @@ belongs in the gateway rows rather than under `## Adapter metrics`, because the 
 
 | Counter | Fires when | Expected value |
 |:--|:--|:--|
-| `lenny_slot_compensation_superseded_total` | a compensation answered `superseded`, meaning the adapter held an entry the compensation was not addressed to | no expected rate; the series records the outcome, whose meaning SPEC-6's §16.1 row states |
+| `lenny_slot_compensation_superseded_total` | a compensation answered `superseded`, meaning the adapter held an entry the compensation was not addressed to, labeled by `cause` as SPEC-6's §16.1 row states | no expected rate; the series records the outcome, whose meaning SPEC-6's §16.1 row states |
 | `lenny_slot_shutdown_untokened_entry_total` | the adapter met an entry carrying no token, incremented from CODE-1's fail-closed arm | zero on the bind paths, and non-zero when an abandoned attempt's late `StartSession` left an untokened entry behind, which SPEC-5 records as a residue |
 
 The superseded series is gateway-side. The untokened-entry series is adapter-side, and the
@@ -2845,7 +2871,7 @@ Amend the `DemoteSDK` row (`:64`) so it states the registry effect rule 4 turns 
 cleanup the demotion runs inside the call:
 
 ```
-| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry for the session the pod holds if it holds one, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. Where that cleanup runs and completes, the next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
+| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry the pod holds if it holds one, whichever session holds it, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. Where that cleanup runs and completes, the next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
 ```
 
 Replace the `ReportSessionScrub` row (`:81`) under `**Adapter-to-Gateway RPCs:**` with the row
@@ -3458,15 +3484,17 @@ execution modes); §6.2 (pod state machine)`:
   deadline still sends the compensation. This is the residue class the compensation exists for
   and the case a naive implementation gets wrong.
 - **The counters.** A compensation answering `superseded` reaches `b.SlotReclaim` with the
-  outcome, `req.Pool` and the sandbox name, and the case asserts the recorded triple rather than
-  the increment alone, so a forwarder that drops a label value fails here. A compensation
+  outcome, the cause, `req.Pool` and the sandbox name, and the case asserts the recorded values
+  rather than the increment alone, so a forwarder that drops a label value fails here. It runs
+  after an attempt refused with CODE-7's `ErrSlotBindAttemptSuperseded`, recording cause
+  `refusal`, and after an ordinary stage failure, recording cause `failure`. A compensation
   answering `absent` reaches the hook not at all. CODE-9's collector and its accessor are held
   by two shipped cases in `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_elicitation_test.go`,
   extended in place beside their `IncSlotFailure` lines.
   `TestCredentialAndLLMProxyAndSlotMetricsEmit` gains one `IncSlotCompensationSuperseded` call
-  with pool `pool-a` and pod name `sbx-1`, passed in the parameter order of the `SlotReclaim`
-  hook CODE-9 declares, and asserts the exposition line
-  `lenny_slot_compensation_superseded_total{k8s_pod_name="sbx-1",pool="pool-a"} 1`, so a
+  with outcome `superseded`, cause `failure`, pool `pool-a` and pod name `sbx-1`, passed in the parameter order of the
+  `SlotReclaim` hook CODE-9 declares, and asserts the exposition line
+  `lenny_slot_compensation_superseded_total{cause="failure",k8s_pod_name="sbx-1",pool="pool-a"} 1`, so a
   collector registered under another name or another label set fails here.
   `TestNewMetricsEmittersNilSafe` gains the same call on a nil `*Metrics`.
 - **The workspace stages are separated at the metric and nowhere else.** A bind whose
@@ -3546,15 +3574,19 @@ execution modes); §6.2 (pod state machine)`:
   (`pkg/gateway/sessionserver/start.go:239-249`), reached through the typed
   `*SetupCommandFailure` handler in `writePodClaimError` (`start.go:87-90`), which is a
   different decision from the `Reason()` and `classifySlotBindFailure` rows above.
-- **The resume classifier holds the row for every refused resume.**
+- **The resume classifier holds the row for every slot-bind refusal of a resume.**
   `TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3` in
   `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`, reusing that file's
-  `seedResumingRow` fixture. Three cases: a bare `status.Error(codes.Aborted,
-  "slot_reclaim_in_progress")`, a superseded refusal, and either of those wrapped in a
-  `*podsession.SlotBindError`. Each asserts that `holdOrFailOnResumeError` takes the
-  `awaiting_client_action` branch and leaves the row a valid precondition for the explicit
-  `POST /v1/sessions/{id}/resume`, rather than the terminal `failed` the classifier answered
-  before CODE-5's arm.
+  `seedResumingRow` fixture. The held cases are a bare `status.Error(codes.Aborted,
+  "slot_reclaim_in_progress")`, a superseded refusal, either of those wrapped in a
+  `*podsession.SlotBindError`, and a started-session refusal carrying CODE-7's
+  `ErrSlotBindAlreadyStarted` wrapped the same way. Each asserts that `holdOrFailOnResumeError`
+  takes the `awaiting_client_action` branch and leaves the row a valid precondition for the
+  explicit `POST /v1/sessions/{id}/resume`, rather than the terminal `failed` the classifier
+  answered before CODE-5's arms. A separate case asserts that `isTransientPodClaimError` does not
+  match a bare `status.Error(codes.FailedPrecondition, ...)` that is not that sentinel, which pins
+  the second arm to the sentinel rather than to the code and keeps the shipped classification of
+  other causes out of this deliverable.
 
 ### Wire-contract tests for SCHEMA-1, CODE-1, CODE-6 and CONF-1, tier 3
 
@@ -3896,8 +3928,8 @@ a package test in the unit tier rather than a tier-11 gate. Its `docs/reference/
 held by a new file, `tests/tier11_docs/slot_compensation_metric_reference_test.go`, following the
 shipped one-metric-per-file precedent `tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go`:
 it reads the reference page, locates the single table row naming the counter, and asserts that the
-row names the `pool` and `k8s_pod_name` labels and the superseded semantics SPEC-6's §16.1 row
-states, and it asserts the same of the `lenny_adapter_leaked_slots` row, with the `pod_id` and
+row names the `pool`, `k8s_pod_name` and `cause` labels and the superseded semantics SPEC-6's §16.1
+row states, and it asserts the same of the `lenny_adapter_leaked_slots` row, with the `pod_id` and
 `pool` labels. It carries the `// spec:` annotation and the `// diagnosis:` comment tier 11 requires.
 
 That file's name states the slot as its subject, so the tier-0 inventory gate derives it into the
@@ -4211,7 +4243,7 @@ of these cases:
 - `pkg/gateway/podlifecycle/podsession/slotfailure.go` · `SlotBindError.Leaked` and the new
   `slotFailureWorkspaceFinalize` stage constant.
 - `pkg/gateway/podlifecycle/podsession/slotbinder.go` · `slotCleanupBudget`,
-  `compensateFailedSlotBind`, `materializeSlot` and
+  `compensationCause`, `compensateFailedSlotBind`, `materializeSlot` and
   `materializeSlotStages` with the mint and the attempt-scoped lease release,
   `releaseAttemptCredentials`, `ReleaseSlotReservation`, `BindReservedSlot`, `ClaimSlot`'s
   connect-stage release, `Binder.ReleaseSlot`'s two teardown calls, and the
@@ -4225,7 +4257,7 @@ of these cases:
   teardown calls.
 - `pkg/gateway/sessionserver/start.go` · the `slotBinder` interface, `accountSlotFailure`,
   `applySlotRetryPolicy`, `bindSlotWithRetry`, `bindConcurrentSlot`, `resumeOnPod`,
-  `rollbackClaim`, and `isTransientPodClaimError`'s `codes.Aborted` arm.
+  `rollbackClaim`, and `isTransientPodClaimError`'s `codes.Aborted` and `ErrSlotBindAlreadyStarted` arms.
 - `pkg/gateway/sessionserver/upload_to_session.go` · the §7.4 pair sets `mid_session` true and
   carries no token.
 - `pkg/observability/metrics/catalog.go` and the `spec161Metrics` list in its `catalog_test.go` · the superseded series and the leaked-slots gauge.
