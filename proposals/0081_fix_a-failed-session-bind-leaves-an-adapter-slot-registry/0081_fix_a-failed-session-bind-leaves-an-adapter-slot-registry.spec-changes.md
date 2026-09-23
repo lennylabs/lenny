@@ -581,8 +581,8 @@ is not a carrier.
 | `schemas/lenny-adapter.proto`, `ReportSessionScrubRequest` message comment | Mirrored by SCHEMA-1 |
 | `pkg/proto/adapter/v1/lenny-adapter.pb.go` and `lenny-adapter_grpc.pb.go`, the generated copies of those two comments | Mirrored by SCHEMA-1, through regeneration |
 | `pkg/adapter/server.go`, `Server.SessionScrubReporter` field comment | Mirrored by CODE-15 |
-| `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Staged by checklist S4's tier-11 sweep, re-key |
-| `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Staged by checklist S4's tier-11 sweep, deletion |
+| `tests/tier11_docs/spec_28_register_writers_test.go`, `podStateGatewayWrittenSentence` | Staged by the non-spec tier-11 `**For SPEC-3**` sweep, re-key |
+| `tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go`, the spec/12 substring block | Staged by the non-spec tier-11 `**For SPEC-3**` sweep, deletion |
 | every Go, SQL and test comment CODE-10's grep returns | CODE-10 |
 
 Then append to the same paragraph. The block carries blank lines, so the table, the paragraph
@@ -631,7 +631,7 @@ separate columns.
 The ten-second graceful window the reclaim-hold paragraph names is the figure the tree already runs, recorded
 here rather than minted. `onHoldTimeout`'s pass-2 close context is
 `context.WithTimeout(context.Background(), 10*time.Second)` at `pkg/adapter/holdstate.go:201`,
-landed by commit `3997f502b` on 2026-08-22, and CODE-6 keeps the same figure while re-scoping it
+landed by commit `3997f502b` on 2026-08-22, and CODE-14 keeps the same figure while re-scoping it
 from one context shared by the pass to a context per member. The figure bounds one of the three
 cases the sentence states, the §10.1 hold-timeout termination, which runs under no request and so
 inherits no caller bound; the other two take the reclaiming `Shutdown`'s carried grace or that
@@ -792,11 +792,9 @@ increment: `ScrubReporter.RecordSessionScrub`
 sentence keyed on the release is false for it. The evaluation point is a separate rule whose
 home is the **Session count limit:** bullet of §5.2, so both read clauses cite that bullet in
 place of restating it, and §12.6 keeps the write trigger it owns and states neither an evaluation
-point nor a reporting rule of its own. The implementor runs `grep -rn sessions_served tests/`,
-and the step that applies SPEC-3 re-keys or deletes every tier-11 assertion that grep finds
-pinning a §12.6 `sessions_served` sentence: an assertion on the write clause is re-keyed onto the
-replacement, and an assertion on the read clause is deleted, because §12.6 no longer states an
-evaluation point for it to compare.
+point nor a reporting rule of its own. The tier-11 assertions pinning a §12.6
+`sessions_served` sentence are swept under the non-spec `**For SPEC-3**` paragraph of
+`### Documentation reconciliation tests, tier 11`.
 
 ### SPEC-4 · the occupancy projection's claim-deletion statements (spec/06_warm-pod-model.md § 6.2, and spec/04_system-components.md § 4.6.1 in the sub-section below)
 
@@ -983,7 +981,7 @@ nothing about either new field, for the reason the summary's `unconditional_tear
 ```
 **Bind attempt token.** A **bind attempt** is one gateway attempt to bind a session onto a pod, running from that attempt's first pod-side RPC for the session until the attempt succeeds or is abandoned. The gateway mints a **bind attempt token** for each attempt: one opaque string value, drawn from a cryptographically secure random source, minted once, before the attempt issues its first pod-side RPC. The adapter compares the token for equality and does nothing else with it. It parses no structure out of it, derives no order and no age from it, and never mints one of its own. The empty string is not a token, so a request whose `bind_attempt` is empty names no attempt. A token belongs to an attempt rather than to a session, so two attempts at one session hold different tokens, and it is never derived from the session identifier, from the slot identifier, or from a `coordination_generation`. It is not a coordination generation and carries none of that field's semantics. The two answer different questions: the generation names the gateway replica that speaks for the session ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and is validated on the RPCs that carry it, while the token names the bind attempt a registry entry belongs to. Where both appear on one message, as on `Shutdown`, each is checked on its own terms.
 
-The table below states which requests carry `bind_attempt` and which carry the `mid_session` marker. Where that table leaves `StartSession` and `ConfigureWorkspace` outside the comparison, the reason is that a start may be issued by a later stage of the same binding than the stage that created the entry, so comparing a token on either of them would refuse a start against an entry the same binding legitimately created. No token comparison runs against either of them, and the rules below reach them by their own conditions. No response reports a token. Nothing a caller must hold travels on a response, so a caller that received no response at all still holds the token it minted, and a caller on a fresh connection holds it exactly as the caller on the original connection did.
+The table below states which requests carry `bind_attempt` and which carry the `mid_session` marker. Where that table leaves `StartSession` and `ConfigureWorkspace` outside the comparison, the reason is that a start may be issued by a later stage of the same binding than the stage that created the entry, so comparing a token on either of them would refuse a start against an entry the same binding legitimately created. No token comparison runs against either of them, and the rules below reach them by their own conditions. No response reports a token, so a caller that received no response at all still holds the token it minted.
 
 Which fields each request carries, where a request on this contract that the table does not list carries neither field:
 
@@ -1044,18 +1042,12 @@ carry it, when the adapter stamps it, which entry a request is addressed to, wha
 entry, and what the response reports.
 
 Some of what the block states are obligations this proposal takes on rather than shipped
-behaviour it records. The registry critical-section paragraph makes first-writer-wins
-implementable from the prose, which it is not while the resolve, the stamp and the comparison
-read as three acts, and it is the one place the block states atomicity, so a step missing from
-the adapter's critical section is a step missing from that paragraph. The start
+behaviour it records. The registry critical-section paragraph is the first, for the ground the
+Design section's **The adapter's atomicity is stated once.** gives. The start
 confirmation is the second: the shipped adapter records the session unconditionally, so the rule
 is new behaviour rather than a restatement; rule 8 states the status its failure is answered on
 and §15.4 publishes non-conformance against the rule, so an adapter written from the published
-contract performs it. And the
-sentence on the gateway's own admission of a mid-session upload is the whole safety argument for
-a request that asserts no attempt identity, so the implementation confirms that the shipped
-mid-session admission guard reads what it appears to read before the mid-session conditioning
-lands, and records what it found.
+contract performs it.
 
 ### SPEC-5 · spec/15_external-api-surface.md § 15.4 (after the SDK-warm demotion contract)
 
@@ -1255,31 +1247,8 @@ Listed so a reviewer can tell scope from oversight.
   after the SDK-warm demotion contract: a pointer at §4.7.1 and the conformance criterion, with
   the slot-identifier reclaim-hold contract beside it), and §15.1's `SETUP_COMMAND_FAILED` row (the cause sentence, the retryability
   sentence, the setup-output sentence and the exclusion sentence replaced).
-- `spec/16_observability.md`: §16.1's metric catalog (one row for each counter
-  the compensation's caller and the adapter's fail-closed arm emit).
+- `spec/16_observability.md`: §16.1's metric catalog (the rows SPEC-6 stages).
 - `spec/29_communication-scenarios.md`: §29.4 session-end step 13 (one sentence appended).
 
 Each reader-facing reference page that mirrors these sections moves with the section it mirrors.
-The edits the non-spec deliverables must carry are these. `docs/reference/metrics.md` gains the
-row for each counter, matching the §16.1 rows, so the catalog a reader consults and the catalog
-the specification states stay one list (CODE-9). `docs/reference/state-machines.md` gains the
-per-slot sub-state row matching the §6.2 edge, takes its own trigger replacement for the
-`receiving_uploads` → `running` row, for the `slot_cleanup` → `released` row and for the page's
-`slot_cleanup -> leaked` clause, each in the page's own voice
-because the page cannot carry the pointers the §6.2 annotations now carry, and its pod
-state machine paragraph states in the page's own voice what §4.6.1's re-keyed claim-deletion
-bullets state, each clause keyed on the phase the pod projects at the claim DELETE, with the
-same projection input added to that paragraph's own enumeration (DOCS-1). `schemas/lenny-adapter.proto` takes
-the `ReportSessionScrub` comment replacements, each naming the outcome the adapter reports
-and citing §5.2 for its terms and for the cleanups the adapter reports, so the wire contract a
-third-party implementor reads stops asserting what `released` and `leaked` imply and stops
-asserting a report on every session release (SCHEMA-1). `docs/reference/adapter-contract.md`
-takes the rewritten `Shutdown` row, the amended `DemoteSDK` row, the re-keyed
-`ReportSessionScrub` row and the added bind-attempt paragraph (DOCS-2).
-`docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` each lose
-the reporting clause of their per-slot cleanup sentence (DOCS-4).
-`docs/reference/error-catalog.md` takes a sentence replacement mirroring each of SPEC-5's §15.1
-replacements, the retryable-fallback sentence among them, and a replaced remedy cell, all in the
-`SETUP_COMMAND_FAILED` row it already carries rather than in a new row, each stated in the
-page's own voice because its reader is a REST client with neither the gRPC codes nor the
-specification (DOCS-3).
+The edits are staged as DOCS-1 to DOCS-4, CODE-9's `docs/reference/metrics.md` rows and SCHEMA-1.
