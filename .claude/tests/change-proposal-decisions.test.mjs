@@ -2477,14 +2477,45 @@ t.section("D40. a designed answer is gated, the checklist mapping travels with a
   // A contested record the human's section may not carry is listed once, and only once.
   const state = JSON.parse(JSON.stringify(stood.result.phaseState));
   state.itemRecords["id:OD-9"].contested = { appliedAtFiring: 1, contestedAtFiring: 2, nowCarries: "the old wording" };
-  const f2 = await later(state, 2, { "f2:list-contested:0": { outcome: "edited", recordWritten: false, where: ["summary.md — open decisions"] } });
+  const f2 = await later(state, 2, { "f2:list-contested:0": { outcome: "listed", note: "entry written" } });
   const lc = promptOf(f2.calls, "f2:list-contested:0");
-  t.check("a contested decision is written into the human's section", /Ensure `## Open decisions for human to make` carries exactly one entry/.test(lc || ""));
+  t.check("the listing agent confirms the reversal before writing anything",
+    /CONFIRM IT FIRST/.test(lc || "") && /Ignore every edit it records to the review log/.test(lc || ""));
+  t.check("a confirmed contest is written into the human's section", /ensure `## Open decisions for human to make` carries exactly one entry/.test(lc || ""));
   t.check("without touching its record file", /Do not write, move or edit/.test(lc || ""));
   const listed = f2.result.phaseState.itemRecords["id:OD-9"].contested;
   t.check("the record remembers the firing that listed it", listed && listed.listedAtFiring === 2, JSON.stringify(listed));
   const f3 = await later(f2.result.phaseState, 3, {});
   t.check("and a later firing does not list it again", never(f3.calls, "f3:list-contested:"));
+
+  // A false contest is cleared rather than listed.
+  const f2b = await later(state, 2, { "f2:list-contested:0": { outcome: "not-contested", note: "the answer stands at summary.md:40" } });
+  t.check("a contest the listing agent does not confirm is cleared",
+    f2b.result.phaseState.itemRecords["id:OD-9"].contested === null,
+    JSON.stringify(f2b.result.phaseState.itemRecords["id:OD-9"].contested));
+  t.check("and it is on the record", f2b.logs.some((l) => /was NOT reversed; its contest is cleared/.test(l)));
+}
+
+// ==========================================================================
+t.section("D41. the reversal check counts only staged and summary edits");
+// ==========================================================================
+{
+  const H = entry({ id: "OD-9", decision: "does the gate stay equality?", disposition: "human", summaryAction: "unchanged" });
+  const first = await fire({}, {
+    "f1:human-decisions:*": found(H),
+    "f1:falsify:0": { theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive", reasoning: "r", evidence: "e", fallbackDisposition: "resolve" },
+    "f1:answer-design:0": { answerable: true, answerKey: "k", answer: "a", authority: "spec/10:41", why: "w", where: ["spec-changes.md"] },
+    "f1:falsify-answer:0": STANDS,
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: ["spec-changes.md — SPEC-1"] },
+  });
+  const f2 = await later(first.result.phaseState, 2, { "f2:reversal-check": { items: [] } });
+  const rc = matching(f2.calls, "f2:reversal-check")[0];
+  t.check("the reversal check runs on opus at low effort", rc && rc.opts.model === "opus" && rc.opts.effort === "low",
+    rc && rc.opts.model + "/" + rc.opts.effort);
+  t.check("it ignores the review log and its archive", rc && /ONLY THE STAGED CHANGE FILES AND THE SUMMARY COUNT/.test(rc.prompt));
+  t.check("it counts a recorded removal as standing while the thing stays removed",
+    rc && /A REMOVAL STANDS WHILE THE THING STAYS REMOVED/.test(rc.prompt));
+  t.check("and matches on content rather than exact characters", rc && /differs only in capitalisation, whitespace, punctuation/.test(rc.prompt));
 }
 
 t.done();

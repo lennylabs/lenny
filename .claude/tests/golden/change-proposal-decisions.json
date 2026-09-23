@@ -2,7 +2,7 @@
   {
     "label": "f2:reversal-check",
     "phase": "Collect",
-    "model": "haiku",
+    "model": "opus",
     "schema": "items",
     "blocks": []
   },

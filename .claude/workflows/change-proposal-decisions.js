@@ -661,8 +661,10 @@ function textDigest(text) {
 }
 const recordPath = (id) => RECORDS_DIR + "/" + textDigest(id) + ".md";
 
-// Whether the text an earlier firing wrote is still in the tree. It is a
-// mechanical read, like the commit and the delta above, rather than a judgment:
+// Whether the text an earlier firing wrote is still in the tree. The review log
+// and its archive are not counted, because compaction moves ledger blocks by
+// design, and a recorded removal stands while the thing stays removed. It is a
+// read rather than a judgment:
 // the question is whether a string is present, and an agent asked to judge
 // whether the decision still holds would re-argue the item, which is what this
 // exists to prevent.
@@ -706,25 +708,37 @@ async function checkReversals() {
   const contestedNow = [];
   const label = "f" + firing + ":reversal-check";
   const res = await robustAgent(
-    "Report whether each recorded piece of text is still in the proposal. Do not edit anything and do " +
-      "not judge whether it should be there.\n\n" +
+    "Report whether what an earlier firing of this phase wrote into the proposal still stands. Do not " +
+      "edit anything and do not judge whether it should be there.\n\n" +
       "The proposal is at " + P.root + " in " + repo + ".\n\n" +
-      "Each item below names a record file. Its WHERE lines say where the text was written and the text " +
+      "Each item below names a record file. Its WHERE lines say where each edit was made and the text " +
       "under WROTE is what was written. A record file that is missing or unreadable is undecidable.\n\n" +
-      "For each item, search the proposal directory for the recorded text. Match on the text itself " +
-      "rather than on the location: a passage moved to another section of the same file is PRESENT. " +
-      "Search for a distinctive sentence from it when the whole passage is long, and read the file the " +
-      "location names first.\n\n" +
-      "Report present when the text is there, absent when it is not, and undecidable when you could not " +
-      "read the file or could not tell. On absent, put what the recorded location carries instead in " +
-      "nowCarries, verbatim and short. Undecidable is an honest answer and is treated as such; do not " +
-      "report absent because you did not find it quickly.\n\n" +
+      "ONLY THE STAGED CHANGE FILES AND THE SUMMARY COUNT. Ignore every WHERE line and every passage that " +
+      "records writing to the review log or its archive: the compaction pass moves ledger blocks into the " +
+      "archive by design, so a log block that is no longer in the log says nothing about the answer.\n\n" +
+      "A REMOVAL STANDS WHILE THE THING STAYS REMOVED. Where a WHERE line records that an entry was removed, " +
+      "deleted or moved out of a section, that edit is intact when the entry is still absent from that " +
+      "section; an entry that left `## Open decisions for human to make` because it was answered is the " +
+      "answer standing, not a reversal. Where it records a move, the edit is intact when the content is " +
+      "at its destination.\n\n" +
+      "For every other edit, search the proposal directory for the recorded text. Match on the content " +
+      "rather than on the location or the exact characters: a passage moved to another section of the same " +
+      "file is present, and so is one that differs only in capitalisation, whitespace, punctuation or a " +
+      "renamed heading. Search for a distinctive sentence when the passage is long.\n\n" +
+      "Report present when every counted edit of the item stands, absent ONLY when a counted edit's content " +
+      "has been removed or replaced by different content, and undecidable when you could not read a file or " +
+      "could not tell. On absent, put in nowCarries what the recorded location in a staged change file or " +
+      "the summary carries instead, verbatim and short. Undecidable is an honest answer and is treated as " +
+      "such; do not report absent because you did not find it quickly.\n\n" +
       JSON.stringify(
         pending.map((r) => ({ id: r.id, record: recordPath(r.id) })),
         null,
         1,
       ),
-    { label, schema: REVERSAL_CHECK, model: "haiku", effort: "high", phase: "Collect" },
+    // Opus at low effort: the check was on Haiku, and every contest it recorded
+    // on one proposal, ten of ten, was a false alarm (an archived log block, an
+    // answer's own removal of its entry, or a difference in capitalisation).
+    { label, schema: REVERSAL_CHECK, model: "opus", effort: "low", phase: "Collect" },
   );
   if (!res) {
     recordDead(label);
@@ -2956,12 +2970,29 @@ async function applyAll(list) {
 // ---- Listing a contested decision for the human ---------------------------
 //
 // A contested record is the human's: the review loop reversed what this phase
-// wrote, and neither position is re-applied. It was reported in
+// wrote, and neither position is re-applied. The listing agent confirms the
+// reversal before it writes anything and clears a false contest instead: the
+// first run of this step re-opened an answered decision on a contest the
+// reversal check had raised over an archived log block. It was reported in
 // `decisionsLeftToHuman` and written nowhere, so a reversal that deleted the
 // entry left a decision the human was said to hold and could not see in the file
 // they read. One agent per such record writes the entry once, under its
 // identifier, and the record remembers the firing that listed it. It never
 // writes the item's record file, whose text the reversal check compares against.
+const CONTESTED_LIST_RESULT = {
+  type: "object",
+  required: ["outcome", "note"],
+  properties: {
+    outcome: {
+      type: "string",
+      enum: ["listed", "already-listed", "not-contested"],
+      description:
+        '"not-contested" when every staged or summary edit the record names still stands, so nothing was reversed and you edited nothing; "listed" when you wrote the entry; "already-listed" when the section already carried it',
+    },
+    note: { type: "string", description: "on not-contested, what you found still standing, with file:line; otherwise what you wrote or found" },
+  },
+};
+
 function contestedListPrompt(rec) {
   return (
     "You are listing ONE contested decision for the human in the open-decisions-and-impact-review phase " +
@@ -2971,17 +3002,23 @@ function contestedListPrompt(rec) {
     "the proposal. Do not write, move or edit " + recordPath(rec.id) + ".\n\n" +
     FILE_MAP + "\n\n" +
     IDENTIFIER_STAMP + "\n\n" +
-    "WHAT HAPPENED. An earlier firing of this phase answered this decision and wrote the answer into the " +
-    "proposal; the review loop has since reversed it. The two positions are unreconciled, so the decision " +
-    "is the human's and neither position is re-applied.\n\n" +
-    "WHAT TO DO. Ensure `## Open decisions for human to make` carries exactly one entry for it under the " +
+    "WHAT WAS REPORTED. An earlier firing of this phase answered this decision and wrote the answer into " +
+    "the proposal, and a later check reported that the review loop has reversed it. That check has been " +
+    "wrong far more often than right, so CONFIRM IT FIRST. Read the record file" +
+    (rec.hasRecord ? " " + recordPath(rec.id) : "") + ". Ignore every edit it records to the review log " +
+    "or its archive, which compaction moves by design. For each edit it records to a staged change file " +
+    "or the summary, a written passage stands when its content is still in the proposal, at that place " +
+    "or another, whatever its exact characters; a removal stands while the thing is still gone, and an " +
+    "entry that left the open decisions because it was answered is the answer standing. When every such " +
+    "edit stands, report `not-contested`, say what you found in `note`, and edit nothing.\n\n" +
+    "ONLY WHEN A STAGED OR SUMMARY EDIT WAS REALLY UNDONE, the decision is the human's: the two positions " +
+    "are unreconciled and neither is re-applied. Then ensure `## Open decisions for human to make` carries exactly one entry for it under the " +
     "identifier `" + rec.id.replace(/^id:/, "") + "`: the question, stated so it can be answered without " +
     "reading the proposal; the answer this phase applied" +
     (rec.hasRecord ? ", read from " + recordPath(rec.id) : ", as far as the question below states it") +
     "; what the proposal carries instead now; and that the phase's answer and the review loop's reversal " +
-    "are the two positions the human chooses between. When the section already carries such an entry, " +
-    "report `already-correct` and edit nothing. Keep the section's preamble true. Set `recordWritten` " +
-    "false: this listing writes no record file.\n\n" +
+    "are the two positions the human chooses between, and report `listed`. When the section already " +
+    "carries such an entry, report `already-listed` and edit nothing. Keep the section's preamble true.\n\n" +
     LOG_WRITE_RULE + "\n\n" +
     "Follow " + repo + "/.claude/rules/doc-style.md.\n\n" +
     FIRING_LINE + "\n\n" +
@@ -2997,17 +3034,22 @@ async function listContested() {
   for (let i = 0; i < pending.length; i++) {
     const rec = pending[i];
     const label = "f" + firing + ":list-contested:" + i;
-    const res = await robustAgent(contestedListPrompt(rec), { label, schema: APPLY_RESULT, phase: "Apply" });
+    const res = await robustAgent(contestedListPrompt(rec), { label, schema: CONTESTED_LIST_RESULT, phase: "Apply" });
     if (!res) {
       recordDead(label);
       log("  " + label + ": the agent returned nothing; " + rec.id + " is listed at a later firing");
       continue;
     }
-    if (res.outcome === "edited") applyTouchedTree = true;
-    if (res.outcome === "edited" || res.outcome === "already-correct") {
-      rec.contested.listedAtFiring = firing;
-      log("  " + label + ": " + rec.id + " is listed for the human (" + res.outcome + ")");
+    if (res.outcome === "not-contested") {
+      // The answer still stands: the contest was a false alarm, and the record
+      // goes back to being an applied item the reversal check reads again.
+      rec.contested = null;
+      log("  " + label + ": " + rec.id + " was NOT reversed; its contest is cleared — " + String(res.note || "").slice(0, 160));
+      continue;
     }
+    if (res.outcome === "listed") applyTouchedTree = true;
+    rec.contested.listedAtFiring = firing;
+    log("  " + label + ": " + rec.id + " is listed for the human (" + res.outcome + ")");
   }
 }
 
