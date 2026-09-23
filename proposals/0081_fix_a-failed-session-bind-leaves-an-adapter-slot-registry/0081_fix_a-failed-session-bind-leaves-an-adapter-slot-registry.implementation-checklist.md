@@ -38,9 +38,9 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 1, 2, 3, 4. Depends on: S1, S2, S9, S11.
 - [ ] **S14 · code** — CODE-6 in full, including the bind-field literal sweep that the files-touched list defines by grep. The mid-session admission guard that the non-spec Design's **The mid-session conditioning.** paragraph names is confirmed before this step lands.
       Tiers 0, 1, 2, 3, 4, 7a, 8, 9, 10. Depends on: S1, S4, S9, S11, S12, S13.
-- [ ] **S15 · code** — CODE-14, except its derivation table's `Shutdown` row, the `Shutdown` row of its tier-1 expired-acquisition case, and the tier-7a cases that drive a removing `Shutdown`, which land with S16.
-      Tiers 0, 1, 7a. Depends on: S1, S4, S14.
-- [ ] **S16 · code** — CODE-1 and CODE-15 in full, including CODE-1's `ShutdownRequest` literal sweep, the tier-1 `exited_cleanly` cases that drive `Server.removeSlotTreeFn`, and the registered-but-unbound class of the tier-9 matching-reclaim arm under Testing **Tier 9, the credential fence.**; CODE-14's `Shutdown` row, the `Shutdown` row of its tier-1 expired-acquisition case and its tier-7a cases that drive a removing `Shutdown`; and the Testing subsection **Tier-1 adoption-ordering tests, every case walked**.
+- [ ] **S15 · code** — CODE-14, except its derivation table's `Shutdown` row, the `Shutdown` row of its tier-1 expired-acquisition case, and its tier-7a cases, which land with S16.
+      Tiers 0, 1. Depends on: S1, S4, S14.
+- [ ] **S16 · code** — CODE-1 and CODE-15 in full, including CODE-1's `ShutdownRequest` literal sweep, and the tier-1 `exited_cleanly` cases that drive `Server.removeSlotTreeFn`; CODE-14's `Shutdown` row, the `Shutdown` row of its tier-1 expired-acquisition case and its tier-7a cases; and the Testing subsection **Tier-1 adoption-ordering tests, every case walked**.
       Tiers 0, 1, 2, 3, 4, 7a, 9, 10. Depends on: S1, S2, S4, S9, S10, S11, S13, S14, S15.
 - [ ] **S18 · code** — CODE-2 in full, including its re-fixturing of the shipped test callers of `noteRuntimeStarted`.
       Tiers 0, 1, 7a. Depends on: S1, S3, S14, S16.
