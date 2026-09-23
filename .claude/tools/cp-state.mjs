@@ -25,6 +25,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\n$/, "");
 const writeAtomic = (p, text) => {
@@ -137,10 +138,30 @@ export function migrateRecords(state, dir) {
 // must exist, so a renamed sentinel fails loudly rather than launching a copy
 // that silently reads nothing.
 export const EMBED_SENTINEL = "const CP_EMBEDDED_DECISIONS_STATE = null;";
+// The Workflow tool refuses a script larger than this many bytes. The workflow
+// alone is close to it, so the copy drops its comment-only lines, which the run
+// never reads, before the state goes in; a copy still over the limit is refused
+// here rather than by the launch.
+export const MAX_SCRIPT_BYTES = 524288;
 export function launchCopy(src, state) {
   const n = src.split(EMBED_SENTINEL).length - 1;
   if (n !== 1) throw new Error("expected exactly one embedding sentinel, found " + n);
-  return src.replace(EMBED_SENTINEL, "const CP_EMBEDDED_DECISIONS_STATE = " + JSON.stringify(state) + ";");
+  const stripped = src
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+  const out = stripped.replace(EMBED_SENTINEL, "const CP_EMBEDDED_DECISIONS_STATE = " + JSON.stringify(state) + ";");
+  const bytes = Buffer.byteLength(out, "utf8");
+  if (bytes > MAX_SCRIPT_BYTES) {
+    throw new Error(
+      "the launch copy is " + bytes + " bytes, over the Workflow limit of " + MAX_SCRIPT_BYTES +
+        "; launch the workflow itself with resumeState, which reads the state back in verified chunks",
+    );
+  }
+  // The runtime wraps the body in an async function after removing the meta
+  // export, so the copy is parsed the same way.
+  new vm.Script("(async function () {\n" + out.replace(/^export\s+const\s+meta/m, "const meta") + "\n})");
+  return out;
 }
 
 function main([cmd, ...args]) {

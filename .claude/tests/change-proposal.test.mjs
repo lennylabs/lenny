@@ -6004,6 +6004,10 @@ t.section("B37. a relaunch reads the decisions state from a launch copy, with no
   let threw = false;
   try { launchCopy("const x = 1;", {}); } catch (e) { threw = true; }
   t.check("a copy of a script with no embedding line is refused", threw);
+  let tooBig = "";
+  try { launchCopy(src, { blob: "x".repeat(600000) }); } catch (e) { tooBig = e.message; }
+  t.check("a copy over the Workflow script limit is refused with the fallback named", /over the Workflow limit/.test(tooBig) && /resumeState/.test(tooBig), tooBig);
+  t.check("the copy drops comment-only lines", !launchCopy(src, {}).split("\n").some((l) => /^\s*\/\//.test(l)));
 
   const STATE = { firings: 4, itemRecords: { "id:OD-1": { id: "id:OD-1", disposition: "human", gate: "stands", hasRecord: false } }, lastBaseline: "abc1234" };
   const dir = mkdtempSync(join(tmpdir(), "cp-launch-"));
