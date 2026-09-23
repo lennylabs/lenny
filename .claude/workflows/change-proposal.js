@@ -4897,7 +4897,9 @@ let decisionsStateLoaded = false;
 // ceiling, because its agent had to echo the whole file back. Each transfer is
 // now split into chunks one small agent can carry, and every chunk is checked
 // against a length and a code-point checksum computed here, through
-// .claude/tools/cp-state.mjs. A chunk that does not match is moved again;
+// .claude/tools/cp-state.mjs. The tool reads a part with each line's leading whitespace
+// dropped, because the harness indents every line of this prompt and the
+// writing agent copies what it sees. A chunk that does not match is moved again;
 // a save that cannot be verified leaves the previous file in place, and a load
 // that cannot be verified starts the phase fresh rather than from a corrupt one.
 const STATE_CHUNK = 20000;

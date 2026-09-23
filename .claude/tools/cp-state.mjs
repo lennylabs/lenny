@@ -10,7 +10,7 @@
 // Lengths, checksums and digests count Unicode code points, which is what the
 // workflow computes on its side with `for (const ch of s)`.
 //
-//   sig <file>...                       per file: "<name> <len> <sum>", trailing newline stripped
+//   sig <file>...                       per part file: "<name> <len> <sum>", read as `part` reads it
 //   join <out> <len> <sum> <part>...    join the parts with newlines, verify length, checksum and JSON,
 //                                       then write <out> atomically; prints "OK <len> <sum>" or "ERR <why>"
 //   meta <file> <chunkSize>             JSON: {len, sum, chunks:[{len, sum}]}, or "MISSING"
@@ -28,6 +28,16 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const read = (p) => readFileSync(p, "utf8").replace(/\n$/, "");
+// A part file as the verification reads it: every line's leading whitespace is
+// dropped. The Workflow harness indents every line of a script-computed prompt,
+// so an agent asked to copy a chunk sees each line two spaces in and, measured on
+// one run, copied the indentation into the file on every attempt: 38 lines, 76
+// extra characters, and a checksum that never matched. A state line never starts
+// with whitespace (`stateText` writes each one starting at `{`, `}` or a JSON
+// string), so dropping it restores the chunk exactly and the checksum still
+// catches any other change.
+export const unindent = (s) => s.split("\n").map((l) => l.replace(/^[ \t]+/, "")).join("\n");
+const part = (p) => unindent(read(p));
 const writeAtomic = (p, text) => {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p + ".tmp", text);
@@ -171,14 +181,14 @@ function main([cmd, ...args]) {
         console.log(basename(p) + " MISSING");
         continue;
       }
-      const s = sig(read(p));
+      const s = sig(part(p));
       console.log(basename(p) + " " + s.len + " " + s.sum);
     }
   } else if (cmd === "join") {
     const [out, wantLen, wantSum, ...parts] = args;
     const missing = parts.filter((p) => !existsSync(p));
     if (missing.length) return console.log("ERR missing " + missing.map((p) => basename(p)).join(","));
-    const text = parts.map(read).join("\n");
+    const text = parts.map(part).join("\n");
     const s = sig(text);
     if (String(s.len) !== wantLen || String(s.sum) !== wantSum) return console.log("ERR mismatch " + s.len + " " + s.sum);
     try {

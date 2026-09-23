@@ -5993,6 +5993,37 @@ t.section("B36. the open-decisions state crosses the sandbox in verified chunks"
   const refused = await driveLive(() => false, "ERR mismatch 1 2");
   t.check("a join the tool refuses is reported as not saved", refused.logs.some((l) => /NOT saved: the join reported/.test(l)));
 
+  // The harness indents every line of a computed prompt, and a part writer that
+  // copies what it sees writes the indentation into the file. The tool's `sig`
+  // and `join` drop leading whitespace per line, which no state line carries.
+  {
+    const { execFileSync } = await import("node:child_process");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-state-indent-"));
+    const tool = new URL("../tools/cp-state.mjs", import.meta.url).pathname;
+    const parts = toolChunks(persisted, 20000);
+    const files = parts.map((body, i) => {
+      const f = path.join(dir, "part-0" + i);
+      // Indented as the harness renders it, on every line but the first of one part.
+      const text = body.split("\n").map((l, j) => (i === 0 && j === 0 ? l : "  " + l)).join("\n") + "\n";
+      fs.writeFileSync(f, text);
+      return f;
+    });
+    const sigOut = execFileSync("node", [tool, "sig", ...files], { encoding: "utf8" });
+    t.check("sig reads an indented part as the chunk it was cut from",
+      parts.every((body, i) => sigOut.includes("part-0" + i + " " + sig(body).len + " " + sig(body).sum)), sigOut);
+    const whole = sig(persisted);
+    const out = path.join(dir, "state.json");
+    const joinOut = execFileSync("node", [tool, "join", out, String(whole.len), String(whole.sum), ...files], { encoding: "utf8" });
+    t.check("and join rebuilds the state exactly", /^OK /.test(joinOut) && fs.readFileSync(out, "utf8") === persisted, joinOut);
+    fs.writeFileSync(files[0], fs.readFileSync(files[0], "utf8").replace('"firings":3', '"firings":4'));
+    const tampered = execFileSync("node", [tool, "join", out + ".2", String(whole.len), String(whole.sum), ...files], { encoding: "utf8" });
+    t.check("while any other change still fails the checksum", /^ERR mismatch/.test(tampered) && parts[0].includes('"firings":3'), tampered);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
   // Load: the meta line, then one verified slice per chunk.
   const onDisk = persisted;
   const chunks = toolChunks(onDisk, 20000);
