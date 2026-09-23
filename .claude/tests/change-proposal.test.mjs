@@ -2812,6 +2812,40 @@ t.section("X5c. an in-scope site the fixer may not edit is not checked as drift"
   t.check("and the drop is on the record", logs.some((l) => /not the fixer's to edit/.test(l)));
 }
 
+t.section("X5d. an in-scope site in a file this loop may not edit is deferred, not checked as drift");
+{
+  // The spec lane may not edit the checklist: the reconciliation pass between
+  // the loops owns its drift. A design that marks a checklist step in scope in
+  // the spec loop must not hand the post-fix review an unedited site to file.
+  const CHECKLIST = "proposals/0081_fix_x/0081_fix_x.implementation-checklist.md";
+  const design = { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" },
+    siteDispositions: [{ file: CHECKLIST, line: 13, quote: "q", disposition: "in-scope", why: "falsified" }] }], newMechanisms: [] };
+  const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
+    "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },
+    "*:expand:*": sites([SITE_P]),
+    "*:fix-design:*": design,
+  }));
+  const designer = matching(calls, "r1:fix-design:")[0];
+  t.check("the spec-lane designer is told the checklist is not this loop's to edit",
+    designer && /FILES THIS LOOP MAY NOT EDIT: [^\n]*0081_fix_x\.implementation-checklist\.md/.test(designer.prompt));
+  const pf = calls.find((c) => c.label === "r1:post-fix-review");
+  t.check("the checklist site is not handed to the post-fix review as in scope",
+    pf && !/HANDED TO THE FIXER AS IN SCOPE/.test(pf.prompt));
+  t.check("the post-fix reviewer is told a stale statement there is not a finding",
+    pf && /A stale statement in\s+one of these files is therefore NOT a finding/.test(pf.prompt));
+  t.check("and the deferral is on the record", logs.some((l) => /lie in a file this loop may not edit/.test(l)));
+}
+{
+  // The non-spec lane may edit every proposal file unless lockSpecChanges closes the spec staging.
+  const open = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, { "*:expand:*": sites([SITE_P]) }));
+  const d1 = matching(open.calls, "r1:fix-design:")[0];
+  t.check("an unlocked non-spec designer is told of no forbidden file", d1 && !/FILES THIS LOOP MAY NOT EDIT/.test(d1.prompt));
+  const locked = await runWorkflow(WF, { ...REVIEW_ARGS, lockSpecChanges: true }, fixStubs(1, { "*:expand:*": sites([SITE_P]) }));
+  const d2 = matching(locked.calls, "r1:fix-design:")[0];
+  t.check("under lockSpecChanges the non-spec designer is told the spec staging is not its to edit",
+    d2 && /FILES THIS LOOP MAY NOT EDIT: [^\n]*0081_fix_x\.spec-changes\.md/.test(d2.prompt));
+}
+
 t.section("X6. the cap bounds expansion and says what it skipped");
 {
   const { calls, logs } = await runWorkflow(WF, { ...REVIEW_ARGS, maxExpansions: 2 }, fixStubs(5, {

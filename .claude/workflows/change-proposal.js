@@ -1188,6 +1188,52 @@ function isProposalSite(file) {
   return rel !== "" && (rel === root || rel.indexOf(root + "/") === 0);
 }
 
+// Proposal files the current loop may not edit. The spec lane's grant leaves
+// out the implementation checklist, whose drift the reconciliation pass between
+// the loops owns, and lockSpecChanges closes the staged spec edits to the
+// non-spec lane. A site in one of these files is not the fixer's to edit however
+// plainly a fix falsifies it, so it must not be handed on as in scope: measured
+// on one run, a designer marked a checklist step in scope in the spec loop, the
+// fixer rightly recorded it as DEFERRED, and the post-fix review then filed the
+// unedited site as a confirmed drift finding that the follow-up fixer could not
+// edit either. On a legacy single-file proposal every role is one file, so
+// nothing is withheld there.
+function laneForbiddenFiles() {
+  if (!LOOP || P.layout !== "folder") return [];
+  if (LOOP.lane === "spec") return [P.checklist];
+  if (lockSpecChanges) return [P.spec];
+  return [];
+}
+function isLaneForbidden(file) {
+  const rel = siteRel(file);
+  if (!rel) return false;
+  // Agents name a file by its repository path, its absolute path, or its bare
+  // name, so the comparison is on the file name, which carries the proposal's
+  // stem and so cannot match another proposal's file.
+  const base = rel.replace(/^.*\//, "");
+  return laneForbiddenFiles().some((f) => {
+    const target = siteRel(f).replace(/^.*\//, "");
+    return base === target || target.endsWith("." + base);
+  });
+}
+
+// The note a designer and a post-fix reviewer get naming those files. Empty when
+// the loop may edit every proposal file.
+function laneForbiddenNote(forWhom) {
+  const files = laneForbiddenFiles();
+  if (!files.length) return "";
+  const list = files.join(", ");
+  return forWhom === "design"
+    ? "\n\nFILES THIS LOOP MAY NOT EDIT: " + list + ". A site in one of them is never `in-scope`, however " +
+        "plainly this fix makes it wrong, because the fixer cannot touch it. Mark it `separate-finding` and " +
+        "say in `why` that it is deferred: the fixer records it as a `DEFERRED` line naming the file, and " +
+        "the pass that owns that file closes it."
+    : "\n\nFILES THIS LOOP MAY NOT EDIT: " + list + ". The fixer records a statement there that its edit " +
+        "made false as a `DEFERRED` line, and the pass that owns that file closes it. A stale statement in " +
+        "one of these files is therefore NOT a finding for questions 1 or 2: nothing in this loop can edit " +
+        "it, and filing it costs a follow-up fixer that cannot either.";
+}
+
 // Re-split one expansion result by path and report what had to move. Silence
 // here would reproduce the defect in a quieter form: a run whose expansion pass
 // consistently misfiles is worth seeing in the log.
@@ -3150,6 +3196,7 @@ function fixDesignPrompt(group, confirmed, round) {
     "hit in siteDispositions with the dispositions above: a hit that describes, counts, lists, or " +
     "attributes content the fix changes is IN SCOPE, and a hit that only defends or narrates what the fix " +
     "removes is OBSOLETE. Record the names and the patterns in citerSearch." +
+    laneForbiddenNote("design") +
     DEVIATIONS_BLOCK() +
     LOG_RULES() +
     directiveBlock() +
@@ -3371,6 +3418,7 @@ function postFixPrompt(confirmed, fixSummary, round, mechanisms, preFixSnap, inS
     "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
     "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
     "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer." +
+    laneForbiddenNote("post-fix") +
     "\n\nThis is round " + round + " of the " + LOOP.name + " loop.\n\n" +
     (mechanisms && mechanisms.length
       ? "THIS ROUND INTRODUCED A NEW MECHANISM. Review it as a DESIGN, not as an edit. For each one below, "
@@ -6738,10 +6786,17 @@ async function runReviewLoop(cfg) {
     // fixer was told not to touch it.
     const inScopeSites = [];
     let inScopeOutOfBounds = 0;
+    let inScopeDeferred = 0;
     for (const d of designs || []) {
       for (const one of (d && d.designs) || []) {
         for (const sd of one.siteDispositions || []) {
           if (sd.disposition !== "in-scope") continue;
+          // A site in a file this loop may not edit is deferred rather than
+          // fixed, so an unedited one is expected rather than a drift finding.
+          if (isLaneForbidden(sd.file)) {
+            inScopeDeferred++;
+            continue;
+          }
           // A design may adjudicate a TREE site `in-scope`, and the fixer's HARD
           // CONSTRAINT forbids editing it. Passing it on would tell the post-fix
           // reviewer that an unedited site is a CONFIRMED drift finding against
@@ -6764,6 +6819,12 @@ async function runReviewLoop(cfg) {
         "Round " + round + ": " + inScopeOutOfBounds +
           " site(s) adjudicated in-scope lie outside " + P.root + " and are not the fixer's to edit; " +
           "they are not checked as drift",
+      );
+    }
+    if (inScopeDeferred) {
+      log(
+        "Round " + round + ": " + inScopeDeferred + " in-scope site(s) lie in a file this loop may not edit; " +
+          "they are deferred to the pass that owns that file and not checked as drift",
       );
     }
     history[history.length - 1].sitesAdopted = inScopeSites.length;
