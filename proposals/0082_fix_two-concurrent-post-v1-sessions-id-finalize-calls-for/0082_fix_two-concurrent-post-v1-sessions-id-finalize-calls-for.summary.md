@@ -8,7 +8,7 @@
 
 - `spec/15_external-api-surface.md` §15.1: one sentence appended to the finalize row's Notes cell, stating the response to a finalize call that a terminal writer overtook (SPEC-1).
 - `pkg/gateway/sessionserver/sessionserver.go` handleFinalize: the created → finalizing Update re-checks the precondition against the locked row (CODE-2).
-- `pkg/gateway/sessionserver/start.go`, `finalize.go`, and `sessionserver.go`: the ready write and every finalize failure write admit only `finalizing`, and a lost exit write revokes only the session's lease (CODE-1, CODE-3).
+- `pkg/gateway/sessionserver/start.go`, `finalize.go`, and `sessionserver.go`: the ready write and every finalize failure write admit only `finalizing` (CODE-1, CODE-3).
 - `docs/api/rest.md` and `docs/api/mcp.md`: the finalize reference states the overtaken-call outcome (DOCS-1).
 - Tests at tiers 1, 2, 4, and 7a (TEST-1 through TEST-4).
 
@@ -16,21 +16,21 @@
 
 - The entry guard calls the existing session.Validate inside the Update mutation. No generic transition-guard helper or new file is added.
 - The exit guards are in scope and mandatory.
-- A lost exit write never calls reclaimFinalizedPod. It revokes only the session-keyed lease through `Credentials.ReleaseSession`.
-- Every refused or superseded finalize write returns the existing *session.PreconditionError, rendered as 409 by writePreconditionError. No new sentinel or error code is added.
+- A lost exit write does not reclaim the pod. CODE-3's handleFinalize rules state the response on each branch.
+- Every guarded finalize write reports a refusal as the existing *session.PreconditionError. No new sentinel or error code is added.
 - A superseded prepare failure answers as SPEC-1 states.
 - failSession stays unconditional for its non-finalize callers. The finalize handler uses a new failFinalizing.
-- The upload-token consume moves ahead of the ready write, so `finalizing` is the only from-state of any finalize failure write.
+- The upload-token consume stays after the ready write with no failure branch (see CODE-3 rule 3).
 - The spec change is the single SPEC-1 sentence in the §15.1 finalize row. The §15.1 preamble, §6.2, §7.1, §7.2, and §29 are not edited.
 - Citation repair covers only the code this change edits.
 - The finalize request context stays request-scoped.
 
 **Watch out for.**
 
-- `podclaim.DeleteClaim` deletes `claim-<podName>` with no owner check. A reclaim issued after a terminal writer has released the pod can delete a successor session's claim on a recycled pod. This is why a lost exit write revokes the lease and does not reclaim.
+- `podclaim.DeleteClaim` deletes `claim-<podName>` with no owner check. A reclaim issued after a terminal writer has released the pod can delete a successor session's claim on a recycled pod. This is why no lost exit write reclaims the pod.
 - The pre-lock Get and Validate stay, because resolveFinalizePlan needs the row. They are an early rejection only; the in-mutation check is authoritative. A test that issues the second call after the first commits passes on the unfixed code, so every race test must force both pre-lock reads ahead of either entry Update.
 - The existing Update closure names its parameter `r`, which shadows the *http.Request. The rewritten closures name it `row`.
-- At tier 1, Prepare cannot succeed without an adapter, so `prep` is always nil. Lease-revoke and no-pod-RPC assertions belong at tier 4 (TEST-3), and a tier-1 assertion of a ReleaseSession call cannot pass.
+- A finalize test on a fixture without an in-process adapter never reaches `prep != nil`, so an assertion there that the handler revoked no lease or reclaimed no pod passes vacuously. TEST-1's `finalize_race_test.go` fixture names the fixture that reaches `prep != nil` at tier 1.
 - `Server.podBinder` is the concrete `*podsession.Binder`. Tests build a real Binder over a fake or envtest client rather than a fake binder.
 - `tests/flake-budget.yaml` is the quarantine registry. The TEST-4 stress budget is declared in the test file's doc comment.
 - Proposal 0081 edits `start.go` and the Binder.Prepare reclaim closure that CODE-3's prepare-failure path relies on. A second-to-land rebase is textual; see the 0081 row under Impacts on other proposals.
@@ -48,7 +48,8 @@
 - Leaving the exit writes out of scope. Rejected because the overwrite already breaks §6.2's FINALIZE_TIMEOUT rule, the §15.1 terminate and DELETE rows, and §7.2 without a concurrent client, and the fix uses the same mechanism in the same function.
 - Calling reclaimFinalizedPod when the ready write or a failure write loses to a terminal writer. Rejected because DeleteClaim deletes `claim-<podName>` with no owner check after the terminal path has already released the pod, so a late delete can remove a successor session's claim on a recycled pod. Only the session-keyed lease revoke is safe.
 - A global IsTerminal guard inside failSession for every caller. Rejected because the `/start` and tree-recovery callers belong to the `/start` serialization work 0081 assigns to a holder claim. The finalize-scoped failFinalizing keeps the change scoped.
-- A failSession variant with an arbitrary guard, or an admit function accepting both `finalizing` and `ready`. Superseded by moving the consume before the ready write, which leaves `finalizing` as the only from-state.
+- A failSession variant with an arbitrary guard, or an admit function accepting both `finalizing` and `ready`. Superseded by CODE-3 rule 3.
+- Moving the upload-token consume ahead of the ready write. Rejected because a finalize whose ready write then loses, or fails, would leave the token consumed on a session whose finalize never succeeded, and a later upload would answer `410 UPLOAD_TOKEN_CONSUMED`, which §7.1 and §15.1 define as following a successful `FinalizeWorkspace`.
 - A new sentinel such as errFinalizeSuperseded or errFinalizeNotCreated. Rejected because *session.PreconditionError already carries the locked state and renders through writePreconditionError. A sentinel would need its own mapping and would lose `details.currentState`.
 - Returning the prepare-phase error (SESSION_CREATION_FAILED, SETUP_COMMAND_FAILED) when the failure write loses. Rejected because it tells the client the session failed when it is `cancelled` or `completed`.
 - A generic transitionguard.go helper presented as the reuse point for other handlers. Rejected because it would restate the §15.1 precondition table beside session.Validate and would drop the capability-gated states when reused on a gated endpoint.
@@ -71,12 +72,13 @@
 - A new error code such as FINALIZE_IN_PROGRESS. Rejected because the §15.1 preamble already mandates 409 INVALID_STATE_TRANSITION.
 - Join semantics, where a loser waits for and returns the winner's result. Rejected because it needs a cross-replica wait channel and contradicts §15.1's 409 rule.
 - Handler-side recovery after an ambiguous entry commit. Rejected because the handler cannot tell its own commit from a concurrent winner's, so it could kill a live winner. It returns 500, and the watchdog resolves an orphaned `finalizing` row.
+- Answering a Gap-2 failure write that finds a non-terminal row either with 409 `currentState=ready` or by running the success tail and returning 200. The 409 is rejected because it reports the call's own success as a conflict, and SPEC-1 and DOCS-1 state a 409 only for a terminal writer. The 200 is rejected because it re-reads the row and replays the status change, parse warnings, and audit row from a recovery branch.
 - A metric counting refused concurrent finalizes. Excluded because no spec text calls for it.
 - Staging any edit to proposal 0081's files.
 
 ## Open decisions for human to make
 
-- **Should the 409-versus-410 precedence for a finalize call made after the upload token was consumed be recorded as a follow-up finding?** §7.1 states that the gateway validates the upload token on every finalize call and that a consumed token returns `410 UPLOAD_TOKEN_CONSUMED`. handleFinalize validates no token today, so a finalize call that arrives after another call has moved the session to `ready` receives `409 INVALID_STATE_TRANSITION` from the §15.1 preamble. No spec text states which of the two responses wins. The gap predates this proposal, and this proposal does not change it. The choice is whether to add it to "Defects in the shipped tree that this proposal does not stage" as a follow-up finding, or to leave it unrecorded. The spec loop derived no recommendation; the open-decisions-and-impact-review phase supplies one. Source: review-log entry `[spec.1.review-docs-alignment.1]`.
+This proposal carries no open decisions.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -86,6 +88,7 @@
 - **Concurrent `/start` is not serialized.** 0081 records that it needs a bounded holder-and-expiry claim, which the created → finalizing guard does not provide.
 - **handleTransition and handleDelete read, validate, and write unconditionally.** Their failure mode is a lost or overwritten state transition. A follow-up finding converts them, building any shared guard on session.Validate so it stays capability-aware.
 - **Stale "§4.3" citations remain elsewhere.** prepareAtFinalize and applyFinalizePrepareResult in `finalize.go`, and several sites in `start.go`, still cite §4.3. They are left for a citation-sweep finding.
+- **handleFinalize validates no upload token.** §7.1 and §7.4 require every finalize request to carry the `uploadToken`, and they require the gateway to reject an expired token with `401 UPLOAD_TOKEN_EXPIRED`, a token bound to another session with `403 UPLOAD_TOKEN_MISMATCH`, and a consumed token with `410 UPLOAD_TOKEN_CONSUMED` (spec/07_session-lifecycle.md:58-60 and :446). handleFinalize reads no `X-Lenny-Upload-Token` header and calls no verifier, and its only token operation is ConsumeDigest after the `ready` write (pkg/gateway/sessionserver/sessionserver.go:3065-3083, :3167, and :3190). Only the upload path verifies the token (pkg/gateway/sessionserver/upload.go:824-828). A finalize call that arrives after another call has moved the session to `ready` therefore receives the §15.1 preamble's `409 INVALID_STATE_TRANSITION` (spec/15_external-api-surface.md:641), and no spec text states whether 409 or 410 takes precedence for that call. The code gap predates this proposal and is recorded as a follow-up finding, and the precedence question needs a spec proposal. TEST-GAPS.md T-7.1.4 proposes a tier-3 test that drives expired, cross-session, and consumed tokens against `/finalize`, and that test fails against the current handler. BUILD-GAPS.md F-7.1.20 states that `/finalize` returns `UPLOAD_TOKEN_EXPIRED`, which the current handler does not do.
 
 ## Impacts on other proposals
 
@@ -100,7 +103,7 @@
 - **CODE-2** (`pkg/gateway/sessionserver/sessionserver.go`, `pkg/gateway/session/sessionstore/sessionstore.go`): entry compare-and-swap on created → finalizing.
 - **CODE-3** (`pkg/gateway/sessionserver/sessionserver.go`, `pkg/gateway/sessionserver/start.go`, `pkg/gateway/sessionserver/finalize.go`): guarded ready and failure writes, failFinalizing, afterFailed, and revokeFinalizeLease.
 - **DOCS-1** (`docs/api/rest.md`, `docs/api/mcp.md`): finalize reference states the overtaken-call outcome.
-- **TEST-1** (`pkg/gateway/sessionserver/finalize_race_internal_test.go`): tier 1 deterministic entry and exit interleavings.
+- **TEST-1** (`pkg/gateway/sessionserver/finalize_race_test.go`, `pkg/gateway/sessionserver/finalize_race_internal_test.go`): tier 1 deterministic entry and exit interleavings.
 - **TEST-2** (`tests/tier2_component/stores/sessionstore_test.go`): tier 2 guarded mutation serializes on the Postgres row lock.
 - **TEST-3** (`tests/tier4_integration/finalize_admission_race_test.go`, and `tests/tier4_integration/eager_claim_lifecycle_test.go` when the dialer is extended in place): tier 4 real-binder entry and exit races.
 - **TEST-4** (`tests/tier7a_load_local/finalize_admission_race_test.go`): tier 7a concurrent finalizes and DELETE under `-race`.

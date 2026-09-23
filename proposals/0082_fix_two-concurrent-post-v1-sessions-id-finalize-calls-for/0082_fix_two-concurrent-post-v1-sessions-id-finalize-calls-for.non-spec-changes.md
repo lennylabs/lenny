@@ -11,7 +11,7 @@ Every finalize state write moves inside the existing locked `sessionstore.Store.
 The design has two guards:
 
 - **Entry guard (CODE-2).** The created → finalizing mutation calls the existing `session.Validate` for `EndpointFinalize` against the locked row's state. `created` is written only by row inserts and no edge leads back into it, so exactly one call per session lifetime commits `finalizing`. The refused call returns before `storedWorkspacePlanForFinalize`, `prepareAtFinalize`, any reclaim, and any failure write, so it makes no pod RPC and writes no WorkspacePlan. The pre-lock `Get` and `Validate` stay as an early 404 or 409, because `resolveFinalizePlan` needs the row.
-- **Exit guards (CODE-1, CODE-3).** The finalizing → ready write and every finalize failure write admit only `finalizing`, through CODE-1's `finalizingPrecondition`. `session.Validate` cannot express this from-state, because the endpoint table admits `created`. A lost exit write means another writer already moved the row to a terminal state (the outcome SPEC-1 states). The handler then revokes only the session-keyed lease and never reclaims the pod, because `podclaim.DeleteClaim` deletes `claim-<podName>` with no owner check and the terminal writer's `terminalReclaimPreRunning` has already released it.
+- **Exit guards (CODE-1, CODE-3).** The finalizing → ready write and every finalize failure write admit only `finalizing`, through CODE-1's `finalizingPrecondition`. `session.Validate` cannot express this from-state, because the endpoint table admits `created`. CODE-3's **handleFinalize rules** state what the handler does after a lost exit write.
 
 "Lost" throughout this file means the Update returned an error for which `errors.As(err, &pe)` with `pe *session.PreconditionError` succeeds.
 
@@ -136,9 +136,10 @@ func (s *Server) failFinalizing(ctx context.Context, tenantID, id string) error 
 // touching the pod claim. It runs when a finalize exit write loses to a
 // terminal writer: that writer has already reclaimed the pod, and a second
 // DeleteClaim on claim-<podName> has no owner check and could remove a
-// successor session's claim on a recycled pod. The revoke covers an
-// AssignCredentials that completed after the terminal revoke, and is a no-op
-// when the session holds no lease.
+// successor session's claim on a recycled pod. The revoke covers any lease
+// this call's prepare phase minted after the terminal revoke, whether
+// AssignCredentials completed or failed partway, and is a no-op when the
+// session holds no lease.
 // spec: §7.1 step 23 (lease release), §4.9
 func (s *Server) revokeFinalizeLease(sessionID string) {
 	if s.podBinder != nil && s.podBinder.Credentials != nil {
@@ -149,12 +150,19 @@ func (s *Server) revokeFinalizeLease(sessionID string) {
 
 Re-cite the `reclaimFinalizedPod` comment from "§4.3 (Gap 2)" to `§7.1 steps 11-13 (finalize prepare phase)`, keeping its §7.1 step 23 and §4.6.1 citations.
 
-handleFinalize rules, in handler order:
+handleFinalize rules:
+
+No lost branch calls `reclaimFinalizedPod`, because `podclaim.DeleteClaim` deletes `claim-<podName>` with no owner check and the terminal writer's `terminalReclaimPreRunning` has already released the pod.
 
 1. **Plan-parse failure** (`storedWorkspacePlanForFinalize` error). Call `ferr := s.failFinalizing(...)` first. If lost, call `writePreconditionError(w, ferr)` and return without reclaiming. Otherwise, whether the failure write committed or returned another store error, call `reclaimFinalizedPod` as today and return the existing 500.
-2. **Prepare failure** (`prepareAtFinalize` error). The binder's `failPhase` or `prepareAtFinalize` has already reclaimed. Call `ferr := s.failFinalizing(...)`. If lost, call `writePreconditionError(w, ferr)`. Otherwise use the existing `writePodClaimError` envelope, and log a non-precondition `ferr` through the package's existing logger.
-3. **Upload-token consume.** Move the consume ahead of the ready write, still after `applyFinalizePrepareResult`. Uploads are admitted only in `created` and the row is already `finalizing`, so the upload window is unchanged. On a consume failure, call `ferr := s.failFinalizing(...)`. If lost, call `revokeFinalizeLease(id)` when `prep != nil` and return `writePreconditionError(w, ferr)`. Otherwise call `reclaimFinalizedPod` when `prep != nil` and return the existing 500.
-4. **Ready write.** Replace the mutation with one that calls `finalizingPrecondition(row)` and returns its error, then calls `transitionReady(row)`. If lost, call `revokeFinalizeLease(id)` when `prep != nil` and return `writePreconditionError(w, err)`, skipping the upload-channel close, the uploadLimits close, the SSE status change, and the finalize audit row. On any other store error (Gap 2), call `ferr := s.failFinalizing(...)`. If that is lost (for example an ambiguous commit that left `ready`, or a terminal writer), do not reclaim and return `writePreconditionError(w, ferr)`. Otherwise call `reclaimFinalizedPod` when `prep != nil` and return the existing 500.
+2. **Prepare failure** (`prepareAtFinalize` error). The binder's `failPhase` or `prepareAtFinalize` has already reclaimed. Call `ferr := s.failFinalizing(...)`. If lost, call `revokeFinalizeLease(id)`, then `writePreconditionError(w, ferr)`. The revoke runs whether or not `prep` is set, because `prepareAtFinalize` returns a nil `prep` on every error (`pkg/gateway/sessionserver/finalize.go:280-283`). `failPhase` releases a lease only when `leaseAssigned` holds, and `Binder.Prepare` sets that flag only after `assignCredentials` returns nil (`pkg/gateway/podlifecycle/podsession/binder.go:948-953`, `:1072-1076`), so leases a partial assignment minted stay recorded under the session, and rule 4 sub-branch (ii) states why the terminal writer's own revoke can miss them. Otherwise use the existing `writePodClaimError` envelope, and log a non-precondition `ferr` through the package's existing logger.
+3. **Upload-token consume.** The consume stays where it runs today, after the rule-4 ready write commits, and has no failure branch. `ConsumeDigest` fails only through `ConsumedTracker.MarkConsumed`, whose contract admits one error, `ErrConsumed`, for a digest that is already invalidated (`pkg/uploadtoken/uploadtoken.go:190-193`). Replace the consume block's `failSession`, `reclaimFinalizedPod`, and 500 with a log of any non-nil result through the package's existing logger (`log.Printf`, as in `pkg/gateway/sessionserver/finalize.go:384`), then continue to the upload-channel close. Rewrite the block's code comment to drop its "Gap 2: a consume failure" rationale and keep the §7.1 single-use citation. No failure write follows the ready write, so `finalizing` stays the only from-state of a finalize failure write, and a token left unconsumed mints no upload because uploads are admitted only in `created` (`pkg/gateway/sessionserver/upload.go:307-315`).
+4. **Ready write.** Replace the mutation with one that calls `finalizingPrecondition(row)` and returns its error, then calls `transitionReady(row)`. If lost, call `revokeFinalizeLease(id)` when `prep != nil` and return `writePreconditionError(w, err)`, skipping the upload-channel close, the uploadLimits close, the SSE status change, and the finalize audit row. On any other store error (Gap 2), call `ferr := s.failFinalizing(...)` and branch on its result:
+   - (i) `ferr` is nil or a non-precondition store error: call `reclaimFinalizedPod` when `prep != nil` and return the existing 500, as today.
+   - (ii) Lost, and `session.IsTerminal(pe.CurrentState)` holds: a terminal writer ended the session. Call `revokeFinalizeLease(id)` when `prep != nil`, do not reclaim, and return `writePreconditionError(w, ferr)`. The lease store is in-memory and per-replica (`pkg/gateway/credentials/credleasestore/credleasestore.go:9-10`), so a terminal writer on another replica, or one whose `ReleaseSession` ran before `AssignCredentials` completed, cannot release this lease.
+   - (iii) Lost, and the locked state is non-terminal: the ready write committed despite its error, and the session may already have moved on through `/start`. Neither revoke nor reclaim, and return the existing 500 carrying the ready-write error. The session legitimately holds the lease.
+
+   Only this branch can find a non-terminal row, because `transitionReady` is the only writer of `ready` (`pkg/gateway/sessionserver/sessionserver.go:3030`), and rules 1 and 2 and the plain lost ready write run while only a terminal writer can move the row off `finalizing`.
 
 Comments on these branches cite `// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states), §7.1 step 23 (lease release)`. `applyFinalizePrepareResult` stays unguarded, because it writes no state.
 
@@ -188,28 +196,43 @@ Each test carries a `// spec:` annotation, and every test at tier 2 and above ca
 
 ### TEST-1 · Tier 1 · deterministic entry and exit interleavings
 
-Target: `pkg/gateway/sessionserver/finalize_race_internal_test.go` (new, package `sessionserver`, memstore-backed like `finalize_plan_internal_test.go`).
+Targets:
 
-Fixture:
+- `pkg/gateway/sessionserver/finalize_race_test.go` (new, package `sessionserver_test`, no build tag). It holds every `hookStore` case and runs on the `start_pod_test.go` pod-bind fixture that `TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1` uses: `podBindRuntime`, `podBindClient`, `podBindWarmPool`, `podBindTemplate`, `podBindIdleSandbox`, `podBindAdapterDialer`, `podBindBinder`, and `recordingLeaseAssigner` (`pkg/gateway/sessionserver/start_pod_test.go:63-210`, `:1142-1162`, and `:1175-1266`). Every adapter-backed case assigns `&podBindRuntime{}` to the in-process adapter's `Runtime`, as that test does at `:1179`. The in-process adapter over bufconn runs Prepare to success, so `prep != nil` in every case that reaches the prepare phase.
+- `pkg/gateway/sessionserver/finalize_race_internal_test.go` (new, package `sessionserver`, memstore-backed like `finalize_plan_internal_test.go`). It holds the unit cases that call unexported symbols, listed under **Cases in `finalize_race_internal_test.go`** below.
 
-- `hookStore` wraps `sessionstore.Store` and runs a callback before the Nth `Update`, following the barrier-store pattern in `tests/tier7a_load_local/tracing_context_concurrent_registration_test.go`. `sessionserver.New` takes the store interface, so the wrapper plugs in directly.
-- Where a case needs a binder, build a real `*podsession.Binder{Client: fake.NewClientBuilder()..., Namespace, Credentials: recordingAssigner}`, following `reclaimTestServer` in `terminal_reclaim_internal_test.go`. Observe a reclaim as the absence of the seeded `claim-<pod>` SandboxClaim, and a revoke as the recording assigner's released list. Do not write a fake podBinder: `Server.podBinder` is the concrete `*podsession.Binder`.
-- Prepare cannot succeed without an adapter, so `prep` is nil in every tier-1 case. Tier 1 asserts no Prepare count and no ReleaseSession call from the finalize handler; TEST-3 owns those.
+Fixture of `finalize_race_test.go`:
 
-Cases:
+- `hookStore` wraps `sessionstore.Store`, and `sessionserver.New` takes it as the store interface. It selects the Update to act on by the State the mutation writes when probed on a copy of the current row, plus an occurrence count of that State, following the probe in `readyTransitionFailStore` (`pkg/gateway/sessionserver/start_pod_test.go:1113-1136`). It does not select by the Nth Update, because `applyFinalizePrepareResult` adds a store Update only when `prep != nil`. On the selected Update it runs in one of three modes: run a callback and then delegate; return an injected error without committing; or delegate, commit, and then return an injected error (the ambiguous commit). A case can arm more than one selection, each with its own mode. The occurrence counter is never reset, because each case builds a fresh wrapper. A probe that selects the wrong Update leaves the hook unfired, and the case then observes an unraced finalize (200 and `ready`) and fails its 409 or 500 assertion.
+- Every callback that commits a terminal state, or moves the row to `finalizing` for a simulated winner, writes directly to the wrapped inner store and bypasses the handlers. A terminal write through `handleDelete` runs `recordSessionCompleted` (`pkg/gateway/sessionserver/sessionserver.go:2958`), which emits the terminal lifecycle and reclaims the pod through `terminalReclaimPreRunning`, releasing the lease and deleting the claim (`pkg/gateway/sessionserver/usage.go:428` and `:446`, and `pkg/gateway/podlifecycle/podsession/binder.go:1097-1102`). A direct write runs none of these, so every lease release, claim delete, and lifecycle emission a case observes is the finalize handler's own. The handler-driven terminal path is TEST-3 Case B's subject.
+- Observe a reclaim as the absence of `claim-sbx-1`, a revoke as `recordingLeaseAssigner.released`, SSE status changes through `Options.Events`, and audit rows and terminal lifecycle emissions through `Options.LifecycleAuditSink`. Do not write a fake podBinder: `Server.podBinder` is the concrete `*podsession.Binder`.
+- **Malformed stored plan.** After the fixture's /create claims the pod, write WorkspacePlan bytes that `workspaceplan.ParseStored` (`pkg/workspaceplan/plan.go:312`) rejects to the row through the wrapped inner store, because /create validates the plan it accepts and an empty finalize body leaves the handler parsing the stored plan (`pkg/gateway/sessionserver/finalize.go:62-63`, `pkg/gateway/sessionserver/start.go:1218-1224`).
 
-- **Entry refusal.** Both calls pass the pre-lock read; the hook commits the winner's `finalizing` before the loser's entry Update. Assert 409 with `currentState` set to the locked state and `allowedStates=[created]`; WorkspacePlan unchanged when the loser sent a body; no terminal lifecycle event; with a fake-client binder, the seeded SandboxClaim still present.
+Cases in `finalize_race_test.go`. Each exit case cites the CODE-3 rule, and the sub-branch where the rule has them, that it drives, and asserts the outcome that rule gives:
+
+- **Entry refusal.** Both calls pass the pre-lock read; the hook commits the winner's `finalizing` before the loser's entry Update. Assert 409 with `currentState` set to the locked state and `allowedStates=[created]`; WorkspacePlan unchanged when the loser sent a body; no terminal lifecycle event; `claim-sbx-1` still present.
 - **Terminal write between the Get and the lock.** The hook commits `cancelled` before the entry Update. Assert 409 with `currentState=cancelled` and the row unchanged.
 - **Row deleted before the lock.** The hook deletes the row before the entry Update. Assert 404 `RESOURCE_NOT_FOUND`.
-- **Ready-write loss**, one sub-case each for DELETE → `cancelled`, terminate → `completed`, and a watchdog-style guarded write → `failed` with `FINALIZE_TIMEOUT`, each committed by the hook before the ready Update. Assert 409 with `currentState` set to the terminal state and `allowedStates=[created]`; State and FailureReason unchanged; no `status_change` to `ready` on the SSE bus; no `session.finalize_workspace` audit row; zero ReleaseSession calls from the finalize handler, which pins CODE-3's `prep != nil` gate.
-- **Prepare failure after DELETE.** Fake-client binder with no matching pool, so `ResolvePool` fails inside `prepareAtFinalize`. The hook commits DELETE before the `failFinalizing` Update. Assert 409 with `currentState=cancelled`, the row stays `cancelled`, and exactly one terminal lifecycle emission.
-- **Plan-parse failure after DELETE.** Assert 409 with `currentState=cancelled` and the seeded claim still present, which shows the lost branch skips the reclaim.
-- **Consume failure from `finalizing`.** An upload verifier whose consume fails. Assert the row reaches `failed` and the existing 500.
+- **Ready-write loss** (CODE-3 rule 4, lost ready write), one sub-case each for a terminal write of `cancelled`, of `completed`, and of `failed` with `FINALIZE_TIMEOUT`, each committed by the hook before the ready Update. Assert 409 with `currentState` set to the terminal state and `allowedStates=[created]`; State and FailureReason unchanged; no `status_change` to `ready` on the SSE bus; no `session.finalize_workspace` audit row; `recordingLeaseAssigner.released` equal to exactly `[id]`, which only `revokeFinalizeLease` can issue here and which fails when that call is removed; and `claim-sbx-1` still present.
+- **Prepare failure after a terminal write** (CODE-3 rule 2). A setup command that exits non-zero fails the prepare phase, as in `TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5`. The hook commits `cancelled` before the `failFinalizing` Update. Assert 409 with `currentState=cancelled`, the row stays `cancelled`, and zero terminal lifecycle emissions, because the lost `failFinalizing` emits nothing.
+- **Credential-assignment failure after a terminal write** (CODE-3 rule 2). On the pod-bind fixture, make the in-process adapter's `AssignCredentials` RPC fail after `recordingLeaseAssigner.AssignProto` has recorded the lease; the fixture has one pool and an `AssignProto` that never fails, so the RPC failure is the reachable partial-assignment trigger. The hook commits `cancelled` before the `failFinalizing` Update. Assert 409 with `currentState=cancelled`, `recordingLeaseAssigner.assigns` equal to `[id]`, and `recordingLeaseAssigner.released` equal to exactly `[id]`. `failPhase` issues no release when `leaseAssigned` is false, so only `revokeFinalizeLease` produces that entry, and the case fails when that call is removed.
+  **IMPLEMENTOR'S CHOICE:** how the `AssignCredentials` RPC failure is injected, since the pod-bind fixture has no hook for it today — the injection must make `assignCredentials` return an error after `AssignProto` has run, and must leave every other pod-bind case's behavior unchanged.
+- **Plan-parse failure after a terminal write** (CODE-3 rule 1). Seed the **Malformed stored plan** and send finalize with an empty body. The hook commits `cancelled` before the `failFinalizing` Update. Assert 409 with `currentState=cancelled` and `claim-sbx-1` still present, which shows the lost branch skips the reclaim.
+- **Plan-parse failure, committed** (CODE-3 rule 1). Seed the **Malformed stored plan** and send finalize with an empty body. Arm no hook. Assert the existing 500, row State `failed`, `claim-sbx-1` absent, and exactly one terminal lifecycle emission through `Options.LifecycleAuditSink`. This case fails when the reclaim is dropped, and the lost case above fails when the reclaim runs before or regardless of the failure write.
+- **Consume after the ready write** (CODE-3 rule 3). The server carries an `uploadtoken.Verifier` over a `ConsumedTracker` whose `MarkConsumed` reads the row's State from the wrapped inner store, records it, and returns `ErrConsumed`, and the row carries an `UploadTokenDigest`. Assert that the tracker recorded `ready`, the response is 200, the row stays `ready`, `claim-sbx-1` is still present, and `recordingLeaseAssigner.released` is empty.
+- **Ready-write store error, failure write lost to a terminal writer** (CODE-3 rule 4, Gap-2 sub-branch (ii)). The hook returns an injected error on the ready Update without committing, then commits `cancelled` before the `failFinalizing` Update. Assert 409 with `currentState=cancelled`, the row stays `cancelled`, `recordingLeaseAssigner.released` equal to exactly `[id]`, and `claim-sbx-1` still present.
+- **Ready-write ambiguous commit** (CODE-3 rule 4, Gap-2 sub-branch (iii)). The hook commits the ready Update and then returns an injected error, so `failFinalizing` loses to `ready`. Assert the existing 500, the row stays `ready`, `claim-sbx-1` still present, `recordingLeaseAssigner.released` empty, and no terminal lifecycle emission.
 - **Unraced call.** Assert the row reaches `ready` with no change in the response.
+
+CODE-3 rule 4 Gap-2 sub-branch (i) is pinned by the existing `TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1` (`pkg/gateway/sessionserver/start_pod_test.go:1175-1266`), which still passes under the guarded mutation because its probe writes `ready` on a `finalizing` row. `finalize_race_test.go` adds no duplicate of it.
+
+Cases in `finalize_race_internal_test.go`:
+
 - **failSession stays unconditional.** A `failSession` call on a `cancelled` row still writes `failed`, pinning that non-finalize callers are unchanged.
 - **finalizingPrecondition.** A refused state leaves the memstore row unchanged, and `errors.As` finds `*session.PreconditionError` with the locked `CurrentState`.
+- **failFinalizing commits and emits the terminal tail.** Seed a `finalizing` memstore row, build the server with `Options{Events: bus, LifecycleAuditSink: sink}`, and call CODE-3's `failFinalizing`. Assert a nil error, State `failed`, exactly one `status_change`, exactly one `session_complete`, and exactly one `session.failed` audit event, using the helpers `TestFailSessionEmitsTerminalLifecycle_spec_7_2_2` uses (`pkg/gateway/sessionserver/lifecycle_internal_test.go:290-312`). The case carries `// spec: 7.2 (terminal states), 11.7`. It pairs with the **Prepare failure after a terminal write** case, which asserts zero emissions on a lost write.
 
-Annotation: `// spec: 15.1 (finalize precondition), 7.1 (steps 11-13, step 23), 6.2 (finalize timeout), 7.2 (terminal states)`.
+Annotation on both files: `// spec: 15.1 (finalize precondition), 7.1 (steps 11-13, step 23), 6.2 (finalize timeout), 7.2 (terminal states)`.
 
 ### TEST-2 · Tier 2 · a guarded mutation serializes on the Postgres row lock
 
@@ -240,14 +263,16 @@ Target: `tests/tier4_integration/finalize_admission_race_test.go` (new).
 Fixture:
 
 - Reuse `eagerCluster` and `recordingAssigner` from `eager_claim_lifecycle_test.go`.
+- Wire one `blobstore.NewMemoryStore(nil)` on the binder's `Blobs` and on `sessionserver.Options.Blobs`, as `TestEagerClaimLifecycleCreateUploadFinalizeStart` does (`tests/tier4_integration/eager_claim_lifecycle_test.go:237-238` and `:282`), because `eagerCluster` wires no blob store.
 - Extend `eagerAdapterDialer`, or add a sibling, to pass a `grpc.ServerOption` to `adapter.NewGRPCServer`. The option installs stream and unary interceptors that count PrepareWorkspace, RunSetup, AssignCredentials, and DemoteSDK.
 - Wrap the envtest `client.Client` in a counting wrapper that records `Delete` calls on SandboxClaim objects by name.
-- Wrap memstore in a hook store equivalent to TEST-1's `hookStore`, defined in this package because TEST-1's type is internal to `sessionserver`.
+- Wrap memstore in a hook store equivalent to TEST-1's `hookStore`, defined in this package because a test file's types cannot be imported from another package.
 - Do not route through the idempotency middleware. Keyless and distinct-key calls reach the handler identically.
 
 Case A (deterministic entry race):
 
-- Issue two keyless `POST /finalize` calls on one `created` session.
+- Before the race, POST one upload to the `created` session, as the lifecycle test does (`tests/tier4_integration/eager_claim_lifecycle_test.go:316-318`). The binder issues PrepareWorkspace only for a non-empty upload set (`pkg/gateway/podlifecycle/podsession/binder.go:1323-1330`), so without the upload no finalize reaches PrepareWorkspace.
+- Issue two keyless `POST /finalize` calls on that session, each carrying a `workspacePlan` with one `uploadFile` source that names the upload's returned `uploadRef`, following the lifecycle test (`tests/tier4_integration/eager_claim_lifecycle_test.go:339-345`).
 - Call 1's hook, placed before its entry Update, blocks until call 2 has completed its pre-lock Get. Call 2's entry Update then runs after call 1 commits.
 - Expect exactly one 200 and one 409 with `details.currentState` of `finalizing` or `ready` and `allowedStates=[created]`.
 - Expect adapter counters of exactly one PrepareWorkspace, at most one RunSetup, and zero DemoteSDK.
@@ -257,7 +282,7 @@ Case B (exit race):
 
 - A hook before the ready Update issues `DELETE /v1/sessions/{id}` through the same handler.
 - Expect finalize to return 409 with `currentState=cancelled`, and the stored row to stay `cancelled` with no `ready` status change.
-- Expect `assigner.released` to contain the session ID. The terminal ReclaimClaimed revokes, and the finalize handler's lease-only revoke may add a second no-op entry.
+- Expect `assigner.released` to hold exactly two entries for the session: one from the terminal ReclaimClaimed and one from the `revokeFinalizeLease` call of CODE-3 rule 4.
 - Expect the counting client to record exactly one Delete of `claim-sbx-1`, which is the terminal reclaim.
 
 Annotations and preflight:
@@ -284,8 +309,9 @@ Annotations: `// spec: 15.1 (finalize precondition), 7.2 (terminal states)` and 
 ## Edge cases and accepted failure modes
 
 - **Ambiguous entry commit.** If the entry Update returns an error after committing, the handler returns 500 and does not re-read or fail the row, because it cannot tell its own commit from a concurrent winner's. The §6.2 watchdog resolves an orphaned `finalizing` row.
+- **Ambiguous ready commit.** CODE-3 rule 4 states the response. The accepted consequences are: the client receives 500 for a session that is `ready`, and it learns the state from GET; the call emits no `status_change` to `ready` on the SSE bus and no `session.finalize_workspace` audit row; and the call skips the upload-channel close and the per-session upload-byte release, as every other exit-write failure branch does.
 - **Client disconnect during Prepare.** The request context is cancelled, so `failFinalizing` runs on a cancelled context and the row stays `finalizing` until the watchdog fires. This predates the race and is recorded in the summary's shipped-tree defects.
-- **Terminate from `finalizing` does not abort a running Prepare.** The finalize call runs to its exit write, loses, and revokes its lease. The pod was already released by the terminal writer.
+- **Terminate from `finalizing` does not abort a running Prepare.** The finalize call runs to its exit write and loses; CODE-3's handleFinalize rules state its response. The pod was already released by the terminal writer.
 - **SetupOutput and WorkspaceRoot persist on a terminal row.** `applyFinalizePrepareResult` stays unguarded; the persisted setup trail is audit data and changes no state.
 - **Double lease revoke.** On exit loss, the terminal reclaim and `revokeFinalizeLease` can both release the lease. `ReleaseSession` is a no-op when the session holds no lease.
 
@@ -295,6 +321,7 @@ Annotations: `// spec: 15.1 (finalize precondition), 7.2 (terminal states)` and 
 - `pkg/gateway/sessionserver/start.go`
 - `pkg/gateway/sessionserver/finalize.go`
 - `pkg/gateway/session/sessionstore/sessionstore.go`
+- `pkg/gateway/sessionserver/finalize_race_test.go` (new)
 - `pkg/gateway/sessionserver/finalize_race_internal_test.go` (new)
 - `tests/tier2_component/stores/sessionstore_test.go`
 - `tests/tier4_integration/finalize_admission_race_test.go` (new)
