@@ -779,6 +779,50 @@ const FORMAT_CHECKLIST =
 // by adding text where the reviewer was looking. The ladder makes addition the
 // last resort, and the reader test sends the defences to the log, where the
 // refuted-findings memory and the standing context already do that job.
+// What staged text is for, shared by the writer and every agent that edits the
+// staged files afterwards. `defenceHome` names where a sentence that defends a
+// choice goes instead: the log shard for an agent inside the review loop, the
+// summary's decisions for the writer, which has no loop to defend against yet.
+function stagedTextRule(defenceHome) {
+  return (
+    "- THE STAGED FILES TELL THE IMPLEMENTOR WHAT TO BUILD. Before writing a sentence into them, name who " +
+    "acts on it and what they do differently because of it. A sentence written so a reviewer does not raise " +
+    "a point again, to explain why an earlier revision was wrong, or to prove with file:line evidence that a " +
+    "choice is safe belongs in " + defenceHome + ". A paragraph that defends a choice is a defect in a " +
+    "staged file. Locate code in staged text by symbol and file; line numbers go stale as other proposals " +
+    "land and belong with the evidence.\n"
+  );
+}
+const NEVER_CUT =
+  "- NEVER CUT, however lean the text: a fail-closed or security predicate, a wire contract or field " +
+  "name, an ordering another step depends on, a trap an implementor would plausibly fall into (stated once, " +
+  "where they will meet it), a note naming which assertion is the one that discriminates, a constraint a gate " +
+  "enforces (such as a row that must stay one physical line), and a deliberate divergence from the staged " +
+  "spec text.\n";
+
+// The design counterpart of the edit ladder, for the drafting stances and the
+// consolidator. The minimal and reuse stances argued for a small design, but the
+// other four stances carried no such pressure, and the consolidator was told to
+// graft what each got right onto its spine, which is additive by construction:
+// every element a stance justified joined the design, and every later round then
+// had to state, cite, and keep it consistent.
+const SIMPLE_DESIGN =
+  "KEEP THE DESIGN SIMPLE, WHATEVER YOUR STANCE. Understand the problem fully first: the ladder shortens the " +
+  "design, never the reading. Then take the FIRST rung that resolves the problem and stop there:\n" +
+  "  1. NO CHANGE. The problem is already handled, or not worth solving; say so.\n" +
+  "  2. DELETE OR NARROW the rule, state, or path that causes it.\n" +
+  "  3. REUSE an existing spec surface, RPC, field, error code, or code path as it is.\n" +
+  "  4. EXTEND one: a field, a value, or a clause on an existing surface.\n" +
+  "  5. Only then a NEW mechanism, the smallest that resolves the problem as validated.\n" +
+  "Every element a design adds costs every later review round: a field is a wire contract, a rule is a " +
+  "review surface, a state is a transition to test, and each must be stated once, cited, and kept consistent " +
+  "for the life of the proposal. So add no mechanism for a scenario the validated problem does not exhibit " +
+  "and your own design does not create, and name such a scenario as a non-goal instead. Of two designs that " +
+  "both resolve the problem, prefer the one with fewer new fields, states, rules, codes, and tests, even when " +
+  "the larger one handles more. Put a fix where every caller routes through, once, rather than at each site " +
+  "the problem was observed. Never simplify away a fail-closed or security check, a guard against data loss, " +
+  "a failure path the spec names, or anything the validated problem requires.\n";
+
 const LEAN_EDIT =
   "- CLOSE EACH FINDING WITH THE LEAST TEXT. Understand the finding fully first: the ladder shortens the " +
   "edit, never the reading. Then take the FIRST rung that closes it and stop there:\n" +
@@ -791,18 +835,11 @@ const LEAN_EDIT =
   "    5. ONE SENTENCE.\n" +
   "    6. Only then ADD the minimum text, in the one home it belongs to.\n" +
   "  Two rungs that both close it: take the lower number.\n" +
-  "- THE STAGED FILES TELL THE IMPLEMENTOR WHAT TO BUILD. Before writing a sentence into them, name who " +
-  "acts on it and what they do differently because of it. A sentence written so a reviewer does not raise " +
-  "a point again, to explain why an earlier revision was wrong, or to prove with file:line evidence that a " +
-  "choice is safe belongs in your log shard: the refuted-findings memory and the review log are this loop's " +
-  "defence against a finding returning, and the proposal is not. A paragraph that defends a choice is a " +
-  "defect in a staged file. Locate code in staged text by symbol and file; line numbers go stale as other " +
-  "proposals land and belong with the evidence in the log.\n" +
-  "- NEVER CUT, whatever the ladder suggests: a fail-closed or security predicate, a wire contract or field " +
-  "name, an ordering another step depends on, a trap an implementor would plausibly fall into (stated once, " +
-  "where they will meet it), a note naming which assertion is the one that discriminates, a constraint a gate " +
-  "enforces (such as a row that must stay one physical line), and a deliberate divergence from the staged " +
-  "spec text.\n";
+  stagedTextRule(
+    "your log shard: the refuted-findings memory and the review log are this loop's defence against a " +
+      "finding returning, and the proposal is not",
+  ) +
+  NEVER_CUT;
 
 const SINGLE_SOURCE_RULE =
   "- STATE EACH RULE ONCE. A predicate, an ordered cascade, a contract, an outcome table or an invariant has ONE normative home: the staged spec text when the rule is normative, otherwise the deliverable that owns it. Number the rules there when there are several. Every other site (the design prose, the summary, the checklist, a conformance or test list, a docs deliverable, a code block's commentary) CITES the home by heading and rule number and adds only what that site alone knows: the lock discipline, which test drives it.\n" +
@@ -1823,6 +1860,7 @@ if (mode === "new") {
             READ_ONLY + " Output the design as structured data only; another agent writes the files.\n" +
             EVIDENCE + "\n\n" +
             "Project principles: " + PRINCIPLES + "\n\n" +
+            SIMPLE_DESIGN + "\n" +
             "THE VALIDATED PROBLEM is at " + P.problem + ". Read it in full, including the refuted premises: " +
             "a design that rests on one is already wrong.\n\n" +
             "Read " + exemplar + " for the level of specificity expected, and read the spec sections your " +
@@ -1855,9 +1893,14 @@ if (mode === "new") {
       "THE VALIDATED PROBLEM is at " + P.problem + ".\n\n" +
       "THE SIX DESIGNS, produced in parallel by agents that did not see each other's work:\n" +
       JSON.stringify(stances, null, 2) +
-      "\n\nHOW TO CONSOLIDATE. Pick a SPINE: the one design whose shape you would defend, named. Then graft " +
-      "what the others got right onto it, one element at a time, and say for each what it came from. Do not " +
-      "average the six; a design assembled from the median of six is a design nobody argued for.\n\n" +
+      "\n\nHOW TO CONSOLIDATE. Pick a SPINE: the one design whose shape you would defend, named. Among the " +
+      "designs that resolve the problem, prefer the one with the fewest moving parts. Then graft what the " +
+      "others got right onto it, one element at a time, and say for each what it came from. Grafting only " +
+      "adds, so each graft must pass the minimal stance's test: show that the problem, or a failure mode the " +
+      "spine itself creates, is not resolved without it. Record every graft you decline in nonGoals with its " +
+      "reason. Do not average the six; a design assembled from the median of six is a design nobody argued " +
+      "for.\n\n" +
+      SIMPLE_DESIGN + "\n" +
       (dissent.length
         ? "TAKE THE DISSENT SERIOUSLY. " + dissent.length + " stance(s) argued that no change should be " +
           "made. Read their reasoning and answer it explicitly. If they are right, set viable: false and " +
@@ -2010,6 +2053,11 @@ if (mode === "new") {
       "finding ids the input named, or \"none\".\n\n" +
       P.status + " — leave it alone. The status is Draft and the review loop changes it.\n\n" +
       SINGLE_SOURCE_RULE +
+      stagedTextRule(
+        "the summary's decisions, once, as the reason for the decision it defends, or nowhere; the draft's " +
+          "rationale for each change is that reason, and it is not repeated beside the staged text",
+      ) +
+      NEVER_CUT +
       FORMAT_BLANKS +
       "\nProse rules: follow " + repo + "/.claude/rules/doc-style.md (read it first). Read the spec " +
       "sections each staged edit targets so anchors and surrounding text are quoted accurately." +

@@ -6205,4 +6205,26 @@ t.section("B39. fixers close each finding with the least text, and delete what a
     apply && /Then sweep for the design this redesign replaced/.test(apply.prompt));
 }
 
+t.section("B40. the draft stage keeps the design simple, and the writer writes only what to build");
+{
+  const run = await runWorkflow(WF, NEW_ARGS, newStubs({ "hash:*": HASH }));
+  const stances = run.calls.filter((c) => /^draft:/.test(c.label) && c.label !== "draft:consolidate");
+  t.check("every stance runs", stances.length === 6, String(stances.length));
+  t.check("every stance, not only minimal, climbs the design ladder",
+    stances.length > 0 && stances.every((c) => /KEEP THE DESIGN SIMPLE, WHATEVER YOUR STANCE/.test(c.prompt)));
+  t.check("and is told not to design for a scenario the problem does not exhibit",
+    stances.every((c) => /add no mechanism for a scenario the validated problem does not exhibit/.test(c.prompt)));
+  const cons = run.calls.find((c) => c.label === "draft:consolidate");
+  t.check("the consolidator prefers the spine with the fewest moving parts",
+    cons && /prefer the one with the fewest moving parts/.test(cons.prompt));
+  t.check("and makes every graft pass the minimal stance's test, recording what it declines",
+    cons && /each graft must pass the minimal stance's test/.test(cons.prompt) && /Record every graft you decline in nonGoals/.test(cons.prompt));
+  const writer = run.calls.find((c) => c.label === "write");
+  t.check("the writer is told the staged files say what to build",
+    writer && /THE STAGED FILES TELL THE IMPLEMENTOR WHAT TO BUILD/.test(writer.prompt));
+  t.check("and puts a change's rationale in the summary's decisions, once",
+    writer && /belongs in the summary's decisions, once/.test(writer.prompt));
+  t.check("and keeps the never-cut list", writer && /NEVER CUT, however lean the text/.test(writer.prompt));
+}
+
 t.done();
