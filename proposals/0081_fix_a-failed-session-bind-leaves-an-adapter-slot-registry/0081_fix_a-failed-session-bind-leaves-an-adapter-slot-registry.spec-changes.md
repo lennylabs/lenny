@@ -85,9 +85,9 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   is transient and spends one of the request's attempts. The retry is placed on another pod
   only when this pod is saturated, or when the leaked slot has carried the pod past §5.2's
   `ceil(maxConcurrentSessions / 2)` replacement threshold, which one leak does at
-  `maxConcurrentSessions: 2` and does not above it. Steering the retry would need the
-  per-request pod exclusion this revision withdrew, and the pod-side refusal replaces it, so
-  this disposition is accepted rather than closed.
+  `maxConcurrentSessions: 2` and does not above it. Steering the retry would need a
+  per-request pod exclusion, which this proposal does not stage, and the pod-side refusal stands
+  in its place, so this disposition is accepted rather than closed.
 - **A client retry of the §15.1 start after a failed bind on a create-time-reserved slot.**
   The row keeps its §4.6 pod binding, so the retried start reconnects to the same pod under
   the same slot identifier. The attempt token and the reclaim hold are what govern
