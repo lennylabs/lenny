@@ -2386,14 +2386,50 @@ async function designAnswers(list) {
           return;
         }
         // The item becomes a resolution carrying its designed answer, and takes
-        // the `resolve` applier from here.
+        // the `resolve` applier from here, once the answer itself survives the
+        // `resolve` brief's falsifier.
         item.disposition = "resolve";
         item.answer = d.answer;
         item.answerKey = d.answerKey;
         item.designedAt = firing;
         log("  " + item.id + ": answer designed — " + String(d.answerKey || "").slice(0, 60));
+        return falsifyDesignedAnswer(item, i);
       }),
     ),
+  );
+}
+
+// A designed answer is text nothing else in this firing reviews, which is the
+// case the `resolve` brief's GROUND judge exists for: it needs affirmative
+// support, so an uncertain verdict refutes it. The falsifier that sent the item
+// here attacked the claim that the decision was the human's, not the answer, so
+// before this gate a designed answer reached Apply without any check of its
+// own; measured on one firing, a structural re-cut of three deliverables landed
+// that way. A refuted or unadjudicated answer leaves the decision the human's.
+async function falsifyDesignedAnswer(item, index) {
+  const label = "f" + firing + ":falsify-answer:" + index;
+  const spec = FALSIFIERS.resolve;
+  const d = item.answerDesign || {};
+  const v = await robustAgent(
+    falsifyPrompt(item, spec) +
+      "\n\nTHE ANSWER UNDER ATTACK, designed after the gate refuted this decision as the human's:\n" +
+      JSON.stringify(
+        { answer: d.answer, authority: d.authority, where: d.where, why: d.why, rung: d.rung },
+        null,
+        2,
+      ).slice(0, 12000),
+    { label, schema: ITEM_FALSIFICATION, phase: "Falsify" },
+  );
+  if (!v) recordDead(label);
+  item.answerFalsification = v || null;
+  const gate = v ? gateVerdict(spec.needsSupport, v) : "unadjudicated";
+  if (gate === "stands") return;
+  item.disposition = "human";
+  item.answerRefuted = gate;
+  log(
+    "  " + label + ": the designed answer for " + item.id + " was " +
+      (gate === "refuted" ? "REFUTED (" + (v.howConclusive || "unstated") + ")" : "not adjudicated") +
+      "; the decision stays the reviewer's",
   );
 }
 
@@ -2464,8 +2500,9 @@ const PHASE_EDITABLE = () =>
       "edit is NOT applied: report `blocked`, state in `note` the edit you would have made and the " +
       "ground for it, and it is recorded for the operator instead of staged.\n"
     : "") +
-  "Every other file in the proposal, including the implementation checklist, and every file outside it, " +
-  "is out of bounds.";
+  "  " + P.checklist + " — ONLY to keep its deliverable ids true when your edit adds, removes, splits, " +
+  "merges or renames a staged deliverable, under the CHECKLIST_MAPPING rule below.\n" +
+  "Every other file in the proposal, and every file outside it, is out of bounds.";
 
 // What one Apply reports. Deliberately small, for the reason the entry schema
 // above is: the field guidance is in the prompt and what the schema enforces is
@@ -2593,10 +2630,21 @@ const IDENTIFIER_STAMP =
 // spec fixer, and the same escape applies: a deliverable this phase adds or
 // removes is recorded for the pass that owns the checklist rather than edited
 // into it.
+// The checklist was wholly out of bounds, so a resolution that split or renamed
+// a deliverable landed half done: measured on one firing, a decision answered by
+// cutting three deliverables into six left three of them in no step and one
+// still in three, with the repair deferred to a reconciliation pass that runs
+// only between the two loops. The phase now keeps the step-to-deliverable
+// mapping true in the same edit, and nothing else in the checklist is its to
+// change.
 const CHECKLIST_DEFERRAL =
-  "THE IMPLEMENTATION CHECKLIST IS NOT YOURS. Where your edit adds, removes, merges, splits or " +
-  "resequences a staged deliverable, record it as a `DEFERRED [" + P.checklist + "]` line in " + P.log +
-  " naming the step that is now wrong and what is true instead. Do not edit the checklist.";
+  "CHECKLIST_MAPPING. Where your edit adds, removes, splits, merges or renames a staged deliverable, " +
+  "update " + P.checklist + " in the same edit so every staged deliverable appears in exactly one step and " +
+  "no step names one that does not exist: change the deliverable id a step names, move a split-off part to " +
+  "the step that lands it, delete a step left with no deliverable (keeping the other steps' ids), and " +
+  "correct any `Depends on:` the change breaks. Name the checklist change in your log line. Any other " +
+  "change the checklist needs is not yours: record it as a `DEFERRED [" + P.checklist + "]` line in " +
+  P.log + " naming the step and what is true instead.";
 
 // What the earlier Applies in THIS firing actually did. It costs no agent, the
 // firing already has it, and it is the one thing this agent's item could not
@@ -2905,6 +2953,64 @@ async function applyAll(list) {
   }
 }
 
+// ---- Listing a contested decision for the human ---------------------------
+//
+// A contested record is the human's: the review loop reversed what this phase
+// wrote, and neither position is re-applied. It was reported in
+// `decisionsLeftToHuman` and written nowhere, so a reversal that deleted the
+// entry left a decision the human was said to hold and could not see in the file
+// they read. One agent per such record writes the entry once, under its
+// identifier, and the record remembers the firing that listed it. It never
+// writes the item's record file, whose text the reversal check compares against.
+function contestedListPrompt(rec) {
+  return (
+    "You are listing ONE contested decision for the human in the open-decisions-and-impact-review phase " +
+    "of a change proposal's review.\n\n" +
+    "HARD CONSTRAINT. You may edit ONLY `## Open decisions for human to make` in " + P.summary + ", and " +
+    "append one line to " + P.log + ". Edit no staged change file, no other section, and no file outside " +
+    "the proposal. Do not write, move or edit " + recordPath(rec.id) + ".\n\n" +
+    FILE_MAP + "\n\n" +
+    IDENTIFIER_STAMP + "\n\n" +
+    "WHAT HAPPENED. An earlier firing of this phase answered this decision and wrote the answer into the " +
+    "proposal; the review loop has since reversed it. The two positions are unreconciled, so the decision " +
+    "is the human's and neither position is re-applied.\n\n" +
+    "WHAT TO DO. Ensure `## Open decisions for human to make` carries exactly one entry for it under the " +
+    "identifier `" + rec.id.replace(/^id:/, "") + "`: the question, stated so it can be answered without " +
+    "reading the proposal; the answer this phase applied" +
+    (rec.hasRecord ? ", read from " + recordPath(rec.id) : ", as far as the question below states it") +
+    "; what the proposal carries instead now; and that the phase's answer and the review loop's reversal " +
+    "are the two positions the human chooses between. When the section already carries such an entry, " +
+    "report `already-correct` and edit nothing. Keep the section's preamble true. Set `recordWritten` " +
+    "false: this listing writes no record file.\n\n" +
+    LOG_WRITE_RULE + "\n\n" +
+    "Follow " + repo + "/.claude/rules/doc-style.md.\n\n" +
+    FIRING_LINE + "\n\n" +
+    "THE RECORD: " +
+    JSON.stringify({ id: rec.id, question: rec.question, contested: rec.contested }, null, 2)
+  );
+}
+
+async function listContested() {
+  const pending = Object.values(records()).filter((rec) => rec.contested && !rec.contested.listedAtFiring);
+  if (pending.length === 0) return;
+  log("Listing " + pending.length + " contested decision(s) for the human, one agent each, sequentially");
+  for (let i = 0; i < pending.length; i++) {
+    const rec = pending[i];
+    const label = "f" + firing + ":list-contested:" + i;
+    const res = await robustAgent(contestedListPrompt(rec), { label, schema: APPLY_RESULT, phase: "Apply" });
+    if (!res) {
+      recordDead(label);
+      log("  " + label + ": the agent returned nothing; " + rec.id + " is listed at a later firing");
+      continue;
+    }
+    if (res.outcome === "edited") applyTouchedTree = true;
+    if (res.outcome === "edited" || res.outcome === "already-correct") {
+      rec.contested.listedAtFiring = firing;
+      log("  " + label + ": " + rec.id + " is listed for the human (" + res.outcome + ")");
+    }
+  }
+}
+
 // ---- Sub-task 7: the summary cleanup ---------------------------------------
 //
 // One agent, run AFTER Apply, because what belongs in each section depends on
@@ -3168,6 +3274,19 @@ function authorityFor(item) {
   const when = item.carried
     ? "firing " + item.carried.fromFiring + ", carried forward to firing " + firing
     : "firing " + firing + " (" + trigger + ")";
+  // A designed answer passed two gates, each under its own brief: the first
+  // refuted the claim that the decision was the human's, and the second attacked
+  // the answer. Naming only one of them, under the final disposition, reported a
+  // refutation as the answer's own verdict.
+  if (item.designedAt && item.answerFalsification) {
+    return (
+      "the open-decisions-and-impact-review phase, " + when + ": " + readings +
+      " independent reading(s), " + (item.agreement || "agreement unstated") + "; the `human` brief's " +
+      "falsifier refuted that the decision is the reviewer's (`" + (v.howConclusive || "unstated") +
+      "`), sub-task 5b designed the answer, and the `resolve` brief's falsifier attacked that answer and " +
+      "reported `" + (item.answerFalsification.howConclusive || "unstated") + "`"
+    );
+  }
   return (
     "the open-decisions-and-impact-review phase, " + when + ": " + readings +
     " independent reading(s), " + (item.agreement || "agreement unstated") + ", attacked by this item's " +
@@ -3288,6 +3407,11 @@ function buildDecisionPayloads() {
       reason =
         "carried forward from firing " + item.carried.fromFiring + " untouched: nothing this firing " +
         "collected changed the item, so it was not re-adjudicated";
+    } else if (item.answerRefuted) {
+      reason =
+        "the gate judged it answerable, but the designed answer was " +
+        (item.answerRefuted === "refuted" ? "refuted" : "not adjudicated") +
+        " by the `resolve` brief's falsifier, so it stays the human's";
     } else if (item.disposition === "human") {
       reason =
         (item.alternatives || []).length > 0
@@ -3847,6 +3971,7 @@ if ((commit.outsideProposal || []).length > 0) {
 // One agent per surviving item that needs an edit, each holding one resolution
 // and writing it, run one after another because they edit the same files.
 await applyAll(survivors);
+await listContested();
 
 // The summary is rewritten to the listed sections, in order, and anything the
 // list does not name is relocated to where it belongs. It runs after Apply

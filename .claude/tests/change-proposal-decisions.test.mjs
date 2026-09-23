@@ -833,6 +833,7 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
     "f1:human-decisions:*": found(H),
     "f1:falsify:0": REFUTE("resolve"),
     "f1:answer-design:0": design,
+    "f1:falsify-answer:0": STANDS,
     "f1:apply:0": { outcome: "edited", recordWritten: true, where: ["spec-changes.md — SPEC-1"] },
   });
   t.check("a refuted human the evidence calls answerable reaches the designer",
@@ -2370,7 +2371,7 @@ t.section("D21. every prompt puts its stable text first, so two calls of one fam
     const b = promptOf(run.calls, "f1:apply:1");
     samePrefix("apply", a, b, [
       "HARD CONSTRAINT.", "THE PROPOSAL. Summary:", "Verify every claim directly against", "it is curated, it is short",
-      "THE IDENTIFIER. Every entry under", "THE IMPLEMENTATION CHECKLIST IS NOT YOURS", "YOU HOLD ONE ITEM",
+      "THE IDENTIFIER. Every entry under", "CHECKLIST_MAPPING. Where your edit", "YOU HOLD ONE ITEM",
       "THE DISPOSITION IS NOT YOURS TO REOPEN", "RECORD WHAT YOU WROTE IN THE REVIEW LOG", "GIT IS THE EVIDENCE",
       "/.claude/rules/doc-style.md",
     ]);
@@ -2426,6 +2427,64 @@ t.section("D21. every prompt puts its stable text first, so two calls of one fam
     samePrefix("answer-design", a, b, ["GROUND IT OR REFUSE IT", "WHAT THE PROPOSAL ALREADY STAGES IS PART OF THE ANSWER", "NEVER REFERENCE AN OPEN DECISION", "NAME THE SITES in `where`"]);
     t.check("answer-design: the decision follows the firing line", a.indexOf("THE DECISION: ") > cutOf(a));
   }
+}
+
+// ==========================================================================
+t.section("D40. a designed answer is gated, the checklist mapping travels with a re-cut, and a contested decision is listed");
+// ==========================================================================
+{
+  const H = entry({ id: "OD-9", decision: "does the gate stay equality?", disposition: "human", summaryAction: "unchanged" });
+  const REFUTE_HUMAN = {
+    theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive",
+    reasoning: "the shipped spec settles it", evidence: "spec/10:41", fallbackDisposition: "resolve",
+  };
+  const design = {
+    answerable: true, answerKey: "equality", answer: "The gate compares for equality.",
+    authority: "spec/10_gateway-internals.md:41", why: "shipped step 3 fixes the comparison",
+    where: ["spec-changes.md — SPEC-1 §10.1.2"], rung: "replace",
+  };
+
+  // The answer itself meets the `resolve` brief's falsifier, and a refuted answer is not applied.
+  const refuted = await fire({}, {
+    "f1:human-decisions:*": found(H), "f1:falsify:0": REFUTE_HUMAN, "f1:answer-design:0": design,
+    "f1:falsify-answer:0": REFUTES,
+  });
+  const fa = promptOf(refuted.calls, "f1:falsify-answer:0");
+  t.check("the designed answer meets the resolve brief's GROUND judge", /You are the GROUND judge/.test(fa || ""));
+  t.check("which is shown the answer it attacks", /THE ANSWER UNDER ATTACK/.test(fa || "") && /The gate compares for equality\./.test(fa || ""));
+  t.check("a refuted answer is not applied", never(refuted.calls, "f1:apply:"));
+  const left = (refuted.result.decisionsLeftToHuman || []).find((d) => d.id === "id:OD-9");
+  t.check("and the decision stays the reviewer's, saying why", left && /designed answer was refuted/.test(left.reason), left && left.reason);
+
+  // An answer that stands is applied, and its authority names both gates.
+  const stood = await fire({}, {
+    "f1:human-decisions:*": found(H), "f1:falsify:0": REFUTE_HUMAN, "f1:answer-design:0": design,
+    "f1:falsify-answer:0": STANDS,
+    "f1:apply:0": { outcome: "edited", recordWritten: true, where: ["spec-changes.md — SPEC-1"] },
+  });
+  const res = (stood.result.decisionsResolved || []).find((d) => d.id === "id:OD-9");
+  t.check("an answer that stands is applied and resolved", !!res, ids(stood.result.decisionsResolved));
+  t.check("its authority names the refuted human disposition and the answer's own verdict",
+    res && /the `human` brief's falsifier refuted/.test(res.authority) && /`resolve` brief's falsifier attacked that answer/.test(res.authority),
+    res && res.authority);
+
+  // The applier keeps the checklist's deliverable mapping true in the same edit.
+  const ap = promptOf(stood.calls, "f1:apply:0");
+  t.check("the applier may edit the checklist's deliverable mapping and nothing else in it",
+    /CHECKLIST_MAPPING\. Where your edit adds, removes, splits, merges or renames a staged deliverable/.test(ap) &&
+      /ONLY to keep its deliverable ids true/.test(ap) && !/including the implementation checklist/.test(ap));
+
+  // A contested record the human's section may not carry is listed once, and only once.
+  const state = JSON.parse(JSON.stringify(stood.result.phaseState));
+  state.itemRecords["id:OD-9"].contested = { appliedAtFiring: 1, contestedAtFiring: 2, nowCarries: "the old wording" };
+  const f2 = await later(state, 2, { "f2:list-contested:0": { outcome: "edited", recordWritten: false, where: ["summary.md — open decisions"] } });
+  const lc = promptOf(f2.calls, "f2:list-contested:0");
+  t.check("a contested decision is written into the human's section", /Ensure `## Open decisions for human to make` carries exactly one entry/.test(lc || ""));
+  t.check("without touching its record file", /Do not write, move or edit/.test(lc || ""));
+  const listed = f2.result.phaseState.itemRecords["id:OD-9"].contested;
+  t.check("the record remembers the firing that listed it", listed && listed.listedAtFiring === 2, JSON.stringify(listed));
+  const f3 = await later(f2.result.phaseState, 3, {});
+  t.check("and a later firing does not list it again", never(f3.calls, "f3:list-contested:"));
 }
 
 t.done();
