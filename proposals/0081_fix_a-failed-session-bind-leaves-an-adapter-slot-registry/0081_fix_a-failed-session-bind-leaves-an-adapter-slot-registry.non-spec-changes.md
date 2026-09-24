@@ -881,7 +881,7 @@ returns `refusal` when `err` matches CODE-7's `ErrSlotBindAttemptSuperseded` or
 that value, and both compensating call sites pass it the attempt's error.
 `Binder.noteCompensationOutcome(outcome, cause, pool, podName)` is a method on `Binder` rather
 than a free function, because the series SPEC-6's
-§16.1 row states is labeled by `pool`, `k8s_pod_name` and `cause` and is emitted through a
+§16.1 row states is labeled by `pool`, `k8s_pod_name` and `error_type` and is emitted through a
 `Binder` hook, both of which a package-level function can reach. It fires only on
 `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch lives in one place, and nothing else consumes
 the value. CODE-9 states the hook, its forwarder and its wiring.
@@ -1950,7 +1950,7 @@ the `SlotReclaim` hook below, so the hook is assigned directly the way `IncSlotF
 (`gatewaymetrics.go:1170-1175`) is assigned to `SlotFailure`.
 
 The collector reaches the binder through a hook of the same form as `SlotFailure`, because the
-series carries `pool`, `k8s_pod_name` and `cause` and only the call site holds those values:
+series carries `pool`, `k8s_pod_name` and `error_type` and only the call site holds those values:
 
 - `pkg/gateway/podlifecycle/podsession/binder.go` declares `SlotReclaim func(outcome, cause, pool,
   podName string)` beside `SlotFailure` (`binder.go:137`), with a doc comment naming the §16.1
@@ -1959,7 +1959,7 @@ series carries `pool`, `k8s_pod_name` and `cause` and only the call site holds t
   noteCompensationOutcome(outcome adapterv1.SlotReclaimOutcome, cause, pool, podName string)`
   beside `recordSlotFailure` (`slotbinder.go:353-361`), which it copies. It returns without
   calling the hook when `b.SlotReclaim` is nil and when the outcome is anything other than
-  `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch exists once. It takes the `cause` label's
+  `SLOT_RECLAIM_OUTCOME_SUPERSEDED`, so the branch exists once. It takes the `error_type` label's
   value as a string, so this deliverable does not depend on CODE-7; CODE-13's
   `compensationCause` supplies it.
 - `cmd/lenny-gateway/metricsbackfill.go` sets the hook on the line below `w.podBinder.SlotFailure
@@ -2003,7 +2003,7 @@ belongs in the gateway rows rather than under `## Adapter metrics`, because the 
 
 | Counter | Fires when | Expected value |
 |:--|:--|:--|
-| `lenny_slot_compensation_superseded_total` | a compensation answered `superseded`, meaning the adapter held an entry the compensation was not addressed to, labeled by `cause` as SPEC-6's §16.1 row states | no expected rate; the series records the outcome, whose meaning SPEC-6's §16.1 row states |
+| `lenny_slot_compensation_superseded_total` | a compensation answered `superseded`, meaning the adapter held an entry the compensation was not addressed to, labeled by `error_type` as SPEC-6's §16.1 row states | no expected rate; the series records the outcome, whose meaning SPEC-6's §16.1 row states |
 | `lenny_slot_shutdown_untokened_entry_total` | the adapter met an entry carrying no token, incremented from CODE-1's fail-closed arm | SPEC-6's §16.1 row states what the series counts |
 
 The superseded series is gateway-side. The untokened-entry series is adapter-side, and the
@@ -2836,8 +2836,8 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | regression, no edit | existing tests that drive a bind through `podsession.Binder`, whose requests S13 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`, `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-4 | S13 | 2, 3, 9 |
 | `pkg/adapter/bindattempt_test.go` | new; every case of **Adapter tests for CODE-6 and CODE-14, tier 1** that no S15 or S16 row names; **The hold refuses admission until the teardown returns having completed** refuses every entry point at the resolve, and **Every deregister-then-destroy site takes the hold** and **A cleanup whose tree removal fails keeps the hold** run their `releaseSessionSlot` and §10.1.4 rows | CODE-6 | S14 | 1 |
 | `pkg/adapter/export_test.go`, `exportpaths_test.go`, `holdstate_test.go`, `manifest_fields_test.go`, `one_session_only_test.go`, `podmcp_arming_internal_test.go`, `slotsession_test.go` and `usage_test.go`, all in `pkg/adapter` | the `slotResolve{allowCreate: true}` widening at every call of `ensureSlotStateLocked`, `ensureSlotPaths` and `claimSessionSlot`, and the `deregisterSlot` rewrite in `podmcp_arming_internal_test.go` | CODE-6 | S14 | 1 |
-| every file the bind-field sweep under `## Files touched on application (non-spec)` covers | the `BindAttempt` or `MidSession` literal edit | CODE-6 | S14 | 1, 3, 4, 7a, 8, 9, 10 |
-| regression, no edit | existing tier-2 tests that drive an adapter RPC whose resolve S14 changes on a real `adapter.Server` with no literal the bind-field grep matches, such as the `StartSession` in `tests/tier2_component/warmlayout/warm_layout_test.go` | CODE-6 | S14 | 2 |
+| the literals the `BindAttempt` rule under `## Files touched on application (non-spec)` requires | the `BindAttempt` or `MidSession` literal edit | CODE-6 | S14 | 1, 3, 4, 7a, 8, 9, 10 |
+| regression, no edit | existing tier-2 tests that drive an adapter RPC whose resolve S14 changes on a real `adapter.Server` with no literal the `BindAttempt` rule under `## Files touched on application (non-spec)` requires, such as the `StartSession` in `tests/tier2_component/warmlayout/warm_layout_test.go` | CODE-6 | S14 | 2 |
 | `pkg/adapter/bindattempt_test.go` | the guard-acquisition assertions of **The hold refuses admission until the teardown returns having completed**; **The per-slot guard serializes the destructive section.**; the `releaseSessionSlot` and `terminateHeldSession` rows of **A destructive section whose guard acquisition expires takes CODE-14's disposition of an expired acquisition at a removing site.**; **An uncontended acquisition on a cancelled context holds the guard.**; **An admission RPC whose guard acquisition expires is refused.** | CODE-14 | S15 | 1 |
 | `pkg/adapter/holdstate_test.go` | **Tier 1, CODE-14's §10.1.4 per-member close budget**, with the file's whole-file §4.7.1 credit | CODE-14 | S15 | 1 |
 | `pkg/adapter/export_test.go`, with `checkpoint_stream_test.go`, `credexpiry_test.go`, `integrationlevel_test.go`, `one_session_only_test.go`, `podmcp_arming_internal_test.go`, `tracingcontext_addressing_test.go` and the S14 rows of `bindattempt_test.go` that call `releaseSessionSlot` | the `context.Context` that `ReleaseSlotForTest` and `releaseSessionSlot` gain, passed as `t.Context()` | CODE-14 | S15 | 1 |
@@ -2846,7 +2846,7 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | `pkg/adapter/slotsession_test.go` and `pkg/adapter/socketruntime_test.go` | every case of **Adapter tests for CODE-1 and CODE-2, tier 1** that no S18 row names, the untokened-entry counter's firing, the `exited_cleanly` cases that drive `Server.removeSlotTreeFn` and **An expired guard acquisition keeps the hold and fails the clean exit.** among them; the **Co-tenancy hazard.** sibling assertion is the `socketruntime_test.go` one; with `slotsession_test.go`'s whole-file §4.7.1 credit | CODE-1, CODE-14, CODE-15 | S16 | 1 |
 | `pkg/adapter/bindattempt_orderings_test.go` | new; **Tier-1 adoption-ordering tests, every case walked** | CODE-1 | S16 | 1 |
 | `tests/tier7a_load_local/slot_reclaim_hold_race_test.go` | new, whole: `TestSlotIdentifierReclaimHoldRefusesABindUntilTheCleanupReturns_spec_5_2`, the lock-order assertion, and the arms of the reclaim against a section admitted before the hold opened with its §10.1.4 second run, with the file's `tests/spec-map.json` §5.2 entry and `slotAddressCaseFiles` row | CODE-1, CODE-14 | S16 | 7a |
-| every file the `ShutdownRequest{` sweep under `## Files touched on application (non-spec)` covers, `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` among them | the `UnconditionalTeardown: true` edit; `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` passes unchanged | CODE-1 | S16 | 1, 2, 3, 4, 7a, 9, 10 |
+| the literals the `UnconditionalTeardown` rule under `## Files touched on application (non-spec)` requires, `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` among them | the `UnconditionalTeardown: true` edit; `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` passes unchanged | CODE-1 | S16 | 1, 2, 3, 4, 7a, 9, 10 |
 | regression, no edit | `tests/tier11_docs/adapter_metric_catalog_test.go`, over the untokened-entry registration CODE-9 adds to `pkg/adapter/metrics.go` | CODE-9 | S16 | 11 |
 | `pkg/adapter/slotsession_test.go` | **Start-versus-reclaim rollback, deterministic form.**, **The confirmation refuses a replaced entry.** and **The rollback destroys no successor.**, with the `probeRuntime` `onStart` hook | CODE-2 | S18 | 1 |
 | `pkg/adapter/sdkwarm_test.go` | **The SDK-warm confirmation refuses without releasing.**, with the `onConfigure` hook and the file's whole-file credits under 4.7.1 and 7.1 | CODE-2 | S18 | 1 |
@@ -2856,7 +2856,7 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | `pkg/gateway/podlifecycle/podsession/slotbinder_test.go` | the compensation row of **The compensation names the attempt's own token**; **The leaked disposition, two arms.**; **A typed refusal is compensated.**; the `materializeSlot` arms of **The credential release is scoped to the attempt** and of **The cancelled-context case.**; the `BindReservedSlot` row of **The cancelled-context case.**; **The release still runs for a non-`SlotBindError` failure**; **Per-stage compensation table.**; **The pre-`PrepareWorkspace` workspace failure, separately.**; the hook half of **The counters.** | CODE-13 | S19 | 1 |
 | `pkg/gateway/podlifecycle/podsession/binder_test.go` | the `Binder.Prepare` arm of **The credential release is scoped to the attempt**, the `Binder.Resume` rows of **The cancelled-context case.** and **The counters.**, and the compensation and lease-release arms of **The resume path.**, each with its per-case `tests/spec-map.json` entry | CODE-13 | S19 | 1 |
 | `pkg/gateway/sessionserver/slotretry_test.go` and `slotretry_load_test.go` | the `ReleaseSlotReservation` signature on `fakeSlotBinder` and `concurrentSlotBinder`, and `fakeSlotBinder.released` widened to carry the disposition | CODE-13 | S19 | 1 |
-| every file the `ReleaseSession(` grep under `## Files touched on application (non-spec)` names whose type is assigned to a `podsession.Binder.Credentials` field | the `Release(leaseID string)` method, which `binder_test.go`'s `fakeAssigner` records | CODE-13 | S19 | 1, 4, 9 |
+| the test types the `Release(leaseID string)` rule under `## Files touched on application (non-spec)` requires | the `Release(leaseID string)` method, which `binder_test.go`'s `fakeAssigner` records | CODE-13 | S19 | 1, 4, 9 |
 | `tests/tier4_integration/concurrent_workspace_test.go` | `TestAbandonedBindLeavesNoSlotResidueOnTheSharedPod_spec_7_1` with its late-reclaim and refused-retry arms, and the file's whole-file credits under 7.1 and 4.7.1 | CODE-13 | S19 | 4 |
 | `tests/tier8_chaos/compensation_loss_test.go` | new; **Tier 8, one case.**, with the file's `tests/spec-map.json` entry under 4.7.1 and 7.1, and a `slotAddressCaseFiles` row if it calls the slot claim surface | CODE-13 | S19 | 8 |
 | `tests/tier9_security/slot_credential_reclaim_fence_test.go` | new, whole: the arms of **Tier 9, the credential fence.**, with the file's `tests/spec-map.json` entry and `slotAddressCaseFiles` row | CODE-13 | S19 | 9 |
@@ -3222,18 +3222,16 @@ execution modes)`:
   because a teardown rule that removes no entry reports a clean exit.
 
 Scope accounting to record in the deliverable: CODE-1's two-field precondition and CODE-6's
-rule 1 are mandatory-field changes on shipped RPCs, and each carries the test-literal sweep that
-its `Every other file that grep ... names` entry under `## Files touched on application
-(non-spec)` defines. A skipped sweep fails silently: the added fields are proto scalars with
-zero values, so nothing fails to compile, and the swept tiers go red together with no build
-error to point at. Each sweep's step and the tiers it reaches are its row in the landing table.
-A test that reaches these RPCs through
+rule 1 are mandatory-field changes on shipped RPCs, and each carries a test-literal rule under
+`## Files touched on application (non-spec)`, **The `UnconditionalTeardown` rule.** and
+**The `BindAttempt` rule.** respectively. The rules exist because a literal left without its
+field fails silently: the added fields are proto scalars with zero values, so nothing fails to
+compile, and the swept tiers go red together with no build error to point at. Each rule's step
+and the tiers it reaches are its row in the landing table. A test that reaches these RPCs through
 an `adapterclient.Client` method builds no `adapterv1` literal. CODE-4's signature changes
-carry every such method except `Resume` by failing the compile, the bind-field sweep names
+carry every such method except `Resume` by failing the compile, the `BindAttempt` rule covers
 the `ResumeParams` literals, and the Tests list under `## Files touched on application (non-spec)` names those files.
-`TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` is one member of the
-`ShutdownRequest` set whose own path is otherwise unaffected and must keep passing
-unchanged. CODE-2 changes
+CODE-2 changes
 the fixtures of the two shipped adapter tests named in its call-site scope, both in
 `adapterevents_test.go`; only `TestAdapterEventsEmitsControlEvents_spec_4_7` goes red without
 that change.
@@ -3359,18 +3357,18 @@ execution modes); §6.2 (pod state machine)`:
   resume's minted `bind_attempt` is still recorded, and its `// spec:` annotation adds `§7.2
   (interactive session model)`.
 - **The counters.** A compensation answering `superseded` reaches `b.SlotReclaim` with the
-  outcome, the cause, `req.Pool` and the sandbox name, and the case asserts the recorded values
+  outcome, the `error_type` value, `req.Pool` and the sandbox name, and the case asserts the recorded values
   rather than the increment alone, so a forwarder that drops a label value fails here. It runs
-  after an attempt refused with each CODE-7 sentinel, recording cause `refusal`, after an
-  ordinary stage failure, recording cause `failure`, and once through `Binder.Resume`'s failure
+  after an attempt refused with each CODE-7 sentinel, recording `error_type` `refusal`, after an
+  ordinary stage failure, recording `error_type` `failure`, and once through `Binder.Resume`'s failure
   branch. A compensation
   answering `absent` reaches the hook not at all. CODE-9's collector and its accessor are held
   by two shipped cases in `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_elicitation_test.go`,
   extended in place beside their `IncSlotFailure` lines.
   `TestCredentialAndLLMProxyAndSlotMetricsEmit` gains one `IncSlotCompensationSuperseded` call
-  with outcome `superseded`, cause `failure`, pool `pool-a` and pod name `sbx-1`, passed in the parameter order of the
+  with outcome `superseded`, `error_type` value `failure`, pool `pool-a` and pod name `sbx-1`, passed in the parameter order of the
   `SlotReclaim` hook CODE-9 declares, and asserts the exposition line
-  `lenny_slot_compensation_superseded_total{cause="failure",k8s_pod_name="sbx-1",pool="pool-a"} 1`, so a
+  `lenny_slot_compensation_superseded_total{error_type="failure",k8s_pod_name="sbx-1",pool="pool-a"} 1`, so a
   collector registered under another name or another label set fails here.
   `TestNewMetricsEmittersNilSafe` gains the same call on a nil `*Metrics`.
 - **The workspace stages are separated at the metric and nowhere else.** A bind whose
@@ -3802,7 +3800,7 @@ a package test in the unit tier rather than a tier-11 gate. Its `docs/reference/
 held by a new file, `tests/tier11_docs/slot_compensation_metric_reference_test.go`, following the
 shipped one-metric-per-file precedent `tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go`:
 it reads the reference page, locates the single table row naming the counter, and asserts that the
-row names the `pool`, `k8s_pod_name` and `cause` labels and the superseded semantics SPEC-6's §16.1
+row names the `pool`, `k8s_pod_name` and `error_type` labels and the superseded semantics SPEC-6's §16.1
 row states, and it asserts the same of the `lenny_adapter_leaked_slots` row, with the `pod_id` and
 `pool` labels. It carries the `// spec:` annotation and the `// diagnosis:` comment tier 11 requires.
 
@@ -4109,38 +4107,81 @@ of these cases:
   `slotAddressCaseFiles` row and a `tests/spec-map.json` §16.1 credit in the step that creates it,
   and
   `tests/tier0_static/spec_map_slot_address_registration_test.go`.
-- `tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go` and
-  `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go` · untouched by the
-  sweeps below; the second takes SCHEMA-1's edit alone. A swept field breaks the unset-field
-  inputs whose bytes `TestUnsetGenerationFenceAddsNoBytes` and
-  `TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7` pin. The files' other literals are
-  descriptor probes and the `TestShutdownRequestRecycleScrubRoundTrip_spec_5_2` round trip,
-  which reach no adapter and need no swept field.
-- Every other file that `grep -rn "ShutdownRequest{" --include=*_test.go pkg/ tests/` names ·
-  the mechanical `UnconditionalTeardown: true` edit alone. They are not enumerated here, because
-  that grep defines the set and each edit is one field on an ordinary teardown call. The edit
-  adds a field to an existing literal, creates no case and adds no call into the slot claim
-  surface, so a swept file enters no row in `slotAddressCaseFiles` and takes no
-  `tests/spec-map.json` entry.
-- Every other file that `grep -rn
-  "adapterv1\.\(FinalizeWorkspaceRequest\|RunSetupRequest\|AssignCredentialsRequest\|ResumeRequest\|PrepareWorkspaceRequest\){\|adapterclient\.ResumeParams{"
-  --include=*_test.go pkg/ tests/` names · the mechanical non-empty `BindAttempt` edit alone,
-  or `MidSession: true` and no token where the literal stands for a §7.4 mid-session call.
-  The `adapterv1.` qualifier is load-bearing: without it the pattern also matches
-  `tokensv1.AssignCredentialsRequest` and `podsession.ResumeRequest`, which belong to other
-  services and carry no such field. The `FinalizeWorkspaceRequest` in
+- **The `UnconditionalTeardown` rule.** **IMPLEMENTOR'S CHOICE:** the edit that gives each
+  in-tree `adapterv1.ShutdownRequest` test literal the field CODE-1's two-field precondition
+  (rule 10, **the teardown-pairing rule**) requires. The constraint follows. Every literal a test
+  hands to a `Shutdown` handler or to an adapter gRPC client, a recycle request included, carries
+  `UnconditionalTeardown: true`, in whichever file it sits, the files the Tests list above names
+  included. A shared request helper, such as `shutdownSlotReq` in
+  `pkg/adapter/sessionscrub_emit_test.go` or `shutdownSessionRequest` in
+  `tests/tier7a_load_local/tracing_context_release_race_test.go`, carries the field for every
+  caller. `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2`
+  (`pkg/adapter/slotsession_test.go`) takes the field at its literal and must keep passing with
+  its assertions unchanged, because its own path is otherwise unaffected. Three kinds of literal
+  stay unchanged. The first is a deliberately invalid request the handler refuses before the
+  precondition, which is the empty-session-id request in
+  `TestShutdownRejectsRecycleWithEmptySessionID_spec_4_7` (`pkg/adapter/podscrub_test.go`),
+  refused by the handler's shipped empty-session-id check, which keeps its place ahead of the
+  two-field precondition. CODE-1 does not fix that order, and the test asserts only
+  `InvalidArgument` and no scrub, so a precondition placed first would refuse the unchanged
+  literal and the test would pass without exercising the empty-session-id refusal. The
+  second is a case this change adds that carries a `bind_attempt` or a malformed field pair,
+  which its own row specifies. The third is a literal that reaches no adapter: the
+  `fencedMessages` descriptor probe and the unset-field input in
+  `tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go`, and all three
+  literals in `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go`, which
+  are the unset-field input, the `TestShutdownRequestRecycleScrubRoundTrip_spec_5_2` round trip
+  and the `TestShutdownMessagePostRemovalDescriptor_spec_4_1` descriptor probe. A swept field on
+  an unset-field input changes the bytes `TestUnsetGenerationFenceAddsNoBytes` and
+  `TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7` pin, and
+  `shutdown_recycle_wire_test.go` takes SCHEMA-1's closed-field-set edit alone. The edit adds a
+  field to an existing literal, creates no case and adds no call into the slot claim surface, so
+  a file it touches enters no row in `slotAddressCaseFiles` and takes no `tests/spec-map.json`
+  entry. Every tier the landing table's CODE-1 row for this rule names stays green at S16.
+- **The `BindAttempt` rule.** **IMPLEMENTOR'S CHOICE:** the edit that gives each in-tree test
+  literal of `adapterv1.PrepareWorkspaceRequest`, `adapterv1.FinalizeWorkspaceRequest`,
+  `adapterv1.RunSetupRequest`, `adapterv1.AssignCredentialsRequest`, `adapterv1.ResumeRequest`
+  and `adapterclient.ResumeParams` the fields CODE-6's rule 1 (**the pairing rule**) requires.
+  The constraint follows. The rule covers these `adapterv1` message types alone:
+  `tokensv1.AssignCredentialsRequest` and `podsession.ResumeRequest` share two of the names,
+  belong to other services and carry no such field. Every literal a test hands to an adapter
+  handler, to an adapter gRPC client or to `adapterclient.Client.Resume` carries a non-empty
+  `BindAttempt`, or `MidSession: true` and no token where the literal stands for a §7.4
+  mid-session call, in whichever file it sits, the files the Tests list above names included. A
+  shared request helper, such as `uploadFrame`, `finalizeReq` and `runSetupReq` in
+  `pkg/adapter/staging_test.go` or `resumeReq` in `pkg/adapter/resume_test.go`, carries the field
+  for every caller, and a `PrepareWorkspace` stream carries it on the frame that resolves the
+  slot identifier. A literal whose test pins a refusal other than rule 1's carries the field
+  too, so the handler still reaches the refusal the test pins. Without it, a test that pins
+  another code turns red, such as the `FailedPrecondition` in
+  `TestAssignCredentialsRequiresACredentialsDir` (`pkg/adapter/credentials_test.go`) or in
+  `TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326`
+  (`pkg/adapter/staging_test.go`), and a test that pins `InvalidArgument` for another reason,
+  such as the symlink refusal in `TestFinalizeWorkspacePlumsArchivePolicy`
+  (`pkg/adapter/staging_test.go`), passes on rule 1's refusal and pins nothing. Four kinds of
+  literal stay unchanged. The first is the `FinalizeWorkspaceRequest` in
   `TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433`
-  (`pkg/adapter/files_updated_test.go`) already sets `mid_session` and carries no token, so it
-  stays unchanged.
-  They are not enumerated here, because that grep defines the set and each edit is one field
-  on an existing literal. The edit creates no case and adds no call into the slot claim
-  surface, so a swept file enters no row in `slotAddressCaseFiles` and takes no
-  `tests/spec-map.json` entry.
-- Every other file that `grep -rn "ReleaseSession(" --include=*_test.go pkg/ cmd/ tests/` names,
-  whose type is assigned to a `podsession.Binder.Credentials` field · one added
-  `Release(leaseID string)` method alone, a no-op, except in
-  `pkg/gateway/podlifecycle/podsession/binder_test.go`, where `fakeAssigner` records its calls.
-  A type that already declares the method takes no edit. They are not enumerated here, because
-  the grep and the field assignment define the set and each edit is one method on an existing
-  fake. The edit creates no case and adds no call into the slot claim surface, so a swept file
-  enters no row in `slotAddressCaseFiles` and takes no `tests/spec-map.json` entry.
+  (`pkg/adapter/files_updated_test.go`), which already sets `mid_session` and carries no token.
+  The second is a deliberately invalid request the handler refuses before rule 1, which is an
+  empty session identifier refused by the handler's shipped empty-session-id check, which keeps
+  its place ahead of `validateBindFields`, such as the empty request in
+  `TestAssignCredentialsRequiresASessionID` (`pkg/adapter/credentials_test.go`). The third is a
+  case this change adds that carries a malformed field pair, which its own row specifies. The
+  fourth is a literal that reaches no adapter handler: the `fencedMessages` descriptor probe and
+  the unset-field input in `tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go`,
+  whose bytes `TestUnsetGenerationFenceAddsNoBytes` pins, and `assignReq` in
+  `pkg/adapter/credredact_test.go`, which only the redaction interceptor's stub handler
+  receives. The edit adds a field to an existing literal, creates no case and adds no call into
+  the slot claim surface, so a file it touches enters no row in `slotAddressCaseFiles` and takes
+  no `tests/spec-map.json` entry. Every tier the landing table's CODE-6 row for this rule names
+  stays green at S14.
+- **The `Release(leaseID string)` rule.** **IMPLEMENTOR'S CHOICE:** the body of the
+  `Release(leaseID string)` method CODE-13 adds to `podsession.CredentialAssigner` on each test
+  fake. The constraint follows. Every test type a test assigns to a `podsession.Binder.Credentials`
+  field declares the method, and the method is a no-op on each of them except `fakeAssigner` in
+  `pkg/gateway/podlifecycle/podsession/binder_test.go`, which records its calls. A type that
+  already declares the method takes no edit. The compiler closes the
+  set, because a fake that lacks the method no longer satisfies the interface. The edit creates
+  no case and adds no call into the slot claim surface, so a file it touches enters no row in
+  `slotAddressCaseFiles` and takes no `tests/spec-map.json` entry. Every tier the landing table's
+  CODE-13 row for this rule names stays green at S19.
