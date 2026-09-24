@@ -1006,7 +1006,7 @@ The adapter applies rules 1 through 7 as an ordered cascade, stopping at the fir
 8. **The start-confirmation rule.** A start confirms the entry is still its own. Before the adapter records the pod's shared runtime process as holding a session, it resolves the registry entry for that slot identifier again and confirms that it still holds an entry for that identifier carrying the same bind attempt token the entry carried when the request that starts the session was admitted. These acts are the start step of the registry critical section. The confirmation is required of every request that starts a session, including one that carries no token of its own, for which the token compared is the one the entry carried at admission, so an entry no later attempt replaced compares equal to itself. When the adapter holds no entry for the identifier, or holds one carrying a different token, it records nothing, removes no entry, and reports no cleanup outcome for the slot, because the slot never reached `running` and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) files at most one cleanup-outcome report per session release, from the cleanup that reclaims the slot. It takes the session back off the shared runtime process and refuses the request that started it, answered on `ABORTED`, which is the transient classification a caller retries on. The rule is conditioned on what the request does rather than on the name of the RPC that does it.
 9. **The first-frame rule.** `PrepareWorkspace` is client-streaming. The adapter resolves the slot identifier once per call, from the first frame that carries one, and reads `bind_attempt` and `mid_session` from that same frame. Every rule above is decided on that frame's values, rule 1 included, and the adapter reads neither field on any later frame of the call, so a later frame states nothing about the call's admission.
 
-Neither `SLOT_BIND_ATTEMPT_SUPERSEDED` nor `SLOT_BIND_ALREADY_STARTED` appears in the [Section 15.1](15_external-api-surface.md#151-rest-api) REST error catalog, because the gateway consumes both. Either refusal means that the pod's registry entry for the session belongs to another bind attempt of the same session, or carries a session that another start of it has already begun, so the client's request has not failed on its own terms. At every bind stage, the gateway answers a client request that fails because its bind met either refusal with the retryable fallback of that request's endpoint (`SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`) and its `Retry-After` header, rather than with `SETUP_COMMAND_FAILED` or any other non-retryable error. The permanent category of rule 6 classifies the refused request on that pod and does not reach the client.
+Neither `SLOT_BIND_ATTEMPT_SUPERSEDED` nor `SLOT_BIND_ALREADY_STARTED`, the two **slot-bind refusals**, appears in the [Section 15.1](15_external-api-surface.md#151-rest-api) REST error catalog, because the gateway consumes both. Either refusal means that the pod's registry entry for the session belongs to another bind attempt of the same session, or carries a session that another start of it has already begun, so the client's request has not failed on its own terms. At every bind stage, the gateway answers a client request that fails because its bind met either refusal with the retryable fallback of that request's endpoint (`SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`) and its `Retry-After` header, rather than with `SETUP_COMMAND_FAILED` or any other non-retryable error. The permanent category of rule 6 classifies the refused request on that pod and does not reach the client.
 
 **`Shutdown` states which teardown it asks for.** Rules 10 through 15 govern a `Shutdown` in place of the admission rules, applied as an ordered cascade on the same terms. Each of rules 11 through 14 fixes the outcome the response reports and whether the request removes an entry; the two teardowns follow from the removal rather than being decided separately. Rule 15 fixes what each reported outcome means.
 
@@ -1055,6 +1055,14 @@ A slot-bind refusal that [Section 4.7.1](04_system-components.md#471-role-and-ga
 
 The sentence is a pointer rather than a second statement of the envelope, and it is the whole
 §15.1 edit: the row gains no cause and names neither adapter code.
+
+### SPEC-5 · spec/05_runtime-registry-and-pool-model.md § 5.2 (`**Client error on exhaustion:**` bullet)
+
+Append the sentence below to the bullet after its last sentence, separated by one space, and leave the bullet's existing text unedited:
+
+```
+A slot that failed on a slot-bind refusal that [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states takes the envelope that section states instead.
+```
 
 ### SPEC-5 · spec/15_external-api-surface.md § 15.4 (after the SDK-warm demotion contract)
 
@@ -1121,18 +1129,6 @@ Listed so a reviewer can tell scope from oversight.
   `schemas/lenny-adapter.proto`). What is deliberate
   here is the absence of a new row. The section's one edit is the pointer sentence SPEC-5
   appends to the `SETUP_COMMAND_FAILED` row.
-- **§5.2's `**Client error on exhaustion:**` bullet.** It is universal: "When a slot fails and
-  either no retry is attempted (non-retryable category) or the retry budget is exhausted, the
-  gateway returns a structured error to the client with ... `error.retryable: false`". On a pool
-  serving concurrent sessions, a rule-6 refusal at a stage other than the setup-command stage, or
-  a superseded refusal that exhausts the retry budget at such a stage, is such a failure inside the slot retry loop, so the bullet and the §4.7.1 paragraph after rule 9
-  overlap, and the §4.7.1 paragraph, which names the two refusals, is the narrower statement.
-  The bullet takes no pointer, unlike §15.1's row, because it names no error code, no HTTP status
-  and no gRPC code: a client looking up the code it received finds no §5.2 entry to misread,
-  whereas §15.1's exclusion sentence names `FailedPrecondition`, the code rule 6's refusal
-  arrives on. Naming the exhaustion error's code and status, and with it any exception, is the
-  separate spec change the summary's unstaged-defects entry "§5.2. The exhaustion error names no
-  code value or status." records.
 - **§6.2's pre-attached `**Client visibility:**` bullet.** Its shipped clause sends a
   deterministic non-zero setup-command exit at `/start` to `SETUP_COMMAND_FAILED` and any other
   setup-window failure to the retryable `STARTING_FAILED`, which is where the gateway answers
@@ -1161,7 +1157,8 @@ Listed so a reviewer can tell scope from oversight.
   the §5.2 `**Slot cleanup:**` bullet's action-list sentence, its reporting sentence (which
   becomes a citation of the scrub-model paragraph) and its leaked-outcome sentence (all
   replaced), and the §5.2 `**Whole-pod replacement trigger:**` bullet's `leaked` parenthetical
-  (replaced with a pointer at the disposition table).
+  (replaced with a pointer at the disposition table), and the §5.2 `**Client error on
+  exhaustion:**` bullet (one pointer sentence appended, SPEC-5).
 - `spec/12_storage-architecture.md`: §12.6's `agent_pod_state` table schema, the `sessions_served`
   column's write trigger in the prose sentence and in the DDL comment (both re-keyed on the
   cleanup-outcome report, because that is where the gateway increments), and the read clause of

@@ -2147,8 +2147,8 @@ each retired statement's distinctive phrasing:
   §4.7 `Shutdown` row's restated `superseded` outcome): no comment carriers.
 - SPEC-2 (§7.2's premise that a replacement pod short of `attached` holds no started runtime
   and nothing to seal): no comment carriers.
-- SPEC-5 adds the §4.7.1 bind attempt token block, the §15.4 blocks and one §15.1 pointer
-  sentence and retires no statement, so it has no carrier class.
+- SPEC-5 adds the §4.7.1 bind attempt token block, the §15.4 blocks and the §15.1 and §5.2
+  pointer sentences and retires no statement, so it has no carrier class.
 - SPEC-6 adds catalog rows and retires no statement, so it has no carrier class.
 
 A later spec-lane edit that retires a statement adds a sub-block in the same three-part form
@@ -2857,7 +2857,7 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | regression, no edit | existing tier-2 and tier-3 tests that drive a bind through `podsession.Binder`, whose bind wrapper and `ReleaseSlotReservation` call sites S19 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go` and `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` | CODE-13 | S19 | 2, 3 |
 | `pkg/gateway/sessionserver/slotretry_test.go` | **Accounting, at `maxConcurrentSessions: 4` (threshold 2).**, **One `maxConcurrentSessions: 2` case**, **The reserved bind path reaches the accounting, at `maxConcurrentSessions: 4`.**, **The refusals' classifications.** and **The refusals' client envelopes.**, with that case's `path::TestName` entries under 4.7.1, 15.1 and 5.2 | CODE-5 | S20 | 1 |
 | `pkg/gateway/sessionserver/slotretry_load_test.go`, `pkg/gateway/runtime/slothealth/slothealth_test.go`, `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go` and `pkg/gateway/session/recycle/scrubreporter_seams_test.go` | **The leak record is per slot.**, with distinct slot identifiers wherever a case records several leaks against one pod and the slot parameter at every `RecordLeak` fake | CODE-5 | S20 | 1 |
-| `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` | **The resume classifier holds the row for every slot-bind refusal of a resume.** with its negative case, and the `resumeOnPod` accounting arms of **The resume path.** | CODE-5 | S20 | 1 |
+| `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` | **The resume classifier holds the row for the reclaim hold and for both slot-bind refusals of a resume.** with its negative case, and the `resumeOnPod` accounting arms of **The resume path.** | CODE-5 | S20 | 1 |
 | `tests/tier4_integration/recycle_scrub_path_test.go` | `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2` with its per-case `tests/spec-map.json` entry and the slot parameter on `perReleaseNoopLedger.RecordLeak` | CODE-5 | S20 | 4 |
 | `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` | **For CODE-5, the refusal answers the retryable fallback at the route.**, with the error-taking `slotFailServer` form and the case's `path::TestName` entries under 4.7.1 and 15.1 | CODE-5 | S20 | 3 |
 | regression, no edit | existing tier-2 and tier-9 tests that drive the start and resume paths of `pkg/gateway/sessionserver`, whose failure accounting and client envelope S20 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-5 | S20 | 2, 9 |
@@ -3478,7 +3478,7 @@ execution modes); §6.2 (pod state machine)`:
   `Reason()` and `classifySlotBindFailure` rows above, and the shipped
   `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` and
   `TestWritePodClaimErrorSetupCommandFailed_spec_7_3` pass unchanged.
-- **The resume classifier holds the row for every slot-bind refusal of a resume.**
+- **The resume classifier holds the row for the reclaim hold and for both slot-bind refusals of a resume.**
   `TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3` in
   `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`, reusing that file's
   `seedResumingRow` fixture. The held cases are a bare `status.Error(codes.Aborted,

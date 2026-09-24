@@ -11,7 +11,7 @@ attempt token and sets `unconditional_teardown` at every non-compensating `Shutd
 S14 and S16 then refuse a request that carries neither. Landing them in the other order
 refuses every bind and every teardown in the window between the two steps.
 
-- [ ] **S1 · spec** — SPEC-5. Lands the §4.7.1 bind attempt token block, the pointer sentence on §15.1's `SETUP_COMMAND_FAILED` row, and SPEC-5's §15.4 edits. It leads because the other spec steps cite the §4.7.1 block; its citations of §5.2 resolve when S4 lands.
+- [ ] **S1 · spec** — SPEC-5. Lands the §4.7.1 bind attempt token block, the pointer sentence on §15.1's `SETUP_COMMAND_FAILED` row, the pointer sentence on §5.2's `**Client error on exhaustion:**` bullet, and SPEC-5's §15.4 edits. It leads because the other spec steps cite the §4.7.1 block; its citations of §5.2 resolve when S4 lands.
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-1. Lands SPEC-1's §4.1, §4.7 and §29.4 edits.
       Tiers 0, 11. Depends on: S1.
