@@ -200,18 +200,6 @@ the residue. Owner: the staged §5.2 reclaim-hold paragraph.
   the binding rather than on `started`. The §4.7 `Shutdown` row states the condition; this case
   records why it is keyed on the binding, so the two teardowns do not read as sharing one
   precondition.
-- **A bind-sequence refusal reaches the client under the envelope its stage already selects.**
-  The gateway consumes both refusal codes, and this proposal leaves its envelope selection
-  alone, so a workspace-stage refusal reaches the client under the transient session-start
-  envelope. In the setup window the gateway renders only the setup-command request's failure
-  into that envelope, and there it branches on the gRPC code rather than on the window, so an
-  already-started refusal at that request, answered on `FAILED_PRECONDITION`, reaches the client
-  as the non-retryable `SETUP_COMMAND_FAILED` that §15.1 defines for a deterministic
-  setup-window failure, while a superseded refusal, answered on `ABORTED`, reaches it as the
-  retryable session-start fallback carrying `Retry-After`. The client-visible code therefore
-  names the stage the refusal arrived in rather than the refusal itself. The category and the
-  retryability the client reads are correct in every case, and narrowing the code is outside
-  this proposal. SPEC-5's §15.1 block and DOCS-3 carry the row's replacements.
 
 ## Staged edits
 
@@ -363,7 +351,7 @@ in the same place, directly below it and before the line resuming `(executionMod
 isolationProfile, scrubPolicy summary)`:
 
 ```
-**Pod-side reclaim on a failed bind.** A gateway bind attempt that fails after the gateway has issued its first pod-side RPC for the session (the [§15.1](15_external-api-surface.md#151-rest-api) start transition onto a slot on a pod serving concurrent sessions, whether that slot was reserved at creation or placed by the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot retry policy, or a [§7.3](#73-retry-and-resume) re-attach onto a replacement pod) also reclaims the state that attempt created on the pod: the gateway sends `Shutdown` for the session and releases the slot reservation afterwards. The obligation begins with an attempt's first such RPC and ends when that attempt succeeds. The gateway sends the reclaim even when the failing RPC's own context is already cancelled or past its deadline, because that is the case in which the adapter may have started the session. It sends the reclaim on the connection the failed attempt holds when that connection is still open; the fence does not depend on the connection, and a reclaim sent on a fresh connection is fenced exactly as one sent on the original. The reclaim names the bind attempt it compensates by carrying that attempt's token ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), and it may name no other. A compensation therefore always names one. The reclaim is answered under the named rules [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states. A reclaim is **acknowledged clean** when the adapter answers it and that answer reports a clean exit, whatever outcome the answer carries, so a reclaim answered `superseded` or `absent` is acknowledged clean. A reclaim the adapter does not answer, and one whose answer does not report a clean exit, are the reclaims not acknowledged clean. The disposition table in [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states what each reclaim reports and what becomes of the slot's occupancy and of its identifier, and the paragraph after the table states what a cleanup that did not complete leaves on the pod and what ends it. Nothing about the attempt's retryability changes. Where this obligation does not reach an attempt the gateway sends no `Shutdown`, and the same paragraph states what becomes of the slot state that attempt left on the pod. This obligation governs the slot state on a pod that outlives the attempt.
+**Pod-side reclaim on a failed bind.** A gateway bind attempt that fails after the gateway has issued its first pod-side RPC for the session (the [§15.1](15_external-api-surface.md#151-rest-api) start transition onto a slot on a pod serving concurrent sessions, whether that slot was reserved at creation or placed by the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot retry policy, or a [§7.3](#73-retry-and-resume) re-attach onto a replacement pod) also reclaims the state that attempt created on the pod: the gateway sends `Shutdown` for the session and releases the slot reservation afterwards. The obligation begins with an attempt's first such RPC and ends when that attempt succeeds. The gateway sends the reclaim even when the failing RPC's own context is already cancelled or past its deadline, because that is the case in which the adapter may have started the session. It sends the reclaim on the connection the failed attempt holds when that connection is still open; the fence does not depend on the connection, and a reclaim sent on a fresh connection is fenced exactly as one sent on the original. The reclaim names the bind attempt it compensates by carrying that attempt's token ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)), and it may name no other. A compensation therefore always names one. The reclaim is answered under the named rules [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states. A reclaim is **acknowledged clean** when the adapter answers it and that answer reports a clean exit, whatever outcome the answer carries, so a reclaim answered `superseded` or `absent` is acknowledged clean. A reclaim the adapter does not answer, and one whose answer does not report a clean exit, are the reclaims not acknowledged clean. The disposition table in [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states what each reclaim reports and what becomes of the slot's occupancy and of its identifier, and the paragraph after the table states what a cleanup that did not complete leaves on the pod and what ends it. Nothing about the attempt's retryability changes. Where this obligation does not reach an attempt, the same paragraph states what becomes of the slot state that attempt left on the pod. This obligation governs the slot state on a pod that outlives the attempt.
 ```
 
 The paragraph's acknowledged-clean predicate quantifies over every outcome rather than over
@@ -1078,9 +1066,7 @@ with status `ABSENT`, following the rows the `coordination_generation` fence alr
 The started-session refusal is a second producer of a deterministic `FailedPrecondition` failure
 in the setup window, and the gateway's envelope selection is unchanged by this proposal, so the
 refusal reaches this row only where it arrives at the setup-command request, which is the stage
-whose deterministic `FailedPrecondition` failure §15.1 already maps to this code. A refusal
-arriving at any other bind-sequence request reaches the client under the envelope that stage
-already selects. The row's cause, retryability and setup-output sentences state a cause the
+whose deterministic `FailedPrecondition` failure §15.1 already maps to this code. The row's cause, retryability and setup-output sentences state a cause the
 refusal does not have, and its exclusion sentence leaves the refusal's own envelope unstated. In the `SETUP_COMMAND_FAILED` row of the
 §15.1 REST error catalog table, replace the opening sentence, which reads, verbatim:
 
