@@ -292,7 +292,7 @@ entries 32, 33, 36 and 50 carry the question and its ground alone and entry 34 c
 recommendation, because the review loop derived none for them, while the review log's `### Settled` list, its standing-context
 changelog and the review-log archive record how every entry that has left this section was answered or moved to
 `## Defects in the shipped tree that this proposal does not stage`, among them decision 53, whose
-re-cut of CODE-1, CODE-4 and CODE-6 lands CODE-14 at S15, CODE-13 at S19, and CODE-15 with
+re-cut of CODE-1, CODE-4 and CODE-6 lands CODE-14 at S15 (its `Shutdown` rows with CODE-1 at S16), CODE-13 at S19, and CODE-15 with
 CODE-1 at S16.
 
 29. **Should a bind refusal that means "another start already holds this slot" be returned to
@@ -1029,7 +1029,7 @@ CODE-1 at S16.
 - **CODE-13** (`pkg/gateway/podlifecycle/podsession/slotbinder.go`, `binder.go`, `slotfailure.go`): the gateway compensates every post-connection bind failure and every failed resume, and scopes the lease release to the attempt.
 - **CODE-5** (`pkg/gateway/sessionserver/start.go`, `pkg/gateway/runtime/slothealth/slothealth.go`, `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, `pkg/gateway/session/recycle/scrubreporter_seams.go`): one accounting helper serves every bind path the reclaim obligation binds, and the resume classifier learns the adapter's transient code and the started-session refusal.
 - **CODE-6** (`pkg/adapter/bindattempt.go`, `pkg/adapter/slot.go`, `pkg/adapter/slotsession.go`, `pkg/adapter/server.go`, `pkg/adapter/staging.go`, `pkg/adapter/slotcreds.go`, `pkg/adapter/credentials.go`, `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go`, `pkg/adapter/holdstate.go`): the bind-attempt token, the rule 2-through-7 predicate at the one resolve chokepoint, the reclaim hold, and the shared resolve helper.
-- **CODE-14** (`pkg/adapter/bindattempt.go`, `pkg/adapter/server.go`, `pkg/adapter/staging.go`, `pkg/adapter/resume.go`, `pkg/adapter/slotsession.go`, `pkg/adapter/session.go`, `pkg/adapter/sdkwarm.go`, `pkg/adapter/holdstate.go`): the per-slot guard.
+- **CODE-14** (`pkg/adapter/bindattempt.go`, `pkg/adapter/server.go`, `pkg/adapter/staging.go`, `pkg/adapter/resume.go`, `pkg/adapter/slotsession.go`, `pkg/adapter/session.go`, `pkg/adapter/sdkwarm.go`, `pkg/adapter/holdstate.go`): the per-slot guard and the removing-site table.
 - **CODE-7** (`pkg/gateway/runtime/adapterclient/client.go`): the translation from the gRPC status detail to the two sentinel errors the gateway matches with `errors.Is`.
 - **CODE-8** (`pkg/gateway/podlifecycle/podsession/binder.go`): the reclaim closures return a typed refusal without draining the pod.
 - **CODE-9** (`pkg/observability/metrics/catalog.go`, `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_credential.go`, `pkg/adapter/metrics.go`, `docs/reference/metrics.md`, `pkg/gateway/podlifecycle/podsession/binder.go`, `pkg/gateway/podlifecycle/podsession/slotbinder.go`, `cmd/lenny-gateway/metricsbackfill.go`, `tests/tier11_docs/slot_compensation_metric_reference_test.go`): the counters that make the fence observable.
@@ -1042,8 +1042,8 @@ CODE-1 at S16.
 - **DOCS-3** (`docs/reference/error-catalog.md`): the `SETUP_COMMAND_FAILED` row mirrors SPEC-5's §15.1 edits.
 - **DOCS-4** (`docs/reference/execution-modes.md`, `docs/operator-guide/security-principles.md`): each page's per-slot cleanup sentence loses its reporting clause.
 
-Tests are not separate deliverables, with one exception. Each implementation step carries the
-tests for the tiers it reaches, specified per deliverable under `## Testing` in the non-spec
-changes file. CONF-1 is listed above because a conformance battery for a contract §15.4
+Tests are not separate deliverables, with one exception. The landing table under `## Testing`
+in the non-spec changes file assigns each test to the deliverable that owns it and the
+implementation step it lands in, and each case is specified there under its owning deliverable. CONF-1 is listed above because a conformance battery for a contract §15.4
 publishes to third-party adapter authors is the deliverable that makes that contract
 checkable, rather than the test coverage of another deliverable.
