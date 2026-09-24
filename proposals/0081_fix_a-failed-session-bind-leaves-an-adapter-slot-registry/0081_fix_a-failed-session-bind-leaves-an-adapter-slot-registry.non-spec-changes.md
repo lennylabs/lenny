@@ -77,7 +77,7 @@ Targets:
   deliverable inserts into them and defines none of them. It takes the raw `lockSlotGuard`,
   because a `Shutdown` is never refused by a hold.
 - `pkg/adapter/metrics.go` is not edited here. The untokened-entry counter and its
-  `incSlotShutdownUntokenedEntry` accessor are CODE-9's, which lands first (S10 precedes S16).
+  `incSlotShutdownUntokenedEntry` accessor are CODE-9's.
   This deliverable calls the accessor and declares nothing.
 
 **The two-field precondition, checked before the lock is taken.** `Shutdown` performs only the
@@ -150,7 +150,7 @@ The handler body:
 // unconditionally once it finds an entry.
 //
 // The comparison runs first under s.mu alone, with no slot guard taken. An arm
-// that removes nothing touches no path, and CODE-14's guard brackets the
+// that removes nothing touches no path, and the per-slot guard brackets the
 // sections that do path work, which run as long as a materialization, a setup
 // command or a checkpoint restore. A reclaim answering ABSENT or SUPERSEDED
 // from behind one of those would spend its whole cleanup budget waiting to
@@ -161,8 +161,8 @@ The handler body:
 // The removing arm releases s.mu, takes the guard through the raw hand-out
 // form, which no reclaim hold refuses and which reports a failure to acquire
 // inside the request's own context rather than blocking past it; the arm
-// proceeds either way. An expired acquisition takes the on-expiry cell of
-// the Shutdown row of CODE-14's removing-site table. It then re-takes s.mu and
+// proceeds either way. An expired acquisition takes the on-expiry disposition
+// in §5.2's reclaim-hold paragraph and disposition table. It then re-takes s.mu and
 // decides again. The
 // re-decision is required rather than defensive: s.mu is not held while the
 // guard is being acquired, so the entry can be removed or replaced in that
@@ -335,8 +335,8 @@ if removed {
     }
 }
 // spec: §5.2 (pool configuration and execution modes). completed is the
-// predicate that ends the reclaim hold, stated in the completed cell of the
-// Shutdown row of CODE-14's removing-site table. The cleanup-outcome report
+// predicate that ends the reclaim hold, stated in §5.2's reclaim-hold paragraph
+// and disposition table. The cleanup-outcome report
 // below is keyed separately, because it is §6.2 occupancy accounting rather
 // than a statement about the slot identifier.
 completed = guarded && closeErr == nil && treeErr == nil
@@ -719,8 +719,7 @@ Targets:
 - `pkg/gateway/sessionserver/upload_to_session.go` (outside this package) · the §7.4
   mid-session pair sets `mid_session` true on `PrepareWorkspace` and `FinalizeWorkspace` and
   carries an empty `bind_attempt`.
-- `slotbinder.go` · a new `slotCleanupBudget` helper; `materializeSlot` mints the attempt's
-  token at the top.
+- `slotbinder.go` · `materializeSlot` mints the attempt's token at the top.
 - `binder.go` · `Binder.Prepare` and `Binder.Resume` mint and carry.
 - `pkg/gateway/runtime/adapterclient/client.go` · `Client.shutdown` sets `unconditional_teardown` (the fenced form
   is CODE-7's `ShutdownReclaim`), and the bind-sequence methods take the token and the mid-session flag as explicit arguments:
@@ -785,19 +784,6 @@ through `Client.shutdown`, which would set both fields. A teardown caller added 
 or handoff teardown among them, reaches one of those two methods and is carried by the same
 statement, so it needs no row in the table above.
 
-**The budget:**
-
-```go
-// slotCleanupBudget is the §5.2 per-slot cleanup timeout,
-// max(cleanupTimeoutSeconds / maxConcurrentSessions, 5) seconds. §5.2 assigns
-// that figure to the adapter's own cleanup enforcement; the gateway reuses it
-// as its own give-up bound on the compensating Shutdown rather than inventing
-// a constant.
-// cleanupTimeoutSeconds is optional, so an unset pool yields the 5s floor.
-// spec: §5.2 (pool configuration and execution modes); §7.1 (normal flow).
-func slotCleanupBudget(cleanupTimeoutSeconds int, maxConcurrentSessions int32) time.Duration
-```
-
 **`Binder.Prepare` and `Binder.Resume` mint and carry.** `Resume` is the first and only
 entry-touching RPC of its attempt and creates the entry through its own claim
 (`pkg/adapter/resume.go:50`, ahead of every path-resolving step), so `ResumeRequest` carries
@@ -808,14 +794,29 @@ entry-touching RPC of its attempt and creates the entry through its own claim
 Targets:
 
 - `slotfailure.go` · `SlotBindError` gains a `Leaked bool` field.
-- `slotbinder.go` · a new `compensationCause` helper and a new `compensateFailedSlotBind`
-  method; `materializeSlot` splits into a stage runner and a compensating wrapper;
+- `slotbinder.go` · a new `slotCleanupBudget` helper, a new `compensationCause` helper and a
+  new `compensateFailedSlotBind` method; `materializeSlot` splits into a stage runner and a compensating wrapper;
   `ReleaseSlotReservation` takes the disposition; `BindReservedSlot` and `ClaimSlot`'s
   connect-stage release pass it.
 - `binder.go` · `assignCredentials` returns the lease identifiers it minted, and
   `Binder.Prepare`'s credential-assignment failure arm releases those by identifier;
   `Binder.Resume` compensates before `cl.Close()`; `releaseResumeSlot` takes the disposition
   and returns its release error.
+
+**The budget:**
+
+```go
+const slotCleanupFloor = 5 * time.Second // the §5.2 per-slot cleanup floor
+
+// slotCleanupBudget is the §5.2 per-slot cleanup timeout,
+// max(cleanupTimeoutSeconds / maxConcurrentSessions, 5) seconds. §5.2 assigns
+// that figure to the adapter's own cleanup enforcement; the gateway reuses it
+// as its own give-up bound on the compensating Shutdown rather than inventing
+// a constant.
+// cleanupTimeoutSeconds is optional, so an unset pool yields slotCleanupFloor.
+// spec: §5.2 (pool configuration and execution modes); §7.1 (normal flow).
+func slotCleanupBudget(cleanupTimeoutSeconds int, maxConcurrentSessions int32) time.Duration
+```
 
 **The compensation.** It carries the attempt's own token, returns the outcome rather than a
 boolean, and leaves the mapping to its caller:
@@ -976,7 +977,9 @@ func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID
 
 Its doc comment's current justification for sending nothing, "the failed attempt already closed
 its adapter connection", is replaced: the reclaim now runs at the failure site while the
-connection is open, and this function releases the reservation afterwards. The `leaked=false`
+connection is open, and this function releases the reservation afterwards, on
+`context.WithoutCancel(ctx)` bounded by `slotCleanupFloor`, because §7.1 requires the release even
+when the failing RPC's context is cancelled. The `leaked=false`
 comment is corrected too: it is true for the connect stage, where the slot was reserved before
 any workspace RPC, and false for every stage the reclaim covers.
 
@@ -1173,9 +1176,9 @@ final `return false`:
 		// spec: §15.4 (runtime adapter specification); §5.2 (pool configuration
 		// and execution modes). ABORTED is the adapter's transient wire
 		// classification for a bind it refused rather than failed. It covers
-		// CODE-6's reclaim-hold refusal, the identity gate's
-		// SLOT_BIND_ATTEMPT_SUPERSEDED, and the rollback CODE-2 answers on a
-		// failed start or resume. All three succeed on a fresh attempt, so the
+		// the §5.2 reclaim-hold refusal, the identity gate's
+		// SLOT_BIND_ATTEMPT_SUPERSEDED, and the start-confirmation rollback the
+		// adapter answers on a failed start or resume. All three succeed on a fresh attempt, so the
 		// row holds in awaiting_client_action for the client's explicit resume
 		// retry rather than going terminal.
 		return true
@@ -1530,26 +1533,6 @@ refusal correctly permanent, on the categories rule 5 and rule 6 state:
 No test asserts any of the five message strings, so the helper may reword none of them and the
 wrap text stands as it is for every non-sentinel error.
 
-**The reclaim hold has one predicate and two test points.** The predicate is the one §5.2 states,
-and the sites that test it are `acquireSlotGuardForResolve` and `ensureSlotStateLocked`. A caller
-is refused where it would otherwise wait, and refused again where it would otherwise be admitted,
-and neither test point makes the other redundant. A guarded admission RPC that met the hold only
-inside `ensureSlotStateLocked` would first block on the guard for the whole destructive section
-and would then resolve after the hold had already been released, so the transient refusal §5.2
-promises for a guarded section would arrive as a permanent `FailedPrecondition` or not at all. The test inside `ensureSlotStateLocked` stays because
-§10.1.4's first pass opens a hold for every member while holding `s.mu` and takes no guard
-(`pkg/adapter/holdstate.go:189-205`), so a caller can acquire a guard cleanly and only then find a
-hold open, and because an RPC CODE-14's derivation table leaves unguarded meets the hold there
-alone. A caller that passes the hold test and then waits on the
-guard waits for the remainder of the section it is being excluded from, which is the exclusion the
-guard exists to provide.
-
-A refusal either test point raises is the same sentinel and is returned through
-`slotResolveError`, which passes it through unchanged, with the span category stamped by
-`slotResolveCategory` at the site that stamps it for a refusal raised inside the resolve. A
-guard-acquisition refusal is therefore indistinguishable to the caller from one the resolve
-raised, which is what lets §4.7.1 state one hold rule rather than two.
-
 ### CODE-14 · pkg/adapter/bindattempt.go, pkg/adapter/server.go, pkg/adapter/staging.go, pkg/adapter/resume.go, pkg/adapter/slotsession.go, pkg/adapter/session.go, pkg/adapter/sdkwarm.go, pkg/adapter/holdstate.go · the per-slot guard and the removing-site table
 
 Targets: `lockSlotGuard` and `acquireSlotGuardForResolve` in `pkg/adapter/bindattempt.go`, and
@@ -1598,6 +1581,26 @@ is subject to the reclaim hold:
   is the frame that resolves the slot identifier and for the rest is the handler's entry, so the
   order §4.7.1 publishes, rule 1 then rule 2 then rules 3 through 7, is the order the code
   runs.
+
+**The reclaim hold has one predicate and two test points.** The predicate is the one §5.2 states,
+and the sites that test it are `acquireSlotGuardForResolve` and `ensureSlotStateLocked`. A caller
+is refused where it would otherwise wait, and refused again where it would otherwise be admitted,
+and neither test point makes the other redundant. A guarded admission RPC that met the hold only
+inside `ensureSlotStateLocked` would first block on the guard for the whole destructive section
+and would then resolve after the hold had already been released, so the transient refusal §5.2
+promises for a guarded section would arrive as a permanent `FailedPrecondition` or not at all. The test inside `ensureSlotStateLocked` stays because
+§10.1.4's first pass opens a hold for every member while holding `s.mu` and takes no guard
+(`pkg/adapter/holdstate.go:189-205`), so a caller can acquire a guard cleanly and only then find a
+hold open, and because an RPC the derivation table below leaves unguarded meets the hold there
+alone. A caller that passes the hold test and then waits on the
+guard waits for the remainder of the section it is being excluded from, which is the exclusion the
+guard exists to provide.
+
+A refusal either test point raises is the same sentinel and is returned through
+`slotResolveError`, which passes it through unchanged, with the span category stamped by
+`slotResolveCategory` at the site that stamps it for a refusal raised inside the resolve. A
+guard-acquisition refusal is therefore indistinguishable to the caller from one the resolve
+raised, which is what lets §4.7.1 state one hold rule rather than two.
 
 **No guard acquisition outlives its caller's context.** Both forms take the caller's context and
 neither waits past it, so no section waits on this guard longer than the work it belongs to is
@@ -2009,7 +2012,8 @@ adapter metrics endpoint already owns; it is recorded in the register rather tha
 scrape target here. `slotFailureFinalize` does not exist: both `stageWorkspace` and
 `FinalizeWorkspace` record `slotFailureWorkspacePrep` (`slotbinder.go:287,294`), so a
 measurement separating them needs a new stage constant, which this deliverable adds as
-`slotFailureWorkspaceFinalize`.
+`slotFailureWorkspaceFinalize = "workspace_finalize"` in binder.go's stage-constant block and
+passes to the finalize site's `recordSlotFailure` call alone.
 
 ### Comment-carrier reduction: shared invariants
 
@@ -2091,8 +2095,6 @@ cleanup-outcome report"; a `// spec:` gloss that attributes the per-release eval
 `sessions_served` to §12 is re-keyed with the rest, onto the write §12.6 keeps, and its
 section number stays.
 
-CODE-10 lands after SPEC-3. Tiers: 0, 11.
-
 ### CODE-11 · pkg/gateway/externalapi/errorclassify/errorclassify.go, pkg/gateway/sessionserver/start.go, pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go · the comment carriers of the narrowed SETUP_COMMAND_FAILED cause take their reduction
 
 **Carrier.** SPEC-5 replaces the §15.1 `SETUP_COMMAND_FAILED` row's cause and retryability
@@ -2113,8 +2115,6 @@ gRPC code as the cause. The classification data and the branch on
 `errorclassify.go`'s map entries are neither converted nor added to. CODE-5's `codes.Aborted`
 arm in `isTransientPodClaimError` carries its own inline comment, so the two deliverables take
 different hunks of that function.
-
-CODE-11 lands after SPEC-5. Tiers: 0.
 
 ### CODE-12 · the Go, SQL and test comments its grep returns · the comment carriers of the re-keyed claim-deletion projection take their reduction
 
@@ -2140,8 +2140,6 @@ the coarse occupancy phase and projects it from the claim and from the phase the
 at the DELETE. Where the projection statement is the sentence's only content, the sentence
 instead states what its own subject does, which is that the gateway deletes the claim or that
 the adapter releases the slot.
-
-CODE-12 lands after SPEC-4. Tiers: 0, 11.
 
 ### CONF-1 · tests/tier3_contract/adapter_bind_attempt/, tests/tier10_conformance/slot_bind_attempt_conformance_test.go, scripts/seed-claim-register.py, tests/claim-map.json · the published contract is enforced at the wire and exercised in process
 
@@ -2526,8 +2524,7 @@ No chart value and no migration.
 ### DOCS-1 · docs/reference/state-machines.md · the per-slot sub-state table gains the new row, the running row's trigger, the released row's trigger and the leaked clause take their replacements, and the pod state machine paragraph takes the projection clause replacements
 
 DOCS-1 edits the per-slot sub-state table, the concurrent-occupancy prose that follows it, and
-the pod state machine paragraph on one page. Every
-edit lands after SPEC-4.
+the pod state machine paragraph on one page.
 
 **The per-slot sub-state table.** Under `### Per-slot sub-states`, add the row matching the §6.2
 edge, immediately after the `receiving_uploads` → `running` row:
@@ -2697,7 +2694,6 @@ token:
 **Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the bind-sequence requests the linked contract's carriage table lists. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule whatever answer it fixes; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
 ```
 
-DOCS-2 lands beside DOCS-1, after SPEC-1, SPEC-3 and SPEC-5 have landed the contract it mirrors.
 Its tier-11 work is specified under `## Testing`.
 
 ### DOCS-3 · docs/reference/error-catalog.md · the `SETUP_COMMAND_FAILED` row takes four sentence replacements and a replaced remedy cell
@@ -2769,11 +2765,10 @@ No new row is added. The two adapter error codes SCHEMA-1 adds are gateway-to-ad
 that the gateway maps into this existing envelope and into the retryable slot-failure envelope,
 so neither appears in the client-facing catalog.
 
-DOCS-3 adds no gate and declares no tier above 0. There is no shipped reconciliation between
+DOCS-3 adds no gate. There is no shipped reconciliation between
 §15.1's catalog and this page to extend, and a gate built for the one row this deliverable
 touches would leave every other row of the page ungated. The absent reconciliation is a defect
 of the page rather than of this change, and it goes out as its own finding against §15.1.
-Tiers: 0.
 
 ### DOCS-4 · docs/reference/execution-modes.md, docs/operator-guide/security-principles.md · the per-slot cleanup sentence on each page loses its reporting clause
 
@@ -2783,8 +2778,7 @@ reports its outcome to the gateway". That clause is the universal SPEC-3 withdra
 table assigns both sites here. On each page, delete the clause so the sentence ends at
 "any recycle setting". The residual-state tables and `docs/operator-guide/multi-tenancy.md` state
 the cleanup alone and are unedited. No gate reads either sentence:
-`TestPerSlotCleanupStatedOnEverySessionModeRow` pins the residual-state table rows. DOCS-4 lands
-beside DOCS-2, after SPEC-3. Tiers: 0, 11.
+`TestPerSlotCleanupStatedOnEverySessionModeRow` pins the residual-state table rows.
 
 ## Testing
 
@@ -2842,7 +2836,7 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | regression, no edit | existing tests that drive a bind through `podsession.Binder`, whose requests S13 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`, `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-4 | S13 | 2, 3, 9 |
 | `pkg/adapter/bindattempt_test.go` | new; every case of **Adapter tests for CODE-6 and CODE-14, tier 1** that no S15 or S16 row names; **The hold refuses admission until the teardown returns having completed** refuses every entry point at the resolve, and **Every deregister-then-destroy site takes the hold** and **A cleanup whose tree removal fails keeps the hold** run their `releaseSessionSlot` and §10.1.4 rows | CODE-6 | S14 | 1 |
 | `pkg/adapter/export_test.go`, `exportpaths_test.go`, `holdstate_test.go`, `manifest_fields_test.go`, `one_session_only_test.go`, `podmcp_arming_internal_test.go`, `slotsession_test.go` and `usage_test.go`, all in `pkg/adapter` | the `slotResolve{allowCreate: true}` widening at every call of `ensureSlotStateLocked`, `ensureSlotPaths` and `claimSessionSlot`, and the `deregisterSlot` rewrite in `podmcp_arming_internal_test.go` | CODE-6 | S14 | 1 |
-| every file the bind-field grep under `## Files touched on application (non-spec)` names | the `BindAttempt` or `MidSession` literal edit | CODE-6 | S14 | 1, 3, 4, 7a, 8, 9, 10 |
+| every file the bind-field sweep under `## Files touched on application (non-spec)` covers | the `BindAttempt` or `MidSession` literal edit | CODE-6 | S14 | 1, 3, 4, 7a, 8, 9, 10 |
 | regression, no edit | existing tier-2 tests that drive an adapter RPC whose resolve S14 changes on a real `adapter.Server` with no literal the bind-field grep matches, such as the `StartSession` in `tests/tier2_component/warmlayout/warm_layout_test.go` | CODE-6 | S14 | 2 |
 | `pkg/adapter/bindattempt_test.go` | the guard-acquisition assertions of **The hold refuses admission until the teardown returns having completed**; **The per-slot guard serializes the destructive section.**; the `releaseSessionSlot` and `terminateHeldSession` rows of **A destructive section whose guard acquisition expires takes CODE-14's disposition of an expired acquisition at a removing site.**; **An uncontended acquisition on a cancelled context holds the guard.**; **An admission RPC whose guard acquisition expires is refused.** | CODE-14 | S15 | 1 |
 | `pkg/adapter/holdstate_test.go` | **Tier 1, CODE-14's §10.1.4 per-member close budget**, with the file's whole-file §4.7.1 credit | CODE-14 | S15 | 1 |
@@ -2852,13 +2846,14 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | `pkg/adapter/slotsession_test.go` and `pkg/adapter/socketruntime_test.go` | every case of **Adapter tests for CODE-1 and CODE-2, tier 1** that no S18 row names, the untokened-entry counter's firing, the `exited_cleanly` cases that drive `Server.removeSlotTreeFn` and **An expired guard acquisition keeps the hold and fails the clean exit.** among them; the **Co-tenancy hazard.** sibling assertion is the `socketruntime_test.go` one; with `slotsession_test.go`'s whole-file §4.7.1 credit | CODE-1, CODE-14, CODE-15 | S16 | 1 |
 | `pkg/adapter/bindattempt_orderings_test.go` | new; **Tier-1 adoption-ordering tests, every case walked** | CODE-1 | S16 | 1 |
 | `tests/tier7a_load_local/slot_reclaim_hold_race_test.go` | new, whole: `TestSlotIdentifierReclaimHoldRefusesABindUntilTheCleanupReturns_spec_5_2`, the lock-order assertion, and the arms of the reclaim against a section admitted before the hold opened with its §10.1.4 second run, with the file's `tests/spec-map.json` §5.2 entry and `slotAddressCaseFiles` row | CODE-1, CODE-14 | S16 | 7a |
-| every file the `ShutdownRequest{` grep under `## Files touched on application (non-spec)` names, `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` among them | the `UnconditionalTeardown: true` edit; `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` passes unchanged | CODE-1 | S16 | 1, 2, 3, 4, 7a, 9, 10 |
+| every file the `ShutdownRequest{` sweep under `## Files touched on application (non-spec)` covers, `tests/tier7a_load_local/shutdown_drain_gate_race_test.go` among them | the `UnconditionalTeardown: true` edit; `TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2` passes unchanged | CODE-1 | S16 | 1, 2, 3, 4, 7a, 9, 10 |
+| regression, no edit | `tests/tier11_docs/adapter_metric_catalog_test.go`, over the untokened-entry registration CODE-9 adds to `pkg/adapter/metrics.go` | CODE-9 | S16 | 11 |
 | `pkg/adapter/slotsession_test.go` | **Start-versus-reclaim rollback, deterministic form.**, **The confirmation refuses a replaced entry.** and **The rollback destroys no successor.**, with the `probeRuntime` `onStart` hook | CODE-2 | S18 | 1 |
 | `pkg/adapter/sdkwarm_test.go` | **The SDK-warm confirmation refuses without releasing.**, with the `onConfigure` hook and the file's whole-file credits under 4.7.1 and 7.1 | CODE-2 | S18 | 1 |
 | `pkg/adapter/export_test.go`, `adapterevents_test.go`, `podmcp_arming_internal_test.go` and `usage_test.go`, and the S16 rows of `slotsession_test.go` that call `noteRuntimeStarted` | the `noteRuntimeStarted` re-fixturing CODE-2's call-site scope states; only `TestAdapterEventsEmitsControlEvents_spec_4_7` goes red without it | CODE-2 | S18 | 1 |
 | `tests/tier7a_load_local/slot_bind_attempt_race_test.go` | new, whole: the start-versus-reclaim race, the reverse ordering and `TestConcurrentBindAttemptsResolveExactlyOneOwner_spec_4_7_1`, with the file's `tests/spec-map.json` entry under 4.7.1 and 7.1 and its `slotAddressCaseFiles` row | CODE-2, CODE-6 | S18 | 7a |
 | regression, no edit | existing tier-2, tier-3, tier-4, tier-9 and tier-10 tests that drive `StartSession`, `Resume` or `ConfigureWorkspace` on a real `adapter.Server`, whose start confirmation S18 changes, such as `tests/tier2_component/warmlayout/warm_layout_test.go`, `tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go` `tests/tier4_integration/mcp_runtime_lifecycle_test.go`, `tests/tier9_security/adapter_mcp_nonce_test.go` and `tests/tier10_conformance/recycle_scrub_conformance_test.go` | CODE-2 | S18 | 2, 3, 4, 9, 10 |
-| `pkg/gateway/podlifecycle/podsession/slotbinder_test.go` | the compensation row of **The compensation names the attempt's own token**; **The leaked disposition, two arms.**; **A typed refusal is compensated.**; the `materializeSlot` arms of **The credential release is scoped to the attempt** and of **The cancelled-context case.**; **The release still runs for a non-`SlotBindError` failure**; **Per-stage compensation table.**; **The pre-`PrepareWorkspace` workspace failure, separately.**; the hook half of **The counters.** | CODE-13 | S19 | 1 |
+| `pkg/gateway/podlifecycle/podsession/slotbinder_test.go` | the compensation row of **The compensation names the attempt's own token**; **The leaked disposition, two arms.**; **A typed refusal is compensated.**; the `materializeSlot` arms of **The credential release is scoped to the attempt** and of **The cancelled-context case.**; the `BindReservedSlot` row of **The cancelled-context case.**; **The release still runs for a non-`SlotBindError` failure**; **Per-stage compensation table.**; **The pre-`PrepareWorkspace` workspace failure, separately.**; the hook half of **The counters.** | CODE-13 | S19 | 1 |
 | `pkg/gateway/podlifecycle/podsession/binder_test.go` | the `Binder.Prepare` arm of **The credential release is scoped to the attempt**, the `Binder.Resume` rows of **The cancelled-context case.** and **The counters.**, and the compensation and lease-release arms of **The resume path.**, each with its per-case `tests/spec-map.json` entry | CODE-13 | S19 | 1 |
 | `pkg/gateway/sessionserver/slotretry_test.go` and `slotretry_load_test.go` | the `ReleaseSlotReservation` signature on `fakeSlotBinder` and `concurrentSlotBinder`, and `fakeSlotBinder.released` widened to carry the disposition | CODE-13 | S19 | 1 |
 | every file the `ReleaseSession(` grep under `## Files touched on application (non-spec)` names whose type is assigned to a `podsession.Binder.Credentials` field | the `Release(leaseID string)` method, which `binder_test.go`'s `fakeAssigner` records | CODE-13 | S19 | 1, 4, 9 |
@@ -2869,7 +2864,7 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | `pkg/gateway/sessionserver/slotretry_test.go` | **Accounting, at `maxConcurrentSessions: 4` (threshold 2).**, **One `maxConcurrentSessions: 2` case**, **The reserved bind path reaches the accounting, at `maxConcurrentSessions: 4`.**, **The refusals' classifications.** and **The refusals' client envelopes.** | CODE-5 | S20 | 1 |
 | `pkg/gateway/sessionserver/slotretry_load_test.go`, `pkg/gateway/runtime/slothealth/slothealth_test.go`, `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go` and `pkg/gateway/session/recycle/scrubreporter_seams_test.go` | **The leak record is per slot.**, with distinct slot identifiers wherever a case records several leaks against one pod and the slot parameter at every `RecordLeak` fake | CODE-5 | S20 | 1 |
 | `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` | **The resume classifier holds the row for every slot-bind refusal of a resume.** with its negative case, and the `resumeOnPod` accounting arms of **The resume path.** | CODE-5 | S20 | 1 |
-| `tests/tier4_integration/recycle_scrub_path_test.go` | `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2`, whose persistent `RecordLeak` assertion needs CODE-5's accounting, with its per-case `tests/spec-map.json` entry and the slot parameter on `perReleaseNoopLedger.RecordLeak` | CODE-5 | S20 | 4 |
+| `tests/tier4_integration/recycle_scrub_path_test.go` | `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2` with its per-case `tests/spec-map.json` entry and the slot parameter on `perReleaseNoopLedger.RecordLeak` | CODE-5 | S20 | 4 |
 | regression, no edit | existing tier-2, tier-3 and tier-9 tests that drive the start and resume paths of `pkg/gateway/sessionserver`, whose failure accounting S20 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`, `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-5 | S20 | 2, 3, 9 |
 | `tests/tier3_contract/adapter_bind_attempt/` | **The behavioural cases**, CONF-1's case list over bufconn | CONF-1 | S22 | 3 |
 | `tests/tier10_conformance/slot_bind_attempt_conformance_test.go` | new; CONF-1's case list in process, with the file's `tests/spec-map.json` entry, its `slotAddressCaseFiles` row and SCHEMA-1's `ABSENT` claim-register row | CONF-1 | S22 | 10 |
@@ -3349,15 +3344,16 @@ execution modes); §6.2 (pod state machine)`:
   session-start stages: exactly one `Shutdown` naming the session, carrying a positive
   `deadlineMs` equal to half the budget the case's pool configuration produces and strictly less
   than the RPC deadline that same configuration produces. The table runs once with
-  `cleanupTimeoutSeconds` unset, where the floor of CODE-4's **The budget:** governs, and once
+  `cleanupTimeoutSeconds` unset, where the floor of CODE-13's **The budget:** governs, and once
   with a configured value above it.
 - **The pre-`PrepareWorkspace` workspace failure, separately.** A `stageWorkspace` failure on a
   plan carrying an original `uploadFile` source, injected by leaving `Binder.Blobs` nil, returns
   before `PrepareWorkspace` is sent, so the pod holds no entry. Assert that the compensation is
   still sent, that the adapter answers `ABSENT`, and that `SlotBindError.Leaked` is false.
-- **The cancelled-context case.** Table-driven over `materializeSlot` and `Binder.Resume`. A
-  failure whose caller context is already cancelled or past its
-  deadline still sends the compensation. This is the residue class the compensation exists for
+- **The cancelled-context case.** Table-driven over `materializeSlot`, `BindReservedSlot` and
+  `Binder.Resume`. A failure whose caller context is already cancelled or past its
+  deadline still sends the compensation. When the fake adapter answers that compensation clean,
+  the `BindReservedSlot` and `Binder.Resume` rows also record the reservation release with `leaked` false. This is the residue class the compensation exists for
   and the case a naive implementation gets wrong. In the `Binder.Resume` row the fake adapter's
   `Resume` blocks until the caller's context is done, the row asserts that a `Shutdown` naming the
   resume's minted `bind_attempt` is still recorded, and its `// spec:` annotation adds `§7.2
@@ -3546,8 +3542,8 @@ above it, so carol beside a live alice arms nothing with or without this change.
 **Tier 4, the late-reclaim arm.** A subtest arm inside that same named case. Bob's bind is
 abandoned at the session-start stage with the caller's context already expired; bob's retry binds
 and starts cleanly on the same pod; the compensation for the first attempt then arrives, is
-answered `superseded`, leaves the running session's entry, tree, credentials and runtime
-membership untouched, and releases the slot with `leaked=false`. Assert bob's retried session
+answered `superseded`, and leaves the running session's entry, tree, credentials and runtime
+membership untouched. Assert bob's retried session
 still serves after the compensation returns, rather than asserting only on the reclaim's answer.
 
 **Tier 4, the refused-retry arm.** A second subtest arm: bob's first attempt fails pre-start and
@@ -3562,12 +3558,14 @@ against a design whose compare sits in the handlers.
 §5.2 (pool configuration and execution modes); §6.2 (pod state machine)`. That file already runs
 envtest plus miniredis plus a real adapter. The unanswered reclaim is driven from the fixture's
 own dialer: `recycleAdapterDialer` builds the client through `adapterclient.Dial`, which is
-variadic over `grpc.DialOption`, so the case adds a unary client interceptor that fails the
-`Shutdown` RPC carrying the `slot_bind_failed` reason and passes every other RPC through
-untouched. A bind whose compensating `Shutdown` the adapter does not answer is released with
-`leaked=true`, so the Redis slot counter does not decrement and the per-pod `SandboxClaim`
-survives at `bound`; and the leak is counted persistently through `RecordLeak` and the
-`lenny_adapter_leaked_slots` gauge rather than aging out of the windowed counter.
+variadic over `grpc.DialOption`, so the case adds a unary client interceptor that fails
+`StartSession` and the `Shutdown` RPC carrying the `slot_bind_failed` reason and passes every
+other RPC through untouched. The case reserves the slot with `Binder.ClaimSlot` and binds it with
+`Binder.BindReservedSlot`, the driver that owns the reservation release (`BindSlot` releases
+nothing), so the failed `StartSession` is compensated, the unanswered `Shutdown` makes the release
+carry `leaked=true`, the Redis slot counter does not decrement, and the per-pod `SandboxClaim`
+survives at `bound`. A control arm whose interceptor passes that `Shutdown` through sees the
+counter reach zero and the claim deleted; that contrast is the assertion that discriminates.
 
 **Tier 7a, the start-versus-reclaim race.** An RPC that admits a start parked inside
 `Runtime.Start` while the compensating `Shutdown` reclaims the slot, under `-race` with a
@@ -4046,7 +4044,7 @@ of these cases:
 - `pkg/gateway/session/recycle/scrubreporter_seams.go` · CODE-5.
 - `pkg/gateway/sessionserver/sessionserver.go` · CODE-3.
 - `pkg/gateway/podlifecycle/podsession/bindattempt.go` · new; CODE-4.
-- `pkg/gateway/podlifecycle/podsession/slotfailure.go` · CODE-9 and CODE-13.
+- `pkg/gateway/podlifecycle/podsession/slotfailure.go` · CODE-13.
 - `pkg/gateway/podlifecycle/podsession/slotbinder.go` · CODE-4, CODE-9 and CODE-13.
 - `pkg/gateway/podlifecycle/podsession/binder.go` · CODE-4, CODE-8, CODE-9 and CODE-13.
 - `pkg/gateway/sessionserver/start.go` · CODE-5 and CODE-13.
@@ -4111,6 +4109,13 @@ of these cases:
   `slotAddressCaseFiles` row and a `tests/spec-map.json` §16.1 credit in the step that creates it,
   and
   `tests/tier0_static/spec_map_slot_address_registration_test.go`.
+- `tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go` and
+  `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go` · untouched by the
+  sweeps below; the second takes SCHEMA-1's edit alone. A swept field breaks the unset-field
+  inputs whose bytes `TestUnsetGenerationFenceAddsNoBytes` and
+  `TestShutdownRequestUnsetRecycleWireIdentical_spec_4_7` pin. The files' other literals are
+  descriptor probes and the `TestShutdownRequestRecycleScrubRoundTrip_spec_5_2` round trip,
+  which reach no adapter and need no swept field.
 - Every other file that `grep -rn "ShutdownRequest{" --include=*_test.go pkg/ tests/` names ·
   the mechanical `UnconditionalTeardown: true` edit alone. They are not enumerated here, because
   that grep defines the set and each edit is one field on an ordinary teardown call. The edit

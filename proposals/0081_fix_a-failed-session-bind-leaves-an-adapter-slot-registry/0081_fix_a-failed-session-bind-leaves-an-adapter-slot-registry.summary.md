@@ -288,7 +288,7 @@ restating it.
 ## Open decisions for human to make
 
 The decisions below are open for a human, each under the identifier it was stamped with, and
-entries 32, 33, 36, 50 and 54 carry the question and its ground alone and entry 34 carries no
+entries 32, 33, 36 and 50 carry the question and its ground alone and entry 34 carries no
 recommendation, because the review loop derived none for them, while the review log's `### Settled` list, its standing-context
 changelog and the review-log archive record how every entry that has left this section was answered or moved to
 `## Defects in the shipped tree that this proposal does not stage`, among them decision 53, whose
@@ -512,23 +512,62 @@ CODE-1 at S16.
     phase derived one.
 
 54. **Should the `cause` label on the new `lenny_slot_compensation_superseded_total` counter be
-    renamed `error_type`?** SPEC-6 stages a §16.1 catalog row for a gateway counter that counts
-    compensating `Shutdown` requests the adapter answered `superseded`. The row labels the
-    series by `pool`, `k8s_pod_name` and `cause`, where `cause` is `refusal` when the
-    compensated bind attempt failed on one of the two new adapter refusal codes and `failure`
-    for any other failure. §16.1.1's paragraph "Distinguishing `error.type` from `reason`"
-    requires a label whose values describe the cause of an error, failure, rejection or abort
-    to be named `error_type`. The answer decides whether SPEC-6's row, CODE-9's collector, the
-    `docs/reference/metrics.md` row and the tests that assert the label keep the name `cause`
-    or take `error_type`.
+    renamed `error_type`?** SPEC-6 stages a §16.1 catalog row for a new gateway counter that
+    counts compensating `Shutdown` requests the adapter answered `superseded`. The row labels
+    the series by `pool`, `k8s_pod_name` and `cause`. `cause` takes the value `refusal` when the
+    compensated bind attempt failed on one of the two new adapter refusal codes
+    (`SLOT_BIND_ATTEMPT_SUPERSEDED` or `SLOT_BIND_ALREADY_STARTED`), and `failure` for any other
+    failure. The operator chose the name `cause` when adding the label under the settled
+    `[operator.post-r16]` decision, which kept refusal compensations in the series and split
+    them by this label. That decision records no argument for the name over `error_type`. The
+    answer decides whether SPEC-6's §16.1 row, CODE-9's collector and its label list, the
+    `docs/reference/metrics.md` row, and the test assertions on the label keep the name `cause`
+    or take `error_type`. The values `refusal` and `failure` are unchanged either way.
 
-    Ground, as the review log gives it. The label name `cause` was the operator's choice when
-    the operator added the label to the series, and the shipped tree already carries a label
-    named `cause`. The review lenses that noted the conflict with §16.1.1 did not file it for
-    that reason and routed it to a person.
+    Recommendation: rename the label to `error_type` and keep its two values.
 
-    Recommendation: none. The review loop derived none, and the
-    open-decisions-and-impact-review phase supplies one.
+    Ground. §16.1.1's paragraph "Distinguishing `error.type` from `reason`" states that "when
+    the label values describe the cause of an error, failure, rejection, abort, or rotation
+    caused by upstream failure, the label is `error_type`" (`spec/16_observability.md:308`),
+    and the attribute table's `error.type` row lists "slot failures" among its uses
+    (`spec/16_observability.md:302`). The values `refusal` and `failure` classify how the
+    compensated bind attempt failed, so they fall under that sentence. The nearest catalog
+    precedent, `lenny_slot_failure_total`, labels per-slot failures by `error_type`, `pool` and
+    `k8s_pod_name` (`spec/16_observability.md:14`). No §16.1 catalog row carries a label named
+    `cause`. The one shipped `cause` label is on `lenny_injection_gate_failclosed_total`
+    (`pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_sessionlifecycle.go:253`), a series that
+    appears in neither `spec/` nor `docs/`.
+
+    The ground is weaker than the rule's wording suggests, and the decision stays with a person
+    for that reason. The sentence at `spec/16_observability.md:308` sits in a paragraph whose
+    purpose is to keep failure causes out of a label named `reason`, and it ends "not `reason`".
+    The next paragraph, "Other domain labels", admits Lenny-specific labels documented inline
+    and lists `failure_phase` among them (`spec/16_observability.md:310`). The spec uses
+    `failure_phase` to classify failures on `lenny_erasure_job_failed_total`
+    (`spec/16_observability.md:210`), and the `ErasureJobFailed` alert reads that label to
+    distinguish failure modes (`spec/16_observability.md:501`). That precedent shows the spec
+    already carries a failure-classifying label under a name other than `error_type`, which
+    is the reading under which `cause` stands as an inline domain label. The catalog is not
+    uniform in the other direction either: `lenny_pool_scaling_admission_denied_total` labels
+    a webhook failure code as `reason` (`spec/16_observability.md:132`).
+
+    Alternatives. Keeping `cause` preserves the operator's recorded wording and rests on the
+    "Other domain labels" reading and the `failure_phase` precedent. It lost because the
+    counter's closest neighbour, `lenny_slot_failure_total`, already uses `error_type` for the
+    same kind of classification, and an operator querying slot failures across both series
+    would meet two label names for one concept. A third name, such as `failure_class`, lost
+    because it satisfies neither the operator's wording nor the §16.1.1 convention.
+
+    Cost of deciding otherwise. Keeping `cause` lands a §16.1 row whose label name a reader of
+    §16.1.1 will take for a breach of the naming rule, and a later rename costs a spec, code,
+    docs and test edit plus any dashboard or alert built on the series by then. Renaming now
+    costs the same four edits before anything depends on the series, and it overrides a label
+    name the operator wrote.
+
+    Confidence: moderate. The rename follows the sentence at `spec/16_observability.md:308` and
+    the `lenny_slot_failure_total` precedent. The `failure_phase` precedent is a sound reason to
+    keep `cause`, and a record that the operator chose `cause` deliberately over `error_type`
+    settles the question in favour of keeping it.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -861,8 +900,8 @@ CODE-1 at S16.
   `adapter-contract.md`, `state-machines.md`, `metrics.md`, `wire-artifacts.md` and
   `glossary.md`. The published catalog can therefore diverge from the spec catalog with no gate
   observing it, which is how the missing and misspelled rows recorded in the entry above
-  survived. This proposal stages no gate. DOCS-3 edits the single `SETUP_COMMAND_FAILED` row
-  and declares tier 0, and a reconciliation built for that one row would leave every other row
+  survived. This proposal stages no gate. DOCS-3 edits the single `SETUP_COMMAND_FAILED` row,
+  and a reconciliation built for that one row would leave every other row
   of the page ungated while reading as coverage. Building the reconciliation over the whole page
   belongs to a finding against §15.1.
 - **No spec change. `Server.ReportSessionFailure` has no production caller.** Every reference
