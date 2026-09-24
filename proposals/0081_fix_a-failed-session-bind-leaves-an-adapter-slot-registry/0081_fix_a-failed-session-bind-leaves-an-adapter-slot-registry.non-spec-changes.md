@@ -3456,10 +3456,10 @@ execution modes); §6.2 (pod state machine)`:
     `"session_start"`, through `classifySlotBindFailure`, with `STARTING_FAILED`, in place of 422
     `SLOT_FAILED`;
   - the concurrent-slot retry exhausted on the superseded refusal: `applySlotRetryPolicy` over the
-    file's `fakeSlotBinder` answering, on every attempt, a `"session_start"`-stage
-    `*podsession.SlotBindError` whose `Err` is `fmt.Errorf("podsession: start slot session on pod
-    %s: %w", ...)` around CODE-7's superseded double-`%w` value, as `slotbinder.go:323-324` wraps
-    rule 8's start-confirmation refusal, so the `*SlotFailedError` carries the `transient`
+    file's `fakeSlotBinder` answering, on every attempt, a `"credential_assignment"`-stage
+    `*podsession.SlotBindError` whose `Err` is `fmt.Errorf("podsession: assign slot credentials on
+    pod %s: %w", ...)` around CODE-7's superseded double-`%w` value, as `Binder.materializeSlot` in
+    `slotbinder.go` wraps a refused `AssignCredentials`, so the `*SlotFailedError` carries the `transient`
     category, with `SESSION_CREATION_FAILED`, in place of 422 `SLOT_FAILED`. The stage is the
     discriminating choice: a `"setup"`-stage fixture wrapped as production wraps it keeps the
     `*SetupCommandFailure` in the chain and answers 503 through `writeSetupCommandError` without
@@ -3473,7 +3473,11 @@ execution modes); §6.2 (pod state machine)`:
   `"session_start"` `*podsession.SlotBindError` whose cause is a plain `codes.FailedPrecondition`
   status answers `SLOT_FAILED`. The control rows are the ones that fail a check keyed on the gRPC
   code rather than on CODE-7's sentinels. The assertions are the response status code, the body's
-  `code`, and the presence or absence of `Retry-After`; `details.reason` discriminates nothing.
+  `code`, the presence or absence of `Retry-After`, and, with the `New(...)` server's
+  `lifecycleAudit` set to a `captureSetupAudit` and its `incWarmpoolWarmupFailure` set to a recorder
+  (both from `setup_command_failed_internal_test.go`), no audit event and no warmup-failure
+  increment on every setup-command-stage refusal row against one of each on the setup-exit control
+  rows; `details.reason` discriminates nothing.
   The envelope is chosen in `writePodClaimError` alone, which is a different decision from the
   `Reason()` and `classifySlotBindFailure` rows above, and the shipped
   `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` and

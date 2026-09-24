@@ -27,13 +27,13 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 11. Depends on: S1, S2, S4, S5.
 - [ ] **S23 · docs** — DOCS-4. Listed beside S7 because DOCS-4 lands beside DOCS-2, after SPEC-3.
       Tiers 0, 11. Depends on: S4.
-- [ ] **S8 · code** — CODE-3. `ValidTransitions()` and its doc comment in `pkg/sandbox/slotstate` gain the new edge, the retired glosses there are re-keyed onto §6.2 and §5.2 pointers, the retired cleanup-timeout trigger is deleted from the doc comments that carry it in `pkg/sandbox/slotstate`, `pkg/gateway/runtime/slothealth`, `pkg/gateway/sessionserver` and `pkg/gateway/metrics/gatewaymetrics`, each of which keeps its existing §6.2 citation. Its tests are the rows the landing table assigns to S8.
+- [ ] **S8 · code** — CODE-3 in full, with the tests the landing table assigns to S8.
       Tiers 0, 1. Depends on: S4, S5.
 - [ ] **S9 · schema** — SCHEMA-1 in full, except its `ABSENT` claim-register row, which lands with S22, and with the tests the landing table assigns to S9. It precedes every step below that opens a `pkg/adapter` handler file, under the summary's proto-window decision.
       Tiers 0, 1, 3, 11. Depends on: S1, S2, S3, S4, S5.
 - [ ] **S10 · code** — CODE-9 in full, except its untokened-entry series, which lands with S16, and its `noteCompensationOutcome` forwarder, which lands with S19, with the tests the landing table assigns to S10.
       Tiers 0, 1, 2, 3, 4, 9, 11. Depends on: S1, S6, S9.
-- [ ] **S11 · code** — CODE-7. `pkg/gateway/runtime/adapterclient` gains a translation from the gRPC status detail to two sentinel errors matched with `errors.Is`, and the exported predicate `IsSlotBindRefusal` over both, following the `RunSetup` detail reader. Its tests are the rows the landing table assigns to S11.
+- [ ] **S11 · code** — CODE-7 in full, with the tests the landing table assigns to S11.
       Tiers 0, 1, 3. Depends on: S1, S9.
 - [ ] **S12 · code** — CODE-8 in full, with the tests the landing table assigns to S12.
       Tiers 0, 1, 2, 3, 4, 9. Depends on: S1, S11.
@@ -47,7 +47,7 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 1, 2, 3, 4, 7a, 9, 10, 11. Depends on: S1, S2, S4, S6, S9, S10, S11, S13, S14, S15.
 - [ ] **S18 · code** — CODE-2 in full, with the tests the landing table assigns to S18.
       Tiers 0, 1, 2, 3, 4, 7a, 9, 10. Depends on: S1, S3, S14, S16.
-- [ ] **S19 · code** — CODE-13, all of it, and CODE-9's `noteCompensationOutcome` forwarder: the compensating `Shutdown`, the leaked disposition, `ReleaseSlotReservation`'s `leaked` parameter at every call site in CODE-13's table, and the attempt-scoped lease release together with the `CredentialAssigner` widening, every `releaseAttemptCredentials` call site, with the tests the landing table assigns to S19, the test types the `Release(leaseID string)` rule under the files-touched list requires among them. These land in one step so no intermediate commit leaves tier 0 red. S20 reads the disposition this step puts on `Binder.Resume`'s error chain.
+- [ ] **S19 · code** — CODE-13 in full and CODE-9's `noteCompensationOutcome` forwarder, with the tests the landing table assigns to S19. These land in one step so no intermediate commit leaves tier 0 red. S20 reads the disposition this step puts on `Binder.Resume`'s error chain.
       Tiers 0, 1, 2, 3, 4, 8, 9. Depends on: S1, S3, S4, S6, S9, S10, S11, S13, S16.
 - [ ] **S20 · code** — CODE-5 in full, with the tests the landing table assigns to S20.
       Tiers 0, 1, 2, 3, 4, 9. Depends on: S1, S3, S4, S19.

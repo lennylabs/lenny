@@ -310,7 +310,7 @@ restating it.
 ## Open decisions for human to make
 
 The decisions below are open for a human, each under the identifier it was stamped with, and
-entries 32, 33, 36, 50, 55, 56 and 57 carry the question and its ground alone and entry 34 carries no
+entries 32, 33, 36, 50, 56 and 57 carry the question and its ground alone and entry 34 carries no
 recommendation, because the review loop derived none for them, while the review log's `### Settled` list, its standing-context
 changelog and the review-log archive record how every entry that has left this section was answered or moved to
 `## Defects in the shipped tree that this proposal does not stage`, among them decision 53, whose
@@ -481,30 +481,6 @@ CODE-1 at S16.
 
     Recommendation: none. Neither the review loop nor the open-decisions-and-impact-review
     phase derived one.
-
-55. **Should the spec changes file's Edge-cases bullet on an abandoned attempt's late
-    `StartSession` name the `/start` retry loop it causes on a create-time-reserved slot?** The
-    bullet "An abandoned attempt's start whose claim runs after the reclaim's cleanup completed
-    re-creates the entry." accepts a residue: the late start re-creates a registry entry that
-    carries no bind attempt token, and nothing removes that entry before the pod retires. The
-    bullet does not say what a client meets afterwards. The answer decides whether the accepted
-    residue is recorded with its client-visible cost. Answering yes adds one sentence to that
-    bullet, which is proposal commentary, and changes no staged spec text.
-
-    Ground, as the review log gives it (run 0081-opt9 `[spec.1.review-mechanism.1]`). On a
-    create-time-reserved slot the session row keeps its §4.6 pod binding, so every client retry
-    of `POST /v1/sessions/{id}/start` reconnects to the same pod under the same slot identifier
-    (`bindConcurrentSlot` reconnects to `row.PodAssignment` in
-    `pkg/gateway/sessionserver/start.go`). Each retry meets the surviving started entry and is
-    refused under §4.7.1 rule 6 with `SLOT_BIND_ALREADY_STARTED`. Since the reversal of operator
-    decision 29, the gateway answers that refusal with the retryable 503 `STARTING_FAILED`, so the
-    client is told to retry a request that cannot succeed until the pod retires. The loop judged
-    the item below the finding bar because the residue is accepted and the envelope is an
-    operator decision already taken, and it recorded that a person may want the bullet to state
-    the loop.
-
-    Recommendation: none. The review loop derived none; the open-decisions-and-impact-review
-    phase supplies one.
 
 56. **Should spec or docs text state the client-visible outcome of a rolled-back start that
     closes a successor's runtime session?** Staged §4.7.1 rule 8 says only that a start whose
