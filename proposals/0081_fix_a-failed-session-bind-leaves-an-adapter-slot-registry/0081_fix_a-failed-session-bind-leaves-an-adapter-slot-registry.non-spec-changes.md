@@ -876,8 +876,8 @@ is why the staged `materializeSlot` body changes with it.
 
 The outcome is read for observability alone. The label's value comes from
 `compensationCause(err error) string`, declared in `slotbinder.go` beside the wrapper, which
-returns `refusal` when `err` matches CODE-7's `ErrSlotBindAttemptSuperseded` or
-`ErrSlotBindAlreadyStarted` under `errors.Is` and `failure` otherwise. It is the one statement of
+returns `refusal` when CODE-7's `adapterclient.IsSlotBindRefusal(err)` holds and `failure`
+otherwise. It is the one statement of
 that value, and both compensating call sites pass it the attempt's error.
 `Binder.noteCompensationOutcome(outcome, cause, pool, podName)` is a method on `Binder` rather
 than a free function, because the series SPEC-6's
@@ -1033,7 +1033,7 @@ unconditional form.
 
 The counters this compensation feeds are CODE-9's.
 
-### CODE-5 · pkg/gateway/sessionserver/start.go, pkg/gateway/runtime/slothealth/slothealth.go, pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go, pkg/gateway/session/recycle/scrubreporter_seams.go · one accounting helper serves every bind path the reclaim obligation binds, and the resume classifier learns the adapter's transient code and the started-session refusal
+### CODE-5 · pkg/gateway/sessionserver/start.go, pkg/gateway/runtime/slothealth/slothealth.go, pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go, pkg/gateway/session/recycle/scrubreporter_seams.go · one accounting helper serves every bind path the reclaim obligation binds, the resume classifier learns the adapter's transient code and the started-session refusal, and the client envelope mapper answers both slot-bind refusals with the retryable fallback
 
 This deliverable stages no placement constraint: no per-request pod-exclusion field on
 `podsession.SlotBindRequest` or `podclaim.SlotRequest`, no pointer threading through
@@ -1048,8 +1048,8 @@ bullet as it stands.
 
 Targets: the classify, record and threshold tail of `applySlotRetryPolicy`,
 `bindConcurrentSlot`'s `BindReservedSlot` branch, `resumeOnPod`'s `podBinder.Resume` failure
-branch, the `slotBinder` interface, `isTransientPodClaimError`, and the persistent leak record's
-key.
+branch, the `slotBinder` interface, `isTransientPodClaimError`, `writePodClaimError`, and the
+persistent leak record's key.
 
 Extract the tail only. The release stays with each caller, which already knows its own
 disposition:
@@ -1138,21 +1138,30 @@ so at `maxConcurrentSessions: 2` the first
 accounted bind failure of either kind drains a pod that nothing drains today. That is the
 conformance gap closing rather than a threshold change, and the threshold itself is untouched.
 
-**The refusals stay retryable on the concurrent-bind path, and no production change on that
-path is what makes them so.** The reclaim hold answers `codes.Aborted` carrying
+**The refusals stay retryable on the concurrent-bind path inside the slot retry loop, and no
+change to that loop's classification is what makes them so.** The reclaim hold answers `codes.Aborted` carrying
 `slot_reclaim_in_progress`, and the identity gate answers `codes.Aborted` carrying
 `SLOT_BIND_ATTEMPT_SUPERSEDED`. `SlotBindError.Reason()` has no `Aborted` case, so both take
 the transient default (`pkg/gateway/podlifecycle/podsession/slotfailure.go`), and
 `classifySlotBindFailure` passes a transient failure through with the retryable §15.1
 `STARTING_FAILED` envelope intact. That switch is not edited and may not be: opening a case for
 `Aborted` in it would break both refusals and CODE-2's rollback, which rely on the same default.
+A retry that exhausts on the superseded refusal at a stage other than the setup-command stage
+returns a `*podsession.SlotFailedError` instead, which `writeSlotFailed` answers 422 `SLOT_FAILED`
+today; the client-boundary refusal case below answers it with the retryable fallback. At the
+setup-command stage the `*SetupCommandFailure` wrap stays in the exhausted error's chain, so the
+`setupFail` case already answers the superseded refusal (`Aborted`) with the retryable 503
+through `writeSetupCommandError`.
 The adapter side is held by CODE-6's **The five resolve sites keep the shared helper.**
 
-The phase gate is the exception and is correctly signed. `SLOT_BIND_ALREADY_STARTED` answers
+The phase gate is the exception inside the slot retry loop. `SLOT_BIND_ALREADY_STARTED` answers
 `codes.FailedPrecondition`, which `Reason()` maps to `policy_rejection` outside the workspace
-stages and which `NonRetryable()` reports true for. That is the right classification on this
-path: the session has already started on this pod, and a retry of the same bind onto the same
-slot is not going to change that. It is not the right classification on the §7.3 resume path,
+stages and which `NonRetryable()` reports true for, so the loop does not repeat the bind: the
+session has already started on this pod, and a retry of the same bind onto the same slot meets
+the same started session. That classification governs the retry loop and the pod's health
+accounting and stops there. It does not choose the client's envelope, because the refusal case
+below answers the client ahead of `writeSlotFailed`, under operator decision 29 as reversed on
+2026-09-24. `Reason()` is not edited. It is not the right classification on the §7.3 resume path,
 where each retry makes a new claim, which may land on another pod, and the refusal is a fact
 about the pod holding the stale entry rather than about the session, so the resume classifier
 below treats it as transient. The spec basis is §7.2's session state machine and §6.2's
@@ -1167,11 +1176,15 @@ pod rather than the session's state.
 `awaiting_client_action` for the client's `POST /v1/sessions/{id}/resume` or demotes it to
 terminal `failed`. Every arm it carries today is a typed error or a sentinel, so a bare
 `codes.Aborted` status matches none of them and falls through to `return false`, which demotes
-a session the refusal says to retry. Add these arms after the existing switch and before that
-final `return false`:
+a session the refusal says to retry. Add these arms directly after the function's nil guard, ahead
+of the existing switch. The switch's `setupFail` case returns false for any `*SetupCommandFailure`
+whose cause carries `FailedPrecondition`, so a started-session refusal wrapped in one, as a
+snapshotless resume's setup-command request carries it, would demote the row while
+`writePodClaimError` answers the client the retryable 503 below. Ahead of the switch, the arms
+hold the row whatever wrapper the refusal arrives in. Moving the `Aborted` arm ahead is neutral,
+because every case of the switch that an `Aborted` error can match already returns true:
 
 ```go
-	}
 	if status.Code(err) == codes.Aborted {
 		// spec: §15.4 (runtime adapter specification); §5.2 (pool configuration
 		// and execution modes). ABORTED is the adapter's transient wire
@@ -1189,8 +1202,12 @@ final `return false`:
 		// a resume retry makes a new claim.
 		return true
 	}
-	return false
 ```
+
+The function's doc comment, which states that the deterministic `FailedPrecondition` setup exit
+demotes the row and that the wire envelope and the row state share one predicate, gains one
+sentence stating that both slot-bind refusals are checked ahead of that predicate, in this
+function and in `writePodClaimError` alike.
 
 The first arm reads the status code rather than CODE-6's adapter-local sentinel because that
 sentinel is minted in the adapter process and no production file under `pkg/gateway` imports
@@ -1198,15 +1215,71 @@ sentinel is minted in the adapter process and no production file under `pkg/gate
 CODE-7's gateway-side sentinel rather than the `FailedPrecondition` code, because this proposal
 reclassifies only the refusals it introduces, and a `FailedPrecondition` workspace-root mismatch
 is not one of them. CODE-7's typed
-sentinels are the other half and are matched where the distinction between the two new codes
-matters, which is the reclaim closures and this second arm; the first arm needs
+sentinels are the other half and are matched through CODE-7's `IsSlotBindRefusal` by the
+client-boundary case, the reclaim closures and `compensationCause`, and alone by this second arm,
+the one site where the distinction between the two new codes matters; the first arm needs
 only the code, so it covers all three `Aborted` producers. `status.Code` resolves through a wrapper
 with `errors.As`, so the arm fires on the bare status and equally through the `*SlotBindError`
-that CODE-13 makes `Binder.Resume` return. The wire envelope needs no change:
-`writePodClaimError`'s default arm already answers the retryable 503 `RESUME_FAILED` with a
-`Retry-After` for a cause it does not recognise, so for these refusals the row-state classifier
-was the half that disagreed with it. Every other resume cause no arm recognises keeps that
-disagreement, which the summary records as a defect this proposal does not stage.
+that CODE-13 makes `Binder.Resume` return. On the snapshot re-attach the wire answers these
+refusals with the retryable 503 `RESUME_FAILED` and a `Retry-After`, through the refusal case
+below for the two slot-bind refusals and through `writePodClaimError`'s default arm for the hold
+and the rollback, so for these refusals the row-state classifier was the half that disagreed with
+it. On a snapshotless concurrent resume, a hold that exhausts the slot retry at a stage other than
+the setup-command stage, or a rollback that exhausts it, still answers 422 `SLOT_FAILED` through `writeSlotFailed` while the `Aborted` arm holds the row. That
+case, and every other resume cause no arm recognises, keeps a disagreement between the wire and
+the row state, which the summary records as a defect this proposal does not stage.
+
+**The client boundary answers both slot-bind refusals with the retryable fallback.**
+`writePodClaimError` (`pkg/gateway/sessionserver/start.go:87-216`) is the one writer of a client
+envelope for a failed bind. `POST /v1/sessions` (`create.go:340`), the one-call create-and-start
+route (`start.go:801`, `start.go:836`), `POST /v1/sessions/{id}/finalize`
+(`sessionserver.go:3144`), `POST /v1/sessions/{id}/start` (`start.go:1164`, `start.go:1176`) and
+`POST /v1/sessions/{id}/resume` (`start.go:3517`) all route a bind failure through it. Add the
+case below as the first case of `writePodClaimError`'s switch, ahead of every typed case and so
+ahead of the `*SetupCommandFailure` case (`start.go:139`) that calls `writeSetupCommandError`
+and the `*SlotFailedError` case (`start.go:186`) that calls `writeSlotFailed`. It calls CODE-7's
+exported `adapterclient.IsSlotBindRefusal` rather than a private copy of the predicate:
+
+```go
+	case adapterclient.IsSlotBindRefusal(err):
+		// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API).
+		// Either refusal means another bind attempt or start of the same
+		// session holds the slot on that pod, so the client's request did not
+		// fail on its own terms and a fresh request binds a fresh attempt.
+		// The answer is this endpoint's retryable fallback at every bind
+		// stage. First in the switch: a refusal wrapped in *SetupCommandFailure
+		// or *SlotFailedError would otherwise take the non-retryable
+		// SETUP_COMMAND_FAILED or SLOT_FAILED envelope.
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+			fallbackMsg+": "+err.Error(), nil)
+```
+
+Three constraints hold the case in place. It is first in the switch; placed inside the
+`setupFail` case it would also run `recordSetupCommandFailed` (`start.go:145`) and file a
+`setup_command_failed` audit row and metric for a request that ran no setup command, and placed
+after the `slotFailed` case it never fires for a `*SlotFailedError`. It matches CODE-7's
+sentinels and never `codes.FailedPrecondition`: a genuine non-zero setup exit, which the adapter
+answers on `FailedPrecondition` with neither refusal code in its detail, still reaches
+`writeSetupCommandError` and answers 422 `SETUP_COMMAND_FAILED`, and a case keyed on the code
+would answer it with the 503, which the control rows of **The refusals' client envelopes.**
+catch. And `writeSetupCommandError`, `writeSlotFailed`, `SlotBindError.Reason()`,
+`NonRetryable()`, `classifySlotBindFailure` and `applySlotRetryPolicy` are not edited: the §5.2
+in-request retry keeps its classification, the pod's health accounting still records the
+refusal, the `*SlotFailedError` still carries the bind error the create-time rollback predicate
+reads, and only the envelope the client reads changes. `details` is empty, as on the default
+arm, and no new `details.reason` value is minted. The sentinel is reachable on every path,
+because `SlotFailedError`, `SlotBindError` and `SetupCommandFailure` each unwrap and every stage
+wrap in `slotbinder.go` and `binder.go` uses `%w`. The default arm is unchanged, so the shipped
+`TestWritePodClaimErrorFallback_spec_7_1_4` passes as it stands.
+
+`handleFinalize` calls `failSession` before `writePodClaimError`
+(`pkg/gateway/sessionserver/sessionserver.go:3143-3145`), so a refusal at `/finalize` leaves the
+row terminal while the client receives the retryable `SESSION_CREATION_FAILED`, as every other
+transient finalize failure does today, and the client's retry is a new session. This deliverable
+does not change that order. `MaterializeDelegatedChild` (`start.go:960`) and the §8.10
+tree-recovery reattacher (`pkg/gateway/sessionserver/treerecovery.go:29`) bind outside
+`writePodClaimError` and answer no REST client, so the check does not reach them.
 
 No in-gateway wait-and-retry is staged for the hold; the spec-changes accepted failure mode **A
 retry that meets the reclaim hold spends an attempt on it** records why.
@@ -1774,8 +1847,8 @@ precedes CODE-8 rather than accompanying it. Two facts fix its design.
 `adapterv1.Error` declares `code`, `category`, `message`, `retryable` and `docs_url` and has no
 reason field, so the distinction between the two refusals has to be carried by two `ErrorCode`
 values rather than by a string. And every gateway consumer of a bind failure matches on Go
-types: `isTransientPodClaimError` (`start.go:3648-3681`) and both
-reclaim closures. `status.Convert` appears nowhere in `pkg/gateway`, and the only status-detail
+types: `isTransientPodClaimError` (`start.go:3648-3681`), `writePodClaimError`
+(`start.go:87-216`, through `IsSlotBindRefusal` below) and both reclaim closures. `status.Convert` appears nowhere in `pkg/gateway`, and the only status-detail
 reader in the whole gateway is `client.go:333-341`, which recovers `RunSetup` partial outputs.
 
 ```go
@@ -1793,7 +1866,23 @@ var ErrSlotBindAttemptSuperseded = errors.New("adapterclient: slot bind attempt 
 //
 // spec: §4.7.1 (role and gateway RPC contract)
 var ErrSlotBindAlreadyStarted = errors.New("adapterclient: slot bind already started")
+
+// IsSlotBindRefusal reports whether err carries either §4.7.1 slot-bind
+// refusal. errors.Is reads through every wrapper the bind paths add:
+// *SetupCommandFailure, *SlotBindError and *SlotFailedError each unwrap to
+// their cause. It is the one statement of the two-sentinel predicate, so a
+// third refusal sentinel is added here and every consumer follows.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+func IsSlotBindRefusal(err error) bool {
+    return errors.Is(err, ErrSlotBindAttemptSuperseded) ||
+        errors.Is(err, ErrSlotBindAlreadyStarted)
+}
 ```
+
+CODE-5's client-boundary case, CODE-8's reclaim closures and CODE-13's `compensationCause` all
+call `IsSlotBindRefusal`, so the client envelope, the no-drain reclaim and the compensation label
+cannot disagree about which errors are refusals.
 
 The translation is one unexported helper every RPC method's error path runs, following the
 `RunSetup` reader's pattern:
@@ -1888,8 +1977,7 @@ parameter is named `cause` because `Binder.Prepare` already carries a function-s
 // A typed slot-bind refusal is not a pod failure, so the closure calls
 // neither failPhase nor drain and the call site returns the refusal.
 reclaim := func(cause error) {
-    if errors.Is(cause, adapterclient.ErrSlotBindAttemptSuperseded) ||
-        errors.Is(cause, adapterclient.ErrSlotBindAlreadyStarted) {
+    if adapterclient.IsSlotBindRefusal(cause) {
         cl.Close()
         return
     }
@@ -2019,10 +2107,9 @@ passes to the finalize site's `recordSlotFailure` call alone.
 
 Each statement the spec lane retires has carriers outside `spec/`. Those in `docs/`, the proto
 and the generated stubs are dispositioned by the deliverables the spec-lane carrier tables
-name. The Go, SQL and test comment carriers are dispositioned by the three sub-blocks below
-(CODE-10, CODE-11 and CODE-12), one per retired statement, each carrying only its carrier
-definition, its grep command or site list, and its arm rule. Everything the three share is
-stated here, once.
+name. The Go, SQL and test comment carriers are dispositioned by the sub-blocks below
+(CODE-10 and CODE-12), one per retired statement, each carrying only its carrier
+definition, its command, and its arm rule. Everything they share is stated here, once.
 
 **Invariants.** Every arm of every sub-block holds these.
 
@@ -2045,14 +2132,14 @@ SCHEMA-1, `pkg/adapter/server.go`'s field comment under CODE-15, and the two tie
 the tier-11 `**For SPEC-3**` sweep) is dispositioned there. Only a hit that states the retired proposition
 and fits no arm of its sub-block is recorded in `deviations.md` rather than left in place.
 
-**Closure.** A sub-block's step is done when every remaining hit of its command, or every site
-on its list, is either edited under its arm rule or admitted by the non-carrier arm. A carrier
+**Closure.** A sub-block's step is done when every remaining hit of its command is either
+edited under its arm rule or admitted by the non-carrier arm. A carrier
 found later is closed by re-running the command and takes no row anywhere in this proposal.
 A file a sub-block alone opens is opened for comment prose only, so it counts toward no impact
 row's file-collision ground in the summary; a file another entry of the files-touched list
 also opens is listed under that entry for its own edit.
 
-**Sweep across the other retired statements.** SPEC-1, SPEC-2 and SPEC-6 were swept once,
+**Sweep across the other retired statements.** SPEC-1, SPEC-2, SPEC-5 and SPEC-6 were swept once,
 from the repository root over `pkg/ cmd/ tests/ migrations/ schemas/ docs/`, with a grep for
 each retired statement's distinctive phrasing:
 
@@ -2060,10 +2147,12 @@ each retired statement's distinctive phrasing:
   §4.7 `Shutdown` row's restated `superseded` outcome): no comment carriers.
 - SPEC-2 (§7.2's premise that a replacement pod short of `attached` holds no started runtime
   and nothing to seal): no comment carriers.
+- SPEC-5 adds the §4.7.1 bind attempt token block, the §15.4 blocks and one §15.1 pointer
+  sentence and retires no statement, so it has no carrier class.
 - SPEC-6 adds catalog rows and retires no statement, so it has no carrier class.
 
 A later spec-lane edit that retires a statement adds a sub-block in the same three-part form
-under this heading rather than a fourth copy of the invariants.
+under this heading rather than another copy of the invariants.
 
 ### CODE-10 · the Go, SQL and test comments its grep returns · the comment carriers of the withdrawn reporting universal take their reduction
 
@@ -2094,27 +2183,6 @@ cleanup-outcome report, in the words SPEC-3's §12.6 replacement uses, which are
 cleanup-outcome report"; a `// spec:` gloss that attributes the per-release evaluation of
 `sessions_served` to §12 is re-keyed with the rest, onto the write §12.6 keeps, and its
 section number stays.
-
-### CODE-11 · pkg/gateway/externalapi/errorclassify/errorclassify.go, pkg/gateway/sessionserver/start.go, pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go · the comment carriers of the narrowed SETUP_COMMAND_FAILED cause take their reduction
-
-**Carrier.** SPEC-5 replaces the §15.1 `SETUP_COMMAND_FAILED` row's cause and retryability
-sentences, and that row is the single home of what the code covers and whether it is
-retryable. A carrier is a comment that restates the row's cause or its retryability ground.
-
-**Sites.** The comment block above the `CONFIRMATION_REQUIRED` and `SETUP_COMMAND_FAILED` pair
-in `pkg/gateway/externalapi/errorclassify/errorclassify.go`, the `writeSetupCommandError` and
-`isTransientPodClaimError` doc comments in `pkg/gateway/sessionserver/start.go`, and the
-`// diagnosis:` comment on `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3` in
-`pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`.
-
-**Arm rule.** Each site is cut back to a citation of §15.1's row. **IMPLEMENTOR'S CHOICE:** the
-replacement text at each site. The constraint is that the replacement at each site is one
-sentence, cites §15.1 by heading, keeps §7.3 where the replaced span cited it, and names no
-gRPC code as the cause. The classification data and the branch on
-`status.Code(setupFail.Cause)` are untouched. The retired-form line citations on
-`errorclassify.go`'s map entries are neither converted nor added to. CODE-5's `codes.Aborted`
-arm in `isTransientPodClaimError` carries its own inline comment, so the two deliverables take
-different hunks of that function.
 
 ### CODE-12 · the Go, SQL and test comments its grep returns · the comment carriers of the re-keyed claim-deletion projection take their reduction
 
@@ -2627,7 +2695,7 @@ the reference page separately and never meet. DOCS-1 therefore carries the tier-
 makes the pair reconcile, specified under `## Testing`. That work covers the per-slot edge
 pairing alone. The pod state machine paragraph takes no gate, because §4.6.1's bullet list
 carries a vm-restart carve-out the page deliberately omits and the two are not comparable by
-substring; the published error catalog DOCS-3 edits is held by no gate for the same reason.
+substring.
 
 ### DOCS-2 · docs/reference/adapter-contract.md · the `Shutdown` row, the `DemoteSDK` row, the `ReportSessionScrub` row, and one bind-attempt paragraph
 
@@ -2695,80 +2763,6 @@ token:
 ```
 
 Its tier-11 work is specified under `## Testing`.
-
-### DOCS-3 · docs/reference/error-catalog.md · the `SETUP_COMMAND_FAILED` row takes four sentence replacements and a replaced remedy cell
-
-The envelope a refusal reaches is the one §4.7.1's paragraph after rule 9 states.
-SPEC-5 replaces the cause, retryability, setup-output and exclusion sentences of the §15.1 row
-so they no longer state a cause the refusal does not have and no longer leave the refusal's own
-envelope unstated. The published catalog at `docs/reference/error-catalog.md:129` states the same
-row for readers who do not have the specification. Nothing holds the two to one text: no file
-under `tests/`, `scripts/` or `cmd/`, and no `Makefile` target, names
-`docs/reference/error-catalog.md`, so the page drifts from §15.1 silently and this deliverable
-is the only thing that moves it.
-
-This deliverable makes one sentence replacement for each of SPEC-5's §15.1 replacements, plus
-one remedy-cell replacement, in the reference page's own column set. The page's prose names the
-pod slot rather than the registry entry, states its exclusion by naming its causes rather than
-by naming gRPC codes, and carries no specification section number, because the reader is a REST
-client who has none of those terms.
-
-The description cell's opening sentence, which reads "A session setup command exited non-zero
-(or hit its hard timeout), which the runtime adapter reports as a deterministic failure.",
-becomes:
-
-```
-The runtime adapter answered the request that runs the session setup commands with a deterministic failure: either a setup command exited non-zero or hit its hard timeout, or the request was refused because the pod slot it reached already carried a started session for the same session identifier.
-```
-
-The description cell's retryability sentence, which reads "Not retryable: the command fails
-identically until the workspace plan or setup script changes.", becomes:
-
-```
-Not retryable: a setup command fails identically until the workspace plan or setup script changes, and a refusal of that request means another start of the same session already holds the pod slot.
-```
-
-The description cell's `details.reason` sentence, which reads "`details.reason` is
-`setup_command_failed`; the per-command stdout and stderr are retrievable via
-`GET /v1/sessions/{id}/setup-output`.", becomes:
-
-```
-`details.reason` is `setup_command_failed`. Where a setup command ran, its per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`; a refused request runs no setup command and produces no such output.
-```
-
-The description cell's closing sentence, which reads "A non-deterministic setup-window failure
-(a crashed pod or a transport timeout) instead surfaces as the retryable
-`SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.", becomes:
-
-```
-A non-deterministic setup-window failure (a crashed pod or a transport timeout), and a request refused because the adapter's entry for the session belongs to a different bind attempt, surface instead as the retryable `SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`.
-```
-
-The sentence enumerates the causes a REST client can see under this code rather than
-quantifying over the bind sequence, because the superseded refusal is a deterministic refusal
-that is retryable, and because a started-session refusal that arrives at a request other than
-the one running the setup commands reaches a different envelope. SPEC-5's re-keyed §15.1
-exclusion sentence also sends that refusal to the envelope its own stage selects. The page
-omits that class because a client reaches this row only through the request that runs the setup
-commands, so the refusal at another bind-sequence request is never visible under this code and
-the reader has no name for the requests it would have to be keyed on.
-
-The remedy cell, which reads "Inspect the setup-command output, correct the workspace plan or
-setup script, and create a new session.", is replaced whole, because the clause has to land
-inside the cell's terminating period rather than after it:
-
-```
-Inspect the setup-command output, correct the workspace plan or setup script, and create a new session. Where the setup-command request was refused, no setup command ran: read the session's state with `GET /v1/sessions/{id}` rather than retrying the start, because another start of the same session already holds the pod slot.
-```
-
-No new row is added. The two adapter error codes SCHEMA-1 adds are gateway-to-adapter codes
-that the gateway maps into this existing envelope and into the retryable slot-failure envelope,
-so neither appears in the client-facing catalog.
-
-DOCS-3 adds no gate. There is no shipped reconciliation between
-§15.1's catalog and this page to extend, and a gate built for the one row this deliverable
-touches would leave every other row of the page ungated. The absent reconciliation is a defect
-of the page rather than of this change, and it goes out as its own finding against §15.1.
 
 ### DOCS-4 · docs/reference/execution-modes.md, docs/operator-guide/security-principles.md · the per-slot cleanup sentence on each page loses its reporting clause
 
@@ -2861,15 +2855,15 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | `tests/tier8_chaos/compensation_loss_test.go` | new; **Tier 8, one case.**, with the file's `tests/spec-map.json` entry under 4.7.1 and 7.1, and a `slotAddressCaseFiles` row if it calls the slot claim surface | CODE-13 | S19 | 8 |
 | `tests/tier9_security/slot_credential_reclaim_fence_test.go` | new, whole: the arms of **Tier 9, the credential fence.**, with the file's `tests/spec-map.json` entry and `slotAddressCaseFiles` row | CODE-13 | S19 | 9 |
 | regression, no edit | existing tier-2 and tier-3 tests that drive a bind through `podsession.Binder`, whose bind wrapper and `ReleaseSlotReservation` call sites S19 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go` and `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` | CODE-13 | S19 | 2, 3 |
-| `pkg/gateway/sessionserver/slotretry_test.go` | **Accounting, at `maxConcurrentSessions: 4` (threshold 2).**, **One `maxConcurrentSessions: 2` case**, **The reserved bind path reaches the accounting, at `maxConcurrentSessions: 4`.**, **The refusals' classifications.** and **The refusals' client envelopes.** | CODE-5 | S20 | 1 |
+| `pkg/gateway/sessionserver/slotretry_test.go` | **Accounting, at `maxConcurrentSessions: 4` (threshold 2).**, **One `maxConcurrentSessions: 2` case**, **The reserved bind path reaches the accounting, at `maxConcurrentSessions: 4`.**, **The refusals' classifications.** and **The refusals' client envelopes.**, with that case's `path::TestName` entries under 4.7.1, 15.1 and 5.2 | CODE-5 | S20 | 1 |
 | `pkg/gateway/sessionserver/slotretry_load_test.go`, `pkg/gateway/runtime/slothealth/slothealth_test.go`, `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go` and `pkg/gateway/session/recycle/scrubreporter_seams_test.go` | **The leak record is per slot.**, with distinct slot identifiers wherever a case records several leaks against one pod and the slot parameter at every `RecordLeak` fake | CODE-5 | S20 | 1 |
 | `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` | **The resume classifier holds the row for every slot-bind refusal of a resume.** with its negative case, and the `resumeOnPod` accounting arms of **The resume path.** | CODE-5 | S20 | 1 |
 | `tests/tier4_integration/recycle_scrub_path_test.go` | `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2` with its per-case `tests/spec-map.json` entry and the slot parameter on `perReleaseNoopLedger.RecordLeak` | CODE-5 | S20 | 4 |
-| regression, no edit | existing tier-2, tier-3 and tier-9 tests that drive the start and resume paths of `pkg/gateway/sessionserver`, whose failure accounting S20 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`, `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-5 | S20 | 2, 3, 9 |
+| `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` | **For CODE-5, the refusal answers the retryable fallback at the route.**, with the error-taking `slotFailServer` form and the case's `path::TestName` entries under 4.7.1 and 15.1 | CODE-5 | S20 | 3 |
+| regression, no edit | existing tier-2 and tier-9 tests that drive the start and resume paths of `pkg/gateway/sessionserver`, whose failure accounting and client envelope S20 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-5 | S20 | 2, 9 |
 | `tests/tier3_contract/adapter_bind_attempt/` | **The behavioural cases**, CONF-1's case list over bufconn | CONF-1 | S22 | 3 |
 | `tests/tier10_conformance/slot_bind_attempt_conformance_test.go` | new; CONF-1's case list in process, with the file's `tests/spec-map.json` entry, its `slotAddressCaseFiles` row and SCHEMA-1's `ABSENT` claim-register row | CONF-1 | S22 | 10 |
 | any `tests/tier11_docs` file CODE-10's grep returns | a comment edit that moves no assertion | CODE-10 | S24 | 11 |
-| `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go` | CODE-11's comment site | CODE-11 | S25 | 0 |
 | any `tests/tier11_docs` file CODE-12's command returns | a comment edit that moves no assertion | CODE-12 | S26 | 11 |
 | `tests/tier0_static/spec_map_slot_address_registration_test.go` | one `slotAddressCaseFiles` row for each new `slot*_test.go` file above and for each new or edited file that gains a call into the slot claim surface, each in its file's step | the owner of that file's row | that file's step | 0 |
 
@@ -3292,6 +3286,8 @@ specification)`:
 - **Each refusal code translates to its sentinel.** A stage answering a status whose detail
   carries `ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED` returns an error satisfying
   `errors.Is(err, ErrSlotBindAttemptSuperseded)`, and the already-started code its own sentinel.
+  `IsSlotBindRefusal` holds for both translated errors and for each wrapped once more with `%w`,
+  and fails for a bare `status.Error(codes.FailedPrecondition, ...)` with no detail.
 - **The original status survives the wrap.** `status.Code(err)` on the translated superseded
   error is `codes.Aborted` and on the already-started error `codes.FailedPrecondition`, so
   CODE-5's arm and CODE-4's guard fire on one value.
@@ -3430,46 +3426,78 @@ execution modes); §6.2 (pod state machine)`:
   podsession.SlotReasonTransient}` and a workspace-stage `codes.Aborted` row, placed beside the
   existing `{"session_start", codes.PermissionDenied, podsession.SlotReasonPolicyRejection}` row;
   and a `{"session_start", codes.FailedPrecondition, podsession.SlotReasonPolicyRejection}` row
-  pinning that the phase gate is correctly non-retryable. In
+  pinning that the phase gate is non-retryable inside the slot retry loop; the client envelope
+  is pinned separately below. In
   `TestClassifySlotBindFailurePassesTransientThrough_spec_5_2` (`:468-492`), a `session_start`
   and a workspace-stage `codes.Aborted` passing through unclassified. The subject is the coupling
   between CODE-2's rollback code, CODE-6's three refusals and the shipped classifier.
-- **The refusals' client envelopes.** Two cases written beside the shipped
-  `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` in
-  `pkg/gateway/sessionserver/slotretry_test.go` (`:519-548`), which is the shipped harness for
-  driving `writePodClaimError` from a wrapped `*podsession.SlotBindError`. Each carries
-  `// spec: §15.1 (REST error catalog); §6.2 (pod state machine); §4.7.1 (role and gateway RPC
-  contract)`. Both fixtures wrap the refusal as the production path wraps it, in a
-  `*podsession.SetupCommandFailure` inside a `*podsession.SlotBindError` whose `Stage` is the
-  setup stage's label `"setup"` rather than the precedent's `"session_start"`, because
-  `slotbinder.go:303-304` is where a refused `RunSetup` is wrapped. In the first case the
-  `Cause` is a `codes.FailedPrecondition` status carrying `SLOT_BIND_ALREADY_STARTED`, and the
-  response is 422 with body `code` `SETUP_COMMAND_FAILED` and no `Retry-After` header. In the
-  second the `Cause` is a `codes.Aborted` status carrying `SLOT_BIND_ATTEMPT_SUPERSEDED`, and
-  the response is the retryable 503 fallback carrying `Retry-After`. The assertions are the
-  response status code, the body's `code`, and the presence or absence of `Retry-After`, because
-  those are the three things the two staged sentences differ on. `details.reason` is
-  `setup_command_failed` on both arms and so discriminates nothing. These two cases are what pin
-  SPEC-5's widened §15.1 row and the §6.2 clause it re-keys: the envelope is chosen by
-  `writeSetupCommandError`'s branch on `status.Code(setupFail.Cause)` alone
-  (`pkg/gateway/sessionserver/start.go:239-249`), reached through the typed
-  `*SetupCommandFailure` handler in `writePodClaimError` (`start.go:87-90`), which is a
-  different decision from the `Reason()` and `classifySlotBindFailure` rows above.
+- **The refusals' client envelopes.** `TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1`, a
+  table-driven case in `pkg/gateway/sessionserver/slotretry_test.go` beside the shipped
+  `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` (`:519-548`), which is the shipped
+  harness for driving `writePodClaimError` from a wrapped bind error. It carries `// spec: §4.7.1
+  (role and gateway RPC contract); §15.1 (REST API); §5.2 (pool configuration and execution
+  modes)`. Each refusal fixture is built as CODE-7's translation returns it,
+  `fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAlreadyStarted, status.Error(codes.FailedPrecondition, ...))`
+  and `fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAttemptSuperseded, status.Error(codes.Aborted, ...))`,
+  because `translateSlotBindRefusal` is unexported; a fixture carrying the bare status alone never
+  reaches the new case and lets the control rows pass vacuously. Each row passes its error and its
+  route's fallback code to `writePodClaimError`. The refusal rows are:
+  - the session-mode setup-command stage: the started-session refusal as the `Cause` of a bare
+    `*podsession.SetupCommandFailure`, as `Binder.Prepare` wraps a refused `RunSetup`
+    (`binder.go:938`), once with `SESSION_CREATION_FAILED` and once with `RESUME_FAILED`, the
+    snapshotless resume's setup-command stage, in place of 422 `SETUP_COMMAND_FAILED`;
+  - the concurrent-slot setup-command stage: that `*SetupCommandFailure` inside a
+    `*podsession.SlotBindError` whose `Stage` is `"setup"`, as `slotbinder.go:303-304` wraps a
+    refused `RunSetup`, passed through `classifySlotBindFailure` so it arrives as the
+    `policy_rejection` `*SlotFailedError` production builds, with `STARTING_FAILED`, in place of
+    422 `SETUP_COMMAND_FAILED`;
+  - the concurrent-slot non-setup stage: the started-session refusal wrapped by
+    `fmt.Errorf("start session: %w", ...)` in a `*podsession.SlotBindError` whose `Stage` is
+    `"session_start"`, through `classifySlotBindFailure`, with `STARTING_FAILED`, in place of 422
+    `SLOT_FAILED`;
+  - the concurrent-slot retry exhausted on the superseded refusal: `applySlotRetryPolicy` over the
+    file's `fakeSlotBinder` answering, on every attempt, a `"session_start"`-stage
+    `*podsession.SlotBindError` whose `Err` is `fmt.Errorf("podsession: start slot session on pod
+    %s: %w", ...)` around CODE-7's superseded double-`%w` value, as `slotbinder.go:323-324` wraps
+    rule 8's start-confirmation refusal, so the `*SlotFailedError` carries the `transient`
+    category, with `SESSION_CREATION_FAILED`, in place of 422 `SLOT_FAILED`. The stage is the
+    discriminating choice: a `"setup"`-stage fixture wrapped as production wraps it keeps the
+    `*SetupCommandFailure` in the chain and answers 503 through `writeSetupCommandError` without
+    the check, so it passes vacuously.
+
+  Every refusal row answers 503 with body `code` equal to the fallback passed and a non-empty
+  `Retry-After`, and answers 422 without CODE-5's refusal case. The control rows keep 422 with no
+  `Retry-After`: a `*podsession.SetupCommandFailure` whose `Cause` is a plain
+  `status.Error(codes.FailedPrecondition, "run setup commands: exit 1")`, a genuine non-zero setup
+  exit, answers `SETUP_COMMAND_FAILED`, bare and through the concurrent-slot setup wrap, and a
+  `"session_start"` `*podsession.SlotBindError` whose cause is a plain `codes.FailedPrecondition`
+  status answers `SLOT_FAILED`. The control rows are the ones that fail a check keyed on the gRPC
+  code rather than on CODE-7's sentinels. The assertions are the response status code, the body's
+  `code`, and the presence or absence of `Retry-After`; `details.reason` discriminates nothing.
+  The envelope is chosen in `writePodClaimError` alone, which is a different decision from the
+  `Reason()` and `classifySlotBindFailure` rows above, and the shipped
+  `TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3` and
+  `TestWritePodClaimErrorSetupCommandFailed_spec_7_3` pass unchanged.
 - **The resume classifier holds the row for every slot-bind refusal of a resume.**
   `TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3` in
   `pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go`, reusing that file's
   `seedResumingRow` fixture. The held cases are a bare `status.Error(codes.Aborted,
   "slot_reclaim_in_progress")`, a superseded refusal, either of those wrapped in a
   `*podsession.SlotBindError`, and a started-session refusal carrying CODE-7's
-  `ErrSlotBindAlreadyStarted` wrapped the same way. Each asserts that `holdOrFailOnResumeError`
+  `ErrSlotBindAlreadyStarted` wrapped the same way, and that refusal as the `Cause` of a
+  `*podsession.SetupCommandFailure`, as a snapshotless resume's setup-command request carries it.
+  That last case is the one that fails when CODE-5's arms sit after the switch, because the
+  shipped `setupFail` case demotes a `FailedPrecondition` cause first. Each asserts that `holdOrFailOnResumeError`
   takes the `awaiting_client_action` branch and leaves the row a valid precondition for the
   explicit `POST /v1/sessions/{id}/resume`, rather than the terminal `failed` the classifier
   answered before CODE-5's arms. A separate case asserts that `isTransientPodClaimError` does not
   match a bare `status.Error(codes.FailedPrecondition, ...)` that is not that sentinel, which pins
   the second arm to the sentinel rather than to the code and keeps the shipped classification of
-  other causes out of this deliverable.
+  other causes out of this deliverable. The shipped `TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3`,
+  whose `*SetupCommandFailure` carries a plain `FailedPrecondition` exit, still demotes the row and
+  passes unchanged.
 
-### Wire-contract tests for SCHEMA-1, CODE-1, CODE-6 and CONF-1, tier 3
+### Wire-contract tests for SCHEMA-1, CODE-1, CODE-5, CODE-6 and CONF-1, tier 3
 
 New directory `tests/tier3_contract/adapter_bind_attempt/`, beside the existing
 `tests/tier3_contract/adapter_generation_fence/`, which is the sibling suite for the other
@@ -3488,6 +3516,24 @@ addition.
 
 **The behavioural cases**, one file, carrying CONF-1's case list over bufconn and the real gRPC
 transport.
+
+**For CODE-5, the refusal answers the retryable fallback at the route.** One case in the existing
+`tests/tier3_contract/rest_sessions/slot_address_absence_test.go`, outside the new directory,
+because that file carries the shipped envtest-backed harness that drives a concurrent-slot bind
+through the real `POST /v1/sessions/{id}/start` handler.
+`TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1` carries `// spec: §4.7.1 (role and
+gateway RPC contract); §15.1 (REST API)` and a `// diagnosis:` comment, and takes its
+`path::TestName` entries under 4.7.1 and 15.1 in `tests/spec-map.json`, which
+`TestSlotAddressCasesAreCreditedToEverySectionTheyAnnotate` requires for this file.
+`slotFailServer` gains an error-taking form that the code-taking form delegates to, and the
+case's `DialAdapter` returns the started-session refusal in CODE-7's double-`%w` form around a
+`codes.FailedPrecondition` status. The dial seam is the harness's only injection point, so the
+refusal arrives at the connect stage rather than from an adapter RPC; `SlotBindError.Reason()`
+reads it as `policy_rejection`, which answers 422 `SLOT_FAILED` without the check. The case
+asserts status 503, body `code` `STARTING_FAILED` and a non-empty `Retry-After`, and, like the
+file's other cases, it skips where the envtest binaries are absent. The superseded refusal is not
+driven here, because whether this route retries decides whether it reaches `SLOT_FAILED` without
+the check; the tier-1 exhausted-retry row is where that refusal discriminates.
 
 ### Conformance battery for CONF-1, tier 10
 
@@ -3772,14 +3818,9 @@ addressing sentence and its agreement with the specification row, and the report
 itself cannot be gated across the two carriers, because §4.7 states it by deferring to §5.2 by
 link while this page may carry no section number.
 
-**For DOCS-3**, no file. No shipped gate compares `docs/reference/error-catalog.md` against
-§15.1: no file under `tests/`, `scripts/` or `cmd/` and no `Makefile` target names the page.
-This deliverable adds none, because a gate built for the one row it touches would leave every
-other row of a sixty-row page ungated and would read as coverage the page does not have.
-
 **For DOCS-4**, no file, for the reason its deliverable states.
 
-**For CODE-10, CODE-11 and CODE-12**, no file: every edit is a comment and no assertion moves,
+**For CODE-10 and CODE-12**, no file: every edit is a comment and no assertion moves,
 under the invariants `### Comment-carrier reduction: shared invariants` states.
 
 **For the counters and SPEC-6**, each series is held by its own gate, and each is stated
@@ -3969,7 +4010,11 @@ of these cases:
   new cases landing in files the map already registers case by case take per-case entries: in
   `tests/tier4_integration/recycle_scrub_path_test.go`, whose only whole-file credit is 15.1,
   `TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2` is entered as
-  `tests/tier4_integration/recycle_scrub_path_test.go::<name>` under sections 5.2, 6.2 and 7.1.
+  `tests/tier4_integration/recycle_scrub_path_test.go::<name>` under sections 5.2, 6.2 and 7.1;
+  in `tests/tier3_contract/rest_sessions/slot_address_absence_test.go`,
+  `TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1` is entered as
+  `tests/tier3_contract/rest_sessions/slot_address_absence_test.go::<name>` under sections 4.7.1
+  and 15.1.
   The tier-1 files this change lands cases in are registered at different granularities, so each
   takes the treatment its own registration requires, read off the map rather than assumed:
 
@@ -3991,9 +4036,11 @@ of these cases:
     each case against its own function's entries. CODE-5's rows are added to
     `TestSlotBindErrorReason_spec_5_2` and
     `TestClassifySlotBindFailurePassesTransientThrough_spec_5_2`, both already entered under
-    section 5.2, and neither function's annotation changes, so no new entry falls due there. A
-    new function added to that file takes a `path::TestName` entry under every section its own
-    annotation names.
+    section 5.2, and neither function's annotation changes, so no new entry falls due for those
+    two rows. CODE-5's new `TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1` is entered as
+    `pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1`
+    under sections 4.7.1, 15.1 and 5.2. A new function added to that file takes a
+    `path::TestName` entry under every section its own annotation names.
   - `pkg/adapter/slotsession_test.go` is registered as a whole, under sections 4.9, 5.2, 6.1,
     6.4 and 15.4, with section 4.7 through the `pkg/adapter/...` directory entry and no per-case
     entries. CODE-1 and CODE-2's cases annotate section 4.7.1, which it does not hold, so it
@@ -4054,9 +4101,8 @@ of these cases:
 - `docs/reference/metrics.md` · CODE-9.
 - `docs/reference/state-machines.md` · DOCS-1.
 - `docs/reference/adapter-contract.md` · DOCS-2.
-- `docs/reference/error-catalog.md` · DOCS-3.
 - `docs/reference/execution-modes.md` and `docs/operator-guide/security-principles.md` · DOCS-4.
-- The comment carriers CODE-10's grep returns, the four sites CODE-11 names, and the comment
+- The comment carriers CODE-10's grep returns and the comment
   carriers CODE-12's command returns · the reduction each sub-block states under
   `### Comment-carrier reduction: shared invariants`. The CODE-10 and CODE-12 sets are closed by
   their commands at application time and are not enumerated here. A file one of these entries
@@ -4088,6 +4134,7 @@ of these cases:
   `pkg/gateway/metrics/gatewaymetrics/gatewaymetrics_elicitation_test.go`,
   `tests/tier3_contract/adapter_bind_attempt/`,
   `tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go`,
+  `tests/tier3_contract/rest_sessions/slot_address_absence_test.go`,
   `tests/tier4_integration/concurrent_workspace_test.go`,
   `tests/tier4_integration/recycle_scrub_path_test.go`,
   `tests/tier4_integration/token_service_unavailability_guard_test.go` and

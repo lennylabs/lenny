@@ -11,7 +11,7 @@ attempt token and sets `unconditional_teardown` at every non-compensating `Shutd
 S14 and S16 then refuse a request that carries neither. Landing them in the other order
 refuses every bind and every teardown in the window between the two steps.
 
-- [ ] **S1 · spec** — SPEC-5. Lands the §4.7.1 bind attempt token block and SPEC-5's §15.4, §15.1 and §6.2 edits. It leads because the other spec steps cite the §4.7.1 block; its citations of §5.2 resolve when S4 lands.
+- [ ] **S1 · spec** — SPEC-5. Lands the §4.7.1 bind attempt token block, the pointer sentence on §15.1's `SETUP_COMMAND_FAILED` row, and SPEC-5's §15.4 edits. It leads because the other spec steps cite the §4.7.1 block; its citations of §5.2 resolve when S4 lands.
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-1. Lands SPEC-1's §4.1, §4.7 and §29.4 edits.
       Tiers 0, 11. Depends on: S1.
@@ -23,7 +23,7 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0. Depends on: S1.
 - [ ] **S5 · spec** — SPEC-4. Lands SPEC-4's §6.2 and §4.6.1 edits. Its tier 11 runs at S7, which lands the reader-facing table that gate reconciles against it.
       Tiers 0. Depends on: S1, S4.
-- [ ] **S7 · docs** — DOCS-1, DOCS-2 and DOCS-3, with the tests the landing table assigns to S7, the SPEC-3 tier-11 sweep among them.
+- [ ] **S7 · docs** — DOCS-1 and DOCS-2, with the tests the landing table assigns to S7, the SPEC-3 tier-11 sweep among them.
       Tiers 0, 11. Depends on: S1, S2, S4, S5.
 - [ ] **S23 · docs** — DOCS-4. Listed beside S7 because DOCS-4 lands beside DOCS-2, after SPEC-3.
       Tiers 0, 11. Depends on: S4.
@@ -33,7 +33,7 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 1, 3, 11. Depends on: S1, S2, S3, S4, S5.
 - [ ] **S10 · code** — CODE-9 in full, except its untokened-entry series, which lands with S16, and its `noteCompensationOutcome` forwarder, which lands with S19, with the tests the landing table assigns to S10.
       Tiers 0, 1, 2, 3, 4, 9, 11. Depends on: S1, S6, S9.
-- [ ] **S11 · code** — CODE-7. `pkg/gateway/runtime/adapterclient` gains a translation from the gRPC status detail to two sentinel errors matched with `errors.Is`, following the `RunSetup` detail reader. Its tests are the rows the landing table assigns to S11.
+- [ ] **S11 · code** — CODE-7. `pkg/gateway/runtime/adapterclient` gains a translation from the gRPC status detail to two sentinel errors matched with `errors.Is`, and the exported predicate `IsSlotBindRefusal` over both, following the `RunSetup` detail reader. Its tests are the rows the landing table assigns to S11.
       Tiers 0, 1, 3. Depends on: S1, S9.
 - [ ] **S12 · code** — CODE-8 in full, with the tests the landing table assigns to S12.
       Tiers 0, 1, 2, 3, 4, 9. Depends on: S1, S11.
@@ -55,7 +55,5 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 3, 10. Depends on: S1, S4, S14, S15, S16, S18.
 - [ ] **S24 · code** — CODE-10. Every hit CODE-10's grep returns is dispositioned under that sub-block's carrier definition and arm rule and the invariants and non-carrier arm of the non-spec `### Comment-carrier reduction: shared invariants` block. Its tests are the rows the landing table assigns to S24.
       Tiers 0, 11. Depends on: S4.
-- [ ] **S25 · code** — CODE-11. The four sites CODE-11 names take the reduction its arm rule states, under its IMPLEMENTOR'S CHOICE constraint and the invariants of the non-spec `### Comment-carrier reduction: shared invariants` block. Its tests are the rows the landing table assigns to S25.
-      Tiers 0. Depends on: S1.
 - [ ] **S26 · code** — CODE-12. Every hit CODE-12's command returns is dispositioned under that sub-block's carrier definition and arm rule and the invariants and non-carrier arm of the non-spec `### Comment-carrier reduction: shared invariants` block. Its tests are the rows the landing table assigns to S26.
       Tiers 0, 11. Depends on: S5.

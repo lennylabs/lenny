@@ -50,8 +50,10 @@ identifier, and an entry-scoped fence is inherited by a retry that resolves the 
 entry. A caller-minted token is held from before the attempt's first pod-side RPC, so an
 attempt that received no response still names itself. The identity refusal is transient and
 is applied before the permanent started-session refusal, so a stale attempt is retried rather
-than failed. Neither refusal takes a §15.1 row, because the gateway consumes both. Owner: the
-staged §4.7.1 block.
+than failed. Neither refusal takes a §15.1 row, because the gateway consumes both, and the gateway
+answers a client request that fails on either one with the client endpoint's retryable fallback, because the refusal comes from a
+race between the gateway's own bind attempts rather than from a failure of the client's request.
+Owner: the staged §4.7.1 block.
 
 **The adapter's atomicity is stated once.** First-writer-wins, the start confirmation and the
 opening of the hold are each unimplementable from prose that reads as separable acts. One
@@ -998,13 +1000,13 @@ The adapter applies rules 1 through 7 as an ordered cascade, stopping at the fir
 2. **The reclaim hold.** Applied to a request rule 1 admits. Its scope and the refusal it returns are the ones [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states, and the status that refusal is answered on is the one [Section 15.4](15_external-api-surface.md#154-runtime-adapter-specification) publishes for the slot-identifier reclaim hold. A request it refuses reaches no rule below.
 3. **The mid-session-create rule.** A request marked `mid_session` that resolves no entry is answered `FAILED_PRECONDITION` and creates nothing.
 4. **The create-and-stamp rule.** A request that is not marked `mid_session` and that resolves no entry creates the entry, stamping its `bind_attempt` on it when it carries one; a request carrying no token creates an entry carrying none. It reaches every request meeting its condition, a `Resume` among them.
-5. **The attempt identity rule.** A request whose non-empty `bind_attempt` differs from the non-empty token the resolved entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, answered on `ABORTED` and carried on the adapter's error envelope as `CATEGORY_TRANSIENT`, which a caller retries on. Because this rule is applied before rule 6, such a request is refused here even when the resolved entry's session has already started: a bind whose attempt identity is stale is a transient condition its caller retries, and refusing it as a started session would present a transient condition to the client as a permanent one.
+5. **The attempt identity rule.** A request whose non-empty `bind_attempt` differs from the non-empty token the resolved entry carries is refused with `SLOT_BIND_ATTEMPT_SUPERSEDED`, answered on `ABORTED` and carried on the adapter's error envelope as `CATEGORY_TRANSIENT`, which a caller retries on. Because this rule is applied before rule 6, such a request is refused here even when the resolved entry's session has already started: a bind whose attempt identity is stale is a transient condition its caller retries, and refusing it as a started session would present a transient condition to its caller as a permanent one.
 6. **The started-session rule.** A request that is not marked `mid_session` and that resolves an entry whose session has already started is refused with `SLOT_BIND_ALREADY_STARTED`, answered on `FAILED_PRECONDITION` and carried as `CATEGORY_PERMANENT`. A repeat `ConfigureWorkspace` for the session that started on that pod is exempt and is admitted: [Section 4.7](#47-runtime-adapter) publishes that request as idempotent, and it re-points the pre-connected runtime without restarting it.
 7. **The admit rule.** Any other request is admitted.
 8. **The start-confirmation rule.** A start confirms the entry is still its own. Before the adapter records the pod's shared runtime process as holding a session, it resolves the registry entry for that slot identifier again and confirms that it still holds an entry for that identifier carrying the same bind attempt token the entry carried when the request that starts the session was admitted. These acts are the start step of the registry critical section. The confirmation is required of every request that starts a session, including one that carries no token of its own, for which the token compared is the one the entry carried at admission, so an entry no later attempt replaced compares equal to itself. When the adapter holds no entry for the identifier, or holds one carrying a different token, it records nothing, removes no entry, and reports no cleanup outcome for the slot, because the slot never reached `running` and [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) files at most one cleanup-outcome report per session release, from the cleanup that reclaims the slot. It takes the session back off the shared runtime process and refuses the request that started it, answered on `ABORTED`, which is the transient classification a caller retries on. The rule is conditioned on what the request does rather than on the name of the RPC that does it.
 9. **The first-frame rule.** `PrepareWorkspace` is client-streaming. The adapter resolves the slot identifier once per call, from the first frame that carries one, and reads `bind_attempt` and `mid_session` from that same frame. Every rule above is decided on that frame's values, rule 1 included, and the adapter reads neither field on any later frame of the call, so a later frame states nothing about the call's admission.
 
-Neither `SLOT_BIND_ATTEMPT_SUPERSEDED` nor `SLOT_BIND_ALREADY_STARTED` appears in the [Section 15.1](15_external-api-surface.md#151-rest-api) REST error catalog, because the gateway consumes both, and the client receives the error the gateway already returns for the bind stage that received the refusal.
+Neither `SLOT_BIND_ATTEMPT_SUPERSEDED` nor `SLOT_BIND_ALREADY_STARTED` appears in the [Section 15.1](15_external-api-surface.md#151-rest-api) REST error catalog, because the gateway consumes both. Either refusal means that the pod's registry entry for the session belongs to another bind attempt of the same session, or carries a session that another start of it has already begun, so the client's request has not failed on its own terms. At every bind stage, the gateway answers a client request that fails because its bind met either refusal with the retryable fallback of that request's endpoint (`SESSION_CREATION_FAILED`, `STARTING_FAILED`, or `RESUME_FAILED`) and its `Retry-After` header, rather than with `SETUP_COMMAND_FAILED` or any other non-retryable error. The permanent category of rule 6 classifies the refused request on that pod and does not reach the client.
 
 **`Shutdown` states which teardown it asks for.** Rules 10 through 15 govern a `Shutdown` in place of the admission rules, applied as an ordered cascade on the same terms. Each of rules 11 through 14 fixes the outcome the response reports and whether the request removes an entry; the two teardowns follow from the removal rather than being decided separately. Rule 15 fixes what each reported outcome means.
 
@@ -1037,6 +1039,23 @@ is new behaviour rather than a restatement; rule 8 states the status its failure
 and §15.4 publishes non-conformance against the rule, so an adapter written from the published
 contract performs it.
 
+### SPEC-5 · spec/15_external-api-surface.md § 15.1 (REST error catalog, `SETUP_COMMAND_FAILED` row, after the exclusion sentence)
+
+The row's exclusion sentence, which begins "Any other setup-window failure (every gRPC code other
+than `FailedPrecondition`" and ends "is recovered with a fresh pod per [Section
+6.2](06_warm-pod-model.md#62-pod-state-machine).", keys the retryable fallback on the gRPC code,
+and rule 6's refusal arrives on `FailedPrecondition`, so without this edit the row places that
+refusal under `SETUP_COMMAND_FAILED` and contradicts the §4.7.1 paragraph after rule 9. Append
+the sentence below after it, separated by one space, and leave the row's cause, retryability,
+exclusion and setup-output sentences unedited:
+
+```
+A slot-bind refusal that [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states is not this code, whichever gRPC code it arrives on; that section states its envelope.
+```
+
+The sentence is a pointer rather than a second statement of the envelope, and it is the whole
+§15.1 edit: the row gains no cause and names neither adapter code.
+
 ### SPEC-5 · spec/15_external-api-surface.md § 15.4 (after the SDK-warm demotion contract)
 
 Insert the two blocks below immediately after the paragraph beginning `**SDK-warm demotion
@@ -1060,87 +1079,6 @@ SCHEMA-1 edits; no response reports a token. The project has no harness that can
 third-party adapter, so the enforcement is CONF-1's tier-3 suite over a real gRPC channel, with
 the tier-10 battery in process, and the absent harness is recorded as a §28.4 claim-register row
 with status `ABSENT`, following the rows the `coordination_generation` fence already carries.
-
-### SPEC-5 · spec/15_external-api-surface.md § 15.1 (REST error catalog, `SETUP_COMMAND_FAILED` row)
-
-The started-session refusal is a second producer of a deterministic `FailedPrecondition` failure
-in the setup window, and the gateway's envelope selection is unchanged by this proposal, so the
-refusal reaches this row only where it arrives at the setup-command request, which is the stage
-whose deterministic `FailedPrecondition` failure §15.1 already maps to this code. The row's cause, retryability and setup-output sentences state a cause the
-refusal does not have, and its exclusion sentence leaves the refusal's own envelope unstated. In the `SETUP_COMMAND_FAILED` row of the
-§15.1 REST error catalog table, replace the opening sentence, which reads, verbatim:
-
-```
-A session setup command exited non-zero (or hit its hard timeout), which the adapter reports as a deterministic `FailedPrecondition` failure.
-```
-
-with:
-
-```
-The adapter answered the setup-command request with a deterministic `FailedPrecondition` failure: either a session setup command exited non-zero or hit its hard timeout, or the request was refused because the registry entry it resolved carried a session that had already started ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract)).
-```
-
-In the same row, replace the retryability sentence, which reads, verbatim:
-
-```
-Deterministic and not retryable without changing the workspace plan or setup script, consistent with `setup_command_failed` under `retryPolicy.nonRetryableFailures` in [Section 7.3](07_session-lifecycle.md#73-retry-and-resume).
-```
-
-with:
-
-```
-Deterministic and not retryable, consistent with `setup_command_failed` under `retryPolicy.nonRetryableFailures` in [Section 7.3](07_session-lifecycle.md#73-retry-and-resume): the setup-command cause fails identically until the workspace plan or setup script changes, and the refused setup-command request means another start already holds the slot identifier.
-```
-
-In the same row, replace the closing sentence, which reads, verbatim:
-
-```
-`details.reason` is `setup_command_failed`; the per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`.
-```
-
-with:
-
-```
-`details.reason` is `setup_command_failed`. Where a setup command ran, its per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`; a refused setup-command request runs no setup command and produces no such output.
-```
-
-In the same row, replace the exclusion sentence, which reads, verbatim:
-
-```
-Any other setup-window failure (every gRPC code other than `FailedPrecondition`, including a crashed pod surfaced as `Unavailable` or `DeadlineExceeded` and a wrapped cause reported as `Unknown`) is not this code; it stays the retryable `SESSION_CREATION_FAILED`/`STARTING_FAILED`/`RESUME_FAILED` fallback and is recovered with a fresh pod per [Section 6.2](06_warm-pod-model.md#62-pod-state-machine).
-```
-
-with:
-
-```
-Any other failure of the setup-command request (every failure of that request other than a deterministic `FailedPrecondition`, including a crashed pod surfaced as `Unavailable` or `DeadlineExceeded`, a wrapped cause reported as `Unknown`, and a superseded bind answered as `Aborted`) is not this code; it stays the retryable `SESSION_CREATION_FAILED`/`STARTING_FAILED`/`RESUME_FAILED` fallback and is recovered with a fresh pod per [Section 6.2](06_warm-pod-model.md#62-pod-state-machine). A deterministic `FailedPrecondition` the adapter answers to any other bind-sequence request is not this code either, and reaches the client under the envelope that stage selects.
-```
-
-### SPEC-5 · spec/06_warm-pod-model.md § 6.2 (pre-attached retry policy, client visibility)
-
-The `**Client visibility:**` bullet under the pre-attached retry policy restates the
-`SETUP_COMMAND_FAILED` mapping for the setup-command request at `POST /v1/sessions/{id}/start`,
-which the §15.1 row above owns, and it already cites §15.1 immediately before restating it. That
-half of the clause is replaced by a pointer at the row rather than re-keyed. The clause's other
-half, which sends any other setup-window failure to the retryable `STARTING_FAILED` fallback, is
-dropped: the bullet's own preceding clause already states that `/start` surfaces a runtime-launch
-failure as `STARTING_FAILED`, and the §15.1 `STARTING_FAILED` row states the mapping. Neither
-mapping is then stated twice. Replace the clause, which reads, verbatim:
-
-```
-a deterministic non-zero setup-command exit at `/start` surfaces as the non-retryable `SETUP_COMMAND_FAILED` ([§15.1](15_external-api-surface.md#151-rest-api)) while any other setup-window failure stays the retryable `STARTING_FAILED` fallback
-```
-
-with:
-
-```
-a failure of the setup-command request at `/start` takes the envelope the `SETUP_COMMAND_FAILED` row of [§15.1](15_external-api-surface.md#151-rest-api) states
-```
-
-The clause then carries the boundary condition §6.2 alone knows, that the concurrent-workspace
-pool materializes its reserved slot and runs setup at start, and states no mapping of its own.
-The rest of the bullet stands as it is, including its finalize, create, `resume_pending` and
-retry-budget sentences.
 
 ### SPEC-6 · spec/16_observability.md § 16.1 (metric catalog)
 
@@ -1181,8 +1119,24 @@ Listed so a reviewer can tell scope from oversight.
   specification publishes to adapter authors with no §15.1 row
   (the `INIT` row of §15.4.2's RPC lifecycle state table, and the `ErrorCode` enum in
   `schemas/lenny-adapter.proto`). What is deliberate
-  here is the absence of a new row. The
-  section itself is edited under SPEC-5's §15.1 block.
+  here is the absence of a new row. The section's one edit is the pointer sentence SPEC-5
+  appends to the `SETUP_COMMAND_FAILED` row.
+- **§5.2's `**Client error on exhaustion:**` bullet.** It is universal: "When a slot fails and
+  either no retry is attempted (non-retryable category) or the retry budget is exhausted, the
+  gateway returns a structured error to the client with ... `error.retryable: false`". On a pool
+  serving concurrent sessions, a rule-6 refusal at a stage other than the setup-command stage, or
+  a superseded refusal that exhausts the retry budget at such a stage, is such a failure inside the slot retry loop, so the bullet and the §4.7.1 paragraph after rule 9
+  overlap, and the §4.7.1 paragraph, which names the two refusals, is the narrower statement.
+  The bullet takes no pointer, unlike §15.1's row, because it names no error code, no HTTP status
+  and no gRPC code: a client looking up the code it received finds no §5.2 entry to misread,
+  whereas §15.1's exclusion sentence names `FailedPrecondition`, the code rule 6's refusal
+  arrives on. Naming the exhaustion error's code and status, and with it any exception, is the
+  separate spec change the summary's unstaged-defects entry "§5.2. The exhaustion error names no
+  code value or status." records.
+- **§6.2's pre-attached `**Client visibility:**` bullet.** Its shipped clause sends a
+  deterministic non-zero setup-command exit at `/start` to `SETUP_COMMAND_FAILED` and any other
+  setup-window failure to the retryable `STARTING_FAILED`, which is where the gateway answers
+  either refusal at `/start`, so the bullet takes no edit.
 
 ## Spec files touched
 
@@ -1221,20 +1175,21 @@ Listed so a reviewer can tell scope from oversight.
   replaced with that same pointer, and the `slot_cleanup ──→ released` and
   `slot_cleanup ──→ leaked`
   annotations each replaced with a pointer at §5.2), the prose after
-  it (one paragraph, citing §4.7.1 for the `running` boundary and pointing at §5.2), the §6.2
-  `resuming` mid-resume cancel bullet (one clause), and the §6.2 pre-attached retry policy's
-  `**Client visibility:**` bullet (one restating clause replaced with a pointer at §15.1's
-  `SETUP_COMMAND_FAILED` row).
+  it (one paragraph, citing §4.7.1 for the `running` boundary and pointing at §5.2), and the §6.2
+  `resuming` mid-resume cancel bullet (one clause).
 - `spec/07_session-lifecycle.md`: §7.1 gains a new paragraph after the atomicity paragraph
   carrying the reclaim obligation, §7.2's mid-resume snapshot-close
   sequence (the section preamble's premise sentence deleted, a sentence added to step 2, and
   step 3 replaced), and §7.3's resume flow (one sentence appended after the numbered list).
-- `spec/15_external-api-surface.md`: §15.4 (the published bind attempt token contract, new,
+- `spec/15_external-api-surface.md`: §15.1's `SETUP_COMMAND_FAILED` catalog row (one pointer
+  sentence appended after the exclusion sentence), §15.4 (the published bind attempt token contract, new,
   after the SDK-warm demotion contract: a pointer at §4.7.1 and the conformance criterion, with
-  the slot-identifier reclaim-hold contract beside it), and §15.1's `SETUP_COMMAND_FAILED` row (the cause sentence, the retryability
-  sentence, the setup-output sentence and the exclusion sentence replaced).
+  the slot-identifier reclaim-hold contract beside it).
 - `spec/16_observability.md`: §16.1's metric catalog (the rows SPEC-6 stages).
 - `spec/29_communication-scenarios.md`: §29.4 session-end step 13 (one sentence appended).
 
 Each reader-facing reference page that mirrors these sections moves with the section it mirrors.
-The edits are staged as DOCS-1 to DOCS-4, CODE-9's `docs/reference/metrics.md` rows and SCHEMA-1.
+The edits are staged as DOCS-1, DOCS-2 and DOCS-4, CODE-9's `docs/reference/metrics.md` rows and SCHEMA-1.
+The exception is `docs/reference/error-catalog.md`, which takes no edit for §15.1's pointer
+sentence: its `SETUP_COMMAND_FAILED` row keys its closing sentence on the cause, so it already
+excludes both refusals.
