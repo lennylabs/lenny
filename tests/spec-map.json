@@ -698,7 +698,9 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go::TestMaterializeSlotMintsOneBindAttemptPerAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go::TestReleaseSlotSendsUnconditionalTeardown_spec_4_7_1",
-        "pkg/gateway/sessionserver/upload_to_session_test.go::TestUploadToSessionSendsTheMarkedMidSessionPair_spec_4_7_1"
+        "pkg/gateway/sessionserver/upload_to_session_test.go::TestUploadToSessionSendsTheMarkedMidSessionPair_spec_4_7_1",
+        "tests/tier4_integration/token_service_unavailability_guard_test.go",
+        "tests/tier8_chaos/token_service_unavailability_guard_test.go"
       ],
       "packages": [
         "pkg/adapter"
