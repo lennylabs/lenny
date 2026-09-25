@@ -217,7 +217,7 @@ func setSessionLeasesForTest(t *testing.T, srv *Server, sessionID string, leases
 	srv.WorkspaceBase = t.TempDir()
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
-	st, err := srv.ensureSlotStateLocked(sessionID)
+	st, err := srv.ensureSlotStateLocked(sessionID, slotResolve{allowCreate: true})
 	if err != nil {
 		t.Fatalf("ensure slot state for %s: %v", sessionID, err)
 	}

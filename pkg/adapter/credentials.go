@@ -67,11 +67,19 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "AssignCredentials requires a session id")
 	}
+	// spec: §4.7.1 rule 1 — AssignCredentials is never mid-session, so it
+	// carries a bind attempt token.
+	if err := validateBindFields(req.GetBindAttempt(), false); err != nil {
+		return nil, err
+	}
 	// spec: §6.1 — the assignment writes the session's own
 	// /run/lenny/slots/{sessionId}/credentials.json, so a co-tenant's
 	// credential file is untouched. Every session is bound to a slot on
 	// every pod, so this is the only assignment path.
-	return s.assignCredentialsSlot(sessionID, sessionID, req.GetLeases())
+	return s.assignCredentialsSlot(sessionID, sessionID, req.GetLeases(), slotResolve{
+		bindAttempt: req.GetBindAttempt(),
+		allowCreate: true,
+	})
 }
 
 // RotateCredentials replaces the leases for the providers named in the

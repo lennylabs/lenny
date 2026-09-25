@@ -214,7 +214,14 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			"ConfigureWorkspace applies only to SDK-warm pods that declare capabilities.preConnect: true; this is a pod-warm adapter")
 	}
 
-	fresh, startMCP, err := s.claimSessionSlot(sessionID, true, true)
+	// ConfigureWorkspace carries no bind attempt token (§4.7.1), and its
+	// idempotent repeat is the one started-session resolve rule 6 exempts,
+	// so allowStarted and idempotentRepeat are set from the same value.
+	const idempotentRepeat = true
+	fresh, startMCP, err := s.claimSessionSlot(sessionID, slotResolve{
+		allowCreate:  true,
+		allowStarted: idempotentRepeat,
+	}, true, idempotentRepeat)
 	if err != nil {
 		return nil, err
 	}

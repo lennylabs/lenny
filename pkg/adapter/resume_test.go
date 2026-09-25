@@ -102,6 +102,7 @@ func serveArchive(s *adapter.Server, archive []byte) []*adapterv1.ChunkGrant {
 
 func resumeReq(sessionID, checkpointID string) *adapterv1.ResumeRequest {
 	return &adapterv1.ResumeRequest{
+		BindAttempt:  "attempt-a",
 		SessionId:    &adapterv1.SessionId{Value: sessionID},
 		Runtime:      "echo",
 		CheckpointId: checkpointID,
@@ -293,8 +294,9 @@ func TestResumeAdmitsASecondSessionAndRefusesARepeat_spec_4_7(t *testing.T) {
 		t.Errorf("resume for a second session = %v, want admitted on its own slot", err)
 	}
 	_, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks))
-	if status.Code(err) != codes.Unavailable {
-		t.Errorf("code = %v, want Unavailable for a session that has already started", status.Code(err))
+	// spec: §4.7.1 rule 6 (the started-session rule).
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition for a session that has already started", status.Code(err))
 	}
 }
 

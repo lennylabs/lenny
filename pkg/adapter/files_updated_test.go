@@ -74,6 +74,12 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 	srv := &Server{WorkspaceBase: root, Lifecycle: lc}
+	// §4.7.1 rule 3: a mid-session request resolves an entry the session
+	// already holds and never creates one, so the running session's entry is
+	// seeded first.
+	if _, err := srv.ensureSlotPaths("sess-mid", slotResolve{allowCreate: true}); err != nil {
+		t.Fatalf("seed sess-mid entry: %v", err)
+	}
 
 	req := &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:  &adapterv1.SessionId{Value: "sess-mid"},

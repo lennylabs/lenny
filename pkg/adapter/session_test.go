@@ -258,8 +258,9 @@ func TestStartSessionRefusesARepeatedStartAndAdmitsASecondSession_spec_4_7(t *te
 		t.Errorf("second session's StartSession = %v, want admitted on its own slot", err)
 	}
 	_, err := s.StartSession(context.Background(), startReq("sess-1"))
-	if status.Code(err) != codes.Unavailable {
-		t.Errorf("repeated start code = %v, want Unavailable", status.Code(err))
+	// spec: §4.7.1 rule 6 (the started-session rule).
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("repeated start code = %v, want FailedPrecondition", status.Code(err))
 	}
 }
 

@@ -64,6 +64,13 @@ type slotState struct {
 	// cross-link each other's checkpoint id. It keeps its own leaf mutex,
 	// independent of coord.mu. spec: §10.1.8.
 	barrier barrierGate
+	// bindAttempt is the §4.7.1 bind attempt token the request that created
+	// the entry carried, empty when that request carried none. It is written
+	// once, by the create branch of ensureSlotStateLocked, and never again
+	// while the entry lives (the stamp-once rule). It is a capability over
+	// the entry's teardown, so it is never logged or returned in a message.
+	// spec: §4.7.1 (role and gateway RPC contract).
+	bindAttempt string
 }
 
 // lastFencedGeneration returns the generation this session's binding on
@@ -94,20 +101,66 @@ func (s *Server) resolveSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
 	return slotlayout.Resolve(s.concurrentRoots(), slotID)
 }
 
-// ensureSlotStateLocked returns the slot's state, creating the registry entry
-// and its on-disk tree on first reference. It is idempotent: a second
-// call for the same slot returns the existing state without recreating
-// the tree's content. Callers hold s.mu.
+// ensureSlotStateLocked resolves the slot's registry entry or creates it,
+// and admits or refuses the caller in the same indivisible step. Callers
+// hold s.mu for the whole of it, as §4.7.1's registry critical section and
+// stamp-once rule require.
 //
-// spec: §6.4 — the gateway mints the slot's identifier at claim time,
-// and the adapter creates that session's slot tree on the first
-// reference to the identifier.
-func (s *Server) ensureSlotStateLocked(slotID string) (*slotState, error) {
+// This function is the adapter's only resolve-or-create step. Its
+// production callers, ensureSlotPaths, assignCredentialsSlot and
+// claimSessionSlotUnderLock, cover the requests §4.7.1's admission rules
+// govern, so the predicate here is the whole of the admission rules that
+// read the registry and no handler carries a second copy of them.
+// Well-formedness of bind_attempt against mid_session is a property of the
+// request alone, checked by validateBindFields at each handler that carries
+// the fields, before the resolve, so a malformed request never reaches this
+// function.
+//
+// The create branch creates the slot's on-disk tree on the first reference
+// to the identifier the gateway minted at claim time (§6.4), and inserts no
+// entry when the identifier is malformed or the tree cannot be created.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rules 2 through 7; §6.4.
+func (s *Server) ensureSlotStateLocked(slotID string, r slotResolve) (*slotState, error) {
+	// The reclaim hold, applied before the map lookup: a held identifier has
+	// no entry to return.
+	if _, held := s.reclaiming[slotID]; held {
+		return nil, errSlotReclaimInProgress
+	}
+	st, ok := s.slots[slotID]
+	switch {
+	case !ok && !r.allowCreate:
+		// The mid-session-create rule. A mid-session request resolves an
+		// entry that already exists and never creates one. Creating here
+		// would mint an entry carrying no token, which no attempt could ever
+		// reclaim and no sweep collects.
+		return nil, errSlotMidSessionNoEntry(slotID)
+	case !ok:
+		// The create-and-stamp rule. The stamp-once rule makes this branch
+		// the only writer of bindAttempt.
+		return s.createSlotStateLocked(slotID, r.bindAttempt)
+	case r.bindAttempt != "" && st.bindAttempt != "" && st.bindAttempt != r.bindAttempt:
+		// The attempt identity rule, evaluated ahead of the started-session
+		// rule so a stale attempt is refused as the transient condition it is.
+		return nil, errSlotBindAttemptSuperseded(slotID)
+	case st.started && !r.allowStarted:
+		// The started-session rule.
+		return nil, errSlotBindAlreadyStarted(slotID)
+	default:
+		// The admit rule. The entry is returned and the token is not
+		// written, which covers both "the entry carries no token" and "the
+		// caller asserts no identity".
+		return st, nil
+	}
+}
+
+// createSlotStateLocked is the create branch of ensureSlotStateLocked: it
+// validates the identifier, creates the slot's on-disk tree, and inserts
+// the entry stamped with bindAttempt. Callers hold s.mu.
+// spec: §4.7.1 rule 4; §6.4.
+func (s *Server) createSlotStateLocked(slotID, bindAttempt string) (*slotState, error) {
 	if s.slots == nil {
 		s.slots = map[string]*slotState{}
-	}
-	if st, ok := s.slots[slotID]; ok {
-		return st, nil
 	}
 	paths, err := s.resolveSlotPaths(slotID)
 	if err != nil {
@@ -117,12 +170,33 @@ func (s *Server) ensureSlotStateLocked(slotID string) (*slotState, error) {
 		return nil, err
 	}
 	st := &slotState{
-		paths:  paths,
-		creds:  map[string]*adapterv1.CredentialLease{},
-		timers: map[string]*expiryTimer{},
+		paths:       paths,
+		creds:       map[string]*adapterv1.CredentialLease{},
+		timers:      map[string]*expiryTimer{},
+		bindAttempt: bindAttempt,
 	}
 	s.slots[slotID] = st
 	return st, nil
+}
+
+// validateBindFields applies §4.7.1 rule 1, the pairing rule: a request
+// that is not marked mid_session must carry a bind attempt token, and one
+// marked mid_session must carry none. It reads no registry state and takes
+// no lock, because well-formedness is a property of the request alone, and
+// each handler whose message carries the fields calls it before any
+// resolve. The refusal is returned unwrapped: its code is already the one
+// the rule fixes. The message never contains the token.
+// spec: §4.7.1 (role and gateway RPC contract), rule 1.
+func validateBindFields(bindAttempt string, midSession bool) error {
+	if midSession && bindAttempt != "" {
+		return status.Error(codes.InvalidArgument,
+			"a mid_session request must not carry a bind_attempt")
+	}
+	if !midSession && bindAttempt == "" {
+		return status.Error(codes.InvalidArgument,
+			"a request that is not marked mid_session requires a bind_attempt")
+	}
+	return nil
 }
 
 // slotStateLocked returns the slot's state if it has been assigned.
@@ -137,10 +211,13 @@ func (s *Server) slotStateLocked(slotID string) (*slotState, bool) {
 // (PrepareWorkspace, FinalizeWorkspace, RunSetup) run before StartSession,
 // so this creates the slot tree the first time the gateway materializes
 // the slot's workspace, ahead of the slot's StartSession claim.
-func (s *Server) ensureSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
+//
+// r is the caller's assertion about the entry, passed through to the
+// resolve. spec: §4.7.1 (role and gateway RPC contract).
+func (s *Server) ensureSlotPaths(slotID string, r slotResolve) (slotlayout.SlotPaths, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, err := s.ensureSlotStateLocked(slotID)
+	st, err := s.ensureSlotStateLocked(slotID, r)
 	if err != nil {
 		return slotlayout.SlotPaths{}, err
 	}
@@ -209,6 +286,18 @@ func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedR
 // spec: §6.4.
 func removeSlotTree(st *slotState) error {
 	return slotlayout.RemoveTree(st.paths)
+}
+
+// removeSlotTreeVia removes the slot's per-slot tree through the test seam
+// when one is set and through removeSlotTree otherwise. Every release site
+// whose reclaim-hold release reads the removal's result calls it, so the
+// retained-hold arm can be driven from a unit test.
+// spec: §5.2 (slot-identifier reclaim hold); §6.4.
+func (s *Server) removeSlotTreeVia(st *slotState) error {
+	if s.removeSlotTreeFn != nil {
+		return s.removeSlotTreeFn(st)
+	}
+	return removeSlotTree(st)
 }
 
 // runtimeForSession returns the runtime process that drives the named

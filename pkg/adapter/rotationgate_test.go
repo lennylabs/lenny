@@ -26,7 +26,8 @@ func rotationGateServer(t *testing.T) (*Server, *fakeRuntime) {
 	s.CheckpointPoolLabel = "test-pool"
 	s.Lifecycle = lc
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": {LeaseId: "l-1", Provider: "anthropic", Payload: []byte("{}")},
 		},

@@ -93,8 +93,12 @@ func TestStartSessionSlotAllowsConcurrentSlots_spec_5_2(t *testing.T) {
 	// rather than a shared pod-global current tree.
 	finalize := func(session, slot, content string) {
 		t.Helper()
+		// Both sessions have started, so the finalize is the §7.4
+		// mid-session form, which §4.7.1 rule 6 exempts and rule 1 pairs
+		// with no bind attempt token.
 		req := &adapterv1.FinalizeWorkspaceRequest{
-			SessionId: &adapterv1.SessionId{Value: session},
+			SessionId:  &adapterv1.SessionId{Value: session},
+			MidSession: true,
 			WorkspacePlan: &adapterv1.WorkspacePlan{
 				SchemaVersion: 1,
 				Sources: []*adapterv1.WorkspaceSource{
@@ -135,8 +139,9 @@ func TestStartSessionRejectsARepeatedStart_spec_4_7(t *testing.T) {
 		t.Fatalf("first StartSession: %v", err)
 	}
 	_, err := s.StartSession(context.Background(), slotStartReq("sess-a"))
-	if status.Code(err) != codes.Unavailable {
-		t.Errorf("repeated start code = %v, want Unavailable", status.Code(err))
+	// spec: §4.7.1 rule 6 (the started-session rule).
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("repeated start code = %v, want FailedPrecondition", status.Code(err))
 	}
 }
 
@@ -145,7 +150,8 @@ func TestStartSessionRejectsARepeatedStart_spec_4_7(t *testing.T) {
 func TestFinalizeWorkspaceSlotMaterializesPerSlot_spec_6_4(t *testing.T) {
 	s, _ := concurrentServer(t)
 	req := &adapterv1.FinalizeWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-a"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-a"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
 			SchemaVersion: 1,
 			Sources: []*adapterv1.WorkspaceSource{
@@ -178,8 +184,9 @@ func TestAssignCredentialsSlotWritesPerSlotFile_spec_6_1(t *testing.T) {
 		"anthropic": {LeaseId: "lease-1", Provider: "anthropic"},
 	}
 	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-a"},
-		Leases:    leases,
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-a"},
+		Leases:      leases,
 	})
 	if err != nil {
 		t.Fatalf("AssignCredentials(slot): %v", err)
@@ -200,7 +207,8 @@ func TestRotateCredentialsSlotIsIndependent_spec_6_1(t *testing.T) {
 	ctx := context.Background()
 	for _, slot := range []string{"sess-a", "sess-b"} {
 		if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-			SessionId: &adapterv1.SessionId{Value: slot},
+			BindAttempt: "attempt-a",
+			SessionId:   &adapterv1.SessionId{Value: slot},
 			Leases: map[string]*adapterv1.CredentialLease{
 				"anthropic": {LeaseId: "lease-" + slot, Provider: "anthropic"},
 			},

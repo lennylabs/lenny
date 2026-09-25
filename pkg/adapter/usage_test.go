@@ -354,7 +354,7 @@ func bindSessionForTest(t *testing.T, s *Server, sessionID string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, err := s.ensureSlotStateLocked(sessionID)
+	st, err := s.ensureSlotStateLocked(sessionID, slotResolve{allowCreate: true})
 	if err != nil {
 		t.Fatalf("ensure slot state for %s: %v", sessionID, err)
 	}

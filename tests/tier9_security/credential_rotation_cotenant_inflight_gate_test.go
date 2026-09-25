@@ -45,7 +45,8 @@ import (
 func assignRotationSession(t *testing.T, s *adapter.Server, sessionID, provider, leaseID string) string {
 	t.Helper()
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
 		Leases: map[string]*adapterv1.CredentialLease{
 			provider: {LeaseId: leaseID, Provider: provider, Payload: []byte("{}")},
 		},

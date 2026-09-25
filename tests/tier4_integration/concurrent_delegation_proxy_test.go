@@ -183,21 +183,23 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 
 	// ---- open both slots on the one pod, each with its own credential lease ----
 	for _, s := range []concurrentSlotSession{alice, bob} {
-		if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
-			SessionId: &adapterv1.SessionId{Value: s.sessionID},
-			Runtime:   "echo-concurrent",
-		}); err != nil {
-			t.Fatalf("StartSession(%s on %s): %v", s.sessionID, s.sessionID, err)
-		}
 		// §6.1: each active slot obtains its independent credential lease via a
-		// separate AssignCredentials RPC at slot assignment time.
+		// separate AssignCredentials RPC at slot assignment time. §4.7.1 rule 6
+		// places the assignment ahead of the session's start.
 		if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-			SessionId: &adapterv1.SessionId{Value: s.sessionID},
+			BindAttempt: "attempt-a",
+			SessionId:   &adapterv1.SessionId{Value: s.sessionID},
 			Leases: map[string]*adapterv1.CredentialLease{
 				s.provider: {LeaseId: s.leaseID, Provider: s.provider, Payload: []byte(`{}`)},
 			},
 		}); err != nil {
 			t.Fatalf("AssignCredentials(%s on %s): %v", s.sessionID, s.sessionID, err)
+		}
+		if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
+			SessionId: &adapterv1.SessionId{Value: s.sessionID},
+			Runtime:   "echo-concurrent",
+		}); err != nil {
+			t.Fatalf("StartSession(%s on %s): %v", s.sessionID, s.sessionID, err)
 		}
 	}
 

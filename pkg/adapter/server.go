@@ -199,6 +199,13 @@ type Server struct {
 	// deterministically without a sleep. Nil in production. spec: §5.2 (async
 	// scrub report).
 	scrubDone func()
+	// removeSlotTreeFn is a test-only seam that replaces the per-slot tree
+	// removal at the release sites whose reclaim-hold release reads the
+	// removal's result. os.RemoveAll cannot be made to fail portably from a
+	// unit test, so the retained-hold arm of each release is driven through
+	// this field. Nil in production, where removeSlotTreeVia takes
+	// removeSlotTree. spec: §5.2 (slot-identifier reclaim hold).
+	removeSlotTreeFn func(*slotState) error
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
 	// over the §28.5.3 JSONL stdin/stdout protocol. RuntimeKindMCP
@@ -365,6 +372,15 @@ type Server struct {
 	// sessionId over the single runtime connection. Guarded by mu.
 	// spec: §6.4; §28.5.3.
 	slots map[string]*slotState
+	// reclaiming is the §5.2 slot-identifier reclaim hold: the identifiers
+	// whose registry entry a release has deregistered and whose cleanup has
+	// not yet completed. reclaimSlotLocked opens a hold in the same critical
+	// section as the deregistration and its release function ends it, and
+	// ensureSlotStateLocked refuses every admission onto a held identifier.
+	// No entry can stand under a held identifier, so the set carries no
+	// value. Guarded by mu. spec: §5.2; §4.7.1 (role and gateway RPC
+	// contract), the registry critical section.
+	reclaiming map[string]struct{}
 }
 
 // New returns a Server advertising the given build version and the v1

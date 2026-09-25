@@ -69,6 +69,7 @@ func TestFinalizeWorkspaceSpanRecordsSchemaError_spec_16_3(t *testing.T) {
 	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	req := &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 9999},
 	}

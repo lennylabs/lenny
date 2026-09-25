@@ -225,8 +225,23 @@ func (s *Server) onHoldTimeout() {
 // hold would report one session's generation on every session the hold
 // terminates. spec: §10.1.2.
 //
-// spec: §10.1.4; §4.7; §6.4.
+// The member's §5.2 reclaim hold, opened by pass 1, ends only when the
+// cleanup this call owes the slot completed: the runtime close and the tree
+// removal both returned without error. Either failure is logged and keeps
+// the identifier held for the life of the pod, and neither aborts the
+// termination, so the usage flush, the removal, the pod-surface
+// cancellation and the AdapterTerminating event run on either arm. The
+// release is deferred, so a panic out of the cleanup is a cleanup that did
+// not complete.
+//
+// spec: §10.1.4; §4.7; §5.2 (slot-identifier reclaim hold); §6.4.
 func (s *Server) terminateHeldSession(ctx context.Context, m heldSession) {
+	completed := false
+	defer func() {
+		if completed && m.release != nil {
+			m.release()
+		}
+	}()
 	gen := m.state.lastFencedGeneration()
 	slog.Warn(reasonCoordinatorLost,
 		"session_id", m.sessionID,
@@ -245,13 +260,21 @@ func (s *Server) terminateHeldSession(ctx context.Context, m heldSession) {
 	// The loop passes no teardown condition: the runtime's own active set
 	// closes the shared process on the last member.
 	// spec: §10.1; §15.4.3.
+	closeErr := error(nil)
 	if s.Runtime != nil {
-		_ = s.Runtime.Close(ctx, m.sessionID)
+		closeErr = s.Runtime.Close(ctx, m.sessionID)
+	}
+	if closeErr != nil {
+		slog.Warn("runtime_close_failed", "slot_id", m.sessionID, "error", closeErr)
 	}
 	s.noteRuntimeClosed(m.sessionID)
 	// The second release step. It follows the close so the agent process is
 	// not reading a credential file the teardown has already removed.
-	_ = removeSlotTree(m.state)
+	treeErr := s.removeSlotTreeVia(m.state)
+	if treeErr != nil {
+		slog.Warn("slot_tree_removal_failed", "slot_id", m.sessionID, "error", treeErr)
+	}
+	completed = closeErr == nil && treeErr == nil
 	// The third release step, on the same terms as every other release that
 	// ends the pod's occupancy: the pod-wide platform and per-connector MCP
 	// servers are cancelled once this member's close leaves the shared

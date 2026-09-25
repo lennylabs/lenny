@@ -337,7 +337,8 @@ func TestCheckpointStreamRejectsUnassignedSlot_spec_5_2(t *testing.T) {
 	// entry and its on-disk tree ahead of StartSession, so the slot exists
 	// with an empty sessionID.
 	if _, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-idle"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-idle"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
 			SchemaVersion: 1,
 			Sources: []*adapterv1.WorkspaceSource{

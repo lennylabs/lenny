@@ -173,7 +173,8 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 	// adapter timer fires within the test window and deletes the file entry.
 	originalExpiry := time.Now().Add(time.Second)
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-conformance"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-conformance"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic_direct": {
 				LeaseId:         "l-live",

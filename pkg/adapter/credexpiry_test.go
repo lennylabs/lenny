@@ -105,8 +105,9 @@ func expiryLease(id, provider, payload string, expiresAt time.Time) *adapterv1.C
 func assignOne(t *testing.T, s *Server, session, provider string, lease *adapterv1.CredentialLease) {
 	t.Helper()
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: session},
-		Leases:    map[string]*adapterv1.CredentialLease{provider: lease},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: session},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: lease},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
@@ -337,7 +338,8 @@ func TestPerProviderExpiryIsIndependent_spec_4_9(t *testing.T) {
 	defer cancel()
 
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic_direct": expiryLease("la", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)),
 			"aws_bedrock":      expiryLease("lb", "aws_bedrock", directPayload, clk.cur.Add(2*time.Hour)),
@@ -389,8 +391,9 @@ func slotExpiryServer(t *testing.T, clk *fakeExpiryClock) *Server {
 func assignSlotOne(t *testing.T, s *Server, session, slot, provider string, lease *adapterv1.CredentialLease) {
 	t.Helper()
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: session},
-		Leases:    map[string]*adapterv1.CredentialLease{provider: lease},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: session},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: lease},
 	}); err != nil {
 		t.Fatalf("AssignCredentials(slot %s): %v", slot, err)
 	}

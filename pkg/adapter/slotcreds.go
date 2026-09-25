@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"time"
@@ -19,13 +20,15 @@ import (
 // lease set, leaving sibling slots' files untouched. The slot must
 // already hold the session (StartSession ran first); credentials may also
 // be assigned before start during the §4.7 bind sequence, in which case
-// the slot tree is created here. spec: §6.1.
-func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.AssignCredentialsResponse, error) {
+// the slot tree is created here. r is the resolve the AssignCredentials
+// request asserts, so §4.7.1's admission rules gate the write.
+// spec: §6.1; §4.7.1 (role and gateway RPC contract).
+func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease, r slotResolve) (*adapterv1.AssignCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, err := s.ensureSlotStateLocked(slotID)
+	st, err := s.ensureSlotStateLocked(slotID, r)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s: %v", slotID, err)
+		return nil, slotResolveError(err, fmt.Sprintf("resolve slot %s", slotID))
 	}
 	// The §4.7 bind sequence assigns credentials before StartSession, so a
 	// not-yet-started slot records the session here; a started slot must

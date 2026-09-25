@@ -1,0 +1,877 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// The bind attempt tokens the cases below stamp and compare. They are
+// opaque to the adapter, so any two distinct non-empty strings serve.
+const (
+	tokenA = "attempt-token-a"
+	tokenB = "attempt-token-b"
+)
+
+// bindRuntime is an SDK-warm runtime whose Close runs an injectable hook,
+// so a case can park a §10.1.4 hold termination inside its runtime close,
+// fail that close, or panic out of it. It implements SDKWarmRuntime so
+// ConfigureWorkspace is reachable on the same server as the other
+// admission RPCs.
+type bindRuntime struct {
+	mu      sync.Mutex
+	onClose func(sessionID string) error
+}
+
+func (r *bindRuntime) Start(context.Context, string) error { return nil }
+func (r *bindRuntime) WriteEnvelope(string, []byte) error  { return nil }
+func (r *bindRuntime) Output(context.Context, string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
+}
+func (r *bindRuntime) Interrupt(context.Context, string, bool) error { return nil }
+func (r *bindRuntime) PreConnect(context.Context) error              { return nil }
+func (r *bindRuntime) ConfigureWorkspace(context.Context, string, string) error {
+	return nil
+}
+func (r *bindRuntime) DemoteSDK(context.Context) error { return nil }
+
+func (r *bindRuntime) Close(_ context.Context, sessionID string) error {
+	r.mu.Lock()
+	hook := r.onClose
+	r.mu.Unlock()
+	if hook != nil {
+		return hook(sessionID)
+	}
+	return nil
+}
+
+func (r *bindRuntime) setOnClose(f func(string) error) {
+	r.mu.Lock()
+	r.onClose = f
+	r.mu.Unlock()
+}
+
+// bindServer builds an adapter with every per-slot root under one temp
+// base and an SDK-warm bindRuntime.
+func bindServer(t *testing.T) (*Server, *bindRuntime) {
+	t.Helper()
+	base := t.TempDir()
+	s := New("bind-attempt-test")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	rt := &bindRuntime{}
+	s.Runtime = rt
+	return s, rt
+}
+
+// resolveLocked runs the resolve under s.mu, as its production callers do.
+func resolveLocked(s *Server, slotID string, r slotResolve) (*slotState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ensureSlotStateLocked(slotID, r)
+}
+
+// seedEntry creates slotID's entry stamped with token and, when started,
+// marks it started, the state a completed start leaves.
+func seedEntry(t *testing.T, s *Server, slotID, token string, started bool) *slotState {
+	t.Helper()
+	st, err := resolveLocked(s, slotID, slotResolve{bindAttempt: token, allowCreate: true})
+	if err != nil {
+		t.Fatalf("seed %s: %v", slotID, err)
+	}
+	if started {
+		s.mu.Lock()
+		st.sessionID = slotID
+		st.started = true
+		s.mu.Unlock()
+	}
+	return st
+}
+
+// hasEntry reports whether the registry holds an entry for slotID.
+func hasEntry(s *Server, slotID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.slots[slotID]
+	return ok
+}
+
+// slotDirExists reports whether any per-slot directory exists for slotID.
+func slotDirExists(s *Server, slotID string) bool {
+	for _, root := range []string{
+		filepath.Join(s.WorkspaceBase, "slots", slotID),
+		filepath.Join(s.SessionsRoot, slotID),
+		filepath.Join(s.ArtifactsRoot, slotID),
+	} {
+		if _, err := os.Stat(root); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// adapterErrorCode returns the adapterv1.Error code a status carries in its
+// detail, or zero when it carries none.
+func adapterErrorCode(err error) adapterv1.Error_ErrorCode {
+	st, ok := status.FromError(err)
+	if !ok {
+		return 0
+	}
+	for _, d := range st.Details() {
+		if e, ok := d.(*adapterv1.Error); ok {
+			return e.GetCode()
+		}
+	}
+	return 0
+}
+
+// captureLogs redirects slog and the standard logger into one buffer for
+// the rest of the test.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	prevSlog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+	prevOut := log.Writer()
+	log.SetOutput(buf)
+	t.Cleanup(func() {
+		slog.SetDefault(prevSlog)
+		log.SetOutput(prevOut)
+	})
+	return buf
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// The rule 2-through-7 predicate in ensureSlotStateLocked, one subtest per
+// rule and per ordering the rules fix.
+func TestResolveAppliesTheAdmissionCascade_spec_4_7_1(t *testing.T) {
+	t.Run("mid-session-create rule creates nothing", func(t *testing.T) {
+		s, _ := bindServer(t)
+		_, err := resolveLocked(s, "alice", slotResolve{allowStarted: true})
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("code = %v, want FailedPrecondition", status.Code(err))
+		}
+		if hasEntry(s, "alice") {
+			t.Error("a mid-session resolve created a registry entry")
+		}
+		if slotDirExists(s, "alice") {
+			t.Error("a mid-session resolve created the slot's tree on disk")
+		}
+	})
+	t.Run("create-and-stamp rule stamps the caller's token", func(t *testing.T) {
+		s, _ := bindServer(t)
+		st := seedEntry(t, s, "alice", tokenA, false)
+		if st.bindAttempt != tokenA {
+			t.Errorf("stamp = %q, want the creating request's token", st.bindAttempt)
+		}
+		st = seedEntry(t, s, "bob", "", false)
+		if st.bindAttempt != "" {
+			t.Errorf("an untokened create stamped %q, want empty", st.bindAttempt)
+		}
+	})
+	t.Run("create arm refuses a malformed identifier before inserting", func(t *testing.T) {
+		for _, id := range []string{".", "..", "a/b", `a\b`, "a\x00b", "./a", "a/"} {
+			s, _ := bindServer(t)
+			if _, err := resolveLocked(s, id, slotResolve{bindAttempt: tokenA, allowCreate: true}); err == nil {
+				t.Errorf("resolve %q admitted a malformed identifier", id)
+			}
+			s.mu.Lock()
+			n := len(s.slots)
+			s.mu.Unlock()
+			if n != 0 {
+				t.Errorf("resolve %q left %d registry entries, want 0", id, n)
+			}
+			entries, _ := os.ReadDir(filepath.Join(s.WorkspaceBase, "slots"))
+			if len(entries) != 0 {
+				t.Errorf("resolve %q created %d directories under slots, want 0", id, len(entries))
+			}
+		}
+	})
+	t.Run("a tree-creation failure inserts nothing", func(t *testing.T) {
+		s, _ := bindServer(t)
+		slots := filepath.Join(s.WorkspaceBase, "slots")
+		if err := os.MkdirAll(slots, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(slots, "alice"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true}); err == nil {
+			t.Fatal("resolve succeeded over a file planted where the slot directory belongs")
+		}
+		if hasEntry(s, "alice") {
+			t.Error("a failed tree creation inserted a registry entry")
+		}
+	})
+	t.Run("attempt identity rule refuses a differing token", func(t *testing.T) {
+		s, _ := bindServer(t)
+		st := seedEntry(t, s, "alice", tokenA, false)
+		_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenB, allowCreate: true})
+		if status.Code(err) != codes.Aborted {
+			t.Fatalf("code = %v, want Aborted", status.Code(err))
+		}
+		if got := adapterErrorCode(err); got != adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED {
+			t.Errorf("detail code = %v, want SLOT_BIND_ATTEMPT_SUPERSEDED", got)
+		}
+		if st.bindAttempt != tokenA {
+			t.Errorf("stamp after the refusal = %q, want it unchanged", st.bindAttempt)
+		}
+	})
+	t.Run("started-session rule refuses unless the caller allows a started entry", func(t *testing.T) {
+		s, _ := bindServer(t)
+		seedEntry(t, s, "alice", tokenA, true)
+		_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true})
+		if status.Code(err) != codes.FailedPrecondition ||
+			adapterErrorCode(err) != adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED {
+			t.Fatalf("err = %v, want FailedPrecondition with SLOT_BIND_ALREADY_STARTED", err)
+		}
+		if _, err := resolveLocked(s, "alice", slotResolve{allowStarted: true}); err != nil {
+			t.Errorf("a resolve allowing a started entry was refused: %v", err)
+		}
+	})
+	t.Run("admit rule both arms and the stamp-once rule", func(t *testing.T) {
+		s, _ := bindServer(t)
+		untokened := seedEntry(t, s, "alice", "", false)
+		if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenB, allowCreate: true}); err != nil {
+			t.Fatalf("a tokened resolve of an untokened entry was refused: %v", err)
+		}
+		if untokened.bindAttempt != "" {
+			t.Errorf("an admitted resolve stamped %q onto an existing entry; only the create writes", untokened.bindAttempt)
+		}
+		stamped := seedEntry(t, s, "bob", tokenA, false)
+		if _, err := resolveLocked(s, "bob", slotResolve{allowCreate: true}); err != nil {
+			t.Fatalf("an untokened resolve of a stamped entry was refused: %v", err)
+		}
+		if stamped.bindAttempt != tokenA {
+			t.Errorf("stamp after an untokened resolve = %q, want it unchanged", stamped.bindAttempt)
+		}
+	})
+	t.Run("the identity rule precedes the started-session rule", func(t *testing.T) {
+		s, _ := bindServer(t)
+		seedEntry(t, s, "alice", tokenA, true)
+		_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenB, allowCreate: true})
+		if got := adapterErrorCode(err); got != adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED {
+			t.Errorf("detail code = %v, want SLOT_BIND_ATTEMPT_SUPERSEDED ahead of the started-session refusal", got)
+		}
+	})
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// Every production caller of the resolve applies the identity gate: a
+// comparison placed in the workspace handlers alone would leave the claim
+// path ungated, so the claim row comes first.
+func TestEveryProductionResolveCallerIsGated_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(s *Server) error
+	}{
+		{"claimSessionSlotUnderLock", func(s *Server) error {
+			_, _, _, err := s.claimSessionSlotUnderLock("alice",
+				slotResolve{bindAttempt: tokenB, allowCreate: true}, false, false)
+			return err
+		}},
+		{"ensureSlotPaths", func(s *Server) error {
+			_, err := s.ensureSlotPaths("alice", slotResolve{bindAttempt: tokenB, allowCreate: true})
+			return err
+		}},
+		{"assignCredentialsSlot", func(s *Server) error {
+			_, err := s.assignCredentialsSlot("alice", "alice", nil,
+				slotResolve{bindAttempt: tokenB, allowCreate: true})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := bindServer(t)
+			seedEntry(t, s, "alice", tokenA, false)
+			err := tc.call(s)
+			if status.Code(err) != codes.Aborted ||
+				adapterErrorCode(err) != adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED {
+				t.Errorf("err = %v, want the superseded refusal", err)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// The claim's own started-entry arm answers rule 6's typed refusal rather
+// than an untyped Unavailable, and its idempotent-repeat arm is unchanged.
+func TestClaimRefusesAStartedEntryWithTheTypedCode_spec_4_7_1(t *testing.T) {
+	s, _ := bindServer(t)
+	seedEntry(t, s, "alice", "", true)
+	_, _, _, err := s.claimSessionSlotUnderLock("alice",
+		slotResolve{allowCreate: true, allowStarted: true}, false, false)
+	if status.Code(err) != codes.FailedPrecondition ||
+		adapterErrorCode(err) != adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED {
+		t.Errorf("err = %v, want SLOT_BIND_ALREADY_STARTED on FailedPrecondition", err)
+	}
+	fresh, startMCP, stale, err := s.claimSessionSlotUnderLock("alice",
+		slotResolve{allowCreate: true, allowStarted: true}, false, true)
+	if err != nil || fresh || startMCP || stale != nil {
+		t.Errorf("idempotent repeat = (%v, %v, %v, %v), want a satisfied claim", fresh, startMCP, stale, err)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §7.4 (upload safety)
+//
+// FinalizeWorkspace reads mid_session before it resolves, so a mid-session
+// finalize for a session the pod holds no entry for creates nothing.
+func TestFinalizeWorkspaceReadsMidSessionBeforeItResolves_spec_4_7_1(t *testing.T) {
+	s, _ := bindServer(t)
+	_, err := s.FinalizeWorkspace(context.Background(), &adapterv1.FinalizeWorkspaceRequest{
+		SessionId:     &adapterv1.SessionId{Value: "alice"},
+		MidSession:    true,
+		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition", status.Code(err))
+	}
+	if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+		t.Error("a mid-session finalize with no entry created an entry or a tree")
+	}
+}
+
+// prepareFrame is one PrepareWorkspace frame carrying the given fields.
+func prepareFrame(sessionID, token string, midSession bool, chunk string) *adapterv1.PrepareWorkspaceRequest {
+	return &adapterv1.PrepareWorkspaceRequest{
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		BindAttempt: token,
+		MidSession:  midSession,
+		UploadRef:   "lenny-blob://t/a",
+		Chunk:       []byte(chunk),
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §7.4 (upload safety)
+//
+// Rule 9: the frame that resolves the slot identifier decides the call's
+// admission, and no later frame's bind_attempt or mid_session is read.
+func TestPrepareWorkspaceLatchesTheFirstFramesAssertion_spec_4_7_1(t *testing.T) {
+	run := func(t *testing.T, s *Server, frames ...*adapterv1.PrepareWorkspaceRequest) *adapterv1.PrepareWorkspaceResponse {
+		t.Helper()
+		stream := &prepareWorkspaceStreamStub{ctx: context.Background(), frames: frames}
+		if err := s.PrepareWorkspace(stream); err != nil {
+			t.Fatalf("PrepareWorkspace: %v", err)
+		}
+		return stream.resp
+	}
+	t.Run("a later frame's differing token is not read", func(t *testing.T) {
+		s, _ := bindServer(t)
+		resp := run(t, s, prepareFrame("alice", tokenA, false, "ab"), prepareFrame("alice", tokenB, false, "cd"))
+		if resp.GetStagedBytes() != 4 {
+			t.Errorf("staged bytes = %d, want 4", resp.GetStagedBytes())
+		}
+		if st := slotStateForTest(s, "alice"); st == nil || st.bindAttempt != tokenA {
+			t.Errorf("entry stamp = %+v, want the first frame's token", st)
+		}
+	})
+	t.Run("a later frame's mid_session is not read", func(t *testing.T) {
+		s, _ := bindServer(t)
+		resp := run(t, s, prepareFrame("alice", tokenA, false, "ab"), prepareFrame("alice", "", true, "cd"))
+		if resp.GetStagedBytes() != 4 {
+			t.Errorf("staged bytes = %d, want 4", resp.GetStagedBytes())
+		}
+		s.mu.Lock()
+		n := len(s.slots)
+		s.mu.Unlock()
+		if n != 1 {
+			t.Errorf("registry entries = %d, want 1", n)
+		}
+	})
+	t.Run("a multi-chunk mid-session upload stages in full", func(t *testing.T) {
+		s, _ := bindServer(t)
+		seedEntry(t, s, "alice", tokenA, true)
+		later := &adapterv1.PrepareWorkspaceRequest{
+			SessionId: &adapterv1.SessionId{Value: "alice"},
+			UploadRef: "lenny-blob://t/a",
+			Chunk:     []byte("cd"),
+		}
+		resp := run(t, s, prepareFrame("alice", "", true, "ab"), later)
+		if resp.GetStagedBytes() != 4 {
+			t.Errorf("staged bytes = %d, want 4", resp.GetStagedBytes())
+		}
+	})
+}
+
+// slotStateForTest returns slotID's registry entry, nil when absent.
+func slotStateForTest(s *Server, slotID string) *slotState {
+	return s.slotStateForSession(slotID)
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// Rule 1 in both directions at every handler whose message carries the
+// fields: the refusal comes before any resolve, so no entry and no tree
+// exist afterwards.
+func TestPairingRuleRefusesBothDirectionsAtEveryHandler_spec_4_7_1(t *testing.T) {
+	ctx := context.Background()
+	plan := &adapterv1.WorkspacePlan{SchemaVersion: 1}
+	cases := []struct {
+		name string
+		call func(s *Server) error
+	}{
+		{"PrepareWorkspace untokened", func(s *Server) error {
+			return s.PrepareWorkspace(&prepareWorkspaceStreamStub{
+				ctx:    ctx,
+				frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame("alice", "", false, "x")},
+			})
+		}},
+		{"PrepareWorkspace mid-session tokened", func(s *Server) error {
+			return s.PrepareWorkspace(&prepareWorkspaceStreamStub{
+				ctx:    ctx,
+				frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame("alice", tokenA, true, "x")},
+			})
+		}},
+		{"FinalizeWorkspace untokened", func(s *Server) error {
+			_, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+				SessionId: &adapterv1.SessionId{Value: "alice"}, WorkspacePlan: plan,
+			})
+			return err
+		}},
+		{"FinalizeWorkspace mid-session tokened", func(s *Server) error {
+			_, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+				SessionId: &adapterv1.SessionId{Value: "alice"}, WorkspacePlan: plan,
+				MidSession: true, BindAttempt: tokenA,
+			})
+			return err
+		}},
+		{"RunSetup untokened", func(s *Server) error {
+			_, err := s.RunSetup(ctx, &adapterv1.RunSetupRequest{SessionId: &adapterv1.SessionId{Value: "alice"}})
+			return err
+		}},
+		{"AssignCredentials untokened", func(s *Server) error {
+			_, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{SessionId: &adapterv1.SessionId{Value: "alice"}})
+			return err
+		}},
+		{"Resume untokened", func(s *Server) error {
+			_, err := s.Resume(ctx, &adapterv1.ResumeRequest{
+				SessionId: &adapterv1.SessionId{Value: "alice"}, CheckpointId: "ckpt-1",
+			})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := bindServer(t)
+			if err := tc.call(s); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("code = %v (%v), want InvalidArgument", status.Code(err), err)
+			}
+			if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+				t.Error("a request the pairing rule refuses created an entry or a tree")
+			}
+		})
+	}
+}
+
+// admissionCall drives one of the requests §4.7.1's admission rules
+// govern for sessionID, carrying the attempt's token where the request
+// carries one.
+type admissionCall struct {
+	name string
+	call func(s *Server, sessionID string) error
+}
+
+func admissionCalls() []admissionCall {
+	ctx := context.Background()
+	return []admissionCall{
+		{"PrepareWorkspace", func(s *Server, id string) error {
+			return s.PrepareWorkspace(&prepareWorkspaceStreamStub{
+				ctx:    ctx,
+				frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame(id, tokenA, false, "x")},
+			})
+		}},
+		{"FinalizeWorkspace", func(s *Server, id string) error {
+			_, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+				WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1},
+			})
+			return err
+		}},
+		{"RunSetup", func(s *Server, id string) error {
+			_, err := s.RunSetup(ctx, &adapterv1.RunSetupRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+			})
+			return err
+		}},
+		{"AssignCredentials", func(s *Server, id string) error {
+			_, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+			})
+			return err
+		}},
+		{"StartSession", func(s *Server, id string) error {
+			_, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{SessionId: &adapterv1.SessionId{Value: id}})
+			return err
+		}},
+		{"Resume", func(s *Server, id string) error {
+			_, err := s.Resume(ctx, &adapterv1.ResumeRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, CheckpointId: "ckpt-1", BindAttempt: tokenA,
+			})
+			return err
+		}},
+		{"ConfigureWorkspace", func(s *Server, id string) error {
+			_, err := s.ConfigureWorkspace(ctx, &adapterv1.ConfigureWorkspaceRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, Cwd: "/workspace",
+			})
+			return err
+		}},
+	}
+}
+
+// startHeldTermination runs §10.1.4 pass 1 over the server's started
+// sessions and hands each member to pass 2 on its own goroutine, returning
+// a channel closed once every member's termination has returned.
+func startHeldTermination(s *Server) <-chan struct{} {
+	members := s.deregisterStartedSessions()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, m := range members {
+			s.terminateHeldSession(context.Background(), m)
+		}
+	}()
+	return done
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §10.1.4 (coordinator-loss detection and hold state)
+//
+// The reclaim hold refuses every admission RPC while the cleanup is parked
+// inside its runtime close, with the transient sentinel and without
+// blocking the caller, and admits each once the cleanup completes.
+func TestReclaimHoldRefusesAdmissionUntilTheTeardownCompletes_spec_5_2(t *testing.T) {
+	for _, ac := range admissionCalls() {
+		t.Run(ac.name, func(t *testing.T) {
+			s, rt := bindServer(t)
+			if err := s.claimSessionForTest("alice"); err != nil {
+				t.Fatalf("claim alice: %v", err)
+			}
+			parked := make(chan struct{})
+			unpark := make(chan struct{})
+			rt.setOnClose(func(string) error {
+				close(parked)
+				<-unpark
+				return nil
+			})
+			done := startHeldTermination(s)
+			<-parked
+
+			refused := make(chan error, 1)
+			go func() { refused <- ac.call(s, "alice") }()
+			select {
+			case err := <-refused:
+				if !isSlotReclaimInProgress(err) || status.Code(err) != codes.Aborted {
+					t.Errorf("%s during the parked cleanup = %v, want the reclaim-hold refusal on Aborted", ac.name, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s blocked on the parked cleanup instead of being refused", ac.name)
+			}
+
+			close(unpark)
+			<-done
+			if err := ac.call(s, "alice"); isSlotReclaimInProgress(err) {
+				t.Errorf("%s after the cleanup completed is still refused by the hold", ac.name)
+			} else if err != nil {
+				t.Errorf("%s after the cleanup completed = %v, want admitted", ac.name, err)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// Every site that deregisters an entry and then destroys its tree holds the
+// identifier during the destruction and releases it once the cleanup
+// completes. A site added without routing through reclaimSlotLocked fails
+// the in-removal assertion.
+func TestEveryDeregisterThenDestroySiteTakesTheHold_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name    string
+		destroy func(s *Server)
+	}{
+		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot("alice") }},
+		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := bindServer(t)
+			if err := s.claimSessionForTest("alice"); err != nil {
+				t.Fatalf("claim alice: %v", err)
+			}
+			var heldDuringRemoval bool
+			s.removeSlotTreeFn = func(st *slotState) error {
+				_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true})
+				heldDuringRemoval = isSlotReclaimInProgress(err)
+				return removeSlotTree(st)
+			}
+			tc.destroy(s)
+			if !heldDuringRemoval {
+				t.Error("the identifier was not held while its tree was being removed")
+			}
+			if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true}); err != nil {
+				t.Errorf("a bind after the completed cleanup = %v, want admitted", err)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// A tree removal that fails is a cleanup that did not complete, so the
+// identifier stays held and the failure is logged.
+func TestACleanupWhoseTreeRemovalFailsKeepsTheHold_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name    string
+		destroy func(s *Server)
+	}{
+		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot("alice") }},
+		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			s, _ := bindServer(t)
+			if err := s.claimSessionForTest("alice"); err != nil {
+				t.Fatalf("claim alice: %v", err)
+			}
+			s.removeSlotTreeFn = func(*slotState) error { return errors.New("injected removal failure") }
+			tc.destroy(s)
+			_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true})
+			if !isSlotReclaimInProgress(err) {
+				t.Errorf("a bind after a failed tree removal = %v, want the reclaim-hold refusal", err)
+			}
+			if out := logs.String(); !strings.Contains(out, `"msg":"slot_tree_removal_failed"`) ||
+				!strings.Contains(out, `"slot_id":"alice"`) {
+				t.Errorf("no slot_tree_removal_failed record naming alice; logs: %s", out)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §10.1.4 (coordinator-loss detection and hold state)
+//
+// A runtime close that fails at the hold termination keeps the hold, and
+// the close stays best-effort in control flow: the final usage report, the
+// tree removal and AdapterTerminating still happen.
+func TestACleanupWhoseRuntimeCloseFailsKeepsTheHold_spec_5_2(t *testing.T) {
+	setCoordinatorHold(false)
+	logs := captureLogs(t)
+	rt := &bindRuntime{}
+	rt.setOnClose(func(string) error { return errors.New("injected close failure") })
+	s, clk := holdTerminationServer(t, rt, "alice")
+	meter := NewSessionUsageMeter(time.Now)
+	meter.Add("alice", 5, 1)
+	s.Usage = meter
+	stream, cancel := attachControlStream(t, s)
+	defer cancel()
+
+	fireHoldTimeout(t, s, clk)
+
+	var sawUsage, sawTerminating bool
+	for _, ev := range drainControlEvents(t, stream, 2) {
+		switch ev.Type {
+		case eventFinalUsageReport:
+			sawUsage = ev.SessionID == "alice"
+		case eventAdapterTerminating:
+			sawTerminating = ev.SessionID == "alice"
+		}
+	}
+	if !sawUsage || !sawTerminating {
+		t.Errorf("final usage = %v, AdapterTerminating = %v; want both for alice", sawUsage, sawTerminating)
+	}
+	if slotDirExists(s, "alice") {
+		t.Error("the slot tree survived a termination whose runtime close failed")
+	}
+	_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true})
+	if !isSlotReclaimInProgress(err) {
+		t.Errorf("a bind after a failed runtime close = %v, want the reclaim-hold refusal", err)
+	}
+	if out := logs.String(); !strings.Contains(out, `"msg":"runtime_close_failed"`) {
+		t.Errorf("no runtime_close_failed record; logs: %s", out)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §10.1.4 (coordinator-loss detection and hold state)
+//
+// A panic out of the destructive section is a cleanup that did not
+// complete, so the deferred release keeps the identifier held.
+func TestAPanicOutOfTheDestructiveSectionKeepsTheHold_spec_5_2(t *testing.T) {
+	s, rt := bindServer(t)
+	if err := s.claimSessionForTest("alice"); err != nil {
+		t.Fatalf("claim alice: %v", err)
+	}
+	rt.setOnClose(func(string) error { panic("injected close panic") })
+	members := s.deregisterStartedSessions()
+	if len(members) != 1 {
+		t.Fatalf("pass 1 collected %d members, want 1", len(members))
+	}
+	func() {
+		defer func() { _ = recover() }()
+		s.terminateHeldSession(context.Background(), members[0])
+	}()
+	_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true})
+	if !isSlotReclaimInProgress(err) {
+		t.Errorf("a bind after a panicking cleanup = %v, want the reclaim-hold refusal", err)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §16.3 (distributed tracing)
+//
+// Each resolve site passes the refusals through with their own codes and
+// wraps every other resolve failure as InvalidArgument, and the sites that
+// stamp a span category stamp the refusal's own category.
+func TestSlotRefusalsKeepTheirClassificationThroughEveryResolveSite_spec_4_7_1(t *testing.T) {
+	ctx := context.Background()
+	type arm struct {
+		name     string
+		slotID   string
+		setup    func(t *testing.T, s *Server)
+		code     codes.Code
+		category tracing.ErrorCategory
+	}
+	arms := []arm{
+		{"reclaim hold", "alice", func(_ *testing.T, s *Server) {
+			s.mu.Lock()
+			s.openReclaimHoldLocked("alice")
+			s.mu.Unlock()
+		}, codes.Aborted, tracing.CategoryTransient},
+		{
+			"superseded", "alice", func(t *testing.T, s *Server) { seedEntry(t, s, "alice", tokenB, false) },
+			codes.Aborted, tracing.CategoryTransient,
+		},
+		{
+			"already started", "alice", func(t *testing.T, s *Server) { seedEntry(t, s, "alice", tokenA, true) },
+			codes.FailedPrecondition, tracing.CategoryPermanent,
+		},
+		{"non-sentinel", "a/b", func(*testing.T, *Server) {}, codes.InvalidArgument, tracing.CategoryPermanent},
+	}
+	sites := []struct {
+		name string
+		span string
+		call func(s *Server, id string) error
+	}{
+		{"resolvePrepareStagingDir", string(tracing.SpanSessionUpload), func(s *Server, id string) error {
+			return s.PrepareWorkspace(&prepareWorkspaceStreamStub{
+				ctx:    ctx,
+				frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame(id, tokenA, false, "x")},
+			})
+		}},
+		{"FinalizeWorkspace", string(tracing.SpanSessionFinalizeWorkspace), func(s *Server, id string) error {
+			_, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+				WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1},
+			})
+			return err
+		}},
+		{"RunSetup", string(tracing.SpanSessionRunSetup), func(s *Server, id string) error {
+			_, err := s.RunSetup(ctx, &adapterv1.RunSetupRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+			})
+			return err
+		}},
+		{"claimSessionSlotUnderLock", "", func(s *Server, id string) error {
+			_, _, _, err := s.claimSessionSlotUnderLock(id, slotResolve{bindAttempt: tokenA, allowCreate: true}, false, false)
+			return err
+		}},
+		{"assignCredentialsSlot", "", func(s *Server, id string) error {
+			_, err := s.assignCredentialsSlot(id, id, nil, slotResolve{bindAttempt: tokenA, allowCreate: true})
+			return err
+		}},
+	}
+	for _, site := range sites {
+		for _, a := range arms {
+			t.Run(site.name+"/"+a.name, func(t *testing.T) {
+				rec := installInternalSpanRecorder(t)
+				s, _ := bindServer(t)
+				a.setup(t, s)
+				err := site.call(s, a.slotID)
+				if got := status.Code(err); got != a.code {
+					t.Fatalf("code = %v (%v), want %v", got, err, a.code)
+				}
+				if site.span == "" {
+					return
+				}
+				span := endedSpanNamed(rec.Ended(), site.span)
+				if span == nil {
+					t.Fatalf("span %s not recorded", site.span)
+				}
+				var got string
+				for _, kv := range span.Attributes() {
+					if string(kv.Key) == tracing.AttrErrorCategory {
+						got = kv.Value.AsString()
+					}
+				}
+				if got != string(a.category) {
+					t.Errorf("span error.category = %q, want %q", got, a.category)
+				}
+			})
+		}
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// The token is a capability over a live session's teardown, so no refusal
+// message, no detail and no log line the resolve path emits carries it.
+func TestTheBindAttemptTokenIsNeverInAMessage_spec_4_7_1(t *testing.T) {
+	logs := captureLogs(t)
+	s, _ := bindServer(t)
+	seedEntry(t, s, "alice", tokenA, false)
+	seedEntry(t, s, "bob", tokenA, true)
+	var errs []error
+	_, err := s.FinalizeWorkspace(context.Background(), &adapterv1.FinalizeWorkspaceRequest{
+		SessionId: &adapterv1.SessionId{Value: "alice"}, BindAttempt: tokenB,
+		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1},
+	})
+	errs = append(errs, err)
+	_, err = s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: "bob"}, BindAttempt: tokenA,
+	})
+	errs = append(errs, err)
+	_, err = s.RunSetup(context.Background(), &adapterv1.RunSetupRequest{
+		SessionId: &adapterv1.SessionId{Value: "alice"}, BindAttempt: tokenB,
+	})
+	errs = append(errs, err)
+	for _, e := range errs {
+		if e == nil {
+			t.Fatal("a refusal case was admitted")
+		}
+		st, _ := status.FromError(e)
+		texts := []string{e.Error(), st.Message()}
+		for _, d := range st.Details() {
+			if ae, ok := d.(*adapterv1.Error); ok {
+				texts = append(texts, ae.GetMessage())
+			}
+		}
+		for _, text := range texts {
+			if strings.Contains(text, tokenA) || strings.Contains(text, tokenB) {
+				t.Errorf("a refusal carries the token: %q", text)
+			}
+		}
+	}
+	if out := logs.String(); strings.Contains(out, tokenA) || strings.Contains(out, tokenB) {
+		t.Errorf("a log line carries the token: %s", out)
+	}
+}

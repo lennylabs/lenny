@@ -211,9 +211,10 @@ func TestPrepareWorkspaceEmitsUploadSpan_spec_16_3(t *testing.T) {
 		t.Fatalf("PrepareWorkspace: %v", err)
 	}
 	if err := stream.Send(&adapterv1.PrepareWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		UploadRef: "u1",
-		Chunk:     []byte("hello upload"),
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		UploadRef:   "u1",
+		Chunk:       []byte("hello upload"),
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}

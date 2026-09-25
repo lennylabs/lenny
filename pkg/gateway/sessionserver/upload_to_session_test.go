@@ -85,6 +85,14 @@ func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding
 	reg := podsession.NewRegistry()
 	if withBinding {
 		ad := dialRealAdapter(t, &adapter.Server{WorkspaceBase: base}, opts...)
+		// §4.7.1 rule 3: a mid-session request resolves the entry the running
+		// session already holds and never creates one, so the session's bind
+		// sequence is replayed far enough to create it: a RunSetup with no
+		// commands, carrying a bind attempt token, creates the entry over the
+		// existing tree without replacing it.
+		if _, err := ad.RunSetup(context.Background(), "sess_mid", nil, nil, "attempt-seed"); err != nil {
+			t.Fatalf("seed sess_mid registry entry: %v", err)
+		}
 		reg.Put(&podsession.BindResult{SessionID: "sess_mid", TenantID: "acme", Adapter: ad})
 	}
 

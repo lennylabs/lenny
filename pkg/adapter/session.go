@@ -108,7 +108,10 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// spec: §5.2 — every session is bound to a slot on every pod, so the
 	// start claims this session's slot whatever the pool's concurrency.
 	// The claim also decides the once-per-pod intra-pod MCP start.
-	_, startMCP, err := s.claimSessionSlot(sessionID, s.isSDKWarm(), false)
+	// StartSession carries no bind attempt token (§4.7.1), so it resolves
+	// with no identity assertion and creates an untokened entry when none
+	// stands.
+	_, startMCP, err := s.claimSessionSlot(sessionID, slotResolve{allowCreate: true}, s.isSDKWarm(), false)
 	if err != nil {
 		spanErr = err
 		return nil, err

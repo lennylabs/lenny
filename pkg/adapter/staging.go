@@ -75,10 +75,24 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 				"PrepareWorkspace frame requires a session id")
 		}
 		if stagingDir == "" {
-			dir, derr := s.resolvePrepareStagingDir(req.GetSessionId().GetValue())
+			// spec: §4.7.1 rule 9 (the first-frame rule). The frame that
+			// resolves the slot identifier is the one whose bind_attempt and
+			// mid_session decide the call's admission, rule 1 included; no
+			// later frame's fields are read.
+			midSession := req.GetMidSession()
+			if verr := validateBindFields(req.GetBindAttempt(), midSession); verr != nil {
+				closeAll()
+				spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+				return verr
+			}
+			dir, derr := s.resolvePrepareStagingDir(req.GetSessionId().GetValue(), slotResolve{
+				bindAttempt:  req.GetBindAttempt(),
+				allowCreate:  !midSession,
+				allowStarted: midSession,
+			})
 			if derr != nil {
 				closeAll()
-				spanErr = tracing.CategorizeError(derr, tracing.CategoryPermanent)
+				spanErr = tracing.CategorizeError(derr, slotResolveCategory(derr))
 				return derr
 			}
 			stagingDir = dir
@@ -129,12 +143,12 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 // base is unset, and workspace.StagingPath joins the upload's hashed name
 // onto whatever directory it is given, so an adapter started without a
 // workspace base would otherwise write every upload into the adapter
-// process's working directory. spec: §6.4.
-func (s *Server) resolvePrepareStagingDir(sessionID string) (string, error) {
-	paths, err := s.ensureSlotPaths(sessionID)
+// process's working directory. spec: §6.4; §4.7.1 (role and gateway RPC
+// contract).
+func (s *Server) resolvePrepareStagingDir(sessionID string, r slotResolve) (string, error) {
+	paths, err := s.ensureSlotPaths(sessionID, r)
 	if err != nil {
-		return "", status.Errorf(codes.InvalidArgument,
-			"resolve staging for session %s: %v", sessionID, err)
+		return "", slotResolveError(err, fmt.Sprintf("resolve staging for session %s", sessionID))
 	}
 	if paths.Staging == "" {
 		return "", status.Error(codes.FailedPrecondition,
@@ -175,14 +189,27 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
+	// spec: §4.7.1 rules 1 and 3 — mid_session is read before the resolve,
+	// because a mid-session finalize for a session the pod holds no entry
+	// for must create nothing, and the pairing rule is decided on the
+	// request's fields before the registry is read.
+	midSession := req.GetMidSession()
+	if verr := validateBindFields(req.GetBindAttempt(), midSession); verr != nil {
+		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+		return nil, verr
+	}
 	// spec: §6.4 — the finalize materializes into the session's own tree
 	// (/workspace/slots/{sessionId}/staging promoted to /current) and
 	// creates that tree on first reference.
-	paths, perr := s.ensureSlotPaths(sessionID)
+	paths, perr := s.ensureSlotPaths(sessionID, slotResolve{
+		bindAttempt:  req.GetBindAttempt(),
+		allowCreate:  !midSession,
+		allowStarted: midSession,
+	})
 	if perr != nil {
-		spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
-		return nil, status.Errorf(codes.InvalidArgument,
-			"resolve workspace for session %s: %v", sessionID, perr)
+		rerr := slotResolveError(perr, fmt.Sprintf("resolve workspace for session %s", sessionID))
+		spanErr = tracing.CategorizeError(rerr, slotResolveCategory(perr))
+		return nil, rerr
 	}
 	workspaceRoot, stagingDir := paths.Current, paths.Staging
 	if workspaceRoot == "" {
@@ -236,7 +263,6 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	// replacing the whole tree, then signals the runtime once promotion
 	// completes. The pre-start path (mid_session false) keeps the §4.7
 	// whole-tree promotion the assignment sequence relies on. F-7.4.6.
-	midSession := req.GetMidSession()
 	span.SetAttributes(attribute.Bool("workspace.mid_session", midSession))
 	var (
 		warnings []workspace.Warning
@@ -332,13 +358,22 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
+	// spec: §4.7.1 rule 1 — RunSetup is never mid-session, so it carries a
+	// bind attempt token.
+	if verr := validateBindFields(req.GetBindAttempt(), false); verr != nil {
+		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+		return nil, verr
+	}
 	// spec: §6.4 — the setup runs against the session's own
 	// /workspace/slots/{sessionId}/current cwd.
-	paths, perr := s.ensureSlotPaths(sessionID)
+	paths, perr := s.ensureSlotPaths(sessionID, slotResolve{
+		bindAttempt: req.GetBindAttempt(),
+		allowCreate: true,
+	})
 	if perr != nil {
-		spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
-		return nil, status.Errorf(codes.InvalidArgument,
-			"resolve workspace for session %s: %v", sessionID, perr)
+		rerr := slotResolveError(perr, fmt.Sprintf("resolve workspace for session %s", sessionID))
+		spanErr = tracing.CategorizeError(rerr, slotResolveCategory(perr))
+		return nil, rerr
 	}
 	workspaceRoot := paths.Current
 	if workspaceRoot == "" {

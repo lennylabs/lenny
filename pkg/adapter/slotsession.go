@@ -4,6 +4,8 @@ package adapter
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"sort"
 
 	"google.golang.org/grpc/codes"
@@ -40,7 +42,9 @@ import (
 //
 // idempotentRepeat reports a repeat for an already-started session as
 // fresh=false rather than refusing it, which is the §4.7
-// ConfigureWorkspace idempotency.
+// ConfigureWorkspace idempotency. r is the resolve the calling handler
+// asserts; ConfigureWorkspace sets its allowStarted from the same value as
+// idempotentRepeat, so §4.7.1 rule 6 admits the repeat it exempts.
 //
 // startMCP reports that this claim took the once-per-pod intra-pod MCP
 // start. The decision is taken inside this critical section rather than
@@ -48,9 +52,9 @@ import (
 // socket the controller renders for the whole pod and two concurrent
 // claims that both observed it free would hand the loser EADDRINUSE.
 //
-// spec: §4.7; §5.2; §15.4.3.
-func (s *Server) claimSessionSlot(sessionID string, sdkWarm, idempotentRepeat bool) (fresh, startMCP bool, err error) {
-	fresh, startMCP, stale, err := s.claimSessionSlotUnderLock(sessionID, sdkWarm, idempotentRepeat)
+// spec: §4.7; §4.7.1 (role and gateway RPC contract); §5.2; §15.4.3.
+func (s *Server) claimSessionSlot(sessionID string, r slotResolve, sdkWarm, idempotentRepeat bool) (fresh, startMCP bool, err error) {
+	fresh, startMCP, stale, err := s.claimSessionSlotUnderLock(sessionID, r, sdkWarm, idempotentRepeat)
 	// A surface armed by a session the registry no longer holds is torn
 	// down outside s.mu, before the claimant arms its own on a fresh
 	// nonce. spec: §15.4.3.
@@ -61,7 +65,7 @@ func (s *Server) claimSessionSlot(sessionID string, sdkWarm, idempotentRepeat bo
 // claimSessionSlotUnderLock is claimSessionSlot's critical section. It
 // returns the cancel functions of a stale pod MCP surface the claim took
 // over, for the caller to run once the lock is released.
-func (s *Server) claimSessionSlotUnderLock(sessionID string, sdkWarm, idempotentRepeat bool) (fresh, startMCP bool, stale []context.CancelFunc, err error) {
+func (s *Server) claimSessionSlotUnderLock(sessionID string, r slotResolve, sdkWarm, idempotentRepeat bool) (fresh, startMCP bool, stale []context.CancelFunc, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sdkWarm {
@@ -72,17 +76,20 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, sdkWarm, idempotent
 			}
 		}
 	}
-	st, err := s.ensureSlotStateLocked(sessionID)
+	st, err := s.ensureSlotStateLocked(sessionID, r)
 	if err != nil {
-		return false, false, nil, status.Errorf(codes.InvalidArgument,
-			"resolve slot for session %s: %v", sessionID, err)
+		return false, false, nil, slotResolveError(err,
+			fmt.Sprintf("resolve slot for session %s", sessionID))
 	}
+	// The local statement of §4.7.1 rule 6. The resolve refuses a started
+	// entry first unless the caller asserted allowStarted, and s.mu forbids
+	// the entry starting between the resolve and here, so this arm answers
+	// the idempotent repeat and states the refusal for a later reader.
 	if st.started {
 		if idempotentRepeat {
 			return false, false, nil, nil
 		}
-		return false, false, nil, status.Errorf(codes.Unavailable,
-			"session %s has already started on this pod", sessionID)
+		return false, false, nil, errSlotBindAlreadyStarted(sessionID)
 	}
 	st.sessionID = sessionID
 	st.started = true
@@ -188,11 +195,26 @@ func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed,
 	return st, removed, boundRemains
 }
 
-// deregisterSlot takes s.mu and runs deregisterSlotLocked.
-func (s *Server) deregisterSlot(sessionID string) (st *slotState, removed, boundRemains bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.deregisterSlotLocked(sessionID)
+// reclaimSlotLocked is the deregistration every release that then destroys
+// the slot's tree takes. It runs deregisterSlotLocked and, when that removed
+// an entry, opens the §5.2 slot-identifier reclaim hold in the same critical
+// section, so no bind can be admitted onto the identifier between the
+// removal and the destructive steps that follow it.
+//
+// release is never nil and is idempotent. The caller defers it and takes it
+// only on the arm where the cleanup it then ran completed, because §5.2 ends
+// the hold on a completed cleanup and keeps the identifier held for the life
+// of the pod on one that did not. A call that removed nothing opened no hold
+// and returns a no-op. Callers hold s.mu.
+//
+// spec: §5.2 (slot-identifier reclaim hold); §4.7.1 (role and gateway RPC
+// contract), the registry critical section.
+func (s *Server) reclaimSlotLocked(sessionID string) (st *slotState, removed, boundRemains bool, release func()) {
+	st, removed, boundRemains = s.deregisterSlotLocked(sessionID)
+	if !removed {
+		return st, false, boundRemains, noHoldRelease
+	}
+	return st, true, boundRemains, s.openReclaimHoldLocked(sessionID)
 }
 
 // releaseSessionSlot runs both release steps in immediate succession and
@@ -210,11 +232,30 @@ func (s *Server) deregisterSlot(sessionID string) (st *slotState, removed, bound
 // unheld and cancels them, which is how a pod recovers from a failed
 // StartSession, Resume, or ConfigureWorkspace.
 //
-// spec: §4.7; §15.4.3.
+// The deregistration opens the §5.2 reclaim hold, and the hold ends only
+// when the tree removal returns without error, which is the whole cleanup
+// this release owes the slot because it closes no runtime. A removal that
+// fails is logged and keeps the identifier held for the life of the pod.
+// The release is deferred, so a panic out of the removal is a cleanup that
+// did not complete.
+//
+// spec: §4.7; §5.2 (slot-identifier reclaim hold); §15.4.3.
 func (s *Server) releaseSessionSlot(sessionID string) {
-	st, removed, _ := s.deregisterSlot(sessionID)
+	s.mu.Lock()
+	st, removed, _, release := s.reclaimSlotLocked(sessionID)
+	s.mu.Unlock()
+	completed := false
+	defer func() {
+		if completed {
+			release()
+		}
+	}()
 	if removed {
-		_ = removeSlotTree(st)
+		if err := s.removeSlotTreeVia(st); err != nil {
+			slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", err)
+		} else {
+			completed = true
+		}
 	}
 	s.cancelPodMCPIfRuntimeIdle()
 }
@@ -306,10 +347,13 @@ func (s *Server) slotStateForSession(sessionID string) *slotState {
 // heldSession is one member of the set the §10.1 hold timeout terminates:
 // a session the adapter had started and whose registry entry pass 1
 // deregistered, carried with the deregistered state so pass 2 can remove
-// its per-slot tree. spec: §10.1.4; §6.4.
+// its per-slot tree, and with the release of the §5.2 reclaim hold pass 1
+// opened for it, which pass 2 takes only when the member's cleanup
+// completed. spec: §10.1.4; §5.2; §6.4.
 type heldSession struct {
 	sessionID string
 	state     *slotState
+	release   func()
 }
 
 // countStartedSessionsLocked reports how many registry entries carry the
@@ -353,8 +397,9 @@ func (s *Server) startedSessionCount() int {
 
 // deregisterStartedSessions is the first pass of the §10.1.4 hold
 // termination: under one s.mu hold it collects every started entry,
-// cancels each entry's direct-mode expiry timers, deletes each entry, and
-// returns the members sorted by session identifier.
+// cancels each entry's direct-mode expiry timers, deletes each entry, opens
+// each member's §5.2 reclaim hold, and returns the members sorted by session
+// identifier.
 //
 // Emptying the registry in one critical section before any termination
 // work is what makes the termination and a concurrent gateway Shutdown
@@ -385,12 +430,13 @@ func (s *Server) deregisterStartedSessions() []heldSession {
 	members := make([]heldSession, 0, len(ids))
 	for _, id := range ids {
 		// The bound-entry result exists to decide the §15.4.2 drain, which
-		// this path does not send, so it is discarded here.
-		st, removed, _ := s.deregisterSlotLocked(id)
+		// this path does not send, so it is discarded here. The reclaim hold
+		// opens with the deregistration and pass 2 carries its release.
+		st, removed, _, release := s.reclaimSlotLocked(id)
 		if !removed {
 			continue
 		}
-		members = append(members, heldSession{sessionID: id, state: st})
+		members = append(members, heldSession{sessionID: id, state: st, release: release})
 	}
 	return members
 }

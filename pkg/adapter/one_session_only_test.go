@@ -39,10 +39,12 @@ func TestStartClaimRefusesASecondStartOfTheSameSession_spec_4_7(t *testing.T) {
 	}
 	err := s.claimSessionForTest("sess-a")
 	if err == nil {
-		t.Fatal("second start of the same session succeeded; want Unavailable")
+		t.Fatal("second start of the same session succeeded; want FailedPrecondition")
 	}
-	if got := status.Code(err); got != codes.Unavailable {
-		t.Errorf("code = %v, want Unavailable", got)
+	// spec: §4.7.1 rule 6 (the started-session rule) answers a repeated
+	// start FAILED_PRECONDITION with SLOT_BIND_ALREADY_STARTED.
+	if got := status.Code(err); got != codes.FailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition", got)
 	}
 }
 
@@ -55,7 +57,7 @@ func TestStartClaimRefusesASecondStartOfTheSameSession_spec_4_7(t *testing.T) {
 func TestStartClaimAdmitsAStartOnABoundNotStartedEntry_spec_4_7(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
 	s.mu.Lock()
-	st, err := s.ensureSlotStateLocked("sess-a")
+	st, err := s.ensureSlotStateLocked("sess-a", slotResolve{allowCreate: true})
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("ensure slot state: %v", err)
@@ -88,10 +90,10 @@ func TestStartClaimReadmitsASessionAfterItsRelease_spec_4_7(t *testing.T) {
 // runtime holds one working directory and one authenticated nonce.
 func TestSDKWarmClaimRefusesASessionBesideAStartedOne_spec_4_7(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
-	if _, _, err := s.claimSessionSlot("sess-a", true, false); err != nil {
+	if _, _, err := s.claimSessionSlot("sess-a", slotResolve{allowCreate: true}, true, false); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	_, _, err := s.claimSessionSlot("sess-b", true, false)
+	_, _, err := s.claimSessionSlot("sess-b", slotResolve{allowCreate: true}, true, false)
 	if err == nil {
 		t.Fatal("second session admitted beside a started one; want Unavailable")
 	}
@@ -114,7 +116,7 @@ func TestSDKWarmClaimRefusesASessionBesideAStartedOne_spec_4_7(t *testing.T) {
 func TestSDKWarmClaimRefusesASessionBesideABoundNotStartedEntry_spec_6_1(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
 	s.mu.Lock()
-	st, err := s.ensureSlotStateLocked("sess-bound")
+	st, err := s.ensureSlotStateLocked("sess-bound", slotResolve{allowCreate: true})
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("ensure slot state: %v", err)
@@ -122,7 +124,7 @@ func TestSDKWarmClaimRefusesASessionBesideABoundNotStartedEntry_spec_6_1(t *test
 	st.sessionID = "sess-bound"
 	s.mu.Unlock()
 
-	_, _, err = s.claimSessionSlot("sess-b", true, false)
+	_, _, err = s.claimSessionSlot("sess-b", slotResolve{allowCreate: true}, true, false)
 	if err == nil {
 		t.Fatal("second session admitted beside a bound-not-started entry; want Unavailable")
 	}
@@ -148,7 +150,7 @@ func TestSDKWarmClaimRefusesASessionBesideABoundNotStartedEntry_spec_6_1(t *test
 func TestSDKWarmClaimAdmitsTheSameSessionOnItsBoundNotStartedEntry_spec_4_7(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
 	s.mu.Lock()
-	st, err := s.ensureSlotStateLocked("sess-a")
+	st, err := s.ensureSlotStateLocked("sess-a", slotResolve{allowCreate: true})
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("ensure slot state: %v", err)
@@ -156,7 +158,7 @@ func TestSDKWarmClaimAdmitsTheSameSessionOnItsBoundNotStartedEntry_spec_4_7(t *t
 	st.sessionID = "sess-a"
 	s.mu.Unlock()
 
-	fresh, startMCP, err := s.claimSessionSlot("sess-a", true, false)
+	fresh, startMCP, err := s.claimSessionSlot("sess-a", slotResolve{allowCreate: true}, true, false)
 	if err != nil {
 		t.Fatalf("claim on its own bound-not-started entry = %v, want admitted", err)
 	}
@@ -183,7 +185,7 @@ func TestSDKWarmClaimAdmitsTheSameSessionOnItsBoundNotStartedEntry_spec_4_7(t *t
 func TestSDKWarmRefusalNamesTheBindingRatherThanAStart_spec_5_2(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
 	s.mu.Lock()
-	st, err := s.ensureSlotStateLocked("sess-bound")
+	st, err := s.ensureSlotStateLocked("sess-bound", slotResolve{allowCreate: true})
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("ensure slot state: %v", err)
@@ -191,7 +193,7 @@ func TestSDKWarmRefusalNamesTheBindingRatherThanAStart_spec_5_2(t *testing.T) {
 	st.sessionID = "sess-bound"
 	s.mu.Unlock()
 
-	_, _, err = s.claimSessionSlot("sess-b", true, false)
+	_, _, err = s.claimSessionSlot("sess-b", slotResolve{allowCreate: true}, true, false)
 	if err == nil {
 		t.Fatal("second session admitted beside a bound-not-started entry; want Unavailable")
 	}
@@ -206,10 +208,10 @@ func TestSDKWarmRefusalNamesTheBindingRatherThanAStart_spec_5_2(t *testing.T) {
 	// The same-session started refusal is a different failure and must
 	// read differently.
 	s2 := &Server{WorkspaceBase: t.TempDir()}
-	if _, _, err := s2.claimSessionSlot("sess-a", true, false); err != nil {
+	if _, _, err := s2.claimSessionSlot("sess-a", slotResolve{allowCreate: true}, true, false); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	_, _, err = s2.claimSessionSlot("sess-a", true, false)
+	_, _, err = s2.claimSessionSlot("sess-a", slotResolve{allowCreate: true}, true, false)
 	if err == nil {
 		t.Fatal("repeat start admitted; want Unavailable")
 	}

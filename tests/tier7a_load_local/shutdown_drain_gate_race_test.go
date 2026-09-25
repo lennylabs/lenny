@@ -325,7 +325,8 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 		// The incoming session's workspace preparation registers its slot
 		// without binding it. A drain withheld on that entry is the defect.
 		if _, err := s.FinalizeWorkspace(context.Background(), &adapterv1.FinalizeWorkspaceRequest{
-			SessionId: &adapterv1.SessionId{Value: "bob"},
+			BindAttempt: "attempt-a",
+			SessionId:   &adapterv1.SessionId{Value: "bob"},
 		}); err != nil {
 			t.Fatalf("prepare bob's workspace: %v", err)
 		}
@@ -458,7 +459,8 @@ func unsequencedDrainAttempt(t *testing.T) {
 		defer wg.Done()
 		rendezvous.arrive()
 		_, _ = s.FinalizeWorkspace(context.Background(), &adapterv1.FinalizeWorkspaceRequest{
-			SessionId: &adapterv1.SessionId{Value: "bob"},
+			BindAttempt: "attempt-a",
+			SessionId:   &adapterv1.SessionId{Value: "bob"},
 		})
 		_, _ = s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 			SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",

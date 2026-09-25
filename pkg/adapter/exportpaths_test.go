@@ -22,7 +22,7 @@ import (
 func exportServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	s := &Server{WorkspaceBase: t.TempDir()}
-	paths, err := s.ensureSlotPaths("sess-1")
+	paths, err := s.ensureSlotPaths("sess-1", slotResolve{allowCreate: true})
 	if err != nil {
 		t.Fatalf("assign slot: %v", err)
 	}
@@ -218,11 +218,11 @@ func TestExportPathsRequiresSessionAndRoot(t *testing.T) {
 // spec: 6.4 (per-slot workspace layout), 8.7 (file export model)
 func TestExportPathsResolvesTheRequestingSessionsSlotRoot_spec_6_4(t *testing.T) {
 	s := &Server{WorkspaceBase: t.TempDir()}
-	mine, err := s.ensureSlotPaths("sess-1")
+	mine, err := s.ensureSlotPaths("sess-1", slotResolve{allowCreate: true})
 	if err != nil {
 		t.Fatalf("assign slot for sess-1: %v", err)
 	}
-	theirs, err := s.ensureSlotPaths("sess-2")
+	theirs, err := s.ensureSlotPaths("sess-2", slotResolve{allowCreate: true})
 	if err != nil {
 		t.Fatalf("assign slot for sess-2: %v", err)
 	}

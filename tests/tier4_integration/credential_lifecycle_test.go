@@ -194,8 +194,9 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 		t.Fatalf("assign direct-mode lease v1: %v", err)
 	}
 	if _, err := adapterSrv.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: clSession},
-		Leases:    map[string]*adapterv1.CredentialLease{v1.GetProvider(): v1},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: clSession},
+		Leases:      map[string]*adapterv1.CredentialLease{v1.GetProvider(): v1},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}

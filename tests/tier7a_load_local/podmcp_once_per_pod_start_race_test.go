@@ -245,6 +245,7 @@ func podMCPStartRaceAttempt(t *testing.T, second string) {
 		rendezvous.arrive()
 		if second == "resume" {
 			_, errs[1] = s.Resume(ctx, &adapterv1.ResumeRequest{
+				BindAttempt:  "attempt-a",
 				SessionId:    &adapterv1.SessionId{Value: "bob"},
 				CheckpointId: "ckpt-1",
 			})

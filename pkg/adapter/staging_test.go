@@ -32,6 +32,7 @@ func captureLogOutput(t *testing.T) (*bytes.Buffer, func()) {
 
 func runSetupReq(sessionID string, policy *adapterv1.SetupPolicy, cmds ...string) *adapterv1.RunSetupRequest {
 	req := &adapterv1.RunSetupRequest{
+		BindAttempt: "attempt-a",
 		SessionId:   &adapterv1.SessionId{Value: sessionID},
 		SetupPolicy: policy,
 	}
@@ -47,6 +48,7 @@ func wsSource(typ, path, content, mode string) *adapterv1.WorkspaceSource {
 
 func finalizeReq(sessionID string, sources ...*adapterv1.WorkspaceSource) *adapterv1.FinalizeWorkspaceRequest {
 	return &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 	}
@@ -124,6 +126,7 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 		{Type: "symlink", Path: "link", LinkTarget: "target.txt"},
 	}
 	reqWithSymlinkOptIn := &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 		ArchivePolicy: &adapterv1.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: slotCurrent(srv, "sess-1")},
@@ -139,6 +142,7 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	// InvalidArgument (the gRPC mapping of workspace.Materialize errors).
 	srv2 := &Server{WorkspaceBase: t.TempDir()}
 	reqDefault := &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 	}
@@ -157,7 +161,8 @@ func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testi
 	root := t.TempDir()
 	srv := &Server{WorkspaceBase: root}
 	req := &adapterv1.FinalizeWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
 			SchemaVersion: workspace.MaxKnownSchemaVersion + 1,
 			Sources:       []*adapterv1.WorkspaceSource{wsSource("inlineFile", "written.txt", "x", "644")},
@@ -370,9 +375,10 @@ func (s *prepareWorkspaceStreamStub) SendAndClose(resp *adapterv1.PrepareWorkspa
 
 func uploadFrame(sessionID, ref, chunk string) *adapterv1.PrepareWorkspaceRequest {
 	return &adapterv1.PrepareWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		UploadRef: ref,
-		Chunk:     []byte(chunk),
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		UploadRef:   ref,
+		Chunk:       []byte(chunk),
 	}
 }
 

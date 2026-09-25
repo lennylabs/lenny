@@ -681,6 +681,7 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "pkg/adapter/bindattempt_test.go",
         "pkg/adapter/server_test.go",
         "pkg/adapter/session_test.go",
         "pkg/adapter/checkpoint_stream_test.go",
@@ -1035,6 +1036,7 @@
       "title": "Pool Configuration and Execution Modes",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
+        "pkg/adapter/bindattempt_test.go",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantInitialAssignmentByGateway",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsTenantInitialAssignmentByOtherSA",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantResetByWarmPoolController",
@@ -1503,6 +1505,7 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/adapter/bindattempt_test.go",
         "pkg/session/...",
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1",
@@ -1615,6 +1618,7 @@
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/adapter/bindattempt_test.go",
         "pkg/upload/...",
         "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives",
         "pkg/gateway/sessionserver/start_pod_test.go",
@@ -2152,6 +2156,7 @@
       "title": "Coordinator-Loss Detection and Hold State",
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
+        "pkg/adapter/bindattempt_test.go",
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
@@ -3983,6 +3988,7 @@
       "title": "Distributed Tracing",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "pkg/adapter/bindattempt_test.go",
         "pkg/observability/correlation/correlation_test.go::TestFromHTTPHeaderRoundTrip",
         "pkg/observability/correlation/correlation_test.go::TestFromGRPCMetadataLowerCaseKeys",
         "pkg/observability/tracing/tracing_test.go::TestStartProjectsCorrelationFieldsAsAttributes",

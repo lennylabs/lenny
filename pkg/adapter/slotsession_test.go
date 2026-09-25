@@ -131,11 +131,12 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T
 	reporterProbe := func() { atReport.current, atReport.credentials = slotTreeProbe(t, s, "alice") }
 	reporter.beforeReport = reporterProbe
 
+	// §4.7.1 rule 6: the credential assignment precedes the start.
+	assignOne(t, s, "alice", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, time.Time{}))
 	if err := s.claimSessionForTest("alice"); err != nil {
 		t.Fatalf("claim alice: %v", err)
 	}
-	assignOne(t, s, "alice", "anthropic_direct",
-		expiryLease("l1", "anthropic_direct", directPayload, time.Time{}))
 
 	if cur, cred := slotTreeProbe(t, s, "alice"); !cur || !cred {
 		t.Fatalf("before shutdown: cwd present = %v, credential file present = %v, want both", cur, cred)
@@ -316,7 +317,7 @@ func TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2(t *testing.
 	if err := s.claimSessionForTest("alice"); err != nil {
 		t.Fatalf("claim alice: %v", err)
 	}
-	if _, err := s.ensureSlotPaths("bob"); err != nil {
+	if _, err := s.ensureSlotPaths("bob", slotResolve{allowCreate: true}); err != nil {
 		t.Fatalf("register bob's unbound slot: %v", err)
 	}
 
@@ -356,17 +357,18 @@ func TestShutdownCancelsTheEndingSessionsExpiryTimers_spec_4_9(t *testing.T) {
 	stream, cancel := attachControlStream(t, s)
 	defer cancel()
 
-	for _, id := range []string{"alice", "bob"} {
-		if err := s.claimSessionForTest(id); err != nil {
-			t.Fatalf("claim %s: %v", id, err)
-		}
-	}
+	// §4.7.1 rule 6: each credential assignment precedes its start.
 	assignOne(t, s, "alice", "anthropic_direct",
 		expiryLease("l-alice", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
 	aliceTimer := clk.last()
 	assignOne(t, s, "bob", "anthropic_direct",
 		expiryLease("l-bob", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
 	bobTimer := clk.last()
+	for _, id := range []string{"alice", "bob"} {
+		if err := s.claimSessionForTest(id); err != nil {
+			t.Fatalf("claim %s: %v", id, err)
+		}
+	}
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		SessionId: &adapterv1.SessionId{Value: "alice"},

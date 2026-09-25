@@ -155,8 +155,9 @@ func TestExtendCredentialLeaseAcceptedOverWire_spec_4_9(t *testing.T) {
 	defer cancel()
 
 	if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		Leases:    map[string]*adapterv1.CredentialLease{provider: directLease("l1", time.Now().Add(time.Hour))},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: directLease("l1", time.Now().Add(time.Hour))},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
@@ -202,8 +203,9 @@ func TestExtendCredentialLeaseRoutesToTheSessionsOwnTimer_spec_6_1(t *testing.T)
 	const slotID = "slot-a"
 	shortExpiry := time.Now().Add(time.Second)
 	if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: slotID},
-		Leases:    map[string]*adapterv1.CredentialLease{provider: directLease("la", shortExpiry)},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: slotID},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: directLease("la", shortExpiry)},
 	}); err != nil {
 		t.Fatalf("AssignCredentials(slot): %v", err)
 	}

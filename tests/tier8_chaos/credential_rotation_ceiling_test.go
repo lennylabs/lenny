@@ -58,7 +58,8 @@ func startAdapter(t *testing.T, pool, sessionID string) (*adapter.Server, string
 	t.Helper()
 	s, socketPath, audit := rotationgate.NewPodAdapter(t, pool)
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": {LeaseId: "l-old", Provider: "anthropic", Payload: []byte("{}")},
 		},

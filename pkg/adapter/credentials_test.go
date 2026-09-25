@@ -44,7 +44,8 @@ func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	s := credServer(t)
 	ctx := context.Background()
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
 		},
@@ -110,7 +111,8 @@ func TestAssignCredentialsWritesTheCredentialFile(t *testing.T) {
 	s := credServer(t)
 
 	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l1", "anthropic", `{"deliveryMode":"direct"}`),
 		},
@@ -136,7 +138,8 @@ func TestAssignCredentialsRequiresACredentialsDir(t *testing.T) {
 	s := adapter.New("cred-test") // CredentialsDir left unset.
 
 	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("error code = %v, want FailedPrecondition", status.Code(err))
@@ -157,7 +160,8 @@ func TestAssignCredentialsIsolatesASecondSessionsFile_spec_6_1(t *testing.T) {
 
 	for _, sess := range []string{"sess-A", "sess-B"} {
 		if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-			SessionId: &adapterv1.SessionId{Value: sess},
+			BindAttempt: "attempt-a",
+			SessionId:   &adapterv1.SessionId{Value: sess},
 			Leases: map[string]*adapterv1.CredentialLease{
 				"anthropic": credLease("l-"+sess, "anthropic", `{}`),
 			},
@@ -179,7 +183,8 @@ func TestRotateCredentialsMergesProviders(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
 			"openai":    credLease("l-oai-1", "openai", `{}`),
@@ -245,16 +250,18 @@ func TestRotateCredentialsAdmitsAReplacementAfterTheLeaseExpired_spec_4_9(t *tes
 	s, _ := concurrentServer(t)
 	ctx := context.Background()
 
-	if _, err := s.StartSession(ctx, slotStartReq("sess-1")); err != nil {
-		t.Fatalf("StartSession: %v", err)
-	}
+	// §4.7.1 rule 6: the credential assignment precedes the start.
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
 		},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
+	}
+	if _, err := s.StartSession(ctx, slotStartReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
 	}
 	// The expiry empties the slot's lease set while the session lives on.
 	if _, err := s.RevokeCredentials(ctx, &adapterv1.RevokeCredentialsRequest{
@@ -291,7 +298,8 @@ func TestRotateCredentialsRefusesAnUnboundSession_spec_6_1(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-A"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-A"},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
@@ -311,7 +319,8 @@ func TestRevokeCredentialsRemovesNamedProviders(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l-anth", "anthropic", `{}`),
 			"openai":    credLease("l-oai", "openai", `{}`),

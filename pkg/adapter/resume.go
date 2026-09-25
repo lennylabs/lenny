@@ -27,6 +27,11 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "Resume requires a session id")
 	}
+	// spec: §4.7.1 rule 1 — Resume is never mid-session, so it carries a
+	// bind attempt token.
+	if err := validateBindFields(req.GetBindAttempt(), false); err != nil {
+		return nil, err
+	}
 	if req.GetCheckpointId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "Resume requires a checkpoint id")
 	}
@@ -47,7 +52,10 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// spec: §5.2 — the resume claims this session's slot on the
 	// replacement pod, the same claim the start path takes, and decides the
 	// once-per-pod intra-pod MCP start with it.
-	_, startMCP, err := s.claimSessionSlot(sessionID, s.isSDKWarm(), false)
+	_, startMCP, err := s.claimSessionSlot(sessionID, slotResolve{
+		bindAttempt: req.GetBindAttempt(),
+		allowCreate: true,
+	}, s.isSDKWarm(), false)
 	if err != nil {
 		return nil, err
 	}

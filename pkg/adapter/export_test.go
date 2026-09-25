@@ -38,7 +38,7 @@ func (s *Server) ReleaseSlotForTest(sessionID string) {
 // the merged start claim does, so a test can put the adapter in the state
 // a completed StartSession leaves without driving the whole RPC.
 func (s *Server) ClaimSessionForTest(sessionID string) error {
-	_, _, err := s.claimSessionSlot(sessionID, s.isSDKWarm(), false)
+	_, _, err := s.claimSessionSlot(sessionID, slotResolve{allowCreate: true}, s.isSDKWarm(), false)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (s *Server) claimSessionForTest(sessionID string) error {
 // session serving traffic while a second session's workspace is still
 // being prepared.
 func (s *Server) RegisterUnboundSlotForTest(sessionID string) error {
-	_, err := s.ensureSlotPaths(sessionID)
+	_, err := s.ensureSlotPaths(sessionID, slotResolve{allowCreate: true})
 	return err
 }
 

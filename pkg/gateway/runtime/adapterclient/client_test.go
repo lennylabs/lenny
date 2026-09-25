@@ -906,6 +906,7 @@ func TestResumeRestoresTheWorkspace(t *testing.T) {
 		SessionID:    "sess-r",
 		Runtime:      "echo",
 		CheckpointID: "ckpt-1",
+		BindAttempt:  testBindAttempt,
 		Chunks: []adapterclient.ChunkGrant{
 			{Index: 0, URL: chunkURL, Length: int64(archived.Len())},
 		},
@@ -952,6 +953,7 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	// admits the resume, and the adapter echoes recovery_generation.
 	res, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID:               "sess-rg",
+		BindAttempt:             testBindAttempt,
 		Runtime:                 "echo",
 		CheckpointID:            "ckpt-1",
 		RecoveryGeneration:      7,
@@ -975,6 +977,7 @@ func TestResumeEchoesRecoveryGenerationAndEnforcesSizePreCheck(t *testing.T) {
 	cl2 := dialAdapter(t, srv2)
 	if _, err := cl2.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID:               "sess-too-big",
+		BindAttempt:             testBindAttempt,
 		Runtime:                 "echo",
 		CheckpointID:            "ckpt-1",
 		ExpectedWorkspaceBytes:  2048,
@@ -997,6 +1000,7 @@ func TestResumeRejectsChunksWithoutTransport(t *testing.T) {
 
 	if _, err := cl.Resume(context.Background(), adapterclient.ResumeParams{
 		SessionID: "sess-r", Runtime: "echo", CheckpointID: "ckpt-1",
+		BindAttempt: testBindAttempt,
 		Chunks: []adapterclient.ChunkGrant{
 			{Index: 0, URL: "https://objectstore.example/chunk-0", Length: 1},
 		},
@@ -1635,7 +1639,7 @@ var bindSequenceCalls = []struct {
 		return cl.AssignCredentials(ctx, "sess-1", nil, testBindAttempt)
 	}},
 	{"Resume", func(ctx context.Context, cl *adapterclient.Client) error {
-		_, err := cl.Resume(ctx, adapterclient.ResumeParams{SessionID: "sess-1", CheckpointID: "ckpt"})
+		_, err := cl.Resume(ctx, adapterclient.ResumeParams{SessionID: "sess-1", CheckpointID: "ckpt", BindAttempt: testBindAttempt})
 		return err
 	}},
 	{"StartSession", func(ctx context.Context, cl *adapterclient.Client) error {

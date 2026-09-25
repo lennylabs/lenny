@@ -168,8 +168,12 @@ func assertWorkspaceDistinctness(t *testing.T, ctx context.Context, client adapt
 		slots[1].slotID: "workspace-of-" + slots[1].sessionID,
 	}
 	for _, sl := range slots {
+		// Both sessions have started, so the finalize is the §7.4 mid-session
+		// form, which §4.7.1 rule 6 exempts and rule 1 pairs with no bind
+		// attempt token.
 		if _, err := client.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
-			SessionId: &adapterv1.SessionId{Value: sl.sessionID},
+			SessionId:  &adapterv1.SessionId{Value: sl.sessionID},
+			MidSession: true,
 			WorkspacePlan: &adapterv1.WorkspacePlan{
 				SchemaVersion: 1,
 				Sources: []*adapterv1.WorkspaceSource{

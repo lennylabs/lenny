@@ -349,7 +349,7 @@ func TestCoordinatorHoldDoesNotArmOnAnUnstartedEntry_spec_10_1(t *testing.T) {
 				t.Helper()
 				s.mu.Lock()
 				defer s.mu.Unlock()
-				if _, err := s.ensureSlotStateLocked("s1"); err != nil {
+				if _, err := s.ensureSlotStateLocked("s1", slotResolve{allowCreate: true}); err != nil {
 					t.Fatalf("ensure slot state: %v", err)
 				}
 			},
@@ -360,7 +360,7 @@ func TestCoordinatorHoldDoesNotArmOnAnUnstartedEntry_spec_10_1(t *testing.T) {
 				t.Helper()
 				s.mu.Lock()
 				defer s.mu.Unlock()
-				st, err := s.ensureSlotStateLocked("s1")
+				st, err := s.ensureSlotStateLocked("s1", slotResolve{allowCreate: true})
 				if err != nil {
 					t.Fatalf("ensure slot state: %v", err)
 				}
@@ -824,7 +824,7 @@ func TestCoordinatorHoldTimeoutRemovesEveryTerminatedSessionsSlotTree_spec_10_1(
 	// A co-tenant the §4.7 bind sequence bound at credential assignment and
 	// that never started here: the gateway has re-placed it on another pod.
 	s.mu.Lock()
-	cotenant, err := s.ensureSlotStateLocked("sess-c")
+	cotenant, err := s.ensureSlotStateLocked("sess-c", slotResolve{allowCreate: true})
 	if err != nil {
 		s.mu.Unlock()
 		t.Fatalf("seed the bound-not-started co-tenant: %v", err)
