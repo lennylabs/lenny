@@ -467,10 +467,9 @@ var perSlotCleanupTables = []struct {
 //
 //	concurrent configuration alone. The per-slot cleanup runs at each session
 //	release in session mode, on a pod of any concurrency and any recycle
-//	setting, and the adapter reports its outcome to the gateway. A table that
-//	states it on the concurrent row alone tells an operator that a
-//	single-session pod releases without one, which is the question the table
-//	exists to answer.
+//	setting. A table that states it on the concurrent row alone tells an
+//	operator that a single-session pod releases without one, which is the
+//	question the table exists to answer.
 func TestPerSlotCleanupStatedOnEverySessionModeRow(t *testing.T) {
 	root := repoRoot(t)
 

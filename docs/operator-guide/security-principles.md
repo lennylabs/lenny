@@ -30,7 +30,7 @@ This page describes the security posture Lenny is built to. It is a companion to
 
 In the default configuration (`sessionPolicy.maxConcurrentSessions: 1`, `recycle.enabled: false`) every session runs in its own Kubernetes pod that is terminated when the session ends. Pods do not share filesystems, credentials, or long-lived network paths, and cross-session leakage through `/tmp`, environment, or a shared in-process cache cannot occur because nothing is reused. The gateway, rather than the pod, is the sole intermediary that sees cross-session context, and it sees only the slivers a given request requires.
 
-A per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting, and the adapter reports its outcome to the gateway.
+A per-slot cleanup runs at each session release in session mode, on a pod of any concurrency and any recycle setting.
 
 When a deployer opts into pod reuse, the trust boundary relaxes by acknowledgment. Credential leases are always per session, but residual state can survive between sessions:
 
