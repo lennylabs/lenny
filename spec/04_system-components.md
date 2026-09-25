@@ -903,7 +903,7 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 2. Adapter opens gRPC connection to gateway (mTLS)
 3. Adapter writes placeholder manifest (connector servers unknown yet)
 4. Adapter signals READY to gateway — pod enters warm pool
-5. Gateway assigns session: `PrepareWorkspace` → `FinalizeWorkspace` → `RunSetup` → `AssignCredentials(leases)` → `StartSession`
+5. Gateway assigns session: `PrepareWorkspace` → `FinalizeWorkspace` → `RunSetup` → `AssignCredentials(leases)` → `StartSession`. A stage that fails takes the failure branch stated in [Section 7.1](07_session-lifecycle.md#71-normal-flow).
 6. Adapter writes **final manifest** (connector servers now known from leases; all provider credentials available)
 7. Adapter spawns runtime binary
 8. Runtime reads manifest, connects to MCP servers (Standard/Full), opens CH-RUNTIMEOPS (Full)
