@@ -309,13 +309,45 @@ restating it.
 
 ## Open decisions for human to make
 
-No decisions remain open for a human: the operator answered the last of them, decisions 30,
-32, 33, 34, 36, 50, 56 and 57, on 2026-09-25 (`[operator.decisions-0925]`), and the review log's
-`### Settled` list, its standing-context changelog and the review-log archive record how every
-entry that has left this section was answered or moved to `## Defects in the shipped tree that
-this proposal does not stage`, among them decision 53, whose re-cut of CODE-1, CODE-4 and CODE-6
-lands CODE-14 at S15 (its `Shutdown` rows with CODE-1 at S16), CODE-13 at S19, and CODE-15 with
-CODE-1 at S16.
+The operator answered decisions 30, 32, 33, 34, 36, 50, 56 and 57 on 2026-09-25
+(`[operator.decisions-0925]`), and the review log's `### Settled` list, its standing-context
+changelog and the review-log archive record how every entry that has left this section was
+answered or moved to `## Defects in the shipped tree that this proposal does not stage`, among
+them decision 53, whose re-cut of CODE-1, CODE-4 and CODE-6 lands CODE-14 at S15 (its `Shutdown`
+rows with CODE-1 at S16), CODE-13 at S19, and CODE-15 with CODE-1 at S16.
+
+The review loop left the three decisions below open in its `### Open` list. Each concerns the
+proposal's own text rather than the mechanism it stages, and none changes a staged edit's effect.
+
+- **Decision 58. Should the spec-changes file keep the paragraph that records where the reclaim
+  hold's ten-second graceful window comes from?** The paragraph sits in SPEC-3's commentary,
+  after the §5.2 disposition-table discussion, and is not a staged spec edit. It cites the tree's
+  existing ten-second close context in `pkg/adapter/holdstate.go`, the commit that landed it,
+  §11.4 step 3's ten-second window, the `Shutdown` deadline the gateway sends and the runtimes'
+  own grace periods, and it explains why no operator override is staged for the figure. Decision
+  40 appended sentences to it. Keeping it retains that provenance for the implementor of CODE-6
+  and CODE-14; deleting it shortens commentary that no staged edit depends on. The review loop
+  recorded that the next prune decides and derived no recommendation; the
+  open-decisions-and-impact-review phase supplies one.
+- **Decision 59. Should the non-spec `## Testing` section state a test disposition for DOCS-2's
+  amended `DemoteSDK` row in `docs/reference/adapter-contract.md`?** DOCS-2 edits four things on
+  that page: the `Shutdown` row, the `DemoteSDK` row, the `ReportSessionScrub` row and one added
+  bind-attempt paragraph. The DOCS-2 block states how three of the four are tested, and no
+  tier-11 gate reads the `DemoteSDK` row, so a later edit that drifts from §4.7's `DemoteSDK` row
+  goes undetected. The review loop filed the gap in three runs and rejected it each time as
+  documentation polish below its bar, and recorded that a prune closes it. The choice is between
+  adding a disposition (a tier-11 assertion, or a sentence recording that the row is unguarded
+  on purpose) and leaving the section as it is.
+- **Decision 60. Should the summary's "File-collision discipline" bullet under `## Summary` be
+  cut down?** The bullet says "Five further adapter files are opened for one small edit each",
+  but the staged changes also open `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go` and
+  `pkg/adapter/metrics.go`, and the edit it describes for `staging.go` is smaller than what
+  CODE-6 and CODE-14 stage there. The same summary's proto-window bullet already names
+  `sdkwarm.go`. The review loop derived a remedy: cut the bullet to its one-clause reason (a
+  later position covering proposal 0080 rewrites these files, so this proposal keeps each edit to
+  the smallest set the mechanism needs) and point at `## Files touched on application
+  (non-spec)` in the non-spec changes file for the file list. The alternative is to correct the
+  count and the file list in place.
 
 ## Defects in the shipped tree that this proposal does not stage
 
