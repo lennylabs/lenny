@@ -354,6 +354,48 @@ func TestFinalizeWorkspaceReadsMidSessionBeforeItResolves_spec_4_7_1(t *testing.
 	}
 }
 
+// spec: §4.7.1 (role and gateway RPC contract); §7.4 (upload safety)
+//
+// PrepareWorkspace applies rule 3 on its first frame: a mid-session upload
+// for a session the pod holds no entry for is refused FAILED_PRECONDITION
+// and creates no entry and no tree. The resolve site wraps every failure
+// other than a typed refusal as INVALID_ARGUMENT, so this pins the rule-3
+// refusal as one that passes through the wrap.
+func TestPrepareWorkspaceMidSessionWithoutEntryRefusesFailedPrecondition_spec_4_7_1(t *testing.T) {
+	s, _ := bindServer(t)
+	err := s.PrepareWorkspace(&prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame("alice", "", true, "ab")},
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition", status.Code(err))
+	}
+	if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+		t.Error("a mid-session upload with no entry created an entry or a tree")
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract), rule 3; §16.3 (distributed tracing)
+//
+// The rule-3 refusal passes through the resolve-site wrap unchanged: it
+// keeps FAILED_PRECONDITION rather than becoming INVALID_ARGUMENT, and its
+// span category is PERMANENT. A non-refusal resolve failure is wrapped as
+// INVALID_ARGUMENT under the site prefix.
+func TestSlotResolveErrorPassesTheMidSessionRefusalThrough_spec_4_7_1(t *testing.T) {
+	refusal := errSlotMidSessionNoEntry("alice")
+	got := slotResolveError(refusal, "resolve staging for session alice")
+	if status.Code(got) != codes.FailedPrecondition {
+		t.Errorf("wrapped rule-3 refusal code = %v, want FailedPrecondition", status.Code(got))
+	}
+	if cat := slotResolveCategory(got); cat != tracing.CategoryPermanent {
+		t.Errorf("rule-3 refusal span category = %v, want %v", cat, tracing.CategoryPermanent)
+	}
+	plain := slotResolveError(errors.New("invalid slot id"), "resolve staging for session alice")
+	if status.Code(plain) != codes.InvalidArgument {
+		t.Errorf("non-refusal resolve failure code = %v, want InvalidArgument", status.Code(plain))
+	}
+}
+
 // prepareFrame is one PrepareWorkspace frame carrying the given fields.
 func prepareFrame(sessionID, token string, midSession bool, chunk string) *adapterv1.PrepareWorkspaceRequest {
 	return &adapterv1.PrepareWorkspaceRequest{
