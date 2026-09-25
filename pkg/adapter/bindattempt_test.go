@@ -663,6 +663,7 @@ func TestEveryDeregisterThenDestroySiteTakesTheHold_spec_5_2(t *testing.T) {
 	}{
 		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot(t.Context(), "alice") }},
 		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
+		{"Shutdown removing arm", func(s *Server) { unconditionalShutdown(t, s, t.Context(), "alice") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -698,6 +699,7 @@ func TestACleanupWhoseTreeRemovalFailsKeepsTheHold_spec_5_2(t *testing.T) {
 	}{
 		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot(t.Context(), "alice") }},
 		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
+		{"Shutdown removing arm", func(s *Server) { unconditionalShutdown(t, s, t.Context(), "alice") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -926,6 +928,20 @@ func TestTheBindAttemptTokenIsNeverInAMessage_spec_4_7_1(t *testing.T) {
 	}
 }
 
+// unconditionalShutdown sends the unconditional form of Shutdown for
+// slotID on ctx and fails the case on an RPC error.
+func unconditionalShutdown(t *testing.T, s *Server, ctx context.Context, slotID string) *adapterv1.ShutdownResponse {
+	t.Helper()
+	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId:             &adapterv1.SessionId{Value: slotID},
+		UnconditionalTeardown: true,
+	})
+	if err != nil {
+		t.Errorf("Shutdown %s: %v", slotID, err)
+	}
+	return resp
+}
+
 // cancelledContext returns a context that is already cancelled.
 func cancelledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1031,6 +1047,9 @@ func TestADestructiveSectionWhoseGuardAcquisitionExpiresRemovesUnguardedAndKeeps
 			for _, m := range s.deregisterStartedSessions() {
 				s.terminateHeldSession(ctx, m)
 			}
+		}},
+		{"Shutdown removing arm", "Shutdown", func(s *Server, ctx context.Context) {
+			unconditionalShutdown(t, s, ctx, "alice")
 		}},
 	}
 	for _, tc := range cases {

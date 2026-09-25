@@ -180,6 +180,7 @@ These counters are emitted by the adapter process inside each agent pod. The def
 | `lenny_adapter_sopeercred_selftest_failed_total` | Counter | -- | Increments when the adapter's `SO_PEERCRED` self-test fails. Outside the default scrape set. | Operational monitoring. |
 | `lenny_adapter_set_tracing_context_dropped_total` | Counter | -- | Increments when a runtime's `set_tracing_context` frame names a session that is not the live binding of the Attach stream that delivered it and the adapter drops it. Outside the default scrape set. | Operational monitoring. |
 | `lenny_adapter_unaddressed_frame_rejected_total` | Counter | `frame_type` | Increments once per Attach stream that rejects a session-scoped frame carrying no per-session identifier on a pod holding more than one slot. One such frame on a pod holding two live streams increments the counter twice. Outside the default scrape set. | Operational monitoring. |
+| `lenny_slot_shutdown_untokened_entry_total` | Counter | -- | Increments when a `Shutdown` that carries a bind attempt token meets a slot registry entry that carries none. The adapter answers `superseded` and removes nothing, so the series counts the reclaims that met an entry no bind attempt owns, such as an entry a start created. Outside the default scrape set. | Operational monitoring. |
 
 ---
 

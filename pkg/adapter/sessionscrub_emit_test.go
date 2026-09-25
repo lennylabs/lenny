@@ -82,7 +82,8 @@ func startSlot(t *testing.T, s *Server, sessionID string) {
 
 func shutdownSlotReq(sessionID string) *adapterv1.ShutdownRequest {
 	return &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
 	}
 }
 
@@ -225,8 +226,9 @@ func TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2(t *testing.T) {
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-base"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:               &adapterv1.RecycleScrub{PodId: "pod-base"},
 	}); err != nil {
 		t.Fatalf("Shutdown(recycle): %v", err)
 	}
@@ -266,7 +268,8 @@ func TestTerminateShutdownEmitsTheSessionScrub_spec_5_2(t *testing.T) {
 
 	// No Recycle disposition: the terminate path.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Shutdown(terminate): %v", err)
 	}

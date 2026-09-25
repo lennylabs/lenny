@@ -424,7 +424,8 @@ func readCredentialProviders(t *testing.T, path string) map[string]string {
 func shutdownSlotCleanly(t *testing.T, ctx context.Context, client adapterv1.AdapterClient, s concurrentSlotSession) {
 	t.Helper()
 	resp, err := client.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: s.sessionID},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: s.sessionID},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown(%s on %s): %v", s.sessionID, s.sessionID, err)

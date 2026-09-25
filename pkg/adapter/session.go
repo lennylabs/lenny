@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -200,66 +201,224 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 	return &adapterv1.SendMessageResponse{}, nil
 }
 
-// Shutdown tears the named session down and, on the occupancy-zero
-// recycle boundary, runs the §5.2 whole-pod scrub. It is where a
-// session's whole teardown lands, on every pod: the final usage flush,
-// the §15.4.2 drain signal, the runtime close, the per-slot tree removal,
-// and the cleanup-outcome report are one sequence whatever the pool's
-// concurrency.
+// Shutdown answers a teardown request for one slot. It performs two
+// teardowns under two preconditions, as the §4.7 Shutdown row states: it
+// releases the slot and its per-slot tree for any registry entry the call
+// removes, and it tears the runtime down only for a session that started.
+// releaseSessionSlot is the shipped statement of the unstarted branch's
+// semantics, so the gateway's compensation and the adapter's own start
+// rollbacks read as one rule.
 //
-// The handler is three ordered clauses over one message. It refuses an
-// empty session_id. It then runs the locked cancel-deregister step for
-// the named session and runs the teardown when that step removed a bound
-// entry, skipping it otherwise. It then runs the whole-pod scrub when the
-// request carries the recycle disposition.
+// Rule 10 (the teardown-pairing rule) is the outermost branch. It is
+// decided on the request's fields alone, which is why it sits above s.mu:
+// a malformed request never reaches the registry and performs nothing,
+// the whole-pod scrub included.
 //
-// Clause two is conditional rather than guarded, which is what makes the
-// handler idempotent: the §11.4 full revoke and the concurrent
-// occupancy-zero edge each send a second request for a session already
-// released, and returning an error there would make every revoked session
-// hold its slot for the life of the pod.
+// Rules 11 through 15 are the comparison shutdownReclaimOutcome decides.
+// Its arms map onto the rules in the cascade's order: no entry is rule 11
+// and answers ABSENT; the unconditional form is rule 12 and answers
+// RECLAIMED; an entry carrying no token and an entry carrying another
+// token are rule 13's two arms and answer SUPERSEDED, which tells the
+// gateway the entry belongs to another attempt and nothing was removed; a
+// matching token is rule 14 and answers RECLAIMED. Rule 15 is the
+// slot_reclaim field every answer carries. The removing arm's per-slot
+// guard, reclaim hold and cleanup-outcome report follow §5.2's reclaim-hold
+// paragraph and disposition table; the inline comments give the reasons.
 //
-// The §4.7 ShutdownRequest carries `deadline_ms` — the §11.4 step-3
-// graceful window the gateway pinned at full_revoke (10s by default).
-// Close runs under a context bounded by that deadline so the runtime
-// adapter's SIGTERM/SIGKILL pivot honors the spec window instead of an
-// internal default. A non-positive `deadline_ms` falls through to the
-// inbound RPC context.
+// The runtime teardown must not run for an unstarted session. For a
+// bound-but-unstarted entry the handler this replaced sent the §15.4.2
+// drain whenever no other bound entry remained, which a
+// registered-but-unbound co-tenant about to call StartSession does not
+// hold off, and filed a ReportSessionScrub that advanced sessionsServed
+// for a session the pod never ran. Runtime.Close is also not uniformly
+// session-scoped: InProcessRuntime.Close and MCPRuntime.Close ignore the
+// session identifier and tear the runtime down on any call, and
+// SocketRuntimeProcess.Close tears down the shared connection, the child
+// and the never-rebound listener whenever its active set is empty, which
+// Interrupt of the last active session produces without clearing the
+// connection.
 //
-// spec: §4.7; §5.2; §11.4; §15.4.2.
+// A non-positive deadline_ms leaves Runtime.Close on the inbound context;
+// a positive one bounds it, so the runtime's SIGTERM/SIGKILL pivot honors
+// the §11.4 graceful window.
+//
+// spec: §4.7; §4.7.1 (role and gateway RPC contract), rules 10 through 15;
+// §5.2 (slot-identifier reclaim hold); §11.4; §15.4.2.
 func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "Shutdown requires a session id")
 	}
+	// spec: §4.7.1 (role and gateway RPC contract), rule 10 (the
+	// teardown-pairing rule). Decided on the request's fields alone, so it
+	// sits above s.mu and a malformed request never reaches the registry.
+	attempt := req.GetBindAttempt()
+	unconditional := req.GetUnconditionalTeardown()
+	if (attempt == "") == !unconditional {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"shutdown for session %s must carry exactly one of bind_attempt and unconditional_teardown",
+			sessionID)
+	}
 
-	// Clause two. The deregistration and the drain decision are one
-	// critical section: an occupancy read taken before the deregistration
-	// would let two co-tenants ending at once each observe the other and
-	// send no drain at all.
+	// The first decision runs under s.mu alone, with no slot guard taken.
+	// An arm that removes nothing touches no path, and the per-slot guard
+	// brackets sections that run as long as a materialization, a setup
+	// command or a checkpoint restore. A reclaim answering ABSENT or
+	// SUPERSEDED from behind one of those would spend its whole budget
+	// waiting to report that it removed nothing, and the gateway would
+	// record an RPC error and a leaked slot instead.
 	s.mu.Lock()
-	st, removed, boundRemains := s.deregisterSlotLocked(sessionID)
-	bound := removed && st.sessionID != ""
+	cur, ok := s.slotStateLocked(sessionID)
+	outcome, remove, untokened := shutdownReclaimOutcome(cur, ok, unconditional, attempt)
+	s.mu.Unlock()
+	if !remove {
+		return s.answerShutdown(req, outcome, true, untokened)
+	}
+
+	// The removing arm takes the guard through the raw form, which no
+	// reclaim hold refuses and which gives up inside the request's own
+	// context rather than blocking past it. An expired acquisition proceeds
+	// unguarded and counts as a cleanup that did not complete (§5.2). The
+	// unlock is deferred ahead of the hold release below, so the guard
+	// outlives the hold: a FinalizeWorkspace, RunSetup or Resume admitted
+	// before this reclaim opened its hold is excluded by the guard, which
+	// the hold cannot reach once a section is past its resolve.
+	unlockSlot, guarded := s.lockSlotGuard(ctx, sessionID)
+	defer unlockSlot()
+	if !guarded {
+		warnSlotGuardNotAcquired(sessionID, "Shutdown")
+	}
+
+	// The second decision is required rather than defensive: s.mu was not
+	// held while the guard was acquired, so the entry can have been removed
+	// or replaced, and deregistering on the first decision would act on a
+	// comparison the registry no longer supports. This decision is the one
+	// the deregistration is atomic with, because deregisterSlotLocked
+	// deletes unconditionally once it finds an entry.
+	s.mu.Lock()
+	cur, ok = s.slotStateLocked(sessionID)
+	outcome, remove, untokened = shutdownReclaimOutcome(cur, ok, unconditional, attempt)
+	if !remove {
+		s.mu.Unlock()
+		return s.answerShutdown(req, outcome, true, untokened)
+	}
+	st, _, boundRemains, release := s.reclaimSlotLocked(sessionID)
+	r := reclaimedSlot{
+		st: st,
+		// st.started is set inside claimSessionSlotUnderLock before
+		// Runtime.Start runs, so gating the runtime teardown on it fails
+		// closed on a start still in flight, which is torn down rather than
+		// skipped.
+		started:      st.started,
+		live:         s.runtimeHoldsLocked(sessionID),
+		boundRemains: boundRemains,
+		guarded:      guarded,
+	}
+	// spec: §5.2 (slot-identifier reclaim hold). The deregistration and the
+	// hold are one critical section, so no bind is admitted between them.
+	// The release is deferred rather than written at each return so that a
+	// panic out of Runtime.Close or the tree removal is a cleanup that did
+	// not complete rather than a silent release, and it is taken only when
+	// the cleanup completed, because §5.2 keeps the identifier held for the
+	// life of the pod when it does not.
+	completed := false
+	defer func() {
+		if completed {
+			release()
+		}
+	}()
 	s.mu.Unlock()
 
+	exitedCleanly, done := s.tearDownReclaimedSlot(ctx, req, r)
+	completed = done
+	return s.answerShutdown(req, outcome, exitedCleanly, false)
+}
+
+// shutdownReclaimOutcome decides what a Shutdown does with the entry it
+// resolved, as a pure function of the request and the entry. It is the
+// whole of §4.7.1's teardown comparison, and the handler evaluates it twice
+// on the removing path: once under s.mu as the fast path that answers the
+// outcomes removing nothing, and once under s.mu after the slot guard is
+// held, which is the evaluation the deregistration is atomic with. Two calls
+// of one function cannot diverge, where the same comparison written out
+// twice can.
+//
+// It returns the outcome, whether the entry is removed, and whether the
+// fail-closed arm answered, an entry carrying no attempt token at all, so
+// the caller counts it on the arm that answers and a call counts it at most
+// once.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rules 11 through 14
+func shutdownReclaimOutcome(cur *slotState, ok, unconditional bool, attempt string) (adapterv1.SlotReclaimOutcome, bool, bool) {
+	switch {
+	case !ok:
+		// Rule 11, the no-entry rule.
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_ABSENT, false, false
+	case unconditional:
+		// Rule 12, the unconditional-teardown rule.
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED, true, false
+	case cur.bindAttempt == "":
+		// Rule 13, the entry carries no token.
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED, false, true
+	case cur.bindAttempt != attempt:
+		// Rule 13, the entry carries another attempt's token.
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED, false, false
+	default:
+		// Rule 14, the attempt-match rule.
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED, true, false
+	}
+}
+
+// reclaimedSlot is what the removing arm of Shutdown captured inside the
+// critical section that deregistered the entry. The predicates are taken
+// once, under s.mu, and never re-read afterwards.
+type reclaimedSlot struct {
+	// st is the deregistered entry.
+	st *slotState
+	// started gates the runtime teardown: the merged claim ran for this
+	// session, whether or not Runtime.Start has returned.
+	started bool
+	// live gates the cleanup-outcome report: the shared runtime process
+	// holds the session, which noteRuntimeStarted records only after
+	// Runtime.Start returned, so the slot reached §6.2's running.
+	live bool
+	// boundRemains reports that another bound entry survives the
+	// deregistration, which withholds the pod-global §15.4.2 drain.
+	boundRemains bool
+	// guarded reports that the section holds the slot's guard.
+	guarded bool
+}
+
+// tearDownReclaimedSlot runs the two teardowns for an entry Shutdown's
+// removing arm deregistered, with s.mu released. It returns the response's
+// exited_cleanly and whether the cleanup completed, which is the predicate
+// that ends the §5.2 reclaim hold.
+//
+// started over-approximates toward closing and live under-approximates
+// toward not counting, so every interleaving of a reclaim with a start
+// files zero or one cleanup-outcome report for the session: a reclaim while
+// the start is in flight closes the runtime and reports nothing, and a
+// reclaim after noteRuntimeStarted recorded the session reports exactly
+// once. The gateway advances the pod's served-session count on every report
+// with no per-session dedup, so the one-report rule has to hold here.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rules 12 and 14; §5.2 (pool
+// configuration and execution modes); §15.4.2.
+func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.ShutdownRequest, r reclaimedSlot) (exitedCleanly, completed bool) {
+	sessionID := req.GetSessionId().GetValue()
 	closeErr := error(nil)
-	if bound {
+	if r.started {
 		// §4.7: flush a final usage report onto the gateway control stream
-		// before the stream closes, so the gateway can run
-		// budget_return.lua (§8.3) with the session's complete token
-		// totals. It reads the usage meter alone, so it is indifferent to
-		// the entry being gone by the time it runs.
+		// so the gateway can run budget_return.lua (§8.3) with the
+		// session's complete token totals.
 		s.emitFinalUsage(ctx, sessionID)
-		// spec: §15.4.2 / §15.4.3 — a Full-level runtime drains through
-		// CH-RUNTIMEOPS (the DRAINING state) before the hard runtime
-		// close. The signal is pod-global and names no session, so it goes
-		// out only when the deregistration left the registry holding no
-		// bound entry; sending it while a co-tenant is still bound would
-		// signal the shared runtime to terminate while it is still serving
-		// that session. It precedes the close because the last session's
-		// close tears the shared runtime down and a terminate frame sent
-		// afterwards reaches a dead runtime.
-		if !boundRemains {
+		// spec: §15.4.2 / §15.4.3. The drain signal is pod-global and names
+		// no session, so it goes out only when the deregistration left no
+		// bound entry; a bound co-tenant is still being served. It precedes
+		// the close because the last session's close tears the shared
+		// runtime down and a terminate frame sent afterwards reaches a dead
+		// runtime.
+		if !r.boundRemains {
 			s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
 		}
 		if s.Runtime != nil {
@@ -268,30 +427,71 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 			cancel()
 		}
 		s.noteRuntimeClosed(sessionID)
-		// The second release step. It follows the drain and the close so
-		// the agent process is not reading a credential file the teardown
-		// has already removed inside the §15.4.2 grace window.
-		_ = removeSlotTree(st)
-		s.cancelPodMCPIfRuntimeIdle()
-		// spec: §5.2 (per-session cleanup outcome), §4.7
-		// (ReportSessionScrub). Report the cleanup outcome so the gateway
-		// advances sessions_served (feeding the maxSessionsPerPod
-		// retirement) and, on a leaked outcome, feeds the
-		// unhealthy-threshold ledger. A clean close is `released`; a close
-		// failure or grace-deadline overrun is `leaked`.
-		s.reportSessionScrub(ctx, sessionID, closeErr)
 	}
 
-	// Clause three. The gateway populates recycle only at occupancy zero,
-	// and on that call clause two has already deregistered the ending
-	// session and removed its tree ahead of the scrub. The Shutdown
-	// response does not wait for the scrub; the gateway bounds it with the
-	// missing-report timeout it armed before sending this request.
-	// spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
+	// The slot release runs for any entry the call removed, bound or not,
+	// which reclaims the tree and the empty credential directory the
+	// workspace-preparation RPCs created for a registered-but-unbound
+	// entry. It follows the drain and the close so the agent process is not
+	// reading a credential file the teardown already removed inside the
+	// §15.4.2 grace window. The armed §4.9 expiry timers were cancelled by
+	// deregisterSlotLocked. cancelPodMCPIfRuntimeIdle is safe here for an
+	// unbound entry: it cancels nothing while the shared runtime process
+	// serves a session or the arming session still holds a slot.
+	treeErr := s.removeSlotTreeVia(r.st)
+	s.cancelPodMCPIfRuntimeIdle()
+	if treeErr != nil {
+		slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", treeErr)
+	}
+
+	// The cleanup-outcome report is §6.2 occupancy accounting and stays
+	// keyed on closeErr alone. On the running arm the gateway frees the
+	// slot's occupancy on a clean exit, so a leaked report keyed on the
+	// tree removal as well would book a leak against occupancy the same
+	// answer frees; that residue is reclaimed at the occupancy-zero
+	// whole-pod scrub instead.
+	if r.live {
+		s.reportSessionScrub(ctx, sessionID, closeErr)
+	}
+	// exited_cleanly implements the §5.2 table's clean-exit column. A slot
+	// that reached running answers on the runtime close alone; one that did
+	// not also carries the tree removal and the guard, because the gateway
+	// keys its leaked disposition on this answer.
+	exitedCleanly = closeErr == nil && (r.live || (r.guarded && treeErr == nil))
+	completed = r.guarded && closeErr == nil && treeErr == nil
+	return exitedCleanly, completed
+}
+
+// answerShutdown is the handler's only exit after the two-field
+// precondition, so every outcome is built in one place. It counts the
+// fail-closed arm, runs clause three and builds the response.
+//
+// Clause three, the whole-pod recycle scrub, runs on every outcome, because
+// the two gateway callers that carry the recycle disposition reach
+// different arms: Binder.ReleaseSlot sends it after a separate
+// unconditional Shutdown already tore the last slot down, so its request
+// answers ABSENT, and Binder.Release's recycle branch sends it as the
+// session's only teardown, so its request answers RECLAIMED on the removing
+// arm. An arm that returned before the scrub would hand the pod to the next
+// tenant unscrubbed with no ReportPodScrub for the gateway's armed
+// missing-report timeout to receive. On the removing arm Runtime.Close and
+// the tree removal have both returned before the scrub goroutine starts,
+// which is the order §5.2 states for the whole-pod boundary. The response
+// does not wait for the scrub; the gateway bounds it with that timeout.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rules 13 and 15; §5.2
+// recycle lifecycle; §4.7 Shutdown recycle disposition; §16.1.
+func (s *Server) answerShutdown(req *adapterv1.ShutdownRequest, outcome adapterv1.SlotReclaimOutcome, exitedCleanly, untokened bool) (*adapterv1.ShutdownResponse, error) {
+	if untokened {
+		incSlotShutdownUntokenedEntry()
+	}
 	if rc := req.GetRecycle(); rc != nil {
 		s.startPodScrub(rc)
 	}
-	return &adapterv1.ShutdownResponse{ExitedCleanly: closeErr == nil}, nil
+	return &adapterv1.ShutdownResponse{
+		ExitedCleanly: exitedCleanly,
+		SlotReclaim:   outcome,
+	}, nil
 }
 
 // drainViaLifecycle sends the §15.4.2 DRAINING-state graceful-shutdown

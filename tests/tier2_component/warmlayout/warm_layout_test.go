@@ -159,7 +159,8 @@ func TestSlotTreeAppearsAtAssignmentAndIsGoneAfterCleanup_spec_6_4(t *testing.T)
 	}
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}

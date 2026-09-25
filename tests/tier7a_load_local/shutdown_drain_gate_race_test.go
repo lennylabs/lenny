@@ -267,8 +267,9 @@ func concurrentShutdownDrainAttempt(t *testing.T) {
 			defer func() { done <- struct{}{} }()
 			rendezvous.arrive()
 			_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-				SessionId: &adapterv1.SessionId{Value: sessionID},
-				Reason:    "session_complete",
+				UnconditionalTeardown: true,
+				SessionId:             &adapterv1.SessionId{Value: sessionID},
+				Reason:                "session_complete",
 			})
 		}()
 	}
@@ -331,7 +332,8 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 			t.Fatalf("prepare bob's workspace: %v", err)
 		}
 		if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "alice"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "alice"},
 		}); err != nil {
 			t.Fatalf("shut alice down: %v", err)
 		}
@@ -372,7 +374,8 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 
 		startDrainSession(t, s, "bob")
 		if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "alice"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "alice"},
 		}); err != nil {
 			t.Fatalf("shut alice down: %v", err)
 		}
@@ -452,7 +455,8 @@ func unsequencedDrainAttempt(t *testing.T) {
 		defer wg.Done()
 		rendezvous.arrive()
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "alice"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "alice"},
 		})
 	}()
 	go func() {

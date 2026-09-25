@@ -170,7 +170,9 @@ func runCancels(cancels []context.CancelFunc) {
 //
 // The cancellation belongs here because an armed timer left behind fires
 // AUTH_EXPIRED against a session that has already ended, and both teardown
-// paths this step replaces cancelled before the runtime close.
+// paths this step replaces cancelled before the runtime close. It is
+// unconditional on the binding, and Shutdown's reclaim of an unbound or
+// unstarted entry relies on that as much as the bound teardown does.
 //
 // The bound-entry answer is the outcome of the same critical section that
 // removed the entry rather than a read taken before it, so two co-tenants

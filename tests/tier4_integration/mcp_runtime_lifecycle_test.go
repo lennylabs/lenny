@@ -136,7 +136,8 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 
 	// Shutdown: terminate the runtime and release the pod.
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-mcp-lifecycle"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-mcp-lifecycle"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -155,6 +156,7 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 		t.Fatalf("StartSession after Shutdown: pod was not released: %v", err)
 	}
 	_, _ = s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-mcp-lifecycle-2"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-mcp-lifecycle-2"},
 	})
 }

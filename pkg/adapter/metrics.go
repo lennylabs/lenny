@@ -91,6 +91,16 @@ var (
 		Help: "set_tracing_context frames dropped because they did not " +
 			"address the Attach stream that delivered them (§28.5.3).",
 	})
+	// §4.7.1 rule 13 and §16.1: a Shutdown carrying a bind attempt token
+	// met a registry entry that carries none, so the reclaim answered
+	// superseded and removed nothing. It counts the reclaims that met an
+	// entry no attempt owns, such as an entry a start created. The series
+	// carries no pod label, because the adapter's scrape target attaches it.
+	slotShutdownUntokenedEntry = mustCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_shutdown_untokened_entry_total",
+		Help: "Shutdown requests carrying a bind attempt token that met a " +
+			"slot registry entry carrying none (§4.7.1, §16.1).",
+	})
 	// §28.5.3: session-scoped frames rejected because they carry no
 	// per-session identifier on a pod holding more than one slot, where
 	// nothing in the frame says which session they address. The rejection
@@ -207,6 +217,11 @@ func incControlEventDropped(event, reason string) {
 // incSetTracingContextDropped records a §28.5.3 set_tracing_context
 // frame the adapter dropped because it addressed another Attach stream.
 func incSetTracingContextDropped() { setTracingContextDropped.WithLabelValues().Inc() }
+
+// incSlotShutdownUntokenedEntry records a Shutdown whose bind attempt token
+// met a slot registry entry carrying none, which §4.7.1 rule 13 answers
+// superseded. spec: §4.7.1 (role and gateway RPC contract); §16.1.
+func incSlotShutdownUntokenedEntry() { slotShutdownUntokenedEntry.WithLabelValues().Inc() }
 
 // incUnaddressedFrameRejected records a §28.5.3 session-scoped frame the
 // adapter rejected because it carried no per-session identifier on a pod

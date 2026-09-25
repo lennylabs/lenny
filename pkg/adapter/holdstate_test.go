@@ -913,8 +913,9 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 	}
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-next"},
-		Reason:    "session_complete",
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-next"},
+		Reason:                "session_complete",
 	}); err != nil {
 		t.Fatalf("Shutdown the next session: %v", err)
 	}

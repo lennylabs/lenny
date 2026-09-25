@@ -67,7 +67,8 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		})
 	})
 
@@ -152,7 +153,8 @@ func TestConnectorServersEmptyWithoutForwarder_spec_4_7(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		})
 	})
 	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))

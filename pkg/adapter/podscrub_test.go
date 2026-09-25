@@ -196,7 +196,8 @@ func TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2(t *testing.T
 	startRecycleSession(t, s, "sess-1")
 
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-abc",
 		},
@@ -243,7 +244,8 @@ func TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2(t *test
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-empty",
 			// CleanupCommands intentionally empty.
@@ -293,7 +295,8 @@ func TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2(t *testing.
 	// guard admits it, and no slot_id so it is a whole-pod (not per-slot)
 	// teardown.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "slot-sess"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-concurrent",
 		},
@@ -367,7 +370,8 @@ func TestShutdownRecycleVMRestartReportsSuccessNoWithhold_spec_5_2(t *testing.T)
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-vm",
 		},
@@ -406,7 +410,8 @@ func TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub_spec_5_2(t *testing.T
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-vm-dirty",
 		},
@@ -443,7 +448,8 @@ func TestShutdownTerminatePathRunsNoScrub_spec_4_7(t *testing.T) {
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -695,8 +701,9 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	// KillUserProcesses). If it blocked on the scrub, this call would hang on
 	// the unreleased gate and the test would time out.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-async"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:               &adapterv1.RecycleScrub{PodId: "pod-async"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -754,8 +761,9 @@ func TestRecycleScrubWithUnreadableSlotsContainerReportsFailure_spec_5_2(t *test
 	// enumeration is on-disk in the first place.
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-unreadable"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:               &adapterv1.RecycleScrub{PodId: "pod-unreadable"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}

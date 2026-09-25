@@ -26,9 +26,10 @@ func TestShutdownDrainsViaLifecycle_spec_15_4_2(t *testing.T) {
 	}
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
-		DeadlineMs: 4000,
-		Reason:     "budget_exhausted",
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		DeadlineMs:            4000,
+		Reason:                "budget_exhausted",
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}

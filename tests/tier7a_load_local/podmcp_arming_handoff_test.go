@@ -198,7 +198,8 @@ func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
 	go func() {
 		defer close(shutdownDone)
 		_, _ = s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "alice"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "alice"},
 		})
 	}()
 	waitClosed(t, closeEntered, "alice's runtime close to begin")
@@ -245,7 +246,8 @@ func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
 
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "bob"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "bob"},
 		})
 	})
 }

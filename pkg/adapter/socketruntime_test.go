@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // runtimeSocketAddr returns a socket address the test binds: a Linux
@@ -297,6 +298,61 @@ func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 	if _, err := reader.ReadString('\n'); err == nil {
 		t.Error("runtime should observe EOF after the last slot's Close")
 	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
+//
+// Interrupt of the last active session leaves the process connected with an
+// empty active set, and in that state a Close for any session tears down the
+// shared connection and the listener. A Shutdown of a bound-but-unstarted
+// entry on such a pod must therefore run no runtime close: the listener
+// stays bound and the runtime can still dial the adapter afterwards.
+//
+// diagnosis: a failure here means the reclaim of a session that never
+// started closed the pod's shared runtime, which no later session on the
+// pod can reach again because the listener is never rebound.
+func TestSocketRuntimeProcessSurvivesTheReclaimOfAnUnstartedSlot_spec_4_7_1(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	connCh := make(chan net.Conn, 1)
+	go func() { connCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
+	if err := sp.Start(context.Background(), "carol"); err != nil {
+		t.Fatalf("Start(carol): %v", err)
+	}
+	runtimeConn := <-connCh
+	defer runtimeConn.Close()
+	if err := sp.Interrupt(context.Background(), "carol", false); err != nil {
+		t.Fatalf("Interrupt(carol): %v", err)
+	}
+
+	base := t.TempDir()
+	s := adapter.New("socket-reclaim-test")
+	s.WorkspaceBase = base + "/workspace"
+	s.SessionsRoot = base + "/sessions"
+	s.ArtifactsRoot = base + "/artifacts"
+	s.CredentialsDir = base + "/run/lenny"
+	s.Runtime = sp
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "alice"},
+	}); err != nil {
+		t.Fatalf("AssignCredentials(alice): %v", err)
+	}
+	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		SessionId:   &adapterv1.SessionId{Value: "alice"},
+		BindAttempt: "attempt-a",
+	})
+	if err != nil {
+		t.Fatalf("Shutdown(alice): %v", err)
+	}
+	if resp.GetSlotReclaim() != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED {
+		t.Errorf("slot_reclaim = %v, want RECLAIMED", resp.GetSlotReclaim())
+	}
+	c := dialRuntimeSocket(t, sp.SocketPath())
+	_ = c.Close()
+	_ = sp.Close(context.Background(), "carol")
 }
 
 // spec: §5.2 — a clean Interrupt (the §28.5.3

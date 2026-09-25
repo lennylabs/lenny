@@ -448,6 +448,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
 	"tests/tier7a_load_local/racestart_testsupport_test.go",
 	"tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
+	"tests/tier7a_load_local/slot_reclaim_hold_race_test.go",
 	"tests/tier7a_load_local/sole_session_concurrent_release_test.go",
 	"tests/tier7a_load_local/tracing_context_release_race_test.go",
 	"tests/tier8_chaos/config_drift_test.go",

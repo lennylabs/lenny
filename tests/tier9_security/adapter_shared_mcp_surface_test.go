@@ -61,7 +61,8 @@ func sharedSurfacePod(t *testing.T, fwd *recordingForwarder, sessions ...string)
 	t.Cleanup(func() {
 		for _, sessionID := range sessions {
 			_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-				SessionId: &adapterv1.SessionId{Value: sessionID},
+				UnconditionalTeardown: true,
+				SessionId:             &adapterv1.SessionId{Value: sessionID},
 			})
 		}
 	})

@@ -705,7 +705,11 @@
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go::TestReleaseSlotSendsUnconditionalTeardown_spec_4_7_1",
         "pkg/gateway/sessionserver/upload_to_session_test.go::TestUploadToSessionSendsTheMarkedMidSessionPair_spec_4_7_1",
         "tests/tier4_integration/token_service_unavailability_guard_test.go",
-        "tests/tier8_chaos/token_service_unavailability_guard_test.go"
+        "tests/tier8_chaos/token_service_unavailability_guard_test.go",
+        "pkg/adapter/slotsession_test.go",
+        "pkg/adapter/bindattempt_orderings_test.go",
+        "pkg/adapter/socketruntime_test.go",
+        "tests/tier7a_load_local/slot_reclaim_hold_race_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -1231,7 +1235,9 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
-        "pkg/gateway/sessionserver/upload_to_session_test.go"
+        "pkg/gateway/sessionserver/upload_to_session_test.go",
+        "pkg/adapter/socketruntime_test.go",
+        "tests/tier7a_load_local/slot_reclaim_hold_race_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1549,7 +1555,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
-        "pkg/gateway/sessionserver/upload_to_session_test.go"
+        "pkg/gateway/sessionserver/upload_to_session_test.go",
+        "pkg/adapter/bindattempt_orderings_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -1630,7 +1637,8 @@
         "tests/tier4_integration/eager_claim_lifecycle_test.go",
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/adapter/staging_test.go",
-        "pkg/gateway/runtime/adapterclient/client_test.go"
+        "pkg/gateway/runtime/adapterclient/client_test.go",
+        "pkg/adapter/bindattempt_orderings_test.go"
       ],
       "packages": [
         "pkg/upload"
@@ -3949,7 +3957,8 @@
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestCredentialLeaseSweepCounterInCatalog",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
         "tests/tier11_docs/slot_compensation_metric_reference_test.go",
-        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go"
+        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
+        "pkg/adapter/slotsession_test.go"
       ],
       "packages": [
         "pkg/observability/metrics",

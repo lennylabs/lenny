@@ -184,7 +184,8 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 	// profile is not carried on the wire (C4); the gateway routes the §5.2
 	// step-7 vm-restart retire on its own runtime store.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId:                 podID,
 			CleanupCommands:       []string{},
@@ -272,7 +273,8 @@ func TestRecycleScrubAtOccupancyZeroConformance(t *testing.T) {
 	// session id, which is the only address the message has, and the whole-pod
 	// scrub runs from the recycle disposition beside the teardown clause.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "slot-sess"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId:                 podID,
 			CleanupCommands:       []string{},
@@ -384,7 +386,8 @@ func TestRecycleSessionScrubLeakedOutcomeConformance(t *testing.T) {
 	// Shutdown tears the named session down. The runtime Close returns an
 	// error, so the cleanup leaked.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "slot-sess"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown(slot-sess): %v", err)
@@ -452,7 +455,8 @@ func TestRecycleScrubVMRestartReportsUniformlyConformance(t *testing.T) {
 	// run the whole-pod scrub and report its binary outcome once, with no
 	// per-profile withhold.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-vm"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-vm"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId:                 podID,
 			CleanupCommands:       []string{},

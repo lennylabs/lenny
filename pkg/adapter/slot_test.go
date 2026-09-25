@@ -290,7 +290,8 @@ func TestShutdownSlotRemovesTree_spec_6_4(t *testing.T) {
 		}
 	}
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-a"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-a"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown(slot-a): %v", err)

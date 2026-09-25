@@ -508,7 +508,7 @@ func shutdownAfterJitter(t *testing.T, client adapterv1.AdapterClient, rt *raceR
 // session's slot, which is the one teardown on a pod of either
 // concurrency. spec: §5.2.
 func shutdownSessionRequest(sessionID string) *adapterv1.ShutdownRequest {
-	return &adapterv1.ShutdownRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}
+	return &adapterv1.ShutdownRequest{UnconditionalTeardown: true, SessionId: &adapterv1.SessionId{Value: sessionID}}
 }
 
 // checkTracingAccounting asserts the four properties the race establishes:

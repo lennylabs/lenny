@@ -65,8 +65,9 @@ func teardownPod(t *testing.T, fwd *recordingForwarder, sessions ...string) (*ad
 func revoke(t *testing.T, s *adapter.Server, sessionID string) {
 	t.Helper()
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		Reason:    "operator",
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
+		Reason:                "operator",
 	}); err != nil {
 		t.Fatalf("Shutdown(%s): %v", sessionID, err)
 	}

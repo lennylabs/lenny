@@ -166,7 +166,8 @@ type Server struct {
 	// spec: §4.7 (ReportPodScrub); §5.2. F-5.2.15.
 	PodScrubReporter PodScrubReporter
 	// SessionScrubReporter emits the §5.2 per-slot cleanup outcome to the
-	// gateway on every session release via ReportSessionScrub, so the gateway
+	// gateway via ReportSessionScrub for the cleanups §5.2 states the adapter
+	// reports, which are those of a slot that reached §6.2's running, so the gateway
 	// advances sessions_served (feeding the maxSessionsPerPod retirement) and
 	// feeds a leaked outcome into the unhealthy-threshold ledger. ConnectGateway
 	// wires it to the dialed *gatewaycontrol.Client alongside PodScrubReporter.

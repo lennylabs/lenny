@@ -539,7 +539,8 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 			// handler directly would skip the refusal the retry loop is
 			// written against.
 			if _, err := client.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-				SessionId: &adapterv1.SessionId{Value: "sess-probe"},
+				UnconditionalTeardown: true,
+				SessionId:             &adapterv1.SessionId{Value: "sess-probe"},
 			}); !heldRefusal(err) {
 				t.Fatalf("attempt %d: Shutdown while the hold is armed = %v, want the "+
 					"UNAVAILABLE coordinator_hold refusal", attempt, err)
@@ -569,8 +570,9 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 					deadline := time.Now().Add(30 * time.Second)
 					for {
 						resp, err := client.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-							SessionId: &adapterv1.SessionId{Value: id},
-							Reason:    "session_complete",
+							UnconditionalTeardown: true,
+							SessionId:             &adapterv1.SessionId{Value: id},
+							Reason:                "session_complete",
 						})
 						if heldRefusal(err) {
 							// Expected before the timeout clears the hold.
@@ -683,7 +685,8 @@ func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T
 	}
 	for _, id := range []string{"sess-a", "sess-b"} {
 		if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: id},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: id},
 		}); err != nil {
 			t.Errorf("Shutdown(%s) after the termination = %v, want the idempotent no-op", id, err)
 		}

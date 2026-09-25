@@ -392,7 +392,8 @@ func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -420,8 +421,9 @@ func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
-		DeadlineMs: 10_000,
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		DeadlineMs:            10_000,
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -445,7 +447,8 @@ func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -472,7 +475,8 @@ func TestShutdownIsANoOpForAnAlreadyReleasedSession_spec_4_7(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-other"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-other"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown for a session the pod does not hold = %v, want a clean no-op", err)

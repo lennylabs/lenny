@@ -92,3 +92,14 @@ func (s *Server) soleSessionLocked() string {
 func (s *Server) runtimeIdleLocked() bool {
 	return len(s.runtimeLive) == 0
 }
+
+// runtimeHoldsLocked reports whether the pod's shared runtime process holds
+// sessionID, which is what separates a slot that reached §6.2's running from
+// one whose start is still in flight or never ran. noteRuntimeStartedLocked
+// is the only writer that adds the session and noteRuntimeClosed the only
+// one that removes it. Callers hold s.mu.
+// spec: §5.2 (pool configuration and execution modes); §6.2.
+func (s *Server) runtimeHoldsLocked(sessionID string) bool {
+	_, ok := s.runtimeLive[sessionID]
+	return ok
+}

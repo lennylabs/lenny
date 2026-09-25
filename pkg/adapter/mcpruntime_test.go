@@ -288,7 +288,8 @@ func TestAdapterServerDrivesMCPRuntime(t *testing.T) {
 
 	// Shutdown terminates the runtime and releases the pod.
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-mcp"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-mcp"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -317,7 +318,8 @@ func TestAdapterServerSkipsPlatformMCPForMCPRuntime(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-mcp"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-mcp"},
 		})
 	})
 }

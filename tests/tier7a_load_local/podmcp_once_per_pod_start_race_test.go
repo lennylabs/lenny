@@ -224,7 +224,8 @@ func podMCPStartRaceAttempt(t *testing.T, second string) {
 	t.Cleanup(func() {
 		for _, id := range []string{"alice", "bob"} {
 			_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-				SessionId: &adapterv1.SessionId{Value: id},
+				UnconditionalTeardown: true,
+				SessionId:             &adapterv1.SessionId{Value: id},
 			})
 		}
 	})

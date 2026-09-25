@@ -143,7 +143,8 @@ func startAndShutdownSlot(t *testing.T, s *adapter.Server, sessionID string) *ad
 		t.Fatalf("StartSession(%s): %v", sessionID, err)
 	}
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown(%s): %v", sessionID, err)
