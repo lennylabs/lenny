@@ -32,6 +32,7 @@ import (
 var generalSlotEdges = []string{
 	"slot_assigned ──→ receiving_uploads",
 	"receiving_uploads ──→ running",
+	"receiving_uploads ──→ slot_cleanup",
 	"running ──→ slot_cleanup",
 	"slot_cleanup ──→ released",
 }
@@ -41,7 +42,10 @@ var generalSlotEdges = []string{
 // sub-states to a pod serving more than one concurrent session, while every
 // session holds a slot on every pod. A reader following the cross-reference
 // arrives at a machine they have just been told does not apply to their pool,
-// and the exclusive-pod slot progression is stated nowhere.
+// and the exclusive-pod slot progression is stated nowhere. It also fails when
+// §6.2 drops the `receiving_uploads ──→ slot_cleanup` edge or scopes it to
+// concurrent occupancy, leaving a bind abandoned or failed before `running`
+// with no edge into the cleanup that reclaims its slot.
 func TestPerSlotSubStatesAreStatedForAPodOfEitherConcurrency(t *testing.T) {
 	root := repoRoot(t)
 	specDir := filepath.Join(root, "spec")
@@ -86,7 +90,9 @@ func TestPerSlotSubStatesAreStatedForAPodOfEitherConcurrency(t *testing.T) {
 // only inside its concurrent-session occupancy section, so the reader-facing
 // mirror carries a condition the specification has dropped. An author of an
 // exclusive-pool integration reads the page and concludes their session's slot
-// has no sub-states.
+// has no sub-states. It also fails when the page's per-slot table lacks the
+// `receiving_uploads` to `slot_cleanup` row §6.2 states, so a reader sees no
+// cleanup for a slot whose bind is abandoned before it reaches `running`.
 func TestStateMachinesDocMirrorsThePerSlotSubStateScope(t *testing.T) {
 	root := repoRoot(t)
 	doc := stateMachinesDoc(t, root)
@@ -106,6 +112,7 @@ func TestStateMachinesDocMirrorsThePerSlotSubStateScope(t *testing.T) {
 		"`running`",
 		"`slot_cleanup`",
 		"`released`",
+		"`receiving_uploads` | `slot_cleanup`",
 	})
 
 	concurrent := section(doc, "Concurrent-session occupancy")

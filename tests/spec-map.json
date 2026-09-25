@@ -2752,9 +2752,7 @@
     "12.1": {
       "title": "Storage Design Principle",
       "spec_file": "spec/12_storage-architecture.md",
-      "tests": [
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231"
-      ],
+      "tests": [],
       "packages": [],
       "blocked_until_phase": "1.5",
       "notes": "Non-normative principles. Enforced by \u00a712.2 and \u00a712.3 tests."

@@ -16,9 +16,8 @@
 //     (`maxConcurrentSessions > 1`) non-`vm-restart` pool the pod drains on the
 //     session release that drives the served-session count to
 //     `maxSessionsPerPod`, decoupled from the occupancy-zero whole-pod scrub.
-//     This lands in §5.2 (Session count limit bullet), §6.2 (a new
-//     concurrent-occupancy diagram edge), and §12 (the sessions_served schema
-//     prose and column comment), and it must be represented as its own
+//     This lands in §5.2 (Session count limit bullet) and §6.2 (a new
+//     concurrent-occupancy diagram edge), and it must be represented as its own
 //     `claimed → draining` row in the state-machines.md concurrent-session
 //     occupancy table, parallel to the existing `maxPodUptimeSeconds` trigger.
 //  3. Two partitioned retirement counters plus a summing rule. The gateway
@@ -44,8 +43,8 @@
 // spec: 5.2 (per-release maxSessionsPerPod drain, persistent leak counting,
 // CreationTimestamp uptime drain, retirement counters), 6.2 (leaked slot
 // semantics, concurrent-occupancy diagram edges), 10.1 (whole-pod-connection-
-// loss trigger restatement in Horizontal Scaling), 12.1 (sessions_served
-// schema), 16.1 (retirement counters + recording rule).
+// loss trigger restatement in Horizontal Scaling), 16.1 (retirement counters +
+// recording rule).
 
 package tier11_docs_test
 
@@ -132,8 +131,8 @@ func TestLeakedSlotCountingLifetimeAgrees_F5231(t *testing.T) {
 	}
 }
 
-// spec: 5.2, 6.2, 12.1
-// diagnosis: §5.2, §6.2, §12, or the state-machines.md concurrent-session
+// spec: 5.2, 6.2
+// diagnosis: §5.2, §6.2, or the state-machines.md concurrent-session
 //
 //	occupancy table disagree on the per-release maxSessionsPerPod drain.
 //	Proposal 0035 (SPEC-D) decoupled the concurrent non-`vm-restart` pool's
@@ -165,14 +164,6 @@ func TestPerReleaseSessionCountDrainAgrees_F5231(t *testing.T) {
 	perReleaseEdge := lineContaining(s62, "served-session count reaches recycle.maxSessionsPerPod")
 	if perReleaseEdge == "" {
 		t.Fatal("spec/06 §6.2 concurrent-occupancy diagram: no per-release maxSessionsPerPod edge (renamed or removed?)")
-	}
-
-	// §12 sessions_served schema: evaluated on each session release on a
-	// concurrent non-vm-restart pool.
-	s12 := readDocPage(t, filepath.Join(specDir, "12_storage-architecture.md"))
-	if !strings.Contains(s12, "on a concurrent non-`vm-restart` pool evaluated on each session release") &&
-		!strings.Contains(s12, "on each session release on a concurrent non-`vm-restart` pool") {
-		t.Error("spec/12 does not state the per-release maxSessionsPerPod evaluation point for a concurrent non-vm-restart pool; it must match the amended §5.2")
 	}
 
 	// state-machines.md concurrent-session occupancy table: a per-release

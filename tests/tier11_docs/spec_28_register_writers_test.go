@@ -97,8 +97,8 @@ var unreferencedLinkEntries = map[string]string{
 // spec: §12.6, §4.6.3, §7.2
 const (
 	podStateGatewayWrittenSentence = "The `sessions_served` and `scrub_failure_count` columns are the exception to " +
-		"the WarmPoolController-maintained mirror: they are gateway-written recycle counters, incremented at each " +
-		"session release (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively"
+		"the WarmPoolController-maintained mirror: they are gateway-written recycle counters, incremented on each " +
+		"cleanup-outcome report (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively"
 
 	claimOwnershipRowSentence = "Created by the gateway at pod acquisition; binding state written via the status " +
 		"subresource; deleted by the gateway at hold expiry or by the WarmPoolController at pod termination and orphan GC"

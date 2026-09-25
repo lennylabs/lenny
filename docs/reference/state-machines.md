@@ -135,7 +135,7 @@ stateDiagram-v2
 
 ## Pod state machine
 
-`Sandbox.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of the per-pod `SandboxClaim`: claim existence, the claim's binding state and disposition, and `sessionPolicy`. A pod with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted on a recycling pod under its limits projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted on a pod with `recycle.enabled: false`, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
+`Sandbox.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of per-pod `SandboxClaim` existence, the claim's binding state and disposition, `sessionPolicy`, and the phase the pod currently projects. A pod in a warm-inventory phase with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted while the pod projects `reserved`, its scrub and any re-warm already complete, projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted while the pod projects `claimed`, on a pool of either recycle setting, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
 
 ### Pod-warm path diagram
 
@@ -232,9 +232,10 @@ Every session is bound to a [slot](glossary#slot) on the pod that runs it, whate
 | From | To | Trigger |
 |:-----|:---|:--------|
 | `slot_assigned` | `receiving_uploads` | Workspace materialization begins for this slot |
-| `receiving_uploads` | `running` | Workspace ready; the session is dispatched to the runtime with its session identifier |
+| `receiving_uploads` | `running` | Workspace ready; the adapter records the pod's shared runtime process as holding the session |
+| `receiving_uploads` | `slot_cleanup` | A cleanup runs on the slot after its bind is abandoned or fails before the slot reaches `running`, a start still in flight included |
 | `running` | `slot_cleanup` | Session completes or fails |
-| `slot_cleanup` | `released` | Slot workspace removed, processes killed, slot released |
+| `slot_cleanup` | `released` | The cleanup ends and the slot stops counting toward the pod's occupancy |
 
 ### Concurrent-session occupancy (`maxConcurrentSessions > 1`)
 
@@ -248,7 +249,7 @@ A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level c
 | `claimed` | `draining` | Served-session count reaches `recycle.maxSessionsPerPod` on a session release, `scrubProfile` is not `vm-restart`. The gateway stamps the drain request per release, decoupled from the occupancy-zero whole-pod scrub, because a persistently leaked slot can hold total occupancy above zero indefinitely. |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
-Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection), and `slot_cleanup -> leaked` when the cleanup timeout is exceeded and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot-counter occupancy and counts toward the `claimed -> draining` threshold above.
+Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection), and `slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot-counter occupancy and counts toward the `claimed -> draining` threshold above.
 
 ---
 

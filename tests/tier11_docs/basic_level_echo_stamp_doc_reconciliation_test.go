@@ -290,7 +290,11 @@ func constructionEnd(lines []string, start int) int {
 //	request under one name, and the recycle disposition rides beside the
 //	teardown rather than selecting a scope. A reader-facing page that names an
 //	RPC the protocol does not declare sends a runtime author looking for a
-//	method that does not exist.
+//	method that does not exist. It also fails when the row stops stating the
+//	two teardowns, the slot release for any removed entry and the runtime
+//	teardown for an admitted start, or the two teardown preconditions, the bind
+//	attempt or the unconditional-teardown flag, with the outcomes the response
+//	reports, or when the page drops its bind attempt token paragraph.
 func TestAdapterContractNamesTheShutdownRPCUnderItsWireName(t *testing.T) {
 	root := repoRoot(t)
 	page := adapterContractDoc(t, root)
@@ -304,7 +308,15 @@ func TestAdapterContractNamesTheShutdownRPCUnderItsWireName(t *testing.T) {
 		"recycle disposition",
 		"ReportSessionScrub",
 		"ReportPodScrub",
+		"no other bound session",
+		"a session whose start the adapter has admitted",
+		"either the bind attempt",
+		"reclaimed",
+		"absent",
 	})
+	if !strings.Contains(page, "**Bind attempt token.**") {
+		t.Error("docs/reference/adapter-contract.md carries no bind attempt token paragraph; the page must say what the token fences and where its rules are stated")
+	}
 	if strings.Contains(page, "| `Terminate` |") {
 		t.Error("docs/reference/adapter-contract.md still carries a `Terminate` RPC row; the gateway-to-adapter teardown request is declared under the single name `Shutdown`")
 	}
