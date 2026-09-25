@@ -46,6 +46,12 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 	// first frame's session id, and an unresolvable (empty) staging path is
 	// refused with FailedPrecondition.
 	var stagingDir string
+	// spec: §5.2 (slot-identifier reclaim hold) — the slot's per-slot guard
+	// is taken once per call, at the frame that resolves the slot
+	// identifier, and held to the end of the call, because the staging
+	// writes run outside s.mu and the tree can be removed between frames.
+	releaseGuard := noGuardRelease
+	defer func() { releaseGuard() }()
 	open := map[string]*os.File{}
 	closeAll := func() {
 		for _, f := range open {
@@ -85,6 +91,13 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 				spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
 				return verr
 			}
+			release, gerr := s.acquireSlotGuardForResolve(stream.Context(), req.GetSessionId().GetValue())
+			if gerr != nil {
+				closeAll()
+				spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
+				return gerr
+			}
+			releaseGuard = release
 			dir, derr := s.resolvePrepareStagingDir(req.GetSessionId().GetValue(), slotResolve{
 				bindAttempt:  req.GetBindAttempt(),
 				allowCreate:  !midSession,
@@ -198,6 +211,17 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
 		return nil, verr
 	}
+	// spec: §5.2 (slot-identifier reclaim hold) — the materialization writes the slot's
+	// tree outside s.mu, so the slot's per-slot guard is held across the
+	// resolve and that work.
+	// A held identifier is refused without waiting, and an acquisition that
+	// outlives ctx is refused with the context's own error.
+	releaseGuard, gerr := s.acquireSlotGuardForResolve(ctx, sessionID)
+	if gerr != nil {
+		spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
+		return nil, gerr
+	}
+	defer releaseGuard()
 	// spec: §6.4 — the finalize materializes into the session's own tree
 	// (/workspace/slots/{sessionId}/staging promoted to /current) and
 	// creates that tree on first reference.
@@ -364,6 +388,17 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
 		return nil, verr
 	}
+	// spec: §5.2 (slot-identifier reclaim hold) — the setup commands write the slot's
+	// tree outside s.mu, so the slot's per-slot guard is held across the
+	// resolve and that work.
+	// A held identifier is refused without waiting, and an acquisition that
+	// outlives ctx is refused with the context's own error.
+	releaseGuard, gerr := s.acquireSlotGuardForResolve(ctx, sessionID)
+	if gerr != nil {
+		spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
+		return nil, gerr
+	}
+	defer releaseGuard()
 	// spec: §6.4 — the setup runs against the session's own
 	// /workspace/slots/{sessionId}/current cwd.
 	paths, perr := s.ensureSlotPaths(sessionID, slotResolve{

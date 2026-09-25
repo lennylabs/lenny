@@ -381,6 +381,16 @@ type Server struct {
 	// value. Guarded by mu. spec: §5.2; §4.7.1 (role and gateway RPC
 	// contract), the registry critical section.
 	reclaiming map[string]struct{}
+	// slotGuards holds each slot identifier's per-slot guard: a
+	// capacity-one channel used as a semaphore that serializes every section
+	// creating, writing or destroying the slot's tree outside mu. An entry is
+	// created on the first reference to an identifier and never removed for
+	// the life of the pod, because deleting it while a holder keeps the old
+	// channel would let the next acquirer mint a second channel and enter
+	// beside that holder. The map is guarded by mu; the channels are not, and
+	// mu is never held while a channel is acquired. spec: §5.2 (slot-identifier
+	// reclaim hold); §4.7.1 (role and gateway RPC contract).
+	slotGuards map[string]chan struct{}
 }
 
 // New returns a Server advertising the given build version and the v1

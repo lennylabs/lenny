@@ -3,8 +3,10 @@
 package adapter
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"google.golang.org/grpc/codes"
@@ -172,3 +174,116 @@ func (s *Server) openReclaimHoldLocked(slotID string) func() {
 // noHoldRelease is the release a reclaim that removed nothing returns: it
 // opened no hold, so there is nothing to end.
 func noHoldRelease() {}
+
+// slotGuardLocked returns slotID's per-slot guard channel, creating it on
+// the first reference to the identifier. Callers hold s.mu.
+func (s *Server) slotGuardLocked(slotID string) chan struct{} {
+	if s.slotGuards == nil {
+		s.slotGuards = map[string]chan struct{}{}
+	}
+	g, ok := s.slotGuards[slotID]
+	if !ok {
+		g = make(chan struct{}, 1)
+		s.slotGuards[slotID] = g
+	}
+	return g
+}
+
+// acquireSlotGuardChan is the acquisition step both hand-out forms share.
+// It first attempts the send without waiting, so a free guard is taken
+// whatever state ctx is in, and only a contended guard is raced against
+// ctx.Done(). The order matters: a select whose cases are both ready picks
+// one at random, and the StartSession and SDK-warm rollbacks release their
+// slot on the very context whose expiry failed Runtime.Start, so a bare
+// two-case select would drop an uncontended guard at random.
+// spec: §5.2 (slot-identifier reclaim hold).
+func acquireSlotGuardChan(ctx context.Context, g chan struct{}) bool {
+	select {
+	case g <- struct{}{}:
+		return true
+	default:
+	}
+	select {
+	case g <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// slotGuardRelease returns the idempotent function that gives g back.
+func slotGuardRelease(g chan struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { <-g }) }
+}
+
+// noGuardRelease is the release an acquisition that took no guard returns.
+func noGuardRelease() {}
+
+// lockSlotGuard acquires slotID's per-slot guard for a destructive
+// section. It never refuses: a reclaim may not be refused by the reclaim
+// hold its own deregistration opened. It returns the release and true on
+// an acquisition, and a no-op release and false when the acquisition
+// outlives ctx, in which case the caller performs its destructive work
+// unguarded and treats the cleanup as not completed. s.mu is released
+// before the channel is acquired, so the lock order is s.mu never held
+// across a guard acquisition. spec: §5.2 (slot-identifier reclaim hold).
+func (s *Server) lockSlotGuard(ctx context.Context, slotID string) (func(), bool) {
+	s.mu.Lock()
+	g := s.slotGuardLocked(slotID)
+	s.mu.Unlock()
+	if !acquireSlotGuardChan(ctx, g) {
+		return noGuardRelease, false
+	}
+	return slotGuardRelease(g), true
+}
+
+// acquireSlotGuardForResolve acquires slotID's per-slot guard for an
+// admission RPC whose path work runs outside s.mu. It is the first of the
+// reclaim hold's two test points: a held identifier is refused here with
+// errSlotReclaimInProgress, without waiting on the guard, so a caller
+// that would otherwise block for the whole destructive section receives
+// the transient refusal §5.2 promises rather than a later resolve's answer.
+// ensureSlotStateLocked is the second test point and stays, because the
+// §10.1.4 first pass opens a hold under s.mu without taking any guard.
+//
+// An acquisition that outlives ctx returns ctx.Err(): proceeding unguarded
+// would let a materialization re-create the tree a reclaim has just
+// removed. On success the caller holds the guard across its resolve and
+// its path work, and calls the returned release when that work has ended.
+// spec: §5.2 (slot-identifier reclaim hold); §4.7.1 (role and gateway RPC
+// contract), rule 2.
+func (s *Server) acquireSlotGuardForResolve(ctx context.Context, slotID string) (func(), error) {
+	s.mu.Lock()
+	if _, held := s.reclaiming[slotID]; held {
+		s.mu.Unlock()
+		return noGuardRelease, errSlotReclaimInProgress
+	}
+	g := s.slotGuardLocked(slotID)
+	s.mu.Unlock()
+	if !acquireSlotGuardChan(ctx, g) {
+		return noGuardRelease, ctx.Err()
+	}
+	return slotGuardRelease(g), nil
+}
+
+// slotGuardCategory returns the §16.3 span category of a guard-acquisition
+// refusal: the refusal's own category for the reclaim hold, and TRANSIENT
+// for a context that expired while the guard was contended.
+// spec: §16.3 (distributed tracing).
+func slotGuardCategory(err error) tracing.ErrorCategory {
+	var refusal *slotRefusal
+	if errors.As(err, &refusal) {
+		return refusal.category
+	}
+	return tracing.CategoryTransient
+}
+
+// warnSlotGuardNotAcquired records that a destructive section's guard
+// acquisition expired and the section is running unguarded, naming the
+// slot identifier and the removing site. The section's reclaim hold is
+// retained, because an unguarded removal can run beside a request still
+// writing under the identifier. spec: §5.2 (slot-identifier reclaim hold).
+func warnSlotGuardNotAcquired(slotID, caller string) {
+	slog.Warn("slot_guard_not_acquired", "slot_id", slotID, "caller", caller)
+}

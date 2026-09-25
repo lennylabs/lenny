@@ -194,16 +194,28 @@ func (s *Server) onHoldTimeout() {
 		return
 	}
 
-	// Pass 2. One close context is shared by every member, which keeps the
-	// bound the single-session timeout had: a runtime process serving more
-	// than one session returns from a non-last close without touching the
-	// child, so only the last member's close consumes the grace.
-	closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Pass 2. One context bounds the pass's per-slot guard acquisitions and
+	// nothing else: a member whose guard a section still holds costs the
+	// pass at most this one deadline, and a later member whose guard is free
+	// still takes it, because the acquisition tries the guard before it
+	// consults the context. Each member's close runs on its own
+	// ten-second context, minted after its acquisition returns, so no
+	// member's close is spent on another member's guard wait. A runtime
+	// process serving more than one session still returns from a non-last
+	// close without touching the child, so only the last member's close
+	// consumes its grace. spec: §5.2 (slot-identifier reclaim hold).
+	guardCtx, cancel := context.WithTimeout(context.Background(), heldSessionCloseWindow)
 	defer cancel()
 	for _, m := range members {
-		s.terminateHeldSession(closeCtx, m)
+		s.terminateHeldSession(guardCtx, m)
 	}
 }
+
+// heldSessionCloseWindow is the graceful window §5.2 fixes for the close of
+// a session the §10.1.4 hold-timeout termination reclaims, which runs under
+// no request. The pass's guard-acquisition deadline takes the same value.
+// spec: §5.2 (slot-identifier reclaim hold); §10.1.4.
+const heldSessionCloseWindow = 10 * time.Second
 
 // terminateHeldSession runs the §10.1.4 coordinator-lost termination for
 // one member of the set the hold timeout deregistered.
@@ -225,23 +237,37 @@ func (s *Server) onHoldTimeout() {
 // hold would report one session's generation on every session the hold
 // terminates. spec: §10.1.2.
 //
+// guardCtx bounds the acquisition of the member's per-slot guard alone.
+// The member's own close context, minted once that acquisition returns,
+// carries the final usage flush, the runtime close and every later call.
+// An acquisition that outlives guardCtx is logged as
+// slot_guard_not_acquired and the termination still runs, unguarded.
+//
 // The member's §5.2 reclaim hold, opened by pass 1, ends only when the
-// cleanup this call owes the slot completed: the runtime close and the tree
-// removal both returned without error. Either failure is logged and keeps
-// the identifier held for the life of the pod, and neither aborts the
-// termination, so the usage flush, the removal, the pod-surface
-// cancellation and the AdapterTerminating event run on either arm. The
-// release is deferred, so a panic out of the cleanup is a cleanup that did
-// not complete.
+// cleanup this call owes the slot completed: it ran under its guard, and
+// the runtime close and the tree removal both returned without error. Each
+// failure is logged and keeps the identifier held for the life of the pod,
+// and none aborts the termination, so the usage flush, the removal, the
+// pod-surface cancellation and the AdapterTerminating event run on every
+// arm. The hold release is deferred after the guard's, so it runs first
+// and the guard outlives the hold, and a panic out of the cleanup is a
+// cleanup that did not complete.
 //
 // spec: §10.1.4; §4.7; §5.2 (slot-identifier reclaim hold); §6.4.
-func (s *Server) terminateHeldSession(ctx context.Context, m heldSession) {
+func (s *Server) terminateHeldSession(guardCtx context.Context, m heldSession) {
+	unlock, guarded := s.lockSlotGuard(guardCtx, m.sessionID)
+	defer unlock()
+	if !guarded {
+		warnSlotGuardNotAcquired(m.sessionID, "terminateHeldSession")
+	}
 	completed := false
 	defer func() {
 		if completed && m.release != nil {
 			m.release()
 		}
 	}()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(guardCtx), heldSessionCloseWindow)
+	defer cancel()
 	gen := m.state.lastFencedGeneration()
 	slog.Warn(reasonCoordinatorLost,
 		"session_id", m.sessionID,
@@ -274,7 +300,7 @@ func (s *Server) terminateHeldSession(ctx context.Context, m heldSession) {
 	if treeErr != nil {
 		slog.Warn("slot_tree_removal_failed", "slot_id", m.sessionID, "error", treeErr)
 	}
-	completed = closeErr == nil && treeErr == nil
+	completed = guarded && closeErr == nil && treeErr == nil
 	// The third release step, on the same terms as every other release that
 	// ends the pod's occupancy: the pod-wide platform and per-connector MCP
 	// servers are cancelled once this member's close leaves the shared

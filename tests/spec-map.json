@@ -688,6 +688,7 @@
         "pkg/adapter/server_test.go",
         "pkg/adapter/session_test.go",
         "pkg/adapter/checkpoint_stream_test.go",
+        "pkg/adapter/holdstate_test.go",
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go",
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",

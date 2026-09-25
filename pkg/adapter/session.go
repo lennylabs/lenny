@@ -133,7 +133,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		connectors:         connectors,
 	})
 	if err != nil {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlot(ctx, sessionID)
 		// §16.3: a manifest-write failure is TRANSIENT (a retry on a fresh
 		// pod can succeed; the §4.7 contract returns the pod to idle).
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
@@ -147,7 +147,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// that took the once-per-pod start arms them.
 	if s.RuntimeKind != RuntimeKindMCP && startMCP {
 		if err := s.startPlatformMCP(nonce); err != nil {
-			s.releaseSessionSlot(sessionID)
+			s.releaseSessionSlot(ctx, sessionID)
 			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
@@ -157,7 +157,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlot(ctx, sessionID)
 		// §16.3: a runtime-start crash is TRANSIENT (pod crash → retry on a
 		// fresh pod).
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)

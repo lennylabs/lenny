@@ -81,7 +81,7 @@ func TestGetObservedIntegrationLevelRPC_spec_5_1(t *testing.T) {
 func TestObservedLevelResetOnSlotRelease_spec_5_1(t *testing.T) {
 	s := New("test")
 	s.markMCPHandshakeSeen()
-	s.ReleaseSlotForTest("")
+	s.ReleaseSlotForTest(t.Context(), "")
 	if lvl := s.observedIntegrationLevel(context.Background(), 0); lvl != observedLevelBasic {
 		t.Errorf("after the slot release level = %q, want basic", lvl)
 	}

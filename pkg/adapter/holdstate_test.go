@@ -990,3 +990,110 @@ func hasLogLine(out, msg, sessionID string, gen int64) bool {
 	}
 	return false
 }
+
+// closeContextRecord is what a closeBudgetRuntime saw on one Close: the
+// session, the Err() of the context the close was handed, and its deadline.
+type closeContextRecord struct {
+	sessionID   string
+	err         error
+	deadline    time.Time
+	hasDeadline bool
+}
+
+// closeBudgetRuntime is a RuntimeProcess recording the context each Close
+// is handed, so a case can read each §10.1.4 member's close budget without
+// waiting on a clock.
+type closeBudgetRuntime struct {
+	holdRuntime
+	mu      sync.Mutex
+	records []closeContextRecord
+}
+
+func (r *closeBudgetRuntime) Close(ctx context.Context, sessionID string) error {
+	dl, ok := ctx.Deadline()
+	r.mu.Lock()
+	r.records = append(r.records, closeContextRecord{sessionID: sessionID, err: ctx.Err(), deadline: dl, hasDeadline: ok})
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *closeBudgetRuntime) closes() []closeContextRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]closeContextRecord(nil), r.records...)
+}
+
+// assertPerMemberCloseBudgets checks that every member's close context is
+// live and carries a deadline, and that each deadline is strictly later
+// than floor and than the previous member's, which a context minted per
+// member after its guard acquisition produces and a context shared across
+// the acquisitions and every close cannot.
+func assertPerMemberCloseBudgets(t *testing.T, recs []closeContextRecord, want int, floor time.Time) {
+	t.Helper()
+	if len(recs) != want {
+		t.Fatalf("runtime closes = %d, want %d", len(recs), want)
+	}
+	prev := floor
+	for _, rec := range recs {
+		if rec.err != nil {
+			t.Errorf("member %s was closed on a context whose Err() = %v, want nil", rec.sessionID, rec.err)
+		}
+		if !rec.hasDeadline {
+			t.Errorf("member %s was closed on a context with no deadline", rec.sessionID)
+			continue
+		}
+		if !rec.deadline.After(prev) {
+			t.Errorf("member %s close deadline %v is not strictly later than %v", rec.sessionID, rec.deadline, prev)
+		}
+		prev = rec.deadline
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §10.1.4 (coordinator-loss detection and hold state)
+//
+// The §10.1.4 hold termination gives each member its own close budget,
+// minted after that member's guard acquisition returns: the pass's single
+// context bounds the guard acquisitions alone, so no member's close is spent
+// on another member's guard wait or inherits a pass context that has
+// already expired.
+func TestHoldTerminationGivesEachMemberItsOwnCloseBudget_spec_10_1_4(t *testing.T) {
+	t.Run("the hold timeout closes each member on its own context", func(t *testing.T) {
+		setCoordinatorHold(false)
+		rt := &closeBudgetRuntime{}
+		s, clk := holdTerminationServer(t, rt, "alice", "bob")
+		before := time.Now()
+		fireHoldTimeout(t, s, clk)
+		assertPerMemberCloseBudgets(t, rt.closes(), 2, before)
+	})
+
+	t.Run("each close deadline is later than the pass's guard deadline", func(t *testing.T) {
+		rt := &closeBudgetRuntime{}
+		s, _ := holdTerminationServer(t, rt, "alice", "bob")
+		guardCtx, cancel := context.WithTimeout(context.Background(), heldSessionCloseWindow)
+		defer cancel()
+		passDeadline, _ := guardCtx.Deadline()
+		for _, m := range s.deregisterStartedSessions() {
+			s.terminateHeldSession(guardCtx, m)
+		}
+		assertPerMemberCloseBudgets(t, rt.closes(), 2, passDeadline)
+	})
+
+	t.Run("a spent pass context does not reach an uncontended member's close", func(t *testing.T) {
+		rt := &closeBudgetRuntime{}
+		s, _ := holdTerminationServer(t, rt, "alice", "bob")
+		spent, cancel := context.WithCancel(context.Background())
+		cancel()
+		members := s.deregisterStartedSessions()
+		for _, m := range members {
+			s.terminateHeldSession(spent, m)
+		}
+		assertPerMemberCloseBudgets(t, rt.closes(), 2, time.Time{})
+		// Each member's guard was free, so each acquisition held it and each
+		// cleanup completed: the identifiers are released.
+		for _, m := range members {
+			if _, err := s.ensureSlotPaths(m.sessionID, slotResolve{bindAttempt: "attempt-a", allowCreate: true}); err != nil {
+				t.Errorf("a bind naming %s after its completed termination = %v, want admitted", m.sessionID, err)
+			}
+		}
+	})
+}

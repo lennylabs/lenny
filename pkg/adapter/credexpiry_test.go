@@ -318,7 +318,7 @@ func TestReleaseSessionCancelsExpiryTimers_spec_4_9(t *testing.T) {
 		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
 	timer := clk.last()
 
-	s.ReleaseSlotForTest("sess-1")
+	s.ReleaseSlotForTest(t.Context(), "sess-1")
 
 	if !timer.isStopped() {
 		t.Error("the release did not stop the session's expiry timer")

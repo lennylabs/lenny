@@ -144,7 +144,7 @@ func TestPodMCPArmingCancelledWhenNoSessionHoldsIt_spec_15_4_3(t *testing.T) {
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server: %v", err)
 	}
-	s.releaseSessionSlot("alice")
+	s.releaseSessionSlot(t.Context(), "alice")
 
 	s.mu.Lock()
 	armed, owner := s.mcpCancel != nil, s.mcpSession
@@ -195,7 +195,7 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 		t.Fatal("a claim on a co-tenanted pod took the pod-wide MCP start")
 	}
 	// bob rolls back; alice is still served by the shared runtime process.
-	s.releaseSessionSlot("bob")
+	s.releaseSessionSlot(t.Context(), "bob")
 	s.mu.Lock()
 	armed, owner := s.mcpCancel != nil, s.mcpSession
 	s.mu.Unlock()

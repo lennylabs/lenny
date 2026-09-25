@@ -422,7 +422,7 @@ func TestSetTracingContextAfterSessionReleaseIsDropped_spec_28_5_3(t *testing.T)
 	s, rt, fwd, client := concurrentTracingPod(t, "sess-a", "sess-b")
 	streamA := openTracingAttach(t, client, "sess-a")
 	rt.waitForSubscribers(t, 1)
-	s.ReleaseSlotForTest("sess-a")
+	s.ReleaseSlotForTest(t.Context(), "sess-a")
 
 	before := tracingDrops()
 	logs := captureDropLogs(t)

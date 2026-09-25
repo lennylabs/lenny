@@ -1010,7 +1010,7 @@ func TestCheckpointStreamLinksBarrierAfterDeregistration_spec_10_1_8(t *testing.
 
 	// sess-b is deregistered while its stream is queued: the registry's map
 	// key is gone before the stream reaches the link site.
-	s.ReleaseSlotForTest("sess-b")
+	s.ReleaseSlotForTest(t.Context(), "sess-b")
 
 	releaseOp()
 	<-streamDone

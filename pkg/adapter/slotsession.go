@@ -218,10 +218,36 @@ func (s *Server) reclaimSlotLocked(sessionID string) (st *slotState, removed, bo
 }
 
 // releaseSessionSlot runs both release steps in immediate succession and
-// then the pod-surface cancellation. It is the compensating action every
-// failed start path takes: it undoes the claim, removes the per-slot tree
-// the claim created, and returns the pod's occupancy to what it was
-// before the call.
+// then the pod-surface cancellation, under the slot's per-slot guard. It
+// is the compensating action every failed start path that holds no guard
+// takes: it undoes the claim, removes the per-slot tree the claim created,
+// and returns the pod's occupancy to what it was before the call.
+//
+// The guard is acquired on ctx, the caller's own context, ahead of s.mu. At
+// the StartSession and SDK-warm rollbacks that is the context whose expiry
+// failed Runtime.Start, which is why the acquisition takes a free guard
+// whatever state ctx is in. An acquisition that outlives ctx is logged as
+// slot_guard_not_acquired and the release still runs, unguarded, because
+// abandoning the removal would leave a worse residue than an unordered one;
+// the cleanup then counts as not completed and the reclaim hold is kept.
+// The guard's release is deferred ahead of the body's hold release, so the
+// guard outlives the hold.
+//
+// spec: §4.7; §5.2 (slot-identifier reclaim hold); §15.4.3.
+func (s *Server) releaseSessionSlot(ctx context.Context, sessionID string) {
+	unlock, guarded := s.lockSlotGuard(ctx, sessionID)
+	defer unlock()
+	if !guarded {
+		warnSlotGuardNotAcquired(sessionID, "releaseSessionSlot")
+	}
+	s.releaseSessionSlotUnderGuard(sessionID, guarded)
+}
+
+// releaseSessionSlotUnderGuard is releaseSessionSlot's body, for a caller
+// that already holds the slot's guard or whose acquisition expired. Resume
+// calls it directly at its rollback sites, because it holds the guard from
+// ahead of its claim and a second acquisition of the capacity-one guard
+// would block rather than re-enter.
 //
 // The pod-wide MCP teardown is gated on the release leaving the pod's
 // shared runtime process serving no session and on the session that armed
@@ -233,14 +259,15 @@ func (s *Server) reclaimSlotLocked(sessionID string) (st *slotState, removed, bo
 // StartSession, Resume, or ConfigureWorkspace.
 //
 // The deregistration opens the §5.2 reclaim hold, and the hold ends only
-// when the tree removal returns without error, which is the whole cleanup
-// this release owes the slot because it closes no runtime. A removal that
-// fails is logged and keeps the identifier held for the life of the pod.
-// The release is deferred, so a panic out of the removal is a cleanup that
-// did not complete.
+// when the cleanup completed: the section ran under its guard and the tree
+// removal returned without error, which is the whole cleanup this release
+// owes the slot because it closes no runtime. A removal that fails is
+// logged and keeps the identifier held for the life of the pod. The
+// release is deferred, so a panic out of the removal is a cleanup that did
+// not complete.
 //
 // spec: §4.7; §5.2 (slot-identifier reclaim hold); §15.4.3.
-func (s *Server) releaseSessionSlot(sessionID string) {
+func (s *Server) releaseSessionSlotUnderGuard(sessionID string, guarded bool) {
 	s.mu.Lock()
 	st, removed, _, release := s.reclaimSlotLocked(sessionID)
 	s.mu.Unlock()
@@ -254,7 +281,7 @@ func (s *Server) releaseSessionSlot(sessionID string) {
 		if err := s.removeSlotTreeVia(st); err != nil {
 			slog.Warn("slot_tree_removal_failed", "slot_id", sessionID, "error", err)
 		} else {
-			completed = true
+			completed = guarded
 		}
 	}
 	s.cancelPodMCPIfRuntimeIdle()

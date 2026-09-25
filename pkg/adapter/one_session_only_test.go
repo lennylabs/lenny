@@ -76,7 +76,7 @@ func TestStartClaimReadmitsASessionAfterItsRelease_spec_4_7(t *testing.T) {
 	if err := s.claimSessionForTest("sess-old"); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
-	s.ReleaseSlotForTest("sess-old")
+	s.ReleaseSlotForTest(t.Context(), "sess-old")
 	if err := s.claimSessionForTest("sess-old"); err != nil {
 		t.Errorf("claim after release: %v (the slot must be free again)", err)
 	}

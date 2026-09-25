@@ -49,6 +49,18 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 			"adapter is not configured with a checkpoint transport")
 	}
 
+	// spec: §5.2 (slot-identifier reclaim hold) — the restore writes the
+	// slot's tree outside s.mu, so the slot's per-slot guard is held from
+	// ahead of the claim to the end of the call, and every rollback below
+	// releases under it rather than acquiring it a second time. A held
+	// identifier is refused here without waiting, and an acquisition that
+	// outlives ctx refuses the Resume before it claims anything.
+	releaseGuard, err := s.acquireSlotGuardForResolve(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseGuard()
+
 	// spec: §5.2 — the resume claims this session's slot on the
 	// replacement pod, the same claim the start path takes, and decides the
 	// once-per-pod intra-pod MCP start with it.
@@ -74,11 +86,11 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// comparison is per session on every pod.
 	sessionRoot, err := s.workspaceRootForSession(sessionID)
 	if err != nil {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, err
 	}
 	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != sessionRoot {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"resume rejected: workspace root mismatch (expected %q, adapter has %q)",
 			expected, sessionRoot)
@@ -94,7 +106,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		req.GetExpectedWorkspaceBytes(), req.GetWorkspaceSizeLimitBytes(),
 	); err != nil {
 		var sizeErr *checkpoint.WorkspaceSizeExceededError
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		if errors.As(err, &sizeErr) {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"resume rejected: %s", sizeErr.Error())
@@ -112,7 +124,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// carries no chunks (conversation-only) restores nothing.
 	restored, extractErr := s.restoreChunks(ctx, sessionID, req.GetChunks())
 	if extractErr != nil {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
 			req.GetCheckpointId(), extractErr)
 	}
@@ -131,7 +143,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		connectors:         connectors,
 	})
 	if err != nil {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}
 	// §4.7: start the platform MCP server for the restored session. The
@@ -139,14 +151,14 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// start arms them.
 	if startMCP {
 		if err := s.startPlatformMCP(nonce); err != nil {
-			s.releaseSessionSlot(sessionID)
+			s.releaseSessionSlotUnderGuard(sessionID, true)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
 		// §9.3: re-open the per-connector MCP servers. F-9.1.2.
 		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
-		s.releaseSessionSlot(sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
 	s.noteRuntimeStarted(sessionID)

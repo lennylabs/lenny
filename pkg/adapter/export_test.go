@@ -28,10 +28,12 @@ func UnaddressedFrameRejectedCounter(frameType string) prometheus.Counter {
 // ReleaseSlotForTest runs both release steps for the session the way the
 // rollback paths do, so an external test can drive the §28.5.3 teardown
 // window in which an Attach stream is still draining output after its
-// binding was released.
-func (s *Server) ReleaseSlotForTest(sessionID string) {
+// binding was released. ctx is the context the release acquires the
+// slot's per-slot guard on, as the handler rollbacks pass their request
+// context.
+func (s *Server) ReleaseSlotForTest(ctx context.Context, sessionID string) {
 	s.noteRuntimeClosed(sessionID)
-	s.releaseSessionSlot(sessionID)
+	s.releaseSessionSlot(ctx, sessionID)
 }
 
 // ClaimSessionForTest binds and marks started the session's slot the way

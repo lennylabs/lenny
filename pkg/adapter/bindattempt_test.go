@@ -5,6 +5,7 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"log/slog"
@@ -619,6 +620,13 @@ func TestReclaimHoldRefusesAdmissionUntilTheTeardownCompletes_spec_5_2(t *testin
 			})
 			done := startHeldTermination(s)
 			<-parked
+			// The parked termination holds the slot's guard, so a guarded
+			// entry point that tested the hold only after waiting on the guard
+			// would block here rather than return the refusal.
+			if release, ok := s.lockSlotGuard(cancelledContext(), "alice"); ok {
+				release()
+				t.Fatal("the parked hold termination does not hold the slot's guard")
+			}
 
 			refused := make(chan error, 1)
 			go func() { refused <- ac.call(s, "alice") }()
@@ -653,7 +661,7 @@ func TestEveryDeregisterThenDestroySiteTakesTheHold_spec_5_2(t *testing.T) {
 		name    string
 		destroy func(s *Server)
 	}{
-		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot("alice") }},
+		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot(t.Context(), "alice") }},
 		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
 	}
 	for _, tc := range cases {
@@ -688,7 +696,7 @@ func TestACleanupWhoseTreeRemovalFailsKeepsTheHold_spec_5_2(t *testing.T) {
 		name    string
 		destroy func(s *Server)
 	}{
-		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot("alice") }},
+		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot(t.Context(), "alice") }},
 		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
 	}
 	for _, tc := range cases {
@@ -916,4 +924,278 @@ func TestTheBindAttemptTokenIsNeverInAMessage_spec_4_7_1(t *testing.T) {
 	if out := logs.String(); strings.Contains(out, tokenA) || strings.Contains(out, tokenB) {
 		t.Errorf("a log line carries the token: %s", out)
 	}
+}
+
+// cancelledContext returns a context that is already cancelled.
+func cancelledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}
+
+// holdGuard takes slotID's per-slot guard on the test's behalf, standing in
+// for a section still inside its path work, and returns its release.
+func holdGuard(t *testing.T, s *Server, slotID string) func() {
+	t.Helper()
+	release, ok := s.lockSlotGuard(context.Background(), slotID)
+	if !ok {
+		t.Fatalf("could not take the guard for %s", slotID)
+	}
+	return release
+}
+
+// slogRecords decodes the JSON slog records captured in buf.
+func slogRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var recs []map[string]any
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err == nil {
+			recs = append(recs, rec)
+		}
+	}
+	return recs
+}
+
+// guardNotAcquiredCallers returns the caller field of every
+// slot_guard_not_acquired record naming slotID.
+func guardNotAcquiredCallers(t *testing.T, buf *bytes.Buffer, slotID string) []string {
+	t.Helper()
+	var callers []string
+	for _, rec := range slogRecords(t, buf) {
+		if rec["msg"] == "slot_guard_not_acquired" && rec["slot_id"] == slotID {
+			caller, _ := rec["caller"].(string)
+			callers = append(callers, caller)
+		}
+	}
+	return callers
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// The acquisition step tries the guard before it consults the context, so a
+// free guard is held on an already-cancelled context every time rather than
+// on the half of the iterations a bare two-case select would pick the send.
+// The guard-acquiring release on that context runs guarded, logs no expiry,
+// and ends the reclaim hold.
+func TestAnUncontendedAcquisitionOnACancelledContextHoldsTheGuard_spec_5_2(t *testing.T) {
+	s, _ := bindServer(t)
+	ctx := cancelledContext()
+	for i := range 64 {
+		release, ok := s.lockSlotGuard(ctx, "alice")
+		if !ok {
+			t.Fatalf("iteration %d: lockSlotGuard on a free guard and a cancelled context = false", i)
+		}
+		release()
+		release, err := s.acquireSlotGuardForResolve(ctx, "alice")
+		if err != nil {
+			t.Fatalf("iteration %d: acquireSlotGuardForResolve on a free guard and a cancelled context = %v", i, err)
+		}
+		release()
+	}
+
+	logs := captureLogs(t)
+	if err := s.claimSessionForTest("alice"); err != nil {
+		t.Fatalf("claim alice: %v", err)
+	}
+	s.releaseSessionSlot(ctx, "alice")
+	if callers := guardNotAcquiredCallers(t, logs, "alice"); len(callers) != 0 {
+		t.Errorf("an uncontended release logged slot_guard_not_acquired for %v", callers)
+	}
+	if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true}); err != nil {
+		t.Errorf("a bind after the guarded release = %v, want admitted because the hold was released", err)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow); §10.1.4 (coordinator-loss detection and hold state)
+//
+// A destructive section whose guard acquisition expires does not wait for
+// the holder and does not abandon the removal: it removes the entry and the
+// tree unguarded, logs slot_guard_not_acquired naming the slot and the
+// removing site, and keeps the reclaim hold after the holder lets go,
+// because an unguarded removal can run beside a request still writing
+// under the identifier.
+func TestADestructiveSectionWhoseGuardAcquisitionExpiresRemovesUnguardedAndKeepsTheHold_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name    string
+		caller  string
+		destroy func(s *Server, ctx context.Context)
+	}{
+		{"releaseSessionSlot", "releaseSessionSlot", func(s *Server, ctx context.Context) {
+			s.releaseSessionSlot(ctx, "alice")
+		}},
+		{"terminateHeldSession", "terminateHeldSession", func(s *Server, ctx context.Context) {
+			for _, m := range s.deregisterStartedSessions() {
+				s.terminateHeldSession(ctx, m)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLogs(t)
+			s, _ := bindServer(t)
+			if err := s.claimSessionForTest("alice"); err != nil {
+				t.Fatalf("claim alice: %v", err)
+			}
+			releaseHolder := holdGuard(t, s, "alice")
+
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				tc.destroy(s, cancelledContext())
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				releaseHolder()
+				t.Fatal("the destructive section waited for the guard holder past its context")
+			}
+			if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+				t.Error("an expired acquisition abandoned the removal; the entry or its tree survived")
+			}
+			callers := guardNotAcquiredCallers(t, logs, "alice")
+			if len(callers) != 1 || callers[0] != tc.caller {
+				t.Errorf("slot_guard_not_acquired callers = %v, want [%s]", callers, tc.caller)
+			}
+			releaseHolder()
+			_, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenA, allowCreate: true})
+			if !isSlotReclaimInProgress(err) {
+				t.Errorf("a bind after an unguarded removal = %v, want the reclaim-hold refusal", err)
+			}
+		})
+	}
+}
+
+// guardedAdmissionCalls are the admission RPCs whose path work runs outside
+// s.mu and which therefore take the per-slot guard ahead of their resolve.
+func guardedAdmissionCalls(ctx context.Context) []admissionCall {
+	return []admissionCall{
+		{"PrepareWorkspace", func(s *Server, id string) error {
+			return s.PrepareWorkspace(&prepareWorkspaceStreamStub{
+				ctx:    ctx,
+				frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame(id, tokenA, false, "x")},
+			})
+		}},
+		{"FinalizeWorkspace", func(s *Server, id string) error {
+			_, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+				WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1},
+			})
+			return err
+		}},
+		{"RunSetup", func(s *Server, id string) error {
+			_, err := s.RunSetup(ctx, &adapterv1.RunSetupRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, BindAttempt: tokenA,
+			})
+			return err
+		}},
+		{"Resume", func(s *Server, id string) error {
+			_, err := s.Resume(ctx, &adapterv1.ResumeRequest{
+				SessionId: &adapterv1.SessionId{Value: id}, CheckpointId: "ckpt-1", BindAttempt: tokenA,
+			})
+			return err
+		}},
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// An admission RPC whose guard acquisition outlives its context is refused
+// with the context's own error before it resolves anything, so a
+// materialization never proceeds unguarded and re-creates a tree a reclaim
+// has just removed.
+func TestAnAdmissionRPCWhoseGuardAcquisitionExpiresIsRefused_spec_5_2(t *testing.T) {
+	for _, ac := range guardedAdmissionCalls(cancelledContext()) {
+		t.Run(ac.name, func(t *testing.T) {
+			s, _ := bindServer(t)
+			releaseHolder := holdGuard(t, s, "alice")
+			defer releaseHolder()
+			if _, err := s.acquireSlotGuardForResolve(cancelledContext(), "alice"); !errors.Is(err, context.Canceled) {
+				t.Fatalf("acquireSlotGuardForResolve on a held guard = %v, want context.Canceled", err)
+			}
+			err := ac.call(s, "alice")
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("%s with an expired guard acquisition = %v, want context.Canceled", ac.name, err)
+			}
+			if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+				t.Errorf("%s created an entry or a tree without holding the guard", ac.name)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §7.1 (normal flow)
+//
+// The per-slot guard brackets FinalizeWorkspace's resolve and its
+// materialization: while another section holds the slot's guard the
+// finalize neither resolves nor writes, and it runs once the guard is
+// free. Two finalizes by the same attempt therefore never interleave their
+// materialization, and each observes the whole tree the other built.
+func TestThePerSlotGuardSerializesTheDestructiveSection_spec_5_2(t *testing.T) {
+	t.Run("a held guard parks the finalize ahead of its resolve", func(t *testing.T) {
+		s, _ := bindServer(t)
+		releaseHolder := holdGuard(t, s, "alice")
+		done := make(chan error, 1)
+		go func() {
+			_, err := s.FinalizeWorkspace(context.Background(),
+				finalizeReq("alice", wsSource("inlineFile", "a.txt", "a", "644")))
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			releaseHolder()
+			t.Fatalf("FinalizeWorkspace returned %v while another section held the slot's guard", err)
+		case <-time.After(200 * time.Millisecond):
+		}
+		if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+			t.Error("the finalize resolved or wrote while another section held the slot's guard")
+		}
+		releaseHolder()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("FinalizeWorkspace after the guard was released = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("FinalizeWorkspace did not proceed once the guard was released")
+		}
+		if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "slots", "alice", "current", "a.txt")); err != nil {
+			t.Errorf("the materialized file is missing: %v", err)
+		}
+	})
+
+	t.Run("concurrent finalizes by one attempt each build the whole tree", func(t *testing.T) {
+		s, _ := bindServer(t)
+		sources := []*adapterv1.WorkspaceSource{
+			wsSource("mkdir", "docs", "", "755"),
+			wsSource("inlineFile", "docs/a.txt", "a", "644"),
+			wsSource("inlineFile", "docs/b.txt", "b", "644"),
+		}
+		const n = 8
+		var wg sync.WaitGroup
+		errs := make(chan error, n)
+		for range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := s.FinalizeWorkspace(context.Background(), finalizeReq("alice", sources...))
+				errs <- err
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Errorf("a concurrent finalize failed: %v", err)
+			}
+		}
+		for _, name := range []string{"a.txt", "b.txt"} {
+			if _, err := os.Stat(filepath.Join(s.WorkspaceBase, "slots", "alice", "current", "docs", name)); err != nil {
+				t.Errorf("docs/%s missing after concurrent finalizes: %v", name, err)
+			}
+		}
+	})
 }
