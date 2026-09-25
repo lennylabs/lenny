@@ -416,8 +416,8 @@ type Server struct {
 	slotReplacement func(pool string)
 	// slotLeakGauge, when set, publishes the §6.2
 	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
-	// the pod's slots whose cleanup timed out and remain counted in
-	// active_slots until the pod terminates. Nil disables the emission.
+	// the pod's leaked slots, which remain counted in active_slots until the
+	// pod terminates. Nil disables the emission.
 	slotLeakGauge func(pod, pool string, leaked int)
 	// observeStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm startup latency on a successful start. Nil
@@ -1664,8 +1664,8 @@ type Options struct {
 
 	// SlotLeakGauge, when set, publishes the §6.2
 	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
-	// a pod's concurrent-workspace slots whose cleanup timed out and remain
-	// counted in active_slots until the pod terminates. Nil disables the
+	// a pod's leaked concurrent-workspace slots, which remain counted in
+	// active_slots until the pod terminates. Nil disables the
 	// emission. spec: §6.2.
 	SlotLeakGauge func(pod, pool string, leaked int)
 

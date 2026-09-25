@@ -31,19 +31,15 @@ const (
 	// ReceivingUploads is the workspace-materialization sub-state for one
 	// slot. spec: §6.2.
 	ReceivingUploads SubState = "receiving_uploads"
-	// Running is the dispatched sub-state: the slot's workspace is ready
-	// and the task has been dispatched to the runtime with the slotId.
-	// spec: §6.2.
+	// Running is the sub-state a slot enters when the adapter records the
+	// pod's shared runtime process as holding the session. spec: §6.2.
 	Running SubState = "running"
-	// SlotCleanup is the post-execution cleanup sub-state (task completed
-	// or failed, per-slot cleanup runs). spec: §6.2.
+	// SlotCleanup is the cleanup sub-state for one slot. spec: §6.2.
 	SlotCleanup SubState = "slot_cleanup"
-	// Released is the terminal sub-state for a slot whose workspace was
-	// removed, processes killed, and slotId released. spec: §6.2.
+	// Released is the terminal sub-state for a reclaimed slot. spec: §6.2.
 	Released SubState = "released"
-	// Leaked is the terminal sub-state for a slot whose cleanup timed out:
-	// the slot is not reclaimed until pod termination and remains counted
-	// in active_slots. spec: §6.2.
+	// Leaked is the terminal sub-state for a slot that is not reclaimed until
+	// pod termination and remains counted in active_slots. spec: §6.2.
 	Leaked SubState = "leaked"
 	// Failed is the terminal sub-state for a slot that hit a non-retryable
 	// error (OOM, workspace validation, policy rejection). spec: §6.2.
@@ -97,15 +93,17 @@ type Transition struct {
 // §6.2:
 //
 //	slot_assigned     → receiving_uploads   (workspace materialization begins)
-//	receiving_uploads → running             (workspace ready, task dispatched)
+//	receiving_uploads → running             (see §6.2 "Pre-running slot cleanup")
+//	receiving_uploads → slot_cleanup        (see §6.2 "Pre-running slot cleanup")
 //	running           → slot_cleanup        (task completes or fails)
 //	running           → failed              (non-retryable error)
-//	slot_cleanup      → released            (slot reclaimed)
-//	slot_cleanup      → leaked              (cleanup timeout exceeded)
+//	slot_cleanup      → released            (see §5.2)
+//	slot_cleanup      → leaked              (see §5.2)
 func ValidTransitions() []Transition {
 	return []Transition{
 		{SlotAssigned, ReceivingUploads},
 		{ReceivingUploads, Running},
+		{ReceivingUploads, SlotCleanup},
 		{Running, SlotCleanup},
 		{Running, Failed},
 		{SlotCleanup, Released},

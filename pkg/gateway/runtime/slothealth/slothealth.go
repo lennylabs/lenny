@@ -30,9 +30,8 @@ const DefaultWindow = 5 * time.Minute
 
 // event is one slot failure occurrence at a point in time. A failure is
 // transient, so it is counted within the rolling 5-minute window and ages
-// out. Leaks are not events: a §6.2 leaked slot (cleanup timeout exceeded)
-// persists until pod termination and is counted persistently instead (see
-// Tracker.leaked). spec: §6.2 "`leaked` slot semantics" (failed slots
+// out. Leaks are not events: a §6.2 leaked slot persists until pod
+// termination and is counted persistently instead (see Tracker.leaked). spec: §6.2 "`leaked` slot semantics" (failed slots
 // counted within a rolling 5-minute window, leaked slots counted
 // persistently).
 type event struct {
@@ -107,9 +106,8 @@ func (t *Tracker) RecordFailure(pod string) {
 	t.events[pod] = append(t.pruneLocked(pod, now), event{at: now})
 }
 
-// RecordLeak records that a slot on pod transitioned to leaked (the §6.2
-// cleanup timeout was exceeded so the slot is not reclaimed until pod
-// termination). A leaked slot counts toward the unhealthy threshold exactly
+// RecordLeak records that a slot on pod transitioned to leaked, so the slot
+// is not reclaimed until pod termination. A leaked slot counts toward the unhealthy threshold exactly
 // like a failure because it consumes slot capacity without being
 // reclaimable, but it is counted persistently rather than within the
 // rolling window: a leaked slot persists until pod termination, so a pod

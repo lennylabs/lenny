@@ -90,9 +90,8 @@ func (r *Registry) MarkReleased(slotID string) {
 	delete(r.slots, slotID)
 }
 
-// MarkLeaked records a slot whose cleanup timed out, so it remains counted
-// in the pod's active_slots and leaked_slots until the pod terminates
-// (spec §6.2). It seeds the slot at Leaked if the
+// MarkLeaked records a leaked slot, so it remains counted in the pod's
+// active_slots and leaked_slots until the pod terminates (spec §6.2). It seeds the slot at Leaked if the
 // registry was not already tracking it. MarkLeaked returns the pod's
 // resulting leaked-slot count so the caller can publish the
 // lenny_adapter_leaked_slots gauge.

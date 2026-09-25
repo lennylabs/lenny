@@ -68,9 +68,8 @@ type credentialMetrics struct {
 	// Postgres after a Redis restart. Labels: `pod` and `pool` (both
 	// bounded — at most one rehydration per pod per Redis restart).
 	slotRehydration *prometheus.CounterVec
-	// adapterLeakedSlots is the §6.2 per-pod count of
-	// concurrent-workspace slots whose cleanup timed out and are leaked
-	// (not reclaimed until pod termination). Labels: `pod_id`, `pool`.
+	// adapterLeakedSlots is the §6.2 per-pod count of leaked
+	// concurrent-workspace slots (not reclaimed until pod termination). Labels: `pod_id`, `pool`.
 	adapterLeakedSlots *prometheus.GaugeVec
 }
 
@@ -216,9 +215,9 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §6.2 — `lenny_adapter_leaked_slots` is the per-pod count of
-	// concurrent-workspace slots whose cleanup timed out and remain counted
-	// in active_slots until the pod terminates. Labels: `pod_id`, `pool`.
+	// §6.2 — `lenny_adapter_leaked_slots` is the per-pod count of leaked
+	// concurrent-workspace slots, which remain counted in active_slots until
+	// the pod terminates. Labels: `pod_id`, `pool`.
 	adapterLeakedSlots, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_adapter_leaked_slots",
 		Help: "Concurrent-workspace leaked slots per pod awaiting pod termination (§6.2).",

@@ -7,12 +7,14 @@ import (
 	"testing"
 )
 
-// spec: §6.2 — the per-slot sub-state edge list is exactly
-// the six edges the spec enumerates, and no others are legal.
+// spec: §6.2 — the per-slot sub-state edge list is exactly the edges the
+// spec enumerates, including the pre-running cleanup edge
+// receiving_uploads → slot_cleanup, and no others are legal.
 func TestValidTransitions_spec_6_2(t *testing.T) {
 	want := map[Transition]bool{
 		{SlotAssigned, ReceivingUploads}: true,
 		{ReceivingUploads, Running}:      true,
+		{ReceivingUploads, SlotCleanup}:  true,
 		{Running, SlotCleanup}:           true,
 		{Running, Failed}:                true,
 		{SlotCleanup, Released}:          true,
@@ -33,6 +35,11 @@ func TestValidTransitions_spec_6_2(t *testing.T) {
 		if err := IsValid(e.From, e.To); err != nil {
 			t.Errorf("IsValid(%q,%q) = %v, want nil", e.From, e.To, err)
 		}
+	}
+	// A bind abandoned before the slot reaches running is reclaimed from
+	// receiving_uploads (spec §6.2 "Pre-running slot cleanup").
+	if err := IsValid(ReceivingUploads, SlotCleanup); err != nil {
+		t.Errorf("receiving_uploads → slot_cleanup must be legal, got %v", err)
 	}
 	if err := IsValid(SlotAssigned, Running); err == nil {
 		t.Error("slot_assigned → running must be illegal (must pass through receiving_uploads)")
