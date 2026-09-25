@@ -2830,7 +2830,8 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | regression, no edit | existing tests that drive a bind through `podsession.Binder`, whose requests S13 changes, such as `tests/tier2_component/translators/openai_singleshot_lifecycle_test.go`, `tests/tier3_contract/rest_sessions/slot_address_absence_test.go` and `tests/tier9_security/credential_delivery_gate_test.go` | CODE-4 | S13 | 2, 3, 9 |
 | `pkg/adapter/bindattempt_test.go` | new; every case of **Adapter tests for CODE-6 and CODE-14, tier 1** that no S15 or S16 row names; **The hold refuses admission until the teardown returns having completed** refuses every entry point at the resolve, and **Every deregister-then-destroy site takes the hold** and **A cleanup whose tree removal fails keeps the hold** run their `releaseSessionSlot` and §10.1.4 rows | CODE-6 | S14 | 1 |
 | `pkg/adapter/export_test.go`, `exportpaths_test.go`, `holdstate_test.go`, `manifest_fields_test.go`, `one_session_only_test.go`, `podmcp_arming_internal_test.go`, `slotsession_test.go` and `usage_test.go`, all in `pkg/adapter` | the `slotResolve{allowCreate: true}` widening at every call of `ensureSlotStateLocked`, `ensureSlotPaths` and `claimSessionSlot`, and the `deregisterSlot` rewrite in `podmcp_arming_internal_test.go` | CODE-6 | S14 | 1 |
-| the literals the `BindAttempt` rule under `## Files touched on application (non-spec)` requires | the `BindAttempt` or `MidSession` literal edit | CODE-6 | S14 | 1, 3, 4, 7a, 8, 9, 10 |
+| `pkg/adapter/session_test.go`, `slot_test.go`, `resume_test.go` and `one_session_only_test.go` | the asserted code of `TestStartSessionRefusesARepeatedStartAndAdmitsASecondSession_spec_4_7`, `TestStartSessionRejectsARepeatedStart_spec_4_7`, `TestResumeAdmitsASecondSessionAndRefusesARepeat_spec_4_7` and `TestStartClaimRefusesASecondStartOfTheSameSession_spec_4_7` moves from `codes.Unavailable` to the code rule 6 (**the started-session rule**) states; no new case | CODE-6 | S14 | 1 |
+| the literals the `BindAttempt` rule under `## Files touched on application (non-spec)` requires | the `BindAttempt` rule's edit | CODE-6 | S14 | 1, 3, 4, 7a, 8, 9, 10 |
 | regression, no edit | existing tier-2 tests that drive an adapter RPC whose resolve S14 changes on a real `adapter.Server` with no literal the `BindAttempt` rule under `## Files touched on application (non-spec)` requires, such as the `StartSession` in `tests/tier2_component/warmlayout/warm_layout_test.go` | CODE-6 | S14 | 2 |
 | `pkg/adapter/bindattempt_test.go` | the guard-acquisition assertions of **The hold refuses admission until the teardown returns having completed**; **The per-slot guard serializes the destructive section.**; the `releaseSessionSlot` and `terminateHeldSession` rows of **A destructive section whose guard acquisition expires takes CODE-14's disposition of an expired acquisition at a removing site.**; **An uncontended acquisition on a cancelled context holds the guard.**; **An admission RPC whose guard acquisition expires is refused.** | CODE-14 | S15 | 1 |
 | `pkg/adapter/holdstate_test.go` | **Tier 1, CODE-14's §10.1.4 per-member close budget**, with the file's whole-file §4.7.1 credit | CODE-14 | S15 | 1 |
@@ -3150,8 +3151,9 @@ execution modes)`:
   sub-cases. The unbound sub-case creates the successor through `ensureSlotPaths` alone; the
   confirmation still refuses, the rollback runs, and the assertion is that the successor's entry
   and its per-slot cwd survive it. The bound sub-case runs `AssignCredentials` and then
-  `claimSessionSlot` for the successor; the confirmation is satisfied by that entry, no rollback
-  runs, and the assertion is that the entry, the cwd and the credential file all survive.
+  `claimSessionSlot` for the successor; the confirmation refuses as **The confirmation refuses a
+  replaced entry.** asserts, the rollback runs, and the assertion is that the entry, the cwd and
+  the credential file all survive it.
 - **The SDK-warm confirmation refuses without releasing.** In `pkg/adapter/sdkwarm_test.go`,
   carrying `// spec: §4.7.1 (role and gateway RPC contract); §6.1 (SDK-warm pre-connect); §7.1
   (normal flow)` rather than the subsection's own annotation, because the arm it pins is the
@@ -3665,7 +3667,7 @@ the same identifier. The reverse ordering is reachable only on the unguarded sta
 successor cannot be created under the identifier while a parked `Resume` holds that slot's guard,
 because the `Shutdown` that would clear the way is still blocked on it. The start confirmation
 finds an entry carrying a different token and refuses, the RPC returns `Aborted`, and the
-successor's entry, tree and runtime membership survive. This fails against a confirmation
+successor's entry and tree survive. This fails against a confirmation
 predicate that reads only `st.sessionID`.
 
 **Tier 7a, the concurrent-resolve race**,
@@ -4128,6 +4130,7 @@ of these cases:
   `pkg/adapter/export_test.go`, `pkg/adapter/usage_test.go`,
   `pkg/adapter/adapterevents_test.go`, `pkg/adapter/podmcp_arming_internal_test.go`,
   `pkg/adapter/exportpaths_test.go`, `pkg/adapter/one_session_only_test.go`,
+  `pkg/adapter/session_test.go`, `pkg/adapter/slot_test.go`, `pkg/adapter/resume_test.go`,
   `pkg/adapter/manifest_fields_test.go` (`setSessionLeasesForTest` at `:220` takes the mechanical
   `slotResolve{allowCreate: true}` widening),
   `pkg/adapter/integrationlevel_test.go`, `pkg/adapter/credexpiry_test.go`,
@@ -4208,6 +4211,10 @@ of these cases:
   handler, to an adapter gRPC client or to `adapterclient.Client.Resume` carries a non-empty
   `BindAttempt`, or `MidSession: true` and no token where the literal stands for a §7.4
   mid-session call, in whichever file it sits, the files the Tests list above names included. A
+  test that sends one of these requests, without `mid_session`, for a session it has already
+  started, other than to pin rule 6's refusal, moves that call ahead of the session's `StartSession` and carries the token there,
+  because rule 6 (**the started-session rule**) refuses it after the start; a
+  `FinalizeWorkspace` may instead take `MidSession: true` and no token. A
   shared request helper, such as `uploadFrame`, `finalizeReq` and `runSetupReq` in
   `pkg/adapter/staging_test.go` or `resumeReq` in `pkg/adapter/resume_test.go`, carries the field
   for every caller, and a `PrepareWorkspace` stream carries it on the frame that resolves the
@@ -4218,20 +4225,23 @@ of these cases:
   `TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326`
   (`pkg/adapter/staging_test.go`), and a test that pins `InvalidArgument` for another reason,
   such as the symlink refusal in `TestFinalizeWorkspacePlumsArchivePolicy`
-  (`pkg/adapter/staging_test.go`), passes on rule 1's refusal and pins nothing. Four kinds of
-  literal stay unchanged. The first is the `FinalizeWorkspaceRequest` in
-  `TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433`
-  (`pkg/adapter/files_updated_test.go`), which already sets `mid_session` and carries no token.
-  The second is a deliberately invalid request the handler refuses before rule 1, which is an
+  (`pkg/adapter/staging_test.go`), passes on rule 1's refusal and pins nothing. The
+  `FinalizeWorkspaceRequest` in `TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433`
+  (`pkg/adapter/files_updated_test.go`) keeps `mid_session` and no token, and the test seeds
+  `sess-mid`'s entry with `srv.ensureSlotPaths("sess-mid", slotResolve{allowCreate: true})`
+  before the call, because rule 3 (**the mid-session-create rule**) refuses it otherwise. Three
+  kinds of literal stay unchanged.
+  The first is a deliberately invalid request the handler refuses before rule 1, which is an
   empty session identifier refused by the handler's shipped empty-session-id check, which keeps
   its place ahead of `validateBindFields`, such as the empty request in
-  `TestAssignCredentialsRequiresASessionID` (`pkg/adapter/credentials_test.go`). The third is a
+  `TestAssignCredentialsRequiresASessionID` (`pkg/adapter/credentials_test.go`). The second is a
   case this change adds that carries a malformed field pair, which its own row specifies. The
-  fourth is a literal that reaches no adapter handler: the `fencedMessages` descriptor probe and
+  third is a literal that reaches no adapter handler: the `fencedMessages` descriptor probe and
   the unset-field input in `tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go`,
   whose bytes `TestUnsetGenerationFenceAddsNoBytes` pins, and `assignReq` in
   `pkg/adapter/credredact_test.go`, which only the redaction interceptor's stub handler
-  receives. The edit adds a field to an existing literal, creates no case and adds no call into
+  receives. The edit adds a field to an existing literal, moves an existing call ahead of the
+  start, or seeds an entry through `ensureSlotPaths`, creates no case and adds no call into
   the slot claim surface, so a file it touches enters no row in `slotAddressCaseFiles` and takes
   no `tests/spec-map.json` entry. Every tier the landing table's CODE-6 row for this rule names
   stays green at S14.
