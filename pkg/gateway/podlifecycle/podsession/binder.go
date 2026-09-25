@@ -870,6 +870,11 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		return nil, err
 	}
 	sandboxName := sb.Name
+	// spec: §4.7.1 (role and gateway RPC contract) — Prepare is one bind
+	// attempt. It mints its token before its first entry-touching RPC and
+	// carries it on PrepareWorkspace, FinalizeWorkspace, RunSetup, and
+	// AssignCredentials, each with mid_session false. DemoteSDK carries none.
+	bindAttempt := newBindAttempt()
 
 	var t BindTimings
 	// leaseAssigned tracks whether assignCredentials issued a lease in this
@@ -929,12 +934,12 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		AllowSymlinks: req.ArchivePolicy.GetAllowSymlinks(),
 		WorkspaceRoot: firstNonEmpty(req.ArchivePolicy.GetWorkspaceRoot(), slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID)),
 	}
-	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow, bindAttempt)
 	if err != nil {
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
-	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
+	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
 	if err != nil {
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
@@ -946,7 +951,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	t.WorkspaceMaterialization = time.Since(phaseStart)
 
 	phaseStart = time.Now()
-	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
+	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy, bindAttempt)
 	if err != nil {
 		reclaim(err)
 		// spec: §7.5 — partial outputs ride alongside the failure
@@ -962,7 +967,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	phaseStart = time.Now()
 	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
 	// projects the coarse `claimed` phase, before the runtime starts at Launch.
-	if err := b.assignCredentials(ctx, cl, req); err != nil {
+	if err := b.assignCredentials(ctx, cl, req, bindAttempt); err != nil {
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
@@ -989,6 +994,11 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 // adapter connection. A launch failure reclaims the pod (and any lease
 // assigned at Prepare) via failPhase and is returned so the gateway retries
 // on a fresh pod. spec: §4.4 (proposal), §6.1, §5.1.
+//
+// Launch mints no §4.7.1 bind attempt token: neither StartSession nor
+// ConfigureWorkspace carries one, and the start confirms instead that the
+// entry it claimed is still the one it was admitted against (§4.7.1 rule 8,
+// the start-confirmation rule).
 func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, error) {
 	sb, cl, neg, err := b.reconnect(ctx, req)
 	if err != nil {
@@ -1252,8 +1262,9 @@ func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
 // assigns nothing.
 //
 // The minted leases carry credential material; per §4.7 item 6 the
-// payload is excluded from access logs and telemetry.
-func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client, req BindRequest) error {
+// payload is excluded from access logs and telemetry. bindAttempt is the
+// calling attempt's §4.7.1 token, carried on the AssignCredentials request.
+func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client, req BindRequest, bindAttempt string) error {
 	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
 	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
 	if !hasPool && !hasUser {
@@ -1293,7 +1304,7 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 			leases[provider] = lease
 		}
 	}
-	return cl.AssignCredentials(ctx, req.SessionID, leases)
+	return cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
 }
 
 // releaseCredentials returns the session's §4.9 credential leases to
@@ -1320,7 +1331,11 @@ func (b *Binder) releaseCredentials(sessionID string) {
 // strip-components-skip warnings the gateway raised during extraction. A
 // plan that carries upload sources but binds through a Binder with no
 // blob store fails rather than materializing an incomplete workspace.
-func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
+//
+// bindAttempt is the calling bind attempt's §4.7.1 token. PrepareWorkspace
+// carries it with mid_session false, because stageWorkspace runs only on the
+// bind sequence; the §7.4 mid-session upload sends its own pair.
+func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, sessionID, tenantID string, plan *adapterv1.WorkspacePlan, allow upload.RuntimeAllow, bindAttempt string) (*adapterv1.WorkspacePlan, []*adapterv1.WorkspacePlanWarning, error) {
 	uploads := make(map[string][]byte)
 
 	// §7.4 / §13.4 — extract uploadArchive and gitClone
@@ -1364,7 +1379,7 @@ func (b *Binder) stageWorkspace(ctx context.Context, cl *adapterclient.Client, s
 		// spec: §6.4 — the uploads stage into the session's own
 		// /workspace/slots/{sessionId}/staging area, whose identifier is the
 		// session the request already names.
-		if _, err := cl.PrepareWorkspace(ctx, sessionID, uploads); err != nil {
+		if _, err := cl.PrepareWorkspace(ctx, sessionID, uploads, bindAttempt, false); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1644,7 +1659,13 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 		cl.Close()
 		return ResumeResult{}, err
 	}
+	// spec: §4.7.1 (role and gateway RPC contract) — the Resume is the first
+	// and only entry-touching RPC of this attempt and creates the slot
+	// registry entry through its own claim, so it carries the attempt's
+	// freshly minted token.
+	bindAttempt := newBindAttempt()
 	res, err := cl.Resume(ctx, adapterclient.ResumeParams{
+		BindAttempt:             bindAttempt,
 		SessionID:               req.SessionID,
 		Runtime:                 req.Runtime,
 		CheckpointID:            req.CheckpointID,

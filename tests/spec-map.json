@@ -691,7 +691,14 @@
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
         "tests/tier3_contract/adapter_bind_attempt/...",
         "pkg/gateway/runtime/adapterclient/client_test.go",
-        "pkg/gateway/podlifecycle/podsession/binder_envtest_test.go"
+        "pkg/gateway/podlifecycle/podsession/binder_envtest_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go::TestMaterializeSlotMintsOneBindAttemptPerAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go::TestReleaseSlotSendsUnconditionalTeardown_spec_4_7_1",
+        "pkg/gateway/sessionserver/upload_to_session_test.go::TestUploadToSessionSendsTheMarkedMidSessionPair_spec_4_7_1"
       ],
       "packages": [
         "pkg/adapter"
@@ -1211,7 +1218,12 @@
         "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
+        "pkg/gateway/sessionserver/upload_to_session_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1367,7 +1379,12 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1",
-        "pkg/gateway/podlifecycle/podsession/binder_envtest_test.go"
+        "pkg/gateway/podlifecycle/podsession/binder_envtest_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
+        "pkg/gateway/sessionserver/upload_to_session_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1518,7 +1535,12 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1",
-        "pkg/gateway/runtime/adapterclient/client_test.go"
+        "pkg/gateway/runtime/adapterclient/client_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
+        "pkg/gateway/sessionserver/upload_to_session_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -1597,7 +1619,8 @@
         "pkg/gateway/sessionserver/upload_to_session_test.go",
         "tests/tier4_integration/eager_claim_lifecycle_test.go",
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
-        "pkg/adapter/staging_test.go"
+        "pkg/adapter/staging_test.go",
+        "pkg/gateway/runtime/adapterclient/client_test.go"
       ],
       "packages": [
         "pkg/upload"

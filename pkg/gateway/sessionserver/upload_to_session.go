@@ -125,13 +125,20 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 	// them onto that session's current tree. A PrepareWorkspace or FinalizeWorkspace
 	// failure leaves the live workspace untouched (the adapter aborts before
 	// promotion) — surface it as a transient upstream error.
-	if _, err := bind.Adapter.PrepareWorkspace(ctx, row.ID, uploads); err != nil {
+	//
+	// spec: §4.7.1 (role and gateway RPC contract); §7.4 — the pair is the
+	// marked mid-session form: mid_session true on both requests and no bind
+	// attempt token, because the binding it writes into predates the request
+	// and may have been made by another replica. The live binding checked
+	// above is the admission that keeps this identity-free request away from
+	// an entry this replica does not own.
+	if _, err := bind.Adapter.PrepareWorkspace(ctx, row.ID, uploads, "", true); err != nil {
 		s.emitMidSessionUploadAudit(ctx, row, uploadOutcomeRejected, "stage_failed", "")
 		s.writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR",
 			"failed to stage mid-session upload onto the pod: "+err.Error(), nil)
 		return
 	}
-	if _, err := bind.Adapter.FinalizeWorkspace(ctx, row.ID, plan, nil, true); err != nil {
+	if _, err := bind.Adapter.FinalizeWorkspace(ctx, row.ID, plan, nil, "", true); err != nil {
 		s.emitMidSessionUploadAudit(ctx, row, uploadOutcomeRejected, "materialize_failed", "")
 		s.writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR",
 			"failed to materialize mid-session upload into the workspace: "+err.Error(), nil)

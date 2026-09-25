@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,13 +33,13 @@ import (
 // dialRealAdapter starts a real adapter.Server (which actually materializes
 // the workspace on disk) on an in-process listener and returns a connected
 // adapterclient.Client. F-7.4.6.
-func dialRealAdapter(t *testing.T, srv *adapter.Server) *adapterclient.Client {
+func dialRealAdapter(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOption) *adapterclient.Client {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	g := grpc.NewServer()
+	g := grpc.NewServer(opts...)
 	adapterv1.RegisterAdapterServer(g, srv)
 	go func() { _ = g.Serve(lis) }()
 	t.Cleanup(func() { g.GracefulStop() })
@@ -54,7 +55,7 @@ func dialRealAdapter(t *testing.T, srv *adapter.Server) *adapterclient.Client {
 // midSessionFixture wires a running session bound to a real adapter pod
 // whose workspace lives under root, with a runtime registry declaring the
 // capability per `capability` and the deployer policy per `policyEnabled`.
-func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding bool) (http.Handler, string) {
+func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding bool, opts ...grpc.ServerOption) (http.Handler, string) {
 	t.Helper()
 	store := memstore.New()
 	now := time.Now()
@@ -83,7 +84,7 @@ func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding
 
 	reg := podsession.NewRegistry()
 	if withBinding {
-		ad := dialRealAdapter(t, &adapter.Server{WorkspaceBase: base})
+		ad := dialRealAdapter(t, &adapter.Server{WorkspaceBase: base}, opts...)
 		reg.Put(&podsession.BindResult{SessionID: "sess_mid", TenantID: "acme", Adapter: ad})
 	}
 
@@ -236,5 +237,81 @@ func TestRuntimeDiscoveryExposesMidSessionUpload_spec_7_4_433(t *testing.T) {
 	}
 	if c := got["rt-no"]; c != nil {
 		t.Errorf("rt-no capabilities = %+v, want omitted", c)
+	}
+}
+
+// midSessionWireRecorder is a pair of gRPC server interceptors that record
+// the bind_attempt and mid_session fields of every PrepareWorkspace frame and
+// every FinalizeWorkspace request the real adapter receives.
+type midSessionWireRecorder struct {
+	mu       sync.Mutex
+	prepare  []*adapterv1.PrepareWorkspaceRequest
+	finalize []*adapterv1.FinalizeWorkspaceRequest
+}
+
+func (r *midSessionWireRecorder) unary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+	if m, ok := req.(*adapterv1.FinalizeWorkspaceRequest); ok {
+		r.mu.Lock()
+		r.finalize = append(r.finalize, m)
+		r.mu.Unlock()
+	}
+	return h(ctx, req)
+}
+
+func (r *midSessionWireRecorder) stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, h grpc.StreamHandler) error {
+	return h(srv, &recordingServerStream{ServerStream: ss, rec: r})
+}
+
+// recordingServerStream records every PrepareWorkspace frame it receives.
+type recordingServerStream struct {
+	grpc.ServerStream
+	rec *midSessionWireRecorder
+}
+
+func (s *recordingServerStream) RecvMsg(m any) error {
+	if err := s.ServerStream.RecvMsg(m); err != nil {
+		return err
+	}
+	if fr, ok := m.(*adapterv1.PrepareWorkspaceRequest); ok {
+		s.rec.mu.Lock()
+		s.rec.prepare = append(s.rec.prepare, fr)
+		s.rec.mu.Unlock()
+	}
+	return nil
+}
+
+// The §7.4 mid-session pair is the marked form of §4.7.1's carriage table:
+// PrepareWorkspace and FinalizeWorkspace both carry mid_session true and an
+// empty bind_attempt, because a mid-session upload writes into a binding
+// that predates the request and asserts no attempt identity. Each half set
+// without the other is the pairing the adapter's wire rule refuses.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.4 (upload safety); §7.1
+// (normal flow); §5.2 (pool configuration and execution modes); §6.2 (pod
+// state machine)
+func TestUploadToSessionSendsTheMarkedMidSessionPair_spec_4_7_1(t *testing.T) {
+	rec := &midSessionWireRecorder{}
+	h, _ := midSessionFixture(t, true, true, true,
+		grpc.UnaryInterceptor(rec.unary), grpc.StreamInterceptor(rec.stream))
+	body := `{"files":[{"path":"docs/new.md","content":"` + b64("fresh") + `","mode":"644"}]}`
+	if rr := uploadToSession(t, h, body); rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.prepare) == 0 || len(rec.finalize) != 1 {
+		t.Fatalf("recorded %d PrepareWorkspace frames and %d FinalizeWorkspace requests, want at least 1 and exactly 1",
+			len(rec.prepare), len(rec.finalize))
+	}
+	for i, fr := range rec.prepare {
+		if !fr.GetMidSession() || fr.GetBindAttempt() != "" {
+			t.Errorf("PrepareWorkspace frame %d carries (bind_attempt %q, mid_session %t), want (\"\", true)",
+				i, fr.GetBindAttempt(), fr.GetMidSession())
+		}
+	}
+	fin := rec.finalize[0]
+	if !fin.GetMidSession() || fin.GetBindAttempt() != "" {
+		t.Errorf("FinalizeWorkspace carries (bind_attempt %q, mid_session %t), want (\"\", true)",
+			fin.GetBindAttempt(), fin.GetMidSession())
 	}
 }

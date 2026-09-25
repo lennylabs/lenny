@@ -262,7 +262,15 @@ func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 // per-slot lease per §6), and starts the session. Any failure closes the
 // adapter connection, records the §5.2 failure counter, and returns a
 // SlotBindError so the caller can release the reservation and retry.
+//
+// Each run is one §4.7.1 bind attempt: it mints its token before its first
+// pod-side RPC and carries it on PrepareWorkspace, FinalizeWorkspace,
+// RunSetup, and AssignCredentials, each with mid_session false. StartSession
+// carries no token (§4.7.1 carriage table).
 func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client) (*BindResult, error) {
+	// spec: §4.7.1 (role and gateway RPC contract) — one token per attempt,
+	// minted before the attempt's first pod-side RPC.
+	bindAttempt := newBindAttempt()
 	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
 	// extraction runs gateway-side (§7.4) exactly as in
@@ -281,14 +289,14 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	// spec: §6.4 — the slot's workspace materializes into
 	// its own /workspace/slots/{sessionId}/ tree, which the adapter keys on
 	// the session identifier the request already names.
-	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
+	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow, bindAttempt)
 	if err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
 		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 	}
-	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
+	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
 	if err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
@@ -296,7 +304,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 	}
 	finalizeWarnings := append(stageWarnings, warnings...)
-	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
+	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy, bindAttempt)
 	if err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
@@ -304,7 +312,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 			&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: setupOutputs})
 	}
 
-	if err := b.assignSlotCredentials(ctx, cl, req, slotID); err != nil {
+	if err := b.assignSlotCredentials(ctx, cl, req, bindAttempt); err != nil {
 		cl.Close()
 		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
 		return nil, b.slotBindError(sandboxName, slotID, slotFailureCredentialAssignment,
@@ -366,8 +374,9 @@ func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
 // concurrent-session slot holds an independent per-slot lease, so a
 // rotation on one slot does not disrupt sibling slots. It is a no-op
 // when the binder has no credential service or the request names no
-// pools.
-func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest, slotID string) error {
+// pools. bindAttempt is the calling attempt's §4.7.1 token, carried on the
+// AssignCredentials request.
+func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest, bindAttempt string) error {
 	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
 	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
 	if !hasPool && !hasUser {
@@ -400,7 +409,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 	}
 	// spec: §6.1 — the lease is written to the session's own per-slot
 	// credential file so a rotation on a co-tenant does not disrupt it.
-	return cl.AssignCredentials(ctx, req.SessionID, leases)
+	return cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
 }
 
 // connectSlot reserves a concurrent-session slot from the pool, resolves

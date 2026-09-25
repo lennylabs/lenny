@@ -96,6 +96,9 @@ type concurrentAdapter struct {
 	// workspaceBase is the §6.4 base the handshake reports, the value the
 	// slot bind carries verbatim onto its BindResult.
 	workspaceBase string
+	// rec records every bind-sequence and Shutdown request the fake served,
+	// so a test can assert the §4.7.1 carriage fields on the wire.
+	rec bindRequestRecorder
 }
 
 func newConcurrentAdapter() *concurrentAdapter {
@@ -122,7 +125,17 @@ func (a *concurrentAdapter) NegotiateVersion(_ context.Context, req *adapterv1.N
 	}, nil
 }
 
+func (a *concurrentAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	return a.rec.servePrepare(stream)
+}
+
+func (a *concurrentAdapter) AssignCredentials(_ context.Context, req *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
+	a.rec.record(req)
+	return &adapterv1.AssignCredentialsResponse{}, nil
+}
+
 func (a *concurrentAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	a.rec.record(req)
 	a.mu.Lock()
 	finalizeErr := a.finalizeErr
 	if finalizeErr == nil {
@@ -135,7 +148,8 @@ func (a *concurrentAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.
 	return &adapterv1.FinalizeWorkspaceResponse{}, nil
 }
 
-func (a *concurrentAdapter) RunSetup(context.Context, *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+func (a *concurrentAdapter) RunSetup(_ context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+	a.rec.record(req)
 	return &adapterv1.RunSetupResponse{}, nil
 }
 
@@ -152,7 +166,8 @@ func (a *concurrentAdapter) StartSession(_ context.Context, req *adapterv1.Start
 	return &adapterv1.StartSessionResponse{}, nil
 }
 
-func (a *concurrentAdapter) Shutdown(context.Context, *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+func (a *concurrentAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	a.rec.record(req)
 	a.mu.Lock()
 	cleanly := a.shutdownExitedCleanly
 	shutdownErr := a.shutdownErr
@@ -969,5 +984,90 @@ func drainAgentPod(name string) *corev1.Pod {
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "agent", Image: "k8s.gcr.io/pause"}},
 		},
+	}
+}
+
+// materializeSlot mints one bind attempt token per attempt and carries it on
+// PrepareWorkspace, FinalizeWorkspace, RunSetup and AssignCredentials, each
+// with mid_session false; two slot binds carry two different tokens.
+// StartSession carries none.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine)
+func TestMaterializeSlotMintsOneBindAttemptPerAttempt_spec_4_7_1(t *testing.T) {
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+	plan := uploadPlanBinder(t, binder)
+	stages := []string{"PrepareWorkspace", "FinalizeWorkspace", "RunSetup", "AssignCredentials"}
+
+	var tokens []string
+	for _, sess := range []string{"sess-1", "sess-2"} {
+		res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+			Pool: testPool, SessionID: sess, TenantID: "acme", Runtime: "claude-code",
+			MaxConcurrentSessions: 4, Plan: plan,
+			CredentialPools: map[string]string{"anthropic": "pool-a"},
+		})
+		if err != nil {
+			t.Fatalf("BindSlot %s: %v", sess, err)
+		}
+		res.Adapter.Close()
+		tokens = append(tokens, oneAttemptToken(t, a.rec.forSession(sess), stages...))
+	}
+	if tokens[0] == tokens[1] {
+		t.Errorf("two slot binds carried the same token %q, want one token per attempt", tokens[0])
+	}
+}
+
+// Binder.ReleaseSlot sends the unconditional teardown form on the session-end
+// Shutdown and on the occupancy-zero recycle Shutdown: unconditional_teardown
+// set and no bind attempt token on every request. A release is not a
+// compensation, so it names no attempt.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine)
+func TestReleaseSlotSendsUnconditionalTeardown_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name        string
+		recycle     bool
+		wantRequest int
+	}{
+		{"session_end", false, 1},
+		{"recycle", true, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newConcurrentAdapter()
+			c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+			binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+			binder.RecycleBoundary = &fakeRecycleBoundary{}
+			res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+				Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+				MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{}, Recycle: tc.recycle,
+			})
+			if err != nil {
+				t.Fatalf("BindSlot: %v", err)
+			}
+			if err := binder.ReleaseSlot(context.Background(), res); err != nil {
+				t.Fatalf("ReleaseSlot: %v", err)
+			}
+			reqs := a.rec.shutdownRequests()
+			if len(reqs) != tc.wantRequest {
+				t.Fatalf("Shutdown requests = %d, want %d", len(reqs), tc.wantRequest)
+			}
+			sawRecycle := false
+			for i, r := range reqs {
+				sawRecycle = sawRecycle || r.GetRecycle() != nil
+				if !r.GetUnconditionalTeardown() {
+					t.Errorf("Shutdown %d: unconditional_teardown is false, want true", i)
+				}
+				if r.GetBindAttempt() != "" {
+					t.Errorf("Shutdown %d: bind_attempt = %q, want empty", i, r.GetBindAttempt())
+				}
+			}
+			if sawRecycle != tc.recycle {
+				t.Errorf("recycle disposition sent = %v, want %v", sawRecycle, tc.recycle)
+			}
+		})
 	}
 }

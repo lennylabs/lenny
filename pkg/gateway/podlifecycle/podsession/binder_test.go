@@ -2050,6 +2050,9 @@ type stageAdapter struct {
 	errs         map[string]error
 	finalizeN    int
 	finalizeHook func(n int) error
+	// rec records every request the fake served, so a test can assert the
+	// §4.7.1 carriage fields on the wire.
+	rec bindRequestRecorder
 }
 
 func (a *stageAdapter) stageErr(stage string) error {
@@ -2062,7 +2065,12 @@ func (a *stageAdapter) NegotiateVersion(context.Context, *adapterv1.NegotiateVer
 	return &adapterv1.NegotiateVersionResponse{SelectedProtocolVersion: adapter.ProtocolVersionV1}, nil
 }
 
-func (a *stageAdapter) FinalizeWorkspace(context.Context, *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+func (a *stageAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	return a.rec.servePrepare(stream)
+}
+
+func (a *stageAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	a.rec.record(req)
 	a.mu.Lock()
 	a.finalizeN++
 	n, hook := a.finalizeN, a.finalizeHook
@@ -2078,25 +2086,43 @@ func (a *stageAdapter) FinalizeWorkspace(context.Context, *adapterv1.FinalizeWor
 	return &adapterv1.FinalizeWorkspaceResponse{}, nil
 }
 
-func (a *stageAdapter) RunSetup(context.Context, *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+func (a *stageAdapter) RunSetup(_ context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+	a.rec.record(req)
 	if err := a.stageErr("RunSetup"); err != nil {
 		return nil, err
 	}
 	return &adapterv1.RunSetupResponse{}, nil
 }
 
-func (a *stageAdapter) AssignCredentials(context.Context, *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
+func (a *stageAdapter) AssignCredentials(_ context.Context, req *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
+	a.rec.record(req)
 	if err := a.stageErr("AssignCredentials"); err != nil {
 		return nil, err
 	}
 	return &adapterv1.AssignCredentialsResponse{}, nil
 }
 
-func (a *stageAdapter) StartSession(context.Context, *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+func (a *stageAdapter) StartSession(_ context.Context, req *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+	a.rec.record(req)
 	if err := a.stageErr("StartSession"); err != nil {
 		return nil, err
 	}
 	return &adapterv1.StartSessionResponse{}, nil
+}
+
+func (a *stageAdapter) ConfigureWorkspace(_ context.Context, req *adapterv1.ConfigureWorkspaceRequest) (*adapterv1.ConfigureWorkspaceResponse, error) {
+	a.rec.record(req)
+	return &adapterv1.ConfigureWorkspaceResponse{}, nil
+}
+
+func (a *stageAdapter) Resume(_ context.Context, req *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
+	a.rec.record(req)
+	return &adapterv1.ResumeResponse{Mode: "full"}, nil
+}
+
+func (a *stageAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	a.rec.record(req)
+	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
 }
 
 // stageAdapterDialer serves a over an in-memory connection and returns a
@@ -2354,5 +2380,312 @@ func TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1(t *testi
 	}
 	if !claimPresent(t, c) {
 		t.Error("winner's per-pod claim deleted by the loser's refusal")
+	}
+}
+
+// bindCarriage is the §4.7.1 carriage a recorded request put on the wire:
+// the RPC, the session it names, its bind_attempt, and its mid_session
+// marker. A request whose message has no such field records the zero value.
+type bindCarriage struct {
+	rpc         string
+	sessionID   string
+	bindAttempt string
+	midSession  bool
+}
+
+// bindRequestRecorder records the requests a gRPC adapter fake serves, every
+// PrepareWorkspace frame included, in arrival order.
+type bindRequestRecorder struct {
+	mu        sync.Mutex
+	carried   []bindCarriage
+	shutdowns []*adapterv1.ShutdownRequest
+}
+
+// record appends one unary request's carriage, and keeps a ShutdownRequest
+// whole so a test can read its teardown fields.
+func (r *bindRequestRecorder) record(req any) {
+	c := bindCarriage{}
+	switch m := req.(type) {
+	case *adapterv1.PrepareWorkspaceRequest:
+		c = bindCarriage{"PrepareWorkspace", m.GetSessionId().GetValue(), m.GetBindAttempt(), m.GetMidSession()}
+	case *adapterv1.FinalizeWorkspaceRequest:
+		c = bindCarriage{"FinalizeWorkspace", m.GetSessionId().GetValue(), m.GetBindAttempt(), m.GetMidSession()}
+	case *adapterv1.RunSetupRequest:
+		c = bindCarriage{"RunSetup", m.GetSessionId().GetValue(), m.GetBindAttempt(), false}
+	case *adapterv1.AssignCredentialsRequest:
+		c = bindCarriage{"AssignCredentials", m.GetSessionId().GetValue(), m.GetBindAttempt(), false}
+	case *adapterv1.ResumeRequest:
+		c = bindCarriage{"Resume", m.GetSessionId().GetValue(), m.GetBindAttempt(), false}
+	case *adapterv1.StartSessionRequest:
+		c = bindCarriage{rpc: "StartSession", sessionID: m.GetSessionId().GetValue()}
+	case *adapterv1.ConfigureWorkspaceRequest:
+		c = bindCarriage{rpc: "ConfigureWorkspace", sessionID: m.GetSessionId().GetValue()}
+	case *adapterv1.ShutdownRequest:
+		c = bindCarriage{rpc: "Shutdown", sessionID: m.GetSessionId().GetValue(), bindAttempt: m.GetBindAttempt()}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.carried = append(r.carried, c)
+	if m, ok := req.(*adapterv1.ShutdownRequest); ok {
+		r.shutdowns = append(r.shutdowns, m)
+	}
+}
+
+// servePrepare drains a PrepareWorkspace stream, recording every frame, and
+// answers success.
+func (r *bindRequestRecorder) servePrepare(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		r.record(req)
+	}
+	return stream.SendAndClose(&adapterv1.PrepareWorkspaceResponse{})
+}
+
+// forSession returns the recorded carriage of every request naming sessionID.
+func (r *bindRequestRecorder) forSession(sessionID string) []bindCarriage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []bindCarriage
+	for _, c := range r.carried {
+		if c.sessionID == sessionID {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// reset forgets every recorded request.
+func (r *bindRequestRecorder) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.carried, r.shutdowns = nil, nil
+}
+
+// shutdownRequests returns every recorded ShutdownRequest.
+func (r *bindRequestRecorder) shutdownRequests() []*adapterv1.ShutdownRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*adapterv1.ShutdownRequest(nil), r.shutdowns...)
+}
+
+// oneAttemptToken asserts that the recorded carriage covers every RPC in
+// want, that each request carries one and the same non-empty 32-hex-digit
+// bind attempt token with mid_session false, and returns that token.
+func oneAttemptToken(t *testing.T, carried []bindCarriage, want ...string) string {
+	t.Helper()
+	seen := map[string]bool{}
+	token := ""
+	for _, c := range carried {
+		if c.rpc == "Shutdown" {
+			continue
+		}
+		seen[c.rpc] = true
+		if c.midSession {
+			t.Errorf("%s carries mid_session true on a bind-sequence request", c.rpc)
+		}
+		if token == "" {
+			token = c.bindAttempt
+		}
+		if c.bindAttempt != token {
+			t.Errorf("%s carries bind_attempt %q, want the attempt's one token %q", c.rpc, c.bindAttempt, token)
+		}
+	}
+	for _, rpc := range want {
+		if !seen[rpc] {
+			t.Errorf("no %s request recorded; recorded %v", rpc, carried)
+		}
+	}
+	if len(token) != 32 || strings.Trim(token, "0123456789abcdef") != "" {
+		t.Errorf("bind attempt token = %q, want 32 lowercase hex digits", token)
+	}
+	return token
+}
+
+// uploadPlanBinder returns a Binder whose blob store holds one upload for
+// sess-1, the plan that references it, and a credential assigner, so a bind
+// attempt runs PrepareWorkspace and AssignCredentials as well as the
+// finalize and setup stages.
+func uploadPlanBinder(t *testing.T, b *podsession.Binder) *adapterv1.WorkspacePlan {
+	t.Helper()
+	blobs := blobstore.NewMemoryStore(nil)
+	uri := blobstore.URI{
+		TenantID: "acme", SessionID: "sess-1", PartID: "part-1",
+		TTL: time.Hour, Encoding: blobstore.Encoding,
+	}
+	if _, err := blobs.Put(uri, "application/octet-stream", bytes.NewReader([]byte("payload"))); err != nil {
+		t.Fatalf("put blob: %v", err)
+	}
+	b.Blobs = blobs
+	b.Credentials = &fakeAssigner{}
+	return &adapterv1.WorkspacePlan{
+		SchemaVersion: 1,
+		Sources: []*adapterv1.WorkspaceSource{
+			{Type: "uploadFile", Path: "data/payload.bin", UploadRef: uri.String()},
+		},
+		SetupCommands: []*adapterv1.SetupCommand{{Cmd: "true"}},
+	}
+}
+
+// Binder.Prepare mints one bind attempt token per attempt and carries it on
+// PrepareWorkspace, FinalizeWorkspace, RunSetup and AssignCredentials, each
+// with mid_session false, and two attempts at the same session carry two
+// different tokens. A token shared across attempts would let an abandoned
+// attempt act on its successor's slot registry entry.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine)
+func TestPrepareMintsOneBindAttemptPerAttempt_spec_4_7_1(t *testing.T) {
+	var deletes claimDeleteCounter
+	c := claimedPodFakeClient(t, &deletes)
+	a := &stageAdapter{}
+	b := newBinder(c, stageAdapterDialer(t, a))
+	plan := uploadPlanBinder(t, b)
+	req := podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", SandboxName: "sbx-1",
+		Plan: plan, CredentialPools: map[string]string{"anthropic": "pool-a"},
+	}
+	stages := []string{"PrepareWorkspace", "FinalizeWorkspace", "RunSetup", "AssignCredentials"}
+
+	if _, err := b.Prepare(context.Background(), req); err != nil {
+		t.Fatalf("first Prepare: %v", err)
+	}
+	first := oneAttemptToken(t, a.rec.forSession("sess-1"), stages...)
+	a.rec.reset()
+	if _, err := b.Prepare(context.Background(), req); err != nil {
+		t.Fatalf("second Prepare: %v", err)
+	}
+	second := oneAttemptToken(t, a.rec.forSession("sess-1"), stages...)
+	if first == second {
+		t.Errorf("two Prepare attempts carried the same token %q, want one token per attempt", first)
+	}
+}
+
+// Binder.Resume mints its own bind attempt token and carries it on the
+// ResumeRequest, the attempt's first and only entry-touching RPC; two resume
+// attempts carry two different tokens.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine)
+func TestResumeMintsItsOwnBindAttempt_spec_4_7_1(t *testing.T) {
+	a := &stageAdapter{}
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"), idleSandbox("sbx-2", "10.244.1.8"))
+	b := newBinder(c, stageAdapterDialer(t, a))
+
+	var tokens []string
+	for _, sess := range []string{"sess-1", "sess-2"} {
+		res, err := b.Resume(context.Background(), podsession.ResumeRequest{
+			Pool: testPool, SessionID: sess, TenantID: "acme", Runtime: "claude-code", CheckpointID: "ckpt-1",
+		})
+		if err != nil {
+			t.Fatalf("Resume %s: %v", sess, err)
+		}
+		res.Result.Adapter.Close()
+		tokens = append(tokens, oneAttemptToken(t, a.rec.forSession(sess), "Resume"))
+	}
+	if tokens[0] == tokens[1] {
+		t.Errorf("two Resume attempts carried the same token %q, want one token per attempt", tokens[0])
+	}
+}
+
+// Binder.Launch mints no token: the requests it issues, StartSession on a
+// pod-warm pod and ConfigureWorkspace on a still-SDK-warm one, carry no
+// bind_attempt, and it sends no request that does.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine)
+func TestLaunchSendsNoBindAttempt_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name       string
+		preConnect bool
+		wantRPC    string
+	}{
+		{"pod_warm", false, "StartSession"},
+		{"sdk_warm", true, "ConfigureWorkspace"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes claimDeleteCounter
+			c := claimedPodFakeClient(t, &deletes)
+			a := &stageAdapter{}
+			b := newBinder(c, stageAdapterDialer(t, a))
+			res, err := b.Launch(context.Background(), podsession.BindRequest{
+				Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1", PreConnect: tc.preConnect,
+			})
+			if err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			res.Adapter.Close()
+			carried := a.rec.forSession("sess-1")
+			if len(carried) != 1 || carried[0].rpc != tc.wantRPC {
+				t.Fatalf("Launch sent %v, want exactly one %s", carried, tc.wantRPC)
+			}
+			if carried[0].bindAttempt != "" {
+				t.Errorf("%s carried bind_attempt %q, want none", tc.wantRPC, carried[0].bindAttempt)
+			}
+		})
+	}
+}
+
+// Binder.shutdownAdapter, on both its retire and its recycle disposition,
+// sends the unconditional teardown form: unconditional_teardown set and no
+// bind attempt token. It is not a compensation, so it names no attempt.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine)
+func TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name        string
+		disposition string
+		wantRecycle bool
+	}{
+		{"retire", "failed", false},
+		{"recycle", "completed", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingShutdownAdapter{}
+			c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+			binder := newBinder(c, nil)
+			binder.RecycleBoundary = &fakeRecycleBoundary{}
+			if tc.wantRecycle {
+				// A recycle release patches the per-pod claim, so it needs
+				// the claim a real bind creates.
+				srv := adapter.New("adapter-test")
+				srv.WorkspaceBase = t.TempDir()
+				srv.Runtime = &fakeRuntime{}
+				binder.DialAdapter = adapterDialer(t, srv)
+			}
+			res := &podsession.BindResult{SessionID: "sess-1", SandboxName: "sbx-1", Recycle: true}
+			if tc.wantRecycle {
+				bound, err := binder.Bind(context.Background(), podsession.BindRequest{
+					Pool: testPool, SessionID: "sess-1", Runtime: "claude-code", Recycle: true,
+				})
+				if err != nil {
+					t.Fatalf("Bind: %v", err)
+				}
+				bound.Adapter.Close()
+				res = bound
+			}
+			res.Adapter = dialRecordingAdapter(t, rec)
+			if err := binder.Release(context.Background(), res, tc.disposition); err != nil {
+				t.Fatalf("Release: %v", err)
+			}
+			reqs := rec.shutdownRequests()
+			if len(reqs) != 1 {
+				t.Fatalf("Shutdown calls = %d, want 1", len(reqs))
+			}
+			if got := reqs[0].GetRecycle() != nil; got != tc.wantRecycle {
+				t.Fatalf("recycle disposition set = %v, want %v", got, tc.wantRecycle)
+			}
+			if !reqs[0].GetUnconditionalTeardown() {
+				t.Error("unconditional_teardown is false, want true on a non-compensating teardown")
+			}
+			if reqs[0].GetBindAttempt() != "" {
+				t.Errorf("bind_attempt = %q, want empty on a non-compensating teardown", reqs[0].GetBindAttempt())
+			}
+		})
 	}
 }

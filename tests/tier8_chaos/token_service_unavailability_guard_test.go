@@ -319,6 +319,8 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 	// and the third breaker-open sweep reaches the cap.
 	leaseTTL := 2 * buffer
 
+	// The assignment is a bind attempt's credential stage, so it carries a
+	// non-empty bind attempt token. spec: §4.7.1 (role and gateway RPC contract).
 	if err := adapterCli.AssignCredentials(ctx, "run-cap", map[string]*adapterv1.CredentialLease{
 		guardProvider: {
 			LeaseId:         "cl-cap",
@@ -326,7 +328,7 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 			Payload:         []byte(guardDirectPayload),
 			ExpiresAtUnixMs: origExpiry.UnixMilli(),
 		},
-	}); err != nil {
+	}, "attempt-guard"); err != nil {
 		t.Fatalf("assign direct lease to adapter: %v", err)
 	}
 	// The assignment binds run-cap's slot on the pod, so its bundle lands

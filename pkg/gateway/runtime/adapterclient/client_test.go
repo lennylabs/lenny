@@ -192,7 +192,7 @@ func TestPrepareWorkspaceStagesUploads(t *testing.T) {
 		"upload-a": []byte("alpha content"),
 		"upload-b": []byte("beta"),
 	}
-	resp, err := cl.PrepareWorkspace(context.Background(), "sess-1", uploads)
+	resp, err := cl.PrepareWorkspace(context.Background(), "sess-1", uploads, testBindAttempt, false)
 	if err != nil {
 		t.Fatalf("PrepareWorkspace: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestPrepareWorkspaceConcatenatesChunks(t *testing.T) {
 
 	large := bytes.Repeat([]byte("lenny"), 40_000) // 200 KB, several frames
 	resp, err := cl.PrepareWorkspace(context.Background(), "sess-1",
-		map[string][]byte{"big": large})
+		map[string][]byte{"big": large}, testBindAttempt, false)
 	if err != nil {
 		t.Fatalf("PrepareWorkspace: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestPrepareWorkspaceWithoutStagingDir(t *testing.T) {
 	srv := adapter.New("adapter-test-build") // no workspace base configured
 	cl := dialAdapter(t, srv)
 	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
-		map[string][]byte{"x": []byte("y")})
+		map[string][]byte{"x": []byte("y")}, testBindAttempt, false)
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("PrepareWorkspace without a staging dir = %v, want FailedPrecondition", err)
 	}
@@ -265,7 +265,7 @@ func TestPrepareWorkspaceRejectsEmptyRef(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 	_, err := cl.PrepareWorkspace(context.Background(), "sess-1",
-		map[string][]byte{"": []byte("payload")})
+		map[string][]byte{"": []byte("payload")}, testBindAttempt, false)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("PrepareWorkspace with an empty upload ref = %v, want InvalidArgument", err)
 	}
@@ -283,7 +283,7 @@ func TestClientFinalizeWorkspace(t *testing.T) {
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "CLAUDE.md", Content: "notes", Mode: "644"},
 		},
-	}, nil, false); err != nil {
+	}, nil, testBindAttempt, false); err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); err != nil {
@@ -301,7 +301,7 @@ func TestClientFinalizeWorkspaceRejectsBadPlan(t *testing.T) {
 		Sources: []*adapterv1.WorkspaceSource{
 			{Type: "inlineFile", Path: "../escape", Content: "x", Mode: "644"},
 		},
-	}, nil, false)
+	}, nil, testBindAttempt, false)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("FinalizeWorkspace with an escaping path = %v, want InvalidArgument", err)
 	}
@@ -316,7 +316,7 @@ func TestClientRunSetup(t *testing.T) {
 
 	outputs, err := cl.RunSetup(context.Background(), "sess-1", []*adapterv1.SetupCommand{
 		{Cmd: "touch setup.done", TimeoutSeconds: 30},
-	}, &adapterv1.SetupPolicy{Shell: true})
+	}, &adapterv1.SetupPolicy{Shell: true}, testBindAttempt)
 	if err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestClientRunSetupFailingCommand(t *testing.T) {
 	cl := dialAdapter(t, srv)
 
 	outputs, err := cl.RunSetup(context.Background(), "sess-1",
-		[]*adapterv1.SetupCommand{{Cmd: "exit 7"}}, &adapterv1.SetupPolicy{Shell: true})
+		[]*adapterv1.SetupCommand{{Cmd: "exit 7"}}, &adapterv1.SetupPolicy{Shell: true}, testBindAttempt)
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("RunSetup with a failing command = %v, want FailedPrecondition", err)
 	}
@@ -368,7 +368,7 @@ func TestClientAssignCredentials(t *testing.T) {
 				Payload: []byte(`{"deliveryMode":"proxy",` +
 					`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-x"}}`),
 			},
-		})
+		}, testBindAttempt)
 	if err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestClientAssignCredentialsEmptyMapIsAccepted(t *testing.T) {
 	cl := dialAdapter(t, srv)
 
 	// A session that needs no upstream credentials assigns an empty set.
-	if err := cl.AssignCredentials(context.Background(), "sess-1", nil); err != nil {
+	if err := cl.AssignCredentials(context.Background(), "sess-1", nil, testBindAttempt); err != nil {
 		t.Fatalf("AssignCredentials with no leases: %v", err)
 	}
 }
@@ -407,7 +407,7 @@ func TestClientAssignCredentialsRejectsEmptySessionID(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	cl := dialAdapter(t, srv)
 
-	err := cl.AssignCredentials(context.Background(), "", nil)
+	err := cl.AssignCredentials(context.Background(), "", nil, testBindAttempt)
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("AssignCredentials with no session id = %v, want InvalidArgument", err)
 	}
@@ -417,7 +417,7 @@ func TestClientAssignCredentialsRejectsUnconfiguredAdapter(t *testing.T) {
 	srv := adapter.New("adapter-test-build") // no CredentialsDir
 	cl := dialAdapter(t, srv)
 
-	err := cl.AssignCredentials(context.Background(), "sess-1", nil)
+	err := cl.AssignCredentials(context.Background(), "sess-1", nil, testBindAttempt)
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("AssignCredentials on an adapter with no credentials dir = %v, want FailedPrecondition", err)
 	}
@@ -1315,7 +1315,7 @@ func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
 				Payload: []byte(`{"deliveryMode":"proxy",` +
 					`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-1"}}`),
 			},
-		}); err != nil {
+		}, testBindAttempt); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
 	if err := cl.RotateCredentials(ctx, "sess-rot",
@@ -1620,19 +1620,19 @@ var bindSequenceCalls = []struct {
 	call func(ctx context.Context, cl *adapterclient.Client) error
 }{
 	{"PrepareWorkspace", func(ctx context.Context, cl *adapterclient.Client) error {
-		_, err := cl.PrepareWorkspace(ctx, "sess-1", map[string][]byte{"ref": []byte("x")})
+		_, err := cl.PrepareWorkspace(ctx, "sess-1", map[string][]byte{"ref": []byte("x")}, testBindAttempt, false)
 		return err
 	}},
 	{"FinalizeWorkspace", func(ctx context.Context, cl *adapterclient.Client) error {
-		_, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, false)
+		_, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, testBindAttempt, false)
 		return err
 	}},
 	{"RunSetup", func(ctx context.Context, cl *adapterclient.Client) error {
-		_, err := cl.RunSetup(ctx, "sess-1", nil, nil)
+		_, err := cl.RunSetup(ctx, "sess-1", nil, nil, testBindAttempt)
 		return err
 	}},
 	{"AssignCredentials", func(ctx context.Context, cl *adapterclient.Client) error {
-		return cl.AssignCredentials(ctx, "sess-1", nil)
+		return cl.AssignCredentials(ctx, "sess-1", nil, testBindAttempt)
 	}},
 	{"Resume", func(ctx context.Context, cl *adapterclient.Client) error {
 		_, err := cl.Resume(ctx, adapterclient.ResumeParams{SessionID: "sess-1", CheckpointID: "ckpt"})
@@ -1745,7 +1745,7 @@ func TestRunSetupKeepsPartialOutputsOnARefusal_spec_4_7_1(t *testing.T) {
 	cl := dialRefusingAdapter(t, &refusingAdapter{
 		err: typedRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED, partial),
 	})
-	outs, err := cl.RunSetup(context.Background(), "sess-1", nil, nil)
+	outs, err := cl.RunSetup(context.Background(), "sess-1", nil, nil, testBindAttempt)
 	if !errors.Is(err, adapterclient.ErrSlotBindAttemptSuperseded) {
 		t.Fatalf("err = %v, want the superseded sentinel", err)
 	}
@@ -1853,5 +1853,220 @@ func TestShutdownReclaimSurfacesRPCError_spec_4_7_1(t *testing.T) {
 	}
 	if got != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_UNSPECIFIED || exited {
 		t.Fatalf("returned (%v, %t) on error, want (UNSPECIFIED, false)", got, exited)
+	}
+}
+
+// testBindAttempt is the bind attempt token the tests pass on every
+// bind-sequence call that is not a §7.4 mid-session upload.
+const testBindAttempt = "attempt-test"
+
+// carriageAdapter records every bind-sequence request and every Shutdown
+// request it receives, every PrepareWorkspace frame included, so a test can
+// assert the §4.7.1 carriage fields a Client method put on the wire.
+type carriageAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+
+	mu        sync.Mutex
+	prepare   []*adapterv1.PrepareWorkspaceRequest
+	finalize  []*adapterv1.FinalizeWorkspaceRequest
+	setup     []*adapterv1.RunSetupRequest
+	assign    []*adapterv1.AssignCredentialsRequest
+	resume    []*adapterv1.ResumeRequest
+	shutdowns []*adapterv1.ShutdownRequest
+}
+
+func (a *carriageAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		a.mu.Lock()
+		a.prepare = append(a.prepare, req)
+		a.mu.Unlock()
+	}
+	return stream.SendAndClose(&adapterv1.PrepareWorkspaceResponse{})
+}
+
+func (a *carriageAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.finalize = append(a.finalize, req)
+	return &adapterv1.FinalizeWorkspaceResponse{}, nil
+}
+
+func (a *carriageAdapter) RunSetup(_ context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.setup = append(a.setup, req)
+	return &adapterv1.RunSetupResponse{}, nil
+}
+
+func (a *carriageAdapter) AssignCredentials(_ context.Context, req *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.assign = append(a.assign, req)
+	return &adapterv1.AssignCredentialsResponse{}, nil
+}
+
+func (a *carriageAdapter) Resume(_ context.Context, req *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.resume = append(a.resume, req)
+	return &adapterv1.ResumeResponse{}, nil
+}
+
+func (a *carriageAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.shutdowns = append(a.shutdowns, req)
+	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+}
+
+// dialCarriageAdapter serves a over bufconn and returns a connected Client.
+func dialCarriageAdapter(t *testing.T, a *carriageAdapter) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, a)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial carriage adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl
+}
+
+// The bind-sequence methods set bind_attempt and mid_session on their
+// requests exactly as the caller passed them, deriving neither from the
+// other, in both the bind-sequence form (a token with mid_session false) and
+// the §7.4 mid-session form (no token with mid_session true). Every
+// PrepareWorkspace frame carries the pair, a multi-frame upload included, so
+// the frame the adapter decides admission on carries it whichever upload the
+// map iteration sends first.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.4 (upload safety)
+func TestBindMethodsCarryTheGivenBindAttemptAndMidSession_spec_4_7_1(t *testing.T) {
+	forms := []struct {
+		name        string
+		bindAttempt string
+		midSession  bool
+	}{
+		{"bind_sequence", "attempt-a", false},
+		{"mid_session", "", true},
+	}
+	large := bytes.Repeat([]byte("x"), 3*64*1024)
+	for _, f := range forms {
+		t.Run(f.name, func(t *testing.T) {
+			a := &carriageAdapter{}
+			cl := dialCarriageAdapter(t, a)
+			ctx := context.Background()
+			uploads := map[string][]byte{"small": []byte("s"), "large": large}
+			if _, err := cl.PrepareWorkspace(ctx, "sess-1", uploads, f.bindAttempt, f.midSession); err != nil {
+				t.Fatalf("PrepareWorkspace: %v", err)
+			}
+			if _, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, f.bindAttempt, f.midSession); err != nil {
+				t.Fatalf("FinalizeWorkspace: %v", err)
+			}
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if len(a.prepare) < 3 {
+				t.Fatalf("PrepareWorkspace frames = %d, want at least 3 for a multi-frame upload", len(a.prepare))
+			}
+			for i, fr := range a.prepare {
+				if fr.GetBindAttempt() != f.bindAttempt || fr.GetMidSession() != f.midSession {
+					t.Fatalf("PrepareWorkspace frame %d carries (%q, %t), want (%q, %t)",
+						i, fr.GetBindAttempt(), fr.GetMidSession(), f.bindAttempt, f.midSession)
+				}
+			}
+			fin := a.finalize[0]
+			if fin.GetBindAttempt() != f.bindAttempt || fin.GetMidSession() != f.midSession {
+				t.Fatalf("FinalizeWorkspace carries (%q, %t), want (%q, %t)",
+					fin.GetBindAttempt(), fin.GetMidSession(), f.bindAttempt, f.midSession)
+			}
+		})
+	}
+}
+
+// RunSetup, AssignCredentials and Resume carry the caller's bind attempt
+// token on their requests; none of them carries a mid-session marker.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+func TestSetupCredentialsAndResumeCarryTheBindAttempt_spec_4_7_1(t *testing.T) {
+	a := &carriageAdapter{}
+	cl := dialCarriageAdapter(t, a)
+	ctx := context.Background()
+	if _, err := cl.RunSetup(ctx, "sess-1", nil, nil, "attempt-setup"); err != nil {
+		t.Fatalf("RunSetup: %v", err)
+	}
+	if err := cl.AssignCredentials(ctx, "sess-1", nil, "attempt-cred"); err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+	if _, err := cl.Resume(ctx, adapterclient.ResumeParams{
+		SessionID: "sess-1", CheckpointID: "ckpt", BindAttempt: "attempt-resume",
+	}); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if got := a.setup[0].GetBindAttempt(); got != "attempt-setup" {
+		t.Errorf("RunSetup bind_attempt = %q, want attempt-setup", got)
+	}
+	if got := a.assign[0].GetBindAttempt(); got != "attempt-cred" {
+		t.Errorf("AssignCredentials bind_attempt = %q, want attempt-cred", got)
+	}
+	if got := a.resume[0].GetBindAttempt(); got != "attempt-resume" {
+		t.Errorf("Resume bind_attempt = %q, want attempt-resume", got)
+	}
+}
+
+// Shutdown and ShutdownRecycle send the unconditional teardown form: every
+// request sets unconditional_teardown and carries no bind_attempt, so each
+// non-compensating teardown caller meets the adapter's two-field teardown
+// precondition without naming the field at its call site. Before the builder
+// set the field, both forms sent a request carrying neither field.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §4.7 (Shutdown); §11.4
+// (user-scoped revocation)
+func TestUnfencedShutdownFormsSetUnconditionalTeardown_spec_4_7_1(t *testing.T) {
+	calls := []struct {
+		name string
+		call func(ctx context.Context, cl *adapterclient.Client) error
+	}{
+		{"Shutdown", func(ctx context.Context, cl *adapterclient.Client) error {
+			_, err := cl.Shutdown(ctx, "sess-1", "USER_REVOKED", 10*time.Second)
+			return err
+		}},
+		{"ShutdownRecycle", func(ctx context.Context, cl *adapterclient.Client) error {
+			_, err := cl.ShutdownRecycle(ctx, "sess-1", adapterclient.RecycleScrub{PodID: "pod-1"})
+			return err
+		}},
+	}
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			a := &carriageAdapter{}
+			cl := dialCarriageAdapter(t, a)
+			if err := c.call(context.Background(), cl); err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if len(a.shutdowns) != 1 {
+				t.Fatalf("Shutdown requests = %d, want 1", len(a.shutdowns))
+			}
+			req := a.shutdowns[0]
+			if !req.GetUnconditionalTeardown() {
+				t.Error("unconditional_teardown is false, want true on the unfenced form")
+			}
+			if req.GetBindAttempt() != "" {
+				t.Errorf("bind_attempt = %q, want empty on the unfenced form", req.GetBindAttempt())
+			}
+		})
 	}
 }

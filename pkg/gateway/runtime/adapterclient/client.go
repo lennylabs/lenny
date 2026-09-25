@@ -244,10 +244,15 @@ func (c *Client) DemoteSDK(ctx context.Context, reason string) error {
 //
 // The request carries credential material; per §4.7 item 6 the call
 // site must keep it out of access logs and telemetry.
-func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease) error {
+//
+// bindAttempt is the calling bind attempt's token, which the adapter compares
+// against the token its slot registry entry carries; the Client sets it as
+// given. spec: §4.7.1 (role and gateway RPC contract).
+func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases map[string]*adapterv1.CredentialLease, bindAttempt string) error {
 	_, err := c.rpc.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		Leases:    leases,
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Leases:      leases,
+		BindAttempt: bindAttempt,
 	})
 	return translateSlotBindRefusal(err)
 }
@@ -311,14 +316,24 @@ const prepareWorkspaceChunkSize = 64 * 1024
 // each §14 WorkspaceSource upload_ref to its content; each upload is
 // sent in frames bounded by prepareWorkspaceChunkSize. The response
 // reports the staged byte and file totals the adapter persisted.
-func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
+//
+// bindAttempt and midSession are the §4.7.1 carriage pair: a bind-sequence
+// caller passes its attempt's token and false, and the §7.4 mid-session
+// upload passes the empty string and true. The Client sets both on every
+// frame as given and derives neither from the other; the adapter decides the
+// call's admission on the first frame (§4.7.1 rule 9, the first-frame rule).
+func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads map[string][]byte, bindAttempt string, midSession bool) (*adapterv1.PrepareWorkspaceResponse, error) {
 	stream, err := c.rpc.PrepareWorkspace(ctx)
 	if err != nil {
 		return nil, translateSlotBindRefusal(err)
 	}
-	sid := &adapterv1.SessionId{Value: sessionID}
+	hdr := uploadFrameHeader{
+		sid:         &adapterv1.SessionId{Value: sessionID},
+		bindAttempt: bindAttempt,
+		midSession:  midSession,
+	}
 	for ref, content := range uploads {
-		if err := sendUpload(stream, sid, ref, content); err != nil {
+		if err := sendUpload(stream, hdr, ref, content); err != nil {
 			// io.EOF means the adapter closed the stream early with an
 			// error; CloseAndRecv surfaces the real status. Any other
 			// send error is a transport failure to return directly.
@@ -335,18 +350,28 @@ func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads
 	return resp, nil
 }
 
+// uploadFrameHeader is the per-call addressing every PrepareWorkspace frame
+// repeats: the session, and the §4.7.1 bind attempt and mid-session marker.
+type uploadFrameHeader struct {
+	sid         *adapterv1.SessionId
+	bindAttempt string
+	midSession  bool
+}
+
 // sendUpload streams one upload as PrepareWorkspace frames. It always
 // sends at least one frame so an empty upload still stages a file.
-func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.SessionId, ref string, content []byte) error {
+func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, hdr uploadFrameHeader, ref string, content []byte) error {
 	for off := 0; ; off += prepareWorkspaceChunkSize {
 		end := off + prepareWorkspaceChunkSize
 		if end > len(content) {
 			end = len(content)
 		}
 		if err := stream.Send(&adapterv1.PrepareWorkspaceRequest{
-			SessionId: sid,
-			UploadRef: ref,
-			Chunk:     content[off:end],
+			SessionId:   hdr.sid,
+			UploadRef:   ref,
+			Chunk:       content[off:end],
+			BindAttempt: hdr.bindAttempt,
+			MidSession:  hdr.midSession,
 		}); err != nil {
 			return err
 		}
@@ -374,12 +399,17 @@ func sendUpload(stream adapterv1.Adapter_PrepareWorkspaceClient, sid *adapterv1.
 // the plan's sources onto the running session's existing workspace root
 // and signals the runtime once promotion completes, rather than replacing
 // the whole tree. The §4.7 assignment-sequence callers pass false. F-7.4.6.
-func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
+//
+// bindAttempt pairs with midSession under §4.7.1: a bind-sequence caller
+// passes its attempt's token with false, and the §7.4 mid-session upload
+// passes the empty string with true. The Client sets both as given.
+func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *adapterv1.WorkspacePlan, archive *adapterv1.ArchivePolicy, bindAttempt string, midSession bool) ([]*adapterv1.WorkspacePlanWarning, error) {
 	resp, err := c.rpc.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: plan,
 		ArchivePolicy: archive,
 		MidSession:    midSession,
+		BindAttempt:   bindAttempt,
 	})
 	if err != nil {
 		return nil, translateSlotBindRefusal(err)
@@ -395,11 +425,14 @@ func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *
 // order; on a hard failure the adapter may attach partial outputs in
 // the gRPC status details — the caller can extract them with
 // `status.FromError(err).Details()`. F-7.5.4.
-func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy) ([]*adapterv1.SetupCommandOutput, error) {
+//
+// bindAttempt is the calling bind attempt's §4.7.1 token, set as given.
+func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands []*adapterv1.SetupCommand, setupPolicy *adapterv1.SetupPolicy, bindAttempt string) ([]*adapterv1.SetupCommandOutput, error) {
 	resp, err := c.rpc.RunSetup(ctx, &adapterv1.RunSetupRequest{
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		SetupCommands: setupCommands,
 		SetupPolicy:   setupPolicy,
+		BindAttempt:   bindAttempt,
 	})
 	if err != nil {
 		// Try to recover partial outputs from the gRPC status details.
@@ -645,6 +678,14 @@ type ResumeParams struct {
 	//
 	// spec: §10.1.7 — reassembly on resume.
 	Chunks []ChunkGrant
+	// BindAttempt is the resume attempt's bind attempt token. A Resume is
+	// the first and only entry-touching RPC of its attempt and creates the
+	// slot registry entry through its own claim, so it carries the token the
+	// adapter stamps on that entry and the attempt's compensation later
+	// names. The Client sets it as given.
+	//
+	// spec: §4.7.1 (role and gateway RPC contract)
+	BindAttempt string
 }
 
 // ChunkGrant is one presigned GET capability for a single checkpoint
@@ -698,6 +739,7 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		WorkspaceSizeLimitBytes: p.WorkspaceSizeLimitBytes,
 		ExpectedWorkspaceRoot:   p.ExpectedWorkspaceRoot,
 		Chunks:                  resumeChunksToProto(p.Chunks),
+		BindAttempt:             p.BindAttempt,
 	})
 	if err != nil {
 		return ResumeResult{}, translateSlotBindRefusal(err)
@@ -879,14 +921,28 @@ func (c *Client) Shutdown(ctx context.Context, sessionID, reason string, deadlin
 	return c.shutdown(ctx, sessionID, reason, deadline, nil)
 }
 
-// shutdown is the single builder behind the Shutdown RPC's two exported
-// forms, populating the fields each caller supplies.
+// shutdown is the single builder behind the Shutdown RPC's two unfenced
+// exported forms, Shutdown and ShutdownRecycle, populating the fields each
+// caller supplies.
+//
+// It sets unconditional_teardown on every request it builds, so every
+// non-compensating teardown caller (the session-end and recycle releases,
+// the exclusive-path teardown, the §11.4 full-revoke fan-out, and any caller
+// added later) sends the unconditional form without naming the field at its
+// call site. The adapter refuses a Shutdown that sets neither that field nor
+// bind_attempt, so setting it here rather than per caller is what keeps a new
+// caller from forgetting it. The fenced form names a bind attempt instead and
+// is built by ShutdownReclaim, never here, because a request carries exactly
+// one of the two fields.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §4.7 (Shutdown); §11.4
 func (c *Client) shutdown(ctx context.Context, sessionID, reason string, deadline time.Duration, recycle *adapterv1.RecycleScrub) (bool, error) {
 	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId:  &adapterv1.SessionId{Value: sessionID},
-		Reason:     reason,
-		DeadlineMs: int32(deadline.Milliseconds()),
-		Recycle:    recycle,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
+		Reason:                reason,
+		DeadlineMs:            int32(deadline.Milliseconds()),
+		Recycle:               recycle,
+		UnconditionalTeardown: true,
 	})
 	if err != nil {
 		return false, err

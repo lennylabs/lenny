@@ -250,6 +250,8 @@ func TestGuardDirectModeReArmsAdapterTimerNoTokenServiceCall_spec_4_9(t *testing
 
 	start := time.Now()
 	originalExpiry := start.Add(1500 * time.Millisecond)
+	// The assignment is a bind attempt's credential stage, so it carries a
+	// non-empty bind attempt token. spec: §4.7.1 (role and gateway RPC contract).
 	if err := adapterCli.AssignCredentials(ctx, "run-direct", map[string]*adapterv1.CredentialLease{
 		guardProvider: {
 			LeaseId:         "cl-direct",
@@ -257,7 +259,7 @@ func TestGuardDirectModeReArmsAdapterTimerNoTokenServiceCall_spec_4_9(t *testing
 			Payload:         []byte(guardDirectPayload),
 			ExpiresAtUnixMs: originalExpiry.UnixMilli(),
 		},
-	}); err != nil {
+	}, "attempt-guard"); err != nil {
 		t.Fatalf("assign direct lease to adapter: %v", err)
 	}
 	if !credentialFileHasProvider(t, credsDir, guardProvider) {
