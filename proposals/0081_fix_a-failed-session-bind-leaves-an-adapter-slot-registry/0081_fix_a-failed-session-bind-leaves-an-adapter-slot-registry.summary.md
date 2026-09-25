@@ -309,218 +309,13 @@ restating it.
 
 ## Open decisions for human to make
 
-The decisions below are open for a human, each under the identifier it was stamped with, and
-entries 32, 33, 36, 50, 56 and 57 carry the question and its ground alone and entry 34 carries no
-recommendation, because the review loop derived none for them, while the review log's `### Settled` list, its standing-context
-changelog and the review-log archive record how every entry that has left this section was answered or moved to
-`## Defects in the shipped tree that this proposal does not stage`, among them decision 53, whose
-re-cut of CODE-1, CODE-4 and CODE-6 lands CODE-14 at S15 (its `Shutdown` rows with CODE-1 at S16), CODE-13 at S19, and CODE-15 with
+No decisions remain open for a human: the operator answered the last of them, decisions 30,
+32, 33, 34, 36, 50, 56 and 57, on 2026-09-25 (`[operator.decisions-0925]`), and the review log's
+`### Settled` list, its standing-context changelog and the review-log archive record how every
+entry that has left this section was answered or moved to `## Defects in the shipped tree that
+this proposal does not stage`, among them decision 53, whose re-cut of CODE-1, CODE-4 and CODE-6
+lands CODE-14 at S15 (its `Shutdown` rows with CODE-1 at S16), CODE-13 at S19, and CODE-15 with
 CODE-1 at S16.
-
-30. **Should SPEC-5 also correct `spec/06_warm-pod-model.md`'s pre-attached client-visibility
-    bullet where it attributes a workspace-validation envelope to the §15.1 finalize
-    precondition note?** The bullet's finalize sentence says `POST /v1/sessions/{id}/finalize`
-    returns "the workspace-validation, setup-command, or credential error per the §15.1
-    finalize precondition note". The §15.1 finalize precondition row names a credential
-    envelope (`CREDENTIAL_POOL_EXHAUSTED`) and a setup-command envelope
-    (`SETUP_COMMAND_FAILED`) and names no workspace envelope at all, so the citation
-    attributes to that row something the row does not state. The condition is pre-existing and
-    unrelated to this proposal's bind-attempt mechanism. SPEC-5 edited a different clause of
-    the same bullet until the reversal of operator decision 29 on 2026-09-24 withdrew that
-    edit, which is what put the question here rather than in a finding of its own. The bullet
-    now takes no edit from this proposal.
-
-    Ground, verified against the tree. Which of the two sections carries the defect is not
-    settled, and that is what makes the question worth a person's time rather than a one-line
-    edit. Three further sites disagree with each other. §7.2's pre-attached failure-visibility
-    paragraph states in normative prose that "a workspace-materialization failure surfaces as
-    `WORKSPACE_PLAN_INVALID` at `POST /v1/sessions/{id}/finalize`", which corroborates §6.2's
-    behavioural claim and would make §15.1's row the incomplete side. The §15.1 error catalog
-    contradicts it: the `WORKSPACE_PLAN_INVALID` row scopes that code to the inner
-    `workspacePlan` payload on `POST /v1/sessions` failing JSON Schema validation and calls it
-    "Reserved for inner-plan schema failures only". The gateway sides with the catalog. Every
-    non-test site that writes the code is a request-validation path
-    (`pkg/gateway/sessionserver/start.go:1425`, `start.go:1449`,
-    `pkg/gateway/sessionserver/sessionserver.go:2794`), the finalize handler emits no workspace
-    envelope at all (`pkg/gateway/sessionserver/finalize.go` carries `VALIDATION_ERROR`,
-    `PAYLOAD_TOO_LARGE` and the credential envelopes), and `writePodClaimError`
-    (`pkg/gateway/sessionserver/start.go:87-216`), the shared mapper finalize routes bind
-    failures through, has no workspace branch. A `workspace_validation` classification does
-    exist on the slot path
-    (`pkg/gateway/podlifecycle/podsession/slotfailure.go:29` and `:88`, for an
-    `InvalidArgument` at the workspace stage), but it reaches the client as `SLOT_FAILED`
-    rather than as a workspace envelope. Leaving it keeps the bullet untouched, and carrying the
-    correction adds a §6.2 edit site to SPEC-5.
-
-    Recommendation: leave it, and record it as a defect this proposal does not stage rather
-    than deleting the question. The cheap framing that makes carrying it attractive assumes the
-    fix is one sentence in §6.2, and the tree does not support that assumption: at least three
-    sections and the gateway disagree about whether any workspace envelope exists at finalize,
-    so the correct edit is unestablished and settling it is a scoping exercise of its own.
-
-    Alternatives. Carrying the correction in SPEC-5 removes the standing inaccuracy in one
-    edit, and it commits the proposal to an edit whose target is unestablished: rewriting
-    §6.2's finalize sentence to drop the workspace envelope makes it contradict §7.2, and
-    adding the envelope to §15.1's finalize row makes that row contradict the error catalog and
-    the gateway. Resolving the four sites together is the correction the condition actually
-    needs, and it is a spec change wider than SPEC-5's scope, touching §6.2, §7.2 and two §15.1
-    tables.
-
-    Cost of deciding otherwise. Leaving it keeps a wrong citation in shipped spec text until a
-    separate finding lands, and a reader following §6.2's pointer to §15.1 finds no workspace
-    envelope there. Carrying it adds §6.2's client-visibility bullet, §7.2's pre-attached
-    failure-visibility paragraph, and §15.1's `WORKSPACE_PLAN_INVALID` catalog row and finalize
-    precondition row to SPEC-5's edit sites, and risks landing a correction in the wrong
-    direction. The three files are already open: SPEC-2 edits `spec/07_session-lifecycle.md`
-    § 7.2 and `spec/06_warm-pod-model.md` § 6.2, and SPEC-5 edits
-    `spec/15_external-api-surface.md` § 15.4, so the added cost is the four paragraphs and rows
-    rather than a new file.
-
-    Confidence: low. The four sites and the gateway behaviour are verified. Which statement the
-    spec intends to be authoritative is not recoverable from the text.
-
-32. **Should §4.7.1 define "registry entry" and "bound entry"?** The staged contract rests on
-    both terms throughout its numbered rules, and `spec/` defines neither anywhere today. An
-    adapter author reading §4.7.1 has to infer what an entry is from the rules that
-    manipulate it. The remedy would be one defining clause in §4.7.1, which is a spec edit this
-    proposal can carry. Leaving it undefined keeps the staging as it stands and leaves the
-    ambiguity for the conformance battery to absorb.
-
-33. **Is the absence of observability on the two accepted residues acceptable?** The staging
-    accepts two residues on the pod. A dead attempt's stamped registry entry produces only
-    transient `SLOT_BIND_ATTEMPT_SUPERSEDED` refusals to later attempts, with no counter and no
-    other signal. An entry carrying no token is counted by an adapter-side series that no
-    deployer scrapes by default, because the adapter metrics endpoint is not wired into the
-    scrape target set. An operator therefore cannot tell either residue from an ordinary
-    refusal. The answer decides whether this proposal owes a scraped signal for them or whether
-    both stay unobservable until the adapter scrape target is wired. Answering it by wiring the
-    adapter scrape target has an unexamined consequence: it would also discharge the §28.1 N4
-    deferral and move the §16.1 adapter row that records it, and nobody has checked what that
-    does to CODE-9's staged catalog and collector sites.
-
-34. **Should a failed §7.3 session re-attach be accounted against the pod's whole-pod
-    replacement threshold on both of its arms, or only on the arm where the slot actually
-    leaked?** A failed re-attach ends either with the slot cleanly reclaimed or with it leaked.
-    CODE-5 as staged accounts both. On a pool set to `maxConcurrentSessions: 2` the replacement
-    threshold is one, so either arm retires a freshly claimed pod on the first failed re-attach.
-    Accounting both arms makes a re-attach failure visible in the pod's health ledger and costs
-    pod churn whose rate nobody has measured. Accounting the leaked arm only keeps a cleanly
-    reclaimed re-attach failure off the threshold and loses that signal.
-
-    Ground, verified against the tree. The threshold is `int((maxConcurrent+1)/2)`
-    (`pkg/gateway/runtime/slothealth/slothealth.go:215-220`), which is one at a
-    `maxConcurrentSessions` of both 1 and 2; the drain-ledger side stamps
-    `lenny.dev/drain-request` on the same threshold
-    (`pkg/gateway/session/recycle/scrubreporter_seams.go:184-197`). CODE-5 calls
-    `accountSlotFailure` from `resumeOnPod`'s `podBinder.Resume` failure branch with
-    `sbe.Leaked` as the discriminator, and that caller is reachable at a `maxConcurrentSessions`
-    of 2, because its non-empty-slot-id guard excludes only pools at 1. The leaked arm's count
-    is persistent and released only when the pod terminates
-    (`slothealth.go:121-125`, stated at `:127-140`); the failure arm ages out of a rolling
-    five-minute window (`:98-108`), which at a threshold of one changes nothing, since the
-    single in-window failure has already drained the pod. Retuning the threshold itself is a
-    named non-goal of this proposal, so the choice is over what gets counted.
-
-    Why the spec does not settle it. §5.2's trigger counts slots that are `failed` or `leaked`
-    and enumerates the `failed` category as "runtime error, OOM, unhandled exception,
-    non-retryable failure". The documented per-slot edge into `failed` is `running -> failed` on
-    a non-retryable error, and a failed re-attach never reaches `running`. CODE-5's own
-    `isTransientPodClaimError` arm classifies the `codes.Aborted` refusal as transient and
-    retryable. A cleanly reclaimed re-attach refusal is therefore neither `failed` nor `leaked`
-    on the documented state machine, so §5.2 does not oblige counting it and the leaked-arm-only
-    alternative stays available. The shipped gateway reads §5.2 more broadly than the shipped
-    prose does, which is why this is a choice rather than a conformance question.
-
-    Recommendation: none. The review loop derived no recommendation, and the reason is that the
-    magnitude cannot be derived from the repository: the spec publishes no re-attach failure
-    rate and no bind failure rate to multiply against the threshold, so the churn is unpriced
-    and further reading does not price it. Node loss, resume storms and transport blips each
-    raise the rate. A reviewer who does not act gets the both-arms answer, because that is what
-    CODE-5 stages and the implementation will build it as staged.
-
-    Alternatives considered, and why neither was taken in the loop. Accounting both arms is what
-    CODE-5 stages, and it lost no argument; it was left open because its cost is the unmeasured
-    churn above. Accounting the leaked arm only is scoped and implementable as a one-word change
-    to the discriminator CODE-5 already passes, and it lost no argument either; it was left open
-    because it silences the ledger on a re-attach failure that the shipped gateway currently
-    counts. Retuning the threshold is out of scope and is not an alternative here.
-
-    What deciding otherwise costs. Choosing the leaked arm only means editing CODE-5's resume
-    caller to pass a discriminator that fires on the leaked disposition alone, and the gateway
-    tests for CODE-5 gain a case pinning that a cleanly reclaimed re-attach failure leaves the
-    ledger untouched. No spec edit follows either way, because §5.2 is not being changed.
-
-    Confidence: low. The arithmetic, the call site and the two counters are verified in the
-    tree. The rate that would rank the two answers does not exist anywhere this proposal can
-    read.
-
-36. **Does the conformance battery owe a case for a per-slot cleanup that fails under the
-    reclaim hold?** A third-party adapter harness cannot force a tree removal to fail, so the
-    rule's failure arm, where the hold persists for the life of the pod, has no case. The
-    recycle-carrying `Shutdown` scrub is in the same position for want of a `ReportPodScrub`
-    observer in the battery. The answer decides whether CONF-1 ships with those arms uncovered
-    and records the gap, or whether the battery gains an injection seam that a third-party
-    adapter would have to implement.
-
-50. **Should the new tier-3 descriptor gate also pin the values of the `SlotReclaimOutcome`
-    enum?** SCHEMA-1 adds a `SlotReclaimOutcome` enum to `schemas/lenny-adapter.proto`, and
-    every `Shutdown` response carries one of its values (`RECLAIMED`, `ABSENT` or
-    `SUPERSEDED`). The gateway branches on that value, and a third-party adapter must emit it.
-    The tier-3 descriptor gate staged in the non-spec changes pins each of the nine new fields
-    by message, number and type, and pins both new `ErrorCode` values by number and name, so a
-    later change that renumbers a field or an error code fails the gate. It pins no value of
-    the new enum, so a renumbered or reused outcome value passes it.
-
-    Ground, as the review log gives it. Both ends of the wire regenerate from the same proto, so
-    a renumber is symmetric inside this repository. That argument excuses the `ErrorCode` pin
-    the proposal does make equally, so it does not by itself distinguish the two. The loop
-    recorded the gap as optional hardening rather than a defect and routed it to a person
-    rather than to another review round. Adding the pin is one more assertion in the staged
-    descriptor gate file and touches no other deliverable. Leaving it out keeps the gate as
-    staged.
-
-    Recommendation: none. Neither the review loop nor the open-decisions-and-impact-review
-    phase derived one.
-
-56. **Should spec or docs text state the client-visible outcome of a rolled-back start that
-    closes a successor's runtime session?** Staged §4.7.1 rule 8 says only that a start whose
-    confirmation is refused takes the session back off the shared runtime process. The non-spec
-    Edge-cases bullet "A rolled-back start can close a successor's runtime session." records an
-    outcome that no staged spec or docs text states, and the answer decides whether a reader of
-    the published contract learns of it.
-
-    Ground, as the non-spec Edge-cases bullet and the review log give it. The rollback leaves the
-    slot registry and the on-disk tree alone, so it destroys no successor's workspace. The
-    rollback's `Runtime.Close(ctx, sessionID)` is keyed on the slot identifier alone, and the
-    slot identifier equals the session identifier, so an abandoned attempt and a later attempt at
-    the same session share it. Between the confirmation's refusal and the rollback's close, a
-    later attempt can claim that identifier on the same pod. The close then releases the
-    successor from the shared runtime's active set and, when that empties the set, ends the
-    shared connection, the spawned child and the listener
-    (`pkg/adapter/socketruntime.go:435-467`). Closing the race would need a per-session identity
-    on the shared runtime's active set, which no `Runtime` implementation carries. The item was
-    filed by `[non-spec.8.review-docs-alignment.1]`, every docs-alignment lens since then
-    declined it, and no fix entry is recorded.
-
-    Recommendation: none. The review loop derived none; the open-decisions-and-impact-review
-    phase supplies one.
-
-57. **Is a §7.1 trace owed for a stale coordinator's compensating `Shutdown` after a gateway
-    handoff?** Staged §7.1 obliges the gateway to reclaim a failed bind on the pod. It does not
-    trace the case where the replica sending the compensating `Shutdown` has lost the session to
-    another replica in a coordinator handoff. The answer decides whether §7.1 states that case
-    or whether the proposal leaves it untraced.
-
-    Ground, as the review log gives it (run 0081-opt8 `[spec.3.review-performance.1]`).
-    `spec/10_gateway-internals.md` §10.1 states that pods validate `coordination_generation` on
-    every gateway-to-pod RPC. Under that statement a compensating `Shutdown` from a coordinator
-    whose generation the handoff superseded is rejected, and the slot is booked `leaked`. The
-    shipped adapter validates the generation only on `CoordinatorFence` and `CheckpointBarrier`,
-    which the defects section below records as a condition this proposal does not stage. The loop
-    judged the case split-brain-only and below the finding bar.
-
-    Recommendation: none. The review loop derived none; the open-decisions-and-impact-review
-    phase supplies one.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -1006,6 +801,28 @@ CODE-1 at S16.
   or `schemas/` defines the code. No staged sentence depends on either value. Naming them is a
   separate spec change.
 
+- **§6.2, §7.2, §15.1. The spec sites that name a `/finalize` failure envelope disagree about a
+  workspace envelope.** §6.2's pre-attached **Client visibility** bullet says
+  `POST /v1/sessions/{id}/finalize` returns "the workspace-validation, setup-command, or credential
+  error per the §15.1 finalize precondition note", and the §15.1 finalize precondition row names a
+  credential envelope (`CREDENTIAL_POOL_EXHAUSTED`) and a setup-command envelope
+  (`SETUP_COMMAND_FAILED`) and no workspace envelope, so the citation attributes to that row
+  something the row does not state. The other sites disagree about which side is wrong. §7.2's
+  pre-attached failure-visibility paragraph states that a workspace-materialization failure
+  surfaces as `WORKSPACE_PLAN_INVALID` at `/finalize`, which corroborates §6.2. The §15.1 error
+  catalog's `WORKSPACE_PLAN_INVALID` row scopes that code to the inner `workspacePlan` payload on
+  `POST /v1/sessions` failing schema validation and calls it "Reserved for inner-plan schema
+  failures only". The gateway sides with the catalog: every non-test writer of the code is a
+  request-validation path (`pkg/gateway/sessionserver/start.go`,
+  `pkg/gateway/sessionserver/sessionserver.go`), the finalize handler emits no workspace envelope,
+  and `writePodClaimError`, the mapper finalize routes bind failures through, has no workspace
+  branch; the slot path's `workspace_validation` classification
+  (`pkg/gateway/podlifecycle/podsession/slotfailure.go`) reaches the client as `SLOT_FAILED`. The
+  condition predates this proposal and is unrelated to the bind-attempt mechanism, and this
+  proposal edits none of those sites, by operator decision 30. Settling it is a spec change across
+  §6.2, §7.2 and both §15.1 tables, whose correct direction is not yet established, and proposal
+  0083 takes it up.
+
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
@@ -1019,6 +836,7 @@ CODE-1 at S16.
 | 0077 (pre-materialize a workspace on a warm pod) | Early draft (2026-08-19 per its own `Date` line; the file's last commit, `8364087f9`, carries the same date, which records when someone touched it rather than when it was reviewed). It heads itself unreviewed and unconverged, its design section leaves the mechanism to a later revision, and its files-touched section reads "Not enumerable until §7 is answered", so it names targets and stages no text. | **Nothing of 0077 loses its subject, because it stages none.** One of its named targets is newly constrained. Its per-slot derivation at slot assignment (`proposals/0077_new_pre-materialize-a-workspace-on-a-warm-pod.md:136,:171`) lands inside the adapter slot lifetime this proposal fences: after CODE-6 a registry entry may be created only inside `ensureSlotStateLocked`, under `s.mu`, as one indivisible resolve-or-create-and-stamp step, and only by a request carrying a bind attempt token, and the per-slot tree is destroyed by the failed-bind reclaim under the slot identifier's reclaim hold and the per-slot guard. A derivation that writes a slot's tree therefore runs inside that guard and creates no entry of its own. Its §7 question 5, what the recycle boundary does to the pod-wide cache, is unchanged: SPEC-3 appends to §5.2's scrub model and widens §5.2's slot-cleanup action list, and widening the §5.2 whole-pod scrub to enumerate the registry is a stated non-goal here, so the whole-pod scrub the cache has to survive is the shipped one. Its remaining targets are untouched, `spec/06`'s warm-pod checklist and `spec/05`'s pool configuration included, both of which sit outside the §6.2 fence and projection and the §5.2 anchors SPEC-3 and SPEC-4 edit. | Write 0077's detailed design against the post-reclaim slot lifetime: place the per-slot derivation inside the per-slot guard, have it create no registry entry, and establish that the pod-wide cache is not per-slot state the reclaim removes. No edit to 0077's staged content, because it stages none. |
 | 0071 (route a runtime frame to one consumer instead of broadcasting it) | Draft for review (2026-08-13 per its own `Date` line; the file's last commit, `8f1083b70`, is dated 2026-08-31, which records when someone touched it rather than when it was reviewed). It is written against 0069 having landed, and its subject is intact in the tree: `demuxSessionOutput` (`pkg/adapter/attach.go:314`) and `broadcast` (`pkg/adapter/socketruntime.go:249`) both still stand. | **No deliverable of 0071 loses its subject.** CODE-1, CODE-2 and SPEC-1 all keep theirs. This proposal's `## Files touched on application (non-spec)` opens none of `pkg/adapter/socketruntime.go`, `pkg/adapter/attach.go`, `pkg/adapter/heartbeat.go` or `pkg/adapter/slotframe.go`, which appear here only as citations, and it leaves §28.5.3 unedited and adds no §28 register row, because `Shutdown` appears in none and §28.5.1 is organised per channel rather than per field. **Two files collide, both in the test lane, as merge hazards.** The staged co-tenancy-hazard case adds a sibling assertion in `pkg/adapter/socketruntime_test.go` beside `TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2` (`:252`), and 0071 rewrites the same package's tier-1 cases. Both proposals also edit `tests/spec-map.json`, 0071 for the tier-1, tier-7a, tier-8 and tier-9 cases it rewrites and this proposal for the files and cases it adds together with the one tier-11 row S7 removes from section `12.1`; the entries are disjoint and the file is one. The assertion's listener half survives 0071, which leaves `p.listener.Close()` (`pkg/adapter/socketruntime.go:467`) alone; 0078's CODE-1 is what removes it. **One statement of this proposal's record goes stale in 0071's direction, and it is prose about the shipped tree rather than a staged edit.** The third residue symptom is narrated against `deliverToSession` (`pkg/adapter/attach.go:345`, `:357`), which 0071's CODE-1 deletes. It stands under `## Defects in the shipped tree that this proposal does not stage`, inside the 0080 row above, in the accepted failure modes of the non-spec changes, and in the problem statement's own account of the residue. No staged edit rests on it: re-scoping `slotCount` and `deliverToSession` is a stated non-goal, and the predicate is left exactly as it is. | Land in either order. Resolve `pkg/adapter/socketruntime_test.go` and `tests/spec-map.json` as merges, keeping both proposals' cases and entries. If 0071 lands first, restate the third residue symptom against the routing table's unknown-address arm, which is where 0071 moves the drop. No edit to 0071's staged content, and no re-derivation of any of its deliverables. |
 | 0082 (serialize concurrent `/finalize` with a compare-and-swap) | Draft (2026-09-23 per its status file's `drafted-date`; its first review run that day did not converge) | **No deliverable of 0082 loses its subject.** 0082's prepare-failure path inherits this proposal's refusal-aware `Binder.Prepare` reclaim closure whichever proposal lands first. CODE-13's attempt-scoped lease release on `Binder.Prepare`'s credential-assignment failure runs before 0082 CODE-3's `revokeFinalizeLease`, which then finds no lease, so each lease is released once in either landing order. This proposal edits no §15.1 table 0082 opens (its one §15.1 edit is a pointer sentence on the error catalog's `SETUP_COMMAND_FAILED` row, and 0082 edits the endpoint precondition table), and the two proposals edit different functions in `pkg/gateway/sessionserver/start.go` and `pkg/gateway/sessionserver/sessionserver.go`; this proposal's refusal case in `writePodClaimError` also sets the envelope `handleFinalize` writes after 0082's rewritten prepare-failure branch. | Rebase textually if it lands second. If 0082 lands, this proposal names another trigger for CODE-8's `Binder.Prepare`-arm short-circuit or states that the arm is a guard with no known path (0082's own row on 0081 records the same obligation). |
+| 0083 (four spec sites disagree on the finalize workspace-failure envelope) | Draft (2026-09-25 per its status file's `drafted-date`) | **No deliverable of 0083 loses its subject.** 0083 takes up the shipped-tree defect "§6.2, §7.2, §15.1. The spec sites that name a `/finalize` failure envelope disagree about a workspace envelope.", which this proposal records under `## Defects in the shipped tree that this proposal does not stage` and does not stage, by operator decision 30. The two proposals open the same spec files at different anchors. 0083's SPEC-1 edits §6.2's **Client visibility:** bullet and its SPEC-2 edits §7.2's **Pre-attached vs. post-attached failure visibility.** paragraph, while SPEC-2 here edits §6.2's `resuming` failure transitions and §7.2's mid-resume snapshot-close sequence, SPEC-4 here edits §6.2's state machine and occupancy projection, and SPEC-5 here appends a pointer sentence to the §15.1 error catalog's `SETUP_COMMAND_FAILED` row, which 0083 does not open. | Nothing is required. Whichever proposal lands second rebases textually. |
 | gateway-runtime-comms remediation, step R1b | Programme step | SCHEMA-1 opens `schemas/lenny-adapter.proto` under rule S-2's second window rather than against R1b's reservation, additively and without touching any identifier R1b renamed, on the terms and with the step ordering the proto-window decision above states. | Record the second window against S-2, so the steps that plan against the generated types (R12, R15, R16, R17, R22, R23) plan against the regenerated set rather than against R1b's. |
 | gateway-runtime-comms remediation, step R12 | Programme step | The hold-timeout reclaim of unstarted slots and its §10.1.4 statement are left to R12, which builds the control-stream consumer that arms the hold and owns the gateway-side whole-pod-loss response. | Take both halves when it builds the consumer, together with an in-flight-upload guard. |
 

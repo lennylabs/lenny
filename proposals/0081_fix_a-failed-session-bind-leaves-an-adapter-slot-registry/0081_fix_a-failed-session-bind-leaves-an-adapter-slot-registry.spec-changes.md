@@ -969,6 +969,8 @@ the bind attempt token once, on the section that owns the gateway-adapter RPC co
 nothing about either new field, for the reason the summary's `unconditional_teardown` decision gives:
 
 ```
+**Registry entries.** The adapter's slot registry holds at most one **registry entry** per slot identifier, and a registry entry is the adapter's per-slot record of a session on the pod. An entry is created only as rule 4 below states, and a deregistration removes it. An entry is **bound** once a session is bound to it: `AssignCredentials` binds the entry it resolves, and a request that starts a session binds the entry when `AssignCredentials` has not, so an entry that `PrepareWorkspace`, `FinalizeWorkspace`, or `RunSetup` created is unbound until one of those two binds it. A bound entry has not thereby started, and whether an entry's session has started is the separate condition rule 6 reads.
+
 **Bind attempt token.** A **bind attempt** is one gateway attempt to bind a session onto a pod, running from that attempt's first pod-side RPC for the session until the attempt succeeds or is abandoned. The gateway mints a **bind attempt token** for each attempt: one opaque string value, drawn from a cryptographically secure random source, minted once, before the attempt issues its first pod-side RPC. The adapter compares the token for equality and does nothing else with it. It parses no structure out of it, derives no order and no age from it, and never mints one of its own. The empty string is not a token, so a request whose `bind_attempt` is empty names no attempt. A token belongs to an attempt rather than to a session, so two attempts at one session hold different tokens, and it is never derived from the session identifier, from the slot identifier, or from a `coordination_generation`. It is not a coordination generation and carries none of that field's semantics. The two answer different questions: the generation names the gateway replica that speaks for the session ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) and is validated on the RPCs that carry it, while the token names the bind attempt a registry entry belongs to. Where both appear on one message, as on `Shutdown`, each is checked on its own terms.
 
 The table below states which requests carry `bind_attempt` and which carry the `mid_session` marker. Where that table leaves `StartSession` and `ConfigureWorkspace` outside the comparison, the reason is that a start may be issued by a later stage of the same binding than the stage that created the entry, so comparing a token on either of them would refuse a start against an entry the same binding legitimately created. No token comparison runs against either of them, and the rules below reach them by their own conditions. No response reports a token, so a caller that received no response at all still holds the token it minted.
@@ -1027,9 +1029,21 @@ are stated here and nowhere else, and the numbering is the reference every other
 and the conformance case lists each reach a rule by its number and name rather than restating it,
 and §15.4's conformance criterion cites the section whole,
 so a refinement to one rule lands once and no second site can drift from this one. §4.7
-owns the two teardowns and their preconditions; this block owns what the value is, which requests
-carry it, when the adapter stamps it, which entry a request is addressed to, what becomes of that
-entry, and what the response reports.
+owns the two teardowns and their preconditions; this block owns what a registry entry is and when
+it is bound, what the value is, which requests carry it, when the adapter stamps it, which entry a
+request is addressed to, what becomes of that entry, and what the response reports.
+
+The block opens with the `**Registry entries.**` paragraph because the bind-attempt paragraph, the
+carriage lead-in and the stamp-once rule already rely on the term. It is the first definition of
+either term in `spec/` and states them once, although the staged §4.7 `Shutdown` row ("whether or
+not `AssignCredentials` has bound that entry", "holding no bound entry") and the shipped §16.1
+`lenny_adapter_set_tracing_context_dropped_total` row already use "bound" in that sense. The
+paragraph records shipped behaviour: the adapter binds an entry by setting its session in
+`assignCredentialsSlot` (`pkg/adapter/slotcreds.go`) or, for the request that starts the session,
+in `claimSessionSlotUnderLock` (`pkg/adapter/slotsession.go`), `boundSlotState` refuses an entry
+that is registered but unbound, and `deregisterSlotLocked` is the removal. Its last sentence keeps
+bound and started apart, because a start keyed on the binding rather than on `started` would refuse
+the first start of every session `AssignCredentials` bound before it.
 
 Some of what the block states are obligations this proposal takes on rather than shipped
 behaviour it records. The registry critical-section paragraph is the first, for the ground the

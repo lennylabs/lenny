@@ -2719,7 +2719,7 @@ with the slot cleanup that row states the demotion runs inside the call, and car
 the fresh-entry consequence rule 4 (**the create-and-stamp rule**) gives, because this page cannot
 cite the rule. The `ReportSessionScrub` row (`:81`) carries the universal SPEC-3 withdraws, a row in SPEC-3's
 carrier table; it now points at this page's own `Shutdown` row for which cleanups are reported
-and adds the one clause that row lacks, which excludes every other release. One added paragraph says what the token is for and where the rules are stated. The
+and adds the one clause that row lacks, which excludes every other release. One added paragraph says what the token is for, what a refused start does to a later attempt's runtime session, and where the rules are stated. The refused-start sentence states an outcome rather than a rule: closing a session a runtime is serving is an effect of these rules that a runtime binary observes, which is why this page states it. The
 cascade and its wire observables stay in §4.7.1: republishing them here would drop a
 normative cascade into a page whose gRPC section is a one-line orientation table
 (`.claude/rules/doc-content.md`, "Match technical depth to the page"), and a runtime author can
@@ -2759,7 +2759,7 @@ the `**Adapter-to-Gateway RPCs:**` heading. It is the whole of what this page sa
 token:
 
 ```
-**Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the bind-sequence requests the linked contract's carriage table lists. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule whatever answer it fixes; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
+**Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the bind-sequence requests the linked contract's carriage table lists. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy. A start that the adapter refuses at its start confirmation is taken back off the runtime process the pod's sessions share; when a later attempt at the same session has claimed the slot in the meantime, that take-back closes the later attempt's runtime session, and closes the shared runtime process as well when that session was the last one it was serving. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule whatever answer it fixes; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
 ```
 
 Its tier-11 work is specified under `## Testing`.
@@ -3514,9 +3514,16 @@ transport rather than against a fake. `tests/spec-map.json` gains the directory 
 step that creates the first file under it.
 
 **The descriptor gate**, one file. It pins each of the nine fields SCHEMA-1 adds by message, number
-and type, and pins both new `ErrorCode` values by number and name. This is the gate that fails if
-a later change renumbers a field or reuses a number, which no `buf breaking` run catches for an
-addition.
+and type, pins both new `ErrorCode` values by number and name, and pins each value of the new
+`SlotReclaimOutcome` enum by name and number: `SLOT_RECLAIM_OUTCOME_UNSPECIFIED` as 0,
+`SLOT_RECLAIM_OUTCOME_RECLAIMED` as 1, `SLOT_RECLAIM_OUTCOME_ABSENT` as 2 and
+`SLOT_RECLAIM_OUTCOME_SUPERSEDED` as 3, the numbers SCHEMA-1's enum declares. The gateway branches
+on the outcome every `Shutdown` response carries and a third-party adapter emits it from the
+published proto, so a renumbered or reused outcome value passes every in-repository round trip,
+because both ends regenerate from the same file, while an adapter built against the earlier
+numbering reports a different outcome than the one it means. This is the gate that fails if a later
+change renumbers a field, an error code or an outcome value, or reuses a number, which no
+`buf breaking` run catches for an addition.
 
 **The behavioural cases**, one file, carrying CONF-1's case list over bufconn and the real gRPC
 transport.
@@ -3898,7 +3905,9 @@ of these cases:
   token closes the confirmation and not this close: the confirmation refuses on the token, and
   the rollback that follows still addresses the runtime by the identifier both attempts share.
   Closing it would need a per-session identity on the shared runtime's active set, which no
-  `Runtime` implementation carries.
+  `Runtime` implementation carries. This bullet is the proposal's record of the race. DOCS-2's
+  `**Bind attempt token.**` paragraph states the outcome for a reader of the published contract,
+  and no spec text states it.
 - **A cleanup the adapter runs inside its own start handler reports its failure nowhere.** A
   bind that fails inside a start handler (`StartSession`, `Resume`, or the SDK-warm start) after
   its slot entered `receiving_uploads` and before the slot reached `running` runs the
