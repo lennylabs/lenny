@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
@@ -2032,5 +2036,323 @@ func TestBindFailsWhenCredentialAssignmentFails(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("Bind succeeded though credential assignment failed, want a failure")
+	}
+}
+
+// stageAdapter is a raw gRPC adapter fake for the reclaim closures of
+// Prepare and Launch. Each bind-sequence RPC answers the error its stage
+// entry names, or success when none is set; finalizeHook, when non-nil,
+// decides FinalizeWorkspace's answer from the call's arrival order so a test
+// can refuse the second of two concurrent attempts.
+type stageAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	mu           sync.Mutex
+	errs         map[string]error
+	finalizeN    int
+	finalizeHook func(n int) error
+}
+
+func (a *stageAdapter) stageErr(stage string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.errs[stage]
+}
+
+func (a *stageAdapter) NegotiateVersion(context.Context, *adapterv1.NegotiateVersionRequest) (*adapterv1.NegotiateVersionResponse, error) {
+	return &adapterv1.NegotiateVersionResponse{SelectedProtocolVersion: adapter.ProtocolVersionV1}, nil
+}
+
+func (a *stageAdapter) FinalizeWorkspace(context.Context, *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	a.mu.Lock()
+	a.finalizeN++
+	n, hook := a.finalizeN, a.finalizeHook
+	a.mu.Unlock()
+	if hook != nil {
+		if err := hook(n); err != nil {
+			return nil, err
+		}
+	}
+	if err := a.stageErr("FinalizeWorkspace"); err != nil {
+		return nil, err
+	}
+	return &adapterv1.FinalizeWorkspaceResponse{}, nil
+}
+
+func (a *stageAdapter) RunSetup(context.Context, *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+	if err := a.stageErr("RunSetup"); err != nil {
+		return nil, err
+	}
+	return &adapterv1.RunSetupResponse{}, nil
+}
+
+func (a *stageAdapter) AssignCredentials(context.Context, *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
+	if err := a.stageErr("AssignCredentials"); err != nil {
+		return nil, err
+	}
+	return &adapterv1.AssignCredentialsResponse{}, nil
+}
+
+func (a *stageAdapter) StartSession(context.Context, *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+	if err := a.stageErr("StartSession"); err != nil {
+		return nil, err
+	}
+	return &adapterv1.StartSessionResponse{}, nil
+}
+
+// stageAdapterDialer serves a over an in-memory connection and returns a
+// DialAdapter func that opens a fresh client per call, as Prepare and Launch
+// each reconnect from the persisted binding.
+func stageAdapterDialer(t *testing.T, a *stageAdapter) func(string) (*adapterclient.Client, error) {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, a)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	return func(string) (*adapterclient.Client, error) {
+		return adapterclient.Dial("passthrough:///bufnet",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return lis.DialContext(ctx)
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+}
+
+// slotBindRefusal builds the status the adapter answers a §4.7.1 slot-bind
+// refusal with: the gRPC code plus an adapterv1.Error detail naming the code.
+func slotBindRefusal(t *testing.T, c codes.Code, ec adapterv1.Error_ErrorCode) error {
+	t.Helper()
+	st, err := status.New(c, "slot bind refused").WithDetails(&adapterv1.Error{Code: ec, Message: "slot bind refused"})
+	if err != nil {
+		t.Fatalf("attach status detail: %v", err)
+	}
+	return st.Err()
+}
+
+// claimDeleteCounter counts SandboxClaim deletions through the client, which
+// is the one apiserver write Binder.drain performs.
+type claimDeleteCounter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *claimDeleteCounter) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+// claimedPodFakeClient seeds a fake client with a claimed Sandbox sbx-1 and
+// its per-pod claim, and counts every SandboxClaim delete on counter.
+func claimedPodFakeClient(t *testing.T, counter *claimDeleteCounter) client.Client {
+	t.Helper()
+	sb := idleSandbox("sbx-1", "10.244.1.7")
+	sb.Status.Phase = "claimed"
+	claim := &lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS}}
+	return fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(sb, claim).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+				if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+					counter.mu.Lock()
+					counter.n++
+					counter.mu.Unlock()
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}).Build()
+}
+
+// claimPresent reports whether the per-pod claim for sbx-1 still exists.
+func claimPresent(t *testing.T, c client.Client) bool {
+	t.Helper()
+	var claim lennyv1.SandboxClaim
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
+	if err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("get per-pod claim: %v", err)
+	}
+	return err == nil
+}
+
+// slotBindRefusalCases pairs each §4.7.1 refusal with the gRPC code the
+// adapter answers it on.
+var slotBindRefusalCases = []struct {
+	name string
+	code codes.Code
+	ec   adapterv1.Error_ErrorCode
+}{
+	{"superseded", codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED},
+	{"already_started", codes.FailedPrecondition, adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED},
+}
+
+// prepareOnClaimedPod runs Binder.Prepare for sess-1 against sbx-1 with a
+// credential pool configured, so the AssignCredentials stage runs.
+func prepareOnClaimedPod(b *podsession.Binder) error {
+	_, err := b.Prepare(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1",
+		CredentialPools: map[string]string{"anthropic": "pool-a"},
+	})
+	return err
+}
+
+// A typed slot-bind refusal met by Binder.Prepare at the finalize, setup or
+// credential-assignment stage is returned to the caller and leaves the pod
+// undrained with no session-wide lease release, while the same closure
+// meeting an ordinary failure at the same stage drains the pod as before.
+// Against the pre-change closure every refusal row deletes the claim.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1(t *testing.T) {
+	for _, stage := range []string{"FinalizeWorkspace", "RunSetup", "AssignCredentials"} {
+		for _, rf := range slotBindRefusalCases {
+			t.Run(stage+"/"+rf.name, func(t *testing.T) {
+				var deletes claimDeleteCounter
+				c := claimedPodFakeClient(t, &deletes)
+				a := &stageAdapter{errs: map[string]error{stage: slotBindRefusal(t, rf.code, rf.ec)}}
+				assigner := &fakeAssigner{}
+				b := newBinder(c, stageAdapterDialer(t, a))
+				b.Credentials = assigner
+
+				err := prepareOnClaimedPod(b)
+				if !adapterclient.IsSlotBindRefusal(err) {
+					t.Fatalf("Prepare error = %v, want the typed slot-bind refusal", err)
+				}
+				if n := deletes.count(); n != 0 {
+					t.Errorf("SandboxClaim deletes = %d, want 0 (a refusal must not drain the pod)", n)
+				}
+				if !claimPresent(t, c) {
+					t.Error("per-pod claim deleted after a slot-bind refusal, want it present")
+				}
+				if len(assigner.released) != 0 {
+					t.Errorf("ReleaseSession calls = %v, want none on a refusal", assigner.released)
+				}
+			})
+		}
+		t.Run(stage+"/ordinary_failure", func(t *testing.T) {
+			var deletes claimDeleteCounter
+			c := claimedPodFakeClient(t, &deletes)
+			a := &stageAdapter{errs: map[string]error{stage: status.Error(codes.Internal, "stage broke")}}
+			b := newBinder(c, stageAdapterDialer(t, a))
+			b.Credentials = &fakeAssigner{}
+
+			err := prepareOnClaimedPod(b)
+			if err == nil || adapterclient.IsSlotBindRefusal(err) {
+				t.Fatalf("Prepare error = %v, want an ordinary failure", err)
+			}
+			if n := deletes.count(); n != 1 {
+				t.Errorf("SandboxClaim deletes = %d, want 1 (an ordinary failure drains the pod)", n)
+			}
+			if claimPresent(t, c) {
+				t.Error("per-pod claim present after an ordinary failure, want it deleted")
+			}
+		})
+	}
+}
+
+// Binder.Launch meeting a StartSession refused with the already-started code,
+// the only refusal reachable there because StartSession carries no bind
+// attempt token, returns the refusal without draining the pod and without the
+// session-keyed lease release, so the live session's §4.9 leases survive. An
+// ordinary StartSession failure keeps the drain and the release.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1(t *testing.T) {
+	cases := []struct {
+		name        string
+		err         func(t *testing.T) error
+		wantRefusal bool
+	}{
+		{"already_started", func(t *testing.T) error {
+			return slotBindRefusal(t, codes.FailedPrecondition, adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED)
+		}, true},
+		{"ordinary_failure", func(*testing.T) error { return status.Error(codes.Internal, "runtime start failed") }, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes claimDeleteCounter
+			c := claimedPodFakeClient(t, &deletes)
+			a := &stageAdapter{errs: map[string]error{"StartSession": tc.err(t)}}
+			assigner := &fakeAssigner{}
+			b := newBinder(c, stageAdapterDialer(t, a))
+			b.Credentials = assigner
+
+			_, err := b.Launch(context.Background(), podsession.BindRequest{
+				Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1",
+			})
+			if err == nil {
+				t.Fatal("Launch succeeded, want the StartSession failure")
+			}
+			if got := adapterclient.IsSlotBindRefusal(err); got != tc.wantRefusal {
+				t.Fatalf("IsSlotBindRefusal(%v) = %v, want %v", err, got, tc.wantRefusal)
+			}
+			wantDeletes, wantReleased := 1, []string{"sess-1"}
+			if tc.wantRefusal {
+				wantDeletes, wantReleased = 0, nil
+			}
+			if n := deletes.count(); n != wantDeletes {
+				t.Errorf("SandboxClaim deletes = %d, want %d", n, wantDeletes)
+			}
+			if claimPresent(t, c) != tc.wantRefusal {
+				t.Errorf("per-pod claim present = %v, want %v", !tc.wantRefusal, tc.wantRefusal)
+			}
+			if len(assigner.released) != len(wantReleased) {
+				t.Errorf("ReleaseSession calls = %v, want %v", assigner.released, wantReleased)
+			}
+		})
+	}
+}
+
+// Two concurrent Binder.Prepare attempts for one session on one pod, the
+// adapter refusing the later one as superseded, leave the winner's pod
+// undrained: the loser returns the refusal and the winner's Prepare succeeds
+// with its per-pod claim intact.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1(t *testing.T) {
+	var deletes claimDeleteCounter
+	c := claimedPodFakeClient(t, &deletes)
+	refusal := slotBindRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED)
+	a := &stageAdapter{finalizeHook: func(n int) error {
+		if n > 1 {
+			return refusal
+		}
+		return nil
+	}}
+	b := newBinder(c, stageAdapterDialer(t, a))
+
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = b.Prepare(context.Background(), podsession.BindRequest{
+				Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1",
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	var won, refused int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			won++
+		case adapterclient.IsSlotBindRefusal(err):
+			refused++
+		default:
+			t.Fatalf("Prepare error = %v, want success or the superseded refusal", err)
+		}
+	}
+	if won != 1 || refused != 1 {
+		t.Fatalf("won=%d refused=%d, want exactly one of each", won, refused)
+	}
+	if n := deletes.count(); n != 0 {
+		t.Errorf("SandboxClaim deletes = %d, want 0 (the loser's refusal must not drain the winner's pod)", n)
+	}
+	if !claimPresent(t, c) {
+		t.Error("winner's per-pod claim deleted by the loser's refusal")
 	}
 }

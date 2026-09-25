@@ -877,9 +877,11 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	// pod (Gap 2): a finalize-block credential assignment must not leak the
 	// lease back to the §4.9 pool when a subsequent step aborts.
 	leaseAssigned := false
-	reclaim := func() {
-		b.failPhase(ctx, sb, leaseAssigned, req.SessionID)
-		cl.Close()
+	// Each call site passes the error it is about to return as cause, before
+	// any wrap into *SetupCommandFailure or *SDKDemotionNotSupported, so the
+	// refusal check reads the raw adapter error.
+	reclaim := func(cause error) {
+		b.reclaimOnFailure(ctx, sb, cl, leaseAssigned, req.SessionID, cause)
 	}
 
 	// spec: §6.1 — on an SDK-warm (preConnect) pod, decide
@@ -894,7 +896,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		if mp, pat, requires := sdkwarm.RequiresDemotion(workspacePlanPaths(req.Plan), req.SDKWarmBlockingPaths); requires {
 			demoteStart := time.Now()
 			if err := cl.DemoteSDK(ctx, fmt.Sprintf("workspace path %q matches sdkWarmBlockingPaths %q", mp, pat)); err != nil {
-				reclaim()
+				reclaim(err)
 				if isUnimplemented(err) {
 					// spec: §6.1 — the runtime declared preConnect
 					// but its adapter cannot tear down the SDK; fail the
@@ -929,12 +931,12 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	}
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow)
 	if err != nil {
-		reclaim()
+		reclaim(err)
 		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
 	}
 	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 	if err != nil {
-		reclaim()
+		reclaim(err)
 		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
 	}
 	// §7.4 strip-skip warnings now originate gateway-side (the
@@ -946,7 +948,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	phaseStart = time.Now()
 	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy)
 	if err != nil {
-		reclaim()
+		reclaim(err)
 		// spec: §7.5 — partial outputs ride alongside the failure
 		// so the gateway can persist what was captured before the abort.
 		return nil, &SetupCommandFailure{
@@ -961,7 +963,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
 	// projects the coarse `claimed` phase, before the runtime starts at Launch.
 	if err := b.assignCredentials(ctx, cl, req); err != nil {
-		reclaim()
+		reclaim(err)
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
 	// The lease is now held; a failure after this point must also revoke it.
@@ -1008,9 +1010,11 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	// A launch failure reclaims the pod and the lease assigned at Prepare:
 	// by Launch the finalize block has always assigned the lease, so the
 	// reclaim revokes it (Gap 2). spec: §7.1 step 23 (lease release).
-	reclaim := func() {
-		b.failPhase(ctx, sb, true, req.SessionID)
-		cl.Close()
+	// Launch issues ConfigureWorkspace or StartSession, neither of which
+	// carries a bind attempt token, so the only refusal it can meet is the
+	// already-started one. spec: §4.7.1 (role and gateway RPC contract).
+	reclaim := func(cause error) {
+		b.reclaimOnFailure(ctx, sb, cl, true, req.SessionID, cause)
 	}
 
 	phaseStart := time.Now()
@@ -1021,7 +1025,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	// StartSession.
 	if req.PreConnect && !req.Demoted {
 		if err := cl.ConfigureWorkspace(ctx, req.SessionID, slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID), req.ExperimentContext, req.TracingContext); err != nil {
-			reclaim()
+			reclaim(err)
 			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", sandboxName, err)
 		}
 	} else if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
@@ -1032,7 +1036,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
-		reclaim()
+		reclaim(err)
 		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
 	}
 	// spec: §5.1 — the runtime has now booted, so the adapter
@@ -1043,7 +1047,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	// declares. An underperforming runtime fails before the session is
 	// reported running, and the pod is reclaimed by draining it.
 	if err := b.verifyIntegrationLevel(ctx, cl, req.Runtime, req.DeclaredIntegrationLevel); err != nil {
-		reclaim()
+		reclaim(err)
 		return nil, err
 	}
 	// spec: §6.2 — the session reaching `running` is a session-model state
@@ -1067,6 +1071,28 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		Timings:               t,
 		WorkspaceBase:         neg.WorkspaceBase,
 	}, nil
+}
+
+// reclaimOnFailure is the body of Prepare's and Launch's reclaim closures.
+// A typed §4.7.1 slot-bind refusal (IsSlotBindRefusal) means the pod is
+// serving the session correctly, under another bind attempt's identity or
+// with the session already started, so it is not a pod failure: the closure
+// closes the connection and calls neither failPhase nor drain, and the call
+// site returns the refusal. Draining there would retire a healthy pod, on
+// the Prepare path the winner's pod on behalf of the loser of two concurrent
+// attempts, and failPhase's session-keyed lease release would strip the
+// §4.9 leases a started session authenticates with. Any other cause keeps
+// the failPhase reclaim.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §6.2 (pod state machine);
+// §7.1 (normal flow).
+func (b *Binder) reclaimOnFailure(ctx context.Context, sb *lennyv1.Sandbox, cl *adapterclient.Client, leaseAssigned bool, sessionID string, cause error) {
+	defer cl.Close()
+	if adapterclient.IsSlotBindRefusal(cause) {
+		log.Printf("podsession: slot bind refused on sandbox %s for session %s; pod left undrained: %v", sb.Name, sessionID, cause)
+		return
+	}
+	b.failPhase(ctx, sb, leaseAssigned, sessionID)
 }
 
 // failPhase reclaims a claimed pod whose setup chain aborted before the

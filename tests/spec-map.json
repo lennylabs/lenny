@@ -690,7 +690,8 @@
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
         "tests/tier3_contract/adapter_bind_attempt/...",
-        "pkg/gateway/runtime/adapterclient/client_test.go"
+        "pkg/gateway/runtime/adapterclient/client_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_envtest_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -1207,7 +1208,10 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindErrorReason_spec_5_2",
         "pkg/adapter/slotsession_test.go",
         "tests/tier11_docs/slot_placeholder_literal_sweep_test.go",
-        "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3"
+        "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1359,7 +1363,11 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryDrainsUnhealthyPod_spec_5_2",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingPatchesClaimToRecycling_spec_6_2",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDoesNotArmTimeout_spec_5_2",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDrainsNotRecycle_spec_5_2"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingFailedDrainsNotRecycle_spec_5_2",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_envtest_test.go"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1506,7 +1514,11 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseReturnsCredentialLeasesToPool_spec_7_1",
-        "tests/tier3_contract/adapter_bind_attempt/..."
+        "tests/tier3_contract/adapter_bind_attempt/...",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareReclaimReturnsSlotBindRefusalWithoutDrain_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchReclaimReturnsAlreadyStartedWithoutDrain_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestConcurrentPrepareLoserRefusalLeavesWinnerPodUndrained_spec_7_1",
+        "pkg/gateway/runtime/adapterclient/client_test.go"
       ],
       "packages": [
         "pkg/session"
