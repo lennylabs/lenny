@@ -708,7 +708,9 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     `deadlineMs`, and the adapter sends SIGTERM on timeout (§28.5.3 `CH-RUNTIMEOPS`,
     [§4.7](04_system-components.md#47-runtime-adapter)). A Basic-level or Standard-level runtime opens no
     `CH-RUNTIMEOPS` channel, so this step does not occur and shutdown is SIGTERM-based
-    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3).
+    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3). On a pod serving
+    concurrent sessions this step occurs only under the condition the
+    [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states for the graceful-shutdown signal.
 
 14. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
     `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
