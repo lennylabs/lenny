@@ -1395,12 +1395,10 @@ type GatewayControlClient interface {
 	// tool-level failure is an is_error result rather than a gRPC error.
 	// spec: §9.3.
 	CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error)
-	// ReportSessionScrub reports the outcome of the per-slot cleanup the
-	// adapter runs on every session release (§5.2), across the
-	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
-	// RELEASED when the slot's runtime, credential timers, and per-slot
-	// directory tree were torn down cleanly, or LEAKED when a resource could
-	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// ReportSessionScrub reports a per-slot cleanup's outcome for the
+	// cleanups §5.2 states the adapter reports, and for no other release.
+	// RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+	// The gateway resolves the pod from pod_id, increments
 	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
 	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
 	// annotation (§4.6.3). The adapter initiates this RPC; a transport
@@ -1564,12 +1562,10 @@ type GatewayControlServer interface {
 	// tool-level failure is an is_error result rather than a gRPC error.
 	// spec: §9.3.
 	CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error)
-	// ReportSessionScrub reports the outcome of the per-slot cleanup the
-	// adapter runs on every session release (§5.2), across the
-	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
-	// RELEASED when the slot's runtime, credential timers, and per-slot
-	// directory tree were torn down cleanly, or LEAKED when a resource could
-	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// ReportSessionScrub reports a per-slot cleanup's outcome for the
+	// cleanups §5.2 states the adapter reports, and for no other release.
+	// RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+	// The gateway resolves the pod from pod_id, increments
 	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
 	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
 	// annotation (§4.6.3). The adapter initiates this RPC; a transport

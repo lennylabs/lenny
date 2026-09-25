@@ -305,12 +305,10 @@ service GatewayControl {
   // spec: §9.3.
   rpc CallConnectorTool(CallConnectorToolRequest) returns (CallConnectorToolResponse) {}
 
-  // ReportSessionScrub reports the outcome of the per-slot cleanup the
-  // adapter runs on every session release (§5.2), across the
-  // `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
-  // RELEASED when the slot's runtime, credential timers, and per-slot
-  // directory tree were torn down cleanly, or LEAKED when a resource could
-  // not be reclaimed. The gateway resolves the pod from pod_id, increments
+  // ReportSessionScrub reports a per-slot cleanup's outcome for the
+  // cleanups §5.2 states the adapter reports, and for no other release.
+  // RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+  // The gateway resolves the pod from pod_id, increments
   // sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
   // into the unhealthy-threshold ledger behind the lenny.dev/drain-request
   // annotation (§4.6.3). The adapter initiates this RPC; a transport
@@ -437,21 +435,21 @@ message CallConnectorToolResponse {
 // adapter runs on every session release.
 enum SessionScrubOutcome {
   SESSION_SCRUB_OUTCOME_UNSPECIFIED = 0;
-  // SESSION_SCRUB_OUTCOME_RELEASED — the slot's runtime, credential
-  // timers, and per-slot directory tree were torn down cleanly and the
-  // slot was released. spec: §5.2 (slot_cleanup → released).
+  // SESSION_SCRUB_OUTCOME_RELEASED — the cleanup reported released, on the
+  // terms §5.2 states. spec: §5.2 (slot_cleanup → released).
   SESSION_SCRUB_OUTCOME_RELEASED = 1;
-  // SESSION_SCRUB_OUTCOME_LEAKED — a resource could not be reclaimed at
-  // the session release. The gateway feeds the outcome into the
+  // SESSION_SCRUB_OUTCOME_LEAKED — the cleanup reported leaked, on the
+  // terms §5.2 states. The gateway feeds the outcome into the
   // unhealthy-threshold ledger behind the lenny.dev/drain-request
   // annotation. spec: §5.2 (leaked slot semantics); §4.6.3.
   SESSION_SCRUB_OUTCOME_LEAKED = 2;
 }
 
-// ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
-// adapter reports on every session release. pod_id is the agent_pod_state
-// row key the gateway increments sessionsServed on; session_id names the
-// released session, which is also the identifier of the slot it held.
+// ReportSessionScrubRequest carries a per-slot cleanup's outcome, for the
+// cleanups §5.2 states the adapter reports and for no other release.
+// pod_id is the agent_pod_state row key the gateway increments
+// sessionsServed on; session_id names the released session, which is also
+// the identifier of the slot it held.
 // spec: §4.7; §5.2.
 message ReportSessionScrubRequest {
   string pod_id = 1;
@@ -472,6 +470,18 @@ message ReportSessionScrubRequest {
 // gateway-side failure is a gRPC status error rather than a populated
 // response.
 message ReportSessionScrubResponse {}
+
+// SlotReclaimOutcome is the outcome a Shutdown reports under spec §4.7.1
+// rule 15.
+enum SlotReclaimOutcome {
+  SLOT_RECLAIM_OUTCOME_UNSPECIFIED = 0;
+  // SLOT_RECLAIM_OUTCOME_RECLAIMED: spec: §4.7.1 rules 12 and 14; §7.1.
+  SLOT_RECLAIM_OUTCOME_RECLAIMED = 1;
+  // SLOT_RECLAIM_OUTCOME_ABSENT: spec: §4.7.1 rule 11; §7.1.
+  SLOT_RECLAIM_OUTCOME_ABSENT = 2;
+  // SLOT_RECLAIM_OUTCOME_SUPERSEDED: spec: §4.7.1 rule 13; §7.1.
+  SLOT_RECLAIM_OUTCOME_SUPERSEDED = 3;
+}
 
 // PodScrubOutcome is the binary result of the §5.2 whole-pod scrub the
 // adapter runs at the occupancy-zero recycle boundary.
@@ -583,6 +593,12 @@ message Error {
     ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE = 25;
     ERROR_CODE_PLATFORM_DEGRADED = 26;
     ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27;
+    // ERROR_CODE_SLOT_BIND_ALREADY_STARTED: spec §4.7.1 rule 6, the
+    // started-session rule. PERMANENT; FailedPrecondition.
+    ERROR_CODE_SLOT_BIND_ALREADY_STARTED = 28;
+    // ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED: spec §4.7.1 rule 5, the attempt
+    // identity rule. TRANSIENT; Aborted.
+    ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED = 29;
     // Reserved range for Phase 2+ additions. Do not assign 1000–1999 to
     // anything that does not survive a wire-compat audit.
   }
@@ -693,6 +709,12 @@ message PrepareWorkspaceRequest {
   // own. spec: §5.2; §6.4.
   reserved 4;
   reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4, 5 and 9.
+  string bind_attempt = 5;
+  // mid_session marks a §7.4 mid-session upload; spec: §4.7.1 carriage
+  // table and rules 1, 3, 6 and 9.
+  bool mid_session = 6;
 }
 
 // PrepareWorkspaceResponse reports the total staged upload set.
@@ -729,6 +751,9 @@ message FinalizeWorkspaceRequest {
   // own. spec: §5.2; §6.4.
   reserved 5;
   reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 6;
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
@@ -854,6 +879,9 @@ message RunSetupRequest {
   // own. spec: §5.2; §6.4.
   reserved 4;
   reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 5;
 }
 
 // RunSetupResponse reports the per-command setup output the adapter
@@ -1028,6 +1056,9 @@ message AssignCredentialsRequest {
   // own. spec: §5.2; §6.4.
   reserved 3;
   reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 4;
 }
 
 message AssignCredentialsResponse {}
@@ -1410,6 +1441,9 @@ message ResumeRequest {
   // own. spec: §5.2; §6.4.
   reserved 15;
   reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 16;
 }
 
 // ChunkGrant is a single presigned GET capability for one checkpoint
@@ -1633,6 +1667,14 @@ message ShutdownRequest {
   // for the session the RPC names, and rejects a request whose
   // generation does not match it (§10.1).
   int64 coordination_generation = 6;
+
+  // bind_attempt names the bind attempt a compensating reclaim is for;
+  // spec: §4.7.1 rule 10 (teardown pairing) and rules 13 and 14.
+  string bind_attempt = 7;
+
+  // unconditional_teardown asks for the teardown of whatever entry the
+  // adapter holds; spec: §4.7.1 rule 10 (teardown pairing) and rule 12.
+  bool unconditional_teardown = 8;
 }
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
@@ -1665,6 +1707,8 @@ message RecycleScrub {
 message ShutdownResponse {
   bool exited_cleanly = 1;
   int32 exit_code = 2;
+  // slot_reclaim is the reclaim outcome; spec: §4.7.1 rule 15.
+  SlotReclaimOutcome slot_reclaim = 3;
 }
 
 // ConfigureWorkspaceRequest carries the finalized working directory to a

@@ -247,6 +247,32 @@ EXPLICIT = [
                 "RevokeCredentials; the Token Service revocation the gateway does call "
                 "is a separate service and is not part of this claim",
     },
+    # The §4.7.1 bind attempt token and the Shutdown teardown precondition. §28.4
+    # does not oblige these rows, because Shutdown carries no §28 statement; they
+    # are carried under the same seeding convention as the rows above because a
+    # production reader ships with the wire contract. Each anchors to the
+    # gateway-to-pod heading the sibling generation-fence rows use.
+    {
+        "claim": "ShutdownRequest bind_attempt and unconditional_teardown teardown precondition",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/session.go` `Server.Shutdown` two-field precondition and "
+                   "bind-attempt comparison, `pkg/gateway/podlifecycle/podsession/slotbinder.go` "
+                   "`Binder.compensateFailedSlotBind`",
+        "note": "the adapter requires exactly one of the two fields, compares the carried "
+                "token against the entry it holds, and performs neither teardown on a "
+                "mismatch; the gateway's compensation names the token its own attempt "
+                "minted and reads the outcome",
+    },
+    {
+        "claim": "bind_attempt carried on the six slot-entry requests and stamped once on create",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/slot.go` `Server.ensureSlotStateLocked`, "
+                   "`pkg/gateway/podlifecycle/podsession/bindattempt.go` `newBindAttempt`",
+        "note": "the adapter writes the token on the create branch alone and compares it "
+                "on every resolve",
+    },
 ]
 
 # One row per request-message field the specification adds, each naming the step

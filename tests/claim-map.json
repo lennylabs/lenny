@@ -391,6 +391,13 @@
       "deferral_id": "R20"
     },
     {
+      "claim": "ShutdownRequest bind_attempt and unconditional_teardown teardown precondition",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/session.go` `Server.Shutdown` two-field precondition and bind-attempt comparison, `pkg/gateway/podlifecycle/podsession/slotbinder.go` `Binder.compensateFailedSlotBind`",
+      "note": "the adapter requires exactly one of the two fields, compares the carried token against the entry it holds, and performs neither teardown on a mismatch; the gateway's compensation names the token its own attempt minted and reads the outcome"
+    },
+    {
       "claim": "ShutdownRequest.coordination_generation generation fence field",
       "status": "UNWIRED",
       "spec_anchor": "#2851-gateway-to-pod",
@@ -508,6 +515,13 @@
       "spec_anchor": "#2853-intra-pod",
       "surface": "comments only",
       "deferral_id": "R20"
+    },
+    {
+      "claim": "bind_attempt carried on the six slot-entry requests and stamped once on create",
+      "status": "WIRED",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "surface": "`pkg/adapter/slot.go` `Server.ensureSlotStateLocked`, `pkg/gateway/podlifecycle/podsession/bindattempt.go` `newBindAttempt`",
+      "note": "the adapter writes the token on the create branch alone and compares it on every resolve"
     },
     {
       "claim": "gRPC control stream `Adapter/AdapterEvents` (client)",

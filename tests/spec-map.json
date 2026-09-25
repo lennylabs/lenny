@@ -663,7 +663,8 @@
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathFailedDispositionRetires_spec_6_2",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
-        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"
+        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
+        "tests/tier3_contract/adapter_bind_attempt/..."
       ],
       "packages": [
         "pkg/adapter",
@@ -687,7 +688,8 @@
         "tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go",
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
-        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go"
+        "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
+        "tests/tier3_contract/adapter_bind_attempt/..."
       ],
       "packages": [
         "pkg/adapter"
@@ -1502,7 +1504,8 @@
         "pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseReturnsCredentialLeasesToPool_spec_7_1"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseReturnsCredentialLeasesToPool_spec_7_1",
+        "tests/tier3_contract/adapter_bind_attempt/..."
       ],
       "packages": [
         "pkg/session"
@@ -3678,7 +3681,8 @@
         "pkg/adapter/holdstate_test.go",
         "pkg/adapter/drain_test.go",
         "tests/tier4_integration/mcp_runtime_lifecycle_test.go",
-        "pkg/adapter/slotsession_test.go"
+        "pkg/adapter/slotsession_test.go",
+        "tests/tier3_contract/adapter_bind_attempt/..."
       ],
       "packages": [
         "cmd/runtimes/echo",

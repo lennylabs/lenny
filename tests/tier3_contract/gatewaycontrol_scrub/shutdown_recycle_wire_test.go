@@ -190,21 +190,24 @@ func TestRecycleScrubHasNoScrubProfileField_spec_5_2(t *testing.T) {
 
 // TestShutdownMessagePostRemovalDescriptor pins the whole of the shutdown
 // message after the duplicate address came off it: ShutdownRequest declares
-// exactly session_id, reason, deadline_ms, recycle, and
-// coordination_generation, reserves the number and the name the duplicate
-// held, and carries no field of the retired wrapper type; ShutdownResponse
-// declares exactly exited_cleanly and exit_code; and the Shutdown RPC is
-// declared on service Adapter, which is the single end-of-session teardown
-// the gateway calls on every release.
+// exactly session_id, reason, deadline_ms, recycle, coordination_generation,
+// and the two teardown preconditions bind_attempt and unconditional_teardown,
+// reserves the number and the name the duplicate held, and carries no field
+// of the retired wrapper type; ShutdownResponse declares exactly
+// exited_cleanly, exit_code, and the slot_reclaim outcome; and the Shutdown
+// RPC is declared on service Adapter, which is the single end-of-session
+// teardown the gateway calls on every release.
 // spec: 4.1 (one address per request), 4.7 (Shutdown), 5.2 (a session-mode
 // slot's identifier is its session's identifier)
 //
 // diagnosis: a failure means the shutdown message drifted from the
 // post-removal contract — the duplicate address came back, a removed number
-// was recycled, a field was added or dropped, or the RPC moved off service
-// Adapter. Every one of those changes the bytes on the teardown path, which
-// no round-trip case above would catch because both of its ends regenerate
-// from the same proto.
+// was recycled, a field was added or dropped, one of the two teardown
+// preconditions or the reclaim outcome the post-removal contract now also
+// declares moved or disappeared, or the RPC moved off service Adapter.
+// Every one of those changes the bytes on the teardown path, which no
+// round-trip case above would catch because both of its ends regenerate from
+// the same proto.
 func TestShutdownMessagePostRemovalDescriptor_spec_4_1(t *testing.T) {
 	reqDesc := (&adapterv1.ShutdownRequest{}).ProtoReflect().Descriptor()
 
@@ -214,6 +217,8 @@ func TestShutdownMessagePostRemovalDescriptor_spec_4_1(t *testing.T) {
 		3: "deadline_ms",
 		5: "recycle",
 		6: "coordination_generation",
+		7: "bind_attempt",
+		8: "unconditional_teardown",
 	}
 	assertFieldSet(t, reqDesc, wantReq)
 
@@ -234,6 +239,7 @@ func TestShutdownMessagePostRemovalDescriptor_spec_4_1(t *testing.T) {
 		map[protoreflect.FieldNumber]protoreflect.Name{
 			1: "exited_cleanly",
 			2: "exit_code",
+			3: "slot_reclaim",
 		})
 
 	svcs := reqDesc.ParentFile().Services()
