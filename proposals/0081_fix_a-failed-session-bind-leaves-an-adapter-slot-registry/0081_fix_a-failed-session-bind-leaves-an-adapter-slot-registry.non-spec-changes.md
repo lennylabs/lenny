@@ -944,10 +944,7 @@ func (b *Binder) materializeSlot(
 **The lease release is scoped to the attempt.** `credassign.Service.ReleaseSession` walks
 `s.leases.LeasesBySession([]string{sessionID})` and releases every lease it finds
 (`credassign.go:400-409`), and the slot identifier is the session identifier, so a release after
-a successor has assigned strips the successor's leases. Moving the call inside the `errors.As`
-guard is the wrong fix: it trades lease-stripping for lease-leaking, because an attempt that
-minted leases, owns the entry, and failed with an error that is not a `*SlotBindError` would
-never return them. The fix is to narrow what the call releases.
+a successor has assigned strips the successor's leases. The fix is to narrow what the call releases.
 `materializeSlotStages` therefore returns the lease identifiers `assignSlotCredentials` minted
 for this attempt, and `releaseAttemptCredentials` releases those by identifier.
 The release calls `CredentialAssigner.Release(leaseID string)`, a member the interface
@@ -2855,7 +2852,7 @@ every step that edits a page under `docs/`. A comment-only edit changes no Go co
 | `pkg/adapter/export_test.go`, `adapterevents_test.go`, `podmcp_arming_internal_test.go` and `usage_test.go`, and the S16 rows of `slotsession_test.go` that call `noteRuntimeStarted` | the `noteRuntimeStarted` re-fixturing CODE-2's call-site scope states; only `TestAdapterEventsEmitsControlEvents_spec_4_7` goes red without it | CODE-2 | S18 | 1 |
 | `tests/tier7a_load_local/slot_bind_attempt_race_test.go` | new, whole: the start-versus-reclaim race, the reverse ordering and `TestConcurrentBindAttemptsResolveExactlyOneOwner_spec_4_7_1`, with the file's `tests/spec-map.json` entry under 4.7.1 and 7.1 and its `slotAddressCaseFiles` row | CODE-2, CODE-6 | S18 | 7a |
 | regression, no edit | existing tier-2, tier-3, tier-4, tier-9 and tier-10 tests that drive `StartSession`, `Resume` or `ConfigureWorkspace` on a real `adapter.Server`, whose start confirmation S18 changes, such as `tests/tier2_component/warmlayout/warm_layout_test.go`, `tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go` `tests/tier4_integration/mcp_runtime_lifecycle_test.go`, `tests/tier9_security/adapter_mcp_nonce_test.go` and `tests/tier10_conformance/recycle_scrub_conformance_test.go` | CODE-2 | S18 | 2, 3, 4, 9, 10 |
-| `pkg/gateway/podlifecycle/podsession/slotbinder_test.go` | the compensation row of **The compensation names the attempt's own token**; **The leaked disposition, two arms.**; **A typed refusal is compensated.**; the `materializeSlot` arms of **The credential release is scoped to the attempt** and of **The cancelled-context case.**; the `BindReservedSlot` row of **The cancelled-context case.**; **The release still runs for a non-`SlotBindError` failure**; **Per-stage compensation table.**; **The pre-`PrepareWorkspace` workspace failure, separately.**; the hook half of **The counters.** | CODE-13 | S19 | 1 |
+| `pkg/gateway/podlifecycle/podsession/slotbinder_test.go` | the compensation row of **The compensation names the attempt's own token**; **The leaked disposition, two arms.**; **A typed refusal is compensated.**; the `materializeSlot` arms of **The credential release is scoped to the attempt** and of **The cancelled-context case.**; the `BindReservedSlot` row of **The cancelled-context case.**; **Per-stage compensation table.**; **The pre-`PrepareWorkspace` workspace failure, separately.**; the hook half of **The counters.** | CODE-13 | S19 | 1 |
 | `pkg/gateway/podlifecycle/podsession/binder_test.go` | the `Binder.Prepare` arm of **The credential release is scoped to the attempt**, the `Binder.Resume` rows of **The cancelled-context case.** and **The counters.**, and the compensation and lease-release arms of **The resume path.**, each with its per-case `tests/spec-map.json` entry | CODE-13 | S19 | 1 |
 | `pkg/gateway/sessionserver/slotretry_test.go` and `slotretry_load_test.go` | the `ReleaseSlotReservation` signature on `fakeSlotBinder` and `concurrentSlotBinder`, and `fakeSlotBinder.released` widened to carry the disposition | CODE-13 | S19 | 1 |
 | the test types the `Release(leaseID string)` rule under `## Files touched on application (non-spec)` requires | the `Release(leaseID string)` method, which `binder_test.go`'s `fakeAssigner` records | CODE-13 | S19 | 1, 4, 9 |
@@ -3341,8 +3338,6 @@ execution modes); §6.2 (pod state machine)`:
   identifier per call. The `fakeAssigner` records its `Release(leaseID)` calls in their own
   field, because `released` records `ReleaseSession` alone (`binder_test.go:301` and `:322-324`)
   and an assertion on it discriminates nothing.
-- **The release still runs for a non-`SlotBindError` failure**, which is the property the staged
-  comment claims and the reason the call sits outside the `errors.As` guard.
 - **Per-stage compensation table.** For the finalize, setup, credential-assignment and
   session-start stages: exactly one `Shutdown` naming the session, carrying a positive
   `deadlineMs` equal to half the budget the case's pool configuration produces and strictly less
