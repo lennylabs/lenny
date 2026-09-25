@@ -3899,7 +3899,9 @@
         "pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
         "tests/tier11_docs/adapter_metric_catalog_test.go",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestCredentialLeaseSweepCounterInCatalog",
-        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2"
+        "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
+        "tests/tier11_docs/slot_compensation_metric_reference_test.go",
+        "pkg/gateway/podlifecycle/podsession/slotbinder_test.go"
       ],
       "packages": [
         "pkg/observability/metrics",

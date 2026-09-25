@@ -530,9 +530,9 @@ func TestCredentialPreclaimMismatchNilSafe(t *testing.T) {
 	m.IncCredentialPreclaimMismatch("p", "anthropic_direct") // must not panic
 }
 
-// spec: §16.1 and §5.2 — the
-// credential, LLM-proxy, and slot-failure metrics register and emit
-// through the gateway registry.
+// spec: §16.1, §5.2, and §4.7.1 — the
+// credential, LLM-proxy, slot-failure, and slot-compensation metrics
+// register and emit through the gateway registry.
 func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
@@ -548,6 +548,7 @@ func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
 	m.ObserveLLMTranslation("claude-prod", "anthropic_direct", "anthropic", "response", 0.02)
 	m.IncLLMTranslationError("claude-prod", "anthropic_direct", "upstream_5xx")
 	m.IncSlotFailure("session_start", "pool-a", "sbx-1")
+	m.IncSlotCompensationSuperseded("superseded", "failure", "pool-a", "sbx-1")
 
 	rr := httptest.NewRecorder()
 	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -565,6 +566,7 @@ func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
 		`lenny_gateway_llm_translation_duration_seconds_count{direction="request",pool="claude-prod",provider="anthropic_direct",proxy_dialect="anthropic"} 1`,
 		`lenny_gateway_llm_translation_errors_total{error_type="upstream_5xx",pool="claude-prod",provider="anthropic_direct"} 1`,
 		`lenny_slot_failure_total{error_type="session_start",k8s_pod_name="sbx-1",pool="pool-a"} 1`,
+		`lenny_slot_compensation_superseded_total{error_type="failure",k8s_pod_name="sbx-1",pool="pool-a"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/metrics output missing %q", want)
@@ -583,6 +585,7 @@ func TestNewMetricsEmittersNilSafe(t *testing.T) {
 	m.ObserveLLMTranslation("p", "anthropic_direct", "anthropic", "request", 0.01)
 	m.IncLLMTranslationError("p", "anthropic_direct", "upstream_5xx")
 	m.IncSlotFailure("session_start", "p", "sbx-1")
+	m.IncSlotCompensationSuperseded("superseded", "failure", "p", "sbx-1")
 	m.ObserveSessionStartupDuration("p", "runc", "standard", 1.0)
 	m.ObserveSessionStartupPhase("pod_claim", "runc", 0.05)
 }

@@ -147,6 +147,10 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 		// §5.2: record concurrent-workspace slot bind failures on
 		// lenny_slot_failure_total (error_type, pool, k8s_pod_name).
 		w.podBinder.SlotFailure = gwMetrics.IncSlotFailure
+		// §16.1: record compensating Shutdowns answered superseded on
+		// lenny_slot_compensation_superseded_total (error_type, pool,
+		// k8s_pod_name).
+		w.podBinder.SlotReclaim = gwMetrics.IncSlotCompensationSuperseded
 		// §5.2: record post-recovery slot-counter rehydration
 		// events on lenny_slot_rehydration_total (pod, pool).
 		w.podBinder.Rehydration = gwMetrics.IncSlotRehydration

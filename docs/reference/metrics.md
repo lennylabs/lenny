@@ -164,6 +164,8 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_controller_pod_retirement_total` | Counter | `reason`, `pool`, `runtime_class` | Controller-initiated pod retirements from the WarmPoolController's level-triggered `maxPodUptimeSeconds` drain. Reason: `uptime_limit`. Sum with the gateway counter for total retirements: `lenny:pod_retirement:total = sum(lenny_gateway_pod_retirement_total) + sum(lenny_controller_pod_retirement_total)`. |
 | `lenny_pod_session_reuse_count` | Histogram | `pool`, `k8s_pod_name` | Sessions served per pod under `recycle.enabled`. |
 | `lenny_slot_failure_total` | Counter | `error_type`, `pool`, `k8s_pod_name` | Per-slot failures on session-mode pods with `maxConcurrentSessions > 1`. |
+| `lenny_slot_compensation_superseded_total` | Counter | `pool`, `k8s_pod_name`, `error_type` | Compensating `Shutdown` requests that the adapter answered `superseded` after a failed bind. The adapter holds an entry for the session that the compensation is not addressed to, so the reclaim released nothing and the slot is not leaked. `error_type` is `refusal` when the compensated attempt failed on a `SLOT_BIND_ATTEMPT_SUPERSEDED` or `SLOT_BIND_ALREADY_STARTED` refusal, which such a compensation answers routinely, and `failure` for any other failure, where the answer marks a race between bind attempts. |
+| `lenny_adapter_leaked_slots` | Gauge | `pod_id`, `pool` | Per-pod count of slots in the `leaked` sub-state. A leaked slot stays counted until the pod terminates. `pod_id` carries the pod name. The gateway emits this gauge. |
 | `lenny_slot_pod_replacement_total` | Counter | `pool`, `k8s_pod_name` | Pod replacements triggered by slot failures. |
 
 ---

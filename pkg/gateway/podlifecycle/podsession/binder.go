@@ -135,6 +135,14 @@ type Binder struct {
 	// k8s_pod_name). errorType names the bind stage that failed. Nil is a
 	// no-op.
 	SlotFailure func(errorType, pool, podName string)
+	// SlotReclaim records the outcome of a compensating Shutdown that
+	// reclaims a slot after a failed bind, backing the §16.1
+	// lenny_slot_compensation_superseded_total counter (labeled by
+	// error_type, pool, and k8s_pod_name). outcome is the adapter's reclaim
+	// outcome and cause is the error_type value (`refusal` or `failure`).
+	// Nil is the no-op default; the field is never cleared once set.
+	// spec: §16.1, §4.7.1.
+	SlotReclaim func(outcome, cause, pool, podName string)
 	// Rehydration records a §5.2 post-recovery slot-counter
 	// rehydration event, backing the lenny_slot_rehydration_total counter
 	// (labeled by pod and pool). It is threaded into the per-BindSlot
@@ -287,7 +295,13 @@ func RequiresDemotion(req BindRequest) bool {
 // concurrent-mode slot bind stages whose failure terminates a reserved
 // slot. The set is finite so the metric stays low-cardinality.
 const (
-	slotFailureWorkspacePrep        = "workspace_prep"
+	slotFailureWorkspacePrep = "workspace_prep"
+	// slotFailureWorkspaceFinalize labels a FinalizeWorkspace failure so the
+	// metric separates it from a staging failure. It is a metric label only:
+	// the SlotBindError at the finalize site keeps slotFailureWorkspacePrep,
+	// because SlotBindError.Reason keys the transient classification of a
+	// workspace-stage FailedPrecondition on that stage.
+	slotFailureWorkspaceFinalize    = "workspace_finalize"
 	slotFailureSetup                = "setup"
 	slotFailureCredentialAssignment = "credential_assignment"
 	slotFailureSessionStart         = "session_start"

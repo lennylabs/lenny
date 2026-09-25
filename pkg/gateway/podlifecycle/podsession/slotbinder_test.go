@@ -78,6 +78,9 @@ type concurrentAdapter struct {
 	// test can assert that a concurrent-session slot finalizes its
 	// per-slot workspace (§5.2).
 	finalized map[string]bool
+	// finalizeErr, when non-nil, makes FinalizeWorkspace fail so a test can
+	// drive the finalize-stage slot failure (§5.2, §16.1).
+	finalizeErr error
 	// startErr, when non-nil, makes StartSession fail so a test can drive
 	// the §5.2 slot-failure path.
 	startErr error
@@ -121,8 +124,14 @@ func (a *concurrentAdapter) NegotiateVersion(_ context.Context, req *adapterv1.N
 
 func (a *concurrentAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
 	a.mu.Lock()
-	a.finalized[req.GetSessionId().GetValue()] = true
+	finalizeErr := a.finalizeErr
+	if finalizeErr == nil {
+		a.finalized[req.GetSessionId().GetValue()] = true
+	}
 	a.mu.Unlock()
+	if finalizeErr != nil {
+		return nil, finalizeErr
+	}
 	return &adapterv1.FinalizeWorkspaceResponse{}, nil
 }
 
@@ -774,6 +783,78 @@ func TestBindSlotEmitsSlotFailureOnStartError_spec_5_2(t *testing.T) {
 	got := failures[0]
 	if got.errorType != "session_start" || got.pool != testPool || got.podName != "sbx-1" {
 		t.Errorf("slot failure = %+v, want session_start/%s/sbx-1", got, testPool)
+	}
+}
+
+// spec: §5.2 (pool configuration and execution modes); §16.1 (metrics)
+// The workspace stages are separated at the metric and nowhere else: a
+// FinalizeWorkspace failure records the workspace_finalize error_type and a
+// staging failure records workspace_prep, while the SlotBindError at both
+// sites keeps the workspace_prep stage so a finalize-stage FailedPrecondition
+// still classifies as transient.
+func TestBindSlotSeparatesWorkspaceStagesAtTheSlotFailureMetric_spec_16_1(t *testing.T) {
+	cases := []struct {
+		name          string
+		finalizeErr   error
+		plan          *adapterv1.WorkspacePlan
+		wantErrorType string
+	}{
+		{
+			name:          "finalize",
+			finalizeErr:   status.Error(codes.FailedPrecondition, "workspace materialization failed"),
+			plan:          &adapterv1.WorkspacePlan{},
+			wantErrorType: podsession.SlotFailureWorkspaceFinalizeForTest,
+		},
+		{
+			// An uploadFile source with no blob store fails staging before
+			// any pod-side RPC.
+			name: "stage",
+			plan: &adapterv1.WorkspacePlan{Sources: []*adapterv1.WorkspaceSource{
+				{Type: "uploadFile", Path: "a.txt", UploadRef: "s3://uploads/a.txt"},
+			}},
+			wantErrorType: podsession.SlotFailureWorkspacePrepForTest,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newConcurrentAdapter()
+			a.finalizeErr = tc.finalizeErr
+			c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+			binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+			var failures []slotFailureCall
+			binder.SlotFailure = func(errorType, pool, podName string) {
+				failures = append(failures, slotFailureCall{errorType, pool, podName})
+			}
+
+			_, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+				Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+				MaxConcurrentSessions: 8,
+				Plan:                  tc.plan,
+			})
+			if err == nil {
+				t.Fatal("BindSlot succeeded, want a workspace-stage failure")
+			}
+			if len(failures) != 1 {
+				t.Fatalf("slot failures = %+v, want exactly one", failures)
+			}
+			want := slotFailureCall{tc.wantErrorType, testPool, "sbx-1"}
+			if failures[0] != want {
+				t.Errorf("slot failure = %+v, want %+v", failures[0], want)
+			}
+			var sbe *podsession.SlotBindError
+			if !errors.As(err, &sbe) {
+				t.Fatalf("BindSlot error = %v, want *SlotBindError", err)
+			}
+			if sbe.Stage != podsession.SlotFailureWorkspacePrepForTest {
+				t.Errorf("SlotBindError.Stage = %q, want %q", sbe.Stage, podsession.SlotFailureWorkspacePrepForTest)
+			}
+			if tc.finalizeErr != nil && sbe.Reason() != podsession.SlotReasonTransient {
+				t.Errorf("finalize FailedPrecondition Reason = %q, want %q", sbe.Reason(), podsession.SlotReasonTransient)
+			}
+			if len(a.finalizedSet()) != 0 {
+				t.Errorf("finalized = %v, want none", a.finalizedSet())
+			}
+		})
 	}
 }
 

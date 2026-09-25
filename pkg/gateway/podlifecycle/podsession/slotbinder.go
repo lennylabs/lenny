@@ -291,7 +291,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, false)
 	if err != nil {
 		cl.Close()
-		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
+		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
 		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 	}

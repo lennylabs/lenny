@@ -1179,6 +1179,21 @@ func (m *Metrics) IncSlotFailure(errorType, pool, podName string) {
 	m.slotFailure.WithLabelValues(errorType, pool, podName).Inc()
 }
 
+// IncSlotCompensationSuperseded increments the §16.1
+// `lenny_slot_compensation_superseded_total` counter for the (cause, pool,
+// podName) tuple. cause is the `error_type` label value. The signature
+// matches the podsession.Binder SlotReclaim hook so the gateway assigns this
+// method to the hook directly. outcome is the reclaim outcome the hook
+// reports; the binder's forwarder calls the hook only for the superseded
+// outcome, so the series carries no outcome label.
+// spec: §16.1, §4.7.1.
+func (m *Metrics) IncSlotCompensationSuperseded(outcome, cause, pool, podName string) {
+	if m == nil {
+		return
+	}
+	m.slotCompensationSuperseded.WithLabelValues(cause, pool, podName).Inc()
+}
+
 // IncSlotRehydration increments the §5.2
 // `lenny_slot_rehydration_total` counter for the (pod, pool) pair.
 // Called by the concurrent-mode slot claimer when a pod's slot counter

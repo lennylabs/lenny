@@ -59,6 +59,12 @@ type credentialMetrics struct {
 	// stage), `pool` (finite, the warm-pool registry), and `k8s_pod_name`
 	// (the §16.1.1-sanctioned pod label for this metric).
 	slotFailure *prometheus.CounterVec
+	// slotCompensationSuperseded counts the §16.1 compensating Shutdowns the
+	// adapter answered superseded, where the reclaim released nothing because
+	// the entry belonged to another bind attempt. Labels: `error_type`
+	// (`refusal` or `failure`, the class of the compensated attempt's
+	// failure), `pool`, and `k8s_pod_name`.
+	slotCompensationSuperseded *prometheus.CounterVec
 	// slotPodReplacement counts the §5.2 whole-pod replacements the
 	// concurrent-workspace slot retry policy triggers when a pod crosses
 	// the ceil(maxConcurrent/2) fail-or-leak threshold. Labeled by pool.
@@ -192,6 +198,20 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 	if err != nil {
 		return m, err
 	}
+	// §16.1 / §4.7.1 — `lenny_slot_compensation_superseded_total` counts
+	// compensating Shutdowns answered superseded: the adapter holds an entry
+	// for the session that the compensation's bind attempt token does not
+	// own, so the reclaim released nothing and the slot is not leaked.
+	// `error_type` separates a compensation after a bind refusal (`refusal`),
+	// which answers superseded routinely, from one after any other failure
+	// (`failure`), where the answer marks a race between attempts.
+	slotCompensationSuperseded, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_compensation_superseded_total",
+		Help: "Slot compensations answered superseded; the reclaim released nothing (§16.1).",
+	}, []string{"error_type", "pool", "k8s_pod_name"})
+	if err != nil {
+		return m, err
+	}
 	// §5.2 / §12.4 — `lenny_slot_rehydration_total` counts
 	// post-recovery slot-counter rehydration events (seeding a pod's
 	// active_slots from Postgres after a Redis restart). `pod` and `pool`
@@ -232,6 +252,7 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 		llmTranslationDuration,
 		llmTranslationErrors,
 		slotFailure,
+		slotCompensationSuperseded,
 		slotRehydration,
 		slotPodReplacement,
 		adapterLeakedSlots,
@@ -249,6 +270,7 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 	m.llmTranslationDuration = llmTranslationDuration
 	m.llmTranslationErrors = llmTranslationErrors
 	m.slotFailure = slotFailure
+	m.slotCompensationSuperseded = slotCompensationSuperseded
 	m.slotPodReplacement = slotPodReplacement
 	m.slotRehydration = slotRehydration
 	m.adapterLeakedSlots = adapterLeakedSlots

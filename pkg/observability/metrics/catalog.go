@@ -91,6 +91,15 @@ var metricCatalog = []MetricSpec{
 	// §16.1 recording rule. spec: §16.1 — controller-owned uptime_limit drain.
 	{"lenny_controller_pod_retirement_total", TypeCounter, "Controller-initiated session-pool pod retirements (level-triggered maxPodUptimeSeconds drain)"},
 	{"lenny_slot_failure_total", TypeCounter, "Concurrent-workspace slot failure count"},
+	// lenny_slot_compensation_superseded_total counts compensating Shutdowns
+	// the adapter answered superseded: it held an entry for the session that
+	// the compensation's bind attempt token did not own, so the reclaim
+	// released nothing. spec: §16.1, §4.7.1.
+	{"lenny_slot_compensation_superseded_total", TypeCounter, "Slot compensations answered superseded (the reclaim released nothing)"},
+	// lenny_adapter_leaked_slots is the gateway-emitted per-pod count of slots
+	// in the leaked sub-state, counted until the pod terminates.
+	// spec: §16.1, §6.2.
+	{"lenny_adapter_leaked_slots", TypeGauge, "Leaked session slots per pod awaiting pod termination"},
 	{"lenny_slot_pod_replacement_total", TypeCounter, "Concurrent-workspace slot pod replacement count"},
 	{"lenny_session_startup_duration_seconds", TypeHistogram, "End-to-end session startup duration"},
 	{"lenny_session_time_to_first_token_seconds", TypeHistogram, "End-to-end time to first token"},
