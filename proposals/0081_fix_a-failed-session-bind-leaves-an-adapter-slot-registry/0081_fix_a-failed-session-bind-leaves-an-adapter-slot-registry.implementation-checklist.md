@@ -34,7 +34,7 @@ refuses every bind and every teardown in the window between the two steps.
 - [ ] **S10 · code** — CODE-9 in full, except its untokened-entry series, which lands with S16, and its `noteCompensationOutcome` forwarder, which lands with S19, with the tests the landing table assigns to S10.
       Tiers 0, 1, 2, 3, 4, 9, 11. Depends on: S1, S6, S9.
 - [ ] **S11 · code** — CODE-7 in full, with the tests the landing table assigns to S11.
-      Tiers 0, 1, 3. Depends on: S1, S9.
+      Tiers 0, 1, 3. Depends on: S1, S2, S3, S9.
 - [ ] **S12 · code** — CODE-8 in full, with the tests the landing table assigns to S12.
       Tiers 0, 1, 2, 3, 4, 9. Depends on: S1, S11.
 - [ ] **S13 · code** — CODE-4 in full, including the §7.4 mid-session pair in `pkg/gateway/sessionserver/upload_to_session.go`, with the tests the landing table assigns to S13.
