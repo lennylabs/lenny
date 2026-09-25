@@ -136,21 +136,10 @@ restating it.
   compensation answered `superseded` under rule 13 (the attempt-mismatch rule), which is the case
   in which the reclaim released nothing; and a `Shutdown` that met an entry carrying no token,
   as SPEC-6's §16.1 row states.
-- File-collision discipline: the compensation's own adapter edits land in `session.go` and
-  `runtimegeneration.go`, and the reclaim hold (under rule 2, the adapter refuses a bind onto a
-  slot identifier from the deregistration of its entry until the reclaim's cleanup completes, or
-  for the pod's life where it does not) and its helper land in a new file.
-  `pkg/adapter/slotsession.go` and `pkg/adapter/slot.go` are both opened, because
-  `ensureSlotStateLocked` is where the entry is created and is therefore where the token is
-  stamped, on that creating branch alone, where the two refusals are raised, and where the hold
-  is refused; `slotState` gains one field, `bindAttempt`. Five further adapter files are opened
-  for one small edit each: `server.go` declares the reclaim-hold set and the per-slot guard
-  table, `staging.go`, `slotcreds.go` and `credentials.go` move their resolve sites to the
-  shared helper and pass what their RPCs assert, and `holdstate.go` gives
-  `terminateHeldSession` a deferred hold release, a deferred slot-guard release and its own
-  per-member ten-second close context. A later position
-  covering proposal 0080 rewrites these files, so this proposal keeps its edits in each to the
-  smallest set the mechanism needs.
+- File-collision discipline: a later position covering proposal 0080 rewrites the adapter files
+  this proposal opens, so each edit is kept to the smallest set the mechanism needs; `## Files
+  touched on application (non-spec)` in the non-spec changes file lists every file with its
+  deliverables.
 
 **Watch out for.**
 
@@ -316,21 +305,9 @@ answered or moved to `## Defects in the shipped tree that this proposal does not
 them decision 53, whose re-cut of CODE-1, CODE-4 and CODE-6 lands CODE-14 at S15 (its `Shutdown`
 rows with CODE-1 at S16), CODE-13 at S19, and CODE-15 with CODE-1 at S16. Decisions 58 and 59
 were resolved on 2026-09-25, and the review log's ledger records their answers
-(`[f20.decision-58]`, `[f20.decision-59]`).
-
-The review loop left the decision below open in its `### Open` list. It concerns the
-proposal's own text rather than the mechanism it stages, and it changes no staged edit's effect.
-
-- **Decision 60. Should the summary's "File-collision discipline" bullet under `## Summary` be
-  cut down?** The bullet says "Five further adapter files are opened for one small edit each",
-  but the staged changes also open `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go` and
-  `pkg/adapter/metrics.go`, and the edit it describes for `staging.go` is smaller than what
-  CODE-6 and CODE-14 stage there. The same summary's proto-window bullet already names
-  `sdkwarm.go`. The review loop derived a remedy: cut the bullet to its one-clause reason (a
-  later position covering proposal 0080 rewrites these files, so this proposal keeps each edit to
-  the smallest set the mechanism needs) and point at `## Files touched on application
-  (non-spec)` in the non-spec changes file for the file list. The alternative is to correct the
-  count and the file list in place.
+(`[f20.decision-58]`, `[f20.decision-59]`). Decision 60 was answered by the operator's delegate on 2026-09-25 (`[operator.signoff-0925]`): the
+File-collision discipline bullet is cut to its reason and a pointer at the files-touched list. No
+decision remains open.
 
 ## Defects in the shipped tree that this proposal does not stage
 

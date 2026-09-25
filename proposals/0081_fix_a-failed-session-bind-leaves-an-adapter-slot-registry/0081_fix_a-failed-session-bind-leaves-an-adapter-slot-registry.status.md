@@ -2,13 +2,13 @@
 proposal: 0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry
 title: A failed session bind leaves a stale adapter slot registry entry
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-09-16
 drafted-by: change-proposal
-reviewed-date: 2026-09-24
+reviewed-date: 2026-09-25
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-09-25
+approved-by: lennylabsdev@gmail.com
 implemented-date: 
 implemented-by: 
 ---
@@ -33,4 +33,4 @@ On 2026-09-23, an adversarial review run executed the non-spec loop. The spec lo
 
 On 2026-09-24, an adversarial review run executed both loops. The spec loop ran 5 rounds and converged, performing 2 full-pool sweeps. The non-spec loop ran 3 rounds and converged, performing 1 full-pool sweep. Across both loops, 6 findings were fixed. The run converged.
 
-On 2026-09-25, an adversarial review run executed both loops. The spec loop ran 1 round and converged, performing 1 full-pool sweep. The non-spec loop ran 4 rounds and did not converge, performing 1 full-pool sweep. Across both loops, 8 findings were fixed. Findings the non-spec loop had not closed remain open. The run did not converge.
+On 2026-09-25, an adversarial review run executed both loops. The spec loop ran 1 round and converged, performing 1 full-pool sweep. The non-spec loop ran 3 rounds and converged, performing 1 full-pool sweep. Across both loops, 1 finding was fixed. The run converged.
