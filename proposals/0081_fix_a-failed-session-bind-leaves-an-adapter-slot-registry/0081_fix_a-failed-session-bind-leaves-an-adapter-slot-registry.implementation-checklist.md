@@ -39,11 +39,11 @@ refuses every bind and every teardown in the window between the two steps.
       Tiers 0, 1, 2, 3, 4, 9. Depends on: S1, S11.
 - [ ] **S13 · code** — CODE-4 in full, including the §7.4 mid-session pair in `pkg/gateway/sessionserver/upload_to_session.go`, with the tests the landing table assigns to S13.
       Tiers 0, 1, 2, 3, 4, 8, 9. Depends on: S1, S2, S9, S11.
-- [ ] **S14 · code** — CODE-6 in full, whose hold-release predicates at this step are the ones CODE-14's **What holds at S14.** paragraph states, with the tests the landing table assigns to S14, the literals the `BindAttempt` rule under the files-touched list requires among them. The mid-session admission guard that the non-spec Design's **The mid-session conditioning.** paragraph names is confirmed before this step lands.
+- [ ] **S14 · code** — CODE-6 in full, whose hold-release predicates at this step are the ones CODE-14's **What holds at S14.** paragraph states, with the tests the landing table assigns to S14, the literals, calls and asserted codes the S14 rows of **The admission-rule test migration.** under the files-touched list require among them. The mid-session admission guard that the non-spec Design's **The mid-session conditioning.** paragraph names is confirmed before this step lands.
       Tiers 0, 1, 2, 3, 4, 7a, 8, 9, 10. Depends on: S1, S4, S9, S11, S12, S13.
 - [ ] **S15 · code** — CODE-14, except the `Shutdown` rows of its derivation table and its removing-site table, which land with S16, and with the tests the landing table assigns to S15.
       Tiers 0, 1, 4, 7a, 9. Depends on: S1, S4, S14.
-- [ ] **S16 · code** — CODE-1 and CODE-15 in full, CODE-9's untokened-entry series, and the `Shutdown` rows of CODE-14's derivation table and removing-site table, with the tests the landing table assigns to S16, the literals the `UnconditionalTeardown` rule under the files-touched list requires among them.
+- [ ] **S16 · code** — CODE-1 and CODE-15 in full, CODE-9's untokened-entry series, and the `Shutdown` rows of CODE-14's derivation table and removing-site table, with the tests the landing table assigns to S16, the literals the rule-10 row of **The admission-rule test migration.** under the files-touched list requires among them.
       Tiers 0, 1, 2, 3, 4, 7a, 9, 10, 11. Depends on: S1, S2, S4, S6, S9, S10, S11, S13, S14, S15.
 - [ ] **S18 · code** — CODE-2 in full, with the tests the landing table assigns to S18.
       Tiers 0, 1, 2, 3, 4, 7a, 9, 10. Depends on: S1, S3, S14, S16.
