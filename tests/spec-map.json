@@ -689,7 +689,8 @@
         "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/tier3_contract/gatewaycontrol_scrub/shutdown_recycle_wire_test.go",
-        "tests/tier3_contract/adapter_bind_attempt/..."
+        "tests/tier3_contract/adapter_bind_attempt/...",
+        "pkg/gateway/runtime/adapterclient/client_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -3682,7 +3683,8 @@
         "pkg/adapter/drain_test.go",
         "tests/tier4_integration/mcp_runtime_lifecycle_test.go",
         "pkg/adapter/slotsession_test.go",
-        "tests/tier3_contract/adapter_bind_attempt/..."
+        "tests/tier3_contract/adapter_bind_attempt/...",
+        "pkg/gateway/runtime/adapterclient/client_test.go"
       ],
       "packages": [
         "cmd/runtimes/echo",

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/protoadapt"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
@@ -1505,5 +1506,352 @@ func waitForAttachSlots(t *testing.T, rec *capturingAdapter, n int) []string {
 			t.Fatalf("recorded %d Attach frames, want at least %d", len(got), n)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// refusingAdapter answers every bind-sequence RPC and every Shutdown form
+// with one configured error, and records the last ShutdownRequest, so a test
+// can drive each Client method against a typed slot-bind refusal. When err
+// is nil its Shutdown answers reclaimOutcome with exitedCleanly.
+type refusingAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+
+	err            error
+	reclaimOutcome adapterv1.SlotReclaimOutcome
+	exitedCleanly  bool
+
+	mu          sync.Mutex
+	gotShutdown *adapterv1.ShutdownRequest
+}
+
+func (r *refusingAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[adapterv1.PrepareWorkspaceRequest, adapterv1.PrepareWorkspaceResponse]) error {
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+	}
+	if r.err != nil {
+		return r.err
+	}
+	return stream.SendAndClose(&adapterv1.PrepareWorkspaceResponse{})
+}
+
+func (r *refusingAdapter) FinalizeWorkspace(context.Context, *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
+	return &adapterv1.FinalizeWorkspaceResponse{}, r.err
+}
+
+func (r *refusingAdapter) RunSetup(context.Context, *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
+	return &adapterv1.RunSetupResponse{}, r.err
+}
+
+func (r *refusingAdapter) AssignCredentials(context.Context, *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
+	return &adapterv1.AssignCredentialsResponse{}, r.err
+}
+
+func (r *refusingAdapter) Resume(context.Context, *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
+	return &adapterv1.ResumeResponse{}, r.err
+}
+
+func (r *refusingAdapter) StartSession(context.Context, *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+	return &adapterv1.StartSessionResponse{}, r.err
+}
+
+func (r *refusingAdapter) ConfigureWorkspace(context.Context, *adapterv1.ConfigureWorkspaceRequest) (*adapterv1.ConfigureWorkspaceResponse, error) {
+	return &adapterv1.ConfigureWorkspaceResponse{}, r.err
+}
+
+func (r *refusingAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	r.mu.Lock()
+	r.gotShutdown = req
+	r.mu.Unlock()
+	if r.err != nil {
+		return nil, r.err
+	}
+	return &adapterv1.ShutdownResponse{ExitedCleanly: r.exitedCleanly, SlotReclaim: r.reclaimOutcome}, nil
+}
+
+func (r *refusingAdapter) recordedShutdown() *adapterv1.ShutdownRequest {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.gotShutdown
+}
+
+// dialRefusingAdapter serves rec over bufconn and returns a connected Client.
+func dialRefusingAdapter(t *testing.T, rec *refusingAdapter) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, rec)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial refusing adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl
+}
+
+// typedRefusal builds the status the adapter answers a slot-bind refusal
+// with: the gRPC code plus an adapterv1.Error detail carrying the code.
+func typedRefusal(t *testing.T, c codes.Code, ec adapterv1.Error_ErrorCode, extra ...*adapterv1.RunSetupResponse) error {
+	t.Helper()
+	st := status.New(c, "slot bind refused")
+	details := []protoadapt.MessageV1{&adapterv1.Error{Code: ec, Message: "slot bind refused"}}
+	for _, e := range extra {
+		details = append(details, e)
+	}
+	withDetails, err := st.WithDetails(details...)
+	if err != nil {
+		t.Fatalf("attach status detail: %v", err)
+	}
+	return withDetails.Err()
+}
+
+// bindSequenceCalls drives each Client method whose error path translates
+// the §4.7.1 slot-bind refusals, keyed by RPC name.
+var bindSequenceCalls = []struct {
+	name string
+	call func(ctx context.Context, cl *adapterclient.Client) error
+}{
+	{"PrepareWorkspace", func(ctx context.Context, cl *adapterclient.Client) error {
+		_, err := cl.PrepareWorkspace(ctx, "sess-1", map[string][]byte{"ref": []byte("x")})
+		return err
+	}},
+	{"FinalizeWorkspace", func(ctx context.Context, cl *adapterclient.Client) error {
+		_, err := cl.FinalizeWorkspace(ctx, "sess-1", &adapterv1.WorkspacePlan{}, nil, false)
+		return err
+	}},
+	{"RunSetup", func(ctx context.Context, cl *adapterclient.Client) error {
+		_, err := cl.RunSetup(ctx, "sess-1", nil, nil)
+		return err
+	}},
+	{"AssignCredentials", func(ctx context.Context, cl *adapterclient.Client) error {
+		return cl.AssignCredentials(ctx, "sess-1", nil)
+	}},
+	{"Resume", func(ctx context.Context, cl *adapterclient.Client) error {
+		_, err := cl.Resume(ctx, adapterclient.ResumeParams{SessionID: "sess-1", CheckpointID: "ckpt"})
+		return err
+	}},
+	{"StartSession", func(ctx context.Context, cl *adapterclient.Client) error {
+		return cl.StartSession(ctx, adapterclient.StartSessionParams{SessionID: "sess-1"})
+	}},
+	{"ConfigureWorkspace", func(ctx context.Context, cl *adapterclient.Client) error {
+		return cl.ConfigureWorkspace(ctx, "sess-1", "/workspace", nil, nil)
+	}},
+}
+
+// slotBindRefusals pairs each §4.7.1 refusal code with the gRPC code the
+// adapter answers it on and the sentinel the client translates it to.
+var slotBindRefusals = []struct {
+	name     string
+	grpcCode codes.Code
+	code     adapterv1.Error_ErrorCode
+	sentinel error
+	other    error
+}{
+	{
+		"superseded", codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED,
+		adapterclient.ErrSlotBindAttemptSuperseded, adapterclient.ErrSlotBindAlreadyStarted,
+	},
+	{
+		"already_started", codes.FailedPrecondition, adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED,
+		adapterclient.ErrSlotBindAlreadyStarted, adapterclient.ErrSlotBindAttemptSuperseded,
+	},
+}
+
+// Each bind-sequence method translates each refusal detail into its sentinel,
+// keeps the original status reachable through the wrap, and the predicate
+// holds for the translated error and for it wrapped once more.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
+// specification)
+func TestBindSequenceMethodsTranslateSlotBindRefusals_spec_4_7_1(t *testing.T) {
+	for _, rf := range slotBindRefusals {
+		for _, bc := range bindSequenceCalls {
+			t.Run(rf.name+"/"+bc.name, func(t *testing.T) {
+				cl := dialRefusingAdapter(t, &refusingAdapter{err: typedRefusal(t, rf.grpcCode, rf.code)})
+				err := bc.call(context.Background(), cl)
+				if !errors.Is(err, rf.sentinel) {
+					t.Fatalf("errors.Is(%v, %v) = false", err, rf.sentinel)
+				}
+				if errors.Is(err, rf.other) {
+					t.Fatalf("error %v also matches %v", err, rf.other)
+				}
+				if got := status.Code(err); got != rf.grpcCode {
+					t.Fatalf("status.Code = %v, want %v (the original status must survive the wrap)", got, rf.grpcCode)
+				}
+				if !adapterclient.IsSlotBindRefusal(err) {
+					t.Fatalf("IsSlotBindRefusal(%v) = false", err)
+				}
+				if !adapterclient.IsSlotBindRefusal(fmt.Errorf("bind stage: %w", err)) {
+					t.Fatalf("IsSlotBindRefusal does not read through a further %%w wrap")
+				}
+			})
+		}
+	}
+}
+
+// Errors that are not a slot-bind refusal reach the caller unchanged: a
+// status with an adapterv1.Error detail of another code, a status with no
+// detail, and a handler error that is not a status at all.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
+// specification)
+func TestBindSequenceMethodsPassOtherErrorsThrough_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code codes.Code
+	}{
+		{"other_detail_code", typedRefusal(t, codes.FailedPrecondition, adapterv1.Error_ERROR_CODE_INVALID_WORKSPACE_PLAN), codes.FailedPrecondition},
+		{"no_detail", status.Error(codes.FailedPrecondition, "plain refusal"), codes.FailedPrecondition},
+		{"not_a_status", errors.New("handler failed"), codes.Unknown},
+	}
+	for _, tc := range cases {
+		for _, bc := range bindSequenceCalls {
+			t.Run(tc.name+"/"+bc.name, func(t *testing.T) {
+				cl := dialRefusingAdapter(t, &refusingAdapter{err: tc.err})
+				err := bc.call(context.Background(), cl)
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				if adapterclient.IsSlotBindRefusal(err) {
+					t.Fatalf("IsSlotBindRefusal(%v) = true for a non-refusal", err)
+				}
+				if got := status.Code(err); got != tc.code {
+					t.Fatalf("status.Code = %v, want %v", got, tc.code)
+				}
+			})
+		}
+	}
+	if adapterclient.IsSlotBindRefusal(nil) || adapterclient.IsSlotBindRefusal(errors.New("x")) {
+		t.Fatal("IsSlotBindRefusal holds for nil or a plain error")
+	}
+}
+
+// RunSetup keeps recovering its partial outputs from the status detail when
+// the same status also carries a refusal detail, and still translates.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
+// specification)
+func TestRunSetupKeepsPartialOutputsOnARefusal_spec_4_7_1(t *testing.T) {
+	partial := &adapterv1.RunSetupResponse{Outputs: []*adapterv1.SetupCommandOutput{{Cmd: "make", ExitCode: 0}}}
+	cl := dialRefusingAdapter(t, &refusingAdapter{
+		err: typedRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED, partial),
+	})
+	outs, err := cl.RunSetup(context.Background(), "sess-1", nil, nil)
+	if !errors.Is(err, adapterclient.ErrSlotBindAttemptSuperseded) {
+		t.Fatalf("err = %v, want the superseded sentinel", err)
+	}
+	if len(outs) != 1 || outs[0].GetCmd() != "make" {
+		t.Fatalf("partial outputs = %v, want the one recovered output", outs)
+	}
+}
+
+// The Shutdown family does not translate: the adapter answers a refusal on
+// a teardown as a reclaim outcome, so an error carrying a refusal detail on
+// any Shutdown form reaches the caller as the plain status.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
+// specification)
+func TestShutdownFormsDoNotTranslateSlotBindRefusals_spec_4_7_1(t *testing.T) {
+	calls := []struct {
+		name string
+		call func(ctx context.Context, cl *adapterclient.Client) error
+	}{
+		{"Shutdown", func(ctx context.Context, cl *adapterclient.Client) error {
+			_, err := cl.Shutdown(ctx, "sess-1", "", 0)
+			return err
+		}},
+		{"ShutdownRecycle", func(ctx context.Context, cl *adapterclient.Client) error {
+			_, err := cl.ShutdownRecycle(ctx, "sess-1", adapterclient.RecycleScrub{PodID: "pod-1"})
+			return err
+		}},
+		{"ShutdownReclaim", func(ctx context.Context, cl *adapterclient.Client) error {
+			_, _, err := cl.ShutdownReclaim(ctx, "sess-1", "bind_failed", 0, "attempt-a")
+			return err
+		}},
+	}
+	for _, rf := range slotBindRefusals {
+		for _, sc := range calls {
+			t.Run(rf.name+"/"+sc.name, func(t *testing.T) {
+				cl := dialRefusingAdapter(t, &refusingAdapter{err: typedRefusal(t, rf.grpcCode, rf.code)})
+				err := sc.call(context.Background(), cl)
+				if err == nil {
+					t.Fatal("expected the adapter's error")
+				}
+				if adapterclient.IsSlotBindRefusal(err) {
+					t.Fatalf("%s translated a refusal: %v", sc.name, err)
+				}
+				if got := status.Code(err); got != rf.grpcCode {
+					t.Fatalf("status.Code = %v, want %v", got, rf.grpcCode)
+				}
+			})
+		}
+	}
+}
+
+// ShutdownReclaim sends the fenced teardown form: the request names the
+// attempt's token in bind_attempt, leaves unconditional_teardown false, and
+// carries no recycle disposition, and the method returns the reclaim outcome
+// and the clean-exit flag the adapter reported.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow); §15.4
+// (runtime adapter specification)
+func TestShutdownReclaimSendsTheFencedFormAndReturnsTheOutcome_spec_4_7_1(t *testing.T) {
+	outcomes := []adapterv1.SlotReclaimOutcome{
+		adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED,
+		adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED,
+		adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_ABSENT,
+	}
+	for _, want := range outcomes {
+		for _, clean := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/clean=%t", want, clean), func(t *testing.T) {
+				rec := &refusingAdapter{reclaimOutcome: want, exitedCleanly: clean}
+				cl := dialRefusingAdapter(t, rec)
+				got, exited, err := cl.ShutdownReclaim(context.Background(), "sess-1", "bind_failed", 1500*time.Millisecond, "attempt-a")
+				if err != nil {
+					t.Fatalf("ShutdownReclaim: %v", err)
+				}
+				if got != want || exited != clean {
+					t.Fatalf("returned (%v, %t), want (%v, %t)", got, exited, want, clean)
+				}
+				req := rec.recordedShutdown()
+				if req.GetBindAttempt() != "attempt-a" {
+					t.Fatalf("bind_attempt = %q, want %q", req.GetBindAttempt(), "attempt-a")
+				}
+				if req.GetUnconditionalTeardown() {
+					t.Fatal("unconditional_teardown is set on the fenced form")
+				}
+				if req.GetRecycle() != nil {
+					t.Fatal("the fenced form carries a recycle disposition")
+				}
+				if req.GetSessionId().GetValue() != "sess-1" || req.GetReason() != "bind_failed" || req.GetDeadlineMs() != 1500 {
+					t.Fatalf("request = %v, want session, reason and deadline forwarded", req)
+				}
+			})
+		}
+	}
+}
+
+// A transport or handler failure on the fenced teardown returns the error
+// with an unspecified outcome and no clean exit, so the caller reads it as
+// unacknowledged.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow)
+func TestShutdownReclaimSurfacesRPCError_spec_4_7_1(t *testing.T) {
+	cl := dialRefusingAdapter(t, &refusingAdapter{err: status.Error(codes.Unavailable, "adapter gone")})
+	got, exited, err := cl.ShutdownReclaim(context.Background(), "sess-1", "bind_failed", 0, "attempt-a")
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("err = %v, want Unavailable", err)
+	}
+	if got != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_UNSPECIFIED || exited {
+		t.Fatalf("returned (%v, %t) on error, want (UNSPECIFIED, false)", got, exited)
 	}
 }

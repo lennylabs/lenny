@@ -24,6 +24,73 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
+// ErrSlotBindAttemptSuperseded is returned when the adapter refused a
+// bind-sequence RPC because the pod's slot registry entry for the session
+// carries a non-empty bind attempt token different from this attempt's.
+// Another attempt owns the entry and everything under it.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+var ErrSlotBindAttemptSuperseded = errors.New("adapterclient: slot bind attempt superseded")
+
+// ErrSlotBindAlreadyStarted is returned when the adapter refused a
+// bind-sequence RPC because the resolved entry's session has already started
+// on the pod and the request is not a §7.4 mid-session upload.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+var ErrSlotBindAlreadyStarted = errors.New("adapterclient: slot bind already started")
+
+// IsSlotBindRefusal reports whether err carries either §4.7.1 slot-bind
+// refusal. errors.Is reads through every wrapper the bind paths add, so a
+// refusal wrapped by the gateway's bind-failure types still matches. It is
+// the one statement of the two-sentinel predicate: a third refusal sentinel
+// is added here and every consumer (the client error envelope, the reclaim
+// closures, and the compensation label) follows.
+//
+// spec: §4.7.1 (role and gateway RPC contract)
+func IsSlotBindRefusal(err error) bool {
+	return errors.Is(err, ErrSlotBindAttemptSuperseded) ||
+		errors.Is(err, ErrSlotBindAlreadyStarted)
+}
+
+// translateSlotBindRefusal recovers the two §4.7.1 slot-bind refusals from the
+// gRPC status detail and returns them as sentinels the gateway can match with
+// errors.Is. The wrap carries both the sentinel and the original error with
+// %w, so errors.Is matches the sentinel while status.Code still walks to the
+// original status (Aborted for the superseded refusal, FailedPrecondition for
+// the already-started one) and a code-keyed arm fires on the same value. Any
+// other error is returned unchanged. It follows the form of RunSetup's
+// partial-output reader: status.FromError, then a type switch over
+// st.Details().
+//
+// Only the bind-sequence RPCs run it. The Shutdown family does not, because
+// the adapter answers a refusal there as a reclaim outcome rather than as an
+// error.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
+// specification)
+func translateSlotBindRefusal(err error) error {
+	if err == nil {
+		return nil
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return err
+	}
+	for _, d := range st.Details() {
+		e, isErr := d.(*adapterv1.Error)
+		if !isErr {
+			continue
+		}
+		switch e.GetCode() {
+		case adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED:
+			return fmt.Errorf("%w: %w", ErrSlotBindAttemptSuperseded, err)
+		case adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED:
+			return fmt.Errorf("%w: %w", ErrSlotBindAlreadyStarted, err)
+		}
+	}
+	return err
+}
+
 // Client is a gateway-side connection to one pod's adapter.
 type Client struct {
 	conn *grpc.ClientConn
@@ -140,7 +207,7 @@ func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
 		MinPlatformVersion: p.MinPlatformVersion,
 	}
 	_, err := c.rpc.StartSession(ctx, req)
-	return err
+	return translateSlotBindRefusal(err)
 }
 
 // ConfigureWorkspace is the §6.1 SDK-warm counterpart of StartSession: on
@@ -156,7 +223,7 @@ func (c *Client) ConfigureWorkspace(ctx context.Context, sessionID, cwd string, 
 		ExperimentContext: experiment,
 		TracingContext:    tracing,
 	})
-	return err
+	return translateSlotBindRefusal(err)
 }
 
 // DemoteSDK tears down a preConnect pod's pre-connected SDK so the pod
@@ -182,7 +249,7 @@ func (c *Client) AssignCredentials(ctx context.Context, sessionID string, leases
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Leases:    leases,
 	})
-	return err
+	return translateSlotBindRefusal(err)
 }
 
 // RotateCredentials replaces a session's previously assigned §4.9
@@ -247,7 +314,7 @@ const prepareWorkspaceChunkSize = 64 * 1024
 func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads map[string][]byte) (*adapterv1.PrepareWorkspaceResponse, error) {
 	stream, err := c.rpc.PrepareWorkspace(ctx)
 	if err != nil {
-		return nil, err
+		return nil, translateSlotBindRefusal(err)
 	}
 	sid := &adapterv1.SessionId{Value: sessionID}
 	for ref, content := range uploads {
@@ -258,10 +325,14 @@ func (c *Client) PrepareWorkspace(ctx context.Context, sessionID string, uploads
 			if err == io.EOF {
 				break
 			}
-			return nil, err
+			return nil, translateSlotBindRefusal(err)
 		}
 	}
-	return stream.CloseAndRecv()
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, translateSlotBindRefusal(err)
+	}
+	return resp, nil
 }
 
 // sendUpload streams one upload as PrepareWorkspace frames. It always
@@ -311,7 +382,7 @@ func (c *Client) FinalizeWorkspace(ctx context.Context, sessionID string, plan *
 		MidSession:    midSession,
 	})
 	if err != nil {
-		return nil, err
+		return nil, translateSlotBindRefusal(err)
 	}
 	return resp.GetWorkspacePlanWarnings(), nil
 }
@@ -335,11 +406,11 @@ func (c *Client) RunSetup(ctx context.Context, sessionID string, setupCommands [
 		if st, ok := status.FromError(err); ok {
 			for _, d := range st.Details() {
 				if r, isResp := d.(*adapterv1.RunSetupResponse); isResp {
-					return r.GetOutputs(), err
+					return r.GetOutputs(), translateSlotBindRefusal(err)
 				}
 			}
 		}
-		return nil, err
+		return nil, translateSlotBindRefusal(err)
 	}
 	return resp.GetOutputs(), nil
 }
@@ -629,7 +700,7 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		Chunks:                  resumeChunksToProto(p.Chunks),
 	})
 	if err != nil {
-		return ResumeResult{}, err
+		return ResumeResult{}, translateSlotBindRefusal(err)
 	}
 	return ResumeResult{
 		RestoredBytes:      resp.GetRestoredBytes(),
@@ -821,6 +892,38 @@ func (c *Client) shutdown(ctx context.Context, sessionID, reason string, deadlin
 		return false, err
 	}
 	return resp.GetExitedCleanly(), nil
+}
+
+// ShutdownReclaim sends the fenced form of §4.7's Shutdown, naming the bind
+// attempt whose slot registry entry it is reclaiming. It is the only sender
+// of the fenced form; every other teardown goes through Shutdown or
+// ShutdownRecycle. It builds its own request rather than routing through
+// the shutdown builder, so the request carries bind_attempt and leaves
+// unconditional_teardown false: the two fields are the fenced and the
+// unconditional forms of the teardown, and a request carries exactly one.
+//
+// The returns are the §4.7.1 reclaim outcome the adapter reports, whether
+// the runtime exited cleanly, and the RPC error. The adapter answers an
+// attempt mismatch as the superseded outcome rather than as an error, so
+// this method does not translate refusals. bindAttempt is the token the
+// compensating attempt already holds, so the client latches nothing off a
+// response and keeps no per-connection state.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (normal flow)
+func (c *Client) ShutdownReclaim(
+	ctx context.Context, sessionID, reason string,
+	deadline time.Duration, bindAttempt string,
+) (adapterv1.SlotReclaimOutcome, bool, error) {
+	resp, err := c.rpc.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Reason:      reason,
+		DeadlineMs:  int32(deadline.Milliseconds()),
+		BindAttempt: bindAttempt,
+	})
+	if err != nil {
+		return adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_UNSPECIFIED, false, err
+	}
+	return resp.GetSlotReclaim(), resp.GetExitedCleanly(), nil
 }
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
