@@ -682,6 +682,9 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/adapter/bindattempt_test.go",
+        "pkg/adapter/one_session_only_test.go",
+        "pkg/adapter/resume_test.go",
+        "pkg/adapter/slot_test.go",
         "pkg/adapter/server_test.go",
         "pkg/adapter/session_test.go",
         "pkg/adapter/checkpoint_stream_test.go",
