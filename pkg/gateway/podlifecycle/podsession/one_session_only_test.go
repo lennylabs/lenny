@@ -69,9 +69,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 
 	// Drive the §6.2 terminal disposition through Release with the
 	// `completed` disposition. The gateway releases the pod by deleting its
-	// per-pod claim; it does not write Sandbox.status.phase. The phase the
-	// WPC projects at the claim DELETE is §4.6.1's to state, and this test
-	// asserts only the gateway side of the §6.1 one-session-only invariant.
+	// per-pod claim; it does not write Sandbox.status.phase.
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
