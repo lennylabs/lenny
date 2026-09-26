@@ -664,7 +664,8 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
-        "tests/tier3_contract/adapter_bind_attempt/..."
+        "tests/tier3_contract/adapter_bind_attempt/...",
+        "tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -719,7 +720,8 @@
         "tests/tier7a_load_local/slot_bind_attempt_race_test.go",
         "tests/tier9_security/slot_credential_reclaim_fence_test.go",
         "tests/tier8_chaos/compensation_loss_test.go",
-        "tests/tier4_integration/concurrent_workspace_test.go"
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "tests/tier7a_load_local/coordinator_hold_termination_race_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -2197,7 +2199,8 @@
         "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "pkg/adapter/coordination_test.go",
-        "pkg/adapter/checkpoint_stream_test.go"
+        "pkg/adapter/checkpoint_stream_test.go",
+        "tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go"
       ],
       "packages": [
         "pkg/gateway"
@@ -2319,7 +2322,8 @@
         "pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
         "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
         "pkg/adapter/coordination_test.go",
-        "pkg/adapter/checkpoint_stream_test.go"
+        "pkg/adapter/checkpoint_stream_test.go",
+        "tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go"
       ],
       "packages": [
         "pkg/gateway"
