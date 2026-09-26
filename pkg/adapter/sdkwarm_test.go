@@ -44,7 +44,10 @@ type fakeSDKWarmRuntime struct {
 	configured   []string // cwd of each ConfigureWorkspace call
 	configErr    error
 	demoted      int
-	demoteErr    error
+	// demoteCalls counts every DemoteSDK call, including one that returns
+	// demoteErr, so a case can tell an attempted demotion from none.
+	demoteCalls int
+	demoteErr   error
 	// onConfigure runs inside ConfigureWorkspace on the calling goroutine,
 	// between the handler's claim and its start confirmation.
 	onConfigure func()
@@ -70,6 +73,7 @@ func (f *fakeSDKWarmRuntime) ConfigureWorkspace(_ context.Context, _ string, cwd
 }
 
 func (f *fakeSDKWarmRuntime) DemoteSDK(_ context.Context) error {
+	f.demoteCalls++
 	if f.demoteErr != nil {
 		return f.demoteErr
 	}
@@ -425,5 +429,67 @@ func TestTheSDKWarmConfirmationRefusesWithoutReleasing_spec_4_7_1(t *testing.T) 
 				t.Errorf("Shutdown naming the successor = %v, want RECLAIMED; the refusal released the successor's entry", got)
 			}
 		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §6.1; §7.1 (normal flow)
+//
+// The SDK-warm refusal answers Aborted whatever the runtime half of the
+// demotion returns. A ConfigureWorkspace whose claimed entry leaves the
+// registry while the SDK is being pointed at the workspace attempts the
+// demotion, and when that demotion fails it still clears the warm-readiness
+// flag and refuses on Aborted, so the gateway classifies the refusal as the
+// transient reclaim it is rather than as an adapter fault. It files no
+// cleanup-outcome report for the session.
+func TestTheSDKWarmConfirmationRefusesOnAbortedWhenTheDemotionFails_spec_4_7_1(t *testing.T) {
+	s, rt := sdkWarmServer(t)
+	s.CredentialsDir = t.TempDir()
+	reporter := &countingScrubReporter{}
+	s.SessionScrubReporter = reporter
+	if err := s.PreConnect(t.Context()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	rt.demoteErr = errors.New("sdk demotion failed")
+	rt.onConfigure = func() {
+		rt.onConfigure = nil
+		if _, err := s.Shutdown(t.Context(), &adapterv1.ShutdownRequest{
+			SessionId:             &adapterv1.SessionId{Value: "alice"},
+			UnconditionalTeardown: true,
+		}); err != nil {
+			t.Errorf("unconditional Shutdown from the hook: %v", err)
+		}
+	}
+
+	_, err := s.ConfigureWorkspace(t.Context(), configureReq("alice", "/workspace/slots/alice/current"))
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("ConfigureWorkspace = %v, want Aborted when the refusal's demotion fails", err)
+	}
+	if rt.demoteCalls != 1 {
+		t.Errorf("SDKWarmRuntime.DemoteSDK attempts = %d, want 1", rt.demoteCalls)
+	}
+	if s.SDKWarmReady() {
+		t.Error("SDKWarmReady is still true after the refusal, although its demotion failed")
+	}
+	if n := reporter.reportsFor("alice"); n != 0 {
+		t.Errorf("cleanup-outcome reports for alice = %d, want 0", n)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §6.1; §7.1 (normal flow)
+//
+// The DemoteSDK RPC surfaces a failed runtime demotion to the gateway as
+// Internal rather than reporting the pod demoted.
+func TestDemoteSDKAnswersInternalWhenTheRuntimeDemotionFails_spec_4_7_1(t *testing.T) {
+	s, rt := sdkWarmServer(t)
+	if err := s.PreConnect(t.Context()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	rt.demoteErr = errors.New("sdk demotion failed")
+	_, err := s.DemoteSDK(t.Context(), &adapterv1.DemoteSDKRequest{Reason: "blocking-path"})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("DemoteSDK = %v, want Internal for a failed runtime demotion", err)
+	}
+	if rt.demoteCalls != 1 {
+		t.Errorf("SDKWarmRuntime.DemoteSDK attempts = %d, want 1", rt.demoteCalls)
 	}
 }

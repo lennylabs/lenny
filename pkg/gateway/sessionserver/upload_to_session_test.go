@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -56,6 +58,16 @@ func dialRealAdapter(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOptio
 // whose workspace lives under root, with a runtime registry declaring the
 // capability per `capability` and the deployer policy per `policyEnabled`.
 func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding bool, opts ...grpc.ServerOption) (http.Handler, string) {
+	t.Helper()
+	return midSessionFixtureAudited(t, capability, policyEnabled, withBinding, nil, opts...)
+}
+
+// midSessionFixtureAudited is midSessionFixture with the session-lifecycle
+// audit sink wired to audit, so a case can read the §16.6 session.upload
+// rows the handler emits. A nil audit wires no sink.
+func midSessionFixtureAudited(t *testing.T, capability, policyEnabled, withBinding bool,
+	audit sessionserver.LifecycleAuditSink, opts ...grpc.ServerOption,
+) (http.Handler, string) {
 	t.Helper()
 	store := memstore.New()
 	now := time.Now()
@@ -100,6 +112,7 @@ func midSessionFixture(t *testing.T, capability, policyEnabled bool, withBinding
 		PodRegistry:             reg,
 		Runtimes:                runtimes,
 		MidSessionUploadEnabled: policyEnabled,
+		LifecycleAuditSink:      audit,
 	})
 	return srv.Handler(), root
 }
@@ -321,5 +334,97 @@ func TestUploadToSessionSendsTheMarkedMidSessionPair_spec_4_7_1(t *testing.T) {
 	if !fin.GetMidSession() || fin.GetBindAttempt() != "" {
 		t.Errorf("FinalizeWorkspace carries (bind_attempt %q, mid_session %t), want (\"\", true)",
 			fin.GetBindAttempt(), fin.GetMidSession())
+	}
+}
+
+// upstreamAbortInjector is a pair of gRPC server interceptors that answer the
+// named adapter RPC with codes.Aborted, the status the adapter's §5.2
+// reclaim-hold refusal carries, without running the handler, and count the
+// FinalizeWorkspace requests that reach the adapter.
+type upstreamAbortInjector struct {
+	failMethod string
+	mu         sync.Mutex
+	finalizes  int
+}
+
+func (i *upstreamAbortInjector) unary(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+	if info.FullMethod == adapterv1.Adapter_FinalizeWorkspace_FullMethodName {
+		i.mu.Lock()
+		i.finalizes++
+		i.mu.Unlock()
+	}
+	if info.FullMethod == i.failMethod {
+		return nil, status.Error(codes.Aborted, "slot reclaim in progress")
+	}
+	return h(ctx, req)
+}
+
+func (i *upstreamAbortInjector) stream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, h grpc.StreamHandler) error {
+	if info.FullMethod == i.failMethod {
+		return status.Error(codes.Aborted, "slot reclaim in progress")
+	}
+	return h(srv, ss)
+}
+
+func (i *upstreamAbortInjector) finalizeCount() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.finalizes
+}
+
+// spec: §7.4 (upload safety); §5.2 (pool configuration and execution modes); §15.1 (REST API)
+//
+// A mid-session upload whose PrepareWorkspace or FinalizeWorkspace the
+// adapter refuses, such as with the transient Aborted refusal the §5.2
+// slot-identifier reclaim hold answers while the session's own cleanup is in
+// flight, is answered HTTP 502 with UPSTREAM_ERROR and audited as a rejected
+// session.upload naming the stage that failed. A refused stage is never
+// followed by the finalize, so nothing is promoted into the workspace.
+func TestAMidSessionUploadTheAdapterRefusesAnswersUpstreamError_spec_7_4(t *testing.T) {
+	cases := []struct {
+		name          string
+		failMethod    string
+		wantReason    string
+		wantFinalizes int
+	}{
+		{"prepare refused", adapterv1.Adapter_PrepareWorkspace_FullMethodName, "stage_failed", 0},
+		{"finalize refused", adapterv1.Adapter_FinalizeWorkspace_FullMethodName, "materialize_failed", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inj := &upstreamAbortInjector{failMethod: tc.failMethod}
+			sink := &lifecycleSink{}
+			h, root := midSessionFixtureAudited(t, true, true, true, sink,
+				grpc.UnaryInterceptor(inj.unary), grpc.StreamInterceptor(inj.stream))
+			rr := uploadToSession(t, h, `{"files":[{"path":"docs/new.md","content":"`+b64("fresh")+`"}]}`)
+			if rr.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, want 502; body=%s", rr.Code, rr.Body.String())
+			}
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode error body: %v; body=%s", err, rr.Body.String())
+			}
+			if body.Error.Code != "UPSTREAM_ERROR" {
+				t.Errorf("error code = %q, want UPSTREAM_ERROR; body=%s", body.Error.Code, rr.Body.String())
+			}
+			if got := inj.finalizeCount(); got != tc.wantFinalizes {
+				t.Errorf("FinalizeWorkspace requests reaching the adapter = %d, want %d", got, tc.wantFinalizes)
+			}
+			if _, err := os.Stat(filepath.Join(root, "docs", "new.md")); !os.IsNotExist(err) {
+				t.Errorf("the refused upload reached the live workspace: stat err = %v", err)
+			}
+			evs := sink.eventsOf("session.upload")
+			if len(evs) != 1 {
+				t.Fatalf("session.upload audit rows = %d, want 1: %+v", len(evs), evs)
+			}
+			if evs[0].Outcome != "rejected" || evs[0].Reason != tc.wantReason || evs[0].SessionID != "sess_mid" {
+				t.Errorf("audit row = (outcome %q, reason %q, session %q), want (rejected, %s, sess_mid)",
+					evs[0].Outcome, evs[0].Reason, evs[0].SessionID, tc.wantReason)
+			}
+		})
 	}
 }

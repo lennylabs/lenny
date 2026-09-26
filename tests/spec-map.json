@@ -687,6 +687,7 @@
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
         "pkg/adapter/bindattempt_test.go",
+        "pkg/adapter/reclaim_admitted_section_test.go",
         "pkg/adapter/one_session_only_test.go",
         "pkg/adapter/resume_test.go",
         "pkg/adapter/slot_test.go",
@@ -1069,6 +1070,7 @@
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotFailureAccountingCountsARepeatedSlotOnce_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotFailureAccountingReadsTheReclaimDisposition_spec_5_2",
         "pkg/adapter/bindattempt_test.go",
+        "pkg/adapter/reclaim_admitted_section_test.go",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantInitialAssignmentByGateway",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideRejectsTenantInitialAssignmentByOtherSA",
         "pkg/admission/label_immutability/label_immutability_test.go::TestDecideAllowsTenantResetByWarmPoolController",
@@ -1693,6 +1695,7 @@
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
         "pkg/adapter/bindattempt_test.go",
+        "pkg/adapter/reclaim_admitted_section_test.go",
         "pkg/upload/...",
         "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives",
         "pkg/gateway/sessionserver/start_pod_test.go",
@@ -2233,6 +2236,7 @@
       "spec_file": "spec/10_gateway-internals.md",
       "tests": [
         "pkg/adapter/bindattempt_test.go",
+        "pkg/adapter/reclaim_admitted_section_test.go",
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
@@ -3674,7 +3678,8 @@
         "pkg/gateway/sessionserver/start_pod_test.go",
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorFallback_spec_7_1_4",
-        "pkg/gateway/sessionserver/start_preclaim_internal_test.go"
+        "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
+        "pkg/gateway/sessionserver/upload_to_session_test.go::TestAMidSessionUploadTheAdapterRefusesAnswersUpstreamError_spec_7_4"
       ],
       "packages": [
         "pkg/api/v1/session",
