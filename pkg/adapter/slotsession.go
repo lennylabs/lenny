@@ -78,6 +78,14 @@ type slotClaim struct {
 	// the entry's own stamp, so an entry no later attempt replaced compares
 	// equal to itself. spec: §4.7.1 (role and gateway RPC contract), rule 8.
 	attempt string
+	// entry is the registry entry the claim was admitted against. The
+	// handler's failure rollbacks release the slot only while the registry
+	// still holds this entry under the session identifier, so an abandoned
+	// attempt's late failure cannot remove the entry a successor attempt
+	// created after a reclaim. Pointer identity is compared rather than the
+	// token alone, because two untokened entries for one session carry the
+	// same empty token. spec: §4.7.1 (role and gateway RPC contract).
+	entry *slotState
 }
 
 // claimSessionSlotUnderLock is claimSessionSlot's critical section. It
@@ -105,14 +113,14 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, r slotResolve, sdkW
 	// the idempotent repeat and states the refusal for a later reader.
 	if st.started {
 		if idempotentRepeat {
-			return slotClaim{attempt: st.bindAttempt}, nil, nil
+			return slotClaim{attempt: st.bindAttempt, entry: st}, nil, nil
 		}
 		return slotClaim{}, nil, errSlotBindAlreadyStarted(sessionID)
 	}
 	st.sessionID = sessionID
 	st.started = true
 	startMCP, stale := s.claimPodMCPStartLocked(sessionID)
-	return slotClaim{fresh: true, startMCP: startMCP, attempt: st.bindAttempt}, stale, nil
+	return slotClaim{fresh: true, startMCP: startMCP, attempt: st.bindAttempt, entry: st}, stale, nil
 }
 
 // claimPodMCPStartLocked reports whether the caller must arm the pod's
@@ -237,14 +245,67 @@ func (s *Server) reclaimSlotLocked(sessionID string) (st *slotState, removed, bo
 	return st, true, boundRemains, s.openReclaimHoldLocked(sessionID)
 }
 
+// reclaimSlotIfOwnedLocked is reclaimSlotLocked for a release made on behalf
+// of one claim: it deregisters the session's entry only while the registry
+// still holds the entry that claim was admitted against. On a mismatch it
+// removes nothing, opens no hold and returns a no-op release.
+//
+// The slot identifier equals the session identifier, so after a
+// compensating Shutdown reclaims an attempt's entry a successor attempt at
+// the same session creates a new entry under the same key. A rollback keyed
+// on the identifier alone would then remove the successor's entry, its
+// staged tree and its credential directory. The comparison runs in the same
+// critical section as the deregistration, which is the §4.7.1 registry
+// critical section. Callers hold s.mu.
+//
+// spec: §4.7.1 (role and gateway RPC contract), the stamp-once rule; §5.2
+// (slot-identifier reclaim hold).
+func (s *Server) reclaimSlotIfOwnedLocked(sessionID string, entry *slotState) (st *slotState, removed bool, release func()) {
+	if cur, ok := s.slots[sessionID]; !ok || cur != entry {
+		return nil, false, noHoldRelease
+	}
+	st, removed, _, release = s.reclaimSlotLocked(sessionID)
+	return st, removed, release
+}
+
+// releaseClaimedSlot is the compensating release a start handler that holds
+// no guard takes when a step after its claim fails: StartSession and the
+// SDK-warm ConfigureWorkspace on a fresh claim. It is releaseSessionSlot
+// fenced on the claim's entry, so it undoes the claim only while that
+// entry is still the one registered under the session identifier. When a
+// reclaim removed the entry, or a successor replaced it, the release
+// removes nothing and takes only the pod-wide MCP half, as the refused
+// start confirmation does; the runtime half is absent because the failure
+// arms run before a successful Runtime.Start.
+//
+// spec: §4.7; §4.7.1 (role and gateway RPC contract); §5.2
+// (slot-identifier reclaim hold); §15.4.3.
+func (s *Server) releaseClaimedSlot(ctx context.Context, sessionID string, claim slotClaim) {
+	unlock, guarded := s.lockSlotGuard(ctx, sessionID)
+	defer unlock()
+	if !guarded {
+		warnSlotGuardNotAcquired(sessionID, "releaseClaimedSlot")
+	}
+	s.mu.Lock()
+	st, removed, release := s.reclaimSlotIfOwnedLocked(sessionID, claim.entry)
+	s.mu.Unlock()
+	if !removed {
+		slog.Info("slot_release_skipped_entry_not_owned", "slot_id", sessionID)
+	}
+	s.finishSlotRelease(sessionID, st, removed, guarded, release)
+}
+
 // releaseSessionSlot runs both release steps in immediate succession and
 // then the pod-surface cancellation, under the slot's per-slot guard. It
-// is the compensating action every failed start path that holds no guard
-// takes: it undoes the claim, removes the per-slot tree the claim created,
-// and returns the pod's occupancy to what it was before the call.
+// removes whatever entry the registry holds under the identifier, so it
+// serves a caller that owns the slot whatever attempt created it, such as
+// the SDK-warm DemoteSDK. A start handler's failure rollback uses
+// releaseClaimedSlot instead, which releases only the entry its claim was
+// admitted against.
 //
 // The guard is acquired on ctx, the caller's own context, ahead of s.mu. At
-// the StartSession and SDK-warm rollbacks that is the context whose expiry
+// the StartSession and SDK-warm rollbacks, which share this acquisition
+// through releaseClaimedSlot, that is the context whose expiry
 // failed Runtime.Start, which is why the acquisition takes a free guard
 // whatever state ctx is in. An acquisition that outlives ctx is logged as
 // slot_guard_not_acquired and the release still runs, unguarded, because
@@ -291,6 +352,16 @@ func (s *Server) releaseSessionSlotUnderGuard(sessionID string, guarded bool) {
 	s.mu.Lock()
 	st, removed, _, release := s.reclaimSlotLocked(sessionID)
 	s.mu.Unlock()
+	s.finishSlotRelease(sessionID, st, removed, guarded, release)
+}
+
+// finishSlotRelease is the part of a release that runs after the
+// deregistration, outside s.mu: it removes the deregistered entry's tree,
+// ends the reclaim hold only on a guarded removal that returned without
+// error, and cancels the pod-wide MCP surface when no session still uses
+// it. A release that removed nothing takes the MCP half alone.
+// spec: §5.2 (slot-identifier reclaim hold); §15.4.3.
+func (s *Server) finishSlotRelease(sessionID string, st *slotState, removed, guarded bool, release func()) {
 	completed := false
 	defer func() {
 		if completed {

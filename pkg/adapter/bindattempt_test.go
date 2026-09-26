@@ -38,6 +38,9 @@ const (
 type bindRuntime struct {
 	mu      sync.Mutex
 	onClose func(sessionID string) error
+	// onConfigure, when set, answers ConfigureWorkspace, so a case can park
+	// the SDK-warm start inside the runtime call and fail it.
+	onConfigure func(sessionID string) error
 }
 
 func (r *bindRuntime) Start(context.Context, string) error { return nil }
@@ -49,7 +52,13 @@ func (r *bindRuntime) Output(context.Context, string) (<-chan []byte, error) {
 }
 func (r *bindRuntime) Interrupt(context.Context, string, bool) error { return nil }
 func (r *bindRuntime) PreConnect(context.Context) error              { return nil }
-func (r *bindRuntime) ConfigureWorkspace(context.Context, string, string) error {
+func (r *bindRuntime) ConfigureWorkspace(_ context.Context, sessionID, _ string) error {
+	r.mu.Lock()
+	hook := r.onConfigure
+	r.mu.Unlock()
+	if hook != nil {
+		return hook(sessionID)
+	}
 	return nil
 }
 func (r *bindRuntime) DemoteSDK(context.Context) error { return nil }
@@ -662,6 +671,9 @@ func TestEveryDeregisterThenDestroySiteTakesTheHold_spec_5_2(t *testing.T) {
 		destroy func(s *Server)
 	}{
 		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot(t.Context(), "alice") }},
+		{"releaseClaimedSlot", func(s *Server) {
+			s.releaseClaimedSlot(t.Context(), "alice", slotClaim{entry: slotStateForTest(s, "alice")})
+		}},
 		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
 		{"Shutdown removing arm", func(s *Server) { unconditionalShutdown(t, s, t.Context(), "alice") }},
 	}
@@ -698,6 +710,9 @@ func TestACleanupWhoseTreeRemovalFailsKeepsTheHold_spec_5_2(t *testing.T) {
 		destroy func(s *Server)
 	}{
 		{"releaseSessionSlot", func(s *Server) { s.releaseSessionSlot(t.Context(), "alice") }},
+		{"releaseClaimedSlot", func(s *Server) {
+			s.releaseClaimedSlot(t.Context(), "alice", slotClaim{entry: slotStateForTest(s, "alice")})
+		}},
 		{"hold termination", func(s *Server) { <-startHeldTermination(s) }},
 		{"Shutdown removing arm", func(s *Server) { unconditionalShutdown(t, s, t.Context(), "alice") }},
 	}
@@ -1042,6 +1057,9 @@ func TestADestructiveSectionWhoseGuardAcquisitionExpiresRemovesUnguardedAndKeeps
 	}{
 		{"releaseSessionSlot", "releaseSessionSlot", func(s *Server, ctx context.Context) {
 			s.releaseSessionSlot(ctx, "alice")
+		}},
+		{"releaseClaimedSlot", "releaseClaimedSlot", func(s *Server, ctx context.Context) {
+			s.releaseClaimedSlot(ctx, "alice", slotClaim{entry: slotStateForTest(s, "alice")})
 		}},
 		{"terminateHeldSession", "terminateHeldSession", func(s *Server, ctx context.Context) {
 			for _, m := range s.deregisterStartedSessions() {

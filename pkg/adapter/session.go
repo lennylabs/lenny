@@ -135,7 +135,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		connectors:         connectors,
 	})
 	if err != nil {
-		s.releaseSessionSlot(ctx, sessionID)
+		s.releaseClaimedSlot(ctx, sessionID, claim)
 		// §16.3: a manifest-write failure is TRANSIENT (a retry on a fresh
 		// pod can succeed; under the §4.7 contract the adapter releases the
 		// slot).
@@ -150,7 +150,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// that took the once-per-pod start arms them.
 	if s.RuntimeKind != RuntimeKindMCP && startMCP {
 		if err := s.startPlatformMCP(nonce); err != nil {
-			s.releaseSessionSlot(ctx, sessionID)
+			s.releaseClaimedSlot(ctx, sessionID, claim)
 			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 		}
@@ -160,7 +160,7 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
-		s.releaseSessionSlot(ctx, sessionID)
+		s.releaseClaimedSlot(ctx, sessionID, claim)
 		// §16.3: a runtime-start crash is TRANSIENT (pod crash → retry on a
 		// fresh pod).
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
@@ -215,9 +215,9 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // teardowns under two preconditions, as the §4.7 Shutdown row states: it
 // releases the slot and its per-slot tree for any registry entry the call
 // removes, and it tears the runtime down only for a session that started.
-// releaseSessionSlot is the shipped statement of the unstarted branch's
-// semantics, so the gateway's compensation and the adapter's own start
-// rollbacks read as one rule.
+// releaseSessionSlot, with its claim-fenced form releaseClaimedSlot, is the
+// shipped statement of the unstarted branch's semantics, so the gateway's
+// compensation and the adapter's own start rollbacks read as one rule.
 //
 // Rule 10 (the teardown-pairing rule) is the outermost branch. It is
 // decided on the request's fields alone, which is why it sits above s.mu:

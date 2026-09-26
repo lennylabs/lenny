@@ -242,12 +242,12 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 			connectors:        connectors,
 		})
 		if err != nil {
-			s.releaseSessionSlot(ctx, sessionID)
+			s.releaseClaimedSlot(ctx, sessionID, claim)
 			return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 		}
 		if s.RuntimeKind != RuntimeKindMCP && startMCP {
 			if err := s.startPlatformMCP(nonce); err != nil {
-				s.releaseSessionSlot(ctx, sessionID)
+				s.releaseClaimedSlot(ctx, sessionID, claim)
 				return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
 			}
 			// §9.3: open the per-connector MCP servers. F-9.1.2.
@@ -257,7 +257,7 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 
 	if err := sw.ConfigureWorkspace(ctx, sessionID, cwd); err != nil {
 		if fresh {
-			s.releaseSessionSlot(ctx, sessionID)
+			s.releaseClaimedSlot(ctx, sessionID, claim)
 		}
 		return nil, status.Errorf(codes.Internal, "configure SDK-warm workspace: %v", err)
 	}
