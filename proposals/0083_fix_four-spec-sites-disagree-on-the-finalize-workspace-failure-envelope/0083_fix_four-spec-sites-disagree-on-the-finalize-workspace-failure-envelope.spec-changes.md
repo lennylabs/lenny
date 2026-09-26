@@ -9,7 +9,7 @@ SPEC-1 corrects the finalize sentence of §6.2's **Client visibility:** bullet t
 
 ## Edge cases and accepted failure modes
 
-- **A deterministic workspace-validation failure at finalize is answered as retryable.** The adapter's `FinalizeWorkspace` answers a structurally invalid staging tree with `InvalidArgument`, and the session-mode finalize path still answers `503 SESSION_CREATION_FAILED` with `Retry-After`. The staged text states this shipped behavior. Whether it should instead be a permanent envelope is open decision OD-2 in the summary.
+- **A deterministic workspace-validation failure at finalize is answered as retryable.** The adapter's `FinalizeWorkspace` answers a structurally invalid staging tree with `InvalidArgument`, and the session-mode finalize path still answers `503 SESSION_CREATION_FAILED` with `Retry-After`. The staged text states this shipped behavior.
 
 ## Staged edits
 
@@ -63,7 +63,7 @@ After applying the edits, run the citation resolver and the naming lint (`script
 
 ## Spec sections deliberately untouched
 
-- **§15.1 "State-mutating endpoint preconditions", the finalize row.** After SPEC-1, §6.2 cites the row only for the setup-command and credential envelopes, which the row names. Proposal 0082 appends a sentence to the same Notes cell. Whether the row should also name the workspace outcome is open decision OD-1.
+- **§15.1 "State-mutating endpoint preconditions", the finalize row.** After SPEC-1, §6.2 cites the row only for the setup-command and credential envelopes, which the row names. Proposal 0082 appends a sentence to the same Notes cell. The `SESSION_CREATION_FAILED` catalog row covers the workspace outcome.
 - **§15.1 error catalog, the `WORKSPACE_PLAN_INVALID` and `SESSION_CREATION_FAILED` rows.** Both already agree with the gateway.
 - **§14's create-time validation list.** It already reserves `WORKSPACE_PLAN_INVALID` for inner-plan schema failures.
 

@@ -13,7 +13,7 @@ The gateway agrees with the catalog. It writes `WORKSPACE_PLAN_INVALID` only on 
 
 What a client receives today when workspace materialization fails:
 
-- **Session-mode (exclusive) pool, at `/finalize`.** `prepareAtFinalize` calls `Binder.Prepare`. A staging or `FinalizeWorkspace` failure returns a wrapped error with no workspace type. `handleFinalize` moves the row to `failed` and routes the error through `writePodClaimError` with fallback `SESSION_CREATION_FAILED`. The client receives `503 SESSION_CREATION_FAILED` with `Retry-After`, whatever gRPC code the adapter returned (the adapter's `FinalizeWorkspace` answers `InvalidArgument` or `FailedPrecondition`). The one exception is an upload archive that violates a §13.4 extraction ceiling: the `*upload.ValidationError` case answers `413 UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with no `Retry-After`.
+- **Session-mode (exclusive) pool, at `/finalize`.** `prepareAtFinalize` calls `Binder.Prepare`. A staging or `FinalizeWorkspace` failure returns a wrapped error with no workspace type. `handleFinalize` moves the row to `failed` and routes the error through `writePodClaimError` with fallback `SESSION_CREATION_FAILED`. The client receives `503 SESSION_CREATION_FAILED` with `Retry-After`, whatever gRPC code the adapter returned (the adapter's `FinalizeWorkspace` answers `InvalidArgument` or `FailedPrecondition`). The one exception is an archive whose gateway-side extraction fails a §13.4 validator: the `*upload.ValidationError` case answers `413 UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with no `Retry-After`.
 - **Concurrent-workspace pool (`maxConcurrentSessions > 1`), at `/finalize`.** `prepareAtFinalize` returns `(nil, nil)` and the call is a plain state transition. No materialization runs at finalize, so no workspace failure can surface there.
 - **Concurrent-workspace pool, at `/start`.** The reserved slot materializes through `BindReservedSlot`. `classifySlotBindFailure` maps an `InvalidArgument` at the workspace stage to the `workspace_validation` category, and the client receives `422 SLOT_FAILED` with `details.category = "workspace_validation"`. Any other workspace-stage failure (including `FailedPrecondition`, which `SlotBindError.Reason` keeps transient at the workspace stage) stays the retryable `503 STARTING_FAILED` fallback.
 
@@ -52,7 +52,7 @@ A client author or SDK author who reads §6.2 or §7.2 and handles `WORKSPACE_PL
 
 ## Prior art considered
 
-- Proposal 0081 (Draft) records this condition in its summary as open decision 30 and recommends leaving it to a separate proposal. 0081 stages no edit to the four sites.
+- Proposal 0081 (Implemented 2026-09-26) records this condition in its summary as a shipped-tree defect it does not stage, by operator decision 30, and names 0083 as the proposal that takes it up. 0081 landed no edit to the four sites.
 - Proposal 0082 (Draft) appends a sentence to the end of the §15.1 finalize row's Notes cell. It does not edit §6.2's **Client visibility:** bullet or §7.2's failure-visibility paragraph.
 - No other proposal under proposals/ edits these sites.
 
