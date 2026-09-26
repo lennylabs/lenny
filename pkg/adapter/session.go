@@ -137,7 +137,8 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	if err != nil {
 		s.releaseSessionSlot(ctx, sessionID)
 		// §16.3: a manifest-write failure is TRANSIENT (a retry on a fresh
-		// pod can succeed; the §4.7 contract returns the pod to idle).
+		// pod can succeed; under the §4.7 contract the adapter releases the
+		// slot).
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}

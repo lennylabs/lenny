@@ -213,9 +213,8 @@ func (m *AgentSandboxPodLifecycleManager) ClaimPod(ctx context.Context, poolName
 
 // ReleasePod implements PodLifecycleManager under the §4.6.1 per-pod
 // occupancy claim model: releasing a pod deletes its per-pod SandboxClaim
-// (`claim-<podName>`), and the WarmPoolController returns the pod to idle
-// as a level-triggered projection of the claim's absence (§4.6.1 occupancy
-// projection). The gateway does not write Sandbox.status to roll the pod
+// (`claim-<podName>`), and the WarmPoolController projects the pod's
+// occupancy phase (§4.6.1 occupancy projection). The gateway does not write Sandbox.status to roll the pod
 // back (§4.6.3). A missing claim is treated as already-released — release
 // is idempotent.
 func (m *AgentSandboxPodLifecycleManager) ReleasePod(ctx context.Context, handle PodHandle) error {

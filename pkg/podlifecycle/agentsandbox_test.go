@@ -183,8 +183,7 @@ func TestAgentSandboxPodLifecycleManager_ClaimPod_ConflictsOnExistingClaim(t *te
 }
 
 // TestAgentSandboxPodLifecycleManager_ReleasePod_DeletesClaim confirms
-// ReleasePod deletes the per-pod claim; the WarmPoolController returns the
-// pod to idle as a projection of the claim's absence.
+// ReleasePod deletes the per-pod claim.
 // spec: §4.6.1.
 func TestAgentSandboxPodLifecycleManager_ReleasePod_DeletesClaim(t *testing.T) {
 	claim := &lennyv1.SandboxClaim{

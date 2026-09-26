@@ -434,8 +434,7 @@ func TestBindRejectsUnderperformingRuntime_spec_5_1(t *testing.T) {
 
 	// The pre-attached failure is a terminal claim disposition: the gateway
 	// reclaims the pod by deleting its per-pod claim (§4.6.3); it does not
-	// write Sandbox.status.phase. The WarmPoolController projects draining
-	// from the claim DELETE on a recycle.enabled:false pod.
+	// write Sandbox.status.phase.
 	var claim lennyv1.SandboxClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &claim)
 	if !apierrors.IsNotFound(gerr) {

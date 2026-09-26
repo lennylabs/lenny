@@ -179,8 +179,7 @@ func TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1(t *testing.T) {
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
 // a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
-// SandboxClaim and writes no Sandbox.status against a real API server: the
-// WarmPoolController projects the pod back to idle from the claim's absence.
+// SandboxClaim and writes no Sandbox.status against a real API server.
 // A second release of the same pod is idempotent.
 //
 // diagnosis: a failure means the CRD-backed ReleasePod still writes

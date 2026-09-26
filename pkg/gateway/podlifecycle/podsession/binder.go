@@ -1255,11 +1255,9 @@ func (b *Binder) ReadoptConnect(ctx context.Context, sandboxName string) (*lenny
 // SandboxClaim. The gateway does not write Sandbox.status (§4.6.3 ownership
 // decomposition): the WarmPoolController is the sole writer of the coarse
 // occupancy phase and projects it from claim existence and pool policy
-// (§4.6.1). On a `recycle.enabled: false` pool a claim DELETE projects
-// `draining` then `terminated`, so deleting the claim is the gateway's
-// reclaim action; on a recycling pool under its limits the projection
-// returns the pod to `idle`. The delete is idempotent — a claim already
-// gone (a double release, or one the orphan GC collected) is a no-op.
+// (§4.6.1). Deleting the claim is the gateway's reclaim action. The delete
+// is idempotent — a claim already gone (a double release, or one the orphan
+// GC collected) is a no-op.
 //
 // spec: §4.6.1 (occupancy projection on claim DELETE); §4.6.3 (gateway is
 // not a writer of Sandbox.status). The WarmPoolController-side projection

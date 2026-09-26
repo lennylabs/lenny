@@ -311,9 +311,7 @@ func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName s
 // the gateway's only action when a session-mode occupancy episode ends: the
 // gateway never writes Sandbox.status (§4.6.3 ownership decomposition), so it
 // releases the pod by deleting the claim and the WarmPoolController projects
-// the resulting occupancy phase (a claim deleted on a `recycle.enabled:
-// false` pod projects `draining` then `terminated`; on a recycling pod under
-// its limits it projects `idle`, §4.6.1 occupancy projection). The delete is
+// the resulting occupancy phase (§4.6.1 occupancy projection). The delete is
 // idempotent: a missing claim is a no-op so a double release or a claim the
 // orphan GC already collected does not error.
 //

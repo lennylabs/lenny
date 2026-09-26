@@ -247,9 +247,8 @@ func (r *CRDPodRegistry) claimViaSandboxClaim(ctx context.Context, sb *lennyv1.S
 }
 
 // ReleasePod releases a pod by deleting its deterministic per-pod
-// SandboxClaim (`claim-<podName>`); the WarmPoolController returns the pod to
-// idle as a level-triggered projection of the claim's absence (§4.6.1
-// occupancy projection). The gateway does not write Sandbox.status to roll the
+// SandboxClaim (`claim-<podName>`); the WarmPoolController projects the pod's
+// occupancy phase (§4.6.1 occupancy projection). The gateway does not write Sandbox.status to roll the
 // pod back: the `sandboxes/status` grant is removed under the §4.6.3 ownership
 // decomposition, so a Sandbox.status write here would be RBAC-denied. The
 // release reason is no longer recorded on Sandbox.status; a terminal

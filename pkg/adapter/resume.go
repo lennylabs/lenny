@@ -20,8 +20,8 @@ import (
 // workspace from a checkpoint on a replacement pod. It claims the pod
 // for the session, rebuilds the workspace from the checkpoint archive,
 // and starts the runtime — the replacement-pod counterpart of
-// StartSession. On any failure after the session is claimed the pod is
-// returned to idle so a retry can land on a fresh pod.
+// StartSession. On any failure after the session is claimed the adapter
+// releases the slot so a retry can land on a fresh pod.
 func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {

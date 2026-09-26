@@ -220,8 +220,7 @@ func TestReleasePodPropagatesDeleteError(t *testing.T) {
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
 // a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
-// SandboxClaim and leaves Sandbox.status untouched: the WarmPoolController
-// projects the pod back to idle from the claim's absence. The release reason
+// SandboxClaim and leaves Sandbox.status untouched. The release reason
 // no longer maps to a Sandbox phase.
 func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	cli := newFakeClient(t, seedSandbox("alpha", "echo-pool", "claimed"))

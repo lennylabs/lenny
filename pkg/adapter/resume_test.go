@@ -310,7 +310,7 @@ func TestResumeReleasesThePodWhenChunkFetchFails(t *testing.T) {
 	if _, err := s.Resume(context.Background(), req); status.Code(err) != codes.Internal {
 		t.Fatalf("code = %v, want Internal when the chunk fetch fails", status.Code(err))
 	}
-	// The pod was returned to idle, so a retry can claim it.
+	// The adapter released the slot, so a retry can claim it.
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-2", chunks)); err != nil {
 		t.Errorf("retry after a released pod failed: %v", err)
