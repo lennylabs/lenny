@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: DOCS-4 also edits the tier-11 gate's diagnosis comment
+## Accepted: DOCS-4 also edits the tier-11 gate's diagnosis comment
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S23 (DOCS-4: drop the reporting clause from the per-slot cleanup sentences).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing DOCS-4 against the tree would expect the DOCS-4 change to touch only the two documentation pages and no test file. That reader would treat the comment edit in `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go` as unexplained scope, or would conclude that the Testing section's "no file" statement for DOCS-4 is still accurate for the landed tree.
 
-## Proposed: SCHEMA-1 claim-register rows seeded WIRED ahead of their production readers
+## Accepted: SCHEMA-1 claim-register rows seeded WIRED ahead of their production readers
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S9 (SCHEMA-1: additive proto window for bind attempt, mid_session, teardown pairing, reclaim outcome, refusal codes).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader who takes the SCHEMA-1 paragraph at face value would expect a production reader for each WIRED row to exist at commit 695dba330. That reader would treat the claim register as evidence that the adapter already enforces the teardown precondition and that the gateway already reads the reclaim outcome. Between step S9 and the later code steps that ship those readers, neither behavior exists in the tree.
 
-## Proposed: CODE-9 adds only the finalize-stage error injection to the concurrentAdapter fixture
+## Accepted: CODE-9 adds only the finalize-stage error injection to the concurrentAdapter fixture
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S10 (CODE-9: gateway observability (superseded counter, leaked-slots gauge, SlotReclaim hook, workspace_finalize stage)).
 
@@ -44,9 +44,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the fixture against the tier-1 test list at the commit that lands step S10 would expect setup-stage and credential-assignment-stage injection, the `PrepareWorkspace` and `AssignCredentials` handlers, typed refusal details, and per-request recording to be present. That reader would also expect the workspace-preparation failure case to use fixture injection, when it uses a source with no blob store instead.
 
-## Proposed: CODE-9 adds export_test.go to the podsession package
+## Accepted: CODE-9 adds export_test.go to the podsession package
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S10 (CODE-9: gateway observability (superseded counter, leaked-slots gauge, SlotReclaim hook, workspace_finalize stage)).
 
@@ -58,9 +58,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader checking the tree against the files-touched list would find `export_test.go` with no entry that accounts for it, and would treat the file as unexplained scope.
 
-## Proposed: CODE-9 credits slotbinder_test.go under §16.1 in tests/spec-map.json
+## Accepted: CODE-9 credits slotbinder_test.go under §16.1 in tests/spec-map.json
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S10 (CODE-9: gateway observability (superseded counter, leaked-slots gauge, SlotReclaim hook, workspace_finalize stage)).
 
@@ -72,9 +72,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing `tests/spec-map.json` against the test section would expect §16.1 to credit only the new tier-11 file. That reader would treat the `slotbinder_test.go` entry as an unplanned edit, and could remove it without knowing that the tier-0 gate depends on it.
 
-## Proposed: CODE-8 moves the refusal guard into a shared Binder helper
+## Accepted: CODE-8 moves the refusal guard into a shared Binder helper
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S12 (CODE-8: reclaim closures return a typed refusal without draining the pod).
 
@@ -86,9 +86,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing `binder.go` against the CODE-8 section would look for the guard inside the Prepare and Launch closure bodies and would not find it there. That reader would find `reclaimOnFailure` with no entry that accounts for it, and would not expect the refusal log line that the proposal does not mention.
 
-## Proposed: CODE-14 per-member close budget test split into three subtests
+## Accepted: CODE-14 per-member close budget test split into three subtests
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S15 (CODE-14: per-slot guard and removing-site table (minus Shutdown rows)).
 
@@ -100,9 +100,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the test against the Testing section would look for one `onHoldTimeout` case that compares member deadlines with the pass context's deadline. That reader would find that the `onHoldTimeout` subtest makes no comparison against the pass context's deadline, and could conclude that the comparison is untested, when the second subtest makes it through `terminateHeldSession`.
 
-## Proposed: CODE-14 slot_guard_not_acquired warning names the removing site as the caller
+## Accepted: CODE-14 slot_guard_not_acquired warning names the removing site as the caller
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S15 (CODE-14: per-slot guard and removing-site table (minus Shutdown rows)).
 
@@ -114,9 +114,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader taking "the caller" in CODE-14 to mean the code path that triggered the removal would expect the warning to identify the handler that called `releaseSessionSlot`. That reader would find only `releaseSessionSlot` or `terminateHeldSession` in the `caller` field, and could not use the warning alone to tell which handler reached `releaseSessionSlot`.
 
-## Proposed: CODE-1 and CODE-15 Shutdown answer and teardown extracted into Server methods
+## Accepted: CODE-1 and CODE-15 Shutdown answer and teardown extracted into Server methods
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S16 (CODE-1 + CODE-15: Shutdown teardown pairing and attempt comparison; CODE-9 untokened-entry series; CODE-14 Shutdown rows).
 
@@ -128,9 +128,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing `Shutdown` against CODE-1 and CODE-15 would look for an `answerShutdown` closure and an inline teardown in the handler body and would find neither. That reader would find `answerShutdown`, `tearDownReclaimedSlot`, and the `reclaimedSlot` struct with no entry that accounts for them, and would have to confirm separately that the deferred unlock and hold release still run in the proposal's order.
 
-## Proposed: CODE-14 tier-7a slot reclaim hold race cases narrowed to the adapter's exported surface
+## Accepted: CODE-14 tier-7a slot reclaim hold race cases narrowed to the adapter's exported surface
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S16 (CODE-1 + CODE-15: Shutdown teardown pairing and attempt comparison; CODE-9 untokened-entry series; CODE-14 Shutdown rows).
 
@@ -149,9 +149,11 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader taking the Testing section as the inventory of tier-7a coverage would conclude that the gateway's HTTP 502 `UPSTREAM_ERROR` mapping for the mid-session arm, the per-section path-work intervals, the `FinalizeWorkspace` arm, the `ExtractTree` park, and the §10.1.4 second run are pinned at tier 7a. None of them is. That reader would also look for the fifth arm in `slot_reclaim_hold_race_test.go` and find it in `slotsession_test.go` at tier 1, and would find a guard-lifetime case the proposal does not list.
 
-## Proposed: CODE-1 socket-runtime co-tenancy assertion tested at two levels
+**Follow-up.** Commit c83036672 pins the gateway's HTTP 502 `UPSTREAM_ERROR` answer for a refused mid-session upload, the reclaim against an admitted mid-session `FinalizeWorkspace`, the reclaim against a `Resume` parked inside `ExtractTree`, and the §10.1.4 second run, each at tier 1. The per-section path-work interval comparison remains unpinned, because a tier-1 park inside `RunSetup` needs a production seam.
 
-**Status:** proposed
+## Accepted: CODE-1 socket-runtime co-tenancy assertion tested at two levels
+
+**Status:** accepted
 
 **Reported by:** step S16 (CODE-1 + CODE-15: Shutdown teardown pairing and attempt comparison; CODE-9 untokened-entry series; CODE-14 Shutdown rows).
 
@@ -163,9 +165,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader looking for a single sibling assertion beside `TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2` would find two tests with different names in two files, both annotated §4.7.1 rather than §5.2, and could mistake the `slotsession_test.go` test for an unrelated addition.
 
-## Proposed: S16 spec-map credits extended to every section a new case annotates
+## Accepted: S16 spec-map credits extended to every section a new case annotates
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S16 (CODE-1 + CODE-15: Shutdown teardown pairing and attempt comparison; CODE-9 untokened-entry series; CODE-14 Shutdown rows).
 
@@ -177,9 +179,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader checking `tests/spec-map.json` against the proposal's listing would find credits the listing does not name, for §16.1, §4.7.1, §7.1, §7.4, and §5.2, and could take them for unreviewed additions to remove.
 
-## Proposed: CODE-2 slot-claim result struct and shared start-rollback helpers
+## Accepted: CODE-2 slot-claim result struct and shared start-rollback helpers
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S18 (CODE-2: start confirms the registry still holds its own attempt's entry).
 
@@ -191,9 +193,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader following the CODE-2 snippet would look for the rollback inline in `StartSession` and for positional returns from the claim functions. That reader would find neither, and would find the rollback and the SDK-warm refusal in helpers in `runtimegeneration.go` and `sdkwarm.go` that the proposal does not name.
 
-## Proposed: CODE-2 SDK-warm refusal when DemoteSDK fails
+## Accepted: CODE-2 SDK-warm refusal when DemoteSDK fails
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S18 (CODE-2: start confirms the registry still holds its own attempt's entry).
 
@@ -205,9 +207,11 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader of the proposal alone could assume that a `DemoteSDK` failure propagates as the RPC's error or leaves `sdkConnected` set. Neither holds: the failure is logged, the flag is cleared, and the status is `Aborted`.
 
-## Proposed: CODE-2 tier-7a race file annotates §4.7.1 and §7.1 only
+**Follow-up.** Commit c83036672 pins this behavior at tier 1 in `pkg/adapter/sdkwarm_test.go`.
 
-**Status:** proposed
+## Accepted: CODE-2 tier-7a race file annotates §4.7.1 and §7.1 only
+
+**Status:** accepted
 
 **Reported by:** step S18 (CODE-2: start confirms the registry still holds its own attempt's entry).
 
@@ -219,9 +223,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader who carries the tier-1 annotation over to the tier-7a file, and adds §5.2 to its cases, would fail the tier-0 credit gate unless the same change also adds a §5.2 credit for that file in `spec-map.json`.
 
-## Proposed: CODE-13 compensation and outcome share a helper
+## Accepted: CODE-13 compensation and outcome share a helper
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S19 (CODE-13 and `noteCompensationOutcome`: the gateway compensates every post-connection failure and failed resume).
 
@@ -233,9 +237,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader following the CODE-13 snippet would look for the two calls inline in `materializeSlot` and in `Binder.Resume`. That reader would find them in `compensateAndNote` and `Binder.failResume`, which the proposal does not name.
 
-## Proposed: CODE-13 resume failure always carries a SlotBindError
+## Accepted: CODE-13 resume failure always carries a SlotBindError
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S19 (CODE-13 and `noteCompensationOutcome`: the gateway compensates every post-connection failure and failed resume).
 
@@ -247,9 +251,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader who takes the sentence to mean that an exclusive-pool resume failure carries no `SlotBindError` would expect `errors.As` to fail on that path. In the landed code, `errors.As` succeeds and yields a `SlotBindError` with an empty `SlotID`.
 
-## Proposed: Tier 4 late-reclaim arm redelivers the first compensation
+## Accepted: Tier 4 late-reclaim arm redelivers the first compensation
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S19 (CODE-13 and `noteCompensationOutcome`: the gateway compensates every post-connection failure and failed resume).
 
@@ -261,9 +265,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader of the proposal would expect the test to delay the first compensation until after the retry starts. The test instead delivers it on time and replays a captured copy, so the arm pins the adapter's answer to a duplicate compensation rather than to a delayed first delivery.
 
-## Proposed: Tier 4 main arm injects the unaddressed frame
+## Accepted: Tier 4 main arm injects the unaddressed frame
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S19 (CODE-13 and `noteCompensationOutcome`: the gateway compensates every post-connection failure and failed resume).
 
@@ -275,9 +279,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader would expect the runtime under test to emit the unaddressed frame itself. The frame comes from the test's `injectingRuntime` wrapper, and the echo-concurrent runtime does not produce one.
 
-## Proposed: Additional slot-retry disposition test
+## Accepted: Additional slot-retry disposition test
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S19 (CODE-13 and `noteCompensationOutcome`: the gateway compensates every post-connection failure and failed resume).
 
@@ -289,9 +293,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader comparing the landing table with the tree would find a test case and three `spec-map.json` credits that the proposal does not list, and could take them for unrelated additions.
 
-## Proposed: Reserved and resume accounting calls go through package functions
+## Accepted: Reserved and resume accounting calls go through package functions
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S20 (CODE-5: shared accounting helper, resume classifier, retryable envelope for both refusals, per-slot leak record).
 
@@ -303,9 +307,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader of CODE-5 would look for `accountSlotFailure` called directly inside `bindConcurrentSlot` and `resumeOnPod`. The call sits one level down, in `failReservedSlot` and `accountResumeSlotFailure`, and the tier-1 cases exercise those functions through the `slotBinder` seam.
 
-## Proposed: Slot-address inventory row and credits for the resume setup demotion test file
+## Accepted: Slot-address inventory row and credits for the resume setup demotion test file
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S20 (CODE-5: shared accounting helper, resume classifier, retryable envelope for both refusals, per-slot leak record).
 
@@ -317,9 +321,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader comparing the landing table with the tree would find an inventory row and four `spec-map.json` credits for a pre-existing test case that the proposal does not list, and could take them for unrelated additions.
 
-## Proposed: Additional per-slot leak record regression tests
+## Accepted: Additional per-slot leak record regression tests
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S20 (CODE-5: shared accounting helper, resume classifier, retryable envelope for both refusals, per-slot leak record).
 
@@ -331,9 +335,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader comparing the landing table with the tree would find two test cases and four `spec-map.json` credits that the proposal does not list, and could take them for unrelated additions.
 
-## Proposed: CONF-1 tier-10 battery names registry state from probe outcomes
+## Accepted: CONF-1 tier-10 battery names registry state from probe outcomes
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S22 (CONF-1: wire-level and in-process conformance of the published contract).
 
@@ -345,9 +349,9 @@ The fifth arm is a deterministic tier-1 test, `TestTheRemovingShutdownDecidesAga
 
 **What a later reader would otherwise get wrong.** A reader of the CONF-1 note would expect a tier-10 failure to report the registry entry's internal fields, such as the stamp, the started flag, or the reclaim hold. The failure message names only the registry state derived from the probe outcome, and the battery never inspects those fields.
 
-## Proposed: CONF-1 removes the tier-0 slot registry export gate
+## Accepted: CONF-1 removes the tier-0 slot registry export gate
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S22 (CONF-1: wire-level and in-process conformance of the published contract).
 
