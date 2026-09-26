@@ -18,7 +18,31 @@ version: 1
 class: change-graph-coverage
 entries:
   - member: |-
+      .claude/tests/build-loop.test.sh
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a shell test over the build-loop driver script, run with bash rather than selected by a test tier
+  - member: |-
+      .claude/tests/change-proposal-decisions-forwarding.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/change-proposal-decisions.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/change-proposal.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/checklist-resume.test.mjs
     class: change-graph-coverage
     disposition: excluded
     reason: |-
@@ -42,7 +66,31 @@ entries:
     reason: |-
       a shell test over the spec/ guard hook, run with bash rather than selected by a test tier
   - member: |-
+      .claude/tests/implement-proposal-forwarding.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/implement-proposal-gate.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/implement-proposal-null-agent.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/implement-proposal-reverify.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/implement-proposal-spec-only.test.mjs
     class: change-graph-coverage
     disposition: excluded
     reason: |-
@@ -66,6 +114,12 @@ entries:
     reason: |-
       a node behavioural test over an agent workflow driver, run with node rather than selected by a test tier
   - member: |-
+      .claude/tests/proposal-edit-audit.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node test over the proposal edit audit, run with node rather than selected by a test tier
+  - member: |-
       .claude/tests/round-boundary.test.sh
     class: change-graph-coverage
     disposition: excluded
@@ -77,6 +131,12 @@ entries:
     disposition: excluded
     reason: |-
       the runner for the workflow test suite, run with node rather than selected by a test tier
+  - member: |-
+      .claude/tests/spec-lease.test.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a node test over the spec/ write lease tool, run with node rather than selected by a test tier
   - member: |-
       .claude/tests/step-loop.test.mjs
     class: change-graph-coverage
@@ -108,6 +168,12 @@ entries:
     reason: |-
       the per-round bookkeeping of the change-proposal review loop, invoked by an agent with one command rather than selected by a test tier
   - member: |-
+      .claude/tools/cp-state.mjs
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      the change-proposal decisions state store the workflow agents invoke with node, rather than selected by a test tier
+  - member: |-
       .claude/tools/proposal-status.mjs
     class: change-graph-coverage
     disposition: excluded
@@ -127,6 +193,12 @@ entries:
       the spec/ write lease the PreToolUse guard hook consults, invoked with node rather than selected by a test tier
   - member: |-
       .claude/workflows/build-gaps-spec-unblock.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/change-proposal-decisions.js
     class: change-graph-coverage
     disposition: excluded
     reason: |-
