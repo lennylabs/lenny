@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -626,20 +627,23 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 }
 
 // spec: 10.1 (coordinator-loss hold), 10.1.4 (the hold timeout), 5.2
-// (per-session teardown), 4.7 (the started flag records the claim)
+// (per-session teardown), 4.7.1 (role and gateway RPC contract, rule 8:
+// the start-confirmation rule)
 //
 // The started flag is written by the merged claim rather than by the
 // start, so a member whose claim returned and whose Runtime.Start has not
 // run is in the terminated set. Closing it ends nothing, because the
-// process never held it, and a start landing afterwards leaves an agent
-// process with no coordinator and no registry entry naming it. Pass 2
-// cannot order around that interleaving: no adapter-side state
-// distinguishes a member whose start has run from one whose has not.
+// process never held it. The start that lands afterwards confirms against
+// the registry before it records the runtime as holding the session, finds
+// the entry the termination deregistered gone, takes the session back off
+// the shared runtime process, and refuses with codes.Aborted. No agent
+// process is left serving a session with no coordinator and no registry
+// entry naming it.
 //
-// diagnosis: this case measures a recorded limit rather than a guarantee.
-// A failure means the window has moved. A change that closes it edits this
-// case in the same commit; a change that widens it is caught here rather
-// than in production.
+// diagnosis: a panic or a late StartSession that returns nil means the
+// start no longer confirms its claim and the late start is resident with
+// no registry entry; a non-empty resident set means the refusal arm stopped
+// closing the session on the shared runtime process.
 func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T) {
 	rt := newHoldSharedRuntime()
 	s, clk := holdRacePod(t, rt)
@@ -659,16 +663,19 @@ func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T
 	startHoldSession(t, s, "sess-b")
 
 	// The co-tenant's close is held until the parked start has completed,
-	// which puts the late start between the two members' closes.
+	// which puts the late start between the two members' closes. The hook
+	// fires on the termination's close of sess-a only: the refused start
+	// closes sess-a a second time from inside that same hook, and the
+	// second close must not release the gates again.
 	cotenantClose := rt.gateClose("sess-b")
+	var lateErr error
+	var hookFired atomic.Bool
 	rt.onClosed = func(sessionID string) {
-		if sessionID != "sess-a" {
+		if sessionID != "sess-a" || !hookFired.CompareAndSwap(false, true) {
 			return
 		}
 		close(lateStart)
-		if err := <-started; err != nil {
-			t.Errorf("the late StartSession failed: %v", err)
-		}
+		lateErr = <-started
 		close(cotenantClose)
 	}
 
@@ -679,9 +686,13 @@ func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T
 
 	awaitClosed(t, rt, "sess-a", "sess-b")
 
-	if got := rt.resident(); len(got) != 1 || got[0] != "sess-a" {
-		t.Errorf("the shared runtime process holds %v after the termination, want [sess-a]: "+
-			"the late start is the window §10.1 records as open", got)
+	if code := status.Code(lateErr); code != codes.Aborted {
+		t.Errorf("the late StartSession = %v (code %v), want codes.Aborted: the start must "+
+			"refuse once the termination has deregistered its entry", lateErr, code)
+	}
+	if got := rt.resident(); len(got) != 0 {
+		t.Errorf("the shared runtime process holds %v after the termination, want none: "+
+			"the refused start takes the session back off the process", got)
 	}
 	for _, id := range []string{"sess-a", "sess-b"} {
 		if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
