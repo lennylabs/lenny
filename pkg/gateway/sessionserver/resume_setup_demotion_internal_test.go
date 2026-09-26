@@ -13,8 +13,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 )
 
 // seedResumingRow inserts a row in the §7.2 internal `resuming` transient
@@ -110,6 +112,125 @@ func TestHoldOrFailOnResumeErrorSetupCommand_spec_7_3(t *testing.T) {
 			if resumable != wantResumable {
 				t.Errorf("resume precondition from %q = %v, want %v (a retryable failure must stay resumable)",
 					row.State, resumable, wantResumable)
+			}
+		})
+	}
+}
+
+// resumeSlotBindErr wraps cause in the *podsession.SlotBindError Binder.Resume
+// returns at the "resume" stage, as the §7.3 re-attach carries a refusal.
+func resumeSlotBindErr(cause error) error {
+	return fmt.Errorf("podsession: resume session on pod sbx-1: %w",
+		&podsession.SlotBindError{Pod: "sbx-1", SlotID: "sess-1", Stage: "resume", Err: cause})
+}
+
+// spec: §7.3 (retry and resume); §4.7.1 (role and gateway RPC contract);
+// §5.2 (pool configuration and execution modes); §6.2 (pod state machine).
+// diagnosis: a failure means a resume that met the §5.2 reclaim hold or a
+// §4.7.1 slot-bind refusal demoted the row to terminal `failed` while the wire
+// answered the retryable RESUME_FAILED, so the client's explicit resume retry
+// is rejected against a terminal row. The setup-command case fails when the
+// refusal arms sit after the setupFail case, which demotes any
+// FailedPrecondition cause first.
+func TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3(t *testing.T) {
+	hold := func() error { return status.Error(codes.Aborted, "slot_reclaim_in_progress") }
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"bare reclaim hold", hold()},
+		{"superseded refusal", supersededRefusal()},
+		{"reclaim hold in a SlotBindError", resumeSlotBindErr(hold())},
+		{"superseded refusal in a SlotBindError", resumeSlotBindErr(supersededRefusal())},
+		{"started-session refusal in a SlotBindError", resumeSlotBindErr(startedRefusal())},
+		{
+			"started-session refusal as a setup-command cause",
+			fmt.Errorf("podsession: resume: %w",
+				&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: startedRefusal()}),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			s := New(store, Options{})
+			id := "sess-resume-refusal"
+			seedResumingRow(t, store, id)
+			s.holdOrFailOnResumeError(context.Background(), "acme", id, tc.err)
+			row, err := store.Get(context.Background(), "acme", id)
+			if err != nil {
+				t.Fatalf("get session: %v", err)
+			}
+			if row.State != session.StateAwaitingClientAction {
+				t.Fatalf("state = %q, want %q", row.State, session.StateAwaitingClientAction)
+			}
+			if verr := session.Validate(session.PreconditionRequest{
+				Endpoint:     session.EndpointResume,
+				CurrentState: row.State,
+			}); verr != nil {
+				t.Errorf("resume precondition from %q rejected: %v", row.State, verr)
+			}
+		})
+	}
+}
+
+// spec: §7.3 (retry and resume); §4.7.1 (role and gateway RPC contract).
+// diagnosis: a failure means the resume classifier holds a row on any
+// FailedPrecondition rather than on the §4.7.1 started-session sentinel,
+// which reclassifies causes this change does not own.
+func TestIsTransientPodClaimErrorIgnoresPlainFailedPrecondition_spec_7_3(t *testing.T) {
+	if isTransientPodClaimError(status.Error(codes.FailedPrecondition, "workspace root mismatch")) {
+		t.Error("a bare FailedPrecondition that is not the started-session refusal classified transient")
+	}
+	if isTransientPodClaimError(resumeSlotBindErr(status.Error(codes.FailedPrecondition, "workspace root mismatch"))) {
+		t.Error("a wrapped FailedPrecondition that is not the started-session refusal classified transient")
+	}
+}
+
+// spec: §5.2 (pool configuration and execution modes); §7.3 (retry and
+// resume); §6.2 (pod state machine).
+// diagnosis: a failure means a failed §7.3 re-attach on a concurrent pool does
+// not reach the §5.2 slot-health accounting, so a leaked resume slot holds
+// occupancy while the pod is never counted unhealthy, drained, or surfaced on
+// the leaked-slot gauge; or an exclusive pool, which reserved nothing, is
+// accounted.
+func TestResumeFailureReachesTheSlotAccounting_spec_5_2(t *testing.T) {
+	match := podsession.PoolMatch{Pool: "pool-x", MaxConcurrentSessions: 4}
+	cases := []struct {
+		name       string
+		match      podsession.PoolMatch
+		slotID     string
+		leaked     bool
+		wantFailed int
+		wantLeaked int
+	}{
+		{"unacknowledged reclaim leaks the slot", match, "sess-1", true, 0, 1},
+		{"cleanly reclaimed resume is a windowed failure", match, "sess-1", false, 1, 0},
+		{"exclusive pool reserved nothing", podsession.PoolMatch{Pool: "pool-x", MaxConcurrentSessions: 1}, "", true, 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			binder := &fakeSlotBinder{}
+			health := slothealth.New()
+			slots := slotstate.NewRegistry()
+			var gauge []int
+			sbe := &podsession.SlotBindError{
+				Pod: "sbx-1", SlotID: tc.slotID, Stage: "resume",
+				Err: status.Error(codes.Unavailable, "resume failed"), Leaked: tc.leaked,
+			}
+			accountResumeSlotFailure(context.Background(), binder, health, slots, nil,
+				func(_, _ string, n int) { gauge = append(gauge, n) }, tc.match,
+				fmt.Errorf("podsession: resume session on pod sbx-1: %w", sbe))
+			if failed, leaked := health.Counts("sbx-1"); failed != tc.wantFailed || leaked != tc.wantLeaked {
+				t.Errorf("Counts = (failed=%d, leaked=%d), want (%d, %d)", failed, leaked, tc.wantFailed, tc.wantLeaked)
+			}
+			if len(gauge) != tc.wantLeaked {
+				t.Errorf("leak gauge publications = %v, want %d", gauge, tc.wantLeaked)
+			}
+			if len(binder.released) != 0 {
+				t.Errorf("released = %+v, want none: Binder.Resume owns the release", binder.released)
+			}
+			if len(binder.drained) != 0 {
+				t.Errorf("drained = %v, want none below threshold 2", binder.drained)
 			}
 		})
 	}

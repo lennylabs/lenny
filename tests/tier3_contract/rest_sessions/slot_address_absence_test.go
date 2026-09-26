@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -298,6 +299,15 @@ func slotFailCluster(t *testing.T) client.Client {
 // §5.2's condition and keeps the retryable §15.1 creation fallback.
 func slotFailServer(t *testing.T, cluster client.Client, store sessionstore.Store, dialCode codes.Code) *sessionserver.Server {
 	t.Helper()
+	return slotFailServerWithErr(t, cluster, store, status.Error(dialCode, "adapter dial failed"))
+}
+
+// slotFailServerWithErr wires the same session server as slotFailServer, with
+// an adapter dial that fails with dialErr. The dial seam is the harness's only
+// injection point, so an error that an adapter RPC would return reaches the
+// bind at the connect stage.
+func slotFailServerWithErr(t *testing.T, cluster client.Client, store sessionstore.Store, dialErr error) *sessionserver.Server {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
@@ -322,7 +332,7 @@ func slotFailServer(t *testing.T, cluster client.Client, store sessionstore.Stor
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		SlotCounter:      slotcounter.New(rc),
 		DialAdapter: func(string) (*adapterclient.Client, error) {
-			return nil, status.Error(dialCode, "adapter dial failed")
+			return nil, dialErr
 		},
 	}
 	return sessionserver.New(store, sessionserver.Options{
@@ -463,6 +473,53 @@ func TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2(t *testing.T)
 	}
 	if resp.Header.Get("Retry-After") == "" {
 		t.Errorf("the retryable creation fallback carries no Retry-After header")
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API)
+// diagnosis: the two-step /start route answers a bind that met the §4.7.1
+// started-session refusal with the non-retryable 422 SLOT_FAILED rather than
+// the retryable 503 STARTING_FAILED with Retry-After. The refusal means
+// another bind attempt or start of the same session holds the slot on that
+// pod, so the client's request did not fail on its own terms and a fresh
+// request binds a fresh attempt. The refusal classifies as policy_rejection
+// inside the slot retry loop, so a failure here means writePodClaimError no
+// longer checks the refusal ahead of the slot-failure envelope.
+func TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
+	cluster := slotFailCluster(t)
+	store := memstore.New()
+	const id = "sess_slot_refused_1"
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID:               id,
+		TenantID:         "acme",
+		UserID:           "alice@acme.com",
+		RuntimeRef:       "echo",
+		IsolationProfile: isolation.ProfileSandboxed,
+		State:            session.StateReady,
+	}); err != nil {
+		t.Fatalf("seed session row: %v", err)
+	}
+	// The started-session refusal in the form the adapter client's
+	// translation returns it: the gateway sentinel and the gRPC status.
+	refusal := fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAlreadyStarted,
+		status.Error(codes.FailedPrecondition, "slot bind already started"))
+	srv := slotFailServerWithErr(t, cluster, store, refusal)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, body := do(t, ts, "POST", "/v1/sessions/"+id+"/start", nil)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 STARTING_FAILED; body=%v", resp.StatusCode, body)
+	}
+	envelope, _ := body["error"].(map[string]any)
+	if envelope == nil {
+		t.Fatalf("response carries no error envelope: %v", body)
+	}
+	if envelope["code"] != "STARTING_FAILED" {
+		t.Errorf("error.code = %v, want STARTING_FAILED", envelope["code"])
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Errorf("the retryable fallback carries no Retry-After header")
 	}
 }
 

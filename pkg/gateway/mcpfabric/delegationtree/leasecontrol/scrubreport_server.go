@@ -186,10 +186,13 @@ type RecycleCounterStore interface {
 // the annotation stamp are the ledger's own concern. spec: §4.7 (leaked
 // feeds the unhealthy-threshold ledger), §4.6.3 (drain-request).
 type DrainLedger interface {
-	// RecordLeak records one leaked session-scrub outcome for podID. The
-	// ledger decides when the pod crosses the unhealthy threshold and stamps
-	// the drain-request annotation.
-	RecordLeak(ctx context.Context, podID string) error
+	// RecordLeak records one leaked session-scrub outcome for the slot slotID
+	// on podID. The ledger decides when the pod crosses the unhealthy
+	// threshold and stamps the drain-request annotation. The record is keyed
+	// by slot, so a second record of the same slot is a no-op; an empty or
+	// constant slotID would collapse a pod's leaks to one and the drain would
+	// never fire. spec: §5.2 (pool configuration and execution modes).
+	RecordLeak(ctx context.Context, podID, slotID string) error
 }
 
 // SessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
@@ -448,7 +451,7 @@ func NewScrubReporter(opts ScrubReporterOptions) (*ScrubReporter, error) {
 // leaked slot can hold total occupancy above zero indefinitely. A pod absent
 // from the mirror returns ErrPodNotInMirror so a stale report does not
 // silently no-op. spec: §4.7; §5.2 (per-release maxSessionsPerPod drain).
-func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _ string, leaked bool) error {
+func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, sessionID string, leaked bool) error {
 	// Capture the atomic post-increment served-session count: the per-release
 	// retirement gates its exact-equality counter emit on this exact value, so
 	// re-reading the counter (which a concurrent release could have advanced)
@@ -464,8 +467,10 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _ string,
 	if leaked {
 		// §4.7: a leaked per-slot cleanup feeds the unhealthy-threshold drain
 		// ledger behind lenny.dev/drain-request. The ledger owns the threshold
-		// check and the annotation stamp.
-		if err := r.ledger.RecordLeak(ctx, podID); err != nil {
+		// check and the annotation stamp. The session identifier is the slot
+		// identifier, and the ledger keys its record by it so a slot that
+		// reaches the ledger twice counts once (§5.2).
+		if err := r.ledger.RecordLeak(ctx, podID, sessionID); err != nil {
 			return fmt.Errorf("record leak for pod %s: %w", podID, err)
 		}
 	}

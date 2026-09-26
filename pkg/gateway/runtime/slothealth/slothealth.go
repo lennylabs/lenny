@@ -57,12 +57,17 @@ type Tracker struct {
 	window time.Duration
 	now    func() time.Time
 	events map[string][]event
-	// leaked is the per-pod count of currently-leaked slots. A leaked slot
-	// stays counted until it is reclaimed at pod termination (Forget), so
-	// this is a persistent count rather than a rolling-window series.
+	// leaked is the per-pod set of currently-leaked slot identifiers. A
+	// leaked slot stays counted until it is reclaimed at pod termination
+	// (Forget), so this is a persistent count rather than a rolling-window
+	// series. It is a set rather than a counter because one slot can reach
+	// the tracker twice: a slot whose compensation's runtime close fails is
+	// recorded through its cleanup-outcome report and again through the
+	// unclean response, and §5.2 enters it into leaked once.
 	// spec: §6.2 "`leaked` slot semantics" (a leaked slot is counted
-	// persistently for as long as the slot remains leaked).
-	leaked map[string]int
+	// persistently for as long as the slot remains leaked); §5.2 (pool
+	// configuration and execution modes).
+	leaked map[string]map[string]struct{}
 }
 
 // Option configures a Tracker.
@@ -81,7 +86,7 @@ func WithClock(now func() time.Time) Option {
 // New builds a Tracker. Without options it uses the §5.2 5-minute window
 // and the wall clock.
 func New(opts ...Option) *Tracker {
-	t := &Tracker{window: DefaultWindow, now: time.Now, events: map[string][]event{}, leaked: map[string]int{}}
+	t := &Tracker{window: DefaultWindow, now: time.Now, events: map[string][]event{}, leaked: map[string]map[string]struct{}{}}
 	for _, o := range opts {
 		o(t)
 	}
@@ -113,13 +118,19 @@ func (t *Tracker) RecordFailure(pod string) {
 // rolling window: a leaked slot persists until pod termination, so a pod
 // that accumulates permanent leaks slowly (more than one window apart) must
 // still reach the threshold rather than aging each leak out. The count is
-// released at pod termination via Forget. spec: §6.2 "`leaked` slot
-// semantics" (leaked slots counted persistently); §5.2 whole-pod
-// replacement trigger.
-func (t *Tracker) RecordLeak(pod string) {
+// released at pod termination via Forget. The record is keyed by slot, and
+// slotID names the leaked slot. A second record of the same slot is a no-op.
+// spec: §6.2 "`leaked` slot semantics" (leaked slots counted
+// persistently); §5.2 whole-pod replacement trigger.
+func (t *Tracker) RecordLeak(pod, slotID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.leaked[pod]++
+	slots := t.leaked[pod]
+	if slots == nil {
+		slots = map[string]struct{}{}
+		t.leaked[pod] = slots
+	}
+	slots[slotID] = struct{}{}
 }
 
 // Unhealthy reports whether pod has accumulated in-window failed slots plus
@@ -148,7 +159,7 @@ func (t *Tracker) Counts(pod string) (failed, leaked int) {
 	} else {
 		t.events[pod] = evs
 	}
-	return len(evs), t.leaked[pod]
+	return len(evs), len(t.leaked[pod])
 }
 
 // countsLocked returns the combined failed-plus-leaked slot count for pod:
@@ -162,7 +173,7 @@ func (t *Tracker) countsLocked(pod string) int {
 	} else {
 		t.events[pod] = evs
 	}
-	return len(evs) + t.leaked[pod]
+	return len(evs) + len(t.leaked[pod])
 }
 
 // Forget drops all recorded failures and the persistent leak count for pod.

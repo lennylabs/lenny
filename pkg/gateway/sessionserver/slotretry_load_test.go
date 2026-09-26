@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -22,17 +23,25 @@ import (
 type concurrentSlotBinder struct {
 	mu      sync.Mutex
 	drained int
+	binds   int
 }
 
 func (c *concurrentSlotBinder) BindSlot(_ context.Context, _ podsession.SlotBindRequest) (*podsession.BindResult, error) {
 	// A non-retryable reason so a single attempt leaks and returns without a
 	// second bind; each goroutine contributes exactly one leak to the pod.
-	return nil, slotBindErr("pod-hot", "slot", "workspace_prep", codes.InvalidArgument)
+	// Each bind names a distinct slot, because the §5.2 leak record is keyed
+	// by slot and a repeated slot counts once, which would never reach the
+	// threshold.
+	c.mu.Lock()
+	c.binds++
+	slotID := fmt.Sprintf("slot-%d", c.binds)
+	c.mu.Unlock()
+	return nil, slotBindErr("pod-hot", slotID, "workspace_prep", codes.InvalidArgument)
 }
 
 func (c *concurrentSlotBinder) ReleaseSlotReservation(_ context.Context, _, _ string, _ bool) error {
 	// Release always errors, so every failed slot is leaked and counted
-	// persistently via RecordLeak.
+	// persistently via RecordLeak, keyed by the slot.
 	return errors.New("slot cleanup timed out")
 }
 

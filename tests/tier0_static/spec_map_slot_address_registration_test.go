@@ -321,6 +321,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/sessionserver/recycle_scrub_fold_component_test.go",
 	"pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
 	"pkg/gateway/sessionserver/resume_external_effect_regression_test.go",
+	"pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go",
 	"pkg/gateway/sessionserver/slothealth_inject_internal_test.go",
 	"pkg/gateway/sessionserver/slotretry_load_test.go",
 	"pkg/gateway/sessionserver/slotretry_test.go",

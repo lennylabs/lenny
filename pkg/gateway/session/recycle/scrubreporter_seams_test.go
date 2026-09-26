@@ -5,6 +5,7 @@ package recycle_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -485,11 +486,13 @@ func concurrentPool(name string, maxConcurrent int) poolstore.Pool {
 }
 
 // recordNLeaks records n leaked session-scrub outcomes against podID through
-// the ledger, failing the test on any error.
+// the ledger, one per distinct slot identifier, failing the test on any
+// error. The slots are distinct because the ledger keys its record by slot
+// and a repeated slot counts once.
 func recordNLeaks(t *testing.T, ledger leasecontrol.DrainLedger, podID string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := ledger.RecordLeak(context.Background(), podID); err != nil {
+		if err := ledger.RecordLeak(context.Background(), podID, fmt.Sprintf("slot-%d", i)); err != nil {
 			t.Fatalf("RecordLeak %d: %v", i, err)
 		}
 	}
@@ -585,9 +588,41 @@ func TestDrainLedgerStampsAtConcurrentThreshold_spec_5_2(t *testing.T) {
 	if drainRequested(t, cl, "pod-1") {
 		t.Fatal("drain-request stamped at 3 leaks, below the ceil(8/2)=4 threshold")
 	}
-	recordNLeaks(t, ledger, "pod-1", 1)
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "slot-3"); err != nil {
+		t.Fatalf("RecordLeak slot-3: %v", err)
+	}
 	if !drainRequested(t, cl, "pod-1") {
 		t.Error("drain-request not stamped at 4 leaks, the ceil(8/2) threshold")
+	}
+}
+
+// TestDrainLedgerCountsARepeatedSlotOnce verifies the drain ledger keys its
+// leak record by slot: a slot whose leak reaches the ledger twice, as a slot
+// whose compensation's runtime close fails does through its cleanup-outcome
+// report and again through the unclean response, counts once toward the
+// ceil(maxConcurrentSessions/2) threshold, while a second distinct slot
+// reaches it.
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
+//
+// diagnosis: a failure means the ledger counts leak records rather than leaked
+// slots, so one slot reported twice drains a pod that holds a single leak.
+func TestDrainLedgerCountsARepeatedSlotOnce_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": concurrentPool("agents", 4)})
+	for i := 0; i < 2; i++ {
+		if err := ledger.RecordLeak(context.Background(), "pod-1", "sess-1"); err != nil {
+			t.Fatalf("RecordLeak sess-1 #%d: %v", i, err)
+		}
+	}
+	if drainRequested(t, cl, "pod-1") {
+		t.Fatal("drain-request stamped after one slot recorded twice, below the ceil(4/2)=2 threshold")
+	}
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "sess-2"); err != nil {
+		t.Fatalf("RecordLeak sess-2: %v", err)
+	}
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped at two distinct leaked slots, the ceil(4/2) threshold")
 	}
 }
 
@@ -630,7 +665,7 @@ func TestDrainLedgerNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
 	delete(pod.Labels, warmpool.LabelPool)
 	cl := fake.NewClientBuilder().WithObjects(pod).Build()
 	ledger := mustDrainLedger(t, cl, nil)
-	if err := ledger.RecordLeak(context.Background(), "pod-1"); err == nil {
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "slot-1"); err == nil {
 		t.Error("RecordLeak on a pod with no pool label: err = nil, want non-nil")
 	}
 }
@@ -648,7 +683,7 @@ func TestDrainLedgerNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
 func TestDrainLedgerMissingPodFallsBackToDefaultBound_spec_3_4(t *testing.T) {
 	cl := fake.NewClientBuilder().Build()
 	ledger := mustDrainLedger(t, cl, nil)
-	if err := ledger.RecordLeak(context.Background(), "ghost"); err != nil {
+	if err := ledger.RecordLeak(context.Background(), "ghost", "slot-1"); err != nil {
 		t.Fatalf("RecordLeak on a missing pod: %v", err)
 	}
 }
@@ -666,7 +701,7 @@ func TestDrainLedgerMissingPoolFallsBackToDefaultBound_spec_3_4(t *testing.T) {
 	pod := agentPod("pod-1", "deleted-pool", "true", time.Unix(0, 0))
 	cl := fake.NewClientBuilder().WithObjects(pod).Build()
 	ledger := mustDrainLedger(t, cl, nil) // no pools => ErrNotFound on resolve
-	if err := ledger.RecordLeak(context.Background(), "pod-1"); err != nil {
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "slot-1"); err != nil {
 		t.Fatalf("RecordLeak with a deleted pool: %v", err)
 	}
 	if !drainRequested(t, cl, "pod-1") {

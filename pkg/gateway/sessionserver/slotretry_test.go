@@ -15,6 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
@@ -396,6 +397,16 @@ func TestSlotBindErrorReason_spec_5_2(t *testing.T) {
 		{"workspace_prep", codes.InvalidArgument, podsession.SlotReasonWorkspaceValidation},
 		{"session_start", codes.ResourceExhausted, podsession.SlotReasonOOM},
 		{"session_start", codes.PermissionDenied, podsession.SlotReasonPolicyRejection},
+		// The adapter's §5.2 reclaim hold, the §4.7.1 identity gate and the
+		// start-confirmation rollback answer Aborted, which takes the
+		// transient default at every stage, so the slot retry loop repeats
+		// the bind on a fresh attempt.
+		{"session_start", codes.Aborted, podsession.SlotReasonTransient},
+		{"workspace_prep", codes.Aborted, podsession.SlotReasonTransient},
+		// The §4.7.1 started-session refusal answers FailedPrecondition, which
+		// is non-retryable inside the slot retry loop; the client envelope is
+		// chosen separately by writePodClaimError.
+		{"session_start", codes.FailedPrecondition, podsession.SlotReasonPolicyRejection},
 		{"setup", codes.FailedPrecondition, podsession.SlotReasonPolicyRejection},
 		// A FailedPrecondition in the workspace stage is an ordinary
 		// materialization failure, not a policy rejection: stay transient.
@@ -482,6 +493,8 @@ func TestClassifySlotBindFailurePassesTransientThrough_spec_5_2(t *testing.T) {
 		{"deadline exceeded", "session_start", codes.DeadlineExceeded},
 		{"workspace-prep failed precondition", "workspace_prep", codes.FailedPrecondition},
 		{"unknown", "connect", codes.Unknown},
+		{"session-start aborted refusal", "session_start", codes.Aborted},
+		{"workspace-prep aborted refusal", "workspace_prep", codes.Aborted},
 	}
 	for _, tc := range transient {
 		t.Run(tc.name, func(t *testing.T) {
@@ -577,5 +590,378 @@ func TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1(t *testing.T) {
 		if len(binder.released) != 1 || binder.released[0] != want {
 			t.Errorf("released = %+v, want [%+v]", binder.released, want)
 		}
+	}
+}
+
+// leakRecorder captures every lenny_adapter_leaked_slots gauge publication the
+// §5.2 accounting makes.
+type leakRecorder struct{ sets []int }
+
+func (l *leakRecorder) gauge(_, _ string, leaked int) { l.sets = append(l.sets, leaked) }
+
+// accountingFixture bundles the collaborators accountSlotFailure reads, so a
+// case asserts the disposition on the tracker and the registry directly
+// rather than only through the drain.
+type accountingFixture struct {
+	binder *fakeSlotBinder
+	health *slothealth.Tracker
+	slots  *slotstate.Registry
+	leaks  *leakRecorder
+	repl   []string
+	now    time.Time
+}
+
+func newAccountingFixture() *accountingFixture {
+	f := &accountingFixture{
+		binder: &fakeSlotBinder{},
+		slots:  slotstate.NewRegistry(),
+		leaks:  &leakRecorder{},
+		now:    time.Unix(0, 0),
+	}
+	f.health = slothealth.New(slothealth.WithClock(func() time.Time { return f.now }))
+	return f
+}
+
+func (f *accountingFixture) account(pod, slotID string, maxConcurrent int32, leaked bool) {
+	sbe := slotBindErr(pod, slotID, "session_start", codes.Unavailable)
+	accountSlotFailure(context.Background(), f.binder, f.health, f.slots,
+		func(pool string) { f.repl = append(f.repl, pool) }, f.leaks.gauge,
+		"pool-x", maxConcurrent, sbe, leaked)
+}
+
+// The shared §5.2 accounting books an unacknowledged compensation as a leak
+// and a compensated failure in the rolling window, at maxConcurrentSessions 4
+// (threshold 2). The retry path's release carries the reclaim's disposition,
+// and a reclaim not acknowledged clean whose reservation release succeeded
+// still takes the leaked arm: the discriminator is the reclaim disposition
+// together with the release outcome, not the release outcome alone.
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state
+// machine); §7.1 (normal flow)
+func TestSlotFailureAccountingReadsTheReclaimDisposition_spec_5_2(t *testing.T) {
+	t.Run("unacknowledged compensation takes the leaked arm", func(t *testing.T) {
+		sbe := slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable)
+		sbe.Leaked = true
+		binder := &fakeSlotBinder{
+			results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-b", SlotID: "sess-1"}},
+			errs:    []error{sbe, nil},
+		}
+		health := slothealth.New()
+		slots := slotstate.NewRegistry()
+		leaks := &leakRecorder{}
+		if _, err := applySlotRetryPolicy(context.Background(), binder, health, slots, nil, leaks.gauge, req("pool-x", 4)); err != nil {
+			t.Fatalf("expected success after one retry, got %v", err)
+		}
+		if want := (slotRelease{pod: "pod-a", slotID: "sess-1", leaked: true}); len(binder.released) != 1 || binder.released[0] != want {
+			t.Errorf("released = %+v, want [%+v]", binder.released, want)
+		}
+		failed, leaked := health.Counts("pod-a")
+		if failed != 0 || leaked != 1 {
+			t.Errorf("Counts(pod-a) = (failed=%d, leaked=%d), want (0, 1): an unacknowledged reclaim is a leak", failed, leaked)
+		}
+		if st, ok := slots.State("sess-1"); !ok || st != slotstate.Leaked {
+			t.Errorf("slot sess-1 state = %q ok=%v, want leaked", st, ok)
+		}
+		if len(leaks.sets) != 1 || leaks.sets[0] != 1 {
+			t.Errorf("leak gauge = %v, want one publication of 1", leaks.sets)
+		}
+		if len(binder.drained) != 0 {
+			t.Errorf("drained = %v, want none: one leak is below threshold 2", binder.drained)
+		}
+	})
+	t.Run("compensated failure takes the windowed arm", func(t *testing.T) {
+		binder := &fakeSlotBinder{
+			results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-b", SlotID: "sess-1"}},
+			errs:    []error{slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable), nil},
+		}
+		health := slothealth.New()
+		leaks := &leakRecorder{}
+		if _, err := applySlotRetryPolicy(context.Background(), binder, health, slotstate.NewRegistry(), nil, leaks.gauge, req("pool-x", 4)); err != nil {
+			t.Fatalf("expected success after one retry, got %v", err)
+		}
+		if want := (slotRelease{pod: "pod-a", slotID: "sess-1"}); len(binder.released) != 1 || binder.released[0] != want {
+			t.Errorf("released = %+v, want [%+v]", binder.released, want)
+		}
+		if failed, leaked := health.Counts("pod-a"); failed != 1 || leaked != 0 {
+			t.Errorf("Counts(pod-a) = (failed=%d, leaked=%d), want (1, 0)", failed, leaked)
+		}
+		if len(leaks.sets) != 0 {
+			t.Errorf("leak gauge = %v, want no publication for a compensated failure", leaks.sets)
+		}
+	})
+	t.Run("leaks of two distinct slots drain at threshold 2", func(t *testing.T) {
+		f := newAccountingFixture()
+		f.account("pod-a", "sess-1", 4, true)
+		if len(f.binder.drained) != 0 {
+			t.Fatalf("drained = %v after one leak, want none", f.binder.drained)
+		}
+		f.account("pod-a", "sess-2", 4, true)
+		if len(f.binder.drained) != 1 || f.binder.drained[0] != "pod-a" {
+			t.Errorf("drained = %v, want pod-a drained on two leaked slots", f.binder.drained)
+		}
+		if len(f.repl) != 1 || f.repl[0] != "pool-x" {
+			t.Errorf("replacements = %v, want one for pool-x", f.repl)
+		}
+		if last := f.leaks.sets[len(f.leaks.sets)-1]; last != 0 {
+			t.Errorf("last leak gauge = %d, want 0 after the drain", last)
+		}
+		if f.slots.LeakedCount("pod-a") != 0 {
+			t.Errorf("registry leaked count = %d after drain, want 0", f.slots.LeakedCount("pod-a"))
+		}
+	})
+	t.Run("a windowed failure ages out while a leak persists", func(t *testing.T) {
+		f := newAccountingFixture()
+		f.account("pod-a", "sess-1", 4, false)
+		f.account("pod-b", "sess-2", 4, true)
+		f.now = f.now.Add(6 * time.Minute)
+		if failed, _ := f.health.Counts("pod-a"); failed != 0 {
+			t.Errorf("windowed failure count after 6m = %d, want 0 (aged out)", failed)
+		}
+		if _, leaked := f.health.Counts("pod-b"); leaked != 1 {
+			t.Errorf("leaked count after 6m = %d, want 1 (a leak persists)", leaked)
+		}
+	})
+}
+
+// The persistent leak record is keyed by slot. A slot the report route
+// already recorded as leaked reaches the accounting again through the unclean
+// compensation response; §5.2 enters it into leaked once, so at
+// maxConcurrentSessions 4 the persistent count stays 1 and the pod is not
+// drained.
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
+func TestSlotFailureAccountingCountsARepeatedSlotOnce_spec_5_2(t *testing.T) {
+	f := newAccountingFixture()
+	f.health.RecordLeak("pod-a", "sess-1")
+	f.account("pod-a", "sess-1", 4, true)
+	if _, leaked := f.health.Counts("pod-a"); leaked != 1 {
+		t.Errorf("persistent leaked count = %d, want 1 (one slot recorded twice)", leaked)
+	}
+	if len(f.binder.drained) != 0 {
+		t.Errorf("drained = %v, want none: a single leaked slot is below threshold 2", f.binder.drained)
+	}
+}
+
+// At maxConcurrentSessions 2 the shipped threshold is 1, so a single failure
+// of either kind drains the pod. This pins the shipped threshold's behaviour
+// rather than evidence of the leaked disposition.
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
+func TestSlotFailureAccountingDrainsOnOneFailureAtTwo_spec_5_2(t *testing.T) {
+	for _, leaked := range []bool{false, true} {
+		f := newAccountingFixture()
+		f.account("pod-a", "sess-1", 2, leaked)
+		if len(f.binder.drained) != 1 || f.binder.drained[0] != "pod-a" {
+			t.Errorf("leaked=%v: drained = %v, want pod-a drained at threshold 1", leaked, f.binder.drained)
+		}
+	}
+}
+
+// The reconnect to a slot reserved at create reaches the §5.2 accounting.
+// BindReservedSlot owns the reservation release and books its outcome on
+// sbe.Leaked, so an acknowledged compensation whose release succeeded takes
+// the windowed arm, a release that errored takes the leaked arm, and a
+// connect-stage failure (no compensation) whose own release errored takes
+// the leaked arm too. At maxConcurrentSessions 4 (threshold 2).
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state
+// machine); §7.1 (normal flow)
+func TestReservedSlotBindReachesTheAccounting_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name       string
+		stage      string
+		leaked     bool
+		wantFailed int
+		wantLeaked int
+	}{
+		{"acknowledged compensation, clean release", "session_start", false, 1, 0},
+		{"acknowledged compensation, release errored", "session_start", true, 0, 1},
+		{"connect-stage failure, release errored", "connect", true, 0, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAccountingFixture()
+			sbe := slotBindErr("pod-r", "sess-1", tc.stage, codes.Unavailable)
+			sbe.Leaked = tc.leaked
+			out := failReservedSlot(context.Background(), f.binder, f.health, f.slots, nil, f.leaks.gauge,
+				req("pool-x", 4), fmt.Errorf("bind reserved slot: %w", sbe))
+			if failed, leaked := f.health.Counts("pod-r"); failed != tc.wantFailed || leaked != tc.wantLeaked {
+				t.Errorf("Counts(pod-r) = (failed=%d, leaked=%d), want (%d, %d)", failed, leaked, tc.wantFailed, tc.wantLeaked)
+			}
+			if got := f.slots.LeakedCount("pod-r"); got != tc.wantLeaked {
+				t.Errorf("registry leaked count = %d, want %d", got, tc.wantLeaked)
+			}
+			// The reserved path keeps its own release: the accounting sends none.
+			if len(f.binder.released) != 0 {
+				t.Errorf("released = %+v, want none from the accounting", f.binder.released)
+			}
+			// A transient failure keeps the retryable fallback.
+			var sf *podsession.SlotFailedError
+			if errors.As(out, &sf) {
+				t.Errorf("transient reserved-slot failure classified as the §5.2 client error: %v", out)
+			}
+		})
+	}
+}
+
+// startedRefusal and supersededRefusal build the two §4.7.1 slot-bind
+// refusals as the adapter client's translation returns them: the gateway
+// sentinel and the gRPC status, both on the chain.
+func startedRefusal() error {
+	return fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAlreadyStarted,
+		status.Error(codes.FailedPrecondition, "slot bind already started"))
+}
+
+func supersededRefusal() error {
+	return fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAttemptSuperseded,
+		status.Error(codes.Aborted, "slot bind attempt superseded"))
+}
+
+// Either §4.7.1 slot-bind refusal answers the endpoint's retryable 503
+// fallback with a Retry-After at every bind stage, in place of the
+// non-retryable 422 SETUP_COMMAND_FAILED or SLOT_FAILED envelope it would
+// otherwise take, and files no setup_command_failed audit row or metric for a
+// request that ran no setup command. A genuine non-zero setup exit, which
+// carries FailedPrecondition with neither refusal, and a plain
+// FailedPrecondition start failure keep their 422 envelopes: those control
+// rows fail a check keyed on the gRPC code rather than on the sentinels.
+//
+// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API); §5.2 (pool
+// configuration and execution modes)
+func TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
+	setupExit := func() error { return status.Error(codes.FailedPrecondition, "run setup commands: exit 1") }
+	concurrentSetup := func(cause error) error {
+		return classifySlotBindFailure(&podsession.SlotBindError{
+			Pod: "pod-b", SlotID: "sess-1", Stage: "setup",
+			Err: &podsession.SetupCommandFailure{Pod: "pod-b", Cause: cause},
+		}, req("pool-x", 4))
+	}
+	exhaustedSuperseded := func(t *testing.T) error {
+		t.Helper()
+		credErr := func() error {
+			return &podsession.SlotBindError{
+				Pod: "pod-b", SlotID: "sess-1", Stage: "credential_assignment",
+				Err: fmt.Errorf("podsession: assign slot credentials on pod %s: %w", "pod-b", supersededRefusal()),
+			}
+		}
+		binder := &fakeSlotBinder{errs: []error{credErr(), credErr()}}
+		_, err := applySlotRetryPolicy(context.Background(), binder, slothealth.New(), slotstate.NewRegistry(), nil, nil, req("pool-x", 4))
+		var sf *podsession.SlotFailedError
+		if !errors.As(err, &sf) || sf.Category != string(podsession.SlotReasonTransient) {
+			t.Fatalf("exhausted superseded retry = %v, want a transient *SlotFailedError", err)
+		}
+		return err
+	}
+	cases := []struct {
+		name      string
+		err       func(t *testing.T) error
+		fallback  string
+		wantCode  string
+		wantHTTP  int
+		wantRetry bool
+		// setupStage marks a row whose error carries a *SetupCommandFailure;
+		// wantAudit is whether it files the setup_command_failed audit row.
+		setupStage bool
+		wantAudit  bool
+	}{
+		{
+			name: "session-mode setup stage, create",
+			err: func(*testing.T) error {
+				return &podsession.SetupCommandFailure{Pod: "pod-b", Cause: startedRefusal()}
+			},
+			fallback: "SESSION_CREATION_FAILED", wantCode: "SESSION_CREATION_FAILED",
+			wantHTTP: 503, wantRetry: true, setupStage: true,
+		},
+		{
+			name: "session-mode setup stage, snapshotless resume",
+			err: func(*testing.T) error {
+				return &podsession.SetupCommandFailure{Pod: "pod-b", Cause: startedRefusal()}
+			},
+			fallback: "RESUME_FAILED", wantCode: "RESUME_FAILED",
+			wantHTTP: 503, wantRetry: true, setupStage: true,
+		},
+		{
+			name:     "concurrent-slot setup stage",
+			err:      func(*testing.T) error { return concurrentSetup(startedRefusal()) },
+			fallback: "STARTING_FAILED", wantCode: "STARTING_FAILED",
+			wantHTTP: 503, wantRetry: true, setupStage: true,
+		},
+		{
+			name: "concurrent-slot non-setup stage",
+			err: func(*testing.T) error {
+				return classifySlotBindFailure(&podsession.SlotBindError{
+					Pod: "pod-b", SlotID: "sess-1", Stage: "session_start",
+					Err: fmt.Errorf("start session: %w", startedRefusal()),
+				}, req("pool-x", 4))
+			},
+			fallback: "STARTING_FAILED", wantCode: "STARTING_FAILED",
+			wantHTTP: 503, wantRetry: true,
+		},
+		{
+			name:     "concurrent-slot retry exhausted on the superseded refusal",
+			err:      exhaustedSuperseded,
+			fallback: "SESSION_CREATION_FAILED", wantCode: "SESSION_CREATION_FAILED",
+			wantHTTP: 503, wantRetry: true,
+		},
+		{
+			name: "control: genuine setup exit, bare",
+			err: func(*testing.T) error {
+				return &podsession.SetupCommandFailure{Pod: "pod-b", Cause: setupExit()}
+			},
+			fallback: "SESSION_CREATION_FAILED", wantCode: "SETUP_COMMAND_FAILED",
+			wantHTTP: 422, setupStage: true, wantAudit: true,
+		},
+		{
+			name:     "control: genuine setup exit, concurrent-slot setup wrap",
+			err:      func(*testing.T) error { return concurrentSetup(setupExit()) },
+			fallback: "STARTING_FAILED", wantCode: "SETUP_COMMAND_FAILED",
+			wantHTTP: 422, setupStage: true, wantAudit: true,
+		},
+		{
+			name: "control: plain FailedPrecondition start failure",
+			err: func(*testing.T) error {
+				return classifySlotBindFailure(&podsession.SlotBindError{
+					Pod: "pod-b", SlotID: "sess-1", Stage: "session_start",
+					Err: fmt.Errorf("start session: %w", status.Error(codes.FailedPrecondition, "workspace root mismatch")),
+				}, req("pool-x", 4))
+			},
+			fallback: "STARTING_FAILED", wantCode: "SLOT_FAILED",
+			wantHTTP: 422,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(memstore.New(), Options{})
+			var sink captureSetupAudit
+			var warmupFailures []string
+			s.lifecycleAudit = &sink
+			s.incWarmpoolWarmupFailure = func(et string) { warmupFailures = append(warmupFailures, et) }
+
+			w := httptest.NewRecorder()
+			s.writePodClaimError(w, tc.err(t), tc.fallback, "could not start the session")
+			if w.Code != tc.wantHTTP {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.wantHTTP, w.Body.String())
+			}
+			body := decodeErrorBody(t, w.Body.Bytes())
+			if body["code"] != tc.wantCode {
+				t.Errorf("code = %v, want %s", body["code"], tc.wantCode)
+			}
+			if got := w.Header().Get("Retry-After") != ""; got != tc.wantRetry {
+				t.Errorf("Retry-After present = %v, want %v", got, tc.wantRetry)
+			}
+			if !tc.setupStage {
+				return
+			}
+			wantEvents := 0
+			if tc.wantAudit {
+				wantEvents = 1
+			}
+			if len(sink.events) != wantEvents {
+				t.Errorf("setup_command_failed audit events = %d, want %d", len(sink.events), wantEvents)
+			}
+			if len(warmupFailures) != wantEvents {
+				t.Errorf("warmup-failure increments = %v, want %d", warmupFailures, wantEvents)
+			}
+		})
 	}
 }

@@ -281,10 +281,17 @@ func (f *fakeCounters) RecycleCounters(_ context.Context, podID string) (int, in
 	return f.served[podID], f.scrub[podID], true, nil
 }
 
-type fakeLedger struct{ leaks []string }
+// fakeLedger records every leak the reporter forwards: leaks carries the pod
+// and slots carries the slot identifier the record is keyed by, index for
+// index.
+type fakeLedger struct {
+	leaks []string
+	slots []string
+}
 
-func (f *fakeLedger) RecordLeak(_ context.Context, podID string) error {
+func (f *fakeLedger) RecordLeak(_ context.Context, podID, slotID string) error {
 	f.leaks = append(f.leaks, podID)
+	f.slots = append(f.slots, slotID)
 	return nil
 }
 
@@ -440,6 +447,13 @@ func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	}
 	if len(l.leaks) != 1 || l.leaks[0] != "pod-1" {
 		t.Errorf("leaks = %v, want one pod-1", l.leaks)
+	}
+	// spec: §5.2 — the leak record is keyed by slot, so the reporter forwards
+	// the leaked session's identifier (the slot identifier) rather than
+	// discarding it; an empty or constant slot would collapse a pod's leaks to
+	// one and the drain would never fire.
+	if len(l.slots) != 1 || l.slots[0] != "s2" {
+		t.Errorf("leak slots = %v, want one s2", l.slots)
 	}
 	// The per-release maxSessionsPerPod retirement runs on every release,
 	// carrying the atomic post-increment served-session count (1 then 2). The

@@ -3,6 +3,7 @@
 package slothealth
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -61,8 +62,8 @@ func TestLeaksCountTowardThreshold_spec_6_2(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	tr := New(WithClock(clk.now))
 
-	tr.RecordLeak("pod-b")
-	tr.RecordLeak("pod-b")
+	tr.RecordLeak("pod-b", "slot-1")
+	tr.RecordLeak("pod-b", "slot-2")
 	if !tr.Unhealthy("pod-b", 3) { // threshold ceil(3/2)=2
 		t.Fatal("two leaks must trip the threshold independent of any failures")
 	}
@@ -82,7 +83,7 @@ func TestFailAndLeakCombine_spec_6_2(t *testing.T) {
 	if tr.Unhealthy("pod-c", 4) { // threshold 2
 		t.Fatal("one failure alone must not trip")
 	}
-	tr.RecordLeak("pod-c")
+	tr.RecordLeak("pod-c", "slot-1")
 	if !tr.Unhealthy("pod-c", 4) {
 		t.Fatal("one failure plus one leak must trip the maxConcurrent=4 threshold")
 	}
@@ -102,13 +103,13 @@ func TestLeaksCountPersistentlyAcrossWindows_spec_6_2(t *testing.T) {
 	tr := New(WithClock(clk.now), WithWindow(5*time.Minute))
 
 	// maxConcurrent=3 → threshold ceil(3/2)=2.
-	tr.RecordLeak("pod-leak")
+	tr.RecordLeak("pod-leak", "slot-1")
 	// Advance well past the rolling window before the second permanent leak.
 	clk.advance(10 * time.Minute)
 	if tr.Unhealthy("pod-leak", 3) {
 		t.Fatal("one persistent leak alone must not trip the maxConcurrent=3 threshold (needs 2)")
 	}
-	tr.RecordLeak("pod-leak")
+	tr.RecordLeak("pod-leak", "slot-2")
 	if !tr.Unhealthy("pod-leak", 3) {
 		t.Fatal("two permanent leaks 10m apart must both count and trip the threshold; a leak must not age out of the persistent count")
 	}
@@ -128,7 +129,7 @@ func TestFailureAgesOutLeakPersists_spec_6_2(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	tr := New(WithClock(clk.now), WithWindow(5*time.Minute))
 
-	tr.RecordLeak("pod-mix")
+	tr.RecordLeak("pod-mix", "slot-1")
 	tr.RecordFailure("pod-mix")
 	if f, l := tr.Counts("pod-mix"); f != 1 || l != 1 {
 		t.Fatalf("precondition Counts = (failed=%d, leaked=%d), want (1, 1)", f, l)
@@ -150,8 +151,8 @@ func TestFailureAgesOutLeakPersists_spec_6_2(t *testing.T) {
 func TestForgetClearsPersistentLeaks_spec_6_2(t *testing.T) {
 	clk := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	tr := New(WithClock(clk.now))
-	tr.RecordLeak("pod-fl")
-	tr.RecordLeak("pod-fl")
+	tr.RecordLeak("pod-fl", "slot-1")
+	tr.RecordLeak("pod-fl", "slot-2")
 	if !tr.Unhealthy("pod-fl", 3) { // threshold 2
 		t.Fatal("precondition: two persistent leaks trip maxConcurrent=3")
 	}
@@ -229,7 +230,7 @@ func TestConcurrentRecording(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			tr.RecordFailure("pod-h")
-			tr.RecordLeak("pod-h")
+			tr.RecordLeak("pod-h", fmt.Sprintf("slot-%d", i))
 			_ = tr.Unhealthy("pod-h", 4)
 			tr.Counts("pod-h")
 		}()
@@ -237,5 +238,34 @@ func TestConcurrentRecording(t *testing.T) {
 	wg.Wait()
 	if f, l := tr.Counts("pod-h"); f != 32 || l != 32 {
 		t.Fatalf("Counts = (failed=%d, leaked=%d), want (32, 32)", f, l)
+	}
+}
+
+// A second record of the same slot is a no-op, so a slot that reaches the
+// tracker through both its cleanup-outcome report and the unclean response
+// counts once toward the threshold, while leaks of distinct slots each count.
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 "`leaked` slot
+// semantics" (a leaked slot is counted once, persistently).
+func TestRecordLeakIsKeyedBySlot_spec_5_2(t *testing.T) {
+	tr := New()
+	tr.RecordLeak("pod-s", "sess-1")
+	tr.RecordLeak("pod-s", "sess-1")
+	if _, l := tr.Counts("pod-s"); l != 1 {
+		t.Fatalf("leaked after two records of one slot = %d, want 1", l)
+	}
+	if tr.Unhealthy("pod-s", 4) { // threshold 2
+		t.Fatal("one slot recorded twice must not trip the maxConcurrent=4 threshold")
+	}
+	tr.RecordLeak("pod-s", "sess-2")
+	if _, l := tr.Counts("pod-s"); l != 2 {
+		t.Fatalf("leaked after a second distinct slot = %d, want 2", l)
+	}
+	if !tr.Unhealthy("pod-s", 4) {
+		t.Fatal("leaks of two distinct slots must trip the maxConcurrent=4 threshold")
+	}
+	tr.Forget("pod-s")
+	if _, l := tr.Counts("pod-s"); l != 0 {
+		t.Fatalf("leaked after Forget = %d, want 0", l)
 	}
 }

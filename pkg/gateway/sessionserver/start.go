@@ -81,9 +81,13 @@ const minWarmupRetryAfterSeconds = 30
 // atomicity note and proposal §4.1, while a bare `podclaim.ErrNoIdlePod`
 // from the two-step `/start` claim keeps the §5.2
 // `WARM_POOL_EXHAUSTED` code.
+//
+// Either §4.7.1 slot-bind refusal answers the retryable fallback at every
+// bind stage, ahead of every typed case, so a refusal wrapped in a setup or
+// slot failure does not take a non-retryable envelope.
 // spec: §5.2, §5.2
 // (RUNTIME_UNAVAILABLE), §7.1,
-// §15.1.
+// §15.1; §4.7.1 (role and gateway RPC contract).
 func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCode, fallbackMsg string) {
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
@@ -95,6 +99,20 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
 	var archiveLimit *upload.ValidationError
 	switch {
+	case adapterclient.IsSlotBindRefusal(err):
+		// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API).
+		// Either refusal means another bind attempt or start of the same
+		// session holds the slot on that pod, so the client's request did not
+		// fail on its own terms and a fresh request binds a fresh attempt.
+		// The answer is this endpoint's retryable fallback at every bind
+		// stage. First in the switch: a refusal wrapped in *SetupCommandFailure
+		// or *SlotFailedError would otherwise take the non-retryable
+		// SETUP_COMMAND_FAILED or SLOT_FAILED envelope, and the setup case
+		// would file a setup_command_failed audit row for a request that ran no
+		// setup command.
+		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
+			fallbackMsg+": "+err.Error(), nil)
 	case errors.As(err, &deliveryIso):
 		// spec: §4.9 — the session-start credential-delivery gate rejected a
 		// resolved CredentialPool whose effective deliveryMode pairs with the
@@ -2595,11 +2613,8 @@ func (s *Server) bindConcurrentSlot(ctx context.Context, row sessionstore.Sessio
 	if row.PodAssignment != "" && !session.IsRecovery(row.State) {
 		res, err := s.podBinder.BindReservedSlot(ctx, slotReq, row.PodAssignment, row.ID)
 		if err != nil {
-			// The reserved slot is not re-reserved and retried here, so a
-			// post-reservation failure is terminal for this request: classify
-			// it as the §5.2 client error so both the one-call and the
-			// two-step route answer a slot failure with the same envelope.
-			return nil, classifySlotBindFailure(err, slotReq)
+			return nil, failReservedSlot(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement,
+				s.slotLeakGauge, slotReq, err)
 		}
 		return res, nil
 	}
@@ -2607,6 +2622,29 @@ func (s *Server) bindConcurrentSlot(ctx context.Context, row sessionstore.Sessio
 		func(ctx context.Context) (*podsession.BindResult, error) {
 			return s.bindSlotWithRetry(ctx, slotReq)
 		})
+}
+
+// failReservedSlot accounts and classifies a failed bind of a slot reserved at
+// create. BindReservedSlot owns the reservation release and books a failed
+// release onto sbe.Leaked, so the failure is accounted against the pod's §5.2
+// health ledger with the disposition it carries. The reserved slot is not
+// re-reserved and retried, so a post-reservation failure is terminal for this
+// request: it is classified as the §5.2 client error so both the one-call and
+// the two-step route answer a slot failure with the same envelope.
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state
+// machine); §7.1 (normal flow).
+func failReservedSlot(ctx context.Context, binder slotBinder, health *slothealth.Tracker,
+	slots *slotstate.Registry, replacement func(pool string),
+	leakGauge func(pod, pool string, leaked int),
+	slotReq podsession.SlotBindRequest, err error,
+) error {
+	var sbe *podsession.SlotBindError
+	if errors.As(err, &sbe) {
+		accountSlotFailure(ctx, binder, health, slots, replacement, leakGauge,
+			slotReq.Pool, slotReq.MaxConcurrentSessions, sbe, sbe.Leaked)
+	}
+	return classifySlotBindFailure(err, slotReq)
 }
 
 // prepareAndLaunch runs the §4.3 prepare barrier and the §4.4 launch
@@ -2779,6 +2817,67 @@ func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
 	}
 }
 
+// accountSlotFailure records one failed or leaked slot against the pod's §5.2
+// health ledger and retires the pod when the combined windowed-failure plus
+// persistent-leak count crosses the unhealthy threshold. Every bind path §7.1
+// binds calls it, both concurrent bind paths and the §7.3 re-attach, so the
+// create-time reserved path and the checkpoint restore reach the threshold
+// §5.2 obliges them to reach, which the trigger states with no carve-out by
+// code path.
+//
+// The caller owns the reservation release and passes the slot's disposition
+// as leaked: true when the compensating reclaim was not acknowledged clean or
+// the release itself failed. A leaked slot stays counted in active_slots
+// until the pod terminates, so it is recorded persistently (MarkLeaked, the
+// leak gauge and RecordLeak, keyed by slot) rather than in the rolling
+// window; any other failure is recorded once in the window (RecordFailure).
+//
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state machine).
+func accountSlotFailure(ctx context.Context, binder slotBinder, health *slothealth.Tracker,
+	slots *slotstate.Registry, replacement func(pool string),
+	leakGauge func(pod, pool string, leaked int),
+	pool string, maxConcurrentSessions int32,
+	sbe *podsession.SlotBindError, leaked bool,
+) {
+	if leaked {
+		// spec: §6.2 "`leaked` slot semantics" — the slot was not reclaimed,
+		// so it remains counted in active_slots (the lenny_adapter_leaked_slots
+		// gauge / the Redis slot-counter occupancy) until the pod terminates.
+		// A leaked slot persists rather than aging out, so it is counted once
+		// toward the threshold through the persistent RecordLeak rather than
+		// the windowed RecordFailure.
+		n := slots.MarkLeaked(sbe.SlotID, sbe.Pod, pool)
+		if leakGauge != nil {
+			leakGauge(sbe.Pod, pool, n)
+		}
+		health.RecordLeak(sbe.Pod, sbe.SlotID)
+	} else {
+		// spec: §6.2 "`leaked` slot semantics" — the slot was reclaimed, so
+		// this is a transient failure counted once in the rolling 5-minute
+		// window.
+		health.RecordFailure(sbe.Pod)
+	}
+	if !health.Unhealthy(sbe.Pod, maxConcurrentSessions) {
+		return
+	}
+	// Retire the whole pod: the combined windowed-failure plus persistent-leak
+	// count crossed the §5.2 unhealthy threshold.
+	if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
+		log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
+	}
+	if replacement != nil {
+		replacement(pool)
+	}
+	health.Forget(sbe.Pod)
+	// spec: §6.2 — the drained pod is being replaced; its leaked slots are
+	// reclaimed with it, so drop the per-pod leaked tracking and zero the
+	// gauge series.
+	slots.ForgetPod(sbe.Pod)
+	if leakGauge != nil {
+		leakGauge(sbe.Pod, pool, 0)
+	}
+}
+
 // applySlotRetryPolicy is the §5.2 "Concurrent-workspace slot retry
 // policy":
 //
@@ -2787,13 +2886,15 @@ func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
 //   - A slot failure after reservation is released so the retry lands on a
 //     genuinely fresh slot and the pod's active_slots is not leaked. How the
 //     failure counts toward the ceil(maxConcurrent/2) unhealthy threshold
-//     depends on the release outcome: a slot that released cleanly is a
-//     transient failure counted in the rolling 5-minute window
-//     (RecordFailure), and a slot whose release errored is leaked
-//     permanently and counted persistently (RecordLeak) so it does not age
-//     out of the window before the threshold is reached. When the pod
-//     crosses the threshold it is drained as a whole and the replacement
-//     counter is incremented.
+//     depends on the release outcome, which covers both the reservation
+//     release and the pod-side reclaim: a slot that released cleanly after
+//     an acknowledged reclaim is a transient failure counted in the rolling
+//     5-minute window (RecordFailure), and a slot whose release errored or
+//     whose reclaim was not acknowledged clean is leaked permanently and
+//     counted persistently (RecordLeak) so it does not age out of the window
+//     before the threshold is reached. accountSlotFailure records either
+//     arm and, when the pod crosses the threshold, drains it as a whole and
+//     increments the replacement counter.
 //   - A non-retryable reason (oom, workspace_validation, policy_rejection)
 //     or an exhausted retry returns the §5.2 structured SlotFailedError.
 //   - A transient reason retries once on a fresh slot.
@@ -2827,52 +2928,19 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		lastErr = err
 		reason := sbe.Reason()
 		// Release the failed slot so a retry re-reserves a fresh one and the
-		// pod's active_slots is not leaked by the failed attempt. The release
-		// outcome fixes how the slot is counted toward the ceil(maxConcurrent/2)
-		// unhealthy threshold: a clean release makes the failure transient, and
-		// a failed release leaks the slot permanently. The release carries the
-		// disposition the binder's compensating reclaim produced, so a reclaim
-		// not acknowledged clean keeps the slot counted (§7.1, §6.2).
-		if relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked); relErr != nil {
+		// pod's active_slots is not leaked by the failed attempt. The slot's
+		// disposition fixes how it is counted toward the ceil(maxConcurrent/2)
+		// unhealthy threshold: a clean release after an acknowledged pod-side
+		// reclaim makes the failure transient, and a failed release or a
+		// reclaim not acknowledged clean leaks the slot permanently. The
+		// release carries the disposition the binder's compensating reclaim
+		// produced, so a leaked slot stays counted (§7.1, §6.2).
+		relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked)
+		if relErr != nil {
 			log.Printf("sessionserver: §5.2 release failed slot %s on pod %s: %v", sbe.SlotID, sbe.Pod, relErr)
-			// spec: §6.2 "`leaked` slot semantics" — the reservation could not be
-			// reclaimed, so the slot is leaked: it remains counted in active_slots
-			// (the lenny_adapter_leaked_slots gauge / the Redis slot-counter
-			// occupancy) until the pod terminates. A leaked slot persists rather
-			// than aging out, so it is counted once toward the threshold through
-			// the persistent RecordLeak below rather than the windowed
-			// RecordFailure, matching the failed_slots (windowed) plus
-			// leaked_slots (persistent) count the trigger evaluates.
-			leaked := slots.MarkLeaked(sbe.SlotID, sbe.Pod, req.Pool)
-			if leakGauge != nil {
-				leakGauge(sbe.Pod, req.Pool, leaked)
-			}
-			health.RecordLeak(sbe.Pod)
-		} else {
-			// spec: §6.2 "`leaked` slot semantics" — the slot released cleanly,
-			// so this is a transient failure counted once in the rolling
-			// 5-minute window. A single bad slot counts once toward the
-			// threshold, here through the windowed RecordFailure.
-			health.RecordFailure(sbe.Pod)
 		}
-		// Retire the whole pod when the combined windowed-failure plus
-		// persistent-leak count crosses the §5.2 unhealthy threshold.
-		if health.Unhealthy(sbe.Pod, req.MaxConcurrentSessions) {
-			if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
-				log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
-			}
-			if replacement != nil {
-				replacement(req.Pool)
-			}
-			health.Forget(sbe.Pod)
-			// spec: §6.2 — the drained pod is being replaced; its
-			// leaked slots are reclaimed with it, so drop the per-pod leaked
-			// tracking and zero the gauge series.
-			slots.ForgetPod(sbe.Pod)
-			if leakGauge != nil {
-				leakGauge(sbe.Pod, req.Pool, 0)
-			}
-		}
+		accountSlotFailure(ctx, binder, health, slots, replacement, leakGauge,
+			req.Pool, req.MaxConcurrentSessions, sbe, sbe.Leaked || relErr != nil)
 		if reason.NonRetryable() || attempt == maxSlotRetries {
 			return nil, &podsession.SlotFailedError{
 				Category:  string(reason),
@@ -3600,6 +3668,30 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	s.writeSession(w, http.StatusOK, updated)
 }
 
+// accountResumeSlotFailure accounts a failed §7.3 re-attach's slot against
+// the pod's §5.2 health ledger. Binder.Resume has already sent the
+// compensation and released the resume's slot reservation, and it carries
+// the resulting disposition on a *podsession.SlotBindError in err's chain.
+// The non-empty slot identifier guard is exactly the concurrent pool: an
+// exclusive pool reserved nothing and has nothing to account. Without this
+// the re-attach is the one bind path §7.1 binds whose leaked slot holds
+// occupancy while the pod is never counted unhealthy or drained.
+//
+// spec: §5.2 (pool configuration and execution modes); §7.3 (retry and
+// resume); §6.2 (pod state machine).
+func accountResumeSlotFailure(ctx context.Context, binder slotBinder, health *slothealth.Tracker,
+	slots *slotstate.Registry, replacement func(pool string),
+	leakGauge func(pod, pool string, leaked int),
+	match podsession.PoolMatch, err error,
+) {
+	var sbe *podsession.SlotBindError
+	if !errors.As(err, &sbe) || sbe.SlotID == "" {
+		return
+	}
+	accountSlotFailure(ctx, binder, health, slots, replacement, leakGauge,
+		match.Pool, maxConcurrentSessions(match.MaxConcurrentSessions), sbe, sbe.Leaked)
+}
+
 // holdOrFailOnResumeError reconciles the §7.2 `resuming` row with the
 // resume failure: a transient cause (per isTransientPodClaimError) reverts
 // the row to `awaiting_client_action` so the explicit `POST /resume` retry
@@ -3641,7 +3733,9 @@ func (s *Server) holdOrFailOnResumeError(ctx context.Context, tenantID, id strin
 // succeed once the condition clears. Both decisions read
 // status.Code(setupFail.Cause) and branch on codes.FailedPrecondition,
 // so the wire retryability and the row state share one predicate and
-// cannot drift. A workspace_validation_failed or runtime-registry error
+// cannot drift. Both §4.7.1 slot-bind refusals are checked ahead of that
+// predicate, in this function and in writePodClaimError alike, so a refusal
+// wrapped in a *SetupCommandFailure holds the row rather than demoting it. A workspace_validation_failed or runtime-registry error
 // is still non-retryable and demotes the row to failed. F-7.3.23.
 //
 // spec: §5.2, §4.9
@@ -3652,6 +3746,23 @@ func (s *Server) holdOrFailOnResumeError(ctx context.Context, tenantID, id strin
 func isTransientPodClaimError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if status.Code(err) == codes.Aborted {
+		// spec: §15.4 (runtime adapter specification); §5.2 (pool configuration
+		// and execution modes). ABORTED is the adapter's transient wire
+		// classification for a bind it refused rather than failed. It covers
+		// the §5.2 reclaim-hold refusal, the identity gate's
+		// SLOT_BIND_ATTEMPT_SUPERSEDED, and the start-confirmation rollback the
+		// adapter answers on a failed start or resume. All three succeed on a
+		// fresh attempt, so the row holds in awaiting_client_action for the
+		// client's explicit resume retry rather than going terminal.
+		return true
+	}
+	if errors.Is(err, adapterclient.ErrSlotBindAlreadyStarted) {
+		// spec: §4.7.1 (role and gateway RPC contract), rule 6; §7.3 (retry and
+		// resume). The refusal is a fact about this pod rather than the session,
+		// and a resume retry makes a new claim.
+		return true
 	}
 	var warming *podsession.PoolWarmingError
 	var credAssign *podsession.CredentialAssignmentError
@@ -4043,6 +4154,8 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		Chunks:                chunks,
 	})
 	if err != nil {
+		accountResumeSlotFailure(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement,
+			s.slotLeakGauge, match, err)
 		return "", err
 	}
 	// spec: §4.6.1 (coordinating replica holds the lease), §10.1

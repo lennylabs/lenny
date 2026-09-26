@@ -173,16 +173,16 @@ func NewDrainLedger(opts DrainLedgerOptions) (leasecontrol.DrainLedger, error) {
 	}, nil
 }
 
-// RecordLeak records one leaked session-scrub outcome for podID and stamps
-// the drain-request annotation once the pod crosses the unhealthy
-// threshold. The threshold denominator is the pod's pool
+// RecordLeak records one leaked session-scrub outcome for the slot slotID on
+// podID and stamps the drain-request annotation once the pod crosses the
+// unhealthy threshold. A second record of the same slot is a no-op. The threshold denominator is the pod's pool
 // maxConcurrentSessions, resolved per pod: a recycling concurrent-session
 // pool drains at ceil(maxConcurrentSessions/2) failed-or-leaked slots, while
 // a single-session pool drains on the first leak. spec: §4.7 (leaked feeds
 // the unhealthy-threshold ledger), §4.6.3 (gateway stamps drain-request),
 // §5.2 (ceil(maxConcurrentSessions/2) unhealthy threshold).
-func (l *drainLedger) RecordLeak(ctx context.Context, podID string) error {
-	l.tracker.RecordLeak(podID)
+func (l *drainLedger) RecordLeak(ctx context.Context, podID, slotID string) error {
+	l.tracker.RecordLeak(podID, slotID)
 	maxConcurrent, err := l.maxConcurrentSessions(ctx, podID)
 	if err != nil {
 		return err

@@ -28,6 +28,7 @@ package tier4_integration_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -39,7 +40,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -203,18 +206,22 @@ func recycleCluster(t *testing.T) client.Client {
 // recycleAdapterDialer serves the real adapter Server over an in-memory
 // connection so the binder's recycle Shutdown reaches the production
 // Server.Shutdown handler, which runs the whole-pod scrub and reports.
-func recycleAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// Extra dial options, such as a client interceptor, are appended to every
+// connection the dialer builds.
+func recycleAdapterDialer(t *testing.T, srv *adapter.Server, extra ...grpc.DialOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(srv)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
-		return adapterclient.Dial("passthrough:///bufnet",
+		opts := append([]grpc.DialOption{
 			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 				return lis.DialContext(ctx)
 			}),
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}, extra...)
+		return adapterclient.Dial("passthrough:///bufnet", opts...)
 	}
 }
 
@@ -857,6 +864,131 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 	}
 }
 
+// reclaimInterceptor fails the StartSession RPC, so a reserved-slot bind fails
+// after the workspace stages and the binder sends its compensating Shutdown,
+// and, when failReclaim is set, fails that Shutdown too so the reclaim goes
+// unanswered. Every other RPC passes through to the real adapter. It records
+// the reason of every Shutdown it sees so the case can assert the compensation
+// was sent.
+type reclaimInterceptor struct {
+	failReclaim bool
+	mu          sync.Mutex
+	reasons     []string
+}
+
+func (r *reclaimInterceptor) intercept(ctx context.Context, method string, req, reply any,
+	cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption,
+) error {
+	switch method {
+	case adapterv1.Adapter_StartSession_FullMethodName:
+		return status.Error(codes.Unavailable, "start session interrupted")
+	case adapterv1.Adapter_Shutdown_FullMethodName:
+		reason := req.(*adapterv1.ShutdownRequest).GetReason()
+		r.mu.Lock()
+		r.reasons = append(r.reasons, reason)
+		r.mu.Unlock()
+		if r.failReclaim && reason == "slot_bind_failed" {
+			return status.Error(codes.Unavailable, "reclaim unanswered")
+		}
+	}
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+func (r *reclaimInterceptor) shutdownReasons() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reasons...)
+}
+
+// activeSlots reads the pod's §5.2 Redis slot counter, treating an absent key
+// as zero.
+func activeSlots(t *testing.T, rc *redis.Client, pod string) int {
+	t.Helper()
+	n, err := rc.Get(context.Background(), "lenny:pod:"+pod+":active_slots").Int()
+	if errors.Is(err, redis.Nil) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("read active_slots for %s: %v", pod, err)
+	}
+	return n
+}
+
+// TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2 drives a reserved-slot
+// bind whose StartSession fails across the real binder, a real adapter, a real
+// kube-apiserver and a real Redis slot counter. The binder compensates the
+// failure with a Shutdown carrying the slot_bind_failed reason. When that
+// reclaim goes unanswered the slot is leaked: the reservation release carries
+// leaked=true, the Redis slot counter keeps the slot counted, and the per-pod
+// SandboxClaim survives at bound. When the reclaim is answered the release is
+// clean, the counter reaches zero and the claim is deleted. The contrast
+// between the two arms is the assertion.
+//
+// diagnosis: a failure in the unanswered arm means an unacknowledged
+// compensation freed the slot's occupancy, so the gateway can over-assign into
+// a pod that may still hold the failed bind's registry entry and tree. A
+// failure in the answered arm means a clean reclaim no longer releases the
+// reservation, so every failed bind leaks a slot.
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
+func TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		failReclaim bool
+		wantSlots   int
+		wantPhase   string
+	}{
+		{"unanswered reclaim leaks the slot", true, 1, string(claimstate.Bound)},
+		{"answered reclaim releases the slot", false, 0, "<deleted>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := recycleCluster(t)
+			srv, _ := newRecycleAdapter(t, &recycleScrubOps{}, nil)
+			icpt := &reclaimInterceptor{failReclaim: tc.failReclaim}
+			binder, _ := recycleBinder(c, recycleAdapterDialer(t, srv, grpc.WithUnaryInterceptor(icpt.intercept)))
+			mr := miniredis.RunT(t)
+			rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { _ = rc.Close() })
+			binder.SlotCounter = slotcounter.New(rc)
+
+			ctx := context.Background()
+			req := podsession.SlotBindRequest{
+				Pool:                  "recycle-pool",
+				SessionID:             "reclaim-sess",
+				TenantID:              "acme",
+				Runtime:               "echo",
+				MaxConcurrentSessions: 4,
+				Plan:                  &adapterv1.WorkspacePlan{},
+			}
+			claim, err := binder.ClaimSlot(ctx, req)
+			if err != nil {
+				t.Fatalf("ClaimSlot: %v", err)
+			}
+			if got := activeSlots(t, rc, claim.SandboxName); got != 1 {
+				t.Fatalf("active_slots after ClaimSlot = %d, want 1", got)
+			}
+
+			_, err = binder.BindReservedSlot(ctx, req, claim.SandboxName, claim.SlotID)
+			var sbe *podsession.SlotBindError
+			if !errors.As(err, &sbe) {
+				t.Fatalf("BindReservedSlot error = %v, want a *podsession.SlotBindError", err)
+			}
+			if sbe.Leaked != tc.failReclaim {
+				t.Errorf("SlotBindError.Leaked = %v, want %v", sbe.Leaked, tc.failReclaim)
+			}
+			reasons := icpt.shutdownReasons()
+			if len(reasons) != 1 || reasons[0] != "slot_bind_failed" {
+				t.Errorf("Shutdown reasons = %v, want one compensation carrying slot_bind_failed", reasons)
+			}
+			if got := activeSlots(t, rc, claim.SandboxName); got != tc.wantSlots {
+				t.Errorf("active_slots after the failed bind = %d, want %d", got, tc.wantSlots)
+			}
+			if got := claimPhase(t, c, claim.SandboxName); got != tc.wantPhase {
+				t.Errorf("claim phase after the failed bind = %q, want %q", got, tc.wantPhase)
+			}
+		})
+	}
+}
+
 // perReleaseCounterStore is an in-memory RecycleCounterStore that models the
 // agent_pod_state sessions_served column the §5.2 per-release drain reads. It
 // returns the monotonic post-increment count on IncrementSessionsServed the
@@ -925,7 +1057,7 @@ func (s *perReleaseRecordingSink) count(reason string) int {
 // ScrubReporter requires a non-nil ledger.
 type perReleaseNoopLedger struct{}
 
-func (perReleaseNoopLedger) RecordLeak(context.Context, string) error { return nil }
+func (perReleaseNoopLedger) RecordLeak(context.Context, string, string) error { return nil }
 
 // perReleaseNoopInspector and perReleaseNoopDriver satisfy the ScrubReporter's
 // RecordPodScrub seams, which the per-release RecordSessionScrub path never
