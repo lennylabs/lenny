@@ -1254,8 +1254,8 @@ func (b *Binder) ReadoptConnect(ctx context.Context, sandboxName string) (*lenny
 // drain releases a session-mode pod by deleting its per-pod occupancy
 // SandboxClaim. The gateway does not write Sandbox.status (§4.6.3 ownership
 // decomposition): the WarmPoolController is the sole writer of the coarse
-// occupancy phase and projects it from claim existence and pool policy
-// (§4.6.1). Deleting the claim is the gateway's reclaim action. The delete
+// occupancy phase and projects it at the claim DELETE (§4.6.1).
+// Deleting the claim is the gateway's reclaim action. The delete
 // is idempotent — a claim already gone (a double release, or one the orphan
 // GC collected) is a no-op.
 //
