@@ -189,7 +189,7 @@ func TestAnAbandonedSDKWarmStartsLateFailureLeavesTheSuccessorsEntry_spec_4_7_1(
 	done := make(chan error, 1)
 	go func() {
 		_, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
-			SessionId: &adapterv1.SessionId{Value: "alice"}, Cwd: "/workspace/current",
+			SessionId: &adapterv1.SessionId{Value: "alice"}, Cwd: "/workspace/slots/alice/current",
 		})
 		done <- err
 	}()
