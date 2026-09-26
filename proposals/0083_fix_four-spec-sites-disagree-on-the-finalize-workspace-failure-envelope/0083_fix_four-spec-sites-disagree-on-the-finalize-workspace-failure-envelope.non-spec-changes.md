@@ -5,7 +5,7 @@ implementation checklist.
 
 ## Design (implementation-facing)
 
-The gateway already returns what SPEC-1 and SPEC-2 state, so this proposal stages no code change. The session-mode finalize path answers a workspace-materialization failure through `writePodClaimError`'s default case as `503 SESSION_CREATION_FAILED` with `Retry-After`, and through its `*upload.ValidationError` case as `413 UPLOAD_ARCHIVE_LIMIT_EXCEEDED` (`pkg/gateway/sessionserver/sessionserver.go` handleFinalize, `pkg/gateway/sessionserver/start.go` writePodClaimError). The concurrent-workspace path materializes at `/start` (`pkg/gateway/sessionserver/finalize.go` prepareAtFinalize, `pkg/gateway/sessionserver/start.go` bindConcurrentSlot and classifySlotBindFailure).
+The gateway already returns what SPEC-1 states (writePodClaimError in `pkg/gateway/sessionserver/start.go`), so this proposal stages no code change.
 
 ## Staged code changes
 
@@ -18,6 +18,10 @@ This proposal stages no schema, chart, or migration change.
 ## Staged docs changes
 
 This proposal stages no docs change. No page under `docs/` repeats the §6.2 or §7.2 claim. `docs/reference/error-catalog.md` already describes `WORKSPACE_PLAN_INVALID` as a create-time schema failure and `SESSION_CREATION_FAILED` as covering workspace materialization, and the finalize sections of `docs/api/rest.md` and `docs/api/mcp.md` name no workspace code.
+
+## Testing
+
+This proposal stages no test. Whether to add one is open decision OD-3 in the summary, and the edge case below records the gap.
 
 ## Edge cases and accepted failure modes
 

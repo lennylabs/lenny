@@ -5,16 +5,11 @@ implementation checklist.
 
 ## Design (as the spec must state it)
 
-The §15.1 error catalog and the gateway already agree. A workspace-materialization failure at `POST /v1/sessions/{id}/finalize` is a generic failure of the atomic creation unit and surfaces as the retryable `SESSION_CREATION_FAILED` fallback, which the catalog row defines as covering "claim, materialize, or setup outside a more specific code". The one more specific code is `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` (413), which the catalog applies to client uploads that violate a §13.4 extraction ceiling. `WORKSPACE_PLAN_INVALID` stays reserved for the create-time inner-plan schema validation, as the catalog and §14 state.
-
-A concurrent-workspace pool runs no materialization at finalize. Its reserved slot materializes at `POST /v1/sessions/{id}/start`, where the §5.2 **Slot retry policy (`maxConcurrentSessions > 1`).** governs the client error.
-
-The edits correct the two sites that disagree with this, §6.2's **Client visibility:** bullet (SPEC-1) and §7.2's **Pre-attached vs. post-attached failure visibility.** paragraph (SPEC-2). Each names the envelopes directly and links the catalog, the same way each already names `SETUP_COMMAND_FAILED`. The §15.1 finalize row and the §15.1 catalog rows take no edit.
+SPEC-1 corrects the finalize sentence of §6.2's **Client visibility:** bullet to the envelope the gateway returns, which the §15.1 `SESSION_CREATION_FAILED` row and §13.4's validator-violation bullet already define. SPEC-2 deletes §7.2's `WORKSPACE_PLAN_INVALID` clause; the paragraph's lead already places the failure at the endpoint that runs the failing step. SPEC-3 and SPEC-4 delete the `INTERNAL_ERROR` that the §16.5 `MinIOUnavailable` row and the §17.7 **MinIO failure** runbook entry name for a failed finalize, and restate none of that outcome. `WORKSPACE_PLAN_INVALID` stays reserved for create-time inner-plan schema validation, as the catalog and §14 state. The §15.1 finalize row and the §15.1 catalog rows take no edit.
 
 ## Edge cases and accepted failure modes
 
 - **A deterministic workspace-validation failure at finalize is answered as retryable.** The adapter's `FinalizeWorkspace` answers a structurally invalid staging tree with `InvalidArgument`, and the session-mode finalize path still answers `503 SESSION_CREATION_FAILED` with `Retry-After`. The staged text states this shipped behavior. Whether it should instead be a permanent envelope is open decision OD-2 in the summary.
-- **A concurrent-workspace slot's workspace failure at `/start`.** The staged text points to §5.2 for the envelope and does not name `SLOT_FAILED`, a code that no §15.1 catalog row defines. The summary records the missing row as a defect this proposal does not stage.
 
 ## Staged edits
 
@@ -29,28 +24,42 @@ Anchor: the bullet that begins "- **Client visibility:** Pre-attached retries ar
 with
 
 ```markdown
-`POST /v1/sessions/{id}/finalize` surfaces a setup-command or credential-assignment failure, returning the setup-command or credential error per the §15.1 finalize precondition note. It surfaces a workspace-materialization failure as the retryable `SESSION_CREATION_FAILED` fallback, except that an upload archive violating a [§13.4](13_security-model.md#134-upload-security) extraction ceiling surfaces as the non-retryable `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` (413) ([§15.1](15_external-api-surface.md#151-rest-api)). A concurrent-workspace pool runs no materialization at finalize: its reserved slot materializes at `POST /v1/sessions/{id}/start`, where the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot retry policy determines the client error.
+`POST /v1/sessions/{id}/finalize` surfaces a workspace-materialization, setup-command, or credential-assignment failure. It returns the setup-command or credential error per the §15.1 finalize precondition note, and a workspace-materialization failure as the `SESSION_CREATION_FAILED` fallback ([§15.1](15_external-api-surface.md#151-rest-api)) unless it is an archive validator violation, which surfaces as `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` ([§13.4](13_security-model.md#134-upload-security)).
 ```
 
 Leave every other sentence of the bullet unedited.
 
 ### SPEC-2 · spec/07_session-lifecycle.md § 7.2 Interactive Session Model (**Pre-attached vs. post-attached failure visibility.**)
 
-Anchor: the paragraph that begins "**Pre-attached vs. post-attached failure visibility.**". In its parenthetical list of endpoints, replace the clause
+Anchor: the paragraph that begins "**Pre-attached vs. post-attached failure visibility.**". In its parenthetical list of endpoints, delete the clause below together with the space that follows it, so that the list reads from "surfaces at `POST /v1/sessions`;" directly to "a deterministic non-zero setup-command exit".
 
 ```markdown
 a workspace-materialization failure surfaces as `WORKSPACE_PLAN_INVALID` at `POST /v1/sessions/{id}/finalize`;
 ```
 
-with
-
-```markdown
-a workspace-materialization failure surfaces at `POST /v1/sessions/{id}/finalize` as the retryable `SESSION_CREATION_FAILED` fallback, or as the non-retryable `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` (HTTP 413) when an upload archive violates a [§13.4](13_security-model.md#134-upload-security) extraction ceiling, and for a concurrent-workspace pool, whose reserved slot materializes at start, it surfaces at `POST /v1/sessions/{id}/start` under the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot retry policy;
-```
-
 Leave the rest of the paragraph unedited.
 
-After applying both edits, run the citation resolver and the naming lint (`scripts/specshift/name`) over the two edited files.
+### SPEC-3 · spec/16_observability.md § 16.5 Alerting Rules and SLOs (`MinIOUnavailable` row)
+
+Anchor: the alert-table row whose first cell is `MinIOUnavailable`. In that row, delete
+
+```markdown
+ (`finalize` step fails with `INTERNAL_ERROR`)
+```
+
+so that the clause reads "blocks workspace uploads at session creation, blocks seal-and-export at session termination". Keep the row on one physical table line, and leave the rest of it unedited.
+
+### SPEC-4 · spec/17_deployment-topology.md § 17.7 Operational Runbooks (**MinIO failure**, *Remediation:* step (3))
+
+Anchor: the *Remediation:* item of the **MinIO failure** entry. In step (3), delete the sentence
+
+```markdown
+Session creation returns `INTERNAL_ERROR`.
+```
+
+Leave every other sentence unedited.
+
+After applying the edits, run the citation resolver and the naming lint (`scripts/specshift/name`) over the edited files.
 
 ## Spec sections deliberately untouched
 
@@ -60,5 +69,7 @@ After applying both edits, run the citation resolver and the naming lint (`scrip
 
 ## Spec files touched
 
-- `spec/06_warm-pod-model.md`: §6.2, one sentence of the **Client visibility:** bullet replaced by three.
-- `spec/07_session-lifecycle.md`: §7.2, one clause of the **Pre-attached vs. post-attached failure visibility.** paragraph replaced.
+- `spec/06_warm-pod-model.md`: §6.2, the finalize sentence of the **Client visibility:** bullet replaced.
+- `spec/07_session-lifecycle.md`: §7.2, one clause of the **Pre-attached vs. post-attached failure visibility.** paragraph deleted.
+- `spec/16_observability.md`: §16.5, the `MinIOUnavailable` row loses its finalize parenthetical.
+- `spec/17_deployment-topology.md`: §17.7, one sentence of the **MinIO failure** remediation step (3) deleted.
