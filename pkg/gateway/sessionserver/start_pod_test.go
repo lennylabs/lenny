@@ -1161,6 +1161,10 @@ func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
 	a.released = append(a.released, sessionID)
 }
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*recordingLeaseAssigner) Release(string) {}
+
 // spec: §7.1 step 23 (lease release: a finalize failure after
 // AssignCredentials succeeded reclaims the pod and revokes the lease),
 // §15.1 (finalize precondition).

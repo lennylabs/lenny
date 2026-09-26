@@ -120,6 +120,10 @@ func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID strin
 
 func (a *materializeLeaseCounter) ReleaseSession(string) {}
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*materializeLeaseCounter) Release(string) {}
+
 func (a *materializeLeaseCounter) count() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

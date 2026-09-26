@@ -30,7 +30,7 @@ func (c *concurrentSlotBinder) BindSlot(_ context.Context, _ podsession.SlotBind
 	return nil, slotBindErr("pod-hot", "slot", "workspace_prep", codes.InvalidArgument)
 }
 
-func (c *concurrentSlotBinder) ReleaseSlotReservation(_ context.Context, _, _ string) error {
+func (c *concurrentSlotBinder) ReleaseSlotReservation(_ context.Context, _, _ string, _ bool) error {
 	// Release always errors, so every failed slot is leaked and counted
 	// persistently via RecordLeak.
 	return errors.New("slot cleanup timed out")

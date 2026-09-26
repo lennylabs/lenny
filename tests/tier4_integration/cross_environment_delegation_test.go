@@ -522,6 +522,10 @@ func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 
 func (a *poolRecordingAssigner) ReleaseSession(string) {}
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*poolRecordingAssigner) Release(string) {}
+
 func (a *poolRecordingAssigner) assignedPools() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -5,9 +5,14 @@ package podsession_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -84,6 +89,22 @@ type concurrentAdapter struct {
 	// startErr, when non-nil, makes StartSession fail so a test can drive
 	// the §5.2 slot-failure path.
 	startErr error
+	// setupErr and assignErr, when non-nil, make RunSetup and
+	// AssignCredentials fail, so a test can drive a failure at every
+	// post-connection stage (§7.1).
+	setupErr  error
+	assignErr error
+	// startBlocks makes StartSession wait until the caller's context is done
+	// and then fail with the context's error, which is the residue class the
+	// compensation exists for: the caller gave up during StartSession.
+	startBlocks bool
+	// reclaimOutcome is the §4.7.1 outcome a Shutdown naming a bind attempt
+	// answers. The zero value answers RECLAIMED.
+	reclaimOutcome adapterv1.SlotReclaimOutcome
+	// shutdownBudgets records, for every Shutdown served, the time left until
+	// the request's deadline as the fake saw it, so a test can compare the
+	// graceful window the request carries against the RPC deadline.
+	shutdownBudgets []time.Duration
 	// shutdownExitedCleanly reports whether a slot's Shutdown RPC returns
 	// exitedCleanly. It defaults to true (a clean slot teardown); a test sets
 	// it false to drive the §6.2 leaked-slot path, where the gateway keeps the
@@ -131,6 +152,12 @@ func (a *concurrentAdapter) PrepareWorkspace(stream grpc.ClientStreamingServer[a
 
 func (a *concurrentAdapter) AssignCredentials(_ context.Context, req *adapterv1.AssignCredentialsRequest) (*adapterv1.AssignCredentialsResponse, error) {
 	a.rec.record(req)
+	a.mu.Lock()
+	assignErr := a.assignErr
+	a.mu.Unlock()
+	if assignErr != nil {
+		return nil, assignErr
+	}
 	return &adapterv1.AssignCredentialsResponse{}, nil
 }
 
@@ -150,10 +177,23 @@ func (a *concurrentAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.
 
 func (a *concurrentAdapter) RunSetup(_ context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
 	a.rec.record(req)
+	a.mu.Lock()
+	setupErr := a.setupErr
+	a.mu.Unlock()
+	if setupErr != nil {
+		return nil, setupErr
+	}
 	return &adapterv1.RunSetupResponse{}, nil
 }
 
-func (a *concurrentAdapter) StartSession(_ context.Context, req *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+func (a *concurrentAdapter) StartSession(ctx context.Context, req *adapterv1.StartSessionRequest) (*adapterv1.StartSessionResponse, error) {
+	a.mu.Lock()
+	blocks := a.startBlocks
+	a.mu.Unlock()
+	if blocks {
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
 	a.mu.Lock()
 	startErr := a.startErr
 	if startErr == nil {
@@ -166,16 +206,27 @@ func (a *concurrentAdapter) StartSession(_ context.Context, req *adapterv1.Start
 	return &adapterv1.StartSessionResponse{}, nil
 }
 
-func (a *concurrentAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+func (a *concurrentAdapter) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	a.rec.record(req)
 	a.mu.Lock()
+	if dl, ok := ctx.Deadline(); ok {
+		a.shutdownBudgets = append(a.shutdownBudgets, time.Until(dl))
+	}
 	cleanly := a.shutdownExitedCleanly
 	shutdownErr := a.shutdownErr
+	outcome := a.reclaimOutcome
 	a.mu.Unlock()
 	if shutdownErr != nil {
 		return nil, shutdownErr
 	}
-	return &adapterv1.ShutdownResponse{ExitedCleanly: cleanly}, nil
+	resp := &adapterv1.ShutdownResponse{ExitedCleanly: cleanly}
+	if req.GetBindAttempt() != "" {
+		if outcome == adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_UNSPECIFIED {
+			outcome = adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED
+		}
+		resp.SlotReclaim = outcome
+	}
+	return resp, nil
 }
 
 func (a *concurrentAdapter) startedSet() map[string]bool {
@@ -1067,6 +1118,458 @@ func TestReleaseSlotSendsUnconditionalTeardown_spec_4_7_1(t *testing.T) {
 			}
 			if sawRecycle != tc.recycle {
 				t.Errorf("recycle disposition sent = %v, want %v", sawRecycle, tc.recycle)
+			}
+		})
+	}
+}
+
+// slotBindReq is the concurrent-pool bind request the compensation cases
+// drive for sess-1.
+func slotBindReq() podsession.SlotBindRequest {
+	return podsession.SlotBindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+	}
+}
+
+// slotEnv shares one envtest apiserver across the subtests of a table, so a
+// table does not pay an apiserver start per row. Each bind gets its own
+// Sandbox in its own pool, so no row can land on another row's pod.
+type slotEnv struct {
+	c client.Client
+	n int
+}
+
+func newSlotEnv(t *testing.T) *slotEnv {
+	t.Helper()
+	return &slotEnv{c: k8sClient(t)}
+}
+
+// failedSlotBind runs one BindSlot against a fresh pod in a fresh pool, with
+// an adapter the configure hook shapes to fail, and returns the
+// SlotBindError, the adapter, and the pod's Sandbox name. req.Pool is
+// overwritten with the row's own pool.
+func (e *slotEnv) failedSlotBind(t *testing.T, configure func(*concurrentAdapter, *podsession.Binder), req podsession.SlotBindRequest) (*podsession.SlotBindError, *concurrentAdapter, string) {
+	t.Helper()
+	e.n++
+	sandboxName, pool := fmt.Sprintf("sbx-%d", e.n), fmt.Sprintf("pool-%d", e.n)
+	sb := concurrentIdleSandbox(sandboxName, "10.244.1.7")
+	sb.Labels[warmpool.LabelPool] = pool
+	seedObjects(t, e.c, sb)
+	req.Pool = pool
+	a := newConcurrentAdapter()
+	binder := newSlotBinder(t, e.c, concurrentAdapterDialer(t, a))
+	if configure != nil {
+		configure(a, binder)
+	}
+	_, err := binder.BindSlot(context.Background(), req)
+	var sbe *podsession.SlotBindError
+	if !errors.As(err, &sbe) {
+		t.Fatalf("BindSlot error = %v, want *SlotBindError", err)
+	}
+	return sbe, a, sandboxName
+}
+
+// attemptToken returns the bind attempt token the recorded bind-sequence
+// requests for sessionID carried.
+func attemptToken(t *testing.T, a *concurrentAdapter, sessionID string) string {
+	t.Helper()
+	for _, c := range a.rec.forSession(sessionID) {
+		if c.rpc != "Shutdown" && c.bindAttempt != "" {
+			return c.bindAttempt
+		}
+	}
+	t.Fatalf("no bind-sequence request carried a token for %s", sessionID)
+	return ""
+}
+
+// A failed slot bind sends exactly one compensating Shutdown, through the
+// fenced form: it names the failed attempt's own token, leaves
+// unconditional_teardown false, and carries the slot_bind_failed reason.
+// Against the pre-change binder no Shutdown is sent at all.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCompensationNamesTheAttemptsOwnToken_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	_, a, _ := env.failedSlotBind(t, func(a *concurrentAdapter, _ *podsession.Binder) {
+		a.startErr = errors.New("runtime refused to start")
+	}, slotBindReq())
+	reqs := a.rec.shutdownRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("Shutdown requests = %d, want exactly one compensation", len(reqs))
+	}
+	r := reqs[0]
+	if r.GetSessionId().GetValue() != "sess-1" {
+		t.Errorf("compensation names session %q, want sess-1", r.GetSessionId().GetValue())
+	}
+	if got, want := r.GetBindAttempt(), attemptToken(t, a, "sess-1"); got != want {
+		t.Errorf("compensation bind_attempt = %q, want the attempt's own token %q", got, want)
+	}
+	if r.GetUnconditionalTeardown() {
+		t.Error("compensation set unconditional_teardown, want the fenced form")
+	}
+	if r.GetReason() != "slot_bind_failed" {
+		t.Errorf("compensation reason = %q, want slot_bind_failed", r.GetReason())
+	}
+}
+
+// The leaked disposition reads the RPC error and the clean-exit flag alone:
+// a clean answer is not leaked and an unclean one is, whatever outcome it
+// carries, and an RPC error is leaked.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCompensationLeakedDisposition_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	outcomes := []struct {
+		name    string
+		outcome adapterv1.SlotReclaimOutcome
+	}{
+		{"reclaimed", adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED},
+		{"superseded", adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED},
+		{"absent", adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_ABSENT},
+		{"unrecognized", adapterv1.SlotReclaimOutcome(99)},
+	}
+	for _, oc := range outcomes {
+		for _, clean := range []bool{true, false} {
+			name := oc.name + "/unclean"
+			if clean {
+				name = oc.name + "/clean"
+			}
+			t.Run(name, func(t *testing.T) {
+				sbe, _, _ := env.failedSlotBind(t, func(a *concurrentAdapter, _ *podsession.Binder) {
+					a.startErr = errors.New("runtime refused to start")
+					a.reclaimOutcome = oc.outcome
+					a.shutdownExitedCleanly = clean
+				}, slotBindReq())
+				if sbe.Leaked == clean {
+					t.Errorf("Leaked = %v for a %s reclaim, want %v", sbe.Leaked, name, !clean)
+				}
+			})
+		}
+	}
+	t.Run("rpc_error", func(t *testing.T) {
+		sbe, _, _ := env.failedSlotBind(t, func(a *concurrentAdapter, _ *podsession.Binder) {
+			a.startErr = errors.New("runtime refused to start")
+			a.shutdownErr = status.Error(codes.Unavailable, "adapter gone")
+		}, slotBindReq())
+		if !sbe.Leaked {
+			t.Error("Leaked = false for an unanswered reclaim, want true")
+		}
+	})
+}
+
+// A stage refused with either §4.7.1 slot-bind refusal is compensated too:
+// the Shutdown names this attempt's token, the fake answers superseded, the
+// slot is not leaked, and the session-wide lease release is not called.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindTypedRefusalIsCompensated_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	for _, rf := range slotBindRefusalCases {
+		t.Run(rf.name, func(t *testing.T) {
+			assigner := &fakeAssigner{}
+			req := slotBindReq()
+			req.CredentialPools = map[string]string{"anthropic": "pool-a"}
+			sbe, a, _ := env.failedSlotBind(t, func(a *concurrentAdapter, b *podsession.Binder) {
+				a.assignErr = slotBindRefusal(t, rf.code, rf.ec)
+				a.reclaimOutcome = adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED
+				b.Credentials = assigner
+			}, req)
+			if !adapterclient.IsSlotBindRefusal(sbe) {
+				t.Fatalf("error %v is not a slot-bind refusal", sbe)
+			}
+			reqs := a.rec.shutdownRequests()
+			if len(reqs) != 1 || reqs[0].GetBindAttempt() != attemptToken(t, a, "sess-1") {
+				t.Fatalf("Shutdown requests = %v, want one naming the refused attempt's token", reqs)
+			}
+			if sbe.Leaked {
+				t.Error("Leaked = true after a clean superseded answer, want false")
+			}
+			if len(assigner.released) != 0 {
+				t.Errorf("ReleaseSession called with %v on a refused attempt, want no session-wide release", assigner.released)
+			}
+		})
+	}
+}
+
+// A failed slot attempt releases, by identifier, exactly the leases it
+// minted before the failure, and never walks the session's leases: a
+// successor attempt's leases for the same session survive it.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	cases := []struct {
+		name      string
+		failFrom  int
+		assignErr func(t *testing.T) error
+		wantN     int
+	}{
+		{"second_assign_fails", 2, nil, 1},
+		{"adapter_assign_fails", 0, func(*testing.T) error { return errors.New("write credentials.json") }, 2},
+		{"adapter_assign_refused", 0, func(t *testing.T) error {
+			return slotBindRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED)
+		}, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assigner := &fakeAssigner{numbered: true}
+			// A successor attempt already holds a lease for sess-1; it must
+			// survive the failed attempt's release.
+			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme")
+			assigner.calls, assigner.minted = nil, nil
+			assigner.failFrom = tc.failFrom
+			req := slotBindReq()
+			req.CredentialPools = map[string]string{"anthropic": "pool-a", "openai": "pool-b"}
+			_, _, _ = env.failedSlotBind(t, func(a *concurrentAdapter, b *podsession.Binder) {
+				if tc.assignErr != nil {
+					a.assignErr = tc.assignErr(t)
+				}
+				b.Credentials = assigner
+			}, req)
+			if len(assigner.minted) != tc.wantN {
+				t.Fatalf("minted = %v, want %d leases before the failure", assigner.minted, tc.wantN)
+			}
+			got := append([]string(nil), assigner.leaseReleases...)
+			want := append([]string(nil), assigner.minted...)
+			sort.Strings(got)
+			sort.Strings(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("released leases = %v, want exactly the attempt's own %v", got, want)
+			}
+			if slices.Contains(got, successor.GetLeaseId()) {
+				t.Errorf("the failed attempt released the successor's lease %s", successor.GetLeaseId())
+			}
+			if len(assigner.released) != 0 {
+				t.Errorf("ReleaseSession called with %v, want no session-wide release from a failed attempt", assigner.released)
+			}
+		})
+	}
+}
+
+// Every post-connection stage failure sends exactly one compensation naming
+// the session, whose graceful window is half the §5.2 per-slot cleanup budget
+// and strictly less than the RPC deadline that budget sets. The table runs
+// with cleanupTimeoutSeconds unset, where the 5s floor governs, and with a
+// configured value above it.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCompensatesEveryPostConnectionStage_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	stages := []struct {
+		name string
+		set  func(a *concurrentAdapter)
+	}{
+		{"finalize", func(a *concurrentAdapter) { a.finalizeErr = status.Error(codes.Internal, "finalize failed") }},
+		{"setup", func(a *concurrentAdapter) { a.setupErr = status.Error(codes.Internal, "setup failed") }},
+		{"credential_assignment", func(a *concurrentAdapter) { a.assignErr = status.Error(codes.Internal, "assign failed") }},
+		{"session_start", func(a *concurrentAdapter) { a.startErr = status.Error(codes.Internal, "start failed") }},
+	}
+	budgets := []struct {
+		name           string
+		cleanupSeconds int
+		wantBudget     time.Duration
+	}{
+		{"floor", 0, 5 * time.Second},
+		{"configured", 80, 20 * time.Second}, // 80s / 4 slots
+	}
+	for _, bg := range budgets {
+		for _, st := range stages {
+			t.Run(bg.name+"/"+st.name, func(t *testing.T) {
+				req := slotBindReq()
+				req.CleanupTimeoutSeconds = bg.cleanupSeconds
+				req.CredentialPools = map[string]string{"anthropic": "pool-a"}
+				_, a, _ := env.failedSlotBind(t, func(a *concurrentAdapter, b *podsession.Binder) {
+					st.set(a)
+					b.Credentials = &fakeAssigner{}
+				}, req)
+				reqs := a.rec.shutdownRequests()
+				if len(reqs) != 1 || reqs[0].GetSessionId().GetValue() != "sess-1" {
+					t.Fatalf("Shutdown requests = %v, want exactly one naming sess-1", reqs)
+				}
+				window := time.Duration(reqs[0].GetDeadlineMs()) * time.Millisecond
+				if window != bg.wantBudget/2 {
+					t.Errorf("deadlineMs = %v, want half the budget %v", window, bg.wantBudget/2)
+				}
+				if len(a.shutdownBudgets) != 1 {
+					t.Fatalf("Shutdown deadlines observed = %v, want one", a.shutdownBudgets)
+				}
+				rpc := a.shutdownBudgets[0]
+				if rpc > bg.wantBudget || window >= rpc {
+					t.Errorf("RPC deadline %v, graceful window %v: want window < deadline <= budget %v", rpc, window, bg.wantBudget)
+				}
+			})
+		}
+	}
+}
+
+// A workspace-staging failure returns before PrepareWorkspace is sent, so the
+// pod holds nothing for the session. The compensation is still sent, the
+// adapter answers absent, and the slot is not leaked.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCompensatesAPrePrepareWorkspaceFailure_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	req := slotBindReq()
+	req.Plan = &adapterv1.WorkspacePlan{Sources: []*adapterv1.WorkspaceSource{
+		{Type: "uploadFile", Path: "a.txt", UploadRef: "s3://uploads/a.txt"},
+	}}
+	sbe, a, _ := env.failedSlotBind(t, func(a *concurrentAdapter, _ *podsession.Binder) {
+		a.reclaimOutcome = adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_ABSENT
+	}, req)
+	for _, c := range a.rec.forSession("sess-1") {
+		if c.rpc == "PrepareWorkspace" {
+			t.Fatal("PrepareWorkspace was sent; the case needs a failure before the first pod-side RPC")
+		}
+	}
+	reqs := a.rec.shutdownRequests()
+	if len(reqs) != 1 || reqs[0].GetBindAttempt() == "" {
+		t.Fatalf("Shutdown requests = %v, want one fenced compensation", reqs)
+	}
+	if sbe.Leaked {
+		t.Error("Leaked = true after an absent, clean answer; a blob-store failure must add nothing to the pod's leak count")
+	}
+}
+
+// A failure whose caller context expired during StartSession still sends the
+// compensation, and on the reserved-slot path the reservation is then
+// released with leaked false. This is the residue class the compensation
+// exists for: the adapter may have started the session after the gateway
+// stopped waiting.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCompensatesWhenTheCallerContextExpired_spec_7_1(t *testing.T) {
+	t.Run("materializeSlot", func(t *testing.T) {
+		a := newConcurrentAdapter()
+		c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+		binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+		a.startBlocks = true
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		if _, err := binder.BindSlot(ctx, slotBindReq()); err == nil {
+			t.Fatal("BindSlot succeeded, want the expired StartSession")
+		}
+		if reqs := a.rec.shutdownRequests(); len(reqs) != 1 || reqs[0].GetBindAttempt() == "" {
+			t.Fatalf("Shutdown requests = %v, want one fenced compensation despite the expired context", reqs)
+		}
+	})
+	t.Run("BindReservedSlot", func(t *testing.T) {
+		a := newConcurrentAdapter()
+		c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+		binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+		req := slotBindReq()
+		claim, err := binder.ClaimSlot(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ClaimSlot: %v", err)
+		}
+		a.startBlocks = true
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		_, err = binder.BindReservedSlot(ctx, req, claim.SandboxName, claim.SlotID)
+		var sbe *podsession.SlotBindError
+		if !errors.As(err, &sbe) {
+			t.Fatalf("BindReservedSlot error = %v, want *SlotBindError", err)
+		}
+		if reqs := a.rec.shutdownRequests(); len(reqs) != 1 || reqs[0].GetBindAttempt() == "" {
+			t.Fatalf("Shutdown requests = %v, want one fenced compensation despite the expired context", reqs)
+		}
+		if sbe.Leaked {
+			t.Error("Leaked = true after a clean reclaim, want the reservation released as not leaked")
+		}
+		// The only slot on the pod was released not leaked, so the per-pod
+		// claim is disposed on the expired context's detached release.
+		if podClaimExists(t, c, "sbx-1") {
+			t.Error("the reservation was not released after the expired start (the release ran on the cancelled context)")
+		}
+	})
+}
+
+// BindReservedSlot releases the reservation with the reclaim's disposition: a
+// reclaim not acknowledged clean keeps the slot counted, so the per-pod claim
+// survives and the error carries Leaked.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestBindReservedSlotReleasesWithTheReclaimDisposition_spec_7_1(t *testing.T) {
+	a := newConcurrentAdapter()
+	a.startErr = errors.New("runtime refused to start")
+	a.shutdownExitedCleanly = false
+	c := k8sClient(t, concurrentIdleSandbox("sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+	req := slotBindReq()
+	claim, err := binder.ClaimSlot(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ClaimSlot: %v", err)
+	}
+	_, err = binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+	var sbe *podsession.SlotBindError
+	if !errors.As(err, &sbe) || !sbe.Leaked {
+		t.Fatalf("BindReservedSlot error = %v, want a leaked *SlotBindError", err)
+	}
+	if !podClaimExists(t, c, "sbx-1") {
+		t.Error("a leaked slot's release deleted the per-pod claim; the slot must stay counted")
+	}
+}
+
+// slotReclaimCall is one SlotReclaim hook invocation.
+type slotReclaimCall struct{ outcome, cause, pool, podName string }
+
+// A compensation answered superseded reaches the SlotReclaim hook with the
+// outcome, the error_type value, the pool, and the sandbox name: `refusal`
+// after an attempt refused with either §4.7.1 sentinel and `failure` after an
+// ordinary stage failure. A compensation answered absent reaches it not at
+// all.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotBindCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T) {
+	env := newSlotEnv(t)
+	cases := []struct {
+		name      string
+		startErr  func(t *testing.T) error
+		outcome   adapterv1.SlotReclaimOutcome
+		wantCause string // empty: the hook is not called
+	}{
+		{"superseded_after_superseded_refusal", func(t *testing.T) error {
+			return slotBindRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED)
+		}, adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED, "refusal"},
+		{"superseded_after_started_refusal", func(t *testing.T) error {
+			return slotBindRefusal(t, codes.FailedPrecondition, adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED)
+		}, adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED, "refusal"},
+		{
+			"superseded_after_failure", func(*testing.T) error { return errors.New("runtime refused to start") },
+			adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED, "failure",
+		},
+		{
+			"absent", func(*testing.T) error { return errors.New("runtime refused to start") },
+			adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_ABSENT, "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []slotReclaimCall
+			req := slotBindReq()
+			_, _, sandboxName := env.failedSlotBind(t, func(a *concurrentAdapter, b *podsession.Binder) {
+				a.startErr = tc.startErr(t)
+				a.reclaimOutcome = tc.outcome
+				b.SlotReclaim = func(outcome, cause, pool, podName string) {
+					calls = append(calls, slotReclaimCall{outcome, cause, pool, podName})
+				}
+			}, req)
+			var want []slotReclaimCall
+			if tc.wantCause != "" {
+				pool := "pool-" + strings.TrimPrefix(sandboxName, "sbx-")
+				want = []slotReclaimCall{{"superseded", tc.wantCause, pool, sandboxName}}
+			}
+			if !slices.Equal(calls, want) {
+				t.Errorf("SlotReclaim calls = %+v, want %+v", calls, want)
 			}
 		})
 	}

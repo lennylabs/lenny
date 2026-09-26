@@ -7,10 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -196,6 +199,16 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 	}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace %s: %v", testNS, err)
 	}
+	seedObjects(t, c, objs...)
+	return c
+}
+
+// seedObjects creates objs through c, seeding each Sandbox's status under
+// the §4.6.3 field manager that owns each field, so a table can add pods to
+// an apiserver it already started.
+func seedObjects(t *testing.T, c client.Client, objs ...client.Object) {
+	t.Helper()
+	ctx := context.Background()
 	for _, o := range objs {
 		var (
 			sbStatus  lennyv1.SandboxStatus
@@ -264,7 +277,6 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 			seedAfter()
 		}
 	}
-	return c
 }
 
 // adapterDialer serves srv over an in-memory connection and returns a
@@ -300,10 +312,24 @@ func newBinder(c client.Client, dial func(string) (*adapterclient.Client, error)
 type fakeAssigner struct {
 	// err, when non-nil, is returned by every AssignProto call.
 	err error
+	// failFrom, when positive, makes the failFrom-th AssignProto call and
+	// every later one fail. It counts calls rather than naming a pool,
+	// because CredentialPools is a map with random iteration order.
+	failFrom int
+	// numbered mints a distinct identifier per call ("cl-<pool>-<n>") rather
+	// than one per pool, so two attempts at one session hold different
+	// leases.
+	numbered bool
 	// calls records each (pool, session, spiffeURI) AssignProto served.
 	calls []assignerCall
+	// minted records each lease identifier AssignProto returned, in order.
+	minted []string
 	// released records each sessionID passed to ReleaseSession.
 	released []string
+	// leaseReleases records each lease identifier passed to Release, the
+	// attempt-scoped release. It is kept apart from released, which records
+	// the session-wide walk alone.
+	leaseReleases []string
 }
 
 type assignerCall struct {
@@ -315,8 +341,16 @@ func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string) (*adapt
 	if a.err != nil {
 		return nil, a.err
 	}
+	if a.failFrom > 0 && len(a.calls) >= a.failFrom {
+		return nil, errors.New("credential pool exhausted")
+	}
+	id := "cl-" + pool
+	if a.numbered {
+		id = fmt.Sprintf("cl-%s-%d", pool, len(a.calls))
+	}
+	a.minted = append(a.minted, id)
 	return &adapterv1.CredentialLease{
-		LeaseId:  "cl-" + pool,
+		LeaseId:  id,
 		Provider: pool,
 		Payload: []byte(`{"deliveryMode":"proxy",` +
 			`"materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt-` + pool + `"}}`),
@@ -325,6 +359,10 @@ func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string) (*adapt
 
 func (a *fakeAssigner) ReleaseSession(sessionID string) {
 	a.released = append(a.released, sessionID)
+}
+
+func (a *fakeAssigner) Release(leaseID string) {
+	a.leaseReleases = append(a.leaseReleases, leaseID)
 }
 
 func TestBindClaimsAndStartsTheSession(t *testing.T) {
@@ -2050,6 +2088,13 @@ type stageAdapter struct {
 	errs         map[string]error
 	finalizeN    int
 	finalizeHook func(n int) error
+	// resumeBlocks makes Resume wait until the caller's context is done and
+	// then fail with the context's error.
+	resumeBlocks bool
+	// reclaimOutcome and uncleanExit shape the answer to a Shutdown naming a
+	// bind attempt. The zero values answer RECLAIMED with a clean exit.
+	reclaimOutcome adapterv1.SlotReclaimOutcome
+	uncleanExit    bool
 	// rec records every request the fake served, so a test can assert the
 	// §4.7.1 carriage fields on the wire.
 	rec bindRequestRecorder
@@ -2115,14 +2160,34 @@ func (a *stageAdapter) ConfigureWorkspace(_ context.Context, req *adapterv1.Conf
 	return &adapterv1.ConfigureWorkspaceResponse{}, nil
 }
 
-func (a *stageAdapter) Resume(_ context.Context, req *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
+func (a *stageAdapter) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
 	a.rec.record(req)
+	a.mu.Lock()
+	blocks := a.resumeBlocks
+	a.mu.Unlock()
+	if blocks {
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	if err := a.stageErr("Resume"); err != nil {
+		return nil, err
+	}
 	return &adapterv1.ResumeResponse{Mode: "full"}, nil
 }
 
 func (a *stageAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	a.rec.record(req)
-	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+	a.mu.Lock()
+	outcome, unclean := a.reclaimOutcome, a.uncleanExit
+	a.mu.Unlock()
+	resp := &adapterv1.ShutdownResponse{ExitedCleanly: !unclean}
+	if req.GetBindAttempt() != "" {
+		if outcome == adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_UNSPECIFIED {
+			outcome = adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED
+		}
+		resp.SlotReclaim = outcome
+	}
+	return resp, nil
 }
 
 // stageAdapterDialer serves a over an in-memory connection and returns a
@@ -2687,5 +2752,197 @@ func TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1(t *testing.T) {
 				t.Errorf("bind_attempt = %q, want empty on a non-compensating teardown", reqs[0].GetBindAttempt())
 			}
 		})
+	}
+}
+
+// Binder.Prepare's credential-assignment failure arm releases, by
+// identifier, exactly the leases the failed attempt minted, and a
+// successor's lease for the same session survives it. The arms are a second
+// AssignProto failing, the adapter's AssignCredentials failing with an
+// ordinary error, and it refusing with a typed refusal. None of them calls
+// the session-wide ReleaseSession.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1(t *testing.T) {
+	cases := []struct {
+		name      string
+		failFrom  int
+		assignErr func(t *testing.T) error
+		wantN     int
+	}{
+		{"second_assign_fails", 2, nil, 1},
+		{"adapter_assign_fails", 0, func(*testing.T) error { return status.Error(codes.Internal, "write credentials.json") }, 2},
+		{"adapter_assign_refused", 0, func(t *testing.T) error {
+			return slotBindRefusal(t, codes.Aborted, adapterv1.Error_ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED)
+		}, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes claimDeleteCounter
+			c := claimedPodFakeClient(t, &deletes)
+			a := &stageAdapter{errs: map[string]error{}}
+			if tc.assignErr != nil {
+				a.errs["AssignCredentials"] = tc.assignErr(t)
+			}
+			assigner := &fakeAssigner{numbered: true}
+			successor, _ := assigner.AssignProto("pool-s", "sess-1", "", "acme")
+			assigner.calls, assigner.minted = nil, nil
+			assigner.failFrom = tc.failFrom
+			b := newBinder(c, stageAdapterDialer(t, a))
+			b.Credentials = assigner
+			_, err := b.Prepare(context.Background(), podsession.BindRequest{
+				Pool: testPool, SessionID: "sess-1", SandboxName: "sbx-1",
+				CredentialPools: map[string]string{"anthropic": "pool-a", "openai": "pool-b"},
+			})
+			if err == nil {
+				t.Fatal("Prepare succeeded, want a credential-assignment failure")
+			}
+			if len(assigner.minted) != tc.wantN {
+				t.Fatalf("minted = %v, want %d leases before the failure", assigner.minted, tc.wantN)
+			}
+			got := append([]string(nil), assigner.leaseReleases...)
+			want := append([]string(nil), assigner.minted...)
+			sort.Strings(got)
+			sort.Strings(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("released leases = %v, want exactly the attempt's own %v", got, want)
+			}
+			if slices.Contains(got, successor.GetLeaseId()) {
+				t.Errorf("the failed attempt released the successor's lease %s", successor.GetLeaseId())
+			}
+			if len(assigner.released) != 0 {
+				t.Errorf("ReleaseSession called with %v, want no session-wide release", assigner.released)
+			}
+		})
+	}
+}
+
+// resumeFailureBinder wires a Binder over a stageAdapter and a miniredis slot
+// counter on a single idle pod, for the failed-resume cases.
+func resumeFailureBinder(t *testing.T, a *stageAdapter) (*podsession.Binder, client.Client) {
+	t.Helper()
+	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
+	b, _ := resumeSlotFixture(t, c, stageAdapterDialer(t, a))
+	return b, c
+}
+
+// A failed adapter Resume sends the compensation naming the resume's own
+// minted token on the still-open connection through the fenced form,
+// releases the resume slot with the reclaim's disposition, releases no
+// gateway-side credential lease, and returns a *SlotBindError at stage
+// "resume" whose Leaked is that disposition. An unclean reclaim keeps the
+// slot counted; on an exclusive pool the error carries no slot identifier.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestResumeFailureCompensatesWithItsOwnToken_spec_7_1(t *testing.T) {
+	cases := []struct {
+		name          string
+		maxConcurrent int32
+		unclean       bool
+		wantLeaked    bool
+		wantClaim     bool
+		wantSlotID    string
+	}{
+		{"concurrent_clean", 4, false, false, false, "sess-1"},
+		{"concurrent_unclean", 4, true, true, true, "sess-1"},
+		{"exclusive", 1, false, false, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &stageAdapter{
+				errs:        map[string]error{"Resume": status.Error(codes.Internal, "checkpoint restore failed")},
+				uncleanExit: tc.unclean,
+			}
+			b, c := resumeFailureBinder(t, a)
+			assigner := &fakeAssigner{}
+			b.Credentials = assigner
+			req := resumeRequest(tc.maxConcurrent)
+			_, err := b.Resume(context.Background(), req)
+			var sbe *podsession.SlotBindError
+			if !errors.As(err, &sbe) {
+				t.Fatalf("Resume error = %v, want a *SlotBindError in the chain", err)
+			}
+			if sbe.Stage != "resume" || sbe.SlotID != tc.wantSlotID || sbe.Pod != "sbx-1" {
+				t.Errorf("SlotBindError = {Pod:%q SlotID:%q Stage:%q}, want {sbx-1 %q resume}", sbe.Pod, sbe.SlotID, sbe.Stage, tc.wantSlotID)
+			}
+			if sbe.Leaked != tc.wantLeaked {
+				t.Errorf("Leaked = %v, want %v", sbe.Leaked, tc.wantLeaked)
+			}
+			if status.Code(err) != codes.Internal {
+				t.Errorf("status.Code(err) = %v, want the Resume error's code to survive the wrap", status.Code(err))
+			}
+			reqs := a.rec.shutdownRequests()
+			if len(reqs) != 1 {
+				t.Fatalf("Shutdown requests = %d, want exactly one compensation", len(reqs))
+			}
+			token := oneAttemptToken(t, a.rec.forSession("sess-1"), "Resume")
+			if reqs[0].GetBindAttempt() != token || reqs[0].GetUnconditionalTeardown() {
+				t.Errorf("compensation = {bind_attempt:%q unconditional:%v}, want the resume's token %q and the fenced form",
+					reqs[0].GetBindAttempt(), reqs[0].GetUnconditionalTeardown(), token)
+			}
+			if len(assigner.leaseReleases) != 0 || len(assigner.released) != 0 {
+				t.Errorf("credential releases = %v / %v, want none from a failed resume", assigner.leaseReleases, assigner.released)
+			}
+			if got := podClaimExists(t, c, "sbx-1"); got != tc.wantClaim {
+				t.Errorf("per-pod claim present = %v, want %v", got, tc.wantClaim)
+			}
+		})
+	}
+}
+
+// A Resume whose caller context expires while the adapter is restoring still
+// sends the compensation naming the resume's minted token, and releases the
+// reservation not leaked when the adapter answers clean.
+//
+// spec: §7.1 (normal flow); §7.2 (interactive session model); §5.2 (pool
+// configuration and execution modes); §6.2 (pod state machine)
+func TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1(t *testing.T) {
+	a := &stageAdapter{resumeBlocks: true}
+	b, c := resumeFailureBinder(t, a)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := b.Resume(ctx, resumeRequest(4))
+	var sbe *podsession.SlotBindError
+	if !errors.As(err, &sbe) {
+		t.Fatalf("Resume error = %v, want a *SlotBindError in the chain", err)
+	}
+	reqs := a.rec.shutdownRequests()
+	token := oneAttemptToken(t, a.rec.forSession("sess-1"), "Resume")
+	if len(reqs) != 1 || reqs[0].GetBindAttempt() != token {
+		t.Fatalf("Shutdown requests = %v, want one naming the resume's token %q", reqs, token)
+	}
+	if sbe.Leaked {
+		t.Error("Leaked = true after a clean reclaim, want false")
+	}
+	if podClaimExists(t, c, "sbx-1") {
+		t.Error("the resume reservation was not released after the expired Resume")
+	}
+}
+
+// A compensation for a failed Resume answered superseded reaches the
+// SlotReclaim hook with the outcome, the failure error_type, the pool, and
+// the sandbox name.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T) {
+	a := &stageAdapter{
+		errs:           map[string]error{"Resume": status.Error(codes.Internal, "checkpoint restore failed")},
+		reclaimOutcome: adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED,
+	}
+	b, _ := resumeFailureBinder(t, a)
+	type call struct{ outcome, cause, pool, podName string }
+	var calls []call
+	b.SlotReclaim = func(outcome, cause, pool, podName string) {
+		calls = append(calls, call{outcome, cause, pool, podName})
+	}
+	if _, err := b.Resume(context.Background(), resumeRequest(4)); err == nil {
+		t.Fatal("Resume succeeded, want the adapter failure")
+	}
+	want := []call{{"superseded", "failure", testPool, "sbx-1"}}
+	if !slices.Equal(calls, want) {
+		t.Errorf("SlotReclaim calls = %+v, want %+v", calls, want)
 	}
 }

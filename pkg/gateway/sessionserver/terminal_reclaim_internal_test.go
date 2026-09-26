@@ -34,6 +34,10 @@ func (a *reclaimRecordingAssigner) ReleaseSession(sessionID string) {
 	a.released = append(a.released, sessionID)
 }
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*reclaimRecordingAssigner) Release(string) {}
+
 // reclaimTestServer builds a white-box Server wired with a fake-client binder
 // (holding a seeded per-pod SandboxClaim for podName), a live registry, and a
 // recording credential assigner, so a test can exercise the terminal reclaim

@@ -125,6 +125,10 @@ func (materializeRaceAssigner) AssignProto(_, _, _, _ string) (*adapterv1.Creden
 }
 func (materializeRaceAssigner) ReleaseSession(string) {}
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (materializeRaceAssigner) Release(string) {}
+
 // materializeCluster boots one envtest control plane and seeds the three warm
 // pools the sub-tests claim from: an assignable pool with an idle pod, an
 // assignment-race pool with its own idle pod, and a still-warming pool with no

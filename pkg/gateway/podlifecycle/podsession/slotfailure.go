@@ -65,6 +65,18 @@ type SlotBindError struct {
 	Stage string
 	// Err is the underlying adapter/stage error.
 	Err error
+	// Leaked is the slot's §6.2 disposition after the failure: true when the
+	// compensating Shutdown was not acknowledged clean (the adapter did not
+	// answer it, or its answer reported an unclean exit) or when the
+	// reservation release itself failed. It is false for a connect-stage
+	// failure, where the slot was reserved before any workspace RPC and the
+	// adapter holds nothing for it. The reservation release and the §5.2
+	// slot-health accounting read it, so a slot whose pod-side state may
+	// survive stays counted rather than freeing occupancy.
+	//
+	// spec: §7.1 (normal flow); §6.2 (pod state machine); §5.2 (pool
+	// configuration and execution modes).
+	Leaked bool
 }
 
 func (e *SlotBindError) Error() string {

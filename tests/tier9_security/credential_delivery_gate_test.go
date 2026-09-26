@@ -78,6 +78,11 @@ func (a *leaseCountingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 	}, nil
 }
 func (a *leaseCountingAssigner) ReleaseSession(string) {}
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*leaseCountingAssigner) Release(string) {}
+
 func (a *leaseCountingAssigner) count() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

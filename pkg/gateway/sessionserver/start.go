@@ -2724,7 +2724,7 @@ const maxSlotRetries = 1
 // tested with a fake binder rather than an envtest cluster.
 type slotBinder interface {
 	BindSlot(ctx context.Context, req podsession.SlotBindRequest) (*podsession.BindResult, error)
-	ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string) error
+	ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error
 	DrainSandbox(ctx context.Context, sandboxName string) error
 }
 
@@ -2830,8 +2830,10 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 		// pod's active_slots is not leaked by the failed attempt. The release
 		// outcome fixes how the slot is counted toward the ceil(maxConcurrent/2)
 		// unhealthy threshold: a clean release makes the failure transient, and
-		// a failed release leaks the slot permanently.
-		if relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID); relErr != nil {
+		// a failed release leaks the slot permanently. The release carries the
+		// disposition the binder's compensating reclaim produced, so a reclaim
+		// not acknowledged clean keeps the slot counted (§7.1, §6.2).
+		if relErr := binder.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, sbe.Leaked); relErr != nil {
 			log.Printf("sessionserver: §5.2 release failed slot %s on pod %s: %v", sbe.SlotID, sbe.Pod, relErr)
 			// spec: §6.2 "`leaked` slot semantics" — the reservation could not be
 			// reclaimed, so the slot is leaked: it remains counted in active_slots
@@ -3243,7 +3245,9 @@ func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResul
 		return
 	}
 	if claim.SlotID != "" {
-		if err := s.podBinder.ReleaseSlotReservation(ctx, claim.SandboxName, claim.SlotID); err != nil {
+		// No workspace RPC runs at create, so the adapter holds nothing for
+		// the slot and the release is not leaked.
+		if err := s.podBinder.ReleaseSlotReservation(ctx, claim.SandboxName, claim.SlotID, false); err != nil {
 			log.Printf("sessionserver: rollback create-time slot reservation %s on pod %s for session %s: %v",
 				claim.SlotID, claim.SandboxName, sessionID, err)
 		}

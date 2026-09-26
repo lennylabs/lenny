@@ -131,6 +131,10 @@ func (failingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLeas
 }
 func (failingAssigner) ReleaseSession(string) {}
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (failingAssigner) Release(string) {}
+
 // recordingAssigner assigns a real lease and records every ReleaseSession so a
 // test can assert the §7.1 step-23 lease revoke ran during a post-launch
 // rollback.
@@ -143,6 +147,10 @@ func (a *recordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.Credentia
 func (a *recordingAssigner) ReleaseSession(sessionID string) {
 	a.released = append(a.released, sessionID)
 }
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*recordingAssigner) Release(string) {}
 
 // updateFaultStore fails store.Update while fail is set, leaving Get/Create
 // intact, so a test can inject the terminal transition-persist failure

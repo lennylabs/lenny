@@ -310,6 +310,11 @@ const (
 	// It is used only on the SlotBindError for retry classification; it is
 	// not a lenny_slot_failure_total error_type value.
 	slotFailureConnect = "connect"
+	// slotFailureResume labels a failed adapter Resume on the SlotBindError
+	// Binder.Resume returns, so the caller's slot accounting reads the reclaim
+	// disposition off the chain. Like slotFailureConnect it is not a
+	// lenny_slot_failure_total error_type value.
+	slotFailureResume = "resume"
 )
 
 // §4.6.1 lenny_pod_claim_fallback_skipped_total reason labels: the two
@@ -344,6 +349,11 @@ type CredentialAssigner interface {
 	// pool slots are returned rather than leaking. A session with no
 	// leases is a no-op. spec: §7.1.
 	ReleaseSession(sessionID string)
+	// Release releases the one §4.9 credential lease leaseID names back to
+	// its pool. A failed bind attempt calls it for each lease it minted, so
+	// the release never reaches a lease a successor attempt for the same
+	// session minted. An unknown lease is a no-op. spec: §7.1, §4.9.
+	Release(leaseID string)
 }
 
 // UserCredentialAssigner materializes a session's §4.9 user-source
@@ -967,7 +977,14 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	phaseStart = time.Now()
 	// §4.7 AssignCredentials is the fourth setup RPC; it runs while the pod
 	// projects the coarse `claimed` phase, before the runtime starts at Launch.
-	if err := b.assignCredentials(ctx, cl, req, bindAttempt); err != nil {
+	if minted, err := b.assignCredentials(ctx, cl, req, bindAttempt); err != nil {
+		// spec: §7.1 (normal flow); §4.9 (credential leasing service). The
+		// attempt releases, by identifier, exactly the leases it minted before
+		// the failure. failPhase's session-wide release is gated on
+		// leaseAssigned, still false here, and a refusal skips failPhase
+		// altogether, so this release runs unconditionally, ahead of the
+		// reclaim closure and outside its refusal guard.
+		b.releaseAttemptCredentials(minted)
 		reclaim(err)
 		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
 	}
@@ -1264,13 +1281,16 @@ func (b *Binder) drain(ctx context.Context, sb *lennyv1.Sandbox) error {
 // The minted leases carry credential material; per §4.7 item 6 the
 // payload is excluded from access logs and telemetry. bindAttempt is the
 // calling attempt's §4.7.1 token, carried on the AssignCredentials request.
-func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client, req BindRequest, bindAttempt string) error {
+// It returns the identifiers of the leases it minted, on failure as well as
+// on success, so a failed attempt releases exactly its own leases.
+func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client, req BindRequest, bindAttempt string) ([]string, error) {
 	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
 	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
 	if !hasPool && !hasUser {
-		return nil
+		return nil, nil
 	}
 	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools)+len(req.UserCredentialProviders))
+	var minted []string
 	if hasPool {
 		for provider, pool := range req.CredentialPools {
 			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
@@ -1279,8 +1299,9 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 				// provider, yet the assignment failed — the race at §4.9. Surface a typed error so the caller can release the pod,
 				// increment lenny_credential_preclaim_mismatch_total, and return
 				// CREDENTIAL_POOL_EXHAUSTED.
-				return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
+				return minted, &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
 			}
+			minted = append(minted, lease.GetLeaseId())
 			// The §4.7 AssignCredentials leases map is keyed by provider, and
 			// the adapter writes each runtime credential-file entry under the
 			// lease's own Provider field. Stamp it from the resolved provider
@@ -1298,13 +1319,14 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 		for _, provider := range req.UserCredentialProviders {
 			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
 			if err != nil {
-				return &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
+				return minted, &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
 			}
+			minted = append(minted, lease.GetLeaseId())
 			lease.Provider = provider
 			leases[provider] = lease
 		}
 	}
-	return cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
+	return minted, cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
 }
 
 // releaseCredentials returns the session's §4.9 credential leases to
@@ -1680,15 +1702,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 		Chunks:                  req.Chunks,
 	})
 	if err != nil {
-		cl.Close()
-		// The reservation is the resume's own, so its compensating release
-		// is too: the adapter Resume RPC is the one failure that follows a
-		// completed reservation, and leaving the increment behind would
-		// compound per retry on the retryable restore path. Every earlier
-		// failure returns out of connect or out of the reservation itself
-		// with no increment landed, so no other error path releases.
-		b.releaseResumeSlot(ctx, sb.Name, slotID)
-		return ResumeResult{}, fmt.Errorf("podsession: resume session on pod %s: %w", sb.Name, err)
+		return ResumeResult{}, b.failResume(ctx, cl, sb.Name, slotID, bindAttempt, req, err)
 	}
 	// spec: §6.2 — the resumed session's fine states
 	// (resume_pending, resuming, running) are session-model states on the
@@ -1764,17 +1778,62 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 	return res.SlotID, nil
 }
 
+// failResume compensates a failed adapter Resume. It sends the compensating
+// Shutdown naming the resume's own bind attempt on the still-open connection,
+// forwards the outcome to the compensation counter, closes the connection,
+// and then releases the resume's slot reservation carrying the reclaim's
+// disposition. A resume whose response was lost therefore tears down the
+// orphan entry it created, and a stale compensation from another attempt at
+// the same session is answered superseded rather than destroying the live
+// resumed session.
+//
+// The reservation is the resume's own, so its release is too: the adapter
+// Resume RPC is the one failure that follows a completed reservation, and
+// leaving the increment behind would compound per retry on the retryable
+// restore path. Every earlier failure returns out of connect or out of the
+// reservation itself with no increment landed, so no other error path
+// releases.
+//
+// It releases no §4.9 credential lease. Binder.Resume mints none and its §7.3
+// retry re-mints none, while the session may still hold the leases its
+// original bind minted; returning them on a retryable failure would leave
+// every later resume running with leases the gateway has already released.
+//
+// The returned error carries a *SlotBindError at stage "resume" whose Leaked
+// is the reclaim's disposition or a failed release, so the caller's slot
+// accounting reads the disposition off the chain. SlotBindError unwraps to
+// the Resume error, so the chain's gRPC classification is unchanged. On an
+// exclusive pool the slot identifier is empty and no accounting runs.
+//
+// spec: §7.1 (normal flow); §7.2 (interactive session model); §7.3 (retry and
+// resume); §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration
+// and execution modes).
+func (b *Binder) failResume(ctx context.Context, cl *adapterclient.Client, sandboxName, slotID, bindAttempt string, req ResumeRequest, cause error) error {
+	_, cleanly, cerr := b.compensateAndNote(ctx, cl, req.SessionID, bindAttempt,
+		req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, req.Pool, sandboxName, slotID, cause)
+	leaked := cerr != nil || !cleanly
+	cl.Close()
+	relErr := b.releaseResumeSlot(ctx, sandboxName, slotID, leaked)
+	sbe := b.slotBindError(sandboxName, slotID, slotFailureResume, cause)
+	sbe.Leaked = leaked || relErr != nil
+	return fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, sbe)
+}
+
 // releaseResumeSlot rolls back the resume's slot reservation after the
-// adapter Resume RPC failed. It is a no-op on an exclusive pool, which
-// reserved nothing: ReleaseSlotReservation decrements unconditionally, so
-// a release for an increment that never landed would under-count the pod.
-func (b *Binder) releaseResumeSlot(ctx context.Context, sandboxName, slotID string) {
+// adapter Resume RPC failed, carrying the compensating reclaim's disposition,
+// and returns the release error so the caller books a failed release as a
+// leak. It is a no-op on an exclusive pool, which reserved nothing:
+// ReleaseSlotReservation decrements unconditionally, so a release for an
+// increment that never landed would under-count the pod.
+func (b *Binder) releaseResumeSlot(ctx context.Context, sandboxName, slotID string, leaked bool) error {
 	if slotID == "" {
-		return
+		return nil
 	}
-	if err := b.ReleaseSlotReservation(ctx, sandboxName, slotID); err != nil {
+	if err := b.ReleaseSlotReservation(ctx, sandboxName, slotID, leaked); err != nil {
 		log.Printf("podsession: release resume slot reservation on pod %s: %v", sandboxName, err)
+		return err
 	}
+	return nil
 }
 
 // negotiated bundles the handshake-reported metadata the caller needs

@@ -124,6 +124,10 @@ func (a *recordingAssigner) ReleaseSession(sessionID string) {
 	a.mu.Unlock()
 }
 
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*recordingAssigner) Release(string) {}
+
 func (a *recordingAssigner) assignCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

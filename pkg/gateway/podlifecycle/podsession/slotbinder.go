@@ -167,9 +167,11 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 		// not leak the pod's active_slots. An exhaustion sentinel
 		// (ErrNoConcurrentSlot/ErrTenantMismatch/ErrNoIdlePod) reserved no slot
 		// and is returned unwrapped for the create handler's exhaustion mapping.
+		// The slot was reserved before any workspace RPC, so the adapter holds
+		// nothing for it and the release is not leaked.
 		var sbe *SlotBindError
 		if errors.As(err, &sbe) {
-			if relErr := b.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID); relErr != nil {
+			if relErr := b.ReleaseSlotReservation(ctx, sbe.Pod, sbe.SlotID, false); relErr != nil {
 				log.Printf("podsession: release reserved slot %s on pod %s after create-time claim handshake failure for session %s: %v",
 					sbe.SlotID, sbe.Pod, req.SessionID, relErr)
 			}
@@ -212,11 +214,21 @@ func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 	if err != nil {
 		// Release the reserved slot so a failed start does not leak the pod's
 		// active_slots; the create-time reservation increment is rolled back by
-		// the matching release. ReleaseSlotReservation is the slot-count half of
-		// ReleaseSlot (the failed attempt closed its own adapter connection).
-		if relErr := b.ReleaseSlotReservation(ctx, sandboxName, slotID); relErr != nil {
+		// the matching release. The pod-side reclaim already ran at the failure
+		// site (materializeSlot), so the release carries the disposition it
+		// produced: a reclaim not acknowledged clean keeps the slot counted.
+		//
+		// spec: §7.1 (normal flow); §6.2 (pod state machine).
+		var sbe *SlotBindError
+		leaked := errors.As(err, &sbe) && sbe.Leaked
+		if relErr := b.ReleaseSlotReservation(ctx, sandboxName, slotID, leaked); relErr != nil {
 			log.Printf("podsession: release reserved slot %s on pod %s after start failure for session %s: %v",
 				slotID, sandboxName, req.SessionID, relErr)
+			// A reservation that could not be released stays counted, so the
+			// failure is booked as a leak by the caller's accounting.
+			if sbe != nil {
+				sbe.Leaked = true
+			}
 		}
 		return nil, err
 	}
@@ -257,20 +269,63 @@ func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 // materializeSlot runs the post-reservation §4.7 workspace-and-start
 // sequence on a slot whose reservation and §15.5 handshake the caller
 // already completed (BindSlot reserves a fresh slot, BindReservedSlot
-// reconnects to one reserved at create). The slot gets its own workspace:
-// it stages and finalizes the workspace, runs setup, assigns credentials (a
-// per-slot lease per §6), and starts the session. Any failure closes the
-// adapter connection, records the §5.2 failure counter, and returns a
-// SlotBindError so the caller can release the reservation and retry.
+// reconnects to one reserved at create). It is the compensating wrapper
+// around materializeSlotStages: every post-connection stage runs inside it,
+// so no stage can be added later without the reclaim.
 //
 // Each run is one §4.7.1 bind attempt: it mints its token before its first
-// pod-side RPC and carries it on PrepareWorkspace, FinalizeWorkspace,
-// RunSetup, and AssignCredentials, each with mid_session false. StartSession
-// carries no token (§4.7.1 carriage table).
+// pod-side RPC, and the stages carry it on PrepareWorkspace,
+// FinalizeWorkspace, RunSetup, and AssignCredentials, each with mid_session
+// false. StartSession carries no token (§4.7.1 carriage table).
+//
+// On a failure it sends the compensating Shutdown naming this attempt's
+// token on the still-open connection, records the slot's disposition on the
+// returned SlotBindError, releases the §4.9 leases this attempt minted, and
+// only then closes the connection. The stages close nothing: a stage that
+// closed the connection would hand the compensation a closed one, the
+// reclaim would fail, and every failed bind would be booked leaked. A
+// successful bind returns the connection open in BindResult.Adapter.
+//
+// spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract); §5.2
+// (pool configuration and execution modes); §6.2 (pod state machine).
 func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client) (*BindResult, error) {
 	// spec: §4.7.1 (role and gateway RPC contract) — one token per attempt,
 	// minted before the attempt's first pod-side RPC.
 	bindAttempt := newBindAttempt()
+	res, minted, err := b.materializeSlotStages(ctx, req, sandboxName, slotID, podIP, workspaceBase, cl, bindAttempt)
+	if err == nil {
+		return res, nil
+	}
+	// spec: §7.1 (normal flow). Every stage is post-connection, so the reclaim
+	// is unconditional. A typed refusal is compensated too; §4.7.1 answers it
+	// superseded when the entry belongs to another attempt.
+	var sbe *SlotBindError
+	if errors.As(err, &sbe) {
+		_, cleanly, cerr := b.compensateAndNote(ctx, cl, req.SessionID, bindAttempt,
+			req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, req.Pool, sandboxName, slotID, err)
+		// spec: §6.2 (pod state machine); §7.1 (normal flow). Leaked is exactly
+		// "not acknowledged clean": the RPC error and the clean-exit flag decide
+		// it for every outcome, and the outcome itself never enters it.
+		sbe.Leaked = cerr != nil || !cleanly
+	}
+	// spec: §7.1 (normal flow); §4.9 (credential leasing service). Releases the
+	// leases this attempt minted, never the session's, on every failure. It
+	// must not move inside the errors.As guard: the credential-assignment stage
+	// can fail, or be refused, after minting.
+	b.releaseAttemptCredentials(minted)
+	cl.Close()
+	return nil, err
+}
+
+// materializeSlotStages is the stage runner materializeSlot wraps. The slot
+// gets its own workspace: it stages and finalizes the workspace, runs setup,
+// assigns credentials (a per-slot lease per §6), and starts the session. Any
+// failure records the §5.2 failure counter and returns a SlotBindError so the
+// wrapper can compensate and the caller can release the reservation and
+// retry. It returns the identifiers of the §4.9 leases it minted, on success
+// and on failure alike, so the wrapper can release exactly those. It never
+// closes cl; the wrapper owns the connection on every path.
+func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, bindAttempt string) (*BindResult, []string, error) {
 	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
 	// extraction runs gateway-side (§7.4) exactly as in
@@ -291,31 +346,28 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	// the session identifier the request already names.
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow, bindAttempt)
 	if err != nil {
-		cl.Close()
 		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 	}
 	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
 	if err != nil {
-		cl.Close()
 		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
 	}
 	finalizeWarnings := append(stageWarnings, warnings...)
 	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy, bindAttempt)
 	if err != nil {
-		cl.Close()
 		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
+		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
 			&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: setupOutputs})
 	}
 
-	if err := b.assignSlotCredentials(ctx, cl, req, bindAttempt); err != nil {
-		cl.Close()
+	minted, err := b.assignSlotCredentials(ctx, cl, req, bindAttempt)
+	if err != nil {
 		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureCredentialAssignment,
+		return nil, minted, b.slotBindError(sandboxName, slotID, slotFailureCredentialAssignment,
 			fmt.Errorf("podsession: assign slot credentials on pod %s: %w", sandboxName, err))
 	}
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
@@ -326,9 +378,8 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
-		cl.Close()
 		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureSessionStart,
+		return nil, minted, b.slotBindError(sandboxName, slotID, slotFailureSessionStart,
 			fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err))
 	}
 	return &BindResult{
@@ -355,7 +406,158 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 		// adapter's whole-pod scrub without re-resolving the pool at release.
 		CleanupCommands:       req.CleanupCommands,
 		CleanupTimeoutSeconds: req.CleanupTimeoutSeconds,
-	}, nil
+	}, minted, nil
+}
+
+// slotCleanupFloor is the §5.2 per-slot cleanup floor: the per-slot
+// cleanup timeout never drops below it.
+const slotCleanupFloor = 5 * time.Second
+
+// slotCleanupBudget is the §5.2 per-slot cleanup timeout,
+// max(cleanupTimeoutSeconds / maxConcurrentSessions, 5) seconds. §5.2
+// assigns that figure to the adapter's own cleanup enforcement; the gateway
+// reuses it as its own give-up bound on the compensating Shutdown rather than
+// inventing a constant. cleanupTimeoutSeconds is optional, so an unset pool
+// yields slotCleanupFloor, and a non-positive maxConcurrentSessions (an
+// exclusive pool, which keeps no per-slot bound) divides by one.
+//
+// spec: §5.2 (pool configuration and execution modes); §7.1 (normal flow).
+func slotCleanupBudget(cleanupTimeoutSeconds int, maxConcurrentSessions int32) time.Duration {
+	n := time.Duration(maxConcurrentSessions)
+	if n < 1 {
+		n = 1
+	}
+	perSlot := time.Duration(cleanupTimeoutSeconds) * time.Second / n
+	return max(perSlot, slotCleanupFloor)
+}
+
+// Values of the error_type label on the §16.1
+// lenny_slot_compensation_superseded_total series.
+const (
+	// compensationCauseRefusal labels a compensation whose attempt the adapter
+	// refused under §4.7.1 (superseded or already started).
+	compensationCauseRefusal = "refusal"
+	// compensationCauseFailure labels a compensation whose attempt failed for
+	// any other reason.
+	compensationCauseFailure = "failure"
+)
+
+// compensationCause returns the error_type label value for a compensation
+// whose attempt failed with err: `refusal` when the adapter refused the
+// attempt with a §4.7.1 slot-bind refusal, `failure` otherwise. It is the one
+// statement of that value; both compensating call sites pass it the attempt's
+// error. spec: §16.1 (metrics); §4.7.1 (role and gateway RPC contract).
+func compensationCause(err error) string {
+	if adapterclient.IsSlotBindRefusal(err) {
+		return compensationCauseRefusal
+	}
+	return compensationCauseFailure
+}
+
+// compensateFailedSlotBind reclaims the pod-side state a failed bind created,
+// naming the bind attempt that created it, and returns the outcome the adapter
+// answered. It touches pod-side state only. The gateway-side §4.9 credential
+// leases belong to the caller, because the two bind entry paths mint them
+// inside materializeSlotStages and the resume path mints none.
+//
+// It returns the outcome rather than a leaked boolean so the caller maps a
+// value it recognizes and counts one it does not, instead of a false answer
+// travelling as a disposition. An RPC error is reported as such.
+//
+// The context is detached from the caller's: the residue class this exists
+// for arises when the caller's context expired during StartSession, so a
+// reclaim issued on that context would fail in the one case that leaves a
+// runtime running for an abandoned session.
+//
+// The call carries two bounds and they differ deliberately. The fourth
+// argument of ShutdownReclaim is the graceful window the adapter spends on
+// the runtime close, and the RPC deadline is the budget, which outlasts that
+// window so the gateway does not give up on the adapter's SIGTERM pivot. A
+// cleanup whose tree removal outruns the remaining budget answers nothing in
+// time, and that is the unanswered reclaim §7.1 accounts. The §11.4 revoke
+// fan-out holds the same relation between its RPC timeout and the shorter
+// graceful window it sends.
+//
+// The reclaim reuses the connection the failed stage holds for cost; §7.1
+// states that the fence does not depend on it. The reason string maps onto
+// the intra-pod terminate frame's session_complete default at the adapter,
+// so the compensation mints no new wire value.
+//
+// spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract); §5.2
+// (pool configuration and execution modes).
+func (b *Binder) compensateFailedSlotBind(
+	ctx context.Context, cl *adapterclient.Client,
+	sessionID, bindAttempt string,
+	cleanupTimeoutSeconds int, maxConcurrentSessions int32,
+	sandboxName, slotID string,
+) (outcome adapterv1.SlotReclaimOutcome, exitedCleanly bool, err error) {
+	budget := slotCleanupBudget(cleanupTimeoutSeconds, maxConcurrentSessions)
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+	defer cancel()
+	outcome, exitedCleanly, err = cl.ShutdownReclaim(rctx, sessionID, "slot_bind_failed", budget/2, bindAttempt)
+	if err != nil {
+		log.Printf("podsession: compensating Shutdown for slot %s on pod %s (session %s) failed: %v",
+			slotID, sandboxName, sessionID, err)
+	}
+	return outcome, exitedCleanly, err
+}
+
+// compensateAndNote runs compensateFailedSlotBind for an attempt that failed
+// with cause and forwards the outcome to noteCompensationOutcome labeled by
+// compensationCause(cause). Both compensating call sites, the slot bind
+// wrapper and the resume failure branch, go through it, so a compensation is
+// never sent without its outcome being counted.
+//
+// spec: §7.1 (normal flow); §16.1 (metrics).
+func (b *Binder) compensateAndNote(
+	ctx context.Context, cl *adapterclient.Client,
+	sessionID, bindAttempt string,
+	cleanupTimeoutSeconds int, maxConcurrentSessions int32,
+	pool, sandboxName, slotID string, cause error,
+) (adapterv1.SlotReclaimOutcome, bool, error) {
+	outcome, cleanly, err := b.compensateFailedSlotBind(ctx, cl, sessionID, bindAttempt,
+		cleanupTimeoutSeconds, maxConcurrentSessions, sandboxName, slotID)
+	b.noteCompensationOutcome(outcome, compensationCause(cause), pool, sandboxName)
+	return outcome, cleanly, err
+}
+
+// reclaimOutcomeSuperseded is the outcome value the SlotReclaim hook receives
+// for a compensation the adapter answered superseded.
+const reclaimOutcomeSuperseded = "superseded"
+
+// noteCompensationOutcome forwards a compensation's outcome to the
+// SlotReclaim hook backing the §16.1 lenny_slot_compensation_superseded_total
+// series. It fires only on SLOT_RECLAIM_OUTCOME_SUPERSEDED, the case in which
+// the reclaim released nothing because the adapter held an entry the
+// compensation was not addressed to, so the branch exists once. It is a no-op
+// when the binder has no SlotReclaim hook. cause is the error_type label
+// value compensationCause supplies.
+//
+// spec: §16.1 (metrics); §4.7.1 (role and gateway RPC contract).
+func (b *Binder) noteCompensationOutcome(outcome adapterv1.SlotReclaimOutcome, cause, pool, podName string) {
+	if b.SlotReclaim == nil || outcome != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_SUPERSEDED {
+		return
+	}
+	b.SlotReclaim(reclaimOutcomeSuperseded, cause, pool, podName)
+}
+
+// releaseAttemptCredentials releases, by identifier, the §4.9 leases one
+// failed bind attempt minted. It never walks the session's leases: the slot
+// identifier is the session identifier, so a session-wide release after a
+// successor attempt has assigned would strip the successor's leases. It is a
+// no-op when the binder has no credential service or the attempt minted
+// nothing. The session-wide release stays on the session-end path.
+//
+// spec: §7.1 (normal flow); §4.9 (credential leasing service).
+func (b *Binder) releaseAttemptCredentials(leaseIDs []string) {
+	if b.Credentials == nil {
+		return
+	}
+	for _, id := range leaseIDs {
+		if id != "" {
+			b.Credentials.Release(id)
+		}
+	}
 }
 
 // recordSlotFailure emits the §5.2 lenny_slot_failure_total
@@ -376,21 +578,28 @@ func (b *Binder) recordSlotFailure(errorType, pool, podName string) {
 // when the binder has no credential service or the request names no
 // pools. bindAttempt is the calling attempt's §4.7.1 token, carried on the
 // AssignCredentials request.
-func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest, bindAttempt string) error {
+//
+// It returns the identifiers of the leases it minted, on failure as well as
+// on success, so a failed attempt releases exactly its own leases rather
+// than every lease its session holds. spec: §7.1 (normal flow); §4.9
+// (credential leasing service).
+func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Client, req SlotBindRequest, bindAttempt string) ([]string, error) {
 	hasPool := b.Credentials != nil && len(req.CredentialPools) > 0
 	hasUser := b.UserCredentials != nil && len(req.UserCredentialProviders) > 0
 	if !hasPool && !hasUser {
-		return nil
+		return nil, nil
 	}
 	leases := make(map[string]*adapterv1.CredentialLease, len(req.CredentialPools)+len(req.UserCredentialProviders))
+	var minted []string
 	if hasPool {
 		for provider, pool := range req.CredentialPools {
 			lease, err := b.Credentials.AssignProto(pool, req.SessionID, req.PodSpiffeURI, req.TenantID)
 			if err != nil {
 				// §4.9 pre-claim race: surface a typed error so the
 				// caller can release the slot and emit the mismatch metric.
-				return &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
+				return minted, &CredentialAssignmentError{Provider: provider, Pool: pool, Err: err}
 			}
+			minted = append(minted, lease.GetLeaseId())
 			lease.Provider = provider
 			leases[provider] = lease
 		}
@@ -401,15 +610,16 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 		for _, provider := range req.UserCredentialProviders {
 			lease, err := b.UserCredentials.MintProto(ctx, req.TenantID, req.UserID, req.SessionID, req.PodSpiffeURI, provider)
 			if err != nil {
-				return &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
+				return minted, &CredentialAssignmentError{Provider: provider, Pool: "user", Err: err}
 			}
+			minted = append(minted, lease.GetLeaseId())
 			lease.Provider = provider
 			leases[provider] = lease
 		}
 	}
 	// spec: §6.1 — the lease is written to the session's own per-slot
 	// credential file so a rotation on a co-tenant does not disrupt it.
-	return cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
+	return minted, cl.AssignCredentials(ctx, req.SessionID, leases, bindAttempt)
 }
 
 // connectSlot reserves a concurrent-session slot from the pool, resolves
@@ -497,18 +707,32 @@ func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *Sl
 // and the active_slots count) without an adapter Shutdown. The §5.2 retry
 // policy calls it after a failed bind so the retry lands on a genuinely
 // fresh slot and the pod's active_slots is not leaked by the failed
-// attempt. It is the slot-count half of ReleaseSlot, reused here because
-// the failed attempt already closed its adapter connection.
-func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string) error {
+// attempt. It is the slot-count half of ReleaseSlot. It sends nothing to the
+// adapter because the pod-side reclaim already ran at the failure site, on
+// the connection the failed attempt held (materializeSlot, Binder.Resume);
+// this function releases the reservation afterwards.
+//
+// leaked is the disposition that reclaim produced. It is false for the
+// connect stage, where the slot was reserved before any workspace RPC and
+// the adapter holds nothing, and for a reclaim acknowledged clean; it is true
+// for a reclaim not acknowledged clean, which keeps the slot counted so the
+// gateway does not over-assign into occupancy the adapter may still hold.
+//
+// The release runs on a context detached from the caller's and bounded by
+// the §5.2 per-slot cleanup floor, because §7.1 requires it even when the
+// failing RPC's context is already cancelled or past its deadline.
+//
+// spec: §7.1 (normal flow); §5.2 (slot retry releases the reservation);
+// §4.7 (recycle disposition); §6.2 (leaked slot remains counted).
+func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), slotCleanupFloor)
+	defer cancel()
 	claimer := &podclaim.SlotClaimer{Client: b.Client, Namespace: b.Namespace, Counter: b.SlotCounter}
 	// recycle=false: a released reservation after a failed bind is a slot-count
 	// rollback, not the occupancy-zero recycle edge, so it never patches the
-	// claim to `recycling` or arms the missing-report timeout. leaked=false: a
-	// reservation rollback frees a slot that never held runtime resources, so
-	// the counter must decrement (the slot is not leaked). The recycled signal
-	// is discarded: recycle=false never returns it. spec: §5.2 (slot retry
-	// releases the reservation), §4.7 (recycle disposition), §6.2 (leaked slot remains counted).
-	_, err := claimer.ReleaseSlot(ctx, sandboxName, false, false)
+	// claim to `recycling` or arms the missing-report timeout. The recycled
+	// signal is discarded: recycle=false never returns it.
+	_, err := claimer.ReleaseSlot(rctx, sandboxName, false, leaked)
 	return err
 }
 

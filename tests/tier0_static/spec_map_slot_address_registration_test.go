@@ -469,6 +469,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier9_security/live_session_test.go",
 	"tests/tier9_security/ops_network_policy_test.go",
 	"tests/tier9_security/session_teardown_surface_test.go",
+	"tests/tier9_security/slot_credential_reclaim_fence_test.go",
 	"tests/tier9_security/tracing_context_session_isolation_test.go",
 }
 

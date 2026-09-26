@@ -711,7 +711,10 @@
         "pkg/adapter/socketruntime_test.go",
         "tests/tier7a_load_local/slot_reclaim_hold_race_test.go",
         "pkg/adapter/sdkwarm_test.go",
-        "tests/tier7a_load_local/slot_bind_attempt_race_test.go"
+        "tests/tier7a_load_local/slot_bind_attempt_race_test.go",
+        "tests/tier9_security/slot_credential_reclaim_fence_test.go",
+        "tests/tier8_chaos/compensation_loss_test.go",
+        "tests/tier4_integration/concurrent_workspace_test.go"
       ],
       "packages": [
         "pkg/adapter"
@@ -992,7 +995,8 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "pkg/adapter/slotsession_test.go",
-        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"
+        "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
+        "tests/tier9_security/slot_credential_reclaim_fence_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -1239,7 +1243,13 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
         "pkg/gateway/sessionserver/upload_to_session_test.go",
         "pkg/adapter/socketruntime_test.go",
-        "tests/tier7a_load_local/slot_reclaim_hold_race_test.go"
+        "tests/tier7a_load_local/slot_reclaim_hold_race_test.go",
+        "tests/tier9_security/slot_credential_reclaim_fence_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeFailureCompensatesWithItsOwnToken_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1400,7 +1410,12 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeMintsItsOwnBindAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestLaunchSendsNoBindAttempt_spec_4_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestShutdownAdapterSendsUnconditionalTeardown_spec_4_7_1",
-        "pkg/gateway/sessionserver/upload_to_session_test.go"
+        "pkg/gateway/sessionserver/upload_to_session_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeFailureCompensatesWithItsOwnToken_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1560,7 +1575,14 @@
         "pkg/gateway/sessionserver/upload_to_session_test.go",
         "pkg/adapter/bindattempt_orderings_test.go",
         "pkg/adapter/sdkwarm_test.go",
-        "tests/tier7a_load_local/slot_bind_attempt_race_test.go"
+        "tests/tier7a_load_local/slot_bind_attempt_race_test.go",
+        "tests/tier8_chaos/compensation_loss_test.go",
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestPrepareCredentialReleaseIsScopedToTheAttempt_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeFailureCompensatesWithItsOwnToken_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1"
       ],
       "packages": [
         "pkg/session"
@@ -1593,7 +1615,8 @@
         "pkg/gateway/session/executor/pod_test.go::TestPodExecutorRefusesAnEmptySessionAddress_spec_7_2",
         "tests/tier2_component/rls/checkpoint_manifest_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
-        "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2"
+        "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2",
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1"
       ],
       "packages": [
         "pkg/session/interactive"

@@ -27,7 +27,7 @@ type fakeSlotBinder struct {
 	errs     []error
 	bindCall int
 
-	released [][2]string // (pod, slotID)
+	released []slotRelease
 	drained  []string
 
 	// releaseErr, when non-nil, makes ReleaseSlotReservation fail so the
@@ -49,8 +49,15 @@ func (f *fakeSlotBinder) BindSlot(_ context.Context, _ podsession.SlotBindReques
 	return res, err
 }
 
-func (f *fakeSlotBinder) ReleaseSlotReservation(_ context.Context, pod, slotID string) error {
-	f.released = append(f.released, [2]string{pod, slotID})
+// slotRelease records one ReleaseSlotReservation call: the pod, the slot
+// identifier, and the leaked disposition the caller passed.
+type slotRelease struct {
+	pod, slotID string
+	leaked      bool
+}
+
+func (f *fakeSlotBinder) ReleaseSlotReservation(_ context.Context, pod, slotID string, leaked bool) error {
+	f.released = append(f.released, slotRelease{pod: pod, slotID: slotID, leaked: leaked})
 	return f.releaseErr
 }
 
@@ -89,7 +96,7 @@ func TestSlotRetryTransientThenSuccess_spec_5_2(t *testing.T) {
 		t.Errorf("BindSlot calls = %d, want 2 (original + one retry)", binder.bindCall)
 	}
 	// §5.2 fresh-slot guarantee: the failed slot is released before retry.
-	if len(binder.released) != 1 || binder.released[0] != [2]string{"pod-a", "sess-1"} {
+	if len(binder.released) != 1 || binder.released[0] != (slotRelease{pod: "pod-a", slotID: "sess-1"}) {
 		t.Errorf("released = %v, want one release of pod-a/sess-1", binder.released)
 	}
 	// maxConcurrent=4 → threshold 2; a single failure must not drain.
@@ -545,5 +552,30 @@ func TestClassifiedSlotFailureKeepsSetupCommandEnvelope_spec_7_3(t *testing.T) {
 	body := decodeErrorBody(t, w.Body.Bytes())
 	if body["code"] != "SETUP_COMMAND_FAILED" {
 		t.Errorf("code = %v, want SETUP_COMMAND_FAILED (the typed handler wins over SLOT_FAILED)", body["code"])
+	}
+}
+
+// The §5.2 retry policy releases a failed slot with the disposition the
+// binder's compensating reclaim put on the SlotBindError: a reclaim not
+// acknowledged clean is released leaked, so the slot stays counted, and a
+// clean one is released not leaked.
+//
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes);
+// §6.2 (pod state machine)
+func TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1(t *testing.T) {
+	for _, leaked := range []bool{false, true} {
+		sbe := slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable)
+		sbe.Leaked = leaked
+		binder := &fakeSlotBinder{
+			results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-b", SlotID: "sess-1"}},
+			errs:    []error{sbe, nil},
+		}
+		if _, err := applySlotRetryPolicy(context.Background(), binder, slothealth.New(), slotstate.NewRegistry(), nil, nil, req("pool-x", 4)); err != nil {
+			t.Fatalf("leaked=%v: expected success after one retry, got %v", leaked, err)
+		}
+		want := slotRelease{pod: "pod-a", slotID: "sess-1", leaked: leaked}
+		if len(binder.released) != 1 || binder.released[0] != want {
+			t.Errorf("released = %+v, want [%+v]", binder.released, want)
+		}
 	}
 }
