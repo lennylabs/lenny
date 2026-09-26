@@ -5,7 +5,7 @@ implementation checklist.
 
 ## Design (implementation-facing)
 
-The gateway already returns what SPEC-1 states (writePodClaimError in `pkg/gateway/sessionserver/start.go`), so this proposal stages no code change.
+The gateway returns what SPEC-1 states (writePodClaimError in `pkg/gateway/sessionserver/start.go`) except for the adapter's post-promotion symlink re-validation, which the summary lists under **Defects in the shipped tree that this proposal does not stage**. This proposal stages no code change.
 
 ## Staged code changes
 

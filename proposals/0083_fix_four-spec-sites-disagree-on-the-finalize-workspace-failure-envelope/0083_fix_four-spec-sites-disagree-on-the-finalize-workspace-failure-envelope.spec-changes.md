@@ -5,11 +5,11 @@ implementation checklist.
 
 ## Design (as the spec must state it)
 
-SPEC-1 corrects the finalize sentence of §6.2's **Client visibility:** bullet to the envelope the gateway returns, which the §15.1 `SESSION_CREATION_FAILED` row and §13.4's validator-violation bullet already define. SPEC-2 deletes §7.2's `WORKSPACE_PLAN_INVALID` clause; the paragraph's lead already places the failure at the endpoint that runs the failing step. SPEC-3 and SPEC-4 delete the `INTERNAL_ERROR` that the §16.5 `MinIOUnavailable` row and the §17.7 **MinIO failure** runbook entry name for a failed finalize, and restate none of that outcome. `WORKSPACE_PLAN_INVALID` stays reserved for create-time inner-plan schema validation, as the catalog and §14 state. The §15.1 finalize row and the §15.1 catalog rows take no edit.
+SPEC-1 corrects the finalize sentence of §6.2's **Client visibility:** bullet to the envelope the §15.1 `SESSION_CREATION_FAILED` row and §13.4's validator-violation bullet already define. SPEC-2 deletes §7.2's `WORKSPACE_PLAN_INVALID` clause; the paragraph's lead already places the failure at the endpoint that runs the failing step. SPEC-3 and SPEC-4 delete the `INTERNAL_ERROR` that the §16.5 `MinIOUnavailable` row and the §17.7 **MinIO failure** runbook entry name for a failed finalize, and restate none of that outcome. `WORKSPACE_PLAN_INVALID` stays reserved for create-time inner-plan schema validation, as the catalog and §14 state. The §15.1 finalize row and the §15.1 catalog rows take no edit.
 
 ## Edge cases and accepted failure modes
 
-- **A deterministic workspace-validation failure at finalize is answered as retryable.** The adapter's `FinalizeWorkspace` answers a structurally invalid staging tree with `InvalidArgument`, and the session-mode finalize path still answers `503 SESSION_CREATION_FAILED` with `Retry-After`. The staged text states this shipped behavior.
+- **A deterministic workspace-validation failure at finalize is answered as retryable.** The adapter's `FinalizeWorkspace` answers a structurally invalid staging tree with `InvalidArgument`, and the session-mode finalize path still answers `503 SESSION_CREATION_FAILED` with `Retry-After`.
 
 ## Staged edits
 
