@@ -21,14 +21,28 @@ package tier7a_load_local_test
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
+
+// slotCredentialDirExists reports whether the slot's §6.1 credential
+// directory is on disk.
+func slotCredentialDirExists(s *adapter.Server, sessionID string) bool {
+	p, err := slotlayout.Resolve(slotlayout.Roots{Credentials: s.CredentialsDir}, sessionID)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p.CredentialsDir)
+	return err == nil
+}
 
 // failingStartRuntime is a hookRuntime whose first Start for failSession
 // parks until unpark closes and then fails, standing in for a Runtime.Start
@@ -107,10 +121,19 @@ func abandonedStartFailureIteration(t *testing.T, i int) {
 	if !slotTreeExists(s, "alice") {
 		t.Errorf("iteration %d: the abandoned rollback removed attempt b's staged tree", i)
 	}
+	if !slotCredentialDirExists(s, "alice") {
+		t.Errorf("iteration %d: the abandoned rollback removed attempt b's credential directory", i)
+	}
 	// A request naming attempt b is admitted only while attempt b's entry
 	// stands and no reclaim hold is open: an absent entry answers the
-	// removal as ABSENT, and a held identifier refuses the bind.
-	if err := assignCreds(s, "alice", "attempt-b"); err != nil {
+	// removal as ABSENT, and a held identifier refuses the bind with
+	// ABORTED before the registry is read. The ABORTED arm is reported on
+	// its own, because a rollback that removed nothing yet opened a hold
+	// would refuse every later bind of the session on this pod.
+	err = assignCreds(s, "alice", "attempt-b")
+	if status.Code(err) == codes.Aborted {
+		t.Errorf("iteration %d: the abandoned rollback left a reclaim hold on the successor's identifier: %v", i, err)
+	} else if err != nil {
 		t.Errorf("iteration %d: attempt b's repeat bind = %v, want admitted", i, err)
 	}
 	resp, err = fencedReclaim(s, "alice", "attempt-b")

@@ -69,11 +69,22 @@ func TestAnAbandonedStartsRollbackLeavesTheSuccessorsEntry_spec_4_7_1(t *testing
 			if !slotDirExists(s, "alice") {
 				t.Error("the abandoned rollback removed the successor's slot tree")
 			}
+			if reclaimHoldOpen(s, "alice") {
+				t.Error("the abandoned rollback opened a reclaim hold on the successor's identifier")
+			}
 			if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenB}); err != nil {
 				t.Errorf("the successor's next request = %v, want admitted with no reclaim hold", err)
 			}
 		})
 	}
+}
+
+// reclaimHoldOpen reports whether the §5.2 reclaim hold is open on slotID.
+func reclaimHoldOpen(s *Server, slotID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, held := s.reclaiming[slotID]
+	return held
 }
 
 // spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
@@ -118,8 +129,42 @@ func TestAStartsRollbackReleasesTheEntryItsClaimOwns_spec_5_2(t *testing.T) {
 	if hasEntry(s, "alice") || slotDirExists(s, "alice") {
 		t.Error("the owning rollback left the entry or its tree")
 	}
+	if reclaimHoldOpen(s, "alice") {
+		t.Error("the guarded owning rollback completed its cleanup and left the reclaim hold open")
+	}
 	if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenB, allowCreate: true}); err != nil {
 		t.Errorf("a bind after the completed rollback = %v, want admitted", err)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (slot-identifier reclaim hold)
+//
+// An owning rollback whose guard acquisition outlived its context removes
+// the entry and its tree unguarded, as releaseSessionSlot does, and keeps
+// the reclaim hold: an unordered cleanup does not count as completed, so
+// the identifier stays held for the life of the pod.
+func TestAnUnguardedOwningRollbackKeepsTheReclaimHold_spec_5_2(t *testing.T) {
+	t.Parallel()
+	s, _ := bindServer(t)
+	seedEntry(t, s, "alice", tokenA, false)
+	if _, err := s.ensureSlotPaths("alice", slotResolve{bindAttempt: tokenA}); err != nil {
+		t.Fatalf("materialize alice: %v", err)
+	}
+	claim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
+	if err != nil {
+		t.Fatalf("claim alice: %v", err)
+	}
+	releaseHolder := holdGuard(t, s, "alice")
+	s.releaseClaimedSlot(cancelledContext(), "alice", claim)
+	releaseHolder()
+	if hasEntry(s, "alice") || slotDirExists(s, "alice") {
+		t.Error("the unguarded owning rollback left the entry or its tree")
+	}
+	if !reclaimHoldOpen(s, "alice") {
+		t.Error("the unguarded owning rollback ended the reclaim hold; an unordered cleanup must keep it")
+	}
+	if _, err := resolveLocked(s, "alice", slotResolve{bindAttempt: tokenB, allowCreate: true}); !isSlotReclaimInProgress(err) {
+		t.Errorf("a bind after the unguarded rollback = %v, want the reclaim-hold refusal", err)
 	}
 }
 
@@ -160,5 +205,8 @@ func TestAnAbandonedSDKWarmStartsLateFailureLeavesTheSuccessorsEntry_spec_4_7_1(
 	}
 	if got := slotStateForTest(s, "alice"); got != successor || !slotDirExists(s, "alice") {
 		t.Errorf("the abandoned SDK-warm rollback removed the successor: entry %p, want %p", got, successor)
+	}
+	if reclaimHoldOpen(s, "alice") {
+		t.Error("the abandoned SDK-warm rollback opened a reclaim hold on the successor's identifier")
 	}
 }
