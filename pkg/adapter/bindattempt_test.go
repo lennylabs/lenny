@@ -289,7 +289,7 @@ func TestEveryProductionResolveCallerIsGated_spec_4_7_1(t *testing.T) {
 		call func(s *Server) error
 	}{
 		{"claimSessionSlotUnderLock", func(s *Server) error {
-			_, _, _, err := s.claimSessionSlotUnderLock("alice",
+			_, _, err := s.claimSessionSlotUnderLock("alice",
 				slotResolve{bindAttempt: tokenB, allowCreate: true}, false, false)
 			return err
 		}},
@@ -323,16 +323,16 @@ func TestEveryProductionResolveCallerIsGated_spec_4_7_1(t *testing.T) {
 func TestClaimRefusesAStartedEntryWithTheTypedCode_spec_4_7_1(t *testing.T) {
 	s, _ := bindServer(t)
 	seedEntry(t, s, "alice", "", true)
-	_, _, _, err := s.claimSessionSlotUnderLock("alice",
+	_, _, err := s.claimSessionSlotUnderLock("alice",
 		slotResolve{allowCreate: true, allowStarted: true}, false, false)
 	if status.Code(err) != codes.FailedPrecondition ||
 		adapterErrorCode(err) != adapterv1.Error_ERROR_CODE_SLOT_BIND_ALREADY_STARTED {
 		t.Errorf("err = %v, want SLOT_BIND_ALREADY_STARTED on FailedPrecondition", err)
 	}
-	fresh, startMCP, stale, err := s.claimSessionSlotUnderLock("alice",
+	claim, stale, err := s.claimSessionSlotUnderLock("alice",
 		slotResolve{allowCreate: true, allowStarted: true}, false, true)
-	if err != nil || fresh || startMCP || stale != nil {
-		t.Errorf("idempotent repeat = (%v, %v, %v, %v), want a satisfied claim", fresh, startMCP, stale, err)
+	if err != nil || claim.fresh || claim.startMCP || stale != nil {
+		t.Errorf("idempotent repeat = (%+v, %v, %v), want a satisfied claim", claim, stale, err)
 	}
 }
 
@@ -844,7 +844,7 @@ func TestSlotRefusalsKeepTheirClassificationThroughEveryResolveSite_spec_4_7_1(t
 			return err
 		}},
 		{"claimSessionSlotUnderLock", "", func(s *Server, id string) error {
-			_, _, _, err := s.claimSessionSlotUnderLock(id, slotResolve{bindAttempt: tokenA, allowCreate: true}, false, false)
+			_, _, err := s.claimSessionSlotUnderLock(id, slotResolve{bindAttempt: tokenA, allowCreate: true}, false, false)
 			return err
 		}},
 		{"assignCredentialsSlot", "", func(s *Server, id string) error {

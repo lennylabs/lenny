@@ -92,7 +92,9 @@ func recvEvent(t *testing.T, stream *fakeControlStream) controlEvent {
 // surfaced on the AdapterEvents stream with its type and fields.
 func TestAdapterEventsEmitsControlEvents_spec_4_7(t *testing.T) {
 	s := New("served")
-	s.noteRuntimeStarted("sess-1")
+	// The record confirms against the registry entry, so the session is
+	// bound first, as a completed bind leaves it.
+	_ = s.noteRuntimeStarted("sess-1", bindSessionForTest(t, s, "sess-1"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -181,7 +183,7 @@ func (s stubUsage) Cumulative(context.Context, string) (Usage, error) { return s
 func TestEmitFinalUsageOnShutdownPath_spec_4_7(t *testing.T) {
 	s := New("served")
 	s.Usage = stubUsage{u: Usage{InputTokens: 5, OutputTokens: 7, WallClockMS: 9}}
-	s.noteRuntimeStarted("sess-fin")
+	_ = s.noteRuntimeStarted("sess-fin", bindSessionForTest(t, s, "sess-fin"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

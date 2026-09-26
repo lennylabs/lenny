@@ -227,10 +227,10 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	// completed-LLM frame folds its tokens into the wired meter under the
 	// pod's current session.
 	s := New("served")
-	bindSessionForTest(t, s, "sess-wire")
+	attempt := bindSessionForTest(t, s, "sess-wire")
 	// The sink resolves through soleSession, which names a session only
 	// once the pod's shared runtime process has been given it and no other.
-	s.noteRuntimeStarted("sess-wire")
+	_ = s.noteRuntimeStarted("sess-wire", attempt)
 	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
@@ -346,8 +346,10 @@ func TestSessionUsageMeterConcurrentFoldRaceSmoke_spec_11_2(t *testing.T) {
 
 // bindSessionForTest binds the named session's slot entry so a
 // session-scoped RPC's checkSessionBound admits it, which is the state a
-// completed bind leaves on every pod. spec: §5.2.
-func bindSessionForTest(t *testing.T, s *Server, sessionID string) {
+// completed bind leaves on every pod, and returns the bind attempt token
+// the entry carries so a caller can confirm a start against it through
+// noteRuntimeStarted. spec: §5.2.
+func bindSessionForTest(t *testing.T, s *Server, sessionID string) string {
 	t.Helper()
 	if s.WorkspaceBase == "" {
 		s.WorkspaceBase = t.TempDir()
@@ -360,4 +362,5 @@ func bindSessionForTest(t *testing.T, s *Server, sessionID string) {
 	}
 	st.sessionID = sessionID
 	st.started = true
+	return st.bindAttempt
 }

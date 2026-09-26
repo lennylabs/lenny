@@ -2,6 +2,13 @@
 
 package adapter
 
+import (
+	"context"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
 // This file holds the pod-level runtime-generation state and the one
 // accessor that names the session a pod-global surface may act as.
 //
@@ -18,21 +25,88 @@ package adapter
 //
 // spec: §15.4.3; §9.1; §11.2.
 
-// noteRuntimeStarted records that sessionID has been given to the pod's
-// one shared runtime process. It runs immediately after a successful
-// start. It is a no-op when the generation's first session is already
-// this session, so an idempotent repeat of a start cannot raise the
-// cohort and drive soleSession empty for the life of the pod.
-func (s *Server) noteRuntimeStarted(sessionID string) {
+// noteRuntimeStarted records the pod's one shared runtime process as holding
+// sessionID, the record at which the slot reaches §6.2 running, and reports
+// whether the record was taken. It runs immediately after a successful
+// start. It refuses in the two states a §7.1 reclaim leaves: the registry
+// holds no entry bound to this session, or it holds one stamped with a
+// different bind attempt. Recording in either would put a session in
+// runtimeLive that the registry does not hold under this attempt's
+// identity, holding runtimeIdleLocked false and soleSession empty for the
+// life of the pod.
+//
+// The second state is the replaced-entry case. The slot identifier equals
+// the session identifier, so a successor attempt at the same session holds
+// an entry under the same key with the same sessionID, and a predicate
+// reading only st.sessionID cannot see that the entry belongs to a later
+// attempt. The bind attempt can, because the successor stamped the entry it
+// created with its own token and the adapter never overwrites a token on a
+// resolve.
+//
+// attempt is the token the entry carried when this start's own claim was
+// admitted, passed in rather than re-read here: a read taken after the
+// claim is as racy as the confirmation it anchors. A start that carries no
+// token of its own passes the entry's token, so an entry no later attempt
+// replaced compares equal to itself. The predicate reads the registry entry
+// rather than st.started, because the claim sets st.started before
+// Runtime.Start and it is therefore true for this very call.
+//
+// The resolve, the confirmation and the record run under one hold of s.mu,
+// which is the start step of the §4.7.1 registry critical section: a
+// confirmation that released the lock before recording would record a
+// session a reclaim had already released.
+//
+// spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract), rule 8
+// (the start-confirmation rule); §15.4.3.
+func (s *Server) noteRuntimeStarted(sessionID, attempt string) bool {
 	if sessionID == "" {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	st, ok := s.slots[sessionID]
+	if !ok || st.sessionID != sessionID || st.bindAttempt != attempt {
+		return false
+	}
 	s.noteRuntimeStartedLocked(sessionID)
+	return true
 }
 
-// noteRuntimeStartedLocked is noteRuntimeStarted with s.mu already held.
+// rollbackUnconfirmedStart is the arm a start takes when noteRuntimeStarted
+// refuses: a §7.1 reclaim removed the slot while Runtime.Start ran, or a
+// successor replaced its entry. It takes the session back off the shared
+// runtime process, cancels a pod-wide MCP surface no surviving claimant
+// holds, and returns the refusal the handler answers.
+//
+// It deregisters nothing, and that is deliberate. The confirmation refuses
+// exactly when the registry holds no entry under this slot identifier or
+// holds one a later attempt owns, so a release keyed on the session
+// identifier alone either removes nothing or removes the successor's
+// entry, its tree, its uploads and its credential directory. The MCP
+// cancellation is safe against a successor because it is gated on
+// mcpArmingHeldLocked. It reports no cleanup outcome either: the slot never
+// reached running, and §5.2 files the one cleanup-outcome report per
+// release from the cleanup that reclaims the slot.
+//
+// The refusal is codes.Aborted, the transient classification a caller
+// retries on: a further attempt succeeds once the reclaim's residue is gone.
+//
+// spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract), rule 8
+// (the start-confirmation rule); §15.4.3.
+func (s *Server) rollbackUnconfirmedStart(ctx context.Context, sessionID string) error {
+	if s.Runtime != nil {
+		_ = s.Runtime.Close(ctx, sessionID)
+	}
+	s.cancelPodMCPIfRuntimeIdle()
+	return status.Errorf(codes.Aborted,
+		"session %s slot was reclaimed while the start was in flight", sessionID)
+}
+
+// noteRuntimeStartedLocked adds sessionID to the shared runtime process's
+// generation, with s.mu already held and the start already confirmed. It is
+// a no-op when the generation's first session is already this session, so
+// an idempotent repeat of a start cannot raise the cohort and drive
+// soleSession empty for the life of the pod.
 func (s *Server) noteRuntimeStartedLocked(sessionID string) {
 	if s.runtimeLive == nil {
 		s.runtimeLive = map[string]struct{}{}

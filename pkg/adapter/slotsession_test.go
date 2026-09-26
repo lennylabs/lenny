@@ -39,13 +39,24 @@ func (fr *fakeRuntime) readWithin(d time.Duration) (lifecycleFrame, bool) {
 // probe taken here observes the pod one step after the §15.4.2 grace window
 // opens. The window's own opening is observed from the runtime side instead,
 // by a reader that probes as soon as the terminate frame arrives.
+//
+// onStart runs inside Start on the calling goroutine, so a case can act on
+// the registry between a start's claim and its confirmation with no
+// parking and no second goroutine.
 type probeRuntime struct {
 	onClose func(sessionID string)
+	onStart func(sessionID string)
 	closed  []string
 }
 
-func (r *probeRuntime) Start(context.Context, string) error { return nil }
-func (r *probeRuntime) WriteEnvelope(string, []byte) error  { return nil }
+func (r *probeRuntime) Start(_ context.Context, sessionID string) error {
+	if r.onStart != nil {
+		r.onStart(sessionID)
+	}
+	return nil
+}
+
+func (r *probeRuntime) WriteEnvelope(string, []byte) error { return nil }
 
 func (r *probeRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	ch := make(chan []byte)
@@ -881,7 +892,7 @@ func TestShutdownOfAClaimedButUnrecordedStartTearsDownWithoutReporting_spec_4_7_
 	rt := &probeRuntime{}
 	s.Runtime = rt
 	bindUnstarted(t, s, "alice")
-	if _, _, err := s.claimSessionSlot("alice", slotResolve{}, false, false); err != nil {
+	if _, err := s.claimSessionSlot("alice", slotResolve{}, false, false); err != nil {
 		t.Fatalf("claim alice: %v", err)
 	}
 	if runtimeHolds(s, "alice") {
@@ -1201,5 +1212,211 @@ func TestTheRemovingShutdownDecidesAgainUnderTheGuard_spec_4_7_1(t *testing.T) {
 	}
 	if cur, cred := slotTreeProbe(t, s, "alice"); !cur || !cred {
 		t.Errorf("successor cwd present = %v, credentials.json present = %v, want both", cur, cred)
+	}
+}
+
+// successorAttempt is the bind attempt token a successor attempt stamps on
+// the entry it creates after a reclaim removed the first attempt's entry.
+const successorAttempt = "attempt-b"
+
+// assignWithToken binds sessionID's slot through AssignCredentials under
+// token, creating and stamping the entry when none stands.
+func assignWithToken(t *testing.T, s *Server, sessionID, token string) {
+	t.Helper()
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		BindAttempt: token,
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic_direct": expiryLease("l-"+token, "anthropic_direct", directPayload, time.Time{}),
+		},
+	}); err != nil {
+		t.Fatalf("AssignCredentials(%s, %s): %v", sessionID, token, err)
+	}
+}
+
+// startAlice drives StartSession for alice, which carries no token.
+func startAlice(ctx context.Context, s *Server) error {
+	_, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "alice"},
+		Runtime:   "echo",
+	})
+	return err
+}
+
+// resumeAlice drives a conversation-only Resume for alice naming
+// shutdownAttempt. It carries no chunks, so restoreChunks returns on its
+// empty-set guard and the call reaches Runtime.Start with no extraction.
+func resumeAlice(ctx context.Context, s *Server) error {
+	_, err := s.Resume(ctx, &adapterv1.ResumeRequest{
+		SessionId:    &adapterv1.SessionId{Value: "alice"},
+		CheckpointId: "ckpt-1",
+		BindAttempt:  shutdownAttempt,
+	})
+	return err
+}
+
+// podMCPArmed reports whether the pod's platform MCP surface is armed and
+// which session armed it.
+func podMCPArmed(s *Server) (armed bool, owner string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mcpCancel != nil, s.mcpSession
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
+//
+// Rule 8. A start whose slot a reclaim removed while Runtime.Start ran
+// records nothing: it takes the session back off the shared runtime,
+// cancels the pod MCP surface no surviving session holds, leaves the
+// registry as the removal left it, files no cleanup-outcome report, and
+// answers Aborted. Each row removes the claimed entry from inside the
+// runtime's Start on the calling goroutine. The StartSession row removes
+// under a completed guard acquisition; the Resume row holds its own guard
+// for the whole call, so its removal expires at once on a cancelled
+// context and keeps the reclaim hold.
+func TestAStartWhoseSlotWasReclaimedRollsBackAndAborts_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name      string
+		removalAt func(t *testing.T) context.Context
+		drive     func(ctx context.Context, s *Server) error
+		holdKept  bool
+	}{
+		{"StartSession", func(t *testing.T) context.Context { return t.Context() }, startAlice, false},
+		{"Resume", func(*testing.T) context.Context { return cancelledContext() }, resumeAlice, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, reporter := slotPod(t)
+			s.MCPSocket = mcpSocketPath(t, "r.sock")
+			rt := &probeRuntime{}
+			rt.onStart = func(sessionID string) { s.ReleaseSlotForTest(tc.removalAt(t), sessionID) }
+			s.Runtime = rt
+			bindUnstarted(t, s, "alice")
+
+			err := tc.drive(t.Context(), s)
+			if status.Code(err) != codes.Aborted {
+				t.Fatalf("%s = %v, want Aborted for a start whose slot was reclaimed", tc.name, err)
+			}
+			if runtimeHolds(s, "alice") {
+				t.Error("the shared runtime records alice after its slot was reclaimed")
+			}
+			if len(rt.closed) != 1 || rt.closed[0] != "alice" {
+				t.Errorf("runtime closed = %v, want [alice]; the rollback takes the session back off the runtime", rt.closed)
+			}
+			if hasEntry(s, "alice") {
+				t.Error("the rollback re-created alice's entry")
+			}
+			if armed, owner := podMCPArmed(s); armed || owner != "" {
+				t.Errorf("pod MCP surface armed = %v owner = %q, want cancelled with no surviving claimant", armed, owner)
+			}
+			if n := len(reporter.snapshot()); n != 0 {
+				t.Errorf("session scrub reports = %d, want 0 for a slot that never reached running", n)
+			}
+			if got := laterBindRefusedByHold(s, "alice"); got != tc.holdKept {
+				t.Errorf("later bind refused by the reclaim hold = %v, want %v", got, tc.holdKept)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
+//
+// Rule 8 compares the bind attempt token, not only the session. A reclaim
+// removed the first attempt's entry and a successor attempt re-created it
+// under the same slot identifier with the same session bound, so a
+// predicate reading only st.sessionID would confirm the first attempt's
+// start. The confirmation refuses it, refuses on an absent entry, and
+// confirms the successor's own start.
+func TestTheStartConfirmationRefusesAReplacedEntry_spec_4_7_1(t *testing.T) {
+	s, _ := slotPod(t)
+	s.Runtime = &probeRuntime{}
+	if s.noteRuntimeStarted("alice", "") {
+		t.Error("noteRuntimeStarted confirmed a session the registry holds no entry for")
+	}
+	bindUnstarted(t, s, "alice")
+	first, err := s.claimSessionSlot("alice", slotResolve{}, false, false)
+	if err != nil {
+		t.Fatalf("claim alice: %v", err)
+	}
+	if first.attempt != shutdownAttempt {
+		t.Fatalf("claim reported attempt %q, want the entry's stamp %q", first.attempt, shutdownAttempt)
+	}
+	s.ReleaseSlotForTest(t.Context(), "alice")
+	assignWithToken(t, s, "alice", successorAttempt)
+	successor, err := s.claimSessionSlot("alice", slotResolve{}, false, false)
+	if err != nil {
+		t.Fatalf("claim the successor: %v", err)
+	}
+
+	if s.noteRuntimeStarted("alice", first.attempt) {
+		t.Error("noteRuntimeStarted confirmed the first attempt's start on the successor's entry")
+	}
+	if runtimeHolds(s, "alice") {
+		t.Fatal("a refused confirmation recorded alice")
+	}
+	if !s.noteRuntimeStarted("alice", successor.attempt) || !runtimeHolds(s, "alice") {
+		t.Error("the successor's own start was not confirmed and recorded")
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
+//
+// The rollback of a refused start deregisters nothing, so a successor that
+// re-created the slot while the start ran keeps its entry and its tree. An
+// unbound successor keeps its per-slot cwd; a bound and claimed successor
+// keeps its cwd and its credential file as well.
+func TestTheStartRollbackDestroysNoSuccessor_spec_4_7_1(t *testing.T) {
+	cases := []struct {
+		name      string
+		successor func(t *testing.T, s *Server)
+		bound     bool
+	}{
+		{"unbound", func(t *testing.T, s *Server) {
+			if _, err := s.ensureSlotPaths("alice", slotResolve{bindAttempt: successorAttempt, allowCreate: true}); err != nil {
+				t.Errorf("create the unbound successor: %v", err)
+			}
+		}, false},
+		{"bound", func(t *testing.T, s *Server) {
+			assignWithToken(t, s, "alice", successorAttempt)
+			if _, err := s.claimSessionSlot("alice", slotResolve{bindAttempt: successorAttempt}, false, false); err != nil {
+				t.Errorf("claim the bound successor: %v", err)
+			}
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := slotPod(t)
+			rt := &probeRuntime{}
+			rt.onStart = func(sessionID string) {
+				s.ReleaseSlotForTest(t.Context(), sessionID)
+				tc.successor(t, s)
+			}
+			s.Runtime = rt
+			bindUnstarted(t, s, "alice")
+
+			if err := startAlice(t.Context(), s); status.Code(err) != codes.Aborted {
+				t.Fatalf("StartSession = %v, want Aborted against a replaced entry", err)
+			}
+			s.mu.Lock()
+			st, ok := s.slots["alice"]
+			token := ""
+			if ok {
+				token = st.bindAttempt
+			}
+			s.mu.Unlock()
+			if !ok || token != successorAttempt {
+				t.Fatalf("successor entry present = %v token = %q, want the successor's entry to survive", ok, token)
+			}
+			current, credentials := slotTreeProbe(t, s, "alice")
+			if !current {
+				t.Error("the rollback removed the successor's per-slot cwd")
+			}
+			if tc.bound && !credentials {
+				t.Error("the rollback removed the successor's credential file")
+			}
+			if runtimeHolds(s, "alice") {
+				t.Error("the refused start recorded alice on the successor's entry")
+			}
+		})
 	}
 }

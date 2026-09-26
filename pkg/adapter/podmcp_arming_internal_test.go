@@ -71,17 +71,17 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
 
-	_, startMCP, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
+	aliceClaim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
 		t.Fatalf("claim alice: %v", err)
 	}
-	if !startMCP {
+	if !aliceClaim.startMCP {
 		t.Fatal("the first claim on an idle pod did not take the once-per-pod MCP start")
 	}
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server for alice: %v", err)
 	}
-	s.noteRuntimeStarted("alice")
+	_ = s.noteRuntimeStarted("alice", aliceClaim.attempt)
 
 	// alice's Shutdown: the locked cancel-deregister step has run and the
 	// runtime close is still in flight.
@@ -93,11 +93,11 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	}
 
 	// bob's start claims the pod in that window.
-	_, startMCP, err = s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false)
+	bobClaim, err := s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
 		t.Fatalf("claim bob: %v", err)
 	}
-	if !startMCP {
+	if !bobClaim.startMCP {
 		t.Fatal("a claim holding the pod alone did not take the MCP start, so bob's manifest nonce would reach no server")
 	}
 	if err := s.startPlatformMCP("nonce-bob"); err != nil {
@@ -138,8 +138,8 @@ func TestPodMCPArmingCancelledWhenNoSessionHoldsIt_spec_15_4_3(t *testing.T) {
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
 
-	if _, startMCP, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false); err != nil || !startMCP {
-		t.Fatalf("claim alice: startMCP=%v err=%v", startMCP, err)
+	if claim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false); err != nil || !claim.startMCP {
+		t.Fatalf("claim alice: startMCP=%v err=%v", claim.startMCP, err)
 	}
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server: %v", err)
@@ -157,8 +157,8 @@ func TestPodMCPArmingCancelledWhenNoSessionHoldsIt_spec_15_4_3(t *testing.T) {
 	}
 
 	// The socket is free for the next claim, which arms on its own nonce.
-	if _, startMCP, err := s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false); err != nil || !startMCP {
-		t.Fatalf("claim bob: startMCP=%v err=%v", startMCP, err)
+	if claim, err := s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false); err != nil || !claim.startMCP {
+		t.Fatalf("claim bob: startMCP=%v err=%v", claim.startMCP, err)
 	}
 	if err := s.startPlatformMCP("nonce-bob"); err != nil {
 		t.Fatalf("re-arm the platform MCP server: %v", err)
@@ -179,19 +179,20 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
 
-	if _, startMCP, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false); err != nil || !startMCP {
-		t.Fatalf("claim alice: startMCP=%v err=%v", startMCP, err)
+	aliceClaim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
+	if err != nil || !aliceClaim.startMCP {
+		t.Fatalf("claim alice: startMCP=%v err=%v", aliceClaim.startMCP, err)
 	}
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server: %v", err)
 	}
-	s.noteRuntimeStarted("alice")
+	_ = s.noteRuntimeStarted("alice", aliceClaim.attempt)
 
-	_, startMCP, err := s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false)
+	bobClaim, err := s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
 		t.Fatalf("claim bob: %v", err)
 	}
-	if startMCP {
+	if bobClaim.startMCP {
 		t.Fatal("a claim on a co-tenanted pod took the pod-wide MCP start")
 	}
 	// bob rolls back; alice is still served by the shared runtime process.
@@ -224,13 +225,14 @@ func TestPodMCPArmingReportsTheLiveArming_spec_15_4_3(t *testing.T) {
 		t.Errorf("PodMCPArming on an unarmed pod = (%q, %q), want both empty", session, nonce)
 	}
 
-	if _, startMCP, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false); err != nil || !startMCP {
-		t.Fatalf("claim alice: startMCP=%v err=%v", startMCP, err)
+	aliceClaim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
+	if err != nil || !aliceClaim.startMCP {
+		t.Fatalf("claim alice: startMCP=%v err=%v", aliceClaim.startMCP, err)
 	}
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server for alice: %v", err)
 	}
-	s.noteRuntimeStarted("alice")
+	_ = s.noteRuntimeStarted("alice", aliceClaim.attempt)
 
 	session, nonce := s.PodMCPArming()
 	if session != "alice" {

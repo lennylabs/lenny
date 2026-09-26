@@ -112,11 +112,12 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// StartSession carries no bind attempt token (§4.7.1), so it resolves
 	// with no identity assertion and creates an untokened entry when none
 	// stands.
-	_, startMCP, err := s.claimSessionSlot(sessionID, slotResolve{allowCreate: true}, s.isSDKWarm(), false)
+	claim, err := s.claimSessionSlot(sessionID, slotResolve{allowCreate: true}, s.isSDKWarm(), false)
 	if err != nil {
 		spanErr = err
 		return nil, err
 	}
+	startMCP := claim.startMCP
 
 	// §9.3: resolve the connectors this session's effective
 	// delegation policy permits so the manifest can list one per-connector
@@ -164,7 +165,15 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
-	s.noteRuntimeStarted(sessionID)
+	// spec: §4.7.1 rule 8 — the start confirms the registry still holds
+	// the entry its claim was admitted against before the runtime is
+	// recorded as holding the session.
+	if !s.noteRuntimeStarted(sessionID, claim.attempt) {
+		rollbackErr := s.rollbackUnconfirmedStart(ctx, sessionID)
+		// §16.3: a lost race with a reclaim is the TRANSIENT category.
+		spanErr = tracing.CategorizeError(rollbackErr, tracing.CategoryTransient)
+		return nil, rollbackErr
+	}
 	return &adapterv1.StartSessionResponse{}, nil
 }
 

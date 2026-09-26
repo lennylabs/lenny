@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -218,13 +219,14 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 	// idempotent repeat is the one started-session resolve rule 6 exempts,
 	// so allowStarted and idempotentRepeat are set from the same value.
 	const idempotentRepeat = true
-	fresh, startMCP, err := s.claimSessionSlot(sessionID, slotResolve{
+	claim, err := s.claimSessionSlot(sessionID, slotResolve{
 		allowCreate:  true,
 		allowStarted: idempotentRepeat,
 	}, true, idempotentRepeat)
 	if err != nil {
 		return nil, err
 	}
+	fresh, startMCP := claim.fresh, claim.startMCP
 	if fresh {
 		// §9.3: resolve the session's permitted connectors so the
 		// pre-connected runtime gets one per-connector MCP server per
@@ -264,10 +266,39 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 	// SDKWarmInProcessRuntime.ConfigureWorkspace is r.Start. The write is
 	// guarded on the freshness arm because the RPC is idempotent under the
 	// §4.7 table and an unguarded site would count one session twice.
-	if fresh {
-		s.noteRuntimeStarted(sessionID)
+	if fresh && !s.noteRuntimeStarted(sessionID, claim.attempt) {
+		return nil, s.refuseUnconfirmedSDKWarmStart(ctx, sw, sessionID)
 	}
 	return &adapterv1.ConfigureWorkspaceResponse{}, nil
+}
+
+// refuseUnconfirmedSDKWarmStart is the SDK-warm start's arm when
+// noteRuntimeStarted refuses: the entry the claim was admitted against left
+// the registry, or was replaced, while the pre-connected SDK was being
+// pointed at the workspace. It takes the runtime half of the §6.1 demotion
+// and nothing else: SDKWarmRuntime.DemoteSDK is the in-process runtime's
+// close and is what clears the pre-connected SDK, and sdkConnected is
+// cleared with it, which a bare Runtime.Close would leave true.
+//
+// It removes no registry entry and no slot tree, so it routes neither
+// through releaseSessionSlot nor through the DemoteSDK RPC handler. Both
+// deregister the entry and remove the tree, which rule 8 bars on a refused
+// confirmation, and a release keyed on the session identifier alone would
+// take a successor's entry. The refusal is codes.Aborted rather than the
+// codes.Internal the handler's other failure arms answer, because rule 8
+// answers a refused confirmation on the transient code.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rule 8 (the
+// start-confirmation rule); §6.1; §7.1 (normal flow).
+func (s *Server) refuseUnconfirmedSDKWarmStart(ctx context.Context, sw SDKWarmRuntime, sessionID string) error {
+	if err := sw.DemoteSDK(ctx); err != nil {
+		slog.Warn("sdk_warm_unconfirmed_start_demote_failed", "session_id", sessionID, "error", err)
+	}
+	s.mu.Lock()
+	s.sdkConnected = false
+	s.mu.Unlock()
+	return status.Errorf(codes.Aborted,
+		"session %s slot was reclaimed while the SDK-warm start was in flight", sessionID)
 }
 
 // DemoteSDK is the §4.7 SDK-warm demotion RPC. The gateway calls it to

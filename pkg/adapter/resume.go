@@ -64,13 +64,14 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// spec: §5.2 — the resume claims this session's slot on the
 	// replacement pod, the same claim the start path takes, and decides the
 	// once-per-pod intra-pod MCP start with it.
-	_, startMCP, err := s.claimSessionSlot(sessionID, slotResolve{
+	claim, err := s.claimSessionSlot(sessionID, slotResolve{
 		bindAttempt: req.GetBindAttempt(),
 		allowCreate: true,
 	}, s.isSDKWarm(), false)
 	if err != nil {
 		return nil, err
 	}
+	startMCP := claim.startMCP
 
 	// spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
 	// The gateway carries the original session's cwd on
@@ -161,7 +162,13 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
-	s.noteRuntimeStarted(sessionID)
+	// spec: §4.7.1 rule 8 — the resume confirms the registry still holds
+	// the entry its claim was admitted against before the runtime is
+	// recorded as holding the session. Resume opens no span, so the
+	// refusal carries no span categorization.
+	if !s.noteRuntimeStarted(sessionID, claim.attempt) {
+		return nil, s.rollbackUnconfirmedStart(ctx, sessionID)
+	}
 	// spec: §4.4 / §7.2 ResumeMode — the adapter restored the workspace
 	// from the named full checkpoint. The §10.1 partial-manifest reassembly
 	// is gateway-driven; the adapter never assembles partials directly, so

@@ -40,11 +40,11 @@ func (s *Server) ReleaseSlotForTest(ctx context.Context, sessionID string) {
 // the merged start claim does, so a test can put the adapter in the state
 // a completed StartSession leaves without driving the whole RPC.
 func (s *Server) ClaimSessionForTest(sessionID string) error {
-	_, _, err := s.claimSessionSlot(sessionID, slotResolve{allowCreate: true}, s.isSDKWarm(), false)
+	claim, err := s.claimSessionSlot(sessionID, slotResolve{allowCreate: true}, s.isSDKWarm(), false)
 	if err != nil {
 		return err
 	}
-	s.noteRuntimeStarted(sessionID)
+	_ = s.noteRuntimeStarted(sessionID, claim.attempt)
 	return nil
 }
 
