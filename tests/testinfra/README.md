@@ -13,6 +13,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`admission/`](admission/) | Validating-admission webhook test fixture. |
 | [`assertions/`](assertions/) | Typed comparison helpers; JSON equality with ordering hints; structural matchers for state machines. The project's stand-in for testify and gomega. |
 | [`audit/`](audit/) | Audit-pipeline helpers (chain inspection, OCSF envelope assertions, SIEM consumer harness). |
+| [`bindattempt/`](bindattempt/) | Adapter fixture and case battery for the slot bind attempt admission and `Shutdown` rules. The Tier 3 contract suite drives it over gRPC and the Tier 10 conformance battery drives it in process. |
 | [`chaos/`](chaos/) | Fault-injection driver for Tier 8 (chaos-mesh adapter, network partition, pod kill, clock skew, toxiproxy bridge). |
 | [`cloud/`](cloud/) | Tier 6 cloud-provider authentication and cluster acquisition for GKE, EKS, and AKS. |
 | [`compose/`](compose/) | `docker compose` lifecycle wrapper for Tier 4 integration tests (gateway, stores, and mocks on a single host). |

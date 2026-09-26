@@ -535,6 +535,14 @@
       "status": "WIRED",
       "spec_anchor": "#2852-pod-to-gateway",
       "surface": "handler `pkg/adapter/adapterevents.go:108`; one comment in `pkg/gateway`"
+    },
+    {
+      "claim": "third-party adapter conformance harness for the \u00a715.4 slot-bind rules",
+      "status": "ABSENT",
+      "spec_anchor": "#2851-gateway-to-pod",
+      "deferral_id": "R8",
+      "surface": "`tests/tier3_contract/adapter_bind_attempt/`, `tests/tier10_conformance/slot_bind_attempt_conformance_test.go`",
+      "note": "the rules are normative for any adapter implementation; cmd/lenny-compliance drives a runtime binary over JSONL against a fake adapter and imports no gRPC, so the project runs the clauses against its own adapter only"
     }
   ]
 }

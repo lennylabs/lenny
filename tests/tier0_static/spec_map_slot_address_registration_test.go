@@ -352,6 +352,7 @@ var slotAddressCaseFiles = []string{
 	"tests/tier10_conformance/reference_battery_test.go",
 	"tests/tier10_conformance/scaffold_battery_test.go",
 	"tests/tier10_conformance/scaffolds_test.go",
+	"tests/tier10_conformance/slot_bind_attempt_conformance_test.go",
 	"tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
 	"tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
 	"tests/tier11_docs/adapter_manifest_rewrite_trigger_doc_test.go",
