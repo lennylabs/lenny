@@ -2,15 +2,15 @@
 proposal: 0081_fix_a-failed-session-bind-leaves-an-adapter-slot-registry
 title: A failed session bind leaves a stale adapter slot registry entry
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-09-16
 drafted-by: change-proposal
 reviewed-date: 2026-09-25
 reviewed-by: change-proposal
 approved-date: 2026-09-25
 approved-by: lennylabsdev@gmail.com
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-09-26
+implemented-by: lennylabsdev@gmail.com
 ---
 
 ## Review history
