@@ -133,6 +133,24 @@ func admissionRequests() []request {
 	)
 }
 
+// midSessionRequests are the §7.4 mid-session upload requests: a
+// PrepareWorkspace and a FinalizeWorkspace marked mid_session, carrying no
+// token. The admission rules govern them like every other admission request,
+// and the §5.2 reclaim hold exists to refuse one still in flight when a
+// cleanup opens the hold.
+func midSessionRequests() []request {
+	return []request{
+		{"mid-session PrepareWorkspace", func(ctx context.Context, p Pod, id, _ string) error {
+			_, err := p.PrepareWorkspace(ctx, prepareFrame(id, "", true, "x"))
+			return err
+		}},
+		{"mid-session FinalizeWorkspace", func(ctx context.Context, p Pod, id, _ string) error {
+			_, err := p.FinalizeWorkspace(ctx, finalizeReq(id, "", true))
+			return err
+		}},
+	}
+}
+
 // callCtx returns a context bounded by callTimeout.
 func callCtx(t *testing.T) context.Context {
 	t.Helper()

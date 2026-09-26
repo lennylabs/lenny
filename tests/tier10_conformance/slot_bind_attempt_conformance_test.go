@@ -50,7 +50,9 @@ func TestPairingRuleRefusesAMalformedRequestAndChangesNothing_spec_4_7_1(t *test
 // diagnosis: an admission request was admitted onto an identifier whose cleanup is still
 // running, waited on the cleanup instead of being refused, was refused with a
 // non-retryable status, or received a different answer from another site that
-// tests the hold. Check the guard acquisition and the resolve's hold test.
+// tests the hold. A mid-session upload answered FAILED_PRECONDITION means the
+// mid-session path tested rule 3 before the hold. Check the guard acquisition
+// and the resolve's hold test.
 func TestReclaimHoldRefusesEveryAdmissionRequestWithOneAnswer_spec_4_7_1(t *testing.T) {
 	bindattempt.ReclaimHold(t, bindattempt.InProcess)
 }

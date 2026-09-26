@@ -88,33 +88,68 @@ func PairingRule(t *testing.T, transport Transport) {
 // ReclaimHold drives rule 2. While the §5.2 reclaim hold keeps an identifier
 // held, every admission request for it is refused on ABORTED, without
 // waiting on the cleanup, with one answer whichever code site tests the
-// hold, and nothing is created or resolved. Once the cleanup completes each
-// request is admitted.
+// hold, and nothing is created or resolved. The rows include the §7.4
+// mid-session upload the hold exists to refuse: the cleanup has already
+// deregistered the entry, so an adapter that tests rule 3 before rule 2
+// answers it FAILED_PRECONDITION, the permanent refusal, where the hold
+// requires ABORTED. Once the cleanup completes each bind-sequence request is
+// admitted, and each mid-session request reaches rule 3 and is answered
+// FAILED_PRECONDITION because no entry stands.
 func ReclaimHold(t *testing.T, transport Transport) {
+	rows := make([]holdRow, 0, len(admissionRequests())+len(midSessionRequests()))
+	for _, r := range admissionRequests() {
+		rows = append(rows, holdRow{request: r, afterCleanup: codes.OK})
+	}
+	for _, r := range midSessionRequests() {
+		rows = append(rows, holdRow{request: r, afterCleanup: codes.FailedPrecondition})
+	}
 	var mu sync.Mutex
 	answers := map[string]string{}
-	for _, r := range admissionRequests() {
-		t.Run(r.name, func(t *testing.T) {
-			f := New(t, transport)
-			f.bindAndStart(t, alice, TokenA)
-			pc := f.park(t, alice)
-			err := callWithin(t, func(ctx context.Context) error { return r.call(ctx, f.Pod, alice, TokenA) })
-			if status.Code(err) != codes.Aborted {
-				t.Fatalf("%s during the parked cleanup = %v, want Aborted", r.name, err)
-			}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			msg := row.drive(t, transport)
 			mu.Lock()
-			answers[r.name] = status.Convert(err).Message()
+			answers[row.name] = msg
 			mu.Unlock()
-			f.finish(t, pc)
-			// The Shutdown deregistered the entry before the refused request
-			// arrived, so an entry standing now is one the refused request
-			// created.
-			f.wantNoEntry(t, alice)
-			if err := r.call(callCtx(t), f.Pod, alice, TokenA); err != nil {
-				t.Errorf("%s after the cleanup completed = %v, want admitted", r.name, err)
-			}
 		})
 	}
+	wantOneAnswer(t, answers)
+}
+
+// holdRow is one request ReclaimHold drives through a parked cleanup, with
+// the code rule 3 or rule 7 answers it once the cleanup has completed.
+type holdRow struct {
+	request
+	afterCleanup codes.Code
+}
+
+// drive refuses the row's request under the reclaim hold and returns the
+// refusal message, then checks the refusal changed nothing and the answer
+// the request receives once the cleanup completes.
+func (row holdRow) drive(t *testing.T, transport Transport) string {
+	t.Helper()
+	f := New(t, transport)
+	f.bindAndStart(t, alice, TokenA)
+	pc := f.park(t, alice)
+	err := callWithin(t, func(ctx context.Context) error { return row.call(ctx, f.Pod, alice, TokenA) })
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("%s during the parked cleanup = %v, want Aborted", row.name, err)
+	}
+	f.finish(t, pc)
+	// The Shutdown deregistered the entry before the refused request
+	// arrived, so an entry or a tree standing now is one the refused
+	// request created.
+	f.wantNoEntry(t, alice)
+	f.wantNoTree(t, alice)
+	if got := status.Code(row.call(callCtx(t), f.Pod, alice, TokenA)); got != row.afterCleanup {
+		t.Errorf("%s after the cleanup completed answered %v, want %v", row.name, got, row.afterCleanup)
+	}
+	return status.Convert(err).Message()
+}
+
+// wantOneAnswer fails the case unless every refusal carried one message.
+func wantOneAnswer(t *testing.T, answers map[string]string) {
+	t.Helper()
 	var first string
 	for name, msg := range answers {
 		if first == "" {
