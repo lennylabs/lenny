@@ -21,11 +21,15 @@ var slotRegistryFields = map[string]bool{"slots": true, "reclaiming": true}
 
 // exportedSlotRegistryReaders returns "file:Name" for every exported
 // function or method in src that names a slot registry map in its body.
-// §15.4 publishes the adapter's exported gRPC handlers as the contract a
-// third-party adapter implements, and §4.7.1 has a caller observe the
-// registry only through the answers those handlers give. The handlers reach
-// the registry through unexported helpers, so an exported declaration that
-// reads the maps itself is an introspection surface outside that contract.
+//
+// This is a project guard on the adapter package's exported Go surface.
+// Neither §4.7.1 nor §15.4 states it as a rule. §15.4 publishes the gRPC
+// handlers as the contract a third-party adapter implements, and §4.7.1
+// defines the answers those handlers give; neither section defines a
+// registry introspection API. The handlers reach the registry through
+// unexported helpers, so an exported declaration that reads the maps itself
+// adds a Go API that no spec section describes. The guard keeps that API
+// from being added without a spec change that defines it.
 func exportedSlotRegistryReaders(t *testing.T, name, src string) []string {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
@@ -51,11 +55,12 @@ func exportedSlotRegistryReaders(t *testing.T, name, src string) []string {
 }
 
 // diagnosis: an exported function or method in pkg/adapter's non-test build
-// reads the slot registry maps directly, which hands every importer of the
-// package a view of registry state that no §4.7.1 answer carries and widens
-// the surface §15.4 publishes for third-party adapters. Observe the registry
-// in tests through the handlers' answers (probe Shutdown outcomes), and keep
-// any in-package helper in an _test.go file.
+// reads the slot registry maps directly. The package's exported surface has
+// gained a registry introspection API that no spec section defines. This is
+// a project guard on the exported surface rather than a spec rule: either
+// observe the registry in tests through the handlers' answers (probe
+// Shutdown outcomes) and keep any in-package helper in an _test.go file, or
+// define the API in the spec before exporting it.
 //
 // spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
 // specification)
@@ -78,7 +83,7 @@ func TestAdapterServerExportsNoSlotRegistryReader_spec_15_4(t *testing.T) {
 	}
 	sort.Strings(offenders)
 	for _, o := range offenders {
-		t.Errorf("%s reads the slot registry from an exported declaration; the registry is observable only through the §4.7.1 handler answers", o)
+		t.Errorf("%s reads the slot registry from an exported declaration, which adds an introspection API the spec does not define", o)
 	}
 }
 
