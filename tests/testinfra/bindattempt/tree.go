@@ -4,7 +4,10 @@ package bindattempt
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -58,6 +61,72 @@ func (f *Fixture) wantNoTree(t *testing.T, id string) {
 	for _, path := range []string{p.Current, p.Staging, p.Sessions, p.Artifacts, p.CredentialsDir} {
 		if exists(path) {
 			t.Errorf("%s exists; a refused request created part of %s's tree", path, id)
+		}
+	}
+}
+
+// fileStamp is what treeSnapshot records for one path: a write, a
+// truncation, a mode change, or an entry added to or removed from a
+// directory each changes one of these fields.
+type fileStamp struct {
+	mode fs.FileMode
+	size int64
+	mod  time.Time
+}
+
+// treeSnapshot maps every path under a slot's per-slot tree to its stamp.
+type treeSnapshot map[string]fileStamp
+
+// snapshotTree records every path under id's per-slot tree: the slot's
+// workspace directory holding current and staging, its session and artifact
+// trees, and its credential directory. A root that does not exist
+// contributes nothing, so a later path under it shows up as added.
+func (f *Fixture) snapshotTree(t *testing.T, id string) treeSnapshot {
+	t.Helper()
+	p := f.slotPaths(t, id)
+	snap := treeSnapshot{}
+	for _, root := range []string{filepath.Dir(p.Current), p.Sessions, p.Artifacts, p.CredentialsDir} {
+		if root == "" || root == "." {
+			continue
+		}
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			snap[path] = fileStamp{mode: info.Mode(), size: info.Size(), mod: info.ModTime()}
+			return nil
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("snapshot %s's tree under %s: %v", id, root, err)
+		}
+	}
+	return snap
+}
+
+// wantTreeUnchanged fails the case unless id's per-slot tree is exactly as
+// before recorded it, naming each path that was added, removed or modified. It
+// is how a case sees a write a refused request made while a parked cleanup
+// holds the tree, before that cleanup removes the tree and the write with
+// it.
+func (f *Fixture) wantTreeUnchanged(t *testing.T, what, id string, before treeSnapshot) {
+	t.Helper()
+	after := f.snapshotTree(t, id)
+	for path, stamp := range after {
+		was, ok := before[path]
+		switch {
+		case !ok:
+			t.Errorf("%s: %s was created in %s's tree", what, path, id)
+		case was != stamp:
+			t.Errorf("%s: %s in %s's tree was modified", what, path, id)
+		}
+	}
+	for path := range before {
+		if _, ok := after[path]; !ok {
+			t.Errorf("%s: %s was removed from %s's tree", what, path, id)
 		}
 	}
 }

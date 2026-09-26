@@ -131,14 +131,22 @@ func (row holdRow) drive(t *testing.T, transport Transport) string {
 	f := New(t, transport)
 	f.bindAndStart(t, alice, TokenA)
 	pc := f.park(t, alice)
+	// The parked cleanup has deregistered the entry and has not yet removed
+	// the tree, which it removes only once the runtime close returns. The
+	// snapshot is taken now, so a write the refused request makes is seen
+	// before the cleanup's own removal would erase it.
+	before := f.snapshotTree(t, alice)
 	err := callWithin(t, func(ctx context.Context) error { return row.call(ctx, f.Pod, alice, TokenA) })
 	if status.Code(err) != codes.Aborted {
 		t.Fatalf("%s during the parked cleanup = %v, want Aborted", row.name, err)
 	}
+	what := row.name + " refused during the cleanup"
+	f.wantRegistry(t, what, alice, heldIdentifier)
+	f.wantTreeUnchanged(t, what, alice, before)
 	f.finish(t, pc)
 	// The Shutdown deregistered the entry before the refused request
 	// arrived, so an entry or a tree standing now is one the refused
-	// request created.
+	// request created and the cleanup did not reach.
 	f.wantNoEntry(t, alice)
 	f.wantNoTree(t, alice)
 	if got := status.Code(row.call(callCtx(t), f.Pod, alice, TokenA)); got != row.afterCleanup {
