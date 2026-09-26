@@ -14,7 +14,9 @@
 // unexported registry, because §15.4 publishes the rules for a third-party
 // adapter and the battery states them in the terms such an adapter is judged
 // by. Registry state is read back through probe Shutdown outcomes, which a
-// caller of any conforming adapter can observe.
+// caller of any conforming adapter can observe, and a failed probe names the
+// registry state the reclaim-outcome rule fixes for the outcome it observed
+// and for the outcome it wanted.
 //
 // spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
 // specification)

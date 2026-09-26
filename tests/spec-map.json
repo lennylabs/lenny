@@ -681,7 +681,6 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "tests/tier0_static/adapter_slot_registry_encapsulation_test.go",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestIsTransientPodClaimErrorIgnoresPlainFailedPrecondition_spec_7_3",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3",
@@ -3739,7 +3738,6 @@
       "title": "Runtime Adapter Specification",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
-        "tests/tier0_static/adapter_slot_registry_encapsulation_test.go",
         "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
         "tests/tier0_static/schemas_test.go::TestMessagePartExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestAdapterJSONLExamplesValidate",

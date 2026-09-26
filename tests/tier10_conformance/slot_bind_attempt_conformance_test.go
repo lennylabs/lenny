@@ -9,9 +9,14 @@
 // contract suite drives over gRPC (tests/tier3_contract/adapter_bind_attempt),
 // one case per numbered rule plus the properties the stamp-once rule and the
 // registry critical section state without a number. The Tier 3 suite is the
-// wire gate; this battery separates an adapter-logic failure from a transport
-// one, because a case that fails here and at Tier 3 is the handler's, and a
-// case that fails only at Tier 3 is the transport's.
+// wire gate. A failure here names the registry state behind it, in the terms
+// the reclaim-outcome rule fixes for each probe Shutdown outcome: whether the
+// adapter holds an entry for the session and whether the named bind attempt
+// owns it. The battery reads that state through the handlers rather than the
+// adapter's unexported registry, because §15.4 publishes the handlers as the
+// contract and defines no registry introspection API. Because the handlers
+// run without a transport here, a case that fails here and at Tier 3 is the
+// handler's, and a case that fails only at Tier 3 is the transport's.
 //
 // The project has no harness that runs these cases against a third-party
 // adapter: cmd/lenny-compliance drives a runtime binary over JSONL and has no

@@ -211,9 +211,29 @@ func (f *Fixture) wantOutcome(t *testing.T, what string, req *adapterv1.Shutdown
 	t.Helper()
 	resp := f.shutdown(t, req)
 	if got := resp.GetSlotReclaim(); got != want {
-		t.Errorf("%s reported %v, want %v", what, got, want)
+		t.Errorf("%s reported %v (%s), want %v (%s)", what, got, registryState(got), want, registryState(want))
 	}
 	return resp
+}
+
+// registryState names the registry state a Shutdown's reclaim outcome
+// reports, so a failed probe names the entry behind the answer rather than
+// only the enum value. Each outcome has one meaning, fixed by the rule that
+// answers it, which is what lets the battery state registry state without
+// reading the adapter's unexported registry.
+//
+// spec: §4.7.1 (role and gateway RPC contract), the reclaim-outcome rule
+func registryState(o adapterv1.SlotReclaimOutcome) string {
+	switch o {
+	case reclaimed:
+		return "the adapter held the entry the request was addressed to and removed it"
+	case superseded:
+		return "the adapter holds an entry for the session that the request's bind attempt does not own, either stamped by another attempt or carrying no token, and removed nothing"
+	case absent:
+		return "the adapter holds no entry for the session"
+	default:
+		return "no registry state: the adapter answered an outcome the contract does not define"
+	}
 }
 
 // wantNoEntry fails the case unless the adapter holds no entry for id.

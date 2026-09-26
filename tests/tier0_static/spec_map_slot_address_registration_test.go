@@ -336,7 +336,6 @@ var slotAddressCaseFiles = []string{
 	"tests/testinfra/sessiondriver/sessiondriver_test.go",
 	"tests/tier0_static/adapter_proto_message_scope_test.go",
 	"tests/tier0_static/adapter_proto_parse_test.go",
-	"tests/tier0_static/adapter_slot_registry_encapsulation_test.go",
 	"tests/tier0_static/address_rule_citation_test.go",
 	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
 	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
