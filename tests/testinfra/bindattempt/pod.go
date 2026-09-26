@@ -66,10 +66,12 @@ type Transport func(t *testing.T, s *adapter.Server) Connection
 // identifier holds two of them, and an optional registry inspector.
 type Connection struct {
 	Dial func(t *testing.T) Pod
-	// Inspect reads the adapter's registry state for a slot identifier. Only
-	// the in-process transport sets it; a wire transport leaves it nil,
-	// because a caller across the wire sees answers rather than state.
-	Inspect func(slotID string) adapter.SlotRegistryView
+	// Inspect reads the adapter's registry state for a slot identifier,
+	// answering whether the entry's stamp equals the named token rather than
+	// returning the stamp. Only the in-process transport sets it; a wire
+	// transport leaves it nil, because a caller across the wire sees answers
+	// rather than state.
+	Inspect func(slotID, token string) adapter.SlotRegistryView
 }
 
 // InProcess drives the exported Server's handlers directly and inspects its

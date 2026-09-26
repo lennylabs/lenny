@@ -75,15 +75,16 @@ func compensate(t *testing.T, s *Server, sessionID, token string) *adapterv1.Shu
 	return resp
 }
 
-// stampOf returns the token sessionID's entry carries and whether one stands.
-func stampOf(s *Server, sessionID string) (string, bool) {
-	v := s.InspectSlotRegistry(sessionID)
-	return v.BindAttempt, v.Entry
+// carries reports whether an entry stands for sessionID stamped with token.
+// It compares through the registry's equality answer, so the test never
+// reads the entry's token back out of the adapter.
+func carries(s *Server, sessionID, token string) bool {
+	return s.InspectSlotRegistry(sessionID, token).CarriesBindAttempt
 }
 
 // startedOf reports whether sessionID's entry records a started session.
 func startedOf(s *Server, sessionID string) bool {
-	return s.InspectSlotRegistry(sessionID).Started
+	return s.InspectSlotRegistry(sessionID, "").Started
 }
 
 // wantSuperseded fails the case unless err is rule 5's refusal.
@@ -145,8 +146,9 @@ func TestTheRefusedResumesOwnCompensationRemovesNothing_spec_4_7_1(t *testing.T)
 	if resp.GetSlotReclaim() != outcomeSuperseded || !resp.GetExitedCleanly() {
 		t.Errorf("the resume's compensation = %+v, want SUPERSEDED with a clean exit", resp)
 	}
-	if stamp, ok := stampOf(s, "alice"); !ok || stamp != attempt1 {
-		t.Errorf("entry after the resume's compensation = (%q, %v), want attempt 1's entry intact", stamp, ok)
+	if !carries(s, "alice", attempt1) {
+		t.Errorf("entry after the resume's compensation = %+v, want attempt 1's entry intact",
+			s.InspectSlotRegistry("alice", attempt1))
 	}
 	if len(rt.closed) != 0 {
 		t.Errorf("runtime closed = %v; no orphan runtime exists", rt.closed)
@@ -165,8 +167,8 @@ func TestARetryIsRefusedUntilTheFailedAttemptsCompensationLands_spec_4_7_1(t *te
 		t.Fatalf("attempt 1 assign: %v", err)
 	}
 	wantSuperseded(t, "attempt 2's first request", assign(s, "alice", attempt2))
-	if stamp, _ := stampOf(s, "alice"); stamp != attempt1 {
-		t.Errorf("entry stamp after attempt 2's refusal = %q, want attempt 1's", stamp)
+	if !carries(s, "alice", attempt1) {
+		t.Error("entry after attempt 2's refusal does not carry attempt 1's stamp")
 	}
 	if resp := compensate(t, s, "alice", attempt1); resp.GetSlotReclaim() != outcomeReclaimed {
 		t.Errorf("attempt 1's compensation = %v, want RECLAIMED", resp.GetSlotReclaim())
@@ -174,8 +176,8 @@ func TestARetryIsRefusedUntilTheFailedAttemptsCompensationLands_spec_4_7_1(t *te
 	if err := assign(s, "alice", attempt3); err != nil {
 		t.Fatalf("attempt 3 after the compensation: %v", err)
 	}
-	if stamp, _ := stampOf(s, "alice"); stamp != attempt3 {
-		t.Errorf("entry stamp after attempt 3 = %q, want attempt 3's", stamp)
+	if !carries(s, "alice", attempt3) {
+		t.Error("entry after attempt 3 does not carry attempt 3's stamp")
 	}
 }
 
@@ -238,9 +240,9 @@ func TestAConcurrentAttemptIsRefusedBeforeItsStart_spec_4_7_1(t *testing.T) {
 		frames: []*adapterv1.PrepareWorkspaceRequest{prepareFrame("alice", attempt2, false, "y")},
 	})
 	wantSuperseded(t, "attempt 2's prepare", err)
-	if stamp, _ := stampOf(s, "alice"); stamp != attempt1 || startedOf(s, "alice") {
-		t.Errorf("entry after attempt 2's refusal: stamp %q, started %v; want attempt 1's, unstarted",
-			stamp, startedOf(s, "alice"))
+	if !carries(s, "alice", attempt1) || startedOf(s, "alice") {
+		t.Errorf("entry after attempt 2's refusal = %+v, want attempt 1's stamp, unstarted",
+			s.InspectSlotRegistry("alice", attempt1))
 	}
 }
 
@@ -292,8 +294,9 @@ func TestAnAttemptRecreatesItsOwnEntryAfterAnUnconditionalTeardown_spec_4_7_1(t 
 	}); err != nil {
 		t.Fatalf("the attempt's own finalize after the teardown: %v", err)
 	}
-	if stamp, ok := stampOf(s, "alice"); !ok || stamp != attempt1 {
-		t.Errorf("recreated entry = (%q, %v), want one stamped with the attempt's own token", stamp, ok)
+	if !carries(s, "alice", attempt1) {
+		t.Errorf("recreated entry = %+v, want one stamped with the attempt's own token",
+			s.InspectSlotRegistry("alice", attempt1))
 	}
 }
 
@@ -339,8 +342,8 @@ func TestAResumeOntoAReplacementPodOwnsTheEntryItCreates_spec_4_7_1(t *testing.T
 	if err := resume(s, "alice", attempt2); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
-	if stamp, _ := stampOf(s, "alice"); stamp != attempt2 {
-		t.Errorf("entry stamp after the resume = %q, want the resume's token", stamp)
+	if !carries(s, "alice", attempt2) {
+		t.Error("entry after the resume does not carry the resume's token")
 	}
 	if resp := compensate(t, s, "alice", attempt1); resp.GetSlotReclaim() != outcomeSuperseded {
 		t.Errorf("a stale compensation = %v, want SUPERSEDED", resp.GetSlotReclaim())
@@ -371,8 +374,8 @@ func TestAMidSessionUploadOntoALiveSession_spec_4_7_1(t *testing.T) {
 	if err := upload("alice"); err != nil {
 		t.Errorf("mid-session upload onto the live session = %v, want admitted", err)
 	}
-	if stamp, _ := stampOf(s, "alice"); stamp != shutdownAttempt {
-		t.Errorf("entry stamp after the upload = %q, want it unchanged", stamp)
+	if !carries(s, "alice", shutdownAttempt) {
+		t.Error("entry stamp changed across the upload, want it unchanged")
 	}
 	if err := upload("bob"); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("mid-session upload for a session with no entry = %v, want FailedPrecondition", err)
@@ -399,8 +402,8 @@ func TestAStaleCompensationAfterAnAdapterRestart_spec_4_7_1(t *testing.T) {
 	if resp := compensate(t, s, "alice", attempt1); resp.GetSlotReclaim() != outcomeSuperseded {
 		t.Errorf("stale compensation against the later attempt's entry = %v, want SUPERSEDED", resp.GetSlotReclaim())
 	}
-	if stamp, _ := stampOf(s, "alice"); stamp != attempt3 {
-		t.Errorf("entry stamp = %q, want the later attempt's", stamp)
+	if !carries(s, "alice", attempt3) {
+		t.Error("entry does not carry the later attempt's stamp")
 	}
 }
 
@@ -420,7 +423,7 @@ func TestACompensationLostToAGatewayCrashLeavesARefusingEntry_spec_4_7_1(t *test
 	for _, token := range []string{attempt2, attempt3} {
 		wantSuperseded(t, "a later attempt at the crashed attempt's entry", assign(s, "alice", token))
 	}
-	if stamp, _ := stampOf(s, "alice"); stamp != attempt1 {
-		t.Errorf("entry stamp = %q, want the dead attempt's", stamp)
+	if !carries(s, "alice", attempt1) {
+		t.Error("entry does not carry the dead attempt's stamp")
 	}
 }
