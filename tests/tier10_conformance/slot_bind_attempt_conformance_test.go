@@ -11,7 +11,11 @@
 // registry critical section state without a number. The Tier 3 suite is the
 // wire gate; this battery separates an adapter-logic failure from a transport
 // one, because a case that fails here and at Tier 3 is the handler's, and a
-// case that fails only at Tier 3 is the transport's.
+// case that fails only at Tier 3 is the transport's. The cases for the
+// properties no single numbered rule states also read the adapter's registry
+// through the Server's read-only view, which only the in-process transport
+// supplies, so their failures name the entry, stamp, start or reclaim hold
+// that produced them rather than only the answer a request received.
 //
 // The project has no harness that runs these cases against a third-party
 // adapter: cmd/lenny-compliance drives a runtime binary over JSONL and has no
@@ -252,7 +256,9 @@ func TestReclaimOutcomeRuleAnswersEveryOutcomeOnASuccessfulCall_spec_4_7_1(t *te
 //
 // diagnosis: a request that resolved an existing entry wrote its token onto it. Stamping
 // on resolve lets a later attempt take ownership of a successor's entry and
-// reclaim it.
+// reclaim it. A registry failure names the stamp the entry carries after the
+// refusal; a stamp other than untokened points at ensureSlotStateLocked's
+// resolve branch.
 func TestStampOnceRuleWritesTheTokenOnlyOnCreate_spec_4_7_1(t *testing.T) {
 	bindattempt.StampOnce(t, bindattempt.InProcess)
 }
@@ -264,7 +270,9 @@ func TestStampOnceRuleWritesTheTokenOnlyOnCreate_spec_4_7_1(t *testing.T) {
 // specification)
 //
 // diagnosis: the resolve, the create and the stamp ran as separable steps, so two racing
-// attempts were both admitted onto one entry.
+// attempts were both admitted onto one entry. A registry failure names the
+// stamp the entry carries: the loser's token means the loser overwrote the
+// winner's stamp outside the registry lock.
 func TestResolveCreateAndStampAreOneStep_spec_4_7_1(t *testing.T) {
 	bindattempt.ResolveCreateStampIndivisible(t, bindattempt.InProcess)
 }
@@ -276,7 +284,10 @@ func TestResolveCreateAndStampAreOneStep_spec_4_7_1(t *testing.T) {
 // specification)
 //
 // diagnosis: the started-session rule ran before the attempt identity rule, so a stale
-// attempt's transient condition was presented as a permanent failure.
+// attempt's transient condition was presented as a permanent failure. A
+// registry failure names the entry's stamp and start state after the
+// refusal, which separates a mis-ordered cascade from a refusal that damaged
+// the entry.
 func TestAttemptIdentityRuleIsAppliedBeforeStartedSessionRule_spec_4_7_1(t *testing.T) {
 	bindattempt.AttemptIdentityBeforeStartedSession(t, bindattempt.InProcess)
 }
@@ -289,6 +300,9 @@ func TestAttemptIdentityRuleIsAppliedBeforeStartedSessionRule_spec_4_7_1(t *test
 //
 // diagnosis: the reclaim hold refused or blocked a Shutdown, which blocks a cleanup
 // behind itself, or admitted a bind onto an identifier still being cleaned.
+// A registry failure names whether the hold was open and whether an entry
+// stood at each step: an entry during the cleanup means a request re-created
+// it, and a hold left open afterwards means the release never ran.
 func TestReclaimHoldAdmitsAShutdownAndRefusesABind_spec_4_7_1(t *testing.T) {
 	bindattempt.ReclaimHoldAgainstShutdown(t, bindattempt.InProcess)
 }

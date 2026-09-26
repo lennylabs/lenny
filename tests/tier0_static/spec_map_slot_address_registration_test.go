@@ -275,6 +275,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/adapter/slot_test.go",
 	"pkg/adapter/slotframe_test.go",
 	"pkg/adapter/slotlayout/slotlayout_test.go",
+	"pkg/adapter/slotregistryview_test.go",
 	"pkg/adapter/slotsession_test.go",
 	"pkg/adapter/socketruntime_e2e_test.go",
 	"pkg/adapter/staging_test.go",

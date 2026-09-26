@@ -77,21 +77,13 @@ func compensate(t *testing.T, s *Server, sessionID, token string) *adapterv1.Shu
 
 // stampOf returns the token sessionID's entry carries and whether one stands.
 func stampOf(s *Server, sessionID string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.slots[sessionID]
-	if !ok {
-		return "", false
-	}
-	return st.bindAttempt, true
+	v := s.InspectSlotRegistry(sessionID)
+	return v.BindAttempt, v.Entry
 }
 
 // startedOf reports whether sessionID's entry records a started session.
 func startedOf(s *Server, sessionID string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, ok := s.slots[sessionID]
-	return ok && st.started
+	return s.InspectSlotRegistry(sessionID).Started
 }
 
 // wantSuperseded fails the case unless err is rule 5's refusal.
