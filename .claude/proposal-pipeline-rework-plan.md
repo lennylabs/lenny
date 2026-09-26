@@ -60,7 +60,7 @@ stem instead (**D1**). The reason is continuity rather than a gate: the `kind`
 segment (`new` or `fix`) is used by the skill and by `BUILD-GAPS.md` and
 `PROPOSAL-QUEUE.md` cross-references, and every existing reference is written
 in that form. The one regex that reads proposal names,
-`qualifyingDocument` in `tests/tier0_static/citation_document_test.go`, matches
+`qualifyingDocument` in a tier-0 citation test (`tests/tierN_example/example_test.go`), matches
 the bare four-digit number as its own alternative, so it tolerates a hyphen
 form. Switching the delimiter is therefore a mechanical follow-on if you want
 it; say so and I will fold it into phase 1.
@@ -179,7 +179,7 @@ Two small tools read this file so nothing greps prose again:
 ## Design (as the spec must state it)
 ## Edge cases and accepted failure modes   rows the SPEC text owns
 ## Staged edits
-   ### SPEC-1 · spec/04_….md § 4.6.3
+   ### SPEC-1 · spec/example.md § N.M
    Anchor: "Replace the row beginning …"
    ```
    <exact text>
@@ -192,7 +192,7 @@ Two small tools read this file so nothing greps prose again:
 ```
 # Non-spec changes — <title>
 ## Design (implementation-facing)
-## Staged code changes        ### CODE-1 · pkg/gateway/…
+## Staged code changes        ### CODE-1 · pkg/example/…
 ## Staged schema, chart, and migration changes    ### SCHEMA-1 / CHART-1 / MIG-1
 ## Staged docs changes        ### DOCS-1 · docs/…
 ## Testing                    ### TEST-1 · tier, // spec: tie, non-happy path it covers
@@ -206,9 +206,9 @@ One lane per step, and the standard pattern is every spec step in a leading
 block (§9.1).
 
 ```
-- [ ] **S1 · spec** — SPEC-1. The §4.6.3 ownership row for the drop counter.
+- [ ] **S1 · spec** — SPEC-1. The §N.M ownership row for the drop counter.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. The §16.1 catalog entry.
+- [ ] **S2 · spec** — SPEC-2. The metric-catalog entry.
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · code** — CODE-1. Emit the counter from the adapter.
       Tiers 0, 1, 3. Depends on: S1, S2
@@ -310,10 +310,10 @@ no later commit in which to do it. The sites are enumerable and small:
 | Site | Exposure |
 |:--|:--|
 | `BUILD-GAPS.md`, `PROPOSAL-QUEUE.md` | findings and queue rows naming a proposal path. The common case; retarget to the directory |
-| `tests/tier11_docs/spec_28_index_rows_test.go` | `channelsProposalFile = "0067_new_….md"`. 0067 is `Applied to spec`, so this **will** break the first time 0067 is touched. The constant retargets to that proposal's `.spec-changes.md`, since the test reads staged text |
-| `tests/tier11_docs/adapter_metric_catalog_test.go` | reads `filepath.Join(root, "proposals", proposal)` from `specCatalogPending`, which is **empty today**. No live exposure, but the pattern breaks if it is repopulated with a migratable proposal. Worth a comment in that file |
-| `tests/tier11_docs/spec_28_ownership_test.go` | `renamingProposalFile` names 0064, which is `Implemented` and therefore never migrates. Safe by construction |
-| `scripts/specshift/scope/scope.go`, `citation_document_test.go`, `residual_gate_test.go` | all key on the `proposals/` **prefix**, which a directory still satisfies. Unaffected |
+| A tier-11 test that names an applied proposal file in a constant (for example `tests/tierN_example/example_test.go`) | the constant names a single-file proposal whose status is `Applied to spec`, so this **will** break the first time that proposal is touched. The constant retargets to that proposal's `.spec-changes.md`, since the test reads staged text |
+| A tier-11 test that reads a proposal from a pending list | reads `filepath.Join(root, "proposals", proposal)` from a pending-proposal list, which is **empty today**. No live exposure, but the pattern breaks if it is repopulated with a migratable proposal. Worth a comment in that file |
+| A tier-11 test that names an implemented proposal in a constant | the constant names a proposal that is `Implemented` and therefore never migrates. Safe by construction |
+| `scripts/specshift/scope/scope.go`, the tier-0 citation-document test, and the tier-0 residual gate test | all key on the `proposals/` **prefix**, which a directory still satisfies. Unaffected |
 
 The migrator greps for the old path before deleting it and reports every site
 it changed, so a reference it could not resolve stops the migration rather than
@@ -354,7 +354,7 @@ in `git status`):
   "step": "S3",
   "opened": "2026-08-31T10:04:00Z",
   "expires": "2026-09-01T10:04:00Z",   // opened + leaseTtlHours, default 24
-  "allow": ["spec/04_control-plane.md", "spec/28_communication-channels.md"]
+  "allow": ["spec/example.md", "spec/example-section.md"]
 }
 ```
 
@@ -975,14 +975,14 @@ A ledger entry:
 ```
 ### [non-spec.4.fix-design.G2] · 2026-08-31 · fix-design · group G2
 - DECISION: routed the drop counter through the existing adapter metrics endpoint
-  — BECAUSE a second endpoint would need its own scrape target (§16 has one)
+  — BECAUSE a second endpoint would need its own scrape target (the observability section of the spec defines one)
   — ALTERNATIVES: a new /metrics/tracing endpoint (rejected: a deployer must wire it);
     piggy-backing on the JSONL frame (rejected: the consumer is Prometheus, not the gateway)
 - WATCHOUT: the adapter's metrics are outside the default scrape target set, so any
-  claim that a metric is "collected" needs the deployer step stated — EVIDENCE: spec/16 §16.4
-- FACT: pkg/alerting/rules is the single source for the alert catalog; docs/reference/metrics.md
-  is rendered — EVIDENCE: pkg/alerting/rules/rules.go:12
-- CORRECTS [spec.2.review-citations.3]: that entry says §16.2 owns the inventory; §16.1 does.
+  claim that a metric is "collected" needs the deployer step stated — EVIDENCE: spec/example.md §N.M
+- FACT: pkg/example is the single source for the alert catalog; docs/example-page.md
+  is rendered — EVIDENCE: pkg/example/example.go:12
+- CORRECTS [spec.2.review-citations.3]: that entry says §N.M owns the inventory; §N.K does.
 - USEFUL [spec.1.fix-design.G1]: its enumeration of the frame consumers saved a full re-derivation.
 - UNVERIFIED: nobody has checked whether tier-3 has a frame-address contract test.
 - OPEN: whether the counter is per-session or per-pod needs the human reviewer.
@@ -1851,7 +1851,7 @@ up over a run and across steps, which is what you asked for.
 ## D1 · step S7 · 2026-08-31 · accepted
 **Status:** accepted            (proposed | accepted | withdrawn)
 **Proposal says:** … (`.spec-changes.md` § SPEC-3)
-**Implemented instead:** … (pkg/gateway/router.go:214)
+**Implemented instead:** … (pkg/example/example.go:214)
 **Why:** …
 **Consequence if the proposal is not corrected:** …
 **Suggested next step:** correct the proposal | file a follow-up proposal | no action
@@ -1939,9 +1939,9 @@ spec lands, so there is no coherent target to deviate from. The likely cause is
 mechanical. `SPEC_RULES` in `implement-proposal.js` **forces** deviations at
 apply time — most sharply, *"a staged edit that introduces a brand-new section
 or subsection is appended at the end of its level and numbered as the next
-ordinal"*. So `.spec-changes.md` stages a new §4.6.4, the applier appends it as
-§4.6.7 and records the deviation, and every sentence in `.non-spec-changes.md`
-and the checklist that says "implement §4.6.4" now cites a section that does
+ordinal"*. So `.spec-changes.md` stages a new §N.M.4, the applier appends it as
+§N.M.7 and records the deviation, and every sentence in `.non-spec-changes.md`
+and the checklist that says "implement §N.M.4" now cites a section that does
 not exist. No code change fixes that; the proposal text is what is wrong.
 
 **The mechanism.** After each `spec`-lane step, a reconciliation agent runs:
@@ -1992,7 +1992,7 @@ pipeline itself forced, and every substantive conflict still goes to a person.
 | `tests/registers/residual-change-graph-coverage.yaml` | four rows deleted, eight added for the new `.mjs`/`.sh` files. Tier 0 fails without this |
 | `close-build-gaps.sh` | rules B, S1, P: lease and status-tool wording, and proposal resolution that accepts **both** layouts |
 | `.claude/workflows/build-gaps-spec-unblock.js` | proposal-path handling for folders |
-| `BUILD-GAPS.md`, `PROPOSAL-QUEUE.md`, `tests/tier11_docs/spec_28_index_rows_test.go` | **not touched by this work.** Each is retargeted by the migrator, per proposal, at the moment that proposal migrates (§2.4) |
+| `BUILD-GAPS.md`, `PROPOSAL-QUEUE.md`, and the tier-11 test that names an applied proposal file | **not touched by this work.** Each is retargeted by the migrator, per proposal, at the moment that proposal migrates (§2.4) |
 | `.claude/rules/spec-driven-development.md` | one paragraph: the proposal is a directory; the immutability rule applies to the directory |
 
 ---
@@ -2051,7 +2051,7 @@ and `.txt` are excluded, so fixtures and goldens are free, but every `.mjs` and
 `.sh` file needs a row with `disposition: excluded` and the reason already used
 for the existing four ("a node behavioural test over an agent workflow driver,
 run with node rather than selected by a test tier"). That is eight new rows and
-four deletions. `residual_gate_test.go` in tier 0 fails without them, which is
+four deletions. The residual gate test in tier 0 fails without them, which is
 the one way this work can break the product suite. It is also the reason the
 file count is kept deliberately small: one file per layer with many assertions
 inside, following the existing pattern, rather than one file per test case.

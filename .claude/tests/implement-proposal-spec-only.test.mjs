@@ -20,7 +20,7 @@ const PARENT_PLAN = {
   approved: true,
   alreadyApplied: false,
   statusLine: "Approved",
-  specEdits: [{ id: "7.1", targetFile: "spec/28_x.md", subsection: "S", summary: "s", method: "authored", command: "" }],
+  specEdits: [{ id: "7.1", targetFile: "spec/example.md", subsection: "S", summary: "s", method: "authored", command: "" }],
   nonSpecStaged: [],
   findingIds: [],
 };

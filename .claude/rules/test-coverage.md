@@ -45,7 +45,7 @@ A change usually touches several of these. Implement the tests for each tier the
 
 ## Coverage target
 
-New code carries at least 80% line coverage, measured by `go-cover` and enforced by CI (TESTING.md §12.1). The target is on new code; refactoring that does not change behavior is not penalized. Before declaring a change done, check the coverage of the lines you changed:
+New code carries at least 80% line coverage, measured by `go-cover` and enforced by CI (the coverage policy in TESTING.md). The target is on new code; refactoring that does not change behavior is not penalized. Before declaring a change done, check the coverage of the lines you changed:
 
 ```
 lenny-test coverage --diff <base-ref>
@@ -55,7 +55,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 
 ## Test conventions
 
-- Every test carries a `// spec:` annotation naming the spec sections it exercises (form: `// spec: 4.6.1 (warm pool controller), 12.3 (postgres ha)`). The harness maps tests to spec sections through this annotation.
+- Every test carries a `// spec:` annotation naming the spec sections it exercises (form: `// spec: N.M.K (section heading), N.M (section heading)`). The harness maps tests to spec sections through this annotation.
 - Every tier-2-and-higher test carries a `// diagnosis:` comment immediately above the function declaration, stating what a failure means. The harness surfaces it in the verdict.
 - Name tests for the behavior and the spec section, not the function under test alone.
 
@@ -86,11 +86,10 @@ Run these checks first, and when one fails, fix the environment rather than the 
 
 **1. The images match the renderer.** The pod spec is rendered from the current tree and the image is not.
 Any argument the renderer passes that the image's binary does not define makes the container exit
-immediately with status 2 from Go's flag package, and the first line of its log names the flag. Compare what
-`pkg/controller/sandbox/podspec` renders against the flags the runtime and adapter binaries define, and
-rebuild and reload when a flag was added, removed, or renamed since the images were built. A rename such as
-`--workspace-root` to `--workspace-base` is the common case, because it changes both sides and neither fails
-to compile.
+immediately with status 2 from Go's flag package, and the first line of its log names the flag. Compare the
+flags the controller's pod-spec renderer emits against the flags the runtime and adapter binaries define, and
+rebuild and reload when a flag was added, removed, or renamed since the images were built. A flag rename is
+the common case, because it changes both sides and neither fails to compile.
 
 **2. The cluster is not carrying wreckage from an earlier run.** Count the agent pods by phase before
 starting:
@@ -132,8 +131,9 @@ later test that waits on that label waits on the wreckage until the wait times o
 because it keeps a passing run tidy, but it cannot be the only cleanup. Give the fixture a start-time sweep
 that lists objects matching its own prefix or its own label, deletes every one that is not this run's, and
 logs what it reclaimed. Make it best-effort and never fatal: a sweep failure must not fail a run whose own
-subject is intact. `sweepStaleNonceOnlyPools` in `tests/tier8_chaos/nonce_only_degradation_test.go` is the
-worked example.
+subject is intact. The pattern is a helper called at the top of the test that lists the objects carrying
+the fixture's name prefix or label, skips the ones this run created, deletes the rest, and logs each deletion
+without failing the test when the sweep itself errors.
 
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test

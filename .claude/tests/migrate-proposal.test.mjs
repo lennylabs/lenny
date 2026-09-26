@@ -132,12 +132,12 @@ t.section("M5. idempotence and resume");
 t.section("M6. an unresolvable inbound reference stops the migration");
 {
   const { result, calls } = await runWorkflow(WF, ARGS, ok({
-    "retarget-refs": { sites: [], unresolved: ["tests/tier11_docs/x_test.go:12 reads the file but for what is unclear"] },
+    "retarget-refs": { sites: [], unresolved: ["tests/tierN_example/example_test.go:12 reads the file but for what is unclear"] },
   }));
   t.check("the run stops", result.status === "unresolved-references", result.status);
   t.check("the legacy file is NOT dropped", never(calls, "drop-legacy"));
   t.check("nothing is committed", never(calls, "commit-migration"));
-  t.check("the unresolved site is reported", (result.unresolved || []).join().includes("x_test.go"));
+  t.check("the unresolved site is reported", (result.unresolved || []).join().includes("example_test.go"));
   t.check("a stopped migration reports the directory repo-relative too", result.dir === "proposals/0076_fix_scope-the-generation", String(result.dir));
 }
 {

@@ -11,8 +11,8 @@ import { classify } from "../tools/classify-diff.mjs";
 const t = suite("step loop");
 const WF = ".claude/workflows/implement-proposal-build.js";
 const STEP = {
-  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/adapter"],
-  tiers: ["unit", "component"], specRefs: ["16.1"], checklistStep: "S1", dependsOn: [],
+  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/example"],
+  tiers: ["unit", "component"], specRefs: ["N.M"], checklistStep: "S1", dependsOn: [],
 };
 const ARGS = (over = {}) => ({
   proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "2026-08-31",
@@ -543,7 +543,7 @@ t.section("SO2. a spec-only stop still checks the lease it may be leaking");
   const withLease = (over) =>
     base({
       plan: twoLane,
-      "spec-targets:*": { files: ["spec/01_intro.md"], why: "SPEC-1 lands there" },
+      "spec-targets:*": { files: ["spec/example-section.md"], why: "SPEC-1 lands there" },
       "lease-open:*": "DONE",
       "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
       "verify:*": { discrepancies: [], green: true, tiersRun: ["unit"], failures: [] },

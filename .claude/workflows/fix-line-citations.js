@@ -4,7 +4,7 @@
 // aborts with the tree unchanged on 80 sites across 63 files that it cannot
 // convert mechanically, and its own message for each is that the site "is left
 // for hand correction". Those 80 sites block the rest of proposal 0064: SPEC-3's
-// reduction of spec/04 §4.7 and spec/15 §15.4 is one atomic sub-step with the
+// reduction of two spec sections is one atomic sub-step with the
 // line pass over the reduced files, and that pass cannot run while the code phase
 // aborts.
 //

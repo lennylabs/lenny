@@ -43,7 +43,7 @@ const newStubs = (over = {}) => ({
     kind: "fix",
     problemRestatement: "r",
     decisions: ["d"],
-    changes: [{ id: "SPEC-1", title: "catalog row", targets: ["spec/16"], rationale: "r", sketch: "s" }],
+    changes: [{ id: "SPEC-1", title: "catalog row", targets: ["spec/example.md"], rationale: "r", sketch: "s" }],
     nonGoals: [],
   },
   "challenge:": { verdict: "keep", reasons: "it survives", evidence: [] },
@@ -124,7 +124,7 @@ t.section("B2. Validate dispatches six lenses plus one consolidator");
 t.section("B3. a non-viable validation stops before any design work");
 {
   const { result, calls } = await runWorkflow(WF, NEW_ARGS, newStubs({
-    "validate:consolidate": { viable: false, whyNotValid: "", whyNotViable: "already solved by §16.1", restatement: "", confirmed: [], refuted: [] },
+    "validate:consolidate": { viable: false, whyNotValid: "", whyNotViable: "already solved by §N.M", restatement: "", confirmed: [], refuted: [] },
   }));
   t.check("status not-viable", result.status === "not-viable", result.status);
   t.check("the reason is carried out", /already solved/.test(result.reason || ""));
@@ -392,7 +392,7 @@ t.section("B6d. one decisions immunity reaches every lens, and no lens owns the 
   // barFor that no default run reaches, so it is enabled here.
   const { calls } = await runWorkflow(
     WF,
-    { ...REVIEW_ARGS, planPath: "docs/plans/remediation.md" },
+    { ...REVIEW_ARGS, planPath: "docs/example-page.md" },
     loopStubs(),
   );
   const lenses = calls.filter(isLens);
@@ -630,7 +630,7 @@ t.section("B7b. the spec gate reads a field, and a skip is visible in the result
 
   // A structured YES ran the loop's OPPOSITE before the gate read a field:
   // String({...}) is "[object Object]", which matches no /YES/i.
-  const yes = await run({ stagesSpecChanges: true, why: "SPEC-1 lands in spec/16" });
+  const yes = await run({ stagesSpecChanges: true, why: "SPEC-1 lands in spec/example.md" });
   t.check("a structured yes runs the spec loop", entered(yes.logs));
   t.check("and the result records no skip", yes.result.review.specReviewSkipped === null);
 
@@ -2628,13 +2628,13 @@ t.section("PS2. the parallel designs are reconciled before any of them is applie
       { id: "G2", title: "b", rationale: "r", findings: [1], order: 2 },
     ]),
     "*:fix-design-reconcile": { conflicts: [], revised: [] },
-    "*:fix:*": { summary: "rewrote the predicate in section 4", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
+    "*:fix:*": { summary: "rewrote the predicate in section N", newMechanisms: [], escalated: [], designRejected: [], citersChecked: [] },
   }));
   const g1 = calls.find((c) => c.label === "r1:fix:G1");
   const g2 = calls.find((c) => c.label === "r1:fix:G2");
   t.check("the first fixer is told of no earlier group", !/WHAT THE EARLIER GROUPS IN THIS ROUND/.test(g1.prompt));
   t.check("the second is", /WHAT THE EARLIER GROUPS IN THIS ROUND/.test(g2.prompt));
-  t.check("and carries what the first actually did", /rewrote the predicate in section 4/.test(g2.prompt));
+  t.check("and carries what the first actually did", /rewrote the predicate in section N/.test(g2.prompt));
   t.check("and is told to check anchors against the current text", /Check your anchors against the CURRENT text/.test(g2.prompt));
 }
 

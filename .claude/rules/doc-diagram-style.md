@@ -96,7 +96,7 @@ Use the cryptography convention from `doc-style.md`: `alice`, `bob`, `carol`, ..
 
 ### Names and references
 
-- No spec section references (`§4.6`, `§13.5`, etc.) in diagram text. Diagrams are often reused across docs and the spec; section numbers age out.
+- No spec section references (such as `§N.M`) in diagram text. Diagrams are often reused across docs and the spec; section numbers age out.
 - No historical content. Do not include former names, deprecated synonyms, or rename notes inside a diagram. Authors and consumers see the current name only.
 - Non-exhaustive lists use `etc.` followed by a period, not a trailing ellipsis. When the list is exhaustive, use a proper conjunction (`a, b, and c`).
 

@@ -19,8 +19,8 @@ import { runWorkflow, suite } from "./harness.mjs";
 const t = suite("proposal-edit audit");
 const WF = ".claude/workflows/implement-proposal-build.js";
 const STEP = {
-  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/adapter"],
-  tiers: ["unit"], specRefs: ["16.1"], checklistStep: "S1", dependsOn: [],
+  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/example"],
+  tiers: ["unit"], specRefs: ["N.M"], checklistStep: "S1", dependsOn: [],
 };
 
 const base = (over = {}) => ({

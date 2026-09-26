@@ -18,8 +18,8 @@ const SRC = loadWorkflow(".claude/workflows/implement-proposal-build.js");
 const PLAN = {
   blastRadius: [{ surface: "pkg/x", why: "t" }],
   steps: [
-    { id: "S1", title: "one", work: "w1", targets: ["pkg/a"], tiers: ["unit"], specRefs: ["§1"], checklistStep: "S1", dependsOn: [] },
-    { id: "S2", title: "two", work: "w2", targets: ["pkg/b"], tiers: ["unit"], specRefs: ["§2"], checklistStep: "S2", dependsOn: [] },
+    { id: "S1", title: "one", work: "w1", targets: ["pkg/a"], tiers: ["unit"], specRefs: ["§N.M"], checklistStep: "S1", dependsOn: [] },
+    { id: "S2", title: "two", work: "w2", targets: ["pkg/b"], tiers: ["unit"], specRefs: ["§N.K"], checklistStep: "S2", dependsOn: [] },
   ],
   deviations: [],
 };
@@ -77,7 +77,7 @@ function run({ reverifyDoneSteps, reverifyFindings }) {
   ).then((result) => ({ result, calls, logs }));
 }
 
-const FINDING = [{ title: "diverged", where: "pkg/a:1 vs §1", divergence: "d", fix: "change the code" }];
+const FINDING = [{ title: "diverged", where: "pkg/a:1 vs §N.M", divergence: "d", fix: "change the code" }];
 let failures = 0;
 const check = (name, cond, detail) => {
   if (cond) console.log("  PASS  " + name);

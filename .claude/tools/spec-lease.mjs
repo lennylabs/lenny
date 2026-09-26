@@ -61,7 +61,7 @@ export function relPath(p) {
  *
  * `resolve()` alone is pure string arithmetic, so a symlinked directory pointed
  * into the guarded tree read as outside it: an adversarial review created
- * `docs/lnk -> ../spec` and wrote `docs/lnk/28_x.md` straight through. The file
+ * `docs/lnk -> ../spec` and wrote `docs/lnk/example.md` straight through. The file
  * being written usually does not exist yet, which is why this walks up to the
  * nearest existing ancestor rather than calling realpathSync on the whole path.
  */
@@ -175,7 +175,7 @@ export function decide(target, opts = {}) {
 
   // An empty allow list grants nothing. It used to grant all of spec/: the
   // guard read `allow.length > 0 && !allow.includes(rel)`, so `open <proposal>
-  // --step S1` with no --allow let spec/04, spec/28 and a spec/ file that did
+  // --step S1` with no --allow let two existing spec files and a spec/ file that did
   // not exist yet all through, against a header that says the lease names the
   // exact files the step's deliverables target.
   const allow = Array.isArray(lease.allow) ? lease.allow.map((p) => relPath(p)) : [];
@@ -369,7 +369,7 @@ export function decideHook(rawPayload, opts = {}) {
     payload = JSON.parse(rawPayload);
   } catch (e) {
     // The shell hook ran `jq ... 2>/dev/null` and then `[ -n "$f" ] || exit 0`:
-    // measured, a jq that exits 127 allowed a write to spec/28_x.md. An input
+    // measured, a jq that exits 127 allowed a write to spec/example.md. An input
     // this tool cannot read is a refusal, like every other one in this file.
     return { allow: false, why: "the hook payload is not JSON; refusing" };
   }

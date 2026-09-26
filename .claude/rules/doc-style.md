@@ -134,7 +134,7 @@ Examples to avoid:
 - "A health-state machine drives the transition." → "A health-state machine governs the transition."
 - "Reordering via `podium layer reorder` is supported." → "Use `podium layer reorder` to change order."
 - "Nesting is intentionally not supported." → "Nesting is intentionally absent." (or "Profiles cannot nest.")
-- "What each shape supports is in §13.11." → "What each mode covers is in §13.11."
+- "What each shape supports is in §N.M." → "What each mode covers is in §N.M."
 
 When you have to use one of these verbs, the action and its target should both be specific enough that the reader can reconstruct the mechanism.
 

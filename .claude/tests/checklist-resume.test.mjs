@@ -21,8 +21,8 @@ import { runWorkflow, suite, never, matching } from "./harness.mjs";
 const t = suite("checklist resume");
 const WF = ".claude/workflows/implement-proposal-build.js";
 const STEP = {
-  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/adapter"],
-  tiers: ["unit"], specRefs: ["16.1"], checklistStep: "S1", dependsOn: [],
+  id: "S1", title: "the counter", work: "emit it", targets: ["pkg/example"],
+  tiers: ["unit"], specRefs: ["N.M"], checklistStep: "S1", dependsOn: [],
 };
 const TICKED_LINE = "- [x] **S1 · code** — done\n";
 

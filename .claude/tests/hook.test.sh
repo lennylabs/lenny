@@ -49,8 +49,8 @@ EOF
 mk_proposal 0001_fix_approved Approved
 mk_proposal 0002_fix_draft Draft
 mkdir -p "$TMP/spec"
-: >"$TMP/spec/04_control-plane.md"
-: >"$TMP/spec/28_channels.md"
+: >"$TMP/spec/example.md"
+: >"$TMP/spec/example-section.md"
 : >"$TMP/pkg"
 
 LEASE="$TMP/proposals/.spec-lease.json"
@@ -93,7 +93,7 @@ run_payload() { # raw_payload [extra env assignments]
 run_hook() { # tool_name tool_input_json [extra env assignments]
   run_payload "$(printf '{"tool_name":"%s","cwd":"%s","tool_input":%s}' "$1" "$REPO" "$2")" "${3:-}"
 }
-S="$REPO/spec/28_communication-channels.md"
+S="$REPO/spec/example.md"
 
 echo
 echo "### layer 4: the spec/ guard hook"
@@ -101,67 +101,67 @@ echo
 
 echo "H1. a path outside spec/ is always allowed"
 rm -f "$LEASE"
-check "pkg/ write allowed with no lease" 0 "$(run_check pkg/gateway/router.go)"
+check "pkg/ write allowed with no lease" 0 "$(run_check pkg/example/example.go)"
 
 echo
 echo "H2. no lease blocks"
-check "spec/ write blocked with no lease" 1 "$(run_check spec/04_control-plane.md)"
+check "spec/ write blocked with no lease" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H3. a lease naming an Approved proposal allows"
-write_lease "$TMP/proposals/0001_fix_approved" "S1" '"spec/04_control-plane.md"' "$FUTURE"
-check "allowed" 0 "$(run_check spec/04_control-plane.md)"
+write_lease "$TMP/proposals/0001_fix_approved" "S1" '"spec/example.md"' "$FUTURE"
+check "allowed" 0 "$(run_check spec/example.md)"
 
 echo
 echo "H4. a lease naming a Draft proposal blocks"
-write_lease "$TMP/proposals/0002_fix_draft" "S1" '"spec/04_control-plane.md"' "$FUTURE"
-check "blocked" 1 "$(run_check spec/04_control-plane.md)"
+write_lease "$TMP/proposals/0002_fix_draft" "S1" '"spec/example.md"' "$FUTURE"
+check "blocked" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H5. an expired lease blocks"
-write_lease "$TMP/proposals/0001_fix_approved" "S1" '"spec/04_control-plane.md"' "$PAST"
-check "blocked" 1 "$(run_check spec/04_control-plane.md)"
+write_lease "$TMP/proposals/0001_fix_approved" "S1" '"spec/example.md"' "$PAST"
+check "blocked" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H6. another proposal is Approved but no lease is open -- the independence property"
 rm -f "$LEASE"
-check "blocked even though 0001 is Approved" 1 "$(run_check spec/04_control-plane.md)"
+check "blocked even though 0001 is Approved" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H7. a path outside the allow list blocks"
-write_lease "$TMP/proposals/0001_fix_approved" "S1" '"spec/04_control-plane.md"' "$FUTURE"
-check "the allowed file passes" 0 "$(run_check spec/04_control-plane.md)"
-check "a sibling spec file blocks" 1 "$(run_check spec/28_channels.md)"
+write_lease "$TMP/proposals/0001_fix_approved" "S1" '"spec/example.md"' "$FUTURE"
+check "the allowed file passes" 0 "$(run_check spec/example.md)"
+check "a sibling spec file blocks" 1 "$(run_check spec/example-section.md)"
 
 echo
 echo "H8. a malformed lease blocks -- fail closed, not open"
 echo '{ this is not json' >"$LEASE"
-check "blocked" 1 "$(run_check spec/04_control-plane.md)"
+check "blocked" 1 "$(run_check spec/example.md)"
 printf '{"proposal":"x"}' >"$LEASE"
-check "blocked on a lease with no expires" 1 "$(run_check spec/04_control-plane.md)"
+check "blocked on a lease with no expires" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H9. an unreadable status blocks"
-write_lease "$TMP/proposals/0003_does_not_exist" "S1" '"spec/04_control-plane.md"' "$FUTURE"
-check "blocked" 1 "$(run_check spec/04_control-plane.md)"
+write_lease "$TMP/proposals/0003_does_not_exist" "S1" '"spec/example.md"' "$FUTURE"
+check "blocked" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H10. open and release round-trip"
 rm -f "$LEASE"
 node "$TOOL" open "$TMP/proposals/0001_fix_approved" --step S2 \
-  --allow spec/04_control-plane.md --lease-file "$LEASE" >/dev/null 2>&1
-check "open then allowed" 0 "$(run_check spec/04_control-plane.md)"
+  --allow spec/example.md --lease-file "$LEASE" >/dev/null 2>&1
+check "open then allowed" 0 "$(run_check spec/example.md)"
 node "$TOOL" release --lease-file "$LEASE" >/dev/null 2>&1
-check "released then blocked" 1 "$(run_check spec/04_control-plane.md)"
+check "released then blocked" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H11. release is scoped to its own step"
 node "$TOOL" open "$TMP/proposals/0001_fix_approved" --step S2 \
-  --allow spec/04_control-plane.md --lease-file "$LEASE" >/dev/null 2>&1
+  --allow spec/example.md --lease-file "$LEASE" >/dev/null 2>&1
 node "$TOOL" release --step S9 --lease-file "$LEASE" >/dev/null 2>&1
-check "another step's release does not free it" 0 "$(run_check spec/04_control-plane.md)"
+check "another step's release does not free it" 0 "$(run_check spec/example.md)"
 node "$TOOL" release --step S2 --lease-file "$LEASE" >/dev/null 2>&1
-check "its own step's release does" 1 "$(run_check spec/04_control-plane.md)"
+check "its own step's release does" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H12. the settings.json hook no longer greps every proposal"
@@ -175,12 +175,12 @@ checks=$((checks + 1))
 
 echo
 echo "H13. the real hook normalises the path instead of pattern-matching it"
-check "a relative spec path blocks"    2 "$(run_hook Edit  '{"file_path":"spec/28_communication-channels.md"}')"
+check "a relative spec path blocks"    2 "$(run_hook Edit  '{"file_path":"spec/example.md"}')"
 check "the plain absolute path blocks" 2 "$(run_hook Write "{\"file_path\":\"$S\"}")"
-check "./ in the middle blocks"        2 "$(run_hook Write "{\"file_path\":\"$REPO/./spec/28_communication-channels.md\"}")"
-check "a .. traversal blocks"          2 "$(run_hook Write "{\"file_path\":\"$REPO/docs/../spec/28_communication-channels.md\"}")"
-check "a doubled slash blocks"         2 "$(run_hook Write "{\"file_path\":\"$REPO//spec/28_communication-channels.md\"}")"
-check "pkg/ is still allowed"          0 "$(run_hook Write "{\"file_path\":\"$REPO/pkg/gateway/router.go\"}")"
+check "./ in the middle blocks"        2 "$(run_hook Write "{\"file_path\":\"$REPO/./spec/example.md\"}")"
+check "a .. traversal blocks"          2 "$(run_hook Write "{\"file_path\":\"$REPO/docs/../spec/example.md\"}")"
+check "a doubled slash blocks"         2 "$(run_hook Write "{\"file_path\":\"$REPO//spec/example.md\"}")"
+check "pkg/ is still allowed"          0 "$(run_hook Write "{\"file_path\":\"$REPO/pkg/example/example.go\"}")"
 
 echo
 echo "H14. an unreadable payload or a broken helper refuses, rather than passing the write through"
@@ -198,15 +198,15 @@ rm -f "$TMP/bin/node" "$TMP/bin/jq"
 
 echo
 echo "H15. a spec/ write issued through Bash is gated, and a read is not"
-check "an in-place edit blocks"      2 "$(run_hook Bash '{"command":"sed -i s/a/b/ spec/28_communication-channels.md"}')"
-check "a redirect blocks"            2 "$(run_hook Bash '{"command":"cat > spec/28_communication-channels.md <<EOF"}')"
+check "an in-place edit blocks"      2 "$(run_hook Bash '{"command":"sed -i s/a/b/ spec/example.md"}')"
+check "a redirect blocks"            2 "$(run_hook Bash '{"command":"cat > spec/example.md <<EOF"}')"
 check "an append blocks"             2 "$(run_hook Bash "{\"command\":\"printf x >> $S\"}")"
-check "a remove blocks"              2 "$(run_hook Bash '{"command":"rm spec/28_communication-channels.md"}')"
+check "a remove blocks"              2 "$(run_hook Bash '{"command":"rm spec/example.md"}')"
 check "git checkout -- blocks"       2 "$(run_hook Bash '{"command":"git checkout -- spec/"}')"
 check "grep over spec allowed"       0 "$(run_hook Bash '{"command":"grep -rn LNK- spec/"}')"
-check "cat of a spec file allowed"   0 "$(run_hook Bash '{"command":"cat spec/28_communication-channels.md"}')"
-check "sed -n over spec allowed"     0 "$(run_hook Bash '{"command":"sed -n 1,40p spec/28_communication-channels.md"}')"
-check "a write outside spec allowed" 0 "$(run_hook Bash '{"command":"sed -i s/a/b/ pkg/gateway/router.go"}')"
+check "cat of a spec file allowed"   0 "$(run_hook Bash '{"command":"cat spec/example.md"}')"
+check "sed -n over spec allowed"     0 "$(run_hook Bash '{"command":"sed -n 1,40p spec/example.md"}')"
+check "a write outside spec allowed" 0 "$(run_hook Bash '{"command":"sed -i s/a/b/ pkg/example/example.go"}')"
 
 echo
 echo "H16. the matcher routes Bash at all"
@@ -222,13 +222,13 @@ echo "H17. open without --allow is refused, because such a lease grants nothing"
 rm -f "$LEASE"
 node "$TOOL" open "$TMP/proposals/0001_fix_approved" --step S3 --lease-file "$LEASE" >/dev/null 2>&1
 check "open exits 2" 2 "$?"
-check "no lease was written" 1 "$(run_check spec/04_control-plane.md)"
+check "no lease was written" 1 "$(run_check spec/example.md)"
 
 echo
 echo "H18. status reports an expired lease as not held"
 rm -f "$LEASE"
 node "$TOOL" open "$TMP/proposals/0001_fix_approved" --step S3 \
-  --allow spec/04_control-plane.md --lease-file "$LEASE" >/dev/null 2>&1
+  --allow spec/example.md --lease-file "$LEASE" >/dev/null 2>&1
 checks=$((checks + 1))
 if node "$TOOL" status --lease-file "$LEASE" --now "$FUTURE" | grep -q '"held": false'; then
   echo "  PASS  a lease past its expiry reports held false"

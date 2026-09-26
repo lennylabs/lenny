@@ -53,7 +53,7 @@ The spec under `spec/` is the source of truth for platform behavior (see `spec-d
 
 - Before documenting how something works (such as a protocol, a default, a capability, or an error path), confirm it against the relevant spec section. Do not infer behavior from the name of a flag, the structure of an example, or what would be convenient to write.
 - When the spec and an existing doc disagree, the spec is right and the doc is the defect. When the spec is silent on something a reader needs, that is a spec gap. Raise it through the proposal pipeline rather than inventing an answer in the documentation.
-- Reader-facing documentation must stand on its own for a reader who does not have the spec. Do not cite spec section numbers (such as `§4.7`) in published prose; section numbers are internal and shift. State the behavior and link to the relevant documentation page. The `// spec:` citations defined in `code-best-practices.md` belong in code rather than in published documentation.
+- Reader-facing documentation must stand on its own for a reader who does not have the spec. Do not cite spec section numbers (such as `§N.M`) in published prose; section numbers are internal and shift. State the behavior and link to the relevant documentation page. The `// spec:` citations defined in `code-best-practices.md` belong in code rather than in published documentation.
 
 ## State the recommended path and mark alternatives
 

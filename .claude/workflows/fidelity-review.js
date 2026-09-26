@@ -1,7 +1,7 @@
 // fidelity-review: verify that a spec section correctly captures the mechanism
 // the code implements and the source analysis established.
 //
-// WHY THIS EXISTS. Reviewing §28 and §29 by handing an agent the file and asking
+// WHY THIS EXISTS. Reviewing a long spec section by handing an agent the file and asking
 // for defects has a known failure: the files are ~1,300 and ~1,600 lines, so each
 // pass samples a different subset and the round count never converges. Sixteen
 // rounds fixed thirty-seven real defects and did not run dry. Worse, the whole
@@ -32,7 +32,7 @@
 //
 //   Workflow({ scriptPath: ".claude/workflows/fidelity-review.js", args: {
 //     repoRoot: "/abs/path",
-//     specFiles: ["spec/28_...md", "spec/29_...md"],
+//     specFiles: ["spec/example.md", "spec/example-section.md"],
 //     sourceDocs: ["gateway-runtime-comms.md", ...],
 //     mechanisms: [ { name, kind, where } ... ]
 //   }})

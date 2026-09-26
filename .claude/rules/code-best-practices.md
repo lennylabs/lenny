@@ -18,10 +18,10 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 
 ## Project structure and reuse
 
-- Search for an existing package to reuse or extend before creating a new one. Cross-reference the §4–§17 component layout in the spec so a concern lands in its canonical package.
+- Search for an existing package to reuse or extend before creating a new one. Cross-reference the component sections of the spec so a concern lands in its canonical package.
 - One package per concern, named for the concern or the spec component it implements: components under `pkg/<concern>`, controllers under `pkg/controller/<name>`, CRD API types under `pkg/apis/lenny/<version>`. A new concern is a new directory. Avoid a catch-all dumping package; a shared helper goes with the concern it serves or in the established `pkg/common` package.
 - Libraries live under `pkg/`; binaries under `cmd/` stay thin and delegate to `pkg/`. Do not put reusable logic in a `cmd/` main.
-- Use an `internal/` subpackage to enforce an encapsulation boundary when helpers under a package subtree must not be imported elsewhere (as `pkg/gateway/mcptools/internal` does). Reach for it deliberately when a package's internals would otherwise leak into unrelated callers; most packages do not need one.
+- Use an `internal/` subpackage to enforce an encapsulation boundary when helpers under a package subtree must not be imported elsewhere (for example, a tool-dispatch package that keeps its shared helpers in `internal/` so only its own subpackages import them). Reach for it deliberately when a package's internals would otherwise leak into unrelated callers; most packages do not need one.
 - Reuse over duplication: extract a shared helper rather than copy a block. Two near-identical blocks are a refactor, not a pattern.
 - Prefer the standard library and the dependencies already in `go.mod`. A new third-party dependency is a supply-chain and maintenance surface: justify it, and reuse the cloud-provider SDK already imported rather than adding a second for the same provider.
 
@@ -48,7 +48,7 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 ## Logging and secrets
 
 - Log through `log/slog` (or `logr` in controller-runtime code, matching the surrounding controller). Do not use `fmt.Print*` for logging in library code.
-- Never log credentials, lease tokens, API keys, or tenant secret material. Log identifiers and outcomes, not secret values (§13 security model).
+- Never log credentials, lease tokens, API keys, or tenant secret material. Log identifiers and outcomes, not secret values (see the security-model section of the spec).
 
 ## Naming, comments, and spec ties
 

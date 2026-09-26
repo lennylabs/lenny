@@ -34,16 +34,16 @@ function approvedProposal(dir, stem) {
 const APPROVED = approvedProposal("proposals", "0001_fix_approved");
 const OUTSIDE = approvedProposal("outside", "0001_evil");
 mkdirSync(join(TMP, "spec"), { recursive: true });
-writeFileSync(join(TMP, "spec", "04_control-plane.md"), "");
+writeFileSync(join(TMP, "spec", "example.md"), "");
 const leasePath = join(TMP, "proposals", ".spec-lease.json");
-const FOUR = "spec/04_control-plane.md";
+const LISTED = "spec/example.md";
 const rmLease = () => rmSync(leasePath, { force: true });
 
 t.section("L1. an empty allow list grants nothing");
 {
   rmLease();
   openLease(APPROVED, { leasePath, step: "S1", allow: [] });
-  for (const p of [FOUR, "spec/28_communication-channels.md", "spec/99_anything.md"]) {
+  for (const p of [LISTED, "spec/example-section.md", "spec/anything-else.md"]) {
     const d = decide(p, { leasePath });
     t.check(p + " is refused", d.allow === false, d.why);
   }
@@ -52,9 +52,9 @@ t.section("L1. an empty allow list grants nothing");
 t.section("L2. a populated allow list grants exactly what it lists");
 {
   rmLease();
-  openLease(APPROVED, { leasePath, step: "S1", allow: [FOUR] });
-  t.check("the listed file passes", decide(FOUR, { leasePath }).allow === true);
-  const d = decide("spec/28_communication-channels.md", { leasePath });
+  openLease(APPROVED, { leasePath, step: "S1", allow: [LISTED] });
+  t.check("the listed file passes", decide(LISTED, { leasePath }).allow === true);
+  const d = decide("spec/example-section.md", { leasePath });
   t.check("a sibling spec file is refused", d.allow === false, d.why);
 }
 
@@ -70,15 +70,15 @@ t.section("L3. a proposal outside the lease's own directory is refused");
       runId: "test",
       opened: "2026-08-31T00:00:00.000Z",
       expires: "2099-01-01T00:00:00.000Z",
-      allow: [FOUR],
+      allow: [LISTED],
     }),
   );
-  const d = decide(FOUR, { leasePath });
+  const d = decide(LISTED, { leasePath });
   t.check("an out-of-tree proposal does not open spec/", d.allow === false, d.why);
 
   let threw = false;
   try {
-    openLease(OUTSIDE, { leasePath, step: "S1", allow: [FOUR] });
+    openLease(OUTSIDE, { leasePath, step: "S1", allow: [LISTED] });
   } catch (e) {
     threw = true;
   }
@@ -88,23 +88,23 @@ t.section("L3. a proposal outside the lease's own directory is refused");
 t.section("L4. a step-scoped release frees only its own step");
 {
   rmLease();
-  openLease(APPROVED, { leasePath, allow: [FOUR] });
+  openLease(APPROVED, { leasePath, allow: [LISTED] });
   const r = releaseLease({ leasePath, step: "S9" });
   t.check("another step's release is refused", r.released === false, JSON.stringify(r));
   t.check("the lease file survives", existsSync(leasePath));
-  t.check("it still grants its file", decide(FOUR, { leasePath }).allow === true);
+  t.check("it still grants its file", decide(LISTED, { leasePath }).allow === true);
   t.check("an unscoped release frees it", releaseLease({ leasePath }).released === true);
 }
 
 t.section("L5. an expired lease reads as present and not held");
 {
   rmLease();
-  openLease(APPROVED, { leasePath, step: "S1", allow: [FOUR], ttlHours: -100 });
+  openLease(APPROVED, { leasePath, step: "S1", allow: [LISTED], ttlHours: -100 });
   const r = readLease(leasePath);
   t.check("present", r.present === true);
   t.check("not held", r.held === false, JSON.stringify(r));
   t.check("expired", r.expired === true);
-  const d = decide(FOUR, { leasePath });
+  const d = decide(LISTED, { leasePath });
   t.check("and it grants nothing", d.allow === false, d.why);
 }
 
@@ -143,7 +143,7 @@ t.section("L7. the bypasses an adversarial review demonstrated");
   // guarded name is built from character codes so this file's own text cannot
   // trip the guard when an agent edits it through a shell.
   const G = String.fromCharCode(115, 112, 101, 99);
-  const F = G + "/28_x.md";
+  const F = G + "/example.md";
   const blocked = (cmd) => {
     const r = scanCommand(cmd, {});
     return !!(r && !r.allow);

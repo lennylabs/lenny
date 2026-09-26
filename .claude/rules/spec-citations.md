@@ -12,7 +12,7 @@ A specification citation names a heading, never a line. Every edit to the specif
 - Do not write a specification line number in any spelling, such as `spec/NN_file-name.md:LINE`, `spec/NN:LINE`, or "line LINE of §N.M". The prohibition is on the line number rather than on one form of words, so a spelling the gates do not yet recognize is a gap in the gates rather than a permitted citation.
 - A section that gives up content keeps a permanent successor pointer naming the heading that now owns the content and the identifiers that moved.
 
-Specification §28.1 states this rule as N8. It sits in the channel naming law because the migration that retired line citations was the same migration that renamed the channels; the rule itself governs every specification citation.
+The naming law in the communication-channels section of the specification states this rule as N8. It sits in the channel naming law because the migration that retired line citations was the same migration that renamed the channels; the rule itself governs every specification citation.
 
 ## Domain
 
@@ -25,7 +25,7 @@ The rule applies to the domain the citation gates read, which `scripts/specshift
 
 The root planning records `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md` are inside the domain. A line citation there is a pointer that has to keep resolving.
 
-§28.1 states N8 without this domain. The domain above is the one the gates enforce, and stating it in §28.1 is owed to the next proposal that edits that section.
+The specification's naming law states N8 without this domain. The domain above is the one the gates enforce, and stating it in the naming law is owed to the next proposal that edits that section.
 
 ## Gates
 

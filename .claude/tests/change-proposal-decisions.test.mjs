@@ -980,17 +980,17 @@ t.section("D6. the baseline commit: before Apply, the proposal directory alone")
   // Another actor's changes are none of this run's business.
   const outside = await fire({}, {
     ...population,
-    "f1:commit": { ...OK_COMMIT, outsideProposal: ["pkg/gateway/lease.go"] },
-    "f1:delta:firing": { files: [{ path: "p.md", added: 1, removed: 0 }], outsideProposal: ["docs/guide.md"] },
+    "f1:commit": { ...OK_COMMIT, outsideProposal: ["pkg/example/example.go"] },
+    "f1:delta:firing": { files: [{ path: "p.md", added: 1, removed: 0 }], outsideProposal: ["docs/example-page.md"] },
   });
   t.check(
     "a change outside the proposal is left uncommitted and reported",
-    (outside.result.outsideProposal || []).includes("pkg/gateway/lease.go"),
+    (outside.result.outsideProposal || []).includes("pkg/example/example.go"),
     (outside.result.outsideProposal || []).join(","),
   );
   t.check(
     "and both readings of it are kept rather than the later one winning",
-    (outside.result.outsideProposal || []).includes("docs/guide.md"),
+    (outside.result.outsideProposal || []).includes("docs/example-page.md"),
     (outside.result.outsideProposal || []).join(","),
   );
   t.check("it is logged", outside.logs.some((l) => /Left uncommitted, outside the proposal/.test(l)));
