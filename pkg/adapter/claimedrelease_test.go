@@ -42,6 +42,7 @@ func replaceWithSuccessor(t *testing.T, s *Server) (abandoned slotClaim, success
 // arm finds the guard held by the successor's request on an expired
 // context.
 func TestAnAbandonedStartsRollbackLeavesTheSuccessorsEntry_spec_4_7_1(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		guarded bool
@@ -81,6 +82,7 @@ func TestAnAbandonedStartsRollbackLeavesTheSuccessorsEntry_spec_4_7_1(t *testing
 // carries the same empty token as the untokened entry the abandoned claim
 // took, and the rollback still leaves it in place.
 func TestAnAbandonedStartsRollbackComparesTheEntryNotTheEmptyToken_spec_4_7_1(t *testing.T) {
+	t.Parallel()
 	s, _ := bindServer(t)
 	claim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
@@ -102,6 +104,7 @@ func TestAnAbandonedStartsRollbackComparesTheEntryNotTheEmptyToken_spec_4_7_1(t 
 // A rollback whose entry is still in place releases it as before: the entry
 // and its tree are removed and the completed cleanup ends the hold.
 func TestAStartsRollbackReleasesTheEntryItsClaimOwns_spec_5_2(t *testing.T) {
+	t.Parallel()
 	s, _ := bindServer(t)
 	seedEntry(t, s, "alice", tokenA, false)
 	if _, err := s.ensureSlotPaths("alice", slotResolve{bindAttempt: tokenA}); err != nil {
@@ -127,6 +130,7 @@ func TestAStartsRollbackReleasesTheEntryItsClaimOwns_spec_5_2(t *testing.T) {
 // reclaims the entry, a successor attempt stages its own entry, and the
 // runtime call then fails. The successor's entry and tree survive.
 func TestAnAbandonedSDKWarmStartsLateFailureLeavesTheSuccessorsEntry_spec_4_7_1(t *testing.T) {
+	t.Parallel()
 	s, rt := bindServer(t)
 	seedEntry(t, s, "alice", tokenA, false)
 	parked, unpark := make(chan struct{}), make(chan struct{})
