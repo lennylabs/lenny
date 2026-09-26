@@ -4,7 +4,8 @@
 // cleanup report.
 //
 // A per-slot cleanup runs at every session release on a pod of any
-// concurrency, and the adapter reports its outcome through
+// concurrency, and the adapter reports the outcome of a cleanup a `Shutdown`
+// performs to reclaim a slot that reached `running` through
 // `ReportSessionScrub`. The request is session-scoped: it is addressed by the
 // identifier of the released session and names no slot. The §4.7 RPC row in
 // spec/04_system-components.md states that rule; the reader-facing mirror in

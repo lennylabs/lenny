@@ -64,7 +64,8 @@ type ScrubReportService interface {
 }
 
 // ReportSessionScrub handles the §4.7 adapter→gateway per-slot cleanup
-// report. The adapter sends it on every session release. The handler
+// report. The adapter sends it for the outcome of a cleanup a `Shutdown`
+// performs to reclaim a slot that reached `running`. The handler
 // fail-closed-validates the request and feeds the typed outcome to the
 // ScrubReportService, which increments sessionsServed and routes a leaked
 // outcome into the unhealthy-threshold drain ledger.
@@ -196,7 +197,7 @@ type DrainLedger interface {
 }
 
 // SessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
-// seam for a concurrent non-vm-restart pool. On every session release the
+// seam for a concurrent non-vm-restart pool. On each cleanup-outcome report the
 // ScrubReporter reports the atomic post-increment served-session count so the
 // retirer can drive the per-release drain decoupled from the whole-pod scrub:
 // a persistently `leaked` slot can hold total occupancy above zero
@@ -217,7 +218,7 @@ type DrainLedger interface {
 // free of the Kubernetes client and poolstore. spec: §5.2 (per-release
 // maxSessionsPerPod drain on a concurrent non-vm-restart pool), §16.1
 // (session_count_limit counted once on the per-release path), §12
-// (sessions_served evaluated per release on a concurrent pool).
+// (sessions_served written on each cleanup-outcome report on a concurrent pool).
 type SessionCountRetirer interface {
 	// RetireOnSessionCount evaluates the served-session count for podID at a
 	// session release. count is the atomic post-increment sessions_served
@@ -474,9 +475,9 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, sessionID
 			return fmt.Errorf("record leak for pod %s: %w", podID, err)
 		}
 	}
-	// §5.2: evaluate the served-session count on every release so a concurrent
-	// non-vm-restart pool drains within maxSessionsPerPod even while a
-	// persistently leaked slot holds total occupancy above zero and the
+	// §5.2: evaluate the served-session count on each cleanup-outcome report
+	// so a concurrent non-vm-restart pool drains within maxSessionsPerPod even
+	// while a persistently leaked slot holds total occupancy above zero and the
 	// occupancy-zero podscrub.Decide check never fires. The retirer gates
 	// internally on maxConcurrentSessions > 1 && scrubProfile != vm-restart;
 	// a single-session or vm-restart pool is a no-op there.

@@ -46,7 +46,7 @@
 // testbedTenant live in multi_agent_testbed_test.go (same package).
 //
 // spec: §5.2 (concurrent sessions: per-slot credential-file group-read,
-// per-slot cleanup via ReportSessionScrub on every session release),
+// per-slot cleanup via ReportSessionScrub),
 // §6.1 (per-slot credential lease lifecycle:
 // /run/lenny/slots/{sessionId}/credentials.json, each active slot an
 // independent lease, revoked independently), §8.2 (delegation budget
@@ -119,7 +119,7 @@ func (r *recordingScrubReporter) snapshot() []scrubReport {
 
 // spec: 5.2 (concurrent sessions: per-slot credential files, per-slot cleanup
 //
-//	via ReportSessionScrub on every session release; each slot an
+//	via ReportSessionScrub; each slot an
 //	independent, simultaneous session), 6.1 (per-slot credential lease
 //	lifecycle: /run/lenny/slots/{sessionId}/credentials.json, revoked
 //	independently), 8.2 (delegation budget carved from the parent's

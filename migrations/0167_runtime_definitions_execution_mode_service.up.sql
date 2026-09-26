@@ -99,8 +99,8 @@ ALTER TABLE sandbox_warm_pools
     RENAME COLUMN task_policy TO session_policy;
 
 -- Add the nullable gateway-written per-pod recycle counters to
--- agent_pod_state. sessions_served is incremented at each session
--- release (ReportSessionScrub) and evaluated against
+-- agent_pod_state. sessions_served is incremented on each cleanup-outcome
+-- report (ReportSessionScrub) and evaluated against
 -- recycle.maxSessionsPerPod; scrub_failure_count is incremented on each
 -- failed whole-pod scrub (ReportPodScrub) and evaluated against
 -- recycle.maxScrubFailures. Both are NULL until the gateway first

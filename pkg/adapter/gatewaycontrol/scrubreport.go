@@ -69,7 +69,7 @@ func (o PodScrubOutcome) proto() adapterv1.PodScrubOutcome {
 }
 
 // ReportSessionScrub reports the §5.2 per-session cleanup outcome to the
-// gateway on every session release. podID is the agent_pod_state row key
+// gateway. podID is the agent_pod_state row key
 // and sessionID the released session, which is also the identifier of the
 // slot it held. The gateway increments sessionsServed on the pod's row and
 // feeds a leaked outcome into the unhealthy-threshold ledger. A transport

@@ -9,8 +9,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 )
 
-// SessionScrubReporter emits the §5.2 per-slot cleanup outcome to the gateway
-// on every session release. The slot-release and base-recycle paths report
+// SessionScrubReporter emits the §5.2 per-slot cleanup outcome to the gateway.
+// The slot-release and base-recycle paths report
 // through it after the per-slot teardown, keyed on the cached pod identity, the
 // released session, which is also the identifier of the slot it held. The
 // gateway advances sessions_served on the pod's row (feeding the

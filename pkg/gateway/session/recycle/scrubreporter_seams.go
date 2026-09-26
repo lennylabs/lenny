@@ -242,7 +242,7 @@ func poolMaxConcurrentSessions(p poolstore.Pool) int32 {
 }
 
 // sessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
-// for a concurrent non-vm-restart pool. On every session release the
+// for a concurrent non-vm-restart pool. On each cleanup-outcome report the
 // ScrubReporter reports the atomic post-increment served-session count and
 // this retirer resolves the pod's pool per release (mirroring
 // drainLedger.maxConcurrentSessions, which loads the same pool from the same

@@ -110,7 +110,7 @@ func TestConnectGatewayWithAddrWiresPodScrubReporter_spec_5_2(t *testing.T) {
 // per-slot cleanup outcome through, and it is the same client as the pod-scrub
 // reporter and the platform and connector forwarders. F-5.2.31.
 //
-// diagnosis: a failure means the per-session-release ReportSessionScrub has no
+// diagnosis: a failure means the ReportSessionScrub has no
 // GatewayControl link to report over, so sessions_served never advances, the
 // maxSessionsPerPod retirement stays inert, and a leaked slot never reaches the
 // gateway leak ledger.

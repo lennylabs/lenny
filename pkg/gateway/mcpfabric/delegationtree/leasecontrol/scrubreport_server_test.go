@@ -426,8 +426,8 @@ func newReporterWithRetirer(t *testing.T, c *fakeCounters, l *fakeLedger, i *fak
 }
 
 // TestReporterSessionScrubIncrementsAndLeaks verifies the orchestrator
-// increments sessions_served on every release and records a leak only on a
-// leaked outcome.
+// increments sessions_served on each cleanup-outcome report and records a
+// leak only on a leaked outcome.
 // spec: 4.7 (ReportSessionScrub increments sessionsServed; leaked feeds the ledger), 5.2 (scrub model)
 //
 // diagnosis: a failure means the gateway's session-release accounting drifted
@@ -455,9 +455,9 @@ func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	if len(l.slots) != 1 || l.slots[0] != "s2" {
 		t.Errorf("leak slots = %v, want one s2", l.slots)
 	}
-	// The per-release maxSessionsPerPod retirement runs on every release,
-	// carrying the atomic post-increment served-session count (1 then 2). The
-	// pre-fix RecordSessionScrub discarded the count and never called the
+	// The per-release maxSessionsPerPod retirement runs on each cleanup-outcome
+	// report, carrying the atomic post-increment served-session count (1 then
+	// 2). The pre-fix RecordSessionScrub discarded the count and never called the
 	// retirer, so this assertion pins the wired per-release path.
 	if len(sr.calls) != 2 || sr.calls[0] != (sessionRetireCall{"pod-1", 1}) || sr.calls[1] != (sessionRetireCall{"pod-1", 2}) {
 		t.Errorf("per-release retirer calls = %+v, want pod-1 counts 1 then 2", sr.calls)
@@ -466,12 +466,12 @@ func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 
 // TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount
 // verifies RecordSessionScrub reports the atomic post-increment served-session
-// count to the per-release maxSessionsPerPod retirer on every release, in both
-// session modes (CODE-B emits on the base recycle path too). It pins the S11
+// count to the per-release maxSessionsPerPod retirer on each cleanup-outcome
+// report, in both session modes (CODE-B emits on the base recycle path too). It pins the S11
 // wiring that captures the IncrementSessionsServed return value the pre-fix
 // handler discarded, so a concurrent non-vm-restart pool can drain per release
 // decoupled from the whole-pod scrub.
-// spec: 5.2 (per-release maxSessionsPerPod drain), 12 (sessions_served evaluated per release), 4.7 (ReportSessionScrub increments sessionsServed)
+// spec: 5.2 (per-release maxSessionsPerPod drain), 12 (sessions_served written on each cleanup-outcome report), 4.7 (ReportSessionScrub increments sessionsServed)
 //
 // diagnosis: a failure means the gateway no longer threads the post-increment
 // served-session count into the per-release retirement, so a concurrent pool

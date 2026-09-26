@@ -91,7 +91,7 @@ func shutdownSlotReq(sessionID string) *adapterv1.ShutdownRequest {
 // report: a concurrent-slot Shutdown whose runtime Close returns cleanly emits
 // exactly one ReportSessionScrub for the slot carrying outcome=released, the
 // cached pod id, the released session, and the slot id. This advances
-// sessions_served (feeding maxSessionsPerPod) on every clean release.
+// sessions_served (feeding maxSessionsPerPod) on each cleanup-outcome report.
 //
 // diagnosis: a failure means a concurrent pool no longer reports a clean slot
 // release, so sessions_served never advances and the maxSessionsPerPod

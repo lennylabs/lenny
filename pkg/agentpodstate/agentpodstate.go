@@ -57,7 +57,7 @@ type PodState struct {
 // RecycleCounters is the pair of gateway-written per-pod recycle counters
 // read by the §5.2 recycle disposition. They are the exception to the
 // WarmPoolController-maintained mirror: the gateway increments
-// SessionsServed at each session release (ReportSessionScrub) and
+// SessionsServed on each cleanup-outcome report (ReportSessionScrub) and
 // ScrubFailureCount on each failed whole-pod scrub (ReportPodScrub), and
 // the disposition evaluates them against recycle.maxSessionsPerPod and
 // recycle.maxScrubFailures. Both columns are NULL until the gateway first
@@ -125,8 +125,8 @@ type Store interface {
 	// counter and returns the new value. A NULL counter (never written) is
 	// treated as 0, so the first increment returns 1. The bool reports
 	// whether the pod row exists; a missing row returns (0, false, nil)
-	// without writing. The gateway calls this at each session release on
-	// the ReportSessionScrub RPC; the §5.2 recycle disposition evaluates
+	// without writing. The gateway calls this on each cleanup-outcome report,
+	// on the ReportSessionScrub RPC; the §5.2 recycle disposition evaluates
 	// the returned value against recycle.maxSessionsPerPod.
 	// spec: §4.7 (ReportSessionScrub increments sessionsServed), §5.2.
 	IncrementSessionsServed(ctx context.Context, podID string) (int, bool, error)
