@@ -8,8 +8,8 @@ A specification citation names a heading, never a line. Every edit to the specif
 
 ## The rule
 
-- Cite a section by its number and heading, or by its anchor, such as `§5.2` or `[Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)`. A citation that needs more precision than a section names the bold paragraph label or quotes the sentence it means.
-- Do not write a specification line number in any spelling, such as `spec/05_runtime-registry-and-pool-model.md:545`, `spec/05:545`, or "line 545 of §5.2". The prohibition is on the line number rather than on one form of words, so a spelling the gates do not yet recognize is a gap in the gates rather than a permitted citation.
+- Cite a section by its number and heading, or by its anchor, such as `§N.M` or `[Section N.M](NN_file-name.md#nm-heading-slug)`. A citation that needs more precision than a section names the bold paragraph label or quotes the sentence it means.
+- Do not write a specification line number in any spelling, such as `spec/NN_file-name.md:LINE`, `spec/NN:LINE`, or "line LINE of §N.M". The prohibition is on the line number rather than on one form of words, so a spelling the gates do not yet recognize is a gap in the gates rather than a permitted citation.
 - A section that gives up content keeps a permanent successor pointer naming the heading that now owns the content and the identifiers that moved.
 
 Specification §28.1 states this rule as N8. It sits in the channel naming law because the migration that retired line citations was the same migration that renamed the channels; the rule itself governs every specification citation.

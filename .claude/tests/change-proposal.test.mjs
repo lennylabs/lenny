@@ -15,7 +15,7 @@ const WF = ".claude/workflows/change-proposal.js";
 const NEW_ARGS = {
   mode: "new",
   problem: "The adapter drops a tracing frame and nothing counts it.",
-  context: "spec/16_observability.md:120 names the catalog",
+  context: "spec/example.md, 'Metric catalog' names the catalog",
   nextNumber: "0081",
   date: "2026-08-31",
   exemplar: "proposals/0080_fix_x.md",
@@ -27,7 +27,7 @@ const NEW_ARGS = {
 // and stop at the first review round with nothing found.
 const newStubs = (over = {}) => ({
   init: "created",
-  "validate:": { verdict: "stands", findings: [{ statement: "s", evidence: "spec/16:1", loadBearing: true }] },
+  "validate:": { verdict: "stands", findings: [{ statement: "s", evidence: "spec/example.md", loadBearing: true }] },
   "validate:consolidate": {
     viable: true,
     restatement: "The adapter drops a tracing frame.",
@@ -930,7 +930,7 @@ t.section("B12n. what a verifier reads: the rubric once, the finding once, and n
 {
   // A launch context the lenses read and the verifiers must not. The string is
   // distinctive so its absence from a prompt is a positive check.
-  const LEAD = "ORCHESTRATOR-LEAD-7f3a: spec/16_observability.md:120 names the catalog";
+  const LEAD = "ORCHESTRATOR-LEAD-7f3a: spec/example.md, 'Metric catalog' names the catalog";
   const CTX_ARGS = { ...REVIEW_ARGS, context: LEAD };
   const fx = (n) => ({
     title: "T" + n, where: "w" + n, claim: "CLAIM-UNIQUE-" + n, why_wrong: "w", evidence: "e",
@@ -2669,7 +2669,7 @@ function sitesPayload(prompt) {
   return null;
 }
 const SITE_P = { file: "proposals/0081_fix_x/0081_fix_x.spec-changes.md", line: 10, quote: "q", why: "breaks", confidence: "high" };
-const SITE_T = { file: "spec/10.md", line: 20, quote: "tq", why: "breaks", confidence: "medium" };
+const SITE_T = { file: "spec/example.md", line: 20, quote: "tq", why: "breaks", confidence: "medium" };
 
 t.section("X1. expansion runs once per CONFIRMED finding, on opus at low effort, before grouping");
 {
@@ -2747,7 +2747,7 @@ t.section("X4. sites reach the planner, the designer and the fixer, framed as ca
   // The instruction and the payload are separate expressions, so the fixer could
   // be told to "follow the adjudication" with no sites in its prompt at all.
   t.check("and is actually GIVEN the sites, not just told about them", /POTENTIALLY RELATED SITES/.test(fixer.prompt));
-  t.check("with the site data itself", /0081_fix_x\.spec-changes\.md/.test(fixer.prompt) && /"spec\/10\.md"/.test(fixer.prompt));
+  t.check("with the site data itself", /0081_fix_x\.spec-changes\.md/.test(fixer.prompt) && /"spec\/example\.md"/.test(fixer.prompt));
   t.check("and to re-read before editing", /RE-READ BEFORE YOU EDIT/.test(fixer.prompt));
   t.check("tree sites stay out of bounds for the fixer", /is NOT yours to edit/.test(fixer.prompt));
   t.check("proposal and tree sites stay separate", /"proposal":/.test(design.prompt) && /"tree":/.test(design.prompt));
@@ -2778,7 +2778,7 @@ t.section("X5. only in-scope sites are checked by the post-fix review");
 
 t.section("X5b. site classes are decided by path, not by the pass that returned them");
 {
-  const MISFILED_TREE = { file: "spec/10_x.md", line: 5, quote: "sq", why: "breaks", confidence: "high" };
+  const MISFILED_TREE = { file: "spec/example.md", line: 5, quote: "sq", why: "breaks", confidence: "high" };
   const MISFILED_PROP = { file: "proposals/0081_fix_x/0081_fix_x.spec-changes.md", line: 7, quote: "pq", why: "breaks", confidence: "high" };
   const { calls, logs } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
     // Deliberately crossed: the spec file under `proposal`, the proposal file under `tree`.
@@ -2788,7 +2788,7 @@ t.section("X5b. site classes are decided by path, not by the pass that returned 
   const payload = sitesPayload(design.prompt);
   const cls = (f) => (payload[0].sites.proposal.some((s) => s.file === f) ? "proposal"
                     : payload[0].sites.tree.some((s) => s.file === f) ? "tree" : "absent");
-  t.check("a spec/ path filed as `proposal` is moved to tree", cls("spec/10_x.md") === "tree", cls("spec/10_x.md"));
+  t.check("a spec/ path filed as `proposal` is moved to tree", cls("spec/example.md") === "tree", cls("spec/example.md"));
   t.check("a proposal-dir path filed as `tree` is moved to proposal",
     cls("proposals/0081_fix_x/0081_fix_x.spec-changes.md") === "proposal",
     cls("proposals/0081_fix_x/0081_fix_x.spec-changes.md"));
@@ -2798,9 +2798,9 @@ t.section("X5b. site classes are decided by path, not by the pass that returned 
 
 t.section("X5c. an in-scope site the fixer may not edit is not checked as drift");
 {
-  const SPEC_SITE = { file: "spec/10_x.md", line: 5, quote: "sq", why: "breaks", confidence: "high" };
+  const SPEC_SITE = { file: "spec/example.md", line: 5, quote: "sq", why: "breaks", confidence: "high" };
   const design = { designs: [{ findingTitle: "T1", effort: "trivial", chosen: { approach: "a", why: "w" },
-    siteDispositions: [{ file: "spec/10_x.md", line: 5, quote: "sq", disposition: "in-scope", why: "breaks" }] }], newMechanisms: [] };
+    siteDispositions: [{ file: "spec/example.md", line: 5, quote: "sq", disposition: "in-scope", why: "breaks" }] }], newMechanisms: [] };
   const { calls, logs, result } = await runWorkflow(WF, REVIEW_ARGS, fixStubs(1, {
     "*:expand:*": { proposal: [], tree: [SPEC_SITE], searched: "grepped X" },
     "*:fix-design:*": design,

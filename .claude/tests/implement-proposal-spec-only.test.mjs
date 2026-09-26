@@ -38,7 +38,7 @@ const BUILD_STUBS = {
   "checklist-ticks": { ticked: [] },
   baseline: { sha: "b" },
   "build:S2:base": { sha: "b" },
-  "spec-targets:*": { files: ["spec/16.md"] },
+  "spec-targets:*": { files: ["spec/example.md"] },
   "lease-open:*": "{}",
   "lease-release:*": "{}",
   // The prefix's exit checks the lease it may be leaking, and fails closed on
@@ -58,7 +58,7 @@ const BUILD_STUBS = {
 };
 
 const specStep = (id, deps) => ({
-  id, lane: "spec", title: "s", work: "SPEC-1", targets: ["spec/16.md"],
+  id, lane: "spec", title: "s", work: "SPEC-1", targets: ["spec/example.md"],
   tiers: ["static"], checklistStep: id, dependsOn: deps || [],
 });
 const codeStep = (id, deps) => ({

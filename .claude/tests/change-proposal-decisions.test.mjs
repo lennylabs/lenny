@@ -121,8 +121,8 @@ const entry = (over = {}) => ({
   home: "summary-open-decisions",
   deliverable: "SPEC-1",
   marker: "",
-  groundQuotes: ['spec/04_gateway.md:12 — "the gateway retries a refused lease once"'],
-  questionsAsked: ["Q: what does the lease section say / A: it retries once (spec/04_gateway.md)"],
+  groundQuotes: ['spec/example.md, "Lease retries" — "the gateway retries a refused lease once"'],
+  questionsAsked: ["Q: what does the lease section say / A: it retries once (spec/example.md)"],
   caseFor: "the spec settles it",
   caseAgainst: "the spec may have drifted from the chart",
   whatWouldFlipIt: "a contrary default in the chart",
@@ -812,7 +812,7 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
   const H = entry({ id: "OD-9", decision: "does the gate stay equality?", disposition: "human", summaryAction: "unchanged" });
   const REFUTE = (fb) => ({
     theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive",
-    reasoning: "the shipped spec settles it", evidence: "spec/10:41", fallbackDisposition: fb,
+    reasoning: "the shipped spec settles it", evidence: 'spec/example.md, "Gate comparison"', fallbackDisposition: fb,
   });
 
   // `implementor` needs no answer: the disposition is the outcome.
@@ -826,8 +826,8 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
   // `resolve` needs an answer, and a separate agent designs it.
   const design = {
     answerable: true, answerKey: "equality", answer: "The gate compares for equality.",
-    authority: "spec/10_gateway-internals.md:41", why: "shipped step 3 fixes the comparison",
-    where: ["spec-changes.md — SPEC-1 §10.1.2"],
+    authority: 'spec/example.md, "Gate comparison"', why: "shipped step 3 fixes the comparison",
+    where: ["spec-changes.md — SPEC-1"],
   };
   const toRes = await fire({}, {
     "f1:human-decisions:*": found(H),
@@ -846,8 +846,8 @@ t.section("D4b. a refuted human disposition is acted on, and its answer designed
   // The applier applies a design rather than deriving a second answer.
   const ap = promptOf(toRes.calls, "f1:apply:0");
   t.check("the applier is given the answer", /THE ANSWER IS ALREADY DESIGNED/.test(ap));
-  t.check("with the authority it rests on", /spec\/10_gateway-internals\.md:41/.test(ap));
-  t.check("and the sites it lands in", /SPEC-1 §10\.1\.2/.test(ap));
+  t.check("with the authority it rests on", /spec\/example\.md, "Gate comparison"/.test(ap));
+  t.check("and the sites it lands in", /spec-changes\.md — SPEC-1/.test(ap));
   t.check("and is told not to re-derive it", /Apply it; do not re-derive it/.test(ap));
   // The staging ladder: an answer lands at the lowest rung that holds, and its
   // ground goes to the log rather than into the staged text.
@@ -2418,7 +2418,7 @@ t.section("D21. every prompt puts its stable text first, so two calls of one fam
   {
     const H = entry({ id: "OD-9", decision: "does the gate stay equality?", disposition: "human", summaryAction: "unchanged" });
     const REFUTE = { theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive", reasoning: "the shipped spec settles it", evidence: [], fallbackDisposition: "resolve" };
-    const design = { answerable: true, answer: "equality", answerKey: "equality", authority: "spec/10:41", where: [P.spec + " — SPEC-1"], why: "the spec says so" };
+    const design = { answerable: true, answer: "equality", answerKey: "equality", authority: 'spec/example.md, "Gate comparison"', where: [P.spec + " — SPEC-1"], why: "the spec says so" };
     const d1 = await fire({}, { "f1:human-decisions:*": found(H), "f1:falsify:0": REFUTE, "f1:answer-design:0": design });
     const d2 = await later(d1.result.phaseState, 2, { "f2:human-decisions:*": found({ ...H, id: "OD-10", decision: "does the fence carry the pre-bump generation?" }), "f2:falsify:0": REFUTE, "f2:answer-design:0": design });
     const a = promptOf(d1.calls, "f1:answer-design:0");
@@ -2436,12 +2436,12 @@ t.section("D40. a designed answer is gated, the checklist mapping travels with a
   const H = entry({ id: "OD-9", decision: "does the gate stay equality?", disposition: "human", summaryAction: "unchanged" });
   const REFUTE_HUMAN = {
     theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive",
-    reasoning: "the shipped spec settles it", evidence: "spec/10:41", fallbackDisposition: "resolve",
+    reasoning: "the shipped spec settles it", evidence: 'spec/example.md, "Gate comparison"', fallbackDisposition: "resolve",
   };
   const design = {
     answerable: true, answerKey: "equality", answer: "The gate compares for equality.",
-    authority: "spec/10_gateway-internals.md:41", why: "shipped step 3 fixes the comparison",
-    where: ["spec-changes.md — SPEC-1 §10.1.2"], rung: "replace",
+    authority: 'spec/example.md, "Gate comparison"', why: "shipped step 3 fixes the comparison",
+    where: ["spec-changes.md — SPEC-1"], rung: "replace",
   };
 
   // The answer itself meets the `resolve` brief's falsifier, and a refuted answer is not applied.
@@ -2504,7 +2504,7 @@ t.section("D41. the reversal check counts only staged and summary edits");
   const first = await fire({}, {
     "f1:human-decisions:*": found(H),
     "f1:falsify:0": { theDispositionIAttacked: "human", falsified: true, howConclusive: "conclusive", reasoning: "r", evidence: "e", fallbackDisposition: "resolve" },
-    "f1:answer-design:0": { answerable: true, answerKey: "k", answer: "a", authority: "spec/10:41", why: "w", where: ["spec-changes.md"] },
+    "f1:answer-design:0": { answerable: true, answerKey: "k", answer: "a", authority: 'spec/example.md, "Gate comparison"', why: "w", where: ["spec-changes.md"] },
     "f1:falsify-answer:0": STANDS,
     "f1:apply:0": { outcome: "edited", recordWritten: true, where: ["spec-changes.md — SPEC-1"] },
   });

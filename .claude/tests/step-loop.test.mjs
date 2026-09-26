@@ -372,11 +372,11 @@ t.section("C12. an unproductive verdict stops the step and writes NO deviation")
 
 // ---- Phase 8b: one execution sequence ------------------------------------
 
-const SPEC_STEP = { id: "S1", lane: "spec", title: "the §16.1 row", work: "SPEC-1", targets: ["spec/16.md"], tiers: ["static"], checklistStep: "S1", dependsOn: [] };
+const SPEC_STEP = { id: "S1", lane: "spec", title: "the example row", work: "SPEC-1", targets: ["spec/example.md"], tiers: ["static"], checklistStep: "S1", dependsOn: [] };
 const CODE_STEP = { ...STEP, id: "S2", lane: "code", checklistStep: "S2", dependsOn: ["S1"] };
 
 const specBase = (over = {}) => base({
-  "spec-targets:*": { files: ["spec/16_observability.md"] },
+  "spec-targets:*": { files: ["spec/example-section.md"] },
   "lease-open:*": "{}",
   "lease-release:*": "{}",
   "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
@@ -394,7 +394,7 @@ t.section("C16. spec and code steps run in one sequence, in checklist order");
   t.check("before the code step builds", firstIndex(calls, "apply:S1") < firstIndex(calls, "build:S2"));
   t.check("the spec step ticks its own box", calls.some((c) => c.label === "tick:S1"));
   t.check("and both steps are recorded", (result.steps || []).length === 2, String((result.steps || []).length));
-  t.check("the spec step records the files it wrote", (result.steps || [])[0].specFiles.join().includes("spec/16"));
+  t.check("the spec step records the files it wrote", (result.steps || [])[0].specFiles.join().includes("spec/example"));
 }
 
 t.section("C17. the lease is per spec step, scoped to its files, and no code step holds one");
@@ -405,7 +405,7 @@ t.section("C17. the lease is per spec step, scoped to its files, and no code ste
   const open = calls.filter((c) => c.label.startsWith("lease-open:"));
   t.check("exactly one lease is opened", open.length === 1, String(open.length));
   t.check("it belongs to the spec step", open[0].label === "lease-open:S1");
-  t.check("its allow list is that step's files only", /--allow 'spec\/16_observability\.md'/.test(open[0].prompt));
+  t.check("its allow list is that step's files only", /--allow 'spec\/example-section\.md'/.test(open[0].prompt));
   t.check("it is a dedicated one-command haiku agent", open[0].opts.model === "haiku" && /Do nothing else/.test(open[0].prompt));
   t.check("it is released", !never(calls, "lease-release:S1"));
   t.check("before the code step runs", firstIndex(calls, "lease-release:S1") < firstIndex(calls, "build:S2"));
@@ -426,7 +426,7 @@ t.section("C21. a failing spec step still releases its lease");
 {
   const { calls, result } = await runWorkflow(
     WF, ARGS({ plan: { blastRadius: [], steps: [SPEC_STEP] } }),
-    specBase({ "verify:S1:spec": { discrepancies: [{ title: "d", file: "spec/16.md", where: "w", expected: "e", observed: "o", fix: "f" }] } }),
+    specBase({ "verify:S1:spec": { discrepancies: [{ title: "d", file: "spec/example.md", where: "w", expected: "e", observed: "o", fix: "f" }] } }),
   );
   t.check("a verification discrepancy stops the step", result.status === "spec-step-failed");
   t.check("the discrepancies are carried out", (result.discrepancies || []).length === 1);

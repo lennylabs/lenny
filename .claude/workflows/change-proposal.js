@@ -1201,7 +1201,7 @@ const POTENTIALLY_RELATED_SITES = {
 // class the expansion pass assigned it. The class is the fixer's WRITE
 // PERMISSION -- SPEC_EDITABLE and NONSPEC_EDITABLE list only files inside the
 // proposal -- and a permission decided by an agent's judgement is not decided.
-// A measured run filed `spec/10_x.md` under `proposal`; the design adjudicated
+// A measured run filed a `spec/` path under `proposal`; the design adjudicated
 // it `in-scope`, the fixer's HARD CONSTRAINT correctly refused to touch
 // anything under spec/, the post-fix reviewer is told an unedited in-scope site
 // is a CONFIRMED drift finding so it filed one, and a follow-up fixer ran

@@ -147,8 +147,8 @@ const CASES = [
     stubs: (() => {
       const E = (over) => ({
         id: "", decision: "which timeout does the adapter use?", home: "summary-open-decisions",
-        deliverable: "SPEC-1", marker: "", groundQuotes: ['spec/04_gateway.md:12 — "it retries once"'],
-        questionsAsked: ["Q: what does the lease section say / A: it retries once (spec/04_gateway.md)"],
+        deliverable: "SPEC-1", marker: "", groundQuotes: ['spec/example.md, "Lease retries" — "it retries once"'],
+        questionsAsked: ["Q: what does the lease section say / A: it retries once (spec/example.md)"],
         caseFor: "f", caseAgainst: "a", whatWouldFlipIt: "w", counterfactual: "c", cascades: [],
         disposition: "human", recommendation: "r", summaryAction: "added", ...over,
       });
@@ -200,13 +200,13 @@ const CASES = [
     args: {
       proposalPath: "proposals/0081_fix_x", repoRoot: "/repo", date: "d",
       plan: { blastRadius: [], steps: [
-        { id: "S1", lane: "spec", title: "s", work: "SPEC-1", targets: ["spec/16.md"], tiers: ["static"], checklistStep: "S1", dependsOn: [] },
+        { id: "S1", lane: "spec", title: "s", work: "SPEC-1", targets: ["spec/example.md"], tiers: ["static"], checklistStep: "S1", dependsOn: [] },
         { id: "S2", lane: "code", title: "c", work: "w", targets: ["pkg/a"], tiers: ["unit"], checklistStep: "S2", dependsOn: ["S1"] },
       ] },
     },
     stubs: {
       "checklist-ticks": { ticked: [] }, baseline: { sha: "b" }, "build:S2:base": { sha: "b" },
-      "spec-targets:*": { files: ["spec/16.md"] }, "lease-open:*": "{}", "lease-release:*": "{}",
+      "spec-targets:*": { files: ["spec/example.md"] }, "lease-open:*": "{}", "lease-release:*": "{}",
       "apply:*": { applied: ["SPEC-1"], unappliable: [], deviations: [] },
       "verify:S1:spec": { discrepancies: [] }, "commit-spec:*": "ok",
       "compile:*": { compiles: true, errors: [] },
