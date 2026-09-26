@@ -1,0 +1,95 @@
+# SPDX-License-Identifier: MIT
+#
+# Per-file counts of proposal scaffolding labels in Go comments.
+#
+# Each count is how many proposal change identifiers (a lane prefix such as
+# the code or spec lane, a hyphen, and a letter or number) and bare build
+# steps (an S and one or two digits, the S3 service name excepted) the
+# comments of the file carried when the proposal-label ratchet landed. A
+# file that carries none holds no entry here, and it fails tier 0 on its
+# first one.
+#
+# tests/tier0_static/proposal_label_comment_test.go reads this file. It
+# fails a file whose count rises above its entry and a file whose count
+# fell below it, so a removal is written back here in the same change and
+# the ratchet only tightens. Replace a label with a `// spec:` citation or a
+# description of the behavior it names.
+kind: proposal-label-comment-baseline
+version: 1
+files:
+  cmd/lenny-gateway/adminrouter.go: 1
+  cmd/lenny-gateway/controlserver.go: 4
+  cmd/lenny-gateway/direct_usage.go: 1
+  cmd/lenny-gateway/direct_usage_recovery_test.go: 7
+  cmd/lenny-gateway/direct_usage_test.go: 6
+  cmd/lenny-gateway/leaseextendseam_wiring_test.go: 3
+  cmd/lenny-gateway/llmproxy.go: 1
+  cmd/lenny-gateway/llmproxy_both_wired_test.go: 2
+  cmd/lenny-gateway/llmproxy_leasecontrol_wired_test.go: 3
+  cmd/lenny-gateway/llmproxy_usage.go: 11
+  cmd/lenny-gateway/llmproxy_usage_test.go: 9
+  cmd/lenny-gateway/main.go: 2
+  cmd/lenny-gateway/scrub_report_wiring_test.go: 1
+  cmd/lenny-gateway/sessiondeps.go: 1
+  cmd/lenny-gateway/sessionsrv.go: 1
+  cmd/lenny-gateway/startup_chain_continuity_test.go: 7
+  cmd/lenny-gateway/stores.go: 1
+  cmd/lenny-gateway/wiring_fields.go: 1
+  pkg/adapter/podscrub_test.go: 1
+  pkg/adapter/usage_test.go: 1
+  pkg/audit/chain_test.go: 5
+  pkg/audit/integrity/continuity_window_test.go: 3
+  pkg/common/seqname/seqname_test.go: 1
+  pkg/controller/warmpool/pod_reconciler.go: 2
+  pkg/controller/warmpool/pod_reconciler_test.go: 3
+  pkg/embedded/localcli/runtime-apply.go: 1
+  pkg/embedded/stack/bringup_test.go: 1
+  pkg/embedded/stack/catalog.go: 4
+  pkg/embedded/stack/lifecycle_test.go: 1
+  pkg/embedded/stack/stack.go: 5
+  pkg/embedded/stack/state.go: 2
+  pkg/gateway/externalapi/admin/scope_enforce_test.go: 2
+  pkg/gateway/externalapi/admin/tenant_sequence_wiring_internal_test.go: 2
+  pkg/gateway/externalapi/admin/tenants.go: 2
+  pkg/gateway/externalapi/openapi/completeness_test.go: 1
+  pkg/gateway/externalapi/openapi/openapi_test.go: 3
+  pkg/gateway/llmproxy/llmproxy/handler.go: 3
+  pkg/gateway/llmproxy/llmproxy/handler_test.go: 2
+  pkg/gateway/mcpfabric/delegationtree/leasecontrol/budgetextension.go: 5
+  pkg/gateway/mcpfabric/delegationtree/leasecontrol/elicitation_test.go: 1
+  pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go: 2
+  pkg/gateway/metrics/gatewaymetrics/retry_resume_test.go: 1
+  pkg/gateway/podlifecycle/podclaim/maxpoduptime_test.go: 1
+  pkg/gateway/podlifecycle/podsession/binder_phases_test.go: 1
+  pkg/gateway/podlifecycle/podsession/slotbinder_test.go: 2
+  pkg/gateway/runtime/adapterclient/client_test.go: 1
+  pkg/gateway/runtime/slothealth/slothealth_test.go: 2
+  pkg/gateway/session/recycle/holdcoordinator.go: 1
+  pkg/gateway/session/recycle/scrubreporter_seams.go: 2
+  pkg/gateway/session/sessionbudget/sessionbudget.go: 9
+  pkg/gateway/session/sessionbudget/sessionbudget_test.go: 5
+  pkg/gateway/session/sessionstore/pgstore/pgstore.go: 2
+  pkg/gateway/sessionserver/slotretry_load_test.go: 2
+  pkg/gateway/sessionserver/slotretry_test.go: 2
+  pkg/podregistry/crd.go: 1
+  pkg/sandbox/podscrub/podscrub_test.go: 1
+  tests/testinfra/embedded/embedded_test.go: 1
+  tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go: 6
+  tests/tier11_docs/direct_usage_reportusage_consistency_test.go: 7
+  tests/tier11_docs/embedded_echo_placement_test.go: 11
+  tests/tier11_docs/external_side_effect_recovery_test.go: 10
+  tests/tier11_docs/vm_restart_reprovision_consistency_test.go: 5
+  tests/tier2_component/auditstore/auditstore_test.go: 3
+  tests/tier2_component/auditstore/write_before_issue_seq_test.go: 1
+  tests/tier2_component/stores/crdpodregistry_claim_test.go: 1
+  tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go: 7
+  tests/tier4_integration/embedded_mode_smoke_test.go: 4
+  tests/tier4_integration/recycle_scrub_path_test.go: 4
+  tests/tier7a_load_local/directusage_teardown/directusage_teardown_test.go: 2
+  tests/tier7a_load_local/scenarios/budget_gate_deny_flag_race/scenario.go: 3
+  tests/tier7a_load_local/scenarios/raisebudget_enforcer_race/scenario.go: 2
+  tests/tier7a_load_local/scenarios/scenarios.go: 3
+  tests/tier7a_load_local/scenarios/slot_leaked_counted_race/scenario.go: 1
+  tests/tier8_chaos/direct_usage_crash_recovery_test.go: 4
+  tests/tier9_security/controller_rbac_test.go: 2
+  tests/tier9_security/write_before_issue_failclosed_test.go: 4
