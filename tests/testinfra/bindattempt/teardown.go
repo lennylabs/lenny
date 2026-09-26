@@ -202,7 +202,6 @@ func StampOnce(t *testing.T, transport Transport) {
 	f.start(t, alice)
 	_, err := f.Pod.RunSetup(callCtx(t), &adapterv1.RunSetupRequest{SessionId: sid(alice), BindAttempt: TokenB})
 	wantStartedRefusal(t, "RunSetup naming an attempt against the untokened started entry", err)
-	f.wantRegistry(t, "after the refused RunSetup naming an attempt", alice, stampedEntry("", true))
 	f.wantOutcome(t, "a Shutdown naming the refused request's attempt", fencedReq(alice, TokenB), superseded)
 	if n := f.Runtime.Closes(alice); n != 0 {
 		t.Errorf("runtime closes = %d, want 0", n)
@@ -224,11 +223,9 @@ func ResolveCreateStampIndivisible(t *testing.T, transport Transport) {
 		switch {
 		case errA == nil && errB != nil:
 			wantSupersededRefusal(t, "the losing attempt", errB)
-			f.wantRegistry(t, "after attempt A won the race", id, stampedEntry(TokenA, false))
 			f.wantOwnedBy(t, id, TokenA)
 		case errB == nil && errA != nil:
 			wantSupersededRefusal(t, "the losing attempt", errA)
-			f.wantRegistry(t, "after attempt B won the race", id, stampedEntry(TokenB, false))
 			f.wantOwnedBy(t, id, TokenB)
 		default:
 			t.Fatalf("%s: attempt A = %v, attempt B = %v; want exactly one admitted", id, errA, errB)
@@ -266,7 +263,6 @@ func AttemptIdentityBeforeStartedSession(t *testing.T, transport Transport) {
 	f.bindAndStart(t, alice, TokenA)
 	_, err := f.Pod.RunSetup(callCtx(t), &adapterv1.RunSetupRequest{SessionId: sid(alice), BindAttempt: TokenB})
 	wantSupersededRefusal(t, "RunSetup naming another attempt against the started entry", err)
-	f.wantRegistry(t, "after the refused RunSetup naming another attempt", alice, stampedEntry(TokenA, true))
 	f.wantTreeIntact(t, alice, true)
 	f.wantOwnedBy(t, alice, TokenA)
 }
@@ -281,7 +277,6 @@ func ReclaimHoldAgainstShutdown(t *testing.T, transport Transport) {
 	f := New(t, transport)
 	f.bindAndStart(t, alice, TokenA)
 	pc := f.park(t, alice)
-	f.wantRegistry(t, "once the cleanup was parked", alice, heldIdentifier)
 	for name, req := range map[string]*adapterv1.ShutdownRequest{
 		"naming the attempt":     fencedReq(alice, TokenA),
 		"unconditional teardown": unconditionalReq(alice),
@@ -295,7 +290,6 @@ func ReclaimHoldAgainstShutdown(t *testing.T, transport Transport) {
 		if err != nil || resp.GetSlotReclaim() != absent {
 			t.Errorf("Shutdown %s during the cleanup = %v, %v; want ABSENT", name, resp.GetSlotReclaim(), err)
 		}
-		f.wantRegistry(t, "after the Shutdown "+name+" during the cleanup", alice, heldIdentifier)
 	}
 	err := callWithin(t, func(ctx context.Context) error {
 		_, err := f.Pod.RunSetup(ctx, &adapterv1.RunSetupRequest{SessionId: sid(alice), BindAttempt: TokenA})
@@ -304,7 +298,8 @@ func ReclaimHoldAgainstShutdown(t *testing.T, transport Transport) {
 	if status.Code(err) != codes.Aborted {
 		t.Errorf("RunSetup during the cleanup = %v, want Aborted", err)
 	}
-	f.wantRegistry(t, "after the RunSetup refused during the cleanup", alice, heldIdentifier)
 	f.finish(t, pc)
-	f.wantRegistry(t, "once the cleanup completed", alice, clearedIdentifier)
+	// The cleanup deregistered the entry and no refused request re-created
+	// it, so a probe finds nothing to reclaim.
+	f.wantNoEntry(t, alice)
 }

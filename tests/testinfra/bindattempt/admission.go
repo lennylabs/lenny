@@ -141,7 +141,6 @@ func (row holdRow) drive(t *testing.T, transport Transport) string {
 		t.Fatalf("%s during the parked cleanup = %v, want Aborted", row.name, err)
 	}
 	what := row.name + " refused during the cleanup"
-	f.wantRegistry(t, what, alice, heldIdentifier)
 	f.wantTreeUnchanged(t, what, alice, before)
 	f.finish(t, pc)
 	// The Shutdown deregistered the entry before the refused request

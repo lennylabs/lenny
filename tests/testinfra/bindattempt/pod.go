@@ -7,18 +7,14 @@
 // and once in process in the Tier 10 conformance battery, so each rule is
 // written here once and each tier supplies only the transport.
 //
-// Every rule assertion reads a result a caller can observe: the status and
-// the adapterv1.Error detail a request is answered with, the reclaim outcome
-// a Shutdown reports, the per-slot tree on disk, the fake runtime's calls,
-// and the session scrub reports the adapter files, because §15.4 publishes
-// the rules for a third-party adapter and the battery states them in the
-// terms such an adapter is judged by. The cases for the properties no single
-// numbered rule states (the stamp-once rule, the registry critical section,
-// the order of rules 5 and 6, and the reclaim hold against a Shutdown) add
-// registry assertions when the transport can inspect the registry, so the
-// in-process run names the entry, stamp, start or hold state that produced
-// a failure rather than only the answer a request received. Over gRPC those
-// assertions are skipped and the wire assertions stand alone.
+// Every assertion reads a result a caller can observe: the status and the
+// adapterv1.Error detail a request is answered with, the reclaim outcome a
+// Shutdown reports, the per-slot tree on disk, the fake runtime's calls, and
+// the session scrub reports the adapter files. None reads the adapter's
+// unexported registry, because §15.4 publishes the rules for a third-party
+// adapter and the battery states them in the terms such an adapter is judged
+// by. Registry state is read back through probe Shutdown outcomes, which a
+// caller of any conforming adapter can observe.
 //
 // spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
 // specification)
@@ -58,41 +54,25 @@ type Pod interface {
 }
 
 // Transport connects the battery to an adapter Server. It is called once per
-// fixture and returns the Connection the fixture drives.
-type Transport func(t *testing.T, s *adapter.Server) Connection
+// fixture and returns a dialer; each dialer call opens a further client, so a
+// case that needs two callers at one slot identifier holds two of them.
+type Transport func(t *testing.T, s *adapter.Server) func(t *testing.T) Pod
 
-// Connection is what a transport gives a fixture: a dialer, each call of
-// which opens a further client, so a case that needs two callers at one slot
-// identifier holds two of them, and an optional registry inspector.
-type Connection struct {
-	Dial func(t *testing.T) Pod
-	// Inspect reads the adapter's registry state for a slot identifier,
-	// answering whether the entry's stamp equals the named token rather than
-	// returning the stamp. Only the in-process transport sets it; a wire
-	// transport leaves it nil, because a caller across the wire sees answers
-	// rather than state.
-	Inspect func(slotID, token string) adapter.SlotRegistryView
-}
-
-// InProcess drives the exported Server's handlers directly and inspects its
-// registry through the Server's read-only view.
-func InProcess(_ *testing.T, s *adapter.Server) Connection {
-	return Connection{
-		Dial:    func(*testing.T) Pod { return inProcessPod{s} },
-		Inspect: s.InspectSlotRegistry,
-	}
+// InProcess drives the exported Server's handlers directly.
+func InProcess(_ *testing.T, s *adapter.Server) func(t *testing.T) Pod {
+	return func(*testing.T) Pod { return inProcessPod{s} }
 }
 
 // OverGRPC serves s over an in-memory listener with the adapter's production
 // gRPC server, interceptors included, and dials one client connection per
-// dialer call. It sets no inspector.
-func OverGRPC(t *testing.T, s *adapter.Server) Connection {
+// dialer call.
+func OverGRPC(t *testing.T, s *adapter.Server) func(t *testing.T) Pod {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(s)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
-	return Connection{Dial: func(t *testing.T) Pod {
+	return func(t *testing.T) Pod {
 		t.Helper()
 		conn, err := grpc.NewClient("passthrough:///bufnet",
 			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
@@ -102,7 +82,7 @@ func OverGRPC(t *testing.T, s *adapter.Server) Connection {
 		}
 		t.Cleanup(func() { _ = conn.Close() })
 		return grpcPod{adapterv1.NewAdapterClient(conn)}
-	}}
+	}
 }
 
 // Fixture is one adapter under test with its fake runtime, its session scrub
@@ -114,7 +94,7 @@ type Fixture struct {
 	Roots   slotlayout.Roots
 	// Pod is the first client the transport opened.
 	Pod  Pod
-	conn Connection
+	dial func(t *testing.T) Pod
 }
 
 // fixturePodID is the pod name the adapter reads from its Downward API
@@ -143,15 +123,15 @@ func New(t *testing.T, transport Transport) *Fixture {
 	s.Runtime = rt
 	reports := &ScrubReports{}
 	s.SessionScrubReporter = reports
-	conn := transport(t, s)
-	return &Fixture{Server: s, Runtime: rt, Reports: reports, Roots: roots, Pod: conn.Dial(t), conn: conn}
+	dial := transport(t, s)
+	return &Fixture{Server: s, Runtime: rt, Reports: reports, Roots: roots, Pod: dial(t), dial: dial}
 }
 
 // Dial opens a further client to the fixture's adapter. Over gRPC it is a
 // separate connection.
 func (f *Fixture) Dial(t *testing.T) Pod {
 	t.Helper()
-	return f.conn.Dial(t)
+	return f.dial(t)
 }
 
 // Runtime is an SDK-warm fake runtime, so every request the admission rules

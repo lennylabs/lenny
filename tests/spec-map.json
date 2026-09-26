@@ -681,6 +681,7 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier0_static/adapter_slot_registry_encapsulation_test.go",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestIsTransientPodClaimErrorIgnoresPlainFailedPrecondition_spec_7_3",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorSlotRefusals_spec_7_3",
@@ -713,7 +714,6 @@
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
         "pkg/adapter/slotsession_test.go",
         "pkg/adapter/bindattempt_orderings_test.go",
-        "pkg/adapter/slotregistryview_test.go",
         "pkg/adapter/socketruntime_test.go",
         "tests/tier7a_load_local/slot_reclaim_hold_race_test.go",
         "pkg/adapter/sdkwarm_test.go",
@@ -1057,7 +1057,6 @@
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2",
-        "pkg/adapter/slotregistryview_test.go",
         "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestDrainLedgerCountsARepeatedSlotOnce_spec_5_2",
         "pkg/gateway/runtime/slothealth/slothealth_test.go::TestRecordLeakIsKeyedBySlot_spec_5_2",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestResumeFailureReachesTheSlotAccounting_spec_5_2",
@@ -3740,6 +3739,7 @@
       "title": "Runtime Adapter Specification",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier0_static/adapter_slot_registry_encapsulation_test.go",
         "tests/tier0_static/schemas_test.go::TestPhase1SchemasParse",
         "tests/tier0_static/schemas_test.go::TestMessagePartExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestAdapterJSONLExamplesValidate",
