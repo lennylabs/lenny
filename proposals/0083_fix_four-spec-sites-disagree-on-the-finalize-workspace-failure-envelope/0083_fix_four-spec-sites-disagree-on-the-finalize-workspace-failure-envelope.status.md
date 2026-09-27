@@ -2,13 +2,13 @@
 proposal: 0083_fix_four-spec-sites-disagree-on-the-finalize-workspace-failure-envelope
 title: Four spec sites disagree on the finalize workspace-failure envelope
 kind: fix
-status: Approved
+status: Reviewed
 drafted-date: 2026-09-25
 drafted-by: change-proposal
-reviewed-date: 2026-09-26
+reviewed-date: 2026-09-27
 reviewed-by: change-proposal
-approved-date: 2026-09-26
-approved-by: jaf@dubium.io
+approved-date: 
+approved-by: 
 implemented-date: 
 implemented-by: 
 ---
