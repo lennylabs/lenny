@@ -19,6 +19,10 @@
 
 **Watch out for.**
 
+- After SPEC-1, the spec answers a structurally invalid staging tree at finalize with the retryable `503 SESSION_CREATION_FAILED` and `Retry-After`, although the adapter rejects it deterministically with `InvalidArgument`. A client that retries on that answer fails again.
+- The post-promotion symlink re-validation path at finalize still answers `503 SESSION_CREATION_FAILED`, where SPEC-1 and §13.4 state `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` for an archive validator violation. This proposal does not stage the fix.
+- No handler-level test pins handleFinalize's routing of a non-archive staging or `FinalizeWorkspace` failure to the `SESSION_CREATION_FAILED` fallback, and no tier-11 gate reads the edited §6.2 or §7.2 text.
+
 ## Goals
 
 - §6.2, §7.2, the §15.1 finalize row, and the §15.1 catalog state one consistent outcome for a workspace-materialization failure at `POST /v1/sessions/{id}/finalize`, and the §16.5 `MinIOUnavailable` row and the §17.7 **MinIO failure** entry no longer contradict it.
