@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: Tier-11 regression test added for the MinIO runbook correction
+## Accepted: Tier-11 regression test added for the MinIO runbook correction
 
-**Status:** proposed
+**Status:** accepted
 
 **Proposal says.** The summary's "What changes" section says the documentation change (DOCS-1, which drops the finalize clause from the MinIO runbook full-outage tenant notice) carries no code, schema, or test change.
 
