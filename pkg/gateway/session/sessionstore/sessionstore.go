@@ -941,7 +941,9 @@ type Store interface {
 	// Update writes new state to id within tenantID. Returns
 	// ErrNotFound when the row is missing. The store does NOT validate
 	// the transition — the caller (sessionserver) drives
-	// session.Validate first.
+	// session.Validate first. A caller that must refuse a stale
+	// transition re-checks the state inside mutate against the locked
+	// row and returns an error, which aborts the write.
 	Update(ctx context.Context, tenantID, id string, mutate func(*Session) error) (Session, error)
 
 	// List returns every session for the tenant, in created-at order

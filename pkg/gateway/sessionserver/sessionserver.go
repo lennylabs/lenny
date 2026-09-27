@@ -3017,21 +3017,26 @@ func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*se
 	}
 }
 
-// transitionFinalizing: per §15.1, /finalize enters the preparation
-// barrier by transitioning created → finalizing. The workspace
+// transitionFinalizing: per §15.1, /finalize begins the §7.1 steps 11-13
+// prepare phase by transitioning created → finalizing. The workspace
 // materialization, setup commands, and credential-lease assignment then
 // run while the row is `finalizing`; handleFinalize transitions
-// finalizing → ready only once the session is fully prepared.
+// finalizing → ready only once the session is fully prepared. The caller
+// applies it inside the locked Update, after re-checking the finalize
+// precondition against the locked row.
+// spec: §7.1 steps 11-13, §15.1
 func transitionFinalizing(row *sessionstore.Session) { row.State = session.StateFinalizing }
 
-// transitionReady: per §15.1, the finalize barrier transitions
-// finalizing → ready once workspace materialization, setup commands, and
-// credential assignment have completed; the session then awaits /start.
+// transitionReady: per §15.1, /finalize transitions finalizing → ready
+// once the §7.1 steps 11-13 prepare phase (workspace materialization,
+// setup commands, and credential assignment) has completed; the session
+// then awaits /start.
+// spec: §7.1 steps 11-13, §15.1
 func transitionReady(row *sessionstore.Session) { row.State = session.StateReady }
 
-// handleFinalize implements POST /v1/sessions/{id}/finalize as the §4.3
-// preparation barrier. After binding the optional §14 WorkspacePlan and
-// transitioning created → finalizing, it reconnects to the pod claimed at
+// handleFinalize implements POST /v1/sessions/{id}/finalize. After binding
+// the optional §14 WorkspacePlan and transitioning created → finalizing, it
+// reconnects to the pod claimed at
 // /create and runs the §7.1 step 11-13 prepare phase against it:
 // PrepareWorkspace streams the buffered lenny-blob:// upload content into
 // the session's staging tree, FinalizeWorkspace materializes that
@@ -3039,6 +3044,14 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // plan's setup commands, and AssignCredentials delivers the §4.9
 // credential lease. Only when the session is fully prepared does it
 // transition finalizing → ready and return.
+//
+// Admission is a compare-and-swap: the created → finalizing write re-checks
+// the §15.1 finalize precondition against the locked row inside the store
+// Update, so of overlapping calls that all read `created` before either
+// write, exactly one commits `finalizing` and every other call answers
+// 409 INVALID_STATE_TRANSITION before any pod RPC, reclaim, failure write,
+// or WorkspacePlan write. The pre-lock Get and Validate remain as an early
+// rejection, because resolveFinalizePlan needs the row.
 //
 // A failure in any prepare step reclaims the claimed pod via the §6.2
 // pre-attached disposition (the binder's lease-aware failPhase, which
@@ -3069,7 +3082,8 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // transition with no pod work.
 //
 // spec: §7.1 steps 11-13; §7.4; §15.1 (finalize
-// precondition); §4.9 (finalize lease assignment); §4.3 (proposal).
+// precondition, State-mutating endpoint preconditions); §4.9 (finalize
+// lease assignment).
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -3099,21 +3113,35 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if !planOK {
 		return
 	}
-	// spec: §15.1 — enter the §4.3 preparation barrier: created → finalizing,
-	// binding the finalize plan in the same logical write. The prepare phase
-	// runs while the row is `finalizing`.
-	updated, err := s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
-		transitionFinalizing(r)
+	// spec: §15.1 (finalize precondition); §7.1 steps 11-13. The pre-lock
+	// Validate above is an early rejection. This check against the locked row
+	// is authoritative, so of overlapping calls that both read `created`,
+	// exactly one commits `finalizing`, binding the finalize plan in the same
+	// write. The prepare phase runs while the row is `finalizing`.
+	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+		if err := session.Validate(session.PreconditionRequest{
+			Endpoint:     session.EndpointFinalize,
+			CurrentState: row.State,
+		}); err != nil {
+			return err
+		}
+		transitionFinalizing(row)
 		if hasPlan {
-			r.WorkspacePlan = planJSON
+			row.WorkspacePlan = planJSON
 		}
 		return nil
 	})
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 		return
 	}
-	// spec: §4.3 / §7.1 steps 11-13 — run the prepare phase against the pod
+	if err != nil {
+		// A refused compare-and-swap renders 409 with the locked state; any
+		// other store error renders 500 and leaves the row `created`.
+		s.writePreconditionError(w, err)
+		return
+	}
+	// spec: §7.1 steps 11-13 — run the prepare phase against the pod
 	// claimed at /create: stream the buffered uploads into the session's
 	// staging tree, materialize its current tree, run setup commands, and assign the §4.9
 	// credential lease. prepareAtFinalize returns (nil, nil) for the
