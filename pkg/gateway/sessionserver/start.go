@@ -98,6 +98,7 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	var deliveryIso *CredentialDeliveryIsolationError
 	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
 	var archiveLimit *upload.ValidationError
+	s.recordPodClaimFailure(err)
 	switch {
 	case adapterclient.IsSlotBindRefusal(err):
 		// spec: §4.7.1 (role and gateway RPC contract); §15.1 (REST API).
@@ -155,12 +156,8 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 				"the request includes sdkWarmBlockingPaths files that require demotion",
 			map[string]any{"reason": "sdk_demotion_not_supported"})
 	case errors.As(err, &setupFail):
-		// spec: §7.5, §7.3, §16.1 — the
-		// gateway records the setup_command_failed audit row + metric on
-		// both branches so the §16 alert can fire and operators can
-		// correlate the rejection reason with the per-command
-		// stdout/stderr trail. F-7.5.9.
-		s.recordSetupCommandFailed(setupFail)
+		// spec: §7.5, §7.3, §16.1 — recordPodClaimFailure (called above)
+		// recorded the setup_command_failed audit row + metric.
 		s.writeSetupCommandError(w, setupFail, fallbackCode, fallbackMsg, err)
 	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
 		s.writeTokenServiceUnavailable(w, err)
@@ -179,10 +176,8 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 	case errors.As(err, &credAssign):
 		// spec: §4.9 — the pre-claim check passed but the lease
 		// assignment failed (a credential became unavailable in the race
-		// window). Record the mismatch so operators can tune pool sizing.
-		if s.preclaimMismatch != nil {
-			s.preclaimMismatch(credAssign.Pool, credAssign.Provider)
-		}
+		// window). recordPodClaimFailure (called above) recorded the mismatch
+		// so operators can tune pool sizing.
 		s.writeCredentialPoolExhausted(w, "assignment_race")
 	case errors.Is(err, errCreateClaimExhausted):
 		// spec: §7.1 / §4.1 (proposal) — a
@@ -230,6 +225,55 @@ func (s *Server) writePodClaimError(w http.ResponseWriter, err error, fallbackCo
 		w.Header().Set("Retry-After", strconv.Itoa(sessionCreationFailedRetryAfterSeconds))
 		s.writeError(w, http.StatusServiceUnavailable, fallbackCode,
 			fallbackMsg+": "+err.Error(), nil)
+	}
+}
+
+// recordPodClaimFailure records the audit row and metrics a pod-claim failure
+// carries, independent of the response the caller writes. It records for err
+// exactly what writePodClaimError's switch would record, under the same arm
+// precedence: a setup-command failure files the setup_command_failed audit
+// row and metric, and a lease-assignment failure counts a pre-claim mismatch.
+// Every arm writePodClaimError evaluates ahead of those two records nothing,
+// so a slot-bind refusal wrapped in a *SetupCommandFailure files no audit row,
+// and a *CredentialAssignmentError wrapping a Token Service outage, a pool
+// warming condition, or a pre-claim credential miss counts no mismatch. The
+// finalize handler calls it on a prepare failure that a terminal writer
+// overtook, where the response is the 409 rather than writePodClaimError's
+// envelope but the failure itself still happened. Keep the arm order below
+// in step with writePodClaimError's switch.
+// spec: §7.5 (setup commands), §4.9 (credential leasing), §16.1 (metrics)
+func (s *Server) recordPodClaimFailure(err error) {
+	var deliveryIso *CredentialDeliveryIsolationError
+	var levelUnderperforms *podsession.RuntimeLevelUnderperforms
+	var proxyDialect *PoolProxyDialectError
+	var demotionUnsupported *podsession.SDKDemotionNotSupported
+	var setupFail *podsession.SetupCommandFailure
+	var warming *podsession.PoolWarmingError
+	var credAssign *podsession.CredentialAssignmentError
+	switch {
+	case adapterclient.IsSlotBindRefusal(err),
+		errors.As(err, &deliveryIso),
+		errors.As(err, &levelUnderperforms),
+		errors.As(err, &proxyDialect),
+		errors.As(err, &demotionUnsupported):
+		// Answered ahead of the recording arms; nothing is recorded.
+	case errors.As(err, &setupFail):
+		// spec: §7.5, §7.3, §16.1 — the gateway records the
+		// setup_command_failed audit row + metric on both setup-failure
+		// envelopes so the §16 alert can fire and operators can correlate the
+		// rejection reason with the per-command stdout/stderr trail. F-7.5.9.
+		s.recordSetupCommandFailed(setupFail)
+	case errors.Is(err, credassign.ErrTokenServiceUnavailable),
+		errors.As(err, &warming),
+		errors.Is(err, credrouter.ErrUserCredentialNotFound),
+		errors.Is(err, credrouter.ErrNoCredentialAvailable):
+		// Answered ahead of the mismatch arm; nothing is recorded.
+	case errors.As(err, &credAssign):
+		// spec: §4.9 — the pre-claim check passed but the lease assignment
+		// failed (a credential became unavailable in the race window).
+		if s.preclaimMismatch != nil {
+			s.preclaimMismatch(credAssign.Pool, credAssign.Provider)
+		}
 	}
 }
 
@@ -3462,11 +3506,6 @@ func (s *Server) persistWorkspaceRoot(ctx context.Context, tenantID, sessionID, 
 	}
 }
 
-// failSession marks a session row failed after a start-path error. The
-// update is best-effort: the start handler has already chosen the HTTP
-// error it returns to the client, so a store failure here cannot change
-// the reply. A failed child session is archived to the §8.10
-// session_tree_archive so a resumed parent can replay the outcome.
 // expireSession transitions a session to the §7.3 terminal `expired`
 // state and runs the same archive / terminal-lifecycle teardown as
 // failSession. The §8.10 tree-recovery driver uses it for a node whose
@@ -3483,22 +3522,77 @@ func (s *Server) expireSession(ctx context.Context, tenantID, sessionID string) 
 	}
 }
 
+// failSession marks a session row failed after a start-path error. The
+// update is best-effort: the start handler has already chosen the HTTP
+// error it returns to the client, so a store failure here cannot change
+// the reply. The write is unconditional, because its callers (the /start
+// path and tree recovery) serialize through their own mechanisms; the
+// finalize handler uses failFinalizing instead, which admits only a
+// `finalizing` row.
 func (s *Server) failSession(ctx context.Context, tenantID, sessionID string) {
 	updated, err := s.store.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.State = session.StateFailed
 		return nil
 	})
 	if err == nil {
-		s.archiveSettledChild(ctx, updated)
-		// spec: §7.2 / §11.7 / §7.1 — the
-		// start-path failure is a terminal transition, so it emits the
-		// same status_change/session_complete SSE events, the
-		// session.failed audit event, and the retention-window roll as
-		// any other terminal path. The heavier seal/executor-close
-		// teardown stays in recordSessionCompleted: a start-path failure
-		// never bound a workspace to seal.
-		s.emitTerminalLifecycle(ctx, updated)
+		s.afterFailed(ctx, updated)
 	}
+}
+
+// afterFailed runs the terminal tail of a `failed` write: it archives a
+// settled child to the §8.10 session_tree_archive so a resumed parent can
+// replay the outcome, and emits the terminal lifecycle. A failed session is
+// a terminal transition, so it emits the same status_change and
+// session_complete SSE events, the session.failed audit event, and the
+// retention-window roll as any other terminal path. The heavier
+// seal/executor-close teardown stays in recordSessionCompleted, because a
+// start-path or finalize failure never bound a workspace to seal.
+// failSession and failFinalizing share it.
+// spec: §7.2, §11.7, §7.1
+func (s *Server) afterFailed(ctx context.Context, updated sessionstore.Session) {
+	s.archiveSettledChild(ctx, updated)
+	s.emitTerminalLifecycle(ctx, updated)
+}
+
+// finalizingPrecondition refuses a finalize exit write unless the locked row
+// is still `finalizing`. Another writer (for example terminate, DELETE, admin
+// force-terminate, the finalizing watchdog, or the orphan session reconciler)
+// can move the row to a terminal state while the prepare phase runs; the exit
+// write must not overwrite that state. The refusal reuses the §15.1
+// precondition error so writePreconditionError renders the 409 with the
+// locked state. EndpointFinalize has no capability-gated states, so passing
+// nil capabilities to AllowedStates yields the complete allowed set.
+// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states)
+func finalizingPrecondition(row *sessionstore.Session) error {
+	if row.State == session.StateFinalizing {
+		return nil
+	}
+	return &session.PreconditionError{
+		Endpoint:      session.EndpointFinalize,
+		CurrentState:  row.State,
+		AllowedStates: session.AllowedStates(session.EndpointFinalize, nil),
+	}
+}
+
+// failFinalizing marks a finalizing session failed, but only while the locked
+// row is still `finalizing`. A lost write returns *session.PreconditionError
+// and emits nothing, so a terminal state another writer committed is kept and
+// no second terminal lifecycle is emitted. Any other store error is returned
+// unchanged, and the caller decides the response.
+// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal states)
+func (s *Server) failFinalizing(ctx context.Context, tenantID, id string) error {
+	updated, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
+		if err := finalizingPrecondition(row); err != nil {
+			return err
+		}
+		row.State = session.StateFailed
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.afterFailed(ctx, updated)
+	return nil
 }
 
 // handleResume implements POST /v1/sessions/{id}/resume per §15.1 and

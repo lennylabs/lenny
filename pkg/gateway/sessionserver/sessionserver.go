@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -3054,9 +3055,10 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // rejection, because resolveFinalizePlan needs the row.
 //
 // A failure in any prepare step reclaims the claimed pod via the §6.2
-// pre-attached disposition (the binder's lease-aware failPhase, which
-// revokes the lease when AssignCredentials had already run) and surfaces
-// the failure through writePodClaimError (§6.2 client visibility). A
+// pre-attached disposition (the binder's failPhase or reconnect reclaim, or
+// prepareAtFinalize's own reclaim before Prepare runs), revokes any lease
+// recorded under the session, and surfaces the failure through
+// writePodClaimError (§6.2 client visibility). A
 // deterministic setup-command exit surfaces as the non-retryable 422
 // SETUP_COMMAND_FAILED, and a transient setup-window failure as the
 // retryable fallback. A credential failure surfaces its own envelope:
@@ -3070,10 +3072,15 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // finalizing → failed so a client cannot retry finalize against a pod
 // that no longer exists.
 //
-// Gap 2: a failure in the finalizing → ready transition, or in the
-// single-use upload-token consume, AFTER AssignCredentials has succeeded
-// reclaims the pod and revokes the lease too, so a post-assignment
-// finalize failure does not leak the lease.
+// The finalizing → ready write and every failure write admit only a row
+// that is still `finalizing`. A terminate, DELETE, or the finalizing
+// watchdog can end the session while the prepare phase runs; the call then
+// keeps that terminal state, revokes any lease recorded under the session,
+// deletes no claim (the terminal writer's reclaim owns the pod), and
+// answers 409 INVALID_STATE_TRANSITION with the terminal state, even when
+// its own prepare phase also failed. A ready write that fails with a store
+// error after AssignCredentials succeeded reclaims the pod and revokes the
+// lease, so a post-assignment finalize failure does not leak the lease.
 //
 // The single-use uploadToken invalidation, upload-channel/limits close,
 // SSE status-change, plan-warning publish, and the §16.6 finalize audit
@@ -3081,9 +3088,10 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // pod binder) finalizes by the plain created → finalizing → ready
 // transition with no pod work.
 //
-// spec: §7.1 steps 11-13; §7.4; §15.1 (finalize
-// precondition, State-mutating endpoint preconditions); §4.9 (finalize
-// lease assignment).
+// spec: §7.1 steps 11-13; §7.1 step 23 (lease release); §7.4; §15.1
+// (finalize precondition, State-mutating endpoint preconditions); §6.2
+// (finalize timeout); §7.2 (terminal states); §4.9 (finalize lease
+// assignment).
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
@@ -3149,88 +3157,52 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// mode, a concurrent-workspace slot, or a row with no live binding).
 	plan, perr := storedWorkspacePlanForFinalize(updated, hasPlan, planJSON)
 	if perr != nil {
-		// spec: §4.3 (proposal: any finalize-barrier failure reclaims the
-		// create-time pod via the §6.2 pre-attached disposition) — the parse
-		// failed before the prepare phase engaged the binder, so its internal
-		// failPhase reclaim cannot run. Reclaim the claimed pod here (no lease
-		// is assigned yet, so the revoke is a no-op) before failing the row, so
-		// a finalize-barrier failure does not leak the pod claimed at /create.
-		s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
-		s.failSession(r.Context(), tenantID, id)
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"stored workspace plan could not be parsed: "+perr.Error(), nil)
+		s.finalizePlanParseFailed(w, r, tenantID, id, updated.PodAssignment, perr)
 		return
 	}
 	prep, err := s.prepareAtFinalize(r.Context(), updated, plan)
 	if err != nil {
-		// spec: §4.3 / §6.2 — the finalize barrier failed; the claimed pod has
-		// already been reclaimed via the §6.2 pre-attached disposition. A
-		// through-Prepare failure (workspace validation, setup command, or
-		// lease assignment) is reclaimed by the binder's lease-aware failPhase,
-		// which revokes the lease when AssignCredentials had already run; a
-		// pre-Prepare failure (pool resolution, or the check-to-assignment
-		// credential mismatch) is reclaimed by prepareAtFinalize itself before it
-		// returns. Either way no pod leaks. Transition the row to the terminal
-		// `failed` state (finalizing → failed) so a retry of finalize cannot run
-		// against a pod that no longer exists, then surface the failure through
-		// writePodClaimError. A workspace-materialization failure takes the
-		// retryable SESSION_CREATION_FAILED fallback passed here, unless it is a
-		// §13.4 archive validator violation (UPLOAD_ARCHIVE_LIMIT_EXCEEDED).
-		s.failSession(r.Context(), tenantID, id)
-		s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
-			"workspace finalization failed")
+		s.finalizePrepareFailed(w, r, tenantID, id, err)
 		return
 	}
-	// spec: §4.3 — only after the prepare phase succeeds does the barrier
-	// transition finalizing → ready and return. Persist the §7.5 setup-command
-	// trail and the §7.3 negotiated workspace root the prepare phase produced.
+	// spec: §7.1 steps 11-13 — only after the prepare phase succeeds does the
+	// finalizing → ready write run. Persist the §7.5 setup-command trail and
+	// the §7.3 negotiated workspace root the prepare phase produced. These
+	// persists write no state, so they stay unguarded.
 	if prep != nil {
 		s.applyFinalizePrepareResult(r.Context(), tenantID, id, updated.TenantID, updated.ID, prep)
 	}
-	// spec: §4.3 (Gap 2) — capture the pod↔session binding from the
-	// finalizing-write result, which is populated, before the finalizing → ready
-	// write below. A failed Update returns the zero Session, so reading
-	// PodAssignment off the failed write's result would lose the binding and the
-	// Gap-2 reclaim would no-op on an empty sandbox name, leaking the pod and the
-	// finalize-assigned lease.
+	// Capture the pod↔session binding from the finalizing-write result before
+	// the ready write below: a failed Update returns the zero Session, so
+	// reading PodAssignment off its result would lose the binding the
+	// store-error branch reclaims.
 	podAssignment := updated.PodAssignment
 	uploadTokenDigest := updated.UploadTokenDigest
 	uploadTokenExpiry := updated.UploadTokenExpiry
-	// spec: §15.1 — finalizing → ready. Gap 2: when AssignCredentials has
-	// already run (prep != nil), a failure of this transition would leave the
-	// lease assigned but the session not ready, so reclaim the pod and revoke
-	// the lease before surfacing the error.
-	updated, err = s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
-		transitionReady(r)
+	// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal
+	// states) — finalizing → ready admits only a row that is still
+	// `finalizing`, so a terminal state another writer committed while the
+	// prepare phase ran is kept.
+	updated, err = s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
+		if err := finalizingPrecondition(row); err != nil {
+			return err
+		}
+		transitionReady(row)
 		return nil
 	})
 	if err != nil {
-		// Gap 2: the prepare phase succeeded (the lease is assigned) but the
-		// finalizing → ready write failed. Reclaim the pod and revoke the lease,
-		// then mark the row failed so it reaches a terminal state rather than
-		// stranding in `finalizing` (which no /finalize retry can leave, because
-		// the finalize precondition requires `created`).
-		if prep != nil {
-			s.reclaimFinalizedPod(r.Context(), podAssignment, id)
-		}
-		s.failSession(r.Context(), tenantID, id)
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		s.finalizeReadyWriteFailed(w, r, tenantID, id, podAssignment, prep != nil, err)
 		return
 	}
-	// §7.1 single-use uploadToken invalidation: once the upload
-	// window closes, the digest cannot mint another upload. Gap 2: a consume
-	// failure after AssignCredentials succeeded would leave the lease assigned
-	// on a session whose finalize the client must treat as failed, so reclaim
-	// the pod and revoke the lease rather than leaking them.
+	// spec: §7.1 (single-use uploadToken invalidation) — once the upload
+	// window closes, the digest cannot mint another upload. ConsumeDigest
+	// fails only when the digest is already invalidated, so a failure is
+	// logged and the call continues: the session is `ready`, and a token left
+	// unconsumed mints no upload because uploads are admitted only in
+	// `created`.
 	if s.uploadVerifier != nil && uploadTokenDigest != "" {
 		if cerr := s.uploadVerifier.ConsumeDigest(uploadTokenDigest, uploadTokenExpiry); cerr != nil {
-			if prep != nil {
-				s.reclaimFinalizedPod(r.Context(), podAssignment, id)
-			}
-			s.failSession(r.Context(), tenantID, id)
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"upload token could not be invalidated: "+cerr.Error(), nil)
-			return
+			log.Printf("sessionserver: consume upload token for finalized session %s: %v", id, cerr)
 		}
 	}
 	// §7.4: close the upload channel — abort any in-flight
@@ -3244,7 +3216,7 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// slots self-release; only the byte total is freed here. F-11.1.6.
 	s.uploadLimits.closeSession(updated.ID)
 	// spec: §7.2 — surface the finalizing → ready transition that
-	// closed the §4.3 preparation barrier.
+	// closed the §7.1 steps 11-13 prepare phase.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
 	// spec: §14 — surface any consumer-advisory parse
 	// warnings the finalize-bound plan raised on the same per-session SSE
