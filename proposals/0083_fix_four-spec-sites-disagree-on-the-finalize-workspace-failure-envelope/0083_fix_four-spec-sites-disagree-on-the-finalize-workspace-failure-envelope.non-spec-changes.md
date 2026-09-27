@@ -17,7 +17,23 @@ This proposal stages no schema, chart, or migration change.
 
 ## Staged docs changes
 
-This proposal stages no docs change. No page under `docs/` repeats the §6.2 or §7.2 claim. `docs/reference/error-catalog.md` already describes `WORKSPACE_PLAN_INVALID` as a create-time schema failure and `SESSION_CREATION_FAILED` as covering workspace materialization, and the finalize sections of `docs/api/rest.md` and `docs/api/mcp.md` name no workspace code.
+No page under `docs/` repeats the §6.2 or §7.2 claim. `docs/reference/error-catalog.md` already describes `WORKSPACE_PLAN_INVALID` as a create-time schema failure and `SESSION_CREATION_FAILED` as covering workspace materialization, and the finalize sections of `docs/api/rest.md` and `docs/api/mcp.md` name no workspace code.
+
+### DOCS-1 · docs/runbooks/minio-failure.md · Full outage tenant notice
+
+Anchor: item 1 under the *Remediation* heading "Step 2 — Full outage". Replace
+
+```markdown
+1. Inform affected tenants: new session creation is degraded -- workspace finalize will return `INTERNAL_ERROR`.
+```
+
+with
+
+```markdown
+1. Inform affected tenants: new session creation is degraded.
+```
+
+Leave the rest of the page unedited.
 
 ## Testing
 
@@ -29,4 +45,4 @@ This proposal stages no test. The edge case below records what stays unpinned.
 
 ## Files touched on application (non-spec)
 
-None.
+- `docs/runbooks/minio-failure.md` (DOCS-1)
