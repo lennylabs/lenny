@@ -57,7 +57,7 @@
 - A new sentinel such as errFinalizeSuperseded or errFinalizeNotCreated. Rejected because *session.PreconditionError already carries the locked state and renders through writePreconditionError. A sentinel would need its own mapping and would lose `details.currentState`.
 - Returning the prepare-phase error (SESSION_CREATION_FAILED, SETUP_COMMAND_FAILED) when the failure write loses. Rejected because it tells the client the session failed when it is `cancelled` or `completed`.
 - A generic transitionguard.go helper presented as the reuse point for other handlers. Rejected because it would restate the §15.1 precondition table beside session.Validate and would drop the capability-gated states when reused on a gated endpoint.
-- A new §7.1 paragraph, or any §6.2, §7.2, or §29 restatement. Rejected because the §15.1 finalize row is the endpoint's single contract home.
+- A new §7.1 paragraph, or any §6.2, §7.2, or §29 restatement. Rejected because SPEC-1's precedence clause overrides every prepare-phase error those sections state.
 - Restating in SPEC-1 the atomic admission, the overlapping-call refusal, the finalizing-only closing write, or the lease revoke. Rejected because the §15.1 preamble, the terminate and DELETE rows, §6.2, and §7.1 step 23 already state them.
 - No spec change at all. Rejected because the response to an admitted call that a terminal writer overtook is a client-observable outcome that no spec text states.
 - A general atomic-admission rule in the §15.1 preamble for every state-mutating endpoint. Rejected because it is false for `/start` and would place handleTransition and handleDelete out of conformance on the day it lands.
@@ -82,7 +82,7 @@
 
 ## Open decisions for human to make
 
-This proposal carries no open decisions.
+- **Should the pre-attached retry loop stop once the session is terminal, and does 0082 own that rule?** The warm-pod model section of the specification (§6.2, "Pre-attached failure retry policy") says that a failure in any state before `attached` makes the gateway re-claim a new pod and replay the setup sequence, with at most 2 retries per client request. No spec text says the loop stops when a DELETE or the finalizing watchdog moves the session to a terminal state while finalization is in progress. The §15.1 terminate row already says terminate aborts the in-progress setup, so terminate is outside the gap. A finalize call that follows the specification literally could therefore claim a fresh pod for a session that has already ended, and only the orphan-claim garbage collector would reclaim that pod. The gap predates 0082, handleFinalize implements no such retry loop today, and SPEC-1 takes no position on aborting setup. The spec review loop recommends leaving it out of 0082 and handling it with the follow-up for the shipped-tree defect **The §15.1 terminate row's "aborts the in-progress setup" is not implemented**. The choice is between accepting that recommendation, which records the gap as a follow-up finding, and staging a spec edit in 0082.
 
 ## Defects in the shipped tree that this proposal does not stage
 
