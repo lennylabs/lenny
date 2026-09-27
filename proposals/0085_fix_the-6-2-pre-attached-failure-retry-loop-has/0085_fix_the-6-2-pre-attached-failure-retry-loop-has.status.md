@@ -15,4 +15,4 @@ implemented-by:
 
 ## Review history
 
-No adversarial review run has completed. This is a first draft written for a later run of the change-proposal workflow in review mode.
+An adversarial review run executed on 2026-09-27. The run did not complete either the spec loop or the non-spec loop. No findings were fixed. The run did not converge.
