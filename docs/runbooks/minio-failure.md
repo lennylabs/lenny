@@ -100,7 +100,7 @@ Encryption should be enabled; versioning and ILM rules must match the [lifecycle
 
 ### Step 2 — Full outage
 
-1. Inform affected tenants: new session creation is degraded -- workspace finalize will return `INTERNAL_ERROR`.
+1. Inform affected tenants: new session creation is degraded.
 2. While MinIO is down:
    - **In-flight sessions continue running.** The pod-local workspace is intact. Only upload/download to the artifact store is blocked.
    - **Eviction checkpoints fall back to Postgres minimal state.** When a preStop checkpoint cannot reach MinIO, the gateway writes a minimal row to `session_eviction_state` containing `conversation_cursor` and a ≤2KB `last_message_context` (truncated if needed). Workspace files are NOT preserved — resumed sessions receive `resumeMode: "conversation_only"` with `workspaceLost: true`.
