@@ -3043,9 +3043,17 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // A failure in any prepare step reclaims the claimed pod via the §6.2
 // pre-attached disposition (the binder's lease-aware failPhase, which
 // revokes the lease when AssignCredentials had already run) and surfaces
-// the corresponding workspace-validation, setup-command, or credential
-// error; a materialization or check-to-assignment credential failure
-// surfaces as CREDENTIAL_POOL_EXHAUSTED. The row transitions
+// the failure through writePodClaimError (§6.2 client visibility). A
+// deterministic setup-command exit surfaces as the non-retryable 422
+// SETUP_COMMAND_FAILED, and a transient setup-window failure as the
+// retryable fallback. A credential failure surfaces its own envelope:
+// a lease-assignment failure, and a finalize-time credential availability
+// miss that mapFinalizeCredentialMismatch remaps to the §4.9
+// check-to-assignment mismatch, surface as CREDENTIAL_POOL_EXHAUSTED. A
+// workspace-materialization failure surfaces as the retryable 503
+// SESSION_CREATION_FAILED fallback with Retry-After, except a §13.4 archive
+// validator violation, which surfaces as the non-retryable 413
+// UPLOAD_ARCHIVE_LIMIT_EXCEEDED. The row transitions
 // finalizing → failed so a client cannot retry finalize against a pod
 // that no longer exists.
 //
@@ -3136,10 +3144,10 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		// credential mismatch) is reclaimed by prepareAtFinalize itself before it
 		// returns. Either way no pod leaks. Transition the row to the terminal
 		// `failed` state (finalizing → failed) so a retry of finalize cannot run
-		// against a pod that no longer exists, then surface the
-		// workspace-validation, setup-command, or credential error. A
-		// materialization or check-to-assignment credential failure surfaces as
-		// CREDENTIAL_POOL_EXHAUSTED via writePodClaimError.
+		// against a pod that no longer exists, then surface the failure through
+		// writePodClaimError. A workspace-materialization failure takes the
+		// retryable SESSION_CREATION_FAILED fallback passed here, unless it is a
+		// §13.4 archive validator violation (UPLOAD_ARCHIVE_LIMIT_EXCEEDED).
 		s.failSession(r.Context(), tenantID, id)
 		s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
 			"workspace finalization failed")
