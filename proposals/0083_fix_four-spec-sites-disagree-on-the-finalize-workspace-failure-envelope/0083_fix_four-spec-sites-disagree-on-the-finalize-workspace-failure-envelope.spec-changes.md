@@ -50,7 +50,7 @@ Anchor: the alert-table row whose first cell is `MinIOUnavailable`. In that row,
 with
 
 ```markdown
- (`POST /v1/sessions/{id}/upload` fails with `INTERNAL_ERROR`, and with 503 once the Upload Handler circuit breaker ([Section 4.1](04_system-components.md#41-edge-gateway-replicas)) opens)
+ (the upload call fails with `INTERNAL_ERROR`, and with 503 once the Upload Handler circuit breaker ([Section 4.1](04_system-components.md#41-edge-gateway-replicas)) opens)
 ```
 
 Keep the row on one physical table line, and leave the rest of it unedited.
@@ -66,7 +66,7 @@ If MinIO is fully unavailable, workspace uploads for new sessions will fail at t
 with
 
 ```markdown
-If MinIO is fully unavailable, workspace uploads for new sessions fail at `POST /v1/sessions/{id}/upload` with `INTERNAL_ERROR`, and with 503 once the Upload Handler circuit breaker ([Section 4.1](04_system-components.md#41-edge-gateway-replicas)) opens. A session whose uploads completed before the outage fails when its workspace is materialized: at `POST /v1/sessions/{id}/finalize` with the retryable `SESSION_CREATION_FAILED`, or at `POST /v1/sessions/{id}/start` on a concurrent-workspace pool.
+If MinIO is fully unavailable, workspace uploads for new sessions fail with `INTERNAL_ERROR`, and with 503 once the Upload Handler circuit breaker ([Section 4.1](04_system-components.md#41-edge-gateway-replicas)) opens. A session whose uploads completed before the outage fails when its workspace is materialized: at `POST /v1/sessions/{id}/finalize` with the retryable `SESSION_CREATION_FAILED`, or at `POST /v1/sessions/{id}/start` on a concurrent-workspace pool.
 ```
 
 Leave every other sentence unedited.

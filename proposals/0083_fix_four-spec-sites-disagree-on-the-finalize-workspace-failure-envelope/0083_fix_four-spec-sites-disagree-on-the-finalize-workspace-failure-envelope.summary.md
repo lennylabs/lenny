@@ -35,7 +35,7 @@
 
 ## Open decisions for human to make
 
-None.
+- **OD-7. Should this proposal add `POST /v1/sessions/{id}/upload-archive` to the §15.1 REST endpoint table, or leave that omission to a separate proposal?** The gateway routes `POST /v1/sessions/{id}/upload-archive` beside `POST /v1/sessions/{id}/upload` (`pkg/gateway/sessionserver/sessionserver.go`), and §7.1's session diagram and §18's build sequence name both endpoints. The §15.1 REST endpoint table and the §15.1 state-mutating endpoint preconditions table list only `/upload`. Both endpoints run one upload pipeline, so a MinIO outage fails either one with `INTERNAL_ERROR` and then with 503 once the Upload Handler circuit breaker opens. SPEC-3 and SPEC-4 therefore say "the upload call" and "workspace uploads" and name neither endpoint, so no staged edit depends on the missing row. The omission predates this proposal. Recommendation from the review: leave it to a separate proposal. The review recorded no confidence.
 
 ## Defects in the shipped tree that this proposal does not stage
 
