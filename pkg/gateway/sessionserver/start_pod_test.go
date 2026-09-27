@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -994,6 +995,164 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	}
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the rejected finalize; the pod was not reclaimed")
+	}
+}
+
+// finalizeMaterializationFailureCase names one way the §4.3 finalize barrier's
+// workspace materialization can fail without an archive validator violation.
+type finalizeMaterializationFailureCase struct {
+	name      string
+	sessionID string
+	// finalizePlan returns the workspace plan the finalize request binds. It
+	// receives the upload ref minted under the case's tenant and session
+	// prefix, so a plan naming it passes the finalize ref-ownership check.
+	finalizePlan func(ref blobstore.URI) string
+	// wantMessage is a substring the error message must carry. It confirms the
+	// failure arose where the case intends, so a regression that fails earlier
+	// for another reason cannot pass the case.
+	wantMessage string
+}
+
+// spec: §6.2 (Pod State Machine, Client visibility), §15.1 (REST API,
+// SESSION_CREATION_FAILED and the finalize precondition note), §7.1 (Normal
+// Flow, the finalize preparation barrier reclaims the create-time pod).
+// diagnosis: a workspace-materialization failure at /finalize that is not an
+// archive validator violation must surface the retryable 503
+// SESSION_CREATION_FAILED fallback with Retry-After, transition the row to
+// `failed`, and reclaim the pod claimed at /create. Two causes are exercised:
+// an uploadArchive ref whose blob is absent from the artifact store (as during
+// an object-store outage), and a plan the adapter refuses to materialize with
+// gRPC InvalidArgument (a structurally invalid staging tree). A failure here
+// means the finalize handler surfaced another envelope for a materialization
+// failure, such as a non-retryable code, INTERNAL_ERROR, or
+// CREDENTIAL_POOL_EXHAUSTED, which contradicts the Client visibility bullet a
+// client relies on to retry, or that the failed finalize leaked its pod.
+func TestFinalizeMaterializationFailureIsRetryableSessionCreationFailed_spec_6_2(t *testing.T) {
+	cases := []finalizeMaterializationFailureCase{
+		{
+			// The ref names this session's upload prefix, so the finalize
+			// ref-ownership check admits it, but no blob is staged: the
+			// binder's materialization read fails with a store error rather
+			// than a §13.4 validator violation.
+			name:      "unstaged upload blob",
+			sessionID: "sess-fin-matfail-blob",
+			finalizePlan: func(ref blobstore.URI) string {
+				return `{"schemaVersion":1,"sources":[{"type":"uploadArchive","pathPrefix":"proj","uploadRef":"` +
+					ref.String() + `","format":"tar"}]}`
+			},
+			wantMessage: "fetch uploadArchive",
+		},
+		{
+			// The second source writes beneath a path the first source made a
+			// regular file, so the adapter's materialization of the staging
+			// tree fails and FinalizeWorkspace answers gRPC InvalidArgument.
+			// The fallback stays retryable for this code as well.
+			name:      "adapter InvalidArgument",
+			sessionID: "sess-fin-matfail-invalid",
+			finalizePlan: func(blobstore.URI) string {
+				return `{"schemaVersion":1,"sources":[` +
+					`{"type":"inlineFile","path":"a","content":"x","mode":"0644"},` +
+					`{"type":"inlineFile","path":"a/b","content":"y","mode":"0644"}]}`
+			},
+			wantMessage: "code = InvalidArgument",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runFinalizeMaterializationFailureCase(t, tc)
+		})
+	}
+}
+
+// runFinalizeMaterializationFailureCase creates a session on a claimed warm
+// pod, finalizes it with the case's plan, and asserts the retryable
+// SESSION_CREATION_FAILED answer, the `failed` row, and the reclaimed pod.
+func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializationFailureCase) {
+	t.Helper()
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	// An empty store: no case stages a blob.
+	binder.Blobs = blobstore.NewMemoryStore(nil)
+	ref := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  tc.sessionID,
+		PartID:     "p1",
+		TTL:        time.Hour,
+	}
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return tc.sessionID },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The pod was claimed at /create.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	finalizeBody := `{"workspacePlan":` + tc.finalizePlan(ref) + `}`
+	rr := postSessionStep(t, h, "/v1/sessions/"+tc.sessionID+"/finalize", []byte(finalizeBody))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("finalize with a failing materialization: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			Category  string `json:"category"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode finalize error envelope: %v (body=%s)", err, rr.Body.String())
+	}
+	if env.Error.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("error code = %q, want SESSION_CREATION_FAILED", env.Error.Code)
+	}
+	if env.Error.Category != "TRANSIENT" || !env.Error.Retryable {
+		t.Errorf("category/retryable = %q/%v, want TRANSIENT/true", env.Error.Category, env.Error.Retryable)
+	}
+	if !strings.Contains(env.Error.Message, tc.wantMessage) {
+		t.Errorf("error message = %q, want it to contain %q", env.Error.Message, tc.wantMessage)
+	}
+	if ra := rr.Header().Get("Retry-After"); ra == "" {
+		t.Errorf("Retry-After absent, want set on the retryable SESSION_CREATION_FAILED fallback")
+	}
+
+	// The finalize barrier failed the session and reclaimed the claimed pod.
+	row, err := store.Get(context.Background(), "acme", tc.sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the materialization failure", row.State)
+	}
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
 	}
 }
 
