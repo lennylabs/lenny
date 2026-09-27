@@ -33,6 +33,7 @@ export const meta = {
   phases: [
     { title: "Plan", detail: "blast radius + ordered build sequence, completeness-checked" },
     { title: "Build", detail: "implement each step in order; verify its tiers and adversarially review its diff before advancing; periodically re-plan the remaining steps on drift; abort if a step stays red or divergent" },
+    { title: "Sweep", detail: "align code comments with the landed spec edits; report any non-comment site for a human" },
     { title: "Verify", detail: "run the reached tiers across the whole change, fixing until green and coverage meets the floor" },
     { title: "Review", detail: "final cross-step design-conformance review of the cumulative diff against the proposal, fix divergences" },
   ],
@@ -195,6 +196,10 @@ const skipBuild = !!input.skipBuild;
 // returned after exactly one agent call with appliedEdits:[] and applied nothing.
 const specOnly = !!input.specOnly;
 const leaseTtlHours = input.leaseTtlHours || 24;
+// sweepComments: after the last checklist step, align code comments with the
+// spec edits this run landed (see the Sweep phase). On by default; false skips
+// it, and the result says it was skipped.
+const sweepComments = input.sweepComments !== false;
 
 // ---- Where a proposal's parts live ---------------------------------------
 //
@@ -384,6 +389,7 @@ const ARG_CLASS = {
   plan: "anchored",
   skipBuild: "launch",
   specOnly: "launch",
+  sweepComments: "forward",
   leaseTtlHours: "forward",
   reverifyDoneSteps: "launch",
   acceptedDivergences: "anchored",
@@ -2495,6 +2501,223 @@ if (specOnly) {
   };
 }
 
+// ---- Sweep: code comments the landed spec edits made false ----
+//
+// A spec edit can leave a Go comment, a doc comment, or a test's diagnosis
+// restating the behaviour the edit replaced. A proposal's review looks for
+// missed edit sites under spec/, docs/, schemas/ and charts/, and not in code
+// comments, so such a comment used to be caught only when a final reviewer
+// looked past its brief: one run of a proposal fixed it and the next run of the
+// same proposal did not. The sweep makes it a step. It runs here, once, because
+// only now is the spec text final, so the find agent reads the landed diff
+// rather than staged text that review rounds were still rewriting.
+//
+// It edits comment lines and nothing else, and an independent check reverts a
+// sweep commit that touched anything more, because a comment carries no
+// behaviour and so needs no proposal to change it. A site that is not a comment
+// (a test assertion, a client-visible string, a chart value) is behaviour the
+// proposal did not stage, so it is recorded as a proposed deviation for a human
+// and left as it is.
+//
+// It never blocks the run. A sweep agent that dies leaves the comments where
+// every earlier run left them, and the result says the sweep did not finish.
+
+const SWEEP_SITES = {
+  type: "object",
+  required: ["sites", "searched"],
+  properties: {
+    searched: { type: "string", description: "what you grepped for and where" },
+    sites: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "line", "kind", "quote", "contradicts"],
+        properties: {
+          file: { type: "string", description: "repository-relative path" },
+          line: { type: "integer" },
+          kind: {
+            type: "string",
+            enum: ["comment", "non-comment"],
+            description: "comment: every line to change is a comment. non-comment: anything that compiles or renders into behaviour",
+          },
+          quote: { type: "string", description: "the text as it stands" },
+          contradicts: { type: "string", description: "the landed spec sentence it now contradicts, with its spec file and heading" },
+        },
+      },
+    },
+  },
+};
+
+const SWEEP_FIX = {
+  type: "object",
+  required: ["commit", "edited"],
+  properties: {
+    commit: { type: "string", description: "the sweep commit's SHA, or empty when nothing was edited" },
+    edited: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "line"],
+        properties: { file: { type: "string" }, line: { type: "integer" }, after: { type: "string" } },
+      },
+    },
+    skipped: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "why"],
+        properties: { file: { type: "string" }, line: { type: "integer" }, why: { type: "string" } },
+      },
+    },
+    details: { type: "string" },
+  },
+};
+
+const SWEEP_CHECK = {
+  type: "object",
+  required: ["commentOnly"],
+  properties: {
+    commentOnly: { type: "boolean", description: "every added or removed line in the commit is a comment or blank" },
+    offending: { type: "array", items: { type: "string" }, description: "each non-comment line the commit changed" },
+    reverted: { type: "string", description: "the SHA of the revert commit, or empty when nothing was reverted" },
+  },
+};
+
+const SWEEP_BRANCH_SAFETY =
+  " BRANCH SAFETY: confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch before any commit; " +
+  "never checkout, switch, reset, stash, or branch -f.";
+
+async function sweepStaleComments(specFiles) {
+  const out = { ran: true, specFiles, sites: [], edited: [], skipped: [], commit: "", nonCommentSites: [], status: "" };
+  const found = await agentTry(
+    "Find code comments that the spec edits this run landed have made false. This is read-only: edit " +
+      "nothing and commit nothing.\n\n" +
+      "Repository: " + repo + ". The landed spec edits are `git diff " + baseRef + "..HEAD -- spec/` " +
+      "(files: " + specFiles.join(", ") + "). Read that diff first. Its removed lines are the contract the " +
+      "spec no longer states, and its added lines are the contract it states now.\n\n" +
+      "Search pkg/, cmd/, sdks/, tests/ and charts/ for text that still states the removed contract or the " +
+      "behaviour it described. Grep for the distinctive phrases and identifiers on the removed lines, and " +
+      "for what they asserted: an error code, a status, an outcome, an ordering, a rule. Read each hit " +
+      "against the landed spec. Report a site only when it now states something false. A site that names " +
+      "a function, a section, or an identifier without stating the replaced behaviour is still true and is " +
+      "not a site, and neither is a `// spec:` citation by section number.\n\n" +
+      "Classify each site. `comment` means every line that would change is a comment: a Go `//` or `/* */` " +
+      "comment, including a doc comment and a test's `// diagnosis:` text, or a `#` comment in YAML, a shell " +
+      "script, or a chart template. `non-comment` means anything else: a test assertion or fixture, an error " +
+      "or log string, a chart value, anything that compiles or renders into behaviour. Quote the text, and " +
+      "name the landed sentence it contradicts with its spec file and heading.\n\n" +
+      "Return what you searched. An empty `sites` list is the expected answer when the spec edits changed " +
+      "nothing a code comment describes.",
+    { schema: SWEEP_SITES, label: "sweep:find", phase: "Sweep" },
+  );
+  if (!found) {
+    out.status = "find-failed";
+    log("Comment sweep: the find agent returned no result; comments were left as they were");
+    return out;
+  }
+  out.sites = Array.isArray(found.sites) ? found.sites : [];
+  const commentSites = out.sites.filter((s) => s && s.kind === "comment");
+  out.nonCommentSites = out.sites.filter((s) => s && s.kind !== "comment");
+
+  if (out.nonCommentSites.length > 0) {
+    await recordProposedDeviations(
+      { id: "sweep", title: "stale code the landed spec edits left behind" },
+      out.nonCommentSites.map((s) => ({
+        proposalSays: "stages no change to " + s.file,
+        implementedInstead: s.file + ":" + s.line + " is unchanged and still states: " + s.quote,
+        why: "it contradicts the landed spec (" + s.contradicts + "), and it is not a comment, so changing it " +
+          "changes behaviour the proposal did not stage",
+        laterReader: "a reader of " + s.file + " takes the old contract as current",
+      })),
+    );
+  }
+
+  if (commentSites.length === 0) {
+    out.status = "no-comment-sites";
+    log("Comment sweep: " + out.sites.length + " site(s), none of them a comment to correct");
+    return out;
+  }
+
+  const fixed = await agentTry(
+    "Correct code comments that the spec edits this run landed have made false.\n\n" +
+      "Repository: " + repo + ". The landed spec edits are `git diff " + baseRef + "..HEAD -- spec/`; read " +
+      "it first. Each site below states the contract that diff removed.\n\n" +
+      "EDIT COMMENT LINES ONLY. Rewrite the false clause of each comment so it states what the landed spec " +
+      "now states, and leave the rest of the comment unchanged. Check each clause you write against the code " +
+      "it describes, not only against the spec. Keep the file's `// spec:` citation form (a section number, " +
+      "never a line number), write no proposal identifier (a change, decision, step, or proposal number), " +
+      "and follow " + repo + "/.claude/rules/doc-style.md. Skip a site, with the reason, when on inspection " +
+      "it is still true or cannot be corrected without changing a line that is not a comment.\n\n" +
+      "Then: (1) commit nothing yet, and confirm the change is comment-only: `git diff -U0 | grep '^[+-]' | " +
+      "grep -v '^+++' | grep -v '^---' | grep -vE '^[+-][[:space:]]*(//|/\\*|\\*|#|$)'` must print nothing. (2) Run " +
+      "`go build ./...`. (3) Run `go test -count=1 ./tests/tier0_static/...`, because the line-citation and " +
+      "proposal-label ratchets read Go comments. (4) Commit only the files you edited, with a message that " +
+      "begins `comments:` and names the spec section the comments now match. Return the commit SHA, or an " +
+      "empty string when you edited nothing." +
+      SWEEP_BRANCH_SAFETY + "\n\nSites:\n" + JSON.stringify(commentSites, null, 1),
+    { schema: SWEEP_FIX, label: "sweep:fix", phase: "Sweep" },
+  );
+  if (!fixed) {
+    out.status = "fix-failed";
+    log("Comment sweep: the fix agent returned no result; " + commentSites.length + " comment site(s) left as they were");
+    return out;
+  }
+  out.edited = Array.isArray(fixed.edited) ? fixed.edited : [];
+  out.skipped = Array.isArray(fixed.skipped) ? fixed.skipped : [];
+  out.commit = String(fixed.commit || "").trim();
+  if (!out.commit) {
+    out.status = "nothing-edited";
+    log("Comment sweep: " + commentSites.length + " comment site(s) found, none edited");
+    return out;
+  }
+
+  // The fix agent's own grep is a self-report. A separate agent classifies the
+  // commit it made with classify-diff.mjs, whose comment-only verdict is
+  // mechanical, and reverts it whole if any changed line is not a comment:
+  // the sweep's licence to act without the proposal is that it changes no
+  // behaviour, so a commit that did change some has no licence at all.
+  const checked = await agentTry(
+    "Check that one commit changes comment lines only, and revert it if it does not.\n\n" +
+      "Repository: " + repo + ". Commit: " + out.commit + ". Run `node " + repo + "/.claude/tools/classify-diff.mjs " +
+      out.commit + "~1.." + out.commit + " --json`. Its verdict is authoritative: the commit is comment-only " +
+      "exactly when `classes` contains `comment-only`. When it does, return commentOnly=true. When it does not, " +
+      "list the changed lines that are not comments (`git show -U0 --format= " + out.commit + "`), run `git revert " +
+      "--no-edit " + out.commit + "` on the current branch and return commentOnly=false, the offending " +
+      "lines, and the revert commit's SHA." + SWEEP_BRANCH_SAFETY,
+    { schema: SWEEP_CHECK, label: "sweep:check", phase: "Sweep", model: "haiku", effort: "high" },
+  );
+  if (!checked) {
+    out.status = "check-failed";
+    log("Comment sweep: the comment-only check returned no result for " + out.commit + "; the final review reads it");
+  } else if (!checked.commentOnly) {
+    out.status = "reverted";
+    out.reverted = String(checked.reverted || "");
+    out.offending = checked.offending || [];
+    log("Comment sweep: commit " + out.commit + " changed non-comment lines and was reverted" +
+      (out.reverted ? " (" + out.reverted + ")" : ""));
+  } else {
+    out.status = "committed";
+    log("Comment sweep: " + out.edited.length + " comment(s) corrected in " + out.commit);
+  }
+  return out;
+}
+
+const landedSpecFiles = Array.from(new Set(
+  stepResults.filter((s) => s && s.lane === "spec").flatMap((s) => s.specFiles || []),
+));
+let commentSweep = { ran: false, status: "", reason: "" };
+if (!sweepComments) {
+  commentSweep.reason = "disabled by sweepComments:false";
+} else if (landedSpecFiles.length === 0) {
+  commentSweep.reason = "no spec step landed in this run";
+} else if (!baseRef) {
+  commentSweep.reason = "no baseline commit to diff the landed spec edits against";
+  log("Comment sweep skipped: " + commentSweep.reason);
+} else {
+  phase("Sweep");
+  commentSweep = await sweepStaleComments(landedSpecFiles);
+}
+
 // ---- Verify: run the reached tiers across the whole change ----
 
 // Clean-checkout compile guard. The Verify and recheck agents run tests
@@ -2656,7 +2879,7 @@ const REVIEW_RULES =
   baseRef +
   "..HEAD`) in " +
   repo +
-  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a bare coverage percentage (the coverage floor is handled separately). Cite file:line and the proposal section. For each finding, also name the tier at which an automated regression test should assert the corrected behavior (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1): you are catching what the automated tests passed over, so the fix must close that test gap, not only the code. Report an empty array when the code conforms.";
+  ". You are read-only; report findings only. A commit whose message begins `comments:` comes from this run's comment sweep, which corrects code comments the landed spec edits made false: it is expected even though the proposal does not stage it, so it is not new scope, and it is a finding only where the corrected comment is itself wrong. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a bare coverage percentage (the coverage floor is handled separately). Cite file:line and the proposal section. For each finding, also name the tier at which an automated regression test should assert the corrected behavior (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1): you are catching what the automated tests passed over, so the fix must close that test gap, not only the code. Report an empty array when the code conforms.";
 
 let reviewClean = false;
 let reviewRound = 0;
@@ -2836,6 +3059,9 @@ return {
   // Edits the build made to the proposal despite being forbidden to. Recorded
   // rather than prevented or reverted; see PROPOSAL_EDITS.
   proposalEdits: proposalEditReport,
+  // Code comments corrected to match the landed spec edits, and any stale site
+  // that was not a comment and so was recorded as a proposed deviation instead.
+  commentSweep,
   skippedSteps,
   // Every final-gate failure across the run: a tier the scoped runs said could
   // not be affected, which the full pass proved otherwise. A class that keeps

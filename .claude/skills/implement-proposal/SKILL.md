@@ -85,6 +85,19 @@ The judges return one of three verdicts. `resolvable` is the default. `unresolva
 
 `unproductive` needs at least `minUnproductiveRounds` consecutive rounds that committed something and still came back with findings. It is a claim about a pattern, and a fix agent groping toward a hard change looks identical from any one round to one that will never get there.
 
+## The comment sweep
+
+A spec edit can leave a code comment restating the contract it replaced. A proposal's review looks for missed edit sites in the spec, docs, schemas, and charts, and not in code comments, so the final review caught such a comment only when a reviewer looked past its brief, and two runs of one proposal disagreed about it.
+
+After the last checklist step, and before the final gate, the run sweeps once for them. The sweep runs only when a spec step landed in this run. It reads the landed spec diff rather than staged text, because only now is that text final.
+
+- **Find.** A read-only agent searches `pkg/`, `cmd/`, `sdks/`, `tests/` and `charts/` for text that still states what the diff removed, and classifies each site as a comment or not.
+- **Fix.** An agent corrects the comment sites, edits comment lines only, runs tier 0, and commits once with a message beginning `comments:`.
+- **Check.** A separate agent classifies that commit with `classify-diff.mjs` and reverts it whole unless the tool calls it `comment-only`. The sweep acts without the proposal only because a comment carries no behaviour.
+- **Everything else goes to a human.** A site that is not a comment, such as a test assertion, a client-visible string, or a chart value, is behaviour the proposal did not stage. It is recorded as a `proposed` deviation and left unchanged.
+
+The final reviewers are told that a `comments:` commit is expected, so they do not read it as new scope. A sweep agent that dies leaves the comments unchanged and does not stop the run. `sweepComments: false` turns the sweep off.
+
 ## Deviations
 
 `.deviations.md` records where the landed code departs from what the proposal states: what it says, what the code does with file:line, why no legal change closes the gap, what a later reader would get wrong, and a suggested next step.
@@ -129,7 +142,7 @@ Invoke by `{scriptPath}`, never by name: a name resolves to a cached copy, so a 
 }
 ```
 
-Arguments, all with defaults: `baseModel` (`opus`), `baseEffort` (`medium`), `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
+Arguments, all with defaults: `baseModel` (`opus`), `baseEffort` (`medium`), `implementCode` (true; false runs the leading spec-lane prefix and stops), `maxPlanRounds` (2), `maxStepAttempts` (50), `maxDeadAttempts` (3), `maxReplans` (6), `replanEvery` (4), `replanStruggleAttempts` (4), `maxVerifyRounds` (25), `maxReviewRounds` (50), `coverageFloor` (80), `introspectEvery` (5), `minUnproductiveRounds` (5), `maxPhaseOscillations` (5), `maxFinalGateFailures` (5), `expensiveTierSeconds` (300), `leaseTtlHours` (24), `sweepComments` (true), `reverifyDoneSteps` (false), `skipBuild` (false), `plan`, `specReviewFocus`, `acceptedDivergences`. Raise a bound only with a reason; a loop that needs a larger one usually has a cause the bound will not fix.
 
 `spec-only` runs the leading spec-lane prefix. Under the standard pattern that prefix is every spec step and the mode is total, which is what `close-build-gaps.sh --mode proposals` relies on. On a proposal that genuinely interleaves it is not, and the run returns `spec-only-incomplete` rather than silently skipping the interleaved spec step. That result carries `stoppedAt`, the non-spec step the run stopped at, and `specStepsBehind`, the spec steps that sit behind it and did not land.
 
@@ -157,7 +170,7 @@ Stop the stale task with `TaskStop`, then relaunch with `{scriptPath, resumeFrom
 2. Report `deviationsFile` and its contents whenever entries exist. This is the run's statement of what did not land as proposed, and it is the input a human needs to decide whether the proposal or the code was wrong.
 3. Report `gateMisses` whenever non-empty: each is a tier the scoped runs said could not be affected and the full pass proved otherwise.
 4. Report `proposalEdits` whenever `edited` is true. An agent modified the proposal despite the instruction; the edit was kept rather than reverted, so a human decides. Under the folder layout the audit excludes the implementation-checklist and deviations files, which the run itself is entitled to write, so what it reports is an edit to the proposal's authored text. On a legacy single-file proposal every role lives in one file and no exclusion is possible, so a reported edit may be the run's own ticked box or appended deviation; the report's `whatChanged` says which.
-5. Report `reverifyRepaired`, `checklistDeviations`, and `skippedSteps` whenever non-empty. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
+5. Report `reverifyRepaired`, `checklistDeviations`, and `skippedSteps` whenever non-empty. Report `commentSweep` whenever it ran: the comments it corrected and its commit, any non-comment site it recorded as a deviation, and a `reverted`, `find-failed`, `fix-failed`, or `check-failed` status, each of which leaves comments for a human to check. A run that recovered from a mis-ordered checklist and said nothing has hidden a defect in the proposal.
 6. On `implemented`: the spec commits, the steps with their commits, the coverage, that the review is clean, and the findings closed. Suggest pushing; do not push unless asked.
 7. On `spec-step-failed`: the step, why, and that earlier steps are committed. On `lease-leaked`: either a spec step did not release its lease and `spec/` is writable, or the lease check did not answer and the run stopped rather than assume it was clear; the `reason` says which. Check with `spec-lease.mjs status`, release, and re-run. On `bad-lane`: the checklist has a step whose lane selects no handler. On `spec-only-incomplete`: the step the run stopped at (`stoppedAt`), the spec steps behind it (`specStepsBehind`) that did not land, and that the prefix which did land is applied and committed. On `build-step-stuck`: the step, the reason, and the `resumeNote`; when a `stuckFindings` entry is `unproductive`, report its `outstandingWork` as work still to do rather than as a failure of the run.
 8. Do not push or open a PR unless asked.

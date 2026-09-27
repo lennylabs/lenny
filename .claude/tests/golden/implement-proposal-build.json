@@ -149,6 +149,13 @@
     "blocks": []
   },
   {
+    "label": "sweep:find",
+    "phase": "Sweep",
+    "model": "opus",
+    "schema": "searched+sites",
+    "blocks": []
+  },
+  {
     "label": "verify",
     "phase": "Verify",
     "model": "opus",

@@ -546,6 +546,7 @@ return {
   changedLineCoverage: build.changedLineCoverage,
   failures: build.failures || [],
   resumeNote: build.resumeNote,
+  commentSweep: build.commentSweep || null,
   findingsReferencing: plan.findingIds,
   findingsClosed: close.closed || [],
 };
