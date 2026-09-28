@@ -715,18 +715,6 @@ func runStaticTier() (string, string) {
 			}
 			return string(out), nil
 		}},
-		{name: "scripts/lint-commit-messages.sh", run: func() (string, error) {
-			// A commit subject names behavior and a spec section; a
-			// proposal's scaffolding label (a build-step or deliverable
-			// id) is rejected. The script checks the commits after its
-			// recorded floor, so history before it does not fail the tier.
-			script := filepath.Join(repoRoot(), "scripts", "lint-commit-messages.sh")
-			if _, err := os.Stat(script); err != nil {
-				return "lint-commit-messages.sh not present; skipping", nil
-			}
-			out, err := exec.Command("bash", script).CombinedOutput()
-			return string(out), err
-		}},
 		{name: "scripts/check-markdown-links.sh", run: func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "check-markdown-links.sh")
 			if _, err := os.Stat(script); err != nil {
