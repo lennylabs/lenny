@@ -618,6 +618,87 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("terminal write racing the finalize entry write keeps the bound plan", func(t *testing.T) {
+		// spec: 15.1 (finalize precondition), 7.1 — the finalize entry
+		// write binds the request's WorkspacePlan in the same Update that
+		// moves the session to finalizing, and /start later reads that
+		// plan back from the row. Update rewrites workspace_plan from the
+		// row it read under FOR UPDATE for every caller, so a terminal
+		// write (DELETE, terminate, or the watchdog) queued behind the
+		// entry write must read the committed plan and carry it through.
+		// A store that did not persist the plan on Update, or that wrote
+		// it from a read taken before the lock, would leave the
+		// Create-time plan in the row.
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		createPlan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"create/"}]}`)
+		entryPlan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"entry/"}]}`)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+			WorkspacePlan: createPlan,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		type updateResult struct {
+			sess sessionstore.Session
+			err  error
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseEntry := func() { releaseOnce.Do(func() { close(release) }) }
+		// A fatal exit below must still unblock the entry write so its
+		// transaction ends and the container cleanup does not wait on it.
+		defer releaseEntry()
+
+		entryDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = entryPlan
+				close(entered)
+				<-release
+				return nil
+			})
+			entryDone <- updateResult{s, err}
+		}()
+		select {
+		case <-entered:
+		case r := <-entryDone:
+			t.Fatalf("entry write returned before entering its mutation: %v", r.err)
+		case <-time.After(rowLockWaitDeadline):
+			t.Fatalf("entry write did not enter its mutation within %s", rowLockWaitDeadline)
+		}
+
+		terminalDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				row.State = session.StateCancelled
+				return nil
+			})
+			terminalDone <- updateResult{s, err}
+		}()
+		awaitSessionRowLockWaiter(t, ctx, pg, terminalDone)
+		releaseEntry()
+
+		if r := awaitUpdateResult(t, "entry", entryDone); r.err != nil {
+			t.Fatalf("entry write: Update: %v", r.err)
+		}
+		if r := awaitUpdateResult(t, "terminal", terminalDone); r.err != nil {
+			t.Fatalf("terminal write: Update: %v", r.err)
+		}
+
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.State != session.StateCancelled {
+			t.Errorf("stored state = %q, want %q", got.State, session.StateCancelled)
+		}
+		assertStoredPlan(t, got.WorkspacePlan, entryPlan)
+	})
+
 	t.Run("list orders newest-first and applies filters", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
@@ -1266,4 +1347,21 @@ func messageCount(t *testing.T, ctx context.Context, pg *containers.Postgres, se
 		t.Fatalf("messageCount: %v", err)
 	}
 	return n
+}
+
+// assertStoredPlan fails the test when the stored workspace plan is not
+// the same JSON document as want. The comparison is on the decoded
+// value because the jsonb column normalizes key order and whitespace.
+func assertStoredPlan(t *testing.T, got, want json.RawMessage) {
+	t.Helper()
+	var gotDoc, wantDoc any
+	if err := json.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatalf("stored plan %q is not valid JSON: %v", got, err)
+	}
+	if err := json.Unmarshal(want, &wantDoc); err != nil {
+		t.Fatalf("expected plan %q is not valid JSON: %v", want, err)
+	}
+	if !reflect.DeepEqual(gotDoc, wantDoc) {
+		t.Errorf("stored WorkspacePlan = %s, want %s", got, want)
+	}
 }
