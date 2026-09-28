@@ -191,11 +191,13 @@ func eagerCluster(t *testing.T) client.Client {
 	return c
 }
 
-// eagerAdapterDialer serves srv over an in-memory connection.
-func eagerAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// eagerAdapterDialer serves srv over an in-memory connection. Any opts are
+// passed to adapter.NewGRPCServer, so a test can install interceptors that
+// observe the RPCs the gateway issues to the pod.
+func eagerAdapterDialer(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
@@ -244,34 +246,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	binder.Credentials = assigner
 
 	ctx := context.Background()
-	tenants := tenantstore.NewMemory()
-	if err := tenants.Create(ctx, tenantstore.Tenant{
-		ID: "acme",
-		CredentialPolicy: credential.CredentialPolicy{
-			PreferredSource: credential.PreferredSourcePool,
-			ProviderPools: map[string]credential.ProviderPool{
-				"anthropic_direct": {DefaultPool: "claude-prod"},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("create tenant: %v", err)
-	}
-	runtimes := runtimestore.NewMemory()
-	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
-		t.Fatalf("create runtime: %v", err)
-	}
-	credPools := credentialpoolstore.NewMemory()
-	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
-		TenantID:              "acme",
-		Name:                  "claude-prod",
-		Provider:              "anthropic_direct",
-		MaxConcurrentSessions: 10,
-		Credentials: []credentialpoolstore.Credential{
-			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
-		},
-	}); err != nil {
-		t.Fatalf("create pool: %v", err)
-	}
+	tenants, runtimes, credPools := eagerCredentialStores(t)
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		IDFunc:                  func() string { return "sess-eager" },
@@ -391,4 +366,43 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	if n := assigner.assignCount(); n != 1 {
 		t.Errorf("AssignProto called %d times total, want 1; /start must assign no lease", n)
 	}
+}
+
+// eagerCredentialStores seeds the tenant, runtime, and credential-pool stores
+// the finalize prepare phase resolves the §4.9 lease against: tenant acme
+// routes anthropic_direct to the claude-prod pool, and runtime echo supports
+// that provider.
+func eagerCredentialStores(t *testing.T) (*tenantstore.Memory, *runtimestore.Memory, *credentialpoolstore.Memory) {
+	t.Helper()
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(ctx, tenantstore.Tenant{
+		ID: "acme",
+		CredentialPolicy: credential.CredentialPolicy{
+			PreferredSource: credential.PreferredSourcePool,
+			ProviderPools: map[string]credential.ProviderPool{
+				"anthropic_direct": {DefaultPool: "claude-prod"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	return tenants, runtimes, credPools
 }
