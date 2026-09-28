@@ -184,11 +184,13 @@ func podBindIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 }
 
 // podBindAdapterDialer serves srv over an in-memory connection and
-// returns a DialAdapter func wired to it.
-func podBindAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// returns a DialAdapter func wired to it. opts are passed to the adapter's
+// gRPC server, so a test can add an interceptor that fails one RPC; the
+// callers that pass none get the adapter's default server.
+func podBindAdapterDialer(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
