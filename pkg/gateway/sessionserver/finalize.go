@@ -186,8 +186,11 @@ func sourceUploadRefField(i int, _ string) string {
 // the revoke is a no-op. A finalize-time credential availability miss is the
 // §4.9 check-to-assignment mismatch (the source vanished across the
 // upload window), so it is remapped to CREDENTIAL_POOL_EXHAUSTED rather than the
-// create-only USER_CREDENTIAL_NOT_FOUND (§4.9). handleFinalize surfaces the
-// returned error through writePodClaimError, where a workspace-materialization
+// create-only USER_CREDENTIAL_NOT_FOUND (§4.9). handleFinalize answers the
+// returned error through finalizePrepareFailed. When a terminal writer
+// overtook the call, the response is 409 INVALID_STATE_TRANSITION with the
+// terminal state in place of the returned error (§15.1). Otherwise the error
+// surfaces through writePodClaimError, where a workspace-materialization
 // failure takes the retryable SESSION_CREATION_FAILED fallback unless it is a
 // §13.4 archive validator violation (UPLOAD_ARCHIVE_LIMIT_EXCEEDED).
 //
