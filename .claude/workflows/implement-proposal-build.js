@@ -2270,7 +2270,12 @@ for (let i = 0; i < plan.steps.length; i++) {
           "make it; say what work is outstanding, and do not describe it as resolved or as a defect in the " +
           "proposal. Say whether the step ticked. Do not editorialise beyond what is given.\n\n" +
           JSON.stringify(mine, null, 2) +
-          "\n\nUse a subject line under 72 characters naming the step and the subject of the finding. " +
+          "\n\nUse a subject line under 72 characters that names the behavior the finding concerns and the " +
+          "spec section it touches, in the form `<area>: <behavior> (§N.M)`. Do not start the subject with " +
+          "the proposal number, and write none of the proposal's scaffolding labels (a build-step id such as " +
+          "S<n>, a change or deliverable id such as CODE-<n> or TEST-<n>, a decision id such as D<n>, or a step " +
+          "number inside one) in the subject or the body: refer to a test by its test name and to code by " +
+          "its function or file. scripts/lint-commit-messages.sh rejects a subject that carries such a label. " +
           "Reply with the commit sha.",
         { label: "record-stuck:" + step.checklistStep, phase: "Build" },
       );
