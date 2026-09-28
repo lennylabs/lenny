@@ -12,3 +12,6 @@ approved-by:
 implemented-date: 
 implemented-by: 
 ---
+## Review history
+
+An adversarial review run was conducted on 2026-09-28. The spec review did not run and the non-spec review did not run. No findings were fixed. The run did not converge, and findings remain open.
