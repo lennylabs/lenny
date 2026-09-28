@@ -266,3 +266,58 @@ func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Reques
 	}
 	return true
 }
+
+// writeWorkspacePlanError translates a workspaceplan.ValidationError
+// into the §15.1 `400 WORKSPACE_PLAN_INVALID` envelope. The one
+// exception is an unsupported schemaVersion: per §14.1 the
+// gateway is a live consumer that MUST reject a plan whose schemaVersion
+// it does not understand with `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED`,
+// carrying `details.knownVersion` / `details.encounteredVersion` so a
+// client can tell "bad plan" apart from "gateway too old." F-14.1.1.
+func (s *Server) writeWorkspacePlanError(w http.ResponseWriter, err error) {
+	var ve *workspaceplan.ValidationError
+	if !errors.As(err, &ve) {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if ve.Reason == workspaceplan.ReasonUnsupportedSchemaVersion {
+		details := map[string]any{"reason": ve.Reason}
+		if ve.Field != "" {
+			details["field"] = ve.Field
+		}
+		// spec: §14.1 — `details.knownVersion` /
+		// `details.encounteredVersion` are mandatory on this envelope.
+		if ve.KnownVersion != nil {
+			details["knownVersion"] = *ve.KnownVersion
+		}
+		if ve.EncounteredVersion != nil {
+			details["encounteredVersion"] = *ve.EncounteredVersion
+		}
+		s.writeError(w, http.StatusUnprocessableEntity, "WORKSPACE_PLAN_SCHEMA_UNSUPPORTED", ve.Error(), details)
+		return
+	}
+	details := map[string]any{}
+	if ve.Field != "" {
+		details["field"] = ve.Field
+	}
+	if ve.Reason != "" {
+		details["reason"] = ve.Reason
+	}
+	if len(ve.SubErrs) > 0 {
+		subs := make([]map[string]any, 0, len(ve.SubErrs))
+		for _, se := range ve.SubErrs {
+			subs = append(subs, map[string]any{
+				"sourceIndex": se.SourceIndex,
+				"field":       se.Field,
+				"reason":      se.Reason,
+				"message":     se.Message,
+			})
+		}
+		// spec: §15.1. F-14.1.19. The multi-violation report
+		// rides under details.fields (plural) per the WORKSPACE_PLAN_INVALID
+		// error-catalog row; details.field (singular) carries the offending
+		// plan path of the first violation.
+		details["fields"] = subs
+	}
+	s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID", ve.Error(), details)
+}
