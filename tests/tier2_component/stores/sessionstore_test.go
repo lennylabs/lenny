@@ -333,6 +333,67 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §7.1, 15.1 (finalize precondition) — Update rewrites the
+	// workspace_plan column from the row it read under FOR UPDATE, so
+	// every mutation that does not touch the plan must carry the stored
+	// plan through unchanged. This pins the write-set half of that
+	// contract: a plan fixed at Create survives an unrelated Update, and
+	// a nil plan stays NULL rather than becoming a JSON null document.
+	t.Run("update that leaves the plan alone preserves the stored plan", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"in/"}]}`)
+		withPlan := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated,
+			RuntimeRef: "echo", WorkspacePlan: plan,
+		}
+		withoutPlan := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}
+		for _, s := range []sessionstore.Session{withPlan, withoutPlan} {
+			if err := store.Create(ctx, s); err != nil {
+				t.Fatalf("Create %s: %v", s.ID, err)
+			}
+			if _, err := store.Update(ctx, tenant, s.ID, func(row *sessionstore.Session) error {
+				row.State = session.StateFinalizing
+				return nil
+			}); err != nil {
+				t.Fatalf("Update %s: %v", s.ID, err)
+			}
+		}
+
+		got, err := store.Get(ctx, tenant, withPlan.ID)
+		if err != nil {
+			t.Fatalf("Get with plan: %v", err)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan %q is not valid JSON: %v", got.WorkspacePlan, err)
+		}
+		if err := json.Unmarshal(plan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want the Create-time plan %s", got.WorkspacePlan, plan)
+		}
+
+		got, err = store.Get(ctx, tenant, withoutPlan.ID)
+		if err != nil {
+			t.Fatalf("Get without plan: %v", err)
+		}
+		if got.WorkspacePlan != nil {
+			t.Errorf("WorkspacePlan = %s, want nil after an Update on a session created without a plan", got.WorkspacePlan)
+		}
+		var isNull bool
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT workspace_plan IS NULL FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
+			withoutPlan.ID, tenant).Scan(&isNull); err != nil {
+			t.Fatalf("read workspace_plan column: %v", err)
+		}
+		if !isNull {
+			t.Error("workspace_plan column is non-NULL after an Update that left a nil plan alone")
+		}
+	})
+
 	t.Run("absent workspace plan stays nil", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		want := sessionstore.Session{
