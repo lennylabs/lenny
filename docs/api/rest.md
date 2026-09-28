@@ -99,6 +99,8 @@ Seal the workspace and run setup commands. Moves uploaded files from the session
 
 **Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
 
+A finalize call that is still running when the session ends, for example through `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, an administrator force-terminate, or the gateway's finalizing timeout (`maxFinalizingTimeoutSeconds`), returns `INVALID_STATE_TRANSITION` (409), even when its own finalization also failed. The session stays in the state it ended in, and the error's `details.currentState` names that state.
+
 ### POST /v1/sessions/{id}/start
 
 Start the agent runtime. The session must be in `ready` state (workspace finalized).

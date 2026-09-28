@@ -346,7 +346,7 @@ Seal the workspace and run setup commands. After finalization, no further file u
 | Code | When |
 |:-----|:-----|
 | `RESOURCE_NOT_FOUND` | Session does not exist |
-| `INVALID_STATE_TRANSITION` | Session not in `created` state |
+| `INVALID_STATE_TRANSITION` | Session not in `created` state, or the session ended while finalization was in progress |
 
 **Example:**
 
