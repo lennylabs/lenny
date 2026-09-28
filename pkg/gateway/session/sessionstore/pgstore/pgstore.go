@@ -452,7 +452,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		legal_hold_set_by = $46,
 		legal_hold_set_at = $47,
 		legal_hold_note = $48,
-		last_agent_activity_at = $49
+		last_agent_activity_at = $49,
+		workspace_plan = $55::jsonb
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	var out sessionstore.Session
@@ -550,6 +551,15 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// stamped when the session enters `suspended`, NULL otherwise.
 			// spec: §7.2; §8.8.
 			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
+			// $55 — §14 WorkspacePlan. POST /finalize binds the
+			// finalize-time plan into the row in the same Update that
+			// commits `finalizing`, and /start reads it back from the
+			// row, so the column is written like every other mutable
+			// field rather than fixed at Create. The row read above
+			// carries the stored plan, so a mutation that leaves the
+			// field alone rewrites the same document.
+			// spec: §7.1; §15.1 (finalize precondition).
+			jsonbArg(sess.WorkspacePlan),
 		); err != nil {
 			return err
 		}

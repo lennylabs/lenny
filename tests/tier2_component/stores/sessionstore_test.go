@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,13 +80,82 @@ func startStore(t *testing.T) (*pgstore.Store, *containers.Postgres) {
 	return pgstore.New(pg.Pool), pg
 }
 
+// rowLockWaitDeadline bounds how long a serialization test waits for a
+// concurrent Update to reach the Postgres row-lock wait.
+const rowLockWaitDeadline = 30 * time.Second
+
+// awaitSessionRowLockWaiter polls pg_stat_activity through the pool's
+// own connection until another backend in this test's database is
+// blocked on a lock while holding the tuple lock of a sessions row,
+// which is where the store's SELECT ... FOR UPDATE waits.
+// It fails the test when the deadline passes or when the waiting
+// Update returns on done before ever blocking, which means the store
+// ran the second mutation without waiting for the row lock. The
+// datname filter keeps a backend of another database on the same
+// server from matching.
+func awaitSessionRowLockWaiter[T any](t *testing.T, ctx context.Context, pg *containers.Postgres, done <-chan T) {
+	t.Helper()
+	// pg_stat_activity.query is cut at track_activity_query_size
+	// (1024 bytes by default), and the sessions select list is longer
+	// than that, so the FOR UPDATE clause never appears in the text.
+	// The waiter is identified by its locks instead: a backend blocked
+	// on another transaction's row lock holds the tuple lock on the
+	// sessions row it is waiting for.
+	const q = `SELECT count(*) FROM pg_stat_activity a
+		WHERE a.datname = current_database()
+		  AND a.pid <> pg_backend_pid()
+		  AND a.wait_event_type = 'Lock'
+		  AND EXISTS (
+			SELECT 1 FROM pg_locks l
+			WHERE l.pid = a.pid
+			  AND l.locktype = 'tuple'
+			  AND l.relation = 'sessions'::regclass)`
+	deadline := time.Now().Add(rowLockWaitDeadline)
+	for {
+		var waiting int
+		if err := pg.Pool.QueryRow(ctx, q).Scan(&waiting); err != nil {
+			t.Fatalf("poll pg_stat_activity: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("concurrent Update returned without waiting on the row lock: %+v", r)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no backend waited on the sessions row lock within %s", rowLockWaitDeadline)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// awaitUpdateResult receives one goroutine's Update result, failing the
+// test when it does not arrive within rowLockWaitDeadline.
+func awaitUpdateResult[T any](t *testing.T, name string, done <-chan T) T {
+	t.Helper()
+	select {
+	case r := <-done:
+		return r
+	case <-time.After(rowLockWaitDeadline):
+		t.Fatalf("%s: Update did not return within %s", name, rowLockWaitDeadline)
+	}
+	var zero T
+	return zero
+}
+
 // spec: 12.2.1
 // diagnosis: the Postgres-backed SessionStore in
 // pkg/gateway/sessionstore/pgstore did not behave as specified. Create
 // and Get must round-trip a session including its jsonb workspace
 // plan, the sentinel errors and cross-tenant isolation must hold, the
 // SELECT ... FOR UPDATE mutate path must strictly advance UpdatedAt,
-// List filters must apply, and Delete must cascade to session_messages.
+// List filters must apply, Update must persist the workspace plan, and
+// Delete must cascade to session_messages.
+// A guarded Update that runs concurrently with another Update on the
+// same row must block on the row lock, see the committed state, and
+// refuse without writing.
 func TestSessionStoreContract(t *testing.T) {
 	t.Parallel()
 	store, pg := startStore(t)
@@ -220,6 +290,49 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §7.1, 15.1 (finalize precondition) — POST /finalize binds
+	// its workspace plan into the row inside the Update that commits
+	// `finalizing`, and /start reads the plan back from the row. The
+	// Update must therefore persist a plan the mutation sets, and keep
+	// the stored plan when the mutation leaves it alone.
+	t.Run("update persists the workspace plan", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`)
+		if _, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+			row.State = session.StateFinalizing
+			row.WorkspacePlan = plan
+			return nil
+		}); err != nil {
+			t.Fatalf("Update setting the plan: %v", err)
+		}
+		if _, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+			row.State = session.StateReady
+			return nil
+		}); err != nil {
+			t.Fatalf("Update leaving the plan alone: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan %q is not valid JSON: %v", got.WorkspacePlan, err)
+		}
+		if err := json.Unmarshal(plan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want %s", got.WorkspacePlan, plan)
+		}
+	})
+
 	t.Run("absent workspace plan stays nil", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		want := sessionstore.Session{
@@ -329,6 +442,118 @@ func TestSessionStoreContract(t *testing.T) {
 		if !second.UpdatedAt.After(first.UpdatedAt) {
 			t.Errorf("UpdatedAt did not advance: first=%v second=%v",
 				first.UpdatedAt, second.UpdatedAt)
+		}
+	})
+
+	t.Run("guarded mutation serializes on the locked row", func(t *testing.T) {
+		// spec: 15.1 (finalize precondition) — the created → finalizing
+		// admission re-checks the precondition inside the Update
+		// mutation, so two overlapping finalize calls serialize on the
+		// SELECT ... FOR UPDATE row lock and the second one reads the
+		// first one's committed state and refuses. This subtest pins the
+		// store half of that compare-and-swap: B's mutation must not run
+		// until A commits, and B's refusal must leave A's write intact.
+		// The guard is inlined because the handler's helper is
+		// unexported in another package.
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		admitCreated := func(row *sessionstore.Session) error {
+			if row.State != session.StateCreated {
+				return &session.PreconditionError{CurrentState: row.State}
+			}
+			return nil
+		}
+		planA := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"a/"}]}`)
+		planB := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"b/"}]}`)
+
+		type updateResult struct {
+			sess sessionstore.Session
+			err  error
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseA := func() { releaseOnce.Do(func() { close(release) }) }
+		// A fatal exit below must still unblock A so its transaction
+		// ends and the container cleanup does not wait on it.
+		defer releaseA()
+
+		aDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				if err := admitCreated(row); err != nil {
+					return err
+				}
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = planA
+				close(entered)
+				<-release
+				return nil
+			})
+			aDone <- updateResult{s, err}
+		}()
+		select {
+		case <-entered:
+		case r := <-aDone:
+			t.Fatalf("A returned before entering its mutation: %v", r.err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("A did not enter its mutation within 30s")
+		}
+
+		bDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				if err := admitCreated(row); err != nil {
+					return err
+				}
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = planB
+				return nil
+			})
+			bDone <- updateResult{s, err}
+		}()
+		awaitSessionRowLockWaiter(t, ctx, pg, bDone)
+		releaseA()
+
+		a := awaitUpdateResult(t, "A", aDone)
+		if a.err != nil {
+			t.Fatalf("A: Update: %v", a.err)
+		}
+		b := awaitUpdateResult(t, "B", bDone)
+		var pe *session.PreconditionError
+		if !errors.As(b.err, &pe) {
+			t.Fatalf("B: want *session.PreconditionError, got %v", b.err)
+		}
+		if pe.CurrentState != session.StateFinalizing {
+			t.Errorf("B: PreconditionError.CurrentState = %q, want %q", pe.CurrentState, session.StateFinalizing)
+		}
+
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.State != session.StateFinalizing {
+			t.Errorf("stored state = %q, want %q", got.State, session.StateFinalizing)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan is not valid JSON: %v", err)
+		}
+		if err := json.Unmarshal(planA, &wantDoc); err != nil {
+			t.Fatalf("plan A is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want A's plan %s", got.WorkspacePlan, planA)
+		}
+		// B's refusal must write nothing, so the stored UpdatedAt is
+		// exactly the value A's commit returned.
+		if !got.UpdatedAt.Equal(a.sess.UpdatedAt) {
+			t.Errorf("stored UpdatedAt = %v, want A's %v (B wrote the row)", got.UpdatedAt, a.sess.UpdatedAt)
 		}
 	})
 
