@@ -2,15 +2,15 @@
 proposal: 0082_fix_two-concurrent-post-v1-sessions-id-finalize-calls-for
 title: Concurrent finalize calls both prepare the session's pod
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-09-23
 drafted-by: change-proposal
 reviewed-date: 2026-09-27
 reviewed-by: change-proposal
 approved-date: 2026-09-27
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-09-28
+implemented-by: jaf
 ---
 
 ## Review history

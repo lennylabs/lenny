@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: Finalize branch logic extracted into helpers in finalize.go
+## Accepted: Finalize branch logic extracted into helpers in finalize.go
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S3 (CODE-1 and CODE-3: exit guards, `failFinalizing`, `afterFailed`, `recordPodClaimFailure`, and `revokeFinalizeLease`).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader following CODE-3 would look for the rule 1, 2, and 4 branches inline in `handleFinalize` and would expect `revokeFinalizeLease` to be the only new function in `finalize.go`. The branches are in the named helpers in `finalize.go`.
 
-## Proposed: recordPodClaimFailure called once before writePodClaimError's switch
+## Accepted: recordPodClaimFailure called once before writePodClaimError's switch
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S3 (CODE-1 and CODE-3: exit guards, `failFinalizing`, `afterFailed`, `recordPodClaimFailure`, and `revokeFinalizeLease`).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader would expect the recording calls inside the two arms of `writePodClaimError`. The classification exists in two switches that must stay in the same arm order, and a change to the arm order of one switch without the other changes which failures are recorded.
 
-## Proposed: Additional exit-guard regression test file
+## Accepted: Additional exit-guard regression test file
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S3 (CODE-1 and CODE-3: exit guards, `failFinalizing`, `afterFailed`, `recordPodClaimFailure`, and `revokeFinalizeLease`).
 
@@ -44,9 +44,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader using TEST-1's file list as the complete inventory would miss `finalize_exit_guard_internal_test.go`, and would miss that `finalize_race_internal_test.go` was created in step S3 rather than in the TEST-1 step.
 
-## Proposed: Committed credential-assignment failure asserts 503 SESSION_CREATION_FAILED
+## Accepted: Committed credential-assignment failure asserts 503 SESSION_CREATION_FAILED
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S4 (TEST-1: tier-1 deterministic entry and exit interleavings).
 
@@ -67,9 +67,11 @@ The implementor owns this file. It stays empty until an implementation records a
 **Suggested next step:** correct the proposal
 **Evidence:** Commit c7609e923 ("sessionstore: pin finalize admission serializing on the Postgres row lock, and persist the plan on Update") introduced the helper and documents the truncation in its message. Rounds 2 through 5 of step S5 reported the same commit with no new changes. All three judges returned high-confidence verdicts that the code is correct, that the proposal's prescribed predicate cannot work because of query-text truncation, and that closing the finding requires amending TEST-2 step 4 or recording this deviation.
 
-## Proposed: Row-lock waiter identified by tuple lock instead of query text
+## Accepted: Row-lock waiter identified by tuple lock instead of query text
 
-**Status:** proposed
+This entry records the same departure as D1 above.
+
+**Status:** accepted
 
 **Reported by:** step S5 (TEST-2: tier-2 Postgres row-lock serialization subtest).
 
@@ -81,9 +83,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong:** A reader following TEST-2 step 4 would write a query-text poll that never matches and would read the resulting timeout as a store defect. A reader comparing the test to the proposal would find a waiter predicate the proposal does not describe, with no record in the proposal of why the query-text match was replaced.
 
-## Proposed: pgstore.Update now persists workspace_plan
+## Accepted: pgstore.Update now persists workspace_plan
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** the operator, from commit c7609e923 (step S5, TEST-2).
 
