@@ -288,8 +288,8 @@ func assertNoWriteOverTerminal(t *testing.T, attempt int, store *transitionStore
 // locked session row, so two concurrent finalize calls both commit
 // `finalizing` and both answer 200, or the refused call reports a state other
 // than the one the winner committed.
+// spec: 15.1 (finalize precondition), 7.2 (terminal states)
 func TestConcurrentFinalizeAdmitsExactlyOne_spec_15_1(t *testing.T) {
-	// spec: 15.1 (finalize precondition), 7.2 (terminal states)
 	for attempt := range raceAttempts {
 		f := newFinalizeRaceFixture(t, 2)
 		finalize := func() (int, []byte) { return f.call(http.MethodPost, "/finalize") }
@@ -330,8 +330,8 @@ func TestConcurrentFinalizeAdmitsExactlyOne_spec_15_1(t *testing.T) {
 // locked session row, so a finalize call admitted a second time or wrote
 // `finalizing`, `ready`, or `failed` over the `cancelled` state DELETE
 // committed.
+// spec: 15.1 (finalize precondition), 7.2 (terminal states)
 func TestConcurrentFinalizeAndDeleteKeepTerminal_spec_15_1(t *testing.T) {
-	// spec: 15.1 (finalize precondition), 7.2 (terminal states)
 	for attempt := range raceAttempts {
 		f := newFinalizeRaceFixture(t, 0)
 		finalize := func() (int, []byte) { return f.call(http.MethodPost, "/finalize") }

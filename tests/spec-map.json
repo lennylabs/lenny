@@ -1650,7 +1650,8 @@
         "tests/tier2_component/rls/checkpoint_manifest_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
+        "tests/tier7a_load_local/finalize_admission_race_test.go"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -3679,7 +3680,8 @@
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorFallback_spec_7_1_4",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
-        "pkg/gateway/sessionserver/upload_to_session_test.go::TestAMidSessionUploadTheAdapterRefusesAnswersUpstreamError_spec_7_4"
+        "pkg/gateway/sessionserver/upload_to_session_test.go::TestAMidSessionUploadTheAdapterRefusesAnswersUpstreamError_spec_7_4",
+        "tests/tier7a_load_local/finalize_admission_race_test.go"
       ],
       "packages": [
         "pkg/api/v1/session",
