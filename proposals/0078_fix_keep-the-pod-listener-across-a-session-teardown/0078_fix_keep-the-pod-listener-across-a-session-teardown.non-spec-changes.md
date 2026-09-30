@@ -519,7 +519,7 @@ Coverage: the change deletes one statement and adds `CloseListener` and its guar
 
 ## 10. Findings closed on application
 
-- **BUILD-GAPS F-5.2.33, part (a)** — the pod-scoped listener torn down on a per-session teardown. The
+- **BUILD-GAPS F-5.2.33, part (a)**: the pod-scoped listener was torn down on a per-session teardown. The
   finding stays OPEN, because part (b) names the component that creates the fresh runtime process for
   session N+1 on the sidecar deployment model and states what the whole-pod scrub can reach while
   `shareProcessNamespace` is forbidden, which is proposal 0079's. Annotate the finding's evidence

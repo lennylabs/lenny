@@ -13,7 +13,6 @@ implemented-date:
 implemented-by: 
 ---
 
-# Proposal: Keep the pod's runtime listener across a session teardown
+## Review history
 
-- **Status:** Draft for review.
-- **Date:** 2026-08-25
+The legacy single-file proposal recorded no adversarial review history.

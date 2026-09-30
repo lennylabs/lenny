@@ -1,3 +1,3 @@
-# Deviations — 0078_fix_keep-the-pod-listener-across-a-session-teardown
+# Deviations: Keep the pod's runtime listener across a session teardown
 
-The implementor owns this file, and it stays empty until an implementation records a deviation.
+The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.

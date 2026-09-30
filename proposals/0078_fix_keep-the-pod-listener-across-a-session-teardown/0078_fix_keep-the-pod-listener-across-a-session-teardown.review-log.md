@@ -1,6 +1,14 @@
-# Review log — 0078_fix_keep-the-pod-listener-across-a-session-teardown
+# Review log: Keep the pod's runtime listener across a session teardown
 
 ## Standing context
+
+### Settled
+
+### Traps
+
+### Open
+
+### Deferred
 
 ## Ledger
 
