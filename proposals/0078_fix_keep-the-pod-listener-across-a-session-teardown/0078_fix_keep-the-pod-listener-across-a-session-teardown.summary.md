@@ -67,19 +67,38 @@ specification text that already stands, and it changes no specification sentence
 ## Open decisions for human to make
 
 - **Should the window a last-slot `Interrupt` leaves stay out of 0078's scope?**
-  - *Question.* A last-slot `Interrupt` closes the shared runtime connection and leaves the adapter's
-    connection state marked live, so a session whose `Start` lands before the interrupted session's
-    `Close` stays on the dead connection until its own `Close` (non-spec-changes.md §5). The behavior
-    predates 0078 and becomes reachable in every connection generation rather than only the first.
-  - *Recommendation.* Keep it out of 0078 and file one new BUILD-GAPS finding for it.
-  - *Ground.* It is a failure mode of the session cohort's release rather than of the pod-scoped scope
-    error this proposal fixes, and clearing the state on a terminal `Interrupt` changes `Interrupt`'s
-    observable behavior (non-spec-changes.md §8, §5).
-  - *Alternatives.* Folding the clear into 0078 lost on the ground above.
-  - *Cost of deciding otherwise.* Folding it in widens the staged code and test set to `Interrupt`.
-    Keeping it out leaves the window open from 0078's landing until the new finding is fixed.
-  - *Confidence.* Medium. The gate refuted an earlier out-of-scope-stands adjudication for this item, and
-    no alternative disposition was staged.
+  - *Question.* On the socket transport one runtime connection serves every session on the pod. When the
+    last active session ends through `Interrupt`, `SocketRuntimeProcess.Interrupt` closes that connection
+    but leaves `p.connected` true and `p.conn` set (`pkg/adapter/socketruntime.go:398-417`); only `Close`
+    clears them (`:449-450`). A `Start` that lands before the interrupted session's `Close` therefore
+    returns nil without accepting (`:182-186`), and that session stays on the dead connection until its own
+    `Close`. The gateway's interrupt moves the session to suspended rather than closing it
+    (`pkg/gateway/sessionserver/interrupt.go`), and the heartbeat-hung path issues the same clean
+    `Interrupt` (`pkg/adapter/heartbeat.go:160-168`), so on a pool with `maxSessionsPerPod` > 1 a sibling
+    `Start` can land in the window. The defect exists today in the first
+    connection generation. Once 0078 keeps the listener bound, later generations can form, and the window
+    can recur in each of them. Should 0078 leave this out of scope and accept the window until a separate
+    fix, or widen its code and test deliverable to clear `connected` and `conn` on a last-slot `Interrupt`?
+  - *Recommendation.* Keep it out of 0078, and record the window outside 0078 as one new BUILD-GAPS
+    finding.
+  - *Ground.* 0078 neither creates nor cures the window (non-spec-changes.md §5, third row). The sibling
+    hazard of the same session-cohort release, a departing connection's fan-out reader acting on the next
+    connection's subscribers, is folded in as CODE-3 because the listener's survival creates it
+    (non-spec-changes.md §7.7). The `Interrupt` window predates that survival. Clearing the state on a
+    terminal `Interrupt` also changes `Interrupt`'s observable behavior, since a later `Start` would then
+    accept a new connection, and the specification states no post-`Interrupt` connection state for the
+    adapter to meet.
+  - *Alternatives.* Folding the clear and its tests into 0078 widens a code-only listener fix to a second
+    teardown path with its own contract question, and it lost for that reason. Handing the window to
+    proposal 0079 fits its ownership of `Close`'s occupancy-zero branch (non-spec-changes.md D8), which
+    `Interrupt` mirrors, but 0079's text does not mention `Interrupt`, so that routing is ungrounded.
+  - *Cost of deciding otherwise.* Folding it in adds `Interrupt` code and tier-1 and tier-7a tests to the
+    staged set. Keeping it out leaves the window open from 0078's landing until a separate fix lands. The
+    recommended finding is not yet staged: on the recommended answer the staging adds the filing to
+    non-spec-changes.md §10 and §12 and lists the window under **Defects in the shipped tree that this
+    proposal does not stage**.
+  - *Confidence.* Low. The gate refuted an earlier out-of-scope-stands adjudication for this item, and
+    whether 0079's redesign must revisit `Interrupt`'s teardown is unconfirmed.
   - *Identifier.* ``marker:non-spec-changes §8:- **clearing `connected` and `conn` on a terminal `interrupt`, and scoping the fan-out reader to a``
 
 ## Defects in the shipped tree that this proposal does not stage
@@ -89,6 +108,24 @@ specification text that already stands, and it changes no specification sentence
 - **`SocketRuntimeProcess.AcceptTimeout` has no operator override.** Its 30s default is set nowhere in
   `cmd/lenny-adapter`, which `code-best-practices.md` does not permit for a non-spec default. After this
   change it bounds how long a start on a recycling sidecar pod waits (non-spec-changes.md §5, first row).
+- **The `CH-MSGSOCK` accept path performs no manifest-nonce handshake.** §28.5.3 (Intra-pod) states the
+  handshake as the first message on this socket (`spec/28_communication-channels.md:533-534`), and §4.7.11
+  item 1 requires it (`spec/04_system-components.md:937`). `SocketRuntimeProcess.accept` returns the raw
+  accepted connection (`pkg/adapter/socketruntime.go:279-300`), and `Start` passes it to the fan-out reader
+  without reading a first message (`:202-227`). The next `Start` therefore accepts a stale dial queued in
+  the listener's backlog (non-spec-changes.md §5, row "A runtime dials between two sessions"). This
+  proposal does not stage the handshake because the gap predates the listener change, the handshake is a
+  separate authentication contract with its own nonce-only challenge-response branch, and no staged
+  deliverable relies on it.
+- **The `Ops.KillUserProcesses` doc comment overstates what the whole-pod scrub kills.** The comment
+  states that the scrub's `kill -9 -1` terminates the runtime's SDK process
+  (`pkg/adapter/scrub/scrub.go:75-77`). `DefaultOps.KillUserProcesses` runs that command inside the
+  adapter container (`pkg/adapter/scrub/defaultops.go:28-35`). On the sidecar transport the runtime runs
+  in a separate container, because §4.7.10 sets `shareProcessNamespace: false`
+  (`spec/04_system-components.md:915`) and §13.1 forbids setting it to true
+  (`spec/13_security-model.md:17-19`), so the command cannot reach the runtime there. This proposal does
+  not correct the comment because the accurate sentence depends on the runtime-lifetime rule proposal 0079
+  owns, and no staged deliverable relies on the claim (non-spec-changes.md §8).
 
 ## Impacts on other proposals
 
