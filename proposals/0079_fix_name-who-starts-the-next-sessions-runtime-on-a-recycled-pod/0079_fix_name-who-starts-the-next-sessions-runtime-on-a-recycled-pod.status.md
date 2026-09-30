@@ -13,12 +13,12 @@ implemented-date:
 implemented-by: 
 ---
 
+## Review history
+
+An adversarial review run executed on 2026-09-30. The spec loop ran four rounds and did not converge. The run fixed 35 findings. One full-pool sweep was performed during the spec loop. The non-spec loop was not run. Because the spec loop did not converge, open decisions the review examined remain unsettled.
+
 ## Original status block
 
 # Proposal: Name who starts the next session's runtime on a recycled pod
 
-- **Status:** Draft for review.
-- **Date:** 2026-08-25
 - **Scope:** Closes BUILD-GAPS F-5.2.33 part (b). No component creates a second runtime process in a sidecar pod, so the runtime process is kept for the pod's life and a later session binds to it as a slot. This proposal stops the adapter from ending the runtime at occupancy zero, reports at the recycle boundary whether the runtime can serve the next session, gates process reuse on the existing process-level isolation acknowledgment, keeps a kept runtime to one tenant, removes the occupancy-zero drain frame, and states the lifetime and the scrub's reach in the specification. Part (a) is proposal 0078, whose pod-scope listener teardown this proposal extends.
-
-This document stages the proposed specification, code, test, and documentation changes. It does not modify any spec, code, or doc file. Apply the changes in the Proposed changes section after sign-off.
