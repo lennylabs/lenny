@@ -1,66 +1,50 @@
 # Summary: Keep the pod's runtime listener across a session teardown
 
-## Scope
-
-- **Scope:** `SocketRuntimeProcess.Close` is a per-session teardown and its last statement unbinds the
-  pod-scoped `CH-MSGSOCK` listener that `NewSocketRuntimeProcess` bound once at adapter boot, so the
-  address every later runtime connection needs is destroyed by the first session that ends. The listener
-  close moves out of the per-session path and into a pod-scoped `CloseListener` the adapter process calls
-  when it exits. This discharges part (a) of BUILD-GAPS finding F-5.2.33 against specification text that
-  already stands, and it changes no specification sentence. Part (b), which names the component that
-  creates the successor runtime process on the sidecar deployment model, is proposal 0079 and is out of
-  scope here. This proposal applies after proposal 0073's code phase completes.
-
-This document stages the proposed code, test, and documentation changes. It does not modify any spec,
-code, or doc file. Apply the changes in the Proposed changes section after sign-off.
-
 ## Summary
 
-**What changes**
+**Problem statement.** `SocketRuntimeProcess.Close` is a per-session teardown and its last statement
+unbinds the pod-scoped `CH-MSGSOCK` listener that `NewSocketRuntimeProcess` bound once at adapter boot, so
+the address every later runtime connection needs is destroyed by the first session that ends.
+
+**What changes.**
 
 - `pkg/adapter/socketruntime.go`: `Close` stops closing the listener and returns `nil` on the
   last-session path. The occupancy-zero gate, the shared-connection close, and the graced child reap are
-  unchanged, so the runtime still dies at the session boundary.
+  unchanged (non-spec-changes.md D8).
 - `pkg/adapter/socketruntime.go`: a new idempotent `CloseListener() error` on the concrete type releases
-  the listener, and the three doc comments that describe the listener as part of a per-slot teardown are
-  corrected to state its pod lifetime.
-- `cmd/lenny-adapter/main.go`: the signal-handler goroutine calls `CloseListener` after
-  `srv.GracefulStop()` returns, which is where the listener's lifetime actually ends.
-- Tests: tier-1 cases that a second session accepts a second runtime connection on the same address and
-  that `CloseListener` is what unbinds it, a tier-4 case that one adapter serves two sessions in
-  sequence over one bound address, and a tier-7a case for a last-session `Close` racing an arriving
-  `Start`. The existing `pkg/adapter` and tier-4 cleanups move to `CloseListener`, and the tier-7a drain
-  fixture's accept timeout is bounded because its failing leg now waits rather than failing at once.
+  the listener, and the `pkg/adapter` comments that describe the listener as part of a per-slot teardown
+  are corrected.
+- `cmd/lenny-adapter/main.go`: `main` defers `CloseListener` where it constructs the socket transport, so
+  the listener is released after `srv.Serve` returns (non-spec-changes.md D5).
+- `pkg/adapter/socketruntime.go`: each accepted connection's fan-out reader delivers to and closes only
+  the subscribers registered against that connection (CODE-3).
+- Tests: tier-1 cases that a second session accepts a second runtime connection on the same address,
+  that `CloseListener` is what unbinds it, and that a departing connection's reader leaves the next
+  connection's subscribers alone, tier-4 cases that one adapter serves two sessions in sequence
+  over one bound address and that the adapter process unlinks a filesystem-path socket when it exits on
+  SIGTERM, and a tier-7a case for a last-session `Close` racing an arriving `Start`. Every test that
+  constructs a `SocketRuntimeProcess` gains a `CloseListener` cleanup (non-spec-changes.md §7.5), and the
+  tier-7a drain fixture's accept timeout is bounded because its failing leg now waits rather than failing
+  at once.
 - `docs/runtime-author-guide/lifecycle.md` states that the adapter's socket address is stable for the
   pod's lifetime.
 
-**Fixed decisions**
+**Decisions.**
 
 - The occupancy-zero gate stays as it is. `releaseActiveLocked` returning `len(p.active) == 0`
-  (`pkg/adapter/socketruntime.go:384-387`) implements §5.2's slot-independence rule, and closing the
-  shared connection on that release is the runtime death §15.4.3 requires.
+  (`pkg/adapter/socketruntime.go:384-387`) implements §5.2's slot-independence rule, and `Close`'s
+  occupancy-zero branch is left untouched (non-spec-changes.md D8).
 - The listener is bound once, in `NewSocketRuntimeProcess` (`pkg/adapter/socketruntime.go:156-162`), and
   is never rebound. Its owner is the adapter process.
-- `RuntimeProcess` (`pkg/adapter/session.go:46`) gains no method, and `Close` keeps its signature.
-  `CloseListener` is declared on the concrete type alone.
-- This proposal does not decide who creates the runtime process for session N+1 on the sidecar
-  deployment model. After it lands, a recycling sidecar pod still serves one session, and it fails at the
-  accept timeout rather than by dialing an address that no longer exists.
-- The proposal applies after proposal 0073's code phase completes through S18.
+- `RuntimeProcess` gains no method, and `Close` keeps its signature. `CloseListener` is declared on the
+  concrete type alone.
+- This proposal lands together with proposal 0079 or immediately before it. Landed alone, it turns the
+  immediate failure of a second `StartSession` on a recycling sidecar pod into a wait for the full accept
+  bound (non-spec-changes.md §5, first row).
 
-**Watch out for**
+**Watch out for.**
 
-- The one-line deletion is not the whole change. Nothing else in the tree closes that listener: the
-  adapter's signal goroutine tears down the SDK, the runtime operations channel, and the gRPC server, and
-  never touches `Runtime` (`cmd/lenny-adapter/main.go:412-427`). Deleting the close with no replacement
-  leaves a filesystem-path socket file behind for the `--runtime-socket <path>` developer loop and for the
-  tier-7a fixture, which binds a path under a temp directory
-  (`tests/tier7a_load_local/shutdown_drain_gate_race_test.go:415-416`).
-- `Close`'s return value is load-bearing beyond logging. `pkg/adapter/session.go:260` assigns it to
-  `closeErr`, which selects `leaked` over `released` in `reportSessionScrub` (`:275`) and sets
-  `ShutdownResponse.ExitedCleanly` (`:287`). A `leaked` outcome feeds the §5.2 unhealthy-slot ledger
-  (`pkg/gateway/sessionserver/start.go:2743-2771`). Returning a pod-scoped resource's error there charged
-  a pod failure to whichever session happened to be last.
+- The one-line deletion is not the whole change; see non-spec-changes.md D2.
 - `Interrupt` (`pkg/adapter/socketruntime.go:398-417`) already performs the same occupancy-zero teardown
   and does not close the listener. The two teardown paths disagree today, and `Interrupt` is the one that
   is right. Do not make them consistent in the other direction.
@@ -68,16 +52,48 @@ code, or doc file. Apply the changes in the Proposed changes section after sign-
   (`pkg/adapter/socketruntime_test.go:252`) looks like the coverage for this area and passes both before
   and after. It asserts the sibling and last-slot connection semantics and never dials a second time,
   which is why the defect survived it.
-- `tests/tier7a_load_local/shutdown_drain_gate_race_test.go:352-356` already comments that "The pod's
-  listener stays bound". The comment is false today and becomes true with this change. Read it as a
-  schedule hazard rather than as evidence the behavior is already correct: the leg's incoming start goes
-  from an immediate closed-listener error to a full accept timeout, and `socketDrainPod` sets that
-  timeout to 5s (`:421`) across `raceAttempts` of 40
-  (`tests/tier7a_load_local/racestart_testsupport_test.go:29`).
-- A prior attempt on this surface failed. Six commits (`8cdd5d6d` through `ccaeb30d`) alternated between
-  making the runtime survive the recycle boundary and restoring its death, and `39e08bb4` reverted the
-  excursion. The runtime's death at occupancy zero is specified behavior and this proposal keeps it.
-- A 0073 review round staged this same listener-close drop inside SCHEMA-1
-  (`proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:8583-8589`) and a later
-  redesign withdrew it. The withdrawal was a scope decision rather than a refutation, and 0073 §9 records
-  the resulting behavior as an accepted limit (`:1997`, `:6638`).
+
+## Goals
+
+The listener close moves out of the per-session path and into a pod-scoped `CloseListener` the adapter
+process calls when it exits. This discharges part (a) of BUILD-GAPS finding F-5.2.33 against
+specification text that already stands, and it changes no specification sentence.
+
+## Non-goals
+
+- Part (b) of BUILD-GAPS finding F-5.2.33 and the runtime process's lifetime across sessions, which
+  proposal 0079 owns.
+
+## Open decisions for human to make
+
+- **Should the window a last-slot `Interrupt` leaves stay out of 0078's scope?**
+  - *Question.* A last-slot `Interrupt` closes the shared runtime connection and leaves the adapter's
+    connection state marked live, so a session whose `Start` lands before the interrupted session's
+    `Close` stays on the dead connection until its own `Close` (non-spec-changes.md §5). The behavior
+    predates 0078 and becomes reachable in every connection generation rather than only the first.
+  - *Recommendation.* Keep it out of 0078 and file one new BUILD-GAPS finding for it.
+  - *Ground.* It is a failure mode of the session cohort's release rather than of the pod-scoped scope
+    error this proposal fixes, and clearing the state on a terminal `Interrupt` changes `Interrupt`'s
+    observable behavior (non-spec-changes.md §8, §5).
+  - *Alternatives.* Folding the clear into 0078 lost on the ground above.
+  - *Cost of deciding otherwise.* Folding it in widens the staged code and test set to `Interrupt`.
+    Keeping it out leaves the window open from 0078's landing until the new finding is fixed.
+  - *Confidence.* Medium. The gate refuted an earlier out-of-scope-stands adjudication for this item, and
+    no alternative disposition was staged.
+  - *Identifier.* ``marker:non-spec-changes §8:- **clearing `connected` and `conn` on a terminal `interrupt`, and scoping the fan-out reader to a``
+
+## Defects in the shipped tree that this proposal does not stage
+
+- **A timed-out `Start` leaves its accept goroutine parked in `Accept`** (non-spec-changes.md §5 and §8,
+  **Restructuring the accept path**).
+- **`SocketRuntimeProcess.AcceptTimeout` has no operator override.** Its 30s default is set nowhere in
+  `cmd/lenny-adapter`, which `code-best-practices.md` does not permit for a non-spec default. After this
+  change it bounds how long a start on a recycling sidecar pod waits (non-spec-changes.md §5, first row).
+
+## Impacts on other proposals
+
+| Proposal | Status | What this change does to it | What it must do |
+|:--|:--|:--|:--|
+| 0073_fix_give-every-session-a-slot-and-absence-one-meaning | Implemented (2026-08-31). | See non-spec-changes.md §10. | Nothing. 0073 is a landed proposal and is not edited. |
+| 0071_fix_route-a-runtime-frame-to-one-consumer-instead-of-broadcasting-it | Draft for review. | CODE-3 gives each accepted connection its own subscriber set, which `fanOut` delivers to and closes on exit. | Keep its consumer table scoped to the connection whose reader delivers to it. |
+| 0079_fix_name-who-starts-the-next-sessions-runtime-on-a-recycled-pod | Draft, being redesigned to keep the runtime process across sessions on recycling pools with `maxSessionsPerPod` > 1, except `scrubProfile: vm-restart` pools, which restart it after every session, with pod retirement when the runtime has exited. | Keeps the pod's `CH-MSGSOCK` address bound across session teardowns and leaves `Close`'s occupancy-zero branch to 0079 (non-spec-changes.md D8). | Land together with this proposal or immediately after it (**Decisions.**). |

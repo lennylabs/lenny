@@ -32,9 +32,8 @@ returns `net.ErrClosed` at once and `accept` wraps it as
 gets a refused connection, because nothing is bound to the name any more. Both directions of the
 conversation are gone.
 
-The failure is silent. The scrub reports success, `StartSession` fails with a transient category, and the
-gateway retries the session onto another pod while the bind failure is counted toward the §5.2
-unhealthy-slot threshold (`pkg/gateway/sessionserver/start.go:2743-2771`).
+The failure is silent. The scrub reports success and `StartSession` fails at once. non-spec-changes.md
+§5's first row gives the gateway's handling of the failed start.
 
 ### 1.2 What the specification already requires
 
@@ -102,6 +101,4 @@ unconditionally (`tests/tier10_conformance/recycle_scrub_conformance_test.go:61`
 
 ### 1.6 Finding
 
-BUILD-GAPS **F-5.2.33**, part (a). Part (b), which names the component that creates the runtime process
-for session N+1 and states what the whole-pod scrub can reach while §13.1 forbids
-`shareProcessNamespace`, is proposal 0079's and stays open.
+BUILD-GAPS **F-5.2.33**, part (a). Part (b) is proposal 0079's and stays open.
