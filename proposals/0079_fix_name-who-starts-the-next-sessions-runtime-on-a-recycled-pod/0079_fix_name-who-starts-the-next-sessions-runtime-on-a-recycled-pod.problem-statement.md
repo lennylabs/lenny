@@ -16,7 +16,7 @@ Under §4.7.10 the default deployment model puts the runtime in its own pod cont
 - The adapter does not. `SocketRuntimeProcess`'s own doc comment records the contract: "The adapter never spawns the runtime in this model — the kubelet starts the runtime container" (`pkg/adapter/socketruntime.go:33`). The `SpawnPath` field that would exec one has no production caller; the four assignments in the tree are all in tests.
 - The scrub cannot reach it. §13.1 forbids `shareProcessNamespace` on every pod template Lenny generates (§13.1), so `DefaultOps.KillUserProcesses` (`pkg/adapter/scrub/defaultops.go:28`) signals only the adapter container's own process tree.
 
-The runtime's exit is correct and specified. The adapter closes the shared connection at occupancy zero (`pkg/adapter/socketruntime.go:450`), the runtime observes the clean-exit EOF and returns, and the runtime-author guide tells authors "On a recycling pod the runtime exits at each session end" (`docs/runtime-author-guide/lifecycle.md:330`). Nothing in this proposal disputes that. The defect is that after the runtime exits, no component creates its successor, and the specification never says which one should.
+The adapter ends the runtime at occupancy zero. `SocketRuntimeProcess.Close` closes the shared connection, reaps a spawned child, and closes the listener when its active set empties (`pkg/adapter/socketruntime.go:435-467`), and `Interrupt` of the last active session closes the connection (`:398-417`). The runtime observes the clean-exit EOF and returns. Ending the runtime at occupancy zero discards a process no component can create again, on a pod the recycle disposition then holds for its tenant.
 
 ### 1.3 How the failure presents
 
@@ -28,7 +28,7 @@ The consequence for capacity is concrete. §5.2's `mode_factor` converges toward
 
 **The scrub does not terminate the runtime's process.** `scrub.Ops` states of step 1 that "It terminates the runtime's SDK process along with every other task process" (`pkg/adapter/scrub/scrub.go:74-77`). §6.1's recycle row makes the same claim at specification level. Both are false on the sidecar model.
 
-The correct statement is narrower than a flat denial and is not derivable from `shareProcessNamespace: false` alone. `buildSidecar` mounts `workspace`, the credential volume, `tmp`, `sessions`, `artifacts`, `/dev/shm`, and `shared` into both containers (`pkg/controller/sandbox/podspec/podspec.go:536-557`), so steps 0, 2, 4, and 6 do cross the container boundary. Step 1b's `ipcrm --all=shm` reaches the pod's shared IPC namespace, because §13.1 forbids only `hostIPC`. What does not cross is step 1's process kill, step 3's environment restoration, and step 5's log-buffer truncation, each of which is scoped to the adapter container.
+The correct statement is narrower than a flat denial and is not derivable from `shareProcessNamespace: false` alone. `buildSidecar` mounts `workspace`, the credential volume, `tmp`, `sessions`, `artifacts`, `/dev/shm`, and `shared` into both containers (`pkg/controller/sandbox/podspec/podspec.go:536-557`), so steps 0, 2, 4, and 6 do cross the container boundary. Step 1b's `ipcrm --all=shm` runs in the pod's shared IPC namespace, because §13.1 forbids only `hostIPC`, but it removes only the segments the adapter's UID owns or created, and the runtime runs under a different UID (`pkg/controller/sandbox/podspec/podspec.go:56-57`). What does not cross is step 1's process kill, step 3's environment restoration, and step 5's log-buffer truncation, each of which is scoped to the adapter container.
 
 **§4.7.9 step 7 names the wrong actor.** The startup sequence reads "Adapter spawns runtime binary" (§4.7). That holds in the embedded model and in the developer loop, and it is false in the sidecar model that the following section makes the default. Nothing reconciles the two sections.
 
@@ -41,3 +41,7 @@ The correct statement is narrower than a flat denial and is not derivable from `
 ### 1.6 Finding
 
 BUILD-GAPS F-5.2.33 part (b). Part (a), the pod-scoped listener destroyed by a per-session `Close`, is proposal 0078 and is a precondition of the conformance work in S10.
+
+### 1.7 Decision of 2026-09-30
+
+The human decided the direction of the fix on 2026-09-30. On a recycling pool with `recycle.maxSessionsPerPod > 1`, the runtime process is kept across sessions, including across occupancy-zero boundaries, and serves the tenant's sessions until the pod reaches `recycle.maxSessionsPerPod` or another retire trigger fires. Every session is already a slot (proposal 0073), and a concurrent pool already keeps one runtime process serving many sessions while occupancy stays above zero, so the fix extends that model across occupancy zero. The decision carries four conditions: a `scrubProfile: vm-restart` pool still restarts after every session, keeping the process requires the existing `sessionPolicy.acknowledgeProcessLevelIsolation: true`, a pod on an `allowCrossTenantReuse` pool is retired when the tenant changes, and a pod whose runtime has exited at a boundary is retired rather than dispatched into.
