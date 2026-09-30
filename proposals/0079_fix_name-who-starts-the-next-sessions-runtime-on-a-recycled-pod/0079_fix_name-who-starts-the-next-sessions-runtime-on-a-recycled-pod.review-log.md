@@ -1265,6 +1265,17 @@ FACT: the SDK-warm ConfigureWorkspace path exists only for the in-process runtim
 - USEFUL [spec.4.review-single-source.2 DECISION on SPEC-4(d)/SPEC-8(f)/SPEC-8(g)]: all three are unchanged since round 4 and still cite §5.2 or the tenant pinning paragraph, so I did not re-file them.
 - USEFUL [spec.2.review-single-source.1 WATCHOUT D11]: D1 restating SPEC-1's no-spawn reason and D11 restating SPEC-6(b) match the proposal's decision format. I skipped both again.
 
+### [f2.other-proposals.0071]
+DECISION: the 0071 impact item (marker: `onHeartbeatHung` calls `rt.Interrupt(ctx, sessionID, false)`) is recorded as a second row in summary.md `## Impacts on other proposals`, after the 0084 row. The row states that CODE-1's deletion of the active set and its nil-returning `Interrupt` (non-spec-changes.md:53), with SPEC-2's rule that no heartbeat escalation closes the connection (spec-changes.md:133-136), remove the reference-counted escalation 0071's §1.3, decision 6, tier-1 and tier-8 heartbeat case, §5 risk bound, and CODE-2 hoist rest on (0071 .md:64-77, :104-108, :167-171, :181-182, :206-210). It also names the CODE-9 comment and log-line collision on heartbeat.go and attach.go (non-spec-changes.md:92) and the `Output` rebase, and states that 0071's frame addressing is unaffected in substance and that no open decision in spec-changes.md §12 changes the effect.
+FACT: the tree premise holds today: `onHeartbeatHung` calls `rt.Interrupt(ctx, sessionID, false)` (pkg/adapter/heartbeat.go:163-167), and `Interrupt` closes the connection only when `releaseActiveLocked` reports the last release (pkg/adapter/socketruntime.go:384-387, :398-417).
+FACT: 0071 is Draft ("Draft for review.", 0071 .md:3), dated 2026-08-13 (0071 .md:4), last revised 2026-08-31 by commit 8f1083b70; the reading's "no date" is superseded by those two dates.
+
+### [f2.cleanup]
+FACT: summary.md already carries the listed sections in order, and this pass edited nothing in it. The 0071 row sits in the existing `## Impacts on other proposals` table after the 0084 row, and `## Deliverable index` is last and unchanged.
+FACT: the §9.1 adapter-signals item this firing left out of scope is the existing sixth entry under `## Defects in the shipped tree that this proposal does not stage`, so no entry under `## Open decisions for human to make` was added.
+FACT: the `## Open decisions for human to make` preamble holds: neither item this firing adjudicated is open for the human, and spec-changes.md §12 carries open decisions 1 through 5.
+WATCHOUT: the `**Watch out for.**` item on proposal 0078 and the `**Decisions.**` bullet on proposal 0073's SCHEMA-1 still assert things about other proposals outside `## Impacts on other proposals`. Both sit in listed parts, and the f1 gate refuted both impact rows, so they stay in place (f1.cleanup).
+
 ## Retired
 
 The legacy single-file proposal carried no `Resolved in adversarial review` history, so this section has no entries.
