@@ -36,6 +36,9 @@ the address every later runtime connection needs is destroyed by the first sessi
   occupancy-zero branch is left untouched (non-spec-changes.md D8).
 - The listener is bound once, in `NewSocketRuntimeProcess` (`pkg/adapter/socketruntime.go:156-162`), and
   is never rebound. Its owner is the adapter process.
+- On the socket transport, `Close` no longer reports an error, so a socket runtime's session scrub always
+  reports the `released` outcome. `MCPRuntime.Close` keeps the `leaked` outcome reachable, and the change
+  adds no compensation for it (non-spec-changes.md D7).
 - `RuntimeProcess` gains no method, and `Close` keeps its signature. `CloseListener` is declared on the
   concrete type alone.
 - This proposal lands together with proposal 0079 or immediately before it. Landed alone, it turns the
