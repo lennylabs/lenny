@@ -2,25 +2,21 @@
 
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1, SPEC-2, SPEC-3, SPEC-4. The §4.7.9 step, the §4.7.10 lifetime paragraph and row, the §4.7 `Shutdown` and `ReportPodScrub` rows, and the §4.6.1 and §4.6.3 reserve, re-warm, retire, and pin statements.
+- [ ] **S1 · spec** — SPEC-1, SPEC-2, SPEC-3, and SPEC-4. The staged `spec/04_system-components.md` edits.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-5, SPEC-6, SPEC-7, SPEC-8. The §5.2 recycle lifecycle, scrub reach, retirement and sizing, the `warn`-outcome retire, acknowledgment, tenant pin, cross-tenant paragraph, `Pod reuse` configuration row, and client visibility.
+- [ ] **S2 · spec** — SPEC-5, SPEC-6, SPEC-7, and SPEC-8. The staged `spec/05_runtime-registry-and-pool-model.md` edits.
       Tiers 0, 11. Depends on: S1
-- [ ] **S3 · spec** — SPEC-9, SPEC-10, SPEC-11, SPEC-12, SPEC-13. The §6.1 row and §6.2 projection, edges, hold, and preConnect re-warm carve-out; the §7.1 `residualStateWarning` row; §15.4 and §15.4.2; §29.2 step 25 and §29.4 steps 12, 13, and 17; §11.4 full-revoke step 3.
+- [ ] **S3 · spec** — SPEC-9, SPEC-10, SPEC-11, SPEC-12, SPEC-13, SPEC-14, SPEC-15, SPEC-16, and SPEC-17. The staged edits to the other specification files.
       Tiers 0, 11. Depends on: S2
-- [ ] **S4 · code** — CODE-1, CODE-2, CODE-4 with TEST-1, TEST-2, TEST-3, TEST-17. The kept transport, the sticky ended state, the terminate frame at pod exit, and the pod-scope teardown, with the dispositions of proposal 0078's socket cases, of the `slotsession_test.go` terminate-frame cases, and of the `holdstate_test.go` `:922` terminate-frame assertion.
-      Tiers 0, 1, 4. Depends on: S3 and proposal 0078
-- [ ] **S5 · code** — CODE-3 with TEST-4 and TEST-5. The generation without reset, the `holdstate_test.go` `:911` sole-session change, the drain-gate test deletion, and the reader-stop race.
-      Tiers 0, 1, 7a. Depends on: S4
-- [ ] **S6 · code** — CODE-5 with TEST-7's adapter cases (including `gatewaycontrol/scrubreport_test.go`) and TEST-8. The liveness sample and the `runtime_live` wire field.
-      Tiers 0, 1, 3. Depends on: S4
-- [ ] **S7 · code** — CODE-6, CODE-7 with TEST-6, TEST-7's gateway cases (including `cmd/lenny-gateway/scrub_report_wiring_test.go`), and TEST-9. The `Decide` branches and the gateway threading.
-      Tiers 0, 1, 4. Depends on: S6
-- [ ] **S8 · code** — CODE-8, CODE-10 with TEST-12, TEST-13, TEST-14, TEST-18. Tenant pin admission on every idle acquisition, the fallback pin check inside the mirror transaction and the fallback pin stamp, the cross-tenant flag, and pinned idle pods excluded from the unpinned warm target.
+- [ ] **S4 · code** — CODE-1, CODE-2, CODE-3, and CODE-4 with TEST-1, TEST-2, TEST-3, TEST-4, TEST-5, and TEST-17. The transport, the terminate frame, the runtime generation, and the pod-scope teardown.
+      Tiers 0, 1, 4, 7a. Depends on: S3 and proposal 0078
+- [ ] **S5 · code** — CODE-5, CODE-6, and CODE-7 with TEST-6, TEST-7, TEST-8, and TEST-9. The liveness report, the `Decide` branches, and the gateway threading.
+      Tiers 0, 1, 3, 4. Depends on: S4
+- [ ] **S6 · code** — CODE-8 and CODE-10 with TEST-12, TEST-13, TEST-14, and TEST-18. Tenant pin admission and pinned idle inventory.
       Tiers 0, 1, 2, 9. Depends on: S3
-- [ ] **S9 · code** — CODE-9. The comment corrections.
-      Tiers 0, 1. Depends on: S4
-- [ ] **S10 · test** — FIXTURE-1, TEST-10, TEST-11, TEST-15. The conformance case, the tier-5 un-skip, and the tier-7a scenario extension.
-      Tiers 0, 5, 7a, 10. Depends on: S5, S7, S8
-- [ ] **S11 · docs** — DOC-1 through DOC-5 with TEST-16.
-      Tiers 0, 11. Depends on: S3
+- [ ] **S7 · code** — CODE-9. The comment corrections.
+      Tiers 0, 1. Depends on: S5
+- [ ] **S8 · test** — FIXTURE-1, TEST-10, TEST-11, and TEST-15. The fixture and the conformance, cluster, and scenario tests.
+      Tiers 0, 5, 7a, 10. Depends on: S5 and S6
+- [ ] **S9 · docs** — DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, and DOC-6 with TEST-16. The documentation.
+      Tiers 0, 11. Depends on: S3 and S7

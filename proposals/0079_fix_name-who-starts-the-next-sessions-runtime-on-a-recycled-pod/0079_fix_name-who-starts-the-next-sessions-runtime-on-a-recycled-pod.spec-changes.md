@@ -14,9 +14,9 @@ Two alternatives are rejected. Withholding the report retires the pod through th
 
 **D5. Reusing a runtime process requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`.** The field (`pkg/gateway/runtime/runtimestore/runtimestore.go:1024-1028`) names the property the deployer accepts: process-level state one session leaves is visible to another on the same pod. A kept runtime process carries into the next session the state the whole-pod scrub does not reach (D11). The gate applies in both deployment models, because the embedded runtime's process is the adapter process and is kept as well (open decision 2). `podscrub.Decide` evaluates it at the recycle boundary from the pool record the recycle policy resolver already fetches (`pkg/gateway/session/recycle/scrubreporter_seams.go:608`), so a change to the pool takes effect at the pod's next boundary. Admission is unchanged: a recycling pool without the field is admitted, and its pods retire at each occupancy-zero boundary with the non-counting reason `process_reuse_unacknowledged`. A pool with `maxConcurrentSessions > 1` always carries the field (`pkg/gateway/runtime/poolstore/poolstore.go:561-566`), so its runtime is always kept.
 
-**D6. A kept runtime process serves one tenant.** The state is the pod's `lenny.dev/tenant-id` label. The gateway stamps it at first assignment (`pkg/gateway/podlifecycle/podclaim/claimer.go:157`, `slotclaimer.go:723`), and the `lenny-tenant-label-immutability` webhook refuses a change to another tenant (`pkg/admission/label_immutability/label_immutability.go:197-205`). No component writes the `{tenant_id} → unassigned` release (`UnassignedTenantID`, `label_immutability.go:48`, has no writer in `pkg/` or `cmd/`), and SPEC-8 forbids it for a recycled pod, so the pin holds for the pod's life. §5.2 already requires the candidate scan to filter on the pin, and the code does not: the idle scan (`claimer.go:124-159`) and the concurrent-slot idle pass (`slotclaimer.go:486-510`) read no pin, and the Postgres fallback claim (`pkg/gateway/podlifecycle/podsession/fallbackclaim.go:91-133`, over `pkg/agentpodstate/pgstore/pgstore.go:245-279`) reads none and stamps none. A kept runtime turns that gap into cross-tenant exposure of in-memory state, so one helper reads the pin at all three sites before the claim is created and refuses a pod pinned to another tenant. On an `allowCrossTenantReuse` pool the refusal also stamps the pod's drain request (`StampDrainRequest`, `slotclaimer.go:95`), which the WarmPoolController consumes in any phase (`pkg/controller/warmpool/pod_reconciler.go:609`), so the pod retires when a different tenant's session would have been assigned to it. Only an `in-place` cross-tenant pool reaches that drain, because a `vm-restart` pool retires every pod at the boundary and cross-tenant reuse is refused on concurrent pools (`poolstore.go:571`). On every other pool a refused pod stays pinned for its tenant, so the WarmPoolController planner must not count it toward the pool's warm target: today it counts every idle pod (`pkg/controller/warmpool/plan/plan.go:111-113`, `:130`), and once each warm pod on a recycling pool has served some tenant, every other tenant's claim returns `ErrNoIdlePod` while the pool reports full inventory. CODE-10 applies the SPEC-8(c) accounting, so the controller provisions unpinned pods for other tenants and holds pinned idle pods within `maxWarm`, which the namespace quota floor sums (§17).
+**D6. A kept runtime process serves one tenant.** The state is the pod's `lenny.dev/tenant-id` label. The gateway stamps it at first assignment (`pkg/gateway/podlifecycle/podclaim/claimer.go:157`, `slotclaimer.go:723`), and the `lenny-tenant-label-immutability` webhook refuses a change to another tenant (`pkg/admission/label_immutability/label_immutability.go:197-205`). No component writes the `{tenant_id} → unassigned` release (`UnassignedTenantID`, `label_immutability.go:48`, has no writer in `pkg/` or `cmd/`), and SPEC-8 forbids it for a recycled pod, so the pin holds for the pod's life. §5.2 already requires the candidate scan to filter on the pin, and the code does not: the idle scan (`claimer.go:124-159`) and the concurrent-slot idle pass (`slotclaimer.go:486-510`) read no pin, and the Postgres fallback claim (`pkg/gateway/podlifecycle/podsession/fallbackclaim.go:91-133`, over `pkg/agentpodstate/pgstore/pgstore.go:245-279`) reads none and stamps none. A kept runtime turns that gap into cross-tenant exposure of in-memory state, so one helper reads the pin at all three sites before the claim is created and refuses a pod pinned to another tenant. On an `allowCrossTenantReuse` pool the refusal also stamps the pod's drain request (`StampDrainRequest`, `slotclaimer.go:95`), which the WarmPoolController consumes in any phase (`pkg/controller/warmpool/pod_reconciler.go:609`), so the pod retires when a different tenant's session would have been assigned to it. Only an `in-place` cross-tenant pool reaches that drain, because a `vm-restart` pool retires every pod at the boundary and cross-tenant reuse is refused on concurrent pools (`poolstore.go:571`). On every other pool a refused pod stays pinned for its tenant, so the WarmPoolController planner must not count it toward the pool's warm target: today it counts every idle pod (`pkg/controller/warmpool/plan/plan.go:111-113`, `:130`), and once each warm pod on a recycling pool has served some tenant, every other tenant's claim returns `ErrNoIdlePod` while the pool reports full inventory. SPEC-8(c) states the pinned idle inventory rule, CODE-10 implements it, and D14 records why it is the interim rule.
 
-**D7. The new retire reasons do not count.** §16.1 freezes `lenny_gateway_pod_retirement_total{reason}` to the three limit triggers. `process_reuse_unacknowledged` is a configuration-driven retire, like `vm_restart_reprovision`, and `runtime_not_live` is a state-driven retire, like `host_unschedulable` (`pkg/sandbox/podscrub/podscrub.go:186-226`). Both are recorded in the audit trail and on neither retirement counter, and `applyDisposition` drives `Retire(failed=false)` to `released` for both without change.
+**D7. The new retire reasons do not count.** §16.1 freezes `lenny_gateway_pod_retirement_total{reason}` to the three limit triggers. `process_reuse_unacknowledged` is a configuration-driven retire, like `vm_restart_reprovision`, and `runtime_not_live` is a state-driven retire, like `host_unschedulable` (`pkg/sandbox/podscrub/podscrub.go:186-226`). Neither is counted on a retirement counter. `applyDisposition` drives `Retire(failed=false)` to `released` for both without change, and the retire path logs the reason (CODE-7). Today `claimDispositionDriver.Retire` logs a reason only for a `failed` retire (`pkg/gateway/session/recycle/scrubreporter_seams.go:993-999`), so no `released` retire's reason is recorded.
 
 **D8. The terminate frame moves from occupancy zero to pod exit.** The §15.4.2 terminate frame tells the runtime to exit, so `tearDownReclaimedSlot` stops sending it and the `boundRemains` result that gated it is deleted. The adapter's SIGTERM handler sends the frame once, with the reason `eviction`, before it closes `CH-RUNTIMEOPS`, so a Full-level runtime still receives the `DRAINING` state the §15.4 integration-level matrix promises (open decision 5).
 
@@ -28,7 +28,11 @@ Two alternatives are rejected. Withholding the report retires the pod through th
 
 **D12. The client disclosure keeps its values and widens its stated meaning.** `podReuse` and `residualStateWarning` are already `true` on every pool with `recycle.enabled: true` (`pkg/gateway/sessionserver/isolationlevel.go:205-212`), which covers every pool on which a runtime process can serve more than one session. The §5.2 client-visibility paragraph and the §7.1 `residualStateWarning` row state that a recycled session may run in a runtime process that served an earlier session of the same tenant. A pool without the acknowledgment still reports `true` and over-warns, because the gateway computes the fields from pool configuration before it binds a pod. A new field would change the external API, the OpenAPI document, and the client SDKs to draw a distinction no client has asked for.
 
-**D13. New `Decide` inputs carry retire polarity.** `Inputs.RuntimeNotLive`, `Inputs.ProcessReuseUnacknowledged`, and `PodRecyclePolicy.ProcessReuseUnacknowledged` are true to retire, the polarity `VMRestart` has, so the zero value keeps today's disposition and every existing literal keeps its meaning (`pkg/sandbox/podscrub/podscrub_test.go:14-27`, `tests/tier4_integration/recycle_scrub_path_test.go:473-479`, `tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition/scenario.go:150-156`, and the reuse fakes in `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`). The fail-closed default sits at the single production assignment of each: `RecordPodScrub` negates the positive wire field, and `InspectForRecycle` negates the pool's acknowledgment.
+**D13. New `Decide` inputs carry retire polarity.** `Inputs.RuntimeNotLive`, `Inputs.ProcessReuseUnacknowledged`, and `PodRecyclePolicy.ProcessReuseUnacknowledged` are true to retire, the polarity `VMRestart` has, so the zero value keeps today's disposition and every existing literal keeps its meaning (`pkg/sandbox/podscrub/podscrub_test.go:14-27`, `tests/tier4_integration/recycle_scrub_path_test.go:473-479`, `tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition/scenario.go:150-156`, the reuse fakes in `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go`, and `tests/tier9_security/pool_admission_isolation_test.go:492` and `:567`). The fail-closed default sits at the single production assignment of each: `RecordPodScrub` negates the positive wire field, and `InspectForRecycle` negates the pool's acknowledgment.
+
+**D14. Pinned idle inventory is the interim rule.** By the human decision of 2026-09-30 (option D), this proposal ships the interim accounting, and a follow-up proposal adds the rest (§9.1, **Pinned idle bound and idle timeout**). The pool store writes `minWarm` and `maxWarm` from one `warmCount` (`pkg/controller/poolscaling/poolstoresource.go:107-108`). Once demand is observed, the PoolScalingController writes the formula target to `minWarm` and leaves `maxWarm` at `warmCount` (`pkg/controller/poolscaling/controller.go:729-730`, `:1090-1094`). SPEC-8(c)'s pinned-idle bound is therefore zero on an admin-API pool until demand is observed, and `warmCount` minus the formula target afterwards. Where the bound is zero, a kept runtime is reused only within the `gateway.claimHoldTTLSeconds` hold. SPEC-8(c) is the rule's one home. D6, SPEC-4(g), SPEC-7(c) and (d), SPEC-16, SPEC-17, and CODE-10 point to it. The §10.7 `status.readyCount == 0` deletion predicate is unchanged: at `minWarm = maxWarm = 0` the bound is zero, so every pinned idle pod drains in the same pass as the unpinned ones.
+
+**D15. Each new retire condition has one statement.** The §5.2 Pod retirement policy items "Process reuse not acknowledged" and "Runtime not live" (SPEC-7(a)) are the only statement of each condition's predicate, reason, precedence, reading of an omitted field, and terminal retire. Every other site names the item by its label and cites §5.2. No other line of spec/04, spec/05, spec/06, or spec/29 names either reason or restates the runtime predicate (TEST-16). A site that scopes the `reserved` hold, the SDK re-warm, or the `rewarmStartedAt` stamp to a pool class, as it scopes out `vm-restart`, or that states the boundary retire of a pool without the acknowledgment, names "Process reuse not acknowledged", which holds for every pod of the pool: SPEC-4(b), (c), (e), and (f), SPEC-5(a), SPEC-7(b), (c), and (e), SPEC-8(h), and SPEC-9(b) and (d). "Runtime not live" is a per-pod condition, like the limit and host-unschedulable retires those sites do not list. It is named only where a site lists per-pod retire causes: the §4.7 `ReportPodScrub` row, which carries the fact (SPEC-3(c)), the §4.6.3 `released` bullet (SPEC-4(a)), the §5.2 **Recycling and integration levels** paragraph (SPEC-5(b)), the §6.2 recycle `claimed ──→ draining` edge (SPEC-9(c)), and the §6.2 re-warm-on-`scrub_warning` paragraph (SPEC-9(f)). §29.4 step 17 names the Pod retirement policy as a whole (SPEC-12(d)). A site already gated on a recycle disposition, such as the §6.1 recycling-pool row, names neither (SPEC-9(a)). Each site keeps its `vm-restart` wording. The tier-11 phrases in the §5.2 recycle-lifecycle and §6.2 projection sentences are kept by inserting text rather than rewording it.
 
 ## 3. Design overview
 
@@ -66,7 +70,7 @@ if in.RuntimeNotLive {
 
 **The acquisition.** `podclaim.AdmitTenantPin` reads the pin before the claim is created on the idle scan, the concurrent-slot idle pass, and the Postgres fallback claim (D6; non-spec changes §4.4 states the predicate).
 
-**Outcome per pool.** A recycling pool on `standard` or `in-place` with `acknowledgeProcessLevelIsolation: true` and `maxSessionsPerPod > 1` reuses the pod with its runtime for the pinned tenant until a retire trigger fires. A recycling pool without the acknowledgment admits and retires each pod at its first occupancy-zero boundary. A `vm-restart` pool, a `maxSessionsPerPod: 1` pool, and a non-recycling pool retire the pod as they do today, and the kubelet ends the runtime with it.
+**Outcome per pool.** A recycling pool on `standard` or `in-place` with `acknowledgeProcessLevelIsolation: true` and `maxSessionsPerPod > 1` reuses the pod with its runtime for the pinned tenant while the pod is held for that tenant (SPEC-8(c)), until a retire trigger fires. A recycling pool without the acknowledgment admits and retires each pod at its first occupancy-zero boundary. A `vm-restart` pool, a `maxSessionsPerPod: 1` pool, and a non-recycling pool retire the pod as they do today, and the kubelet ends the runtime with it.
 
 ## 5. Edge cases and accepted failure modes
 
@@ -90,6 +94,11 @@ if in.RuntimeNotLive {
 | Window after the cohort session closes and before the next start | `soleSession` is empty, and the pod MCP surface is cancelled | D9, CODE-3 |
 | `allowCrossTenantReuse` `in-place` pool, next session from a different tenant | The acquisition path refuses the pod and stamps its drain request, and the session is placed on another pod; a same-tenant session that binds before the drain lands completes while the pod drains | D6, SPEC-8 |
 | Pinned pod on a pool without `allowCrossTenantReuse`, claim from a different tenant | Refused and left pinned for its tenant, or drained, as SPEC-8(c) states | D6, CODE-10 |
+| Pool whose only idle pods are pinned | `status.readyCount` is 0, the controller creates unpinned replacements, and `PoolWarmingUp` is True while they warm, so a create for the pinned tenant receives the 503 for that window | SPEC-8(c), CODE-10 |
+| Pinned idle pod on a pool whose `maxWarm` equals its warm target | Drained on the reconcile after the hold expires; the tenant's next session reuses the runtime only inside the hold | SPEC-8(c), D14 |
+| Scale-to-zero window or paused experiment (`minWarm` 0, `maxWarm` kept) | Up to `maxWarm` pinned idle pods stay until claimed, certificate-replaced, or retired; they accrue idle pod-minutes | SPEC-8(c) |
+| Idle pod mid-acquisition (pin stamped, claim present, projection not landed) | Counted as unpinned idle inventory, as today, and never named for the pinned drain | CODE-10 |
+| Service-mode pool | The planner reads no pin; router-labelled service pods count as today | CODE-10 |
 | Postgres fallback claim | Reads the pin before claiming the mirror row, leaves the row unchanged on a refusal, and stamps the pin on success | D6, CODE-8 |
 | Acknowledgment removed while a kept-runtime pod is reserved or idle | A same-tenant session may still bind and run in the kept process; the next boundary reads the updated pool and retires the pod | D5 |
 | Embedded recycling pod | The adapter process is kept and the loop runs once per session; the embedded mains wire no `ScrubOps`, so the report is withheld and the pod retires by timeout, which predates this proposal | D1, §9.1 |
@@ -150,7 +159,7 @@ Add a row to the sidecar-versus-embedded trade-off table, after the `Recommended
 (a) In the `Shutdown` row, replace from `It flushes the session's final usage report and then closes the runtime.` through `since sending it while a co-tenant is still bound would signal the shared runtime to terminate while it is serving that session.` with this text, on one line inside the cell:
 
 ```
-It flushes the session's final usage report and then ends the session's use of the pod's runtime process, which stays alive for the pod's life ([Section 4.7.10](#4710-deployment-model)). A session's teardown sends no [Section 15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine) graceful-shutdown signal, because that signal ends the runtime process the pod keeps; the adapter sends it once, with the reason `eviction`, when the pod terminates.
+It flushes the session's final usage report and then ends the session's use of the pod's runtime process, which stays alive for the pod's life ([Section 4.7.10](#4710-deployment-model)). A session's teardown sends no [Section 15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine) graceful-shutdown signal, because that signal ends the runtime process the pod keeps; the adapter writes it once, as the `CH-RUNTIMEOPS` `terminate` frame with the reason `eviction`, to a runtime that opened that channel, when the pod terminates.
 ```
 
 (b) In the same row, replace `the adapter keeps the pod process alive across the recycle boundary` with `the adapter keeps its own process and the runtime process alive across the recycle boundary`.
@@ -164,20 +173,20 @@ The request also states whether the adapter's runtime process can serve the next
 and insert after the sentence ending `rather than reserving or re-warming ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).`:
 
 ```
-A pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true` takes the same terminal retire with the non-counting reason `process_reuse_unacknowledged`, and a report that states the runtime cannot serve the next session, or omits that fact, takes it with the non-counting reason `runtime_not_live` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+A pod retired under the Pod retirement policy's "Process reuse not acknowledged" or "Runtime not live" condition takes the same terminal retire ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 ```
 
-**SPEC-4 — `spec/04_system-components.md` §4.6.1 and §4.6.3.** Each part extends a `vm-restart` carve-out or the pin scope and cites §5.2 for the rule rather than restating it.
+**SPEC-4 — `spec/04_system-components.md` §4.6.1 and §4.6.3.** Each part names a §5.2 Pod retirement policy condition by its label under D15, or states the pin scope, and cites §5.2 for the rule.
 
-(a) In §4.6.3, the `released` bullet, replace `or the `vm-restart` recycle-boundary reprovision` with `, the `vm-restart` recycle-boundary reprovision, or the recycle-boundary retire of a pod whose pool lacks the process-reuse acknowledgment or whose runtime cannot serve the next session`.
+(a) In §4.6.3, the `released` bullet, replace `or the `vm-restart` recycle-boundary reprovision` with `, the `vm-restart` recycle-boundary reprovision, or a retire under the Pod retirement policy's "Process reuse not acknowledged" or "Runtime not live" condition`.
 
 (b) In §4.6.3, the `recycling` bullet, append after the sentence ending `rather than entering the `sdk_connecting` re-warm sub-phase ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).`:
 
 ```
-A pod whose pool does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, or whose scrub report states that its runtime cannot serve the next session, likewise projects `claimed → draining` after its scrub report on any `scrubProfile` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+A pool without the process-reuse acknowledgment likewise projects `claimed → draining` after its scrub report (Pod retirement policy, "Process reuse not acknowledged", [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 ```
 
-(c) In §4.6.3, the claim-status paragraph's `rewarmStartedAt` parenthetical, replace `a `vm-restart` preConnect pool retires (draining → released) after its scrub report and records no `rewarmStartedAt` stamp,` with `a `vm-restart` preConnect pool, a preConnect pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, and a preConnect pod whose scrub report states that its runtime cannot serve the next session retire (draining → released) after the scrub report and record no `rewarmStartedAt` stamp,`.
+(c) In §4.6.3, the claim-status paragraph's `rewarmStartedAt` parenthetical, insert after `records no `rewarmStartedAt` stamp` and before the `, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)` citation that follows, without rewording the `vm-restart` clause: `; a preConnect pool without the process-reuse acknowledgment (Pod retirement policy, "Process reuse not acknowledged") records none either`.
 
 (d) In §4.6.3, the **Gateway ServiceAccount RBAC grants:** paragraph, replace `and allows the WarmPoolController SA to reset `{tenant_id} → unassigned` only on a pool whose microvm-gated `recycle.allowCrossTenantReuse` permits cross-tenant reuse ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)); on every other pool the pin persists for the pod's lifetime, across the recycle-to-idle edge.` with:
 
@@ -190,10 +199,10 @@ In the same paragraph, delete ` when a pod crosses the unhealthy threshold`, kee
 (e) In §4.6.1, the occupancy-projection `sdk_connecting` bullet, append after the sentence ending `or the non-preConnect `reserved` hold, on preConnect and non-preConnect pools alike ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).`:
 
 ```
-A pod whose pool does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, or whose scrub report states that its runtime cannot serve the next session, takes the same terminal retire on any `scrubProfile` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+A pool without the process-reuse acknowledgment takes the same terminal retire (Pod retirement policy, "Process reuse not acknowledged", [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 ```
 
-(f) In §4.6.1, **Reserved hold (claim retention across same-tenant sessions):**, replace `This reserved hold applies to `standard` and `in-place` pools; a `vm-restart` pool retires at the occupancy-zero boundary rather than entering `reserved`` with `This reserved hold applies to `standard` and `in-place` pools; a `vm-restart` pool, a pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, and a pod whose scrub report states that its runtime cannot serve the next session retire at the occupancy-zero boundary rather than entering `reserved``, keeping the citation that follows.
+(f) In §4.6.1, **Reserved hold (claim retention across same-tenant sessions):**, insert after the sentence ending `rather than entering `reserved` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).`, without rewording it: `A pool without the process-reuse acknowledgment does not enter `reserved` either (Pod retirement policy, "Process reuse not acknowledged", [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).`
 
 (g) In the same paragraph, replace the last sentence, from `The `lenny.dev/tenant-id` pin persists across the recycle-to-idle edge` through `available to that tenant alone.`, with `[Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the `lenny.dev/tenant-id` pin rule for a recycled idle pod, including its claim and inventory accounting.`
 
@@ -202,7 +211,7 @@ A pod whose pool does not set `sessionPolicy.acknowledgeProcessLevelIsolation: t
 (a) In **Recycle lifecycle (`recycle.enabled: true`)**, insert after the sentence ending `rather than running the SDK re-warm leg or entering `reserved`.`, without rewording it:
 
 ```
-A pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, and a pod whose scrub report states that its runtime cannot serve the next session, likewise retire at the occupancy-zero boundary with a non-counting reason after the session-count and uptime retirements (see the Pod retirement policy below), so the `reserved` hold and the SDK re-warm apply only to a pod that keeps a live runtime process under that acknowledgment.
+A pool without the process-reuse acknowledgment likewise retires the pod at the occupancy-zero boundary rather than running the SDK re-warm leg or entering `reserved` (see the Pod retirement policy below, "Process reuse not acknowledged").
 ```
 
 In the same paragraph, replace `per-session setup belongs in the runtime's initialization.` with `per-session setup belongs in the runtime's handling of the session's first message, because a runtime process kept across sessions initializes once per pod.` In §5.1 **Setup Commands and Policy**, replace `Per-task setup belongs in the runtime's initialization.` with `Per-task setup belongs in the runtime's handling of the session's first message ([Section 5.2](#52-pool-configuration-and-execution-modes)).`
@@ -219,7 +228,8 @@ runtime serves each later session on the same connection, keyed by the frame's
 `sessionId`, as a runtime on a concurrent pool does, and
 `recycle.maxSessionsPerPod` bounds the number of sessions one runtime process
 serves. A runtime that exits after its session makes the pod retire at the
-recycle boundary rather than serve the next session. Recycling is admitted at
+recycle boundary rather than serve the next session (see the Pod retirement
+policy below, "Runtime not live"). Recycling is admitted at
 every integration level (Basic, Standard, and Full).
 ```
 
@@ -252,7 +262,7 @@ process lifetime").
 
 **SPEC-7 — `spec/05_runtime-registry-and-pool-model.md` §5.2, retirement and sizing.**
 
-(a) Append to the **Pod retirement policy (recycling pools)** list, after the **Scrub failure limit** item:
+(a) Append to the **Pod retirement policy (recycling pools)** list, after the **Scrub failure limit** item, the two items below, and follow them with the paragraph below. Each item and the paragraph land as one physical line, as the existing items do:
 
 ```
 - **Process reuse not acknowledged:** The pool does not set
@@ -274,20 +284,30 @@ process lifetime").
   whole-pod replacement trigger under **Slot retry policy
   (`maxConcurrentSessions > 1`)** below, and the pod drains when that trigger
   fires.
+
+Both conditions are evaluated before the host-node schedulability retire
+([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), and each takes the
+terminal retire the `vm-restart` reprovision takes: after the scrub report the
+pod projects `claimed → draining` on preConnect and non-preConnect pools alike
+rather than entering the SDK re-warm or the `reserved` hold, the claim's binding
+state becomes `released`
+([Section 4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)),
+no `rewarmStartedAt` stamp is recorded, and on a `warn`-policy scrub failure the
+`scrub_warning` annotation is recorded on the retired pod.
 ```
 
 In the **Uptime limit** item, replace `if omitted, only `maxSessionsPerPod` and `maxScrubFailures` govern retirement` with `if omitted, the other conditions in this list govern retirement`.
 
-(b) In the validation paragraph, append after the sentence ending `without a `vm-restart` carve-out.`: `On a pool that does not set `acknowledgeProcessLevelIsolation`, a `maxSessionsPerPod` above 1 is inert for the same reason, because the pod retires at its first occupancy-zero boundary.`
+(b) In the validation paragraph, append after the sentence ending `without a `vm-restart` carve-out.`: `On a pool that does not set `acknowledgeProcessLevelIsolation`, a `maxSessionsPerPod` above 1 is inert for the same reason, because the pod retires at its first occupancy-zero boundary (see the Pod retirement policy above, "Process reuse not acknowledged").`
 
-(c) Append to the `session` item of **Mode adjustment factor (`mode_factor`)**, after the concurrent `vm-restart` sentence: `A sequential recycling pool that does not set `acknowledgeProcessLevelIsolation` retires each pod at its first occupancy-zero boundary, so its steady-state `mode_factor` is `1.0` and its observed `lenny_pod_session_reuse_count` p50 is 1.`
+(c) Append to the `session` item of **Mode adjustment factor (`mode_factor`)**, after the concurrent `vm-restart` sentence: `A sequential recycling pool that does not set `acknowledgeProcessLevelIsolation` retires each pod at its first occupancy-zero boundary (see the Pod retirement policy above, "Process reuse not acknowledged"), so its steady-state `mode_factor` is `1.0` and its observed `lenny_pod_session_reuse_count` p50 is 1. On a pool that sets it, a pod serves only its pinned tenant, and across an occupancy-zero boundary only while the pod is held for that tenant (see the tenant pinning paragraph above), so the estimate converges toward `recycle.maxSessionsPerPod` only for a workload whose tenants return to their pods within that window, and the observed p50 governs otherwise.`
 
-(d) In **Caveats**, replace `This convergence toward `recycle.maxSessionsPerPod` applies to `standard` and `in-place` recycling pools.` with `This convergence toward `recycle.maxSessionsPerPod` applies to `standard` and `in-place` recycling pools that set `sessionPolicy.acknowledgeProcessLevelIsolation: true`; a sequential pool that does not set it sizes at `mode_factor = 1.0`.` In the same bullet's **Integration level consideration:**, replace `and recycling requires no runtime cooperation ([Execution Modes](#execution-modes)), so no cross-level adjustment is needed.` with `and recycling requires no CH-RUNTIMEOPS exchange ([Execution Modes](#execution-modes)), so no cross-level adjustment is needed.`
+(d) In **Caveats**, replace `This convergence toward `recycle.maxSessionsPerPod` applies to `standard` and `in-place` recycling pools.` with `This convergence toward `recycle.maxSessionsPerPod` applies to `standard` and `in-place` recycling pools that set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, on the tenant-return condition the `session` item above states; a sequential pool that does not set it sizes at `mode_factor = 1.0`.` In the same bullet's **Integration level consideration:**, replace `and recycling requires no runtime cooperation ([Execution Modes](#execution-modes)), so no cross-level adjustment is needed.` with `and recycling requires no CH-RUNTIMEOPS exchange ([Execution Modes](#execution-modes)), so no cross-level adjustment is needed.`
 
 (e) In **`onScrubFailure` behaviors:**, the **`warn`** bullet, insert after the sentence that ends `does not serve the next session, and does not traverse the `claimed → sdk_connecting` re-warm edge.`, without rewording it:
 
 ```
-A pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, and a pod whose scrub report states that its runtime cannot serve the next session, take the same retire on a `warn`-policy outcome (see the Pod retirement policy below, "Process reuse not acknowledged" and "Runtime not live").
+A pool without the process-reuse acknowledgment takes the same retire on a `warn`-policy outcome (see the Pod retirement policy below, "Process reuse not acknowledged").
 ```
 
 **SPEC-8 — `spec/05_runtime-registry-and-pool-model.md` §5.2, acknowledgment, tenant pin, and client visibility.**
@@ -302,24 +322,48 @@ A pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`,
 The pin persists across the recycle-to-idle edge for the pod's lifetime on every
 pool, including a pool with microvm-gated `recycle.allowCrossTenantReuse`,
 because a recycled pod keeps the runtime process that served its tenant
-([Section 4.7.10](04_system-components.md#4710-deployment-model)): a pinned idle
-pod is claimable only by its pinned tenant, the candidate scan filters on the pin
-label, and inventory accounting counts pinned-idle pods as idle inventory
-available to that tenant alone, toward the pool's `maxWarm` ceiling but not
-toward `minWarm`; the WarmPoolController drains pinned idle pods in excess of
-`maxWarm` minus `minWarm`, so on a pool whose `maxWarm` equals `minWarm` a
-recycled pod serves its tenant again only within the reserved hold
-([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle))
-and is drained when it returns to idle. A recycled pod never takes the
-`{tenant_id} → unassigned` transition. The gateway reads the pin on every
-idle-pod acquisition, including the Postgres-backed fallback claim
+([Section 4.7.10](04_system-components.md#4710-deployment-model)). A recycled pod
+never takes the `{tenant_id} → unassigned` transition. The gateway reads the pin
+on every idle-pod acquisition, including the Postgres-backed fallback claim
 ([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)),
 before it creates the claim and passes over a pod the pin refuses to the next
-idle candidate; the fallback claim stamps the pin at first
-assignment as the primary claim path does. On a pool with
-`recycle.allowCrossTenantReuse: true`, a pod refused to a session of a different
-tenant is drained: the gateway stamps its `lenny.dev/drain-request` annotation,
-the pod retires, and the warm pool provisions an unpinned replacement.
+idle candidate; the fallback claim stamps the pin at first assignment as the
+primary claim path does. On a pool with `recycle.allowCrossTenantReuse: true`, a
+pod refused to a session of a different tenant is drained: the gateway stamps its
+`lenny.dev/drain-request` annotation, the pod retires, and the warm pool
+provisions an unpinned replacement.
+
+**Pinned idle inventory.** A session-mode pod in `idle` whose
+`lenny.dev/tenant-id` label is non-empty and for which no SandboxClaim exists is a
+pinned idle pod. It is claimable only by its pinned tenant, and the
+WarmPoolController accounts for it apart from the pool's unpinned inventory:
+
+- It does not count toward `minWarm`. `status.warmCount` and `status.readyCount`
+  count unpinned pods only, as do the `idlePodCount` and the `PoolWarmingUp`
+  condition derived from them and the `lenny_warmpool_idle_pods` gauge
+  ([Section 16.1](16_observability.md#161-metrics)). The controller therefore
+  provisions unpinned pods for other tenants while pinned pods sit idle, and a
+  pool whose only idle pods are pinned reports `PoolWarmingUp` while those
+  replacements warm.
+- It counts toward `maxWarm`. The controller keeps at most `maxWarm` minus the
+  pool's warm target (`minWarm`, capped at `maxWarm`) pinned idle pods and drains
+  the rest. The bound follows the current `minWarm`, so it widens while a
+  scale-to-zero window or a paused experiment holds `minWarm` at 0, and it is
+  zero when `minWarm` and `maxWarm` are both 0.
+- It accrues `lenny_warmpool_idle_pod_minutes`, which counts every idle pod.
+
+A recycled pod is therefore held for its pinned tenant while it is `reserved`
+([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
+`gateway.claimHoldTTLSeconds`) and afterwards while it fits under that bound. On
+a pool whose `maxWarm` equals its warm target the bound is zero, so a recycled
+pod serves its tenant again only within the reserved hold and is drained when it
+returns to `idle`. A deployer widens the window by setting `maxWarm` above
+`minWarm` or by raising `gateway.claimHoldTTLSeconds`. A pinned idle pod has no
+idle timeout of its own. It leaves inventory when its tenant claims it, when the
+bound drains it, when the idle-pod certificate replacement drains it
+([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)),
+or when the Pod retirement policy below retires it. A per-pool bound on pinned
+idle pods beyond `maxWarm` and an idle timeout for pinned pods are future work.
 ```
 
 (d) Insert after the **Deployer acknowledgment (concurrent sessions).** paragraph, keeping that label, which `pkg/admission/pool_config_validator/validator.go:377` cites:
@@ -341,7 +385,7 @@ runtime process serves one tenant; the tenant pinning paragraphs above state how
 the gateway enforces that.
 ```
 
-(e) In **Client visibility of weak-isolation reuse.**, replace `may be observable from prior sessions; concurrent slots share process-level state;` with `may be observable from prior sessions, and on a pool that sets `acknowledgeProcessLevelIsolation` the session may run in a runtime process that served an earlier session of the same tenant; concurrent slots share process-level state;`
+(e) In **Client visibility of weak-isolation reuse.**, replace `may be observable from prior sessions; concurrent slots share process-level state;` with `may be observable from prior sessions, and on a pool that sets `acknowledgeProcessLevelIsolation` the session may run in a runtime process that served an earlier session of the same tenant; concurrent slots share process-level state;`, and replace `the session runs on a pod that serves more than one session over its lifetime` with `the session runs on a pool configured to reuse pods`
 
 (f) In the paragraph that begins `Cross-tenant pod reuse is only permitted on the sequential-reuse path`, replace its first two sentences, from `Cross-tenant pod reuse is only permitted on the sequential-reuse path` through `but it is not equivalent to dedicated hardware isolation.`, with the text below, and keep the sentences that follow (`The pool controller rejects ...` and `Cross-tenant slot sharing ...`):
 
@@ -355,24 +399,24 @@ the gateway enforces that.
 such pools set `vm-restart` or `in-place`. Neither profile reuses a pod across tenants: a `vm-restart` pool retires the pod at every recycle boundary, and an `in-place` pod keeps its continuing guest across its pinned tenant's later sessions and is drained when a session of a different tenant would reach it (see the tenant pinning paragraph above). In `in-place` mode the following residual state vectors are documented as persisting across the pinned tenant's sessions in the continuing guest:
 ```
 
-(h) In the table under `Common configurations of the block:`, replace the `Pod reuse` row's behavior cell `The pod serves sequential sessions of one tenant, with a whole-pod scrub between sessions.` with `The pod serves sequential sessions of one tenant, with a whole-pod scrub between sessions, when the pool sets `sessionPolicy.acknowledgeProcessLevelIsolation: true`; otherwise it retires at each occupancy-zero boundary.`
+(h) In the table under `Common configurations of the block:`, replace the `Pod reuse` row's behavior cell `The pod serves sequential sessions of one tenant, with a whole-pod scrub between sessions.` with `The pod serves sequential sessions of one tenant, with a whole-pod scrub between sessions, when the pool sets `sessionPolicy.acknowledgeProcessLevelIsolation: true`; otherwise it retires at each occupancy-zero boundary (see the Pod retirement policy below, "Process reuse not acknowledged").`
 
 **SPEC-9 — `spec/06_warm-pod-model.md` §6.1 and §6.2.**
 
-(a) In the §6.1 `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true` row, replace `At the occupancy-zero recycle boundary the whole-pod scrub terminates the SDK process along with all other session processes;` with `At the occupancy-zero recycle boundary the ending session's use of the runtime ends and the runtime process is kept ([Section 4.7.10](04_system-components.md#4710-deployment-model)); a pod whose pool does not set `acknowledgeProcessLevelIsolation`, or whose runtime is reported as not live, retires instead;`
+(a) In the §6.1 `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true` row, replace `At the occupancy-zero recycle boundary the whole-pod scrub terminates the SDK process along with all other session processes;` with `At the occupancy-zero recycle boundary the ending session's use of the runtime ends and the runtime process is kept ([Section 4.7.10](04_system-components.md#4710-deployment-model));`
 
-(b) In the §6.2 occupancy-projection sentence, insert immediately before `a `reserved` claim projects `reserved`` (after the clause ending `step 7);`), without rewording the surrounding text: `a `recycling` claim on a pool that does not set `acknowledgeProcessLevelIsolation`, or on a pod whose scrub report states that its runtime cannot serve the next session, takes the same `claimed → draining` projection on any `scrubProfile`;`
+(b) In the §6.2 occupancy-projection sentence, insert immediately before `a `reserved` claim projects `reserved`` (after the clause ending `step 7);`), without rewording the surrounding text: `on a pool without the process-reuse acknowledgment a `recycling` claim takes the same `claimed → draining` projection ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), Pod retirement policy, "Process reuse not acknowledged");`
 
-(c) In the §6.2 recycle-edge block, in the `claimed ──→ draining` recycle edge, replace `an unschedulable host node; or a vm-restart pool reprovisioning a fresh` / `guest at the recycle boundary)` with `an unschedulable host node; a vm-restart pool reprovisioning a fresh` / `guest at the recycle boundary; a pool without acknowledgeProcessLevelIsolation;` / `or a scrub report stating that the runtime cannot serve the next session)`, keeping the block's column alignment.
+(c) In the §6.2 recycle-edge block, in the `claimed ──→ draining` recycle edge, replace `an unschedulable host node; or a vm-restart pool reprovisioning a fresh` / `guest at the recycle boundary)` with `an unschedulable host node; a vm-restart pool reprovisioning a fresh` / `guest at the recycle boundary; or a §5.2 Pod retirement policy retire,` / `"Process reuse not acknowledged" or "Runtime not live")`, keeping the block's column alignment.
 
-(d) In **`reserved` hold semantics**, after the sentence ending `see [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) step 7).`, append: `A pod on a pool that does not set `acknowledgeProcessLevelIsolation`, or whose runtime is reported as not live, is not a recycled pod in this sense either and takes the same `draining → terminated` projection.`
+(d) In **`reserved` hold semantics**, after the sentence ending `see [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) step 7).`, append: `A pod on a pool without the process-reuse acknowledgment is not a recycled pod in this sense either and takes the same `draining → terminated` projection ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), Pod retirement policy, "Process reuse not acknowledged").`
 
 (e) In the §6.2 occupancy-projection block, in the `idle ──→ draining` edge, replace `level-triggers the drain from the pod CreationTimestamp,` / `regardless of session activity)` with `level-triggers the drain from the pod CreationTimestamp,` / `regardless of session activity; or gateway-stamped` / `lenny.dev/drain-request annotation — see §5.2)`, and in the `claimed ──→ draining` edge above it replace `lenny.dev/drain-request annotation — unhealthy threshold)` with `lenny.dev/drain-request annotation — see §5.2)`, keeping the block's column alignment.
 
 (f) In **preConnect re-warm on scrub_warning.**, insert after the sentence that ends `and the gateway provisions a fresh replacement (see [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) step 7).`, without rewording it:
 
 ```
-A pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, and a pod whose scrub report states that its runtime cannot serve the next session, take the same retire on both outcomes ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), Pod retirement policy).
+A pod retired under the Pod retirement policy's "Process reuse not acknowledged" or "Runtime not live" condition takes the same retire on both outcomes ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 ```
 
 (g) In §6.1 **Pod-warm (default):**, replace `The agent process is NOT started.` with `No session is bound, and no message for the next session has been delivered.`, keeping the sentences that follow.
@@ -381,13 +425,13 @@ A pool that does not set `sessionPolicy.acknowledgeProcessLevelIsolation: true`,
 
 (i) In §6.1 **Per-session credential lease lifecycle.**, replace `and a recycling pod does not retain credentials between sessions.` with `and a recycling pod does not retain credentials between sessions outside a kept runtime process ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer acknowledgment (runtime process kept across sessions)").`
 
-**SPEC-10 — `spec/07_session-lifecycle.md` §7.1, `residualStateWarning` row.** Replace `For recycling pools, residual-state vectors include the DNS resolver cache, TCP `TIME_WAIT` state, and page cache from prior sessions.` with `For recycling pools, residual-state vectors include the DNS resolver cache, TCP `TIME_WAIT` state, and page cache from prior sessions, and on a pool that sets `sessionPolicy.acknowledgeProcessLevelIsolation: true` the session may run in a runtime process that served an earlier session of the same tenant (see [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) deployer acknowledgments).`
+**SPEC-10 — `spec/07_session-lifecycle.md` §7.1, `podReuse` and `residualStateWarning` rows.** In the `podReuse` row, delete `when the assigned pool reuses pods across executions: `. In the `residualStateWarning` row, replace `For recycling pools, residual-state vectors include the DNS resolver cache, TCP `TIME_WAIT` state, and page cache from prior sessions.` with `For recycling pools, residual-state vectors include the DNS resolver cache, TCP `TIME_WAIT` state, and page cache from prior sessions, and on a pool that sets `sessionPolicy.acknowledgeProcessLevelIsolation: true` the session may run in a runtime process that served an earlier session of the same tenant (see [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) deployer acknowledgments).`
 
 **SPEC-11 — `spec/15_external-api-surface.md` §15.4, §15.4.1, §15.4.2, and §15.4.3.**
 
 (a) In §15.4, replace `the platform scrubs the pod and starts a fresh runtime process for each session, so recycling requires no runtime cooperation and is available at every integration level.` with `recycling needs no CH-RUNTIMEOPS exchange and is available at every integration level, on the terms [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Recycling and integration levels** states.`
 
-(b) In the §15.4.2 state table, replace the `DRAINING` description `Graceful shutdown requested. The adapter finishes the current exchange and signals the agent to stop.` with `The pod is terminating. The adapter finishes the current exchange, signals the agent to stop, and then closes the runtime's connections. A session's end does not enter this state.` In the diagram above the table, replace the return edge from `ACTIVE` to `TERMINATED` labelled `(session ends normally)` with a return edge from `ACTIVE` to `READY` labelled `(session ends; the pod is recycled)`. In the sentence after the table, replace `readiness signal, exit on completion)` with `readiness signal)`.
+(b) In the §15.4.2 state table, replace the `DRAINING` description `Graceful shutdown requested. The adapter finishes the current exchange and signals the agent to stop.` with `The pod is terminating. The adapter finishes the current exchange, writes the `CH-RUNTIMEOPS` `terminate` frame on the terms the [Section 4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states, and then closes the runtime's connections.` In the diagram above the table, replace the return edge from `ACTIVE` to `TERMINATED` labelled `(session ends normally)` with a return edge from `ACTIVE` to `READY` labelled `(session ends; the pod is recycled)`, and add an edge from `READY` to `DRAINING` labelled `(pod terminates)`. In the sentence after the table, replace `readiness signal, exit on completion)` with `readiness signal)`.
 
 (c) In §15.4.3, locating each site by its quoted text (each matrix row is one physical line padded with spaces, and stays one line):
 
@@ -420,7 +464,7 @@ and replace step 29 (from `29. On a pod-warm pod with a `type: agent` runtime: `
     ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 7).
 ```
 
-In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with `On the first session of a pod-warm pod`, keeping each step's number and the rest of its text and rewrapping to the step's width.
+In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with `On the first session of a pod-warm pod`, keeping each step's number and the rest of its text, breaking only the lengthened opening line and leaving every later line as it is, because a tier-11 test (`TestIntraPodMCPNonceStatementsAgreeAcrossSpecAndDocs`) finds step 26a's `The runtime reads the manifest and connects to the platform MCP` on one physical line.
 
 (b) In §29.4, replace step 13 (from `13. On a session end against a Full-level runtime, triggered by` through `[§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states for the graceful-shutdown signal.`) with:
 
@@ -434,7 +478,7 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 
 (c) In §29.4 step 12, replace `the graceful end-of-session shutdown of the pod's runtime` with `the graceful end-of-session teardown of the named session`, replace `the adapter keeps the pod process alive across the recycle boundary` with `the adapter keeps its own process and the runtime process alive across the recycle boundary`, and replace `On the default disposition the adapter closes the session runtime and the pod is replaced.` with `On the default disposition the pod is replaced.`
 
-(d) In §29.4 step 17, replace `retires the pod when the recycle limits or the host-node schedulability check say so` with `retires the pod when the recycle limits, the process-reuse acknowledgment, the reported runtime liveness, or the host-node schedulability check say so`.
+(d) In §29.4 step 17, replace `retires the pod when the recycle limits or the host-node schedulability check say so` with `retires the pod when the Pod retirement policy or the host-node schedulability check says so`, keeping the citations that follow and the step's wrap width.
 
 (e) In §29.4 step 6, replace `so this step does not occur and the interrupt degrades to SIGTERM-based termination with no opportunity for the runtime to reach a safe stop point` with `so this step does not occur and the interrupt degrades as the `Interrupt` row states`, keeping the citation that follows.
 
@@ -442,9 +486,8 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 
 ```
 4b. Against a Full-level runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`, `intra-pod`. The adapter writes
-    the `terminate` frame once, with the reason `eviction`, at the point the
-    [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states (§28.5.3 `CH-RUNTIMEOPS`). A
-    Basic-level or Standard-level runtime opens no `CH-RUNTIMEOPS` channel and receives no frame. The
+    the `terminate` frame with the reason `eviction` at the point the
+    [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states (§28.5.3 `CH-RUNTIMEOPS`). The
     specification does not fix the relative order of steps 4a and 4b.
 ```
 
@@ -466,7 +509,9 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 
 (e) In the §28.8 `CH-MSGSOCK` row, replace `is treated as hung and is sent SIGTERM` with `is treated as hung, as the §28.5.3 `CH-MSGSOCK` **Timing.** bullet states`.
 
-§28's sentence "refuses the call unless that process has been given exactly one session" binds across recycle boundaries once the process is kept. The §28.5.3 sentences that say the adapter spawns the runtime binary belong to the first-session manifest-ordering defect and keep their wording (§9.1).
+(f) In the **Annotated Protocol Trace — Basic-Level Session** block, replace step 1, `1. Adapter starts agent binary, stdin/stdout pipes open.`, with `1. The runtime's connection to the adapter is open; the runtime dialled it on the pod's first session.` Steps 8 through 10 keep their wording (§9.1).
+
+§28's sentence "refuses the call unless that process has been given exactly one session" binds across recycle boundaries once the process is kept. The §28.5.3 sentences that say the adapter spawns the runtime binary before a manifest-dependent step, and the §28.5.3 and §28.8 `shutdown`, SIGTERM-on-timeout, and exit-code sentences, keep their wording (§9.1).
 
 **SPEC-15 — `spec/13_security-model.md` §13.1, credential-read boundary.**
 
@@ -478,21 +523,28 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 
 **SPEC-16 — `spec/16_observability.md` §16.1, the `lenny_warmpool_idle_pods` row.** Replace `number of pods in `idle` state ready to be claimed;` with `number of pods in `idle` state ready to be claimed, excluding idle pods pinned to a tenant ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes));`. The row stays one physical line.
 
+**SPEC-17 — `spec/17_deployment-topology.md` §17.8.2, **First-week monitoring workflow.**** In the `lenny_warmpool_idle_pod_minutes` bullet, replace `` `minWarm` is oversized; reduce by 25%.`` with `` `minWarm` is oversized; reduce by 25%. On a recycling pool whose `maxWarm` exceeds `minWarm`, the counter also accrues idle pods pinned to a tenant ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), tenant pinning), so compare against `maxWarm × 30` there.``
+
+**SPEC-18 — `spec/10_gateway-internals.md` §10.1.4, the **Hold state timeout:** bullet.** Delete `it sends `terminate` on the CH-RUNTIMEOPS and `, so the clause reads `the adapter initiates graceful session termination — it emits a `session.terminated` event with reason `coordinator_lost``.
+
 ## 9. Non-goals
 
 ### 9.1 Out of scope
 
 - **Re-creating a runtime process inside the pod.** A runtime that stops ends the pod's service through the `runtime_not_live` retire or the failed-start drain.
-- **A per-session end signal to the runtime, and SDK support for sequential sessions.** Open decision 3.
+- **A per-session end signal to the runtime, and SDK support for sequential sessions.** Open decision 3. The §15.4.6 conformance category **deadline signal handling**, whose runtime exits on a session's deadline signal (its fixture in `cmd/lenny-compliance/full.go` sends a `terminate` frame), belongs to the same contract and keeps its wording.
 - **Per-session attribution for intra-pod MCP on a multi-session process.** Open decision 1.
 - **The per-release `maxSessionsPerPod` drain and its `vm-restart` exclusion** (`pkg/gateway/session/recycle/scrubreporter_seams.go:344-373`). Unchanged.
 - **The `SocketRuntimeProcess` listener teardown.** Proposal 0078, which lands first.
 - **Per-slot cleanup**, which runs at every session release and does not depend on the runtime's lifetime.
 - **The §16.1 retirement-counter row.** The row omits the existing non-counting reasons `host_unschedulable`, `scrub_report_timeout`, and `vm_restart_reprovision`. File it separately; the new reasons are named in §5.2.
-- **The first-session manifest ordering on the sidecar transport.** The runtime reads the manifest before the adapter writes it on a pod's first session. It is a pre-existing defect on every sidecar pod, filed to be fixed after proposals 0078 and 0079 land. The sentences that describe the manifest as written "before spawning" belong to it and keep their wording here: the §4.7 adapter manifest ("before the runtime binary is spawned"), the manifest tool-list field, the manifest `credentialsPath` field, §4.7.11 items 1 and 4, the `SO_PEERCRED` self-test ("before any agent process is spawned"), §15.4.3 **Authentication.**, the §15.7 `CreateRequest` comment, the §6.1 **Per-session credential lease lifecycle.** paragraph ("before that session's binary is spawned"), and the §28.5.3 sentences that place the manifest write before the adapter spawns the runtime binary (the **Preconditions.** bullets of `CH-MSGSOCK`, `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR`, and the two `adapterLocalTools` sentences under `CH-MSGSOCK` that say "before spawning the runtime"). §29.2 step 25 is not among them: it states the runtime's `CH-MSGSOCK` dial rather than the manifest ordering, and SPEC-12 rewrites it.
+- **The first-session manifest ordering on the sidecar transport.** The runtime reads the manifest before the adapter writes it on a pod's first session. It is a pre-existing defect on every sidecar pod, filed to be fixed after proposals 0078 and 0079 land. The sentences that describe the manifest as written "before spawning" belong to it and keep their wording here: the §4.7 **Adapter manifest:** paragraph ("before the runtime binary is spawned" and "before each session's runtime start"), the manifest tool-list field, the manifest `credentialsPath` field, §4.7.11 items 1 and 4, the `SO_PEERCRED` self-test ("before any agent process is spawned"), §15.4.3 **Authentication.**, the §15.7 `CreateRequest` comment, the §6.1 **Per-session credential lease lifecycle.** paragraph ("before that session's binary is spawned"), and the §28.5.3 sentences that place the manifest write before the adapter spawns the runtime binary (the **Preconditions.** bullets of `CH-MSGSOCK`, `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR`, and the two `adapterLocalTools` sentences under `CH-MSGSOCK` that say "before spawning the runtime"). The review log's blast-radius table lists every site of this class (P3), with its mirrors under `docs/`, `schemas/`, and the code comments, and those sites keep their wording as well. §29.2 step 25 is not among them: it states the runtime's `CH-MSGSOCK` dial rather than the manifest ordering, and SPEC-12 rewrites it.
+- **Adapter signals, the `shutdown` frame, and exit observation that the sidecar model never delivered.** Before this proposal and after it, the adapter neither signals the sidecar runtime container, nor writes a `CH-MSGSOCK` `shutdown` frame, nor reads the runtime container's exit code or stderr (summary.md, Defects in the shipped tree). The sentences that state those acts, and their mirrors under `docs/` and `schemas/`, keep their wording here, and no staged text restates them. The review log's blast-radius table lists every site (class P1, P2). Once the adapter writes `terminate` only at pod termination with `eviction`, the reason values `session_complete`, `budget_exhausted`, and `operator` have no emitter (`budget_exhausted` and `operator` had none before); the enum stays a value set. File the class separately.
 - **Scrub steps 3 and 5, and the preConnect re-warm.** `scrubConfig` sets neither `ResetEnv` nor `TruncateLogs` (`pkg/adapter/podscrub.go:120-127`), so both steps record as skipped, and no component calls `PreConnect` after adapter startup. Both predate this proposal; file them separately.
 - **Embedded recycling wiring.** `cmd/runtimes/echo-embedded` and `cmd/runtimes/preconnect-echo` wire no `ScrubOps`, so an embedded recycling pod never reports its scrub and retires by timeout. File it separately.
 - **Claim-path defects outside the pin check.** `Claimer.Claim` leaks a bound claim when `stampPodTenant` fails (`pkg/gateway/podlifecycle/podclaim/claimer.go:157-159`), and `CRDPodRegistry.ClaimPod` has no pin check and no production caller (`pkg/podregistry/crd.go:170-209`). File them separately.
+- **Pinned idle bound and idle timeout.** A per-pool bound on pinned idle pods beyond `maxWarm`, summed by the §17 namespace quota floor, and an idle TTL for pinned pods belong to a follow-up proposal (D14). This proposal adds neither and does not change how the pool store writes `maxWarm`.
+- **The §6.2 `idle ──→ draining` trigger list.** The edge, and the `idle` → `draining` row of `docs/reference/state-machines.md`, name neither the scale-down excess drain nor the idle-pod certificate replacement today. SPEC-8(c)'s pinned-idle drain joins them. File it separately.
 
 ## 12. Open decisions for review
 
@@ -500,4 +552,4 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 2. **Scope of the acknowledgment gate.** **Default:** the gate applies to every recycling pool, because the embedded runtime runs in the adapter process, which is kept. It needs no label, and the only recycling fixture pool, `task-mode-echo-pool`, gains the field (FIXTURE-1). The consequence is that an embedded recycling pool without the acknowledgment loses reuse. **Alternative A:** exempt embedded pods, which needs a pod label that the Sandbox reconciler stamps from the runtime's `deploymentModel` and the gateway reads at the boundary, with an envtest and a rollout note. **Alternative B:** refuse `recycle.enabled` with `maxSessionsPerPod > 1` and no acknowledgment at pool admission. It is louder and removes the `process_reuse_unacknowledged` branch, but every existing recycling pool definition without the field starts failing validation, and a pool edit that removes the field is refused rather than taking effect at the next boundary.
 3. **The runtime contract for sequential sessions.** The Go runtime SDK binds `OnCreate`, the manifest session, and the credential path once per process (`sdks/runtime/go/runtime/runtime.go:76-84`), and no frame tells a runtime that a session ended. On an acknowledged pool such a runtime serves a later session under the first session's context. The same gap exists on concurrent pools today, and proposal 0084 declares multi-session SDKs out of scope. **Default:** stage the SDK change in a sibling proposal; this proposal stages the specification sentences, the doc comments, and the runtime-author guide statement that a runtime on an acknowledged recycling pool keys every frame by `sessionId`. **Alternative:** gate reuse on a runtime capability declaration, which adds a registry field and a client-surface change.
 4. **Relationship to proposal 0078.** **Default:** land 0078 first. CODE-1 applies on top of 0078's CODE-1 through CODE-3, and CODE-4 extends 0078's `CloseListener` (0078 CODE-2) and keeps its name and signature. TEST-1 deletes 0078's TEST-1 and TEST-9 and amends its TEST-4. **Alternative:** fold 0078's CODE-1 and CODE-2 into this proposal.
-5. **The terminate frame.** Removing the occupancy-zero send leaves the §15.4.2 `DRAINING` state and the §15.4 matrix's Full-level drain row with no sender, because `RuntimeOps.Terminate` has no other caller (`pkg/adapter/session.go:516`). **Default:** send the frame once at pod exit (D8, CODE-2, CODE-4, SPEC-11(b)). **Alternative:** delete `drainViaLifecycle` and `drainReason` with their tests, and amend the §15.4 matrix row and the §15.4.2 table to state that no drain coordination exists.
+5. **The terminate frame.** Removing the occupancy-zero send leaves the §15.4.2 `DRAINING` state and the §15.4 matrix's Full-level drain row with no sender, because `RuntimeOps.Terminate` has no other caller (`pkg/adapter/session.go:516`). **Default:** send the frame once at pod exit (D8, CODE-2, CODE-4, SPEC-11(b)). **Alternative:** delete `drainViaLifecycle` with its tests, and amend the §15.4 matrix row and the §15.4.2 table to state that no drain coordination exists.

@@ -40,7 +40,7 @@ The correct statement is narrower than a flat denial and is not derivable from `
 
 ### 1.6 Finding
 
-BUILD-GAPS F-5.2.33 part (b). Part (a), the pod-scoped listener destroyed by a per-session `Close`, is proposal 0078 and is a precondition of the conformance work in S10.
+BUILD-GAPS F-5.2.33 part (b). Part (a), the pod-scoped listener destroyed by a per-session `Close`, is proposal 0078 and is a precondition of the conformance work in TEST-10.
 
 ### 1.7 Decision of 2026-09-30
 
