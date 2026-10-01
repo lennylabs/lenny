@@ -2293,9 +2293,29 @@ pinned-idle proposal, so each of those is converged once against the final set o
 - [ ] Proposal 0078 implemented. Its deviations file is checked against the symbols proposal 0079 relies
   on (`CloseListener`, the occupancy-zero branch, the per-connection reset, the exit-time call site, and
   the test names); a deviation there triggers a citations and edit-sites review of 0079.
-- [ ] Proposal 0079 implemented through its checklist (spec steps first, then gateway and controller,
-  adapter transport, liveness and retirement, comments, cluster and conformance tests, and docs). Closes
-  BUILD-GAPS F-5.2.33 part (b).
+- [ ] Proposal 0079 implemented through its checklist. Closes BUILD-GAPS F-5.2.33 part (b). The step
+  numbering below is the checklist's as of 2026-10-01; the proposal's own checklist is authoritative.
+  - [ ] S1 to S18, the spec steps. Each lands its staged edits under a scoped spec write lease: §4.7.9,
+    §4.7.10, and the §4.7 adapter RPC table; §4.6.1 and §4.6.3; §5.1 and §5.2 (recycle lifecycle, scrub
+    steps, retirement and sizing, the acknowledgment, the tenant pin, and client visibility); §6.1 and §6.2;
+    §7.1; §10.1.4; §11.4; §13.1; §15.4 to §15.4.3; §16.1; §17.8.2; §28; and §29.
+  - [ ] S19, gateway and controller: the tenant-pin read on every claim path, the refuse-and-drain of an
+    already-used pod after a pool edit takes the pool outside the process-reuse rule, the interim pinned-idle
+    rule in the warm-pool planner, and the admission refusal of a recycling pool without the acknowledgment.
+  - [ ] S20, the adapter transport, which turns runtime reuse on: per-session `Close` and `Interrupt` no longer
+    end the shared runtime connection, the pod-exit `terminate` frame is deleted, the runtime generation
+    counter, and the pod-scope teardown at adapter exit and at the coordinator hold timeout. Needs proposal
+    0078. It does not wait for the runtime-SDK proposal (section 10.3).
+  - [ ] S21: the adapter reports at the recycle boundary whether the runtime process is live, the gateway's
+    disposition retires the pod when it is not, and the gateway threads the report through.
+  - [ ] S22: comment corrections and regenerated CRD descriptions.
+  - [ ] S23: the tier-10 conformance, tier-5 cluster, and tier-7a scenario tests, including the un-skipped
+    recycle case.
+  - [ ] S24: documentation and its tier-11 consistency gate.
+
+**Exit criteria for every implemented proposal in this track.** Every reached tier is green on the final
+tree, the owner has adjudicated each entry in the proposal's deviations file, the proposal is marked
+`Implemented`, the BUILD-GAPS findings it closes are closed, and the branch is pushed.
 
 **Phase 2: two proposals in parallel after proposal 0079**
 
@@ -2351,3 +2371,192 @@ restart after a runtime crash, and starting the next runtime before its session 
 These items are independent of the order above and can run whenever capacity allows: BUILD-GAPS F-10.3.26
 (admission webhooks never reload a renewed serving certificate), draft proposals 0085 and 0086, draft
 proposal 0072 split into its separate items, and draft proposal 0080 split into per-concern proposals.
+
+### 10.5 Decisions still open
+
+Each decision is listed with the phase that needs it and the recommendation on record.
+
+**Before or during Phase 0**
+
+- **What a gVisor failure in the validation spike means.** Either it ends the restart lifetime on
+  `sandboxed` pools, or it delays it until a gVisor-specific design exists. No recommendation is recorded.
+- **Whether R6 lands before proposal 0087's code.** This is a scheduling call. Landing R6 first removes the
+  S-4 serialization of pod-builder edits.
+
+**At proposal 0087 part 1's convergence (Phase 2)**
+
+- **The trust model.** Is a platform process running at the agent UID, in the same container as the
+  author's binary, acceptable, and on which isolation profiles (runc, gVisor, and Kata)? The design makes
+  gVisor validation a hard gate.
+- **The default lifetime for new sequential recycling pools,** `keep` or `restart`. `restart` adds the
+  runtime's cold start to every session until the design's later phase that starts the next runtime early.
+- **Supervisor scope.** The recommendation is restart pools only, with supervision of every sidecar pod left
+  to a later proposal.
+- **Where the runtime's start command comes from:** a registration field, a registry lookup by image digest,
+  or both. The 0087 draft stages a `Runtime.spec.command` field.
+- **What `restart` means for embedded runtimes,** which run inside the adapter process.
+- **Whether the lifetime choice lives on the pool, on the Runtime, or on both.**
+- **Ordering of the runtime's end against the deployer's `cleanupCommands`.**
+- **Whether the restart lifetime still requires `acknowledgeProcessLevelIsolation`** for state other than the
+  runtime process.
+- **The new channel's name.** The working name is `CH-SUPERVISE`. Stems built on "spawn" are unavailable,
+  because §8 binds that word to child-session delegation.
+
+**At proposal 0087 part 2's convergence (Phase 3)**
+
+- **Whether a fresh runtime process plus the whole-pod scrub is enough isolation for cross-tenant reuse on
+  `in-place` microVM pools,** given residue in the guest kernel and the adapter process that persists across
+  tenants.
+
+**At the runtime-SDK proposal's convergence (Phase 2)**
+
+- **The end-of-session signal.** Whether the SDKs learn that a session ended through a new frame, and on
+  which channel. A new frame passes through §28, the frame schema, and a tier-3 contract test.
+
+**Deferred by the restart design, not yet scheduled**
+
+- **Whether a supervised pod restarts its runtime after a crash.** That would change the no-restart policy
+  in §4.7.11 item 5 and §5.2.
+
+### 10.6 Context and rationale for the proposal track
+
+This section records why the track looks the way it does, so a later reader does not have to rederive it.
+
+**Origin.** BUILD-GAPS F-5.2.33 found that on a recycling pool a sidecar runtime exits at the end of its
+first session and nothing starts a successor. The kubelet starts the runtime container once under
+`RestartPolicy: Never`. The adapter cannot spawn a binary that lives in a separate image and mount
+namespace, and it drops `CAP_SETUID`. §13.1 forbids `shareProcessNamespace`. Before these proposals, the
+recycled pod failed its second session after a 30-second accept wait, the gateway retried the session on
+another pod, the operator saw nothing, and capacity planning assumed reuse that never happened.
+
+**Why the runtime is kept (proposal 0079).** The owner expects `recycle.maxSessionsPerPod` to mean real
+reuse for every runtime. Since proposal 0073 every session is a slot on one shared runtime connection, and
+concurrent pools already keep one runtime process serving many sessions while occupancy stays above zero,
+so keeping the process across occupancy zero extends an existing model. An August attempt to do this
+(reverted in `39e08bb4`) failed because it was made inside proposal 0073, whose specification text required
+the opposite. Proposal 0079 therefore changes the specification first.
+
+**How proposal 0079 is shaped, and why.**
+
+- A kept runtime retains its first session's in-memory state, so keeping it requires
+  `acknowledgeProcessLevelIsolation: true`, the acknowledgment concurrent pools already require. A pool
+  without it is rejected at admission rather than quietly retiring each pod after one session, which would
+  under-deliver what the deployer configured. `vm-restart` pools never keep the process and are exempt.
+- A pool edit that takes a pool outside that rule fails closed: an already-used pod is refused and drained
+  at its next acquisition, including the reserved-hold rebind, so the client-visible `podReuse` and
+  `residualStateWarning` flags stay exact.
+- If the runtime process is gone at a recycle boundary, the pod is retired rather than dispatched into. The
+  adapter reports liveness on the existing scrub report.
+- Per-session `Close` and `Interrupt` no longer end the shared runtime connection. This also removes a
+  window recorded in proposal 0078's review, where a last-slot `Interrupt` closed the connection but left
+  the adapter marked connected.
+- At the coordinator hold timeout the adapter tears the pod down, so a kept runtime never keeps live
+  credentials without a coordinator.
+- No `terminate` frame is sent at pod exit. It raced the kubelet's own `SIGTERM`, arrived before the
+  eviction checkpoint request, reached only Full-level runtimes, and rides a channel that R17 has not yet
+  enabled in deployed pods. Pod-exit drain coordination belongs to R16 and R17.
+- After a kept process serves its second session, intra-pod MCP tools and direct-mode usage attribution fail
+  closed, because the adapter can no longer tell which session a call belongs to. Concurrent pools already
+  behave this way. Proposal 0084 is the fix.
+- The first-party runtime SDKs bind session context once per process, so on a kept process an SDK runtime
+  would serve a later session under the first session's context. No runtime in the tree uses an SDK on a
+  recycling pool, and the platform is pre-deployment, so the SDK fix is a separate proposal that must land
+  before any release. A fail-closed SDK guard was considered and rejected, because it would be built and then
+  replaced by that proposal.
+
+**Tenant pinning and the reserved hold.** The gateway stamps `lenny.dev/tenant-id` on a pod at its first
+assignment, and nothing resets it on a recycled pod, so the pin lasts until the pod retires. The reserved
+hold (`gateway.claimHoldTTLSeconds`, default 10 seconds) is a separate reservation: for that window only the
+same tenant's next session can take the pod. After the hold the pod returns to idle and stays pinned. A
+pinned pod stops being pinned only by retiring: at `maxSessionsPerPod`, past `maxPodUptimeSeconds`, when its
+runtime is gone, on every boundary of a `vm-restart` pool, after exhausted scrub failures, or when the
+warm-pool controller drains pinned idle pods that do not fit.
+
+**Pinned idle inventory.** Admin-API pools render `maxWarm` equal to `minWarm` from one `warmCount`, so
+pinned idle pods have no room above the general inventory. Under proposal 0079's interim rule (the owner's
+option D), pinned idle pods do not count toward `minWarm` and are drained when they do not fit under
+`maxWarm`, so on default pools a kept runtime is reused only when the tenant's next session arrives within
+the hold. Deployers widen the window by raising `maxWarm` above `minWarm` or raising the hold TTL. The
+pinned-idle proposal (option C) adds a separate per-pool bound on pinned idle pods beyond `maxWarm`, summed
+by the §17 quota floor, and an idle TTL so that a tenant that stops sending sessions does not keep its pods
+until the uptime limit. A TTL alone was rejected, because it either gives no reuse on default pools or
+leaves the pod count unbounded.
+
+**Cross-tenant reuse.** `recycle.allowCrossTenantReuse` is valid only on one-session-at-a-time microVM
+pools, and it has real effect only with `scrubProfile: in-place`. It only ever worked for embedded runtimes,
+because a sidecar runtime was never restarted. With a kept runtime that never serves a second tenant, the
+field has no effect after proposal 0079. The owner kept it, rather than deleting it, because the supervised
+runtime process will make it meaningful again. Proposal 0079 originally drained pinned pods for other
+tenants' demand; that drain was deleted on 2026-10-01 after review showed that under the interim planner it
+creates no replacement and gives the requesting session nothing, so its only effect was to retire another
+tenant's warm runtime early.
+
+**The supervised runtime process (proposal 0087).** The design exploration
+(`scratchpad/sidecar-restart/design.md` on the machine that ran it) compared these candidates:
+
+- Retire and reprovision: safe, and it never restores cross-tenant reuse.
+- A platform supervisor as the runtime container's PID 1 (recommended): an init container stages a static
+  first-party binary into a shared volume and the pod builder makes it the runtime container's command. On
+  the adapter's instruction it starts each runtime generation after the final manifest is written, ends it
+  at the recycle boundary with `SIGTERM` and then `kill -9 -1` within its namespace, reports the exit status
+  with proof that no runtime process remains, and performs the agent-UID halves of the scrub that the
+  adapter cannot reach. Platform-versus-author identity rests on ordering the platform controls (the pod spec
+  makes the supervisor PID 1, the adapter reports READY only after the supervisor connects, and the adapter
+  accepts one supervisor connection per pod) and on kernel properties (a PID-namespace init ignores
+  `SIGKILL` and `SIGSTOP` from inside the namespace, and a non-dumpable process blocks `ptrace`,
+  `/proc/<pid>/fd`, and `pidfd_getfd` from same-UID code without capabilities). It runs on the Kubernetes
+  1.27 floor and needs no new RBAC. An earlier concern that the runtime's command would drift after an image
+  re-tag is weak, because `Runtime.spec.image` must be pinned by digest.
+- A kubelet container restart behind a platform start gate: possible later, but it cannot stop a predecessor
+  that refuses to exit. Revisit once the Kubernetes floor reaches 1.33.
+- One ephemeral container per generation, exec through the API server, the Kata guest agent, and a
+  node-level container-runtime action: rejected, for unstoppable containers without resource limits,
+  cluster-wide exec permission, host-only reach, and a privileged agent on every node respectively.
+
+Proposal 0087 adds `recycle.runtimeProcess: keep | restart`. Under `restart`, each session gets a fresh
+process, so the single-session SDKs stay correct with no change. Part 2 restores cross-tenant reuse by
+resetting the tenant pin after a scrub report that proves the old runtime is gone. The design's later
+phases are SDK warm-up for sidecar runtimes, optional restart after a crash, and starting the next runtime
+before its session arrives, which needs the runtime-SDK proposal.
+
+**Why proposal 0087 follows proposal 0079 rather than preceding it.** The owner asked whether introducing
+the supervisor earlier would make other items easier. The sequencing analysis found the hypothesis partly
+right:
+
+- The supervisor removes the manifest-ordering defect and makes the per-generation nonce easy on the pods it
+  runs, keeps the single-session SDKs correct on restart pools, gives the adapter a process it can end (which
+  helps proposal 0071's heartbeat escalation and 0079's hold-timeout teardown), may help R16 and R17, and is
+  the only route to cross-tenant reuse.
+- It does not remove the other items. Proposal 0087 restates 0079's reuse predicate, acknowledgment rule,
+  liveness signal, and post-edit refusal, and it needs 0079's tenant-pin read, so placing it first would mean
+  folding 0079 into it and re-converging 0079. The manifest-ordering defect and the `CH-MSGSOCK`
+  authentication gap affect every sidecar pod, including non-recycling ones, while 0087 supervises only
+  restart pools. Recycled pods stay tenant-pinned under either lifetime, so the pinned-idle bound is still
+  needed, and proposal 0084 is still needed on concurrent pools. gVisor is the default isolation profile
+  (§5.3), so the restart lifetime cannot reach default pools until the spike passes.
+- Landing proposal 0087 after proposal 0079 costs a small to medium amount of rework: splitting one
+  predicate, resetting the generation counter on an attested runtime end, and qualifying some of 0079's
+  unconditional sentences and its tier-11 wording gate. The one piece that would have been built and then
+  retired, the cross-tenant drain, was deleted.
+- Merging the multi-session SDK change, the manifest-ordering fix, and the SDK half of the nonce into one
+  proposal touches the three SDKs once instead of three times.
+
+**The `CH-MSGSOCK` authentication gap (BUILD-GAPS F-4.7.25).** The §28.5.3 card states a `SO_PEERCRED`
+peer-UID check and a manifest-nonce handshake as the first message, with an HMAC challenge when
+`requireSoPeercred` is false. `SocketRuntimeProcess.accept` performs neither. The adapter's peer check
+wraps only the MCP listeners. The runtime SDKs send the nonce only on MCP `initialize`. The `SO_PEERCRED`
+half is a fix of existing specification text; the nonce half depends on the manifest being written before
+the runtime connects, so it travels with the manifest-ordering fix in the runtime-SDK proposal.
+
+**R5 and proposal 0082.** Proposal 0082 landed before R5 so that R5's move-only carve-up carried 0082's new
+code, which avoided re-anchoring 0082's staged edits to new files. R5 ran in a separate worktree while
+proposal 0082's review was in flight, so the review never read a tree that moved under it.
+
+**Working practices this track established.**
+
+- A proposal under review is never changed underneath its running review, and code is never changed in a
+  tree a review is reading. Parallel drafting and refactoring run in separate git worktrees, merged with
+  `--no-ff` afterwards.
+- Human decisions that change staged text are applied before a review loop spends rounds on that text.
+- A move-only refactor is verified mechanically: declaration-level equivalence, an identical test inventory,
+  per-test verdict comparison against the base, and an independent review of the moved-block diff.
