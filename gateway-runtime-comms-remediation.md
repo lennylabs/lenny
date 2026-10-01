@@ -54,6 +54,14 @@ without it, and the reason is stated in the step.
 Out of scope: filing clusters into `PROPOSAL-QUEUE.md`, editing `spec/`, and editing code. This plan
 states what the clusters should be. Filing them is a later decision.
 
+**Extension of 2026-10-01.** The owner extended the plan with a proposal track that runs alongside the
+remediation steps: the recycled-pod runtime lifetime (proposals 0078 and 0079), the supervised runtime
+process (proposal 0087), and the follow-up proposals those decisions created. Most of these items close
+records outside reference sections 6 and 8, so they sit outside the original scope boundary above. They are
+scheduled here because they edit the same adapter, gateway, and pod-builder surfaces as the remediation
+steps, and their order against those steps decides how much work is redone. Section 10 holds the status of
+every step and the order of the proposal track.
+
 ### 1.3 Status vocabulary
 
 Carried unchanged from reference §1.2 (`gateway-runtime-comms.md:20-36`), because every downstream
@@ -889,6 +897,14 @@ R2a, and R7.
 in the same change, and the reviewer diffs by moved block rather than by line.
 
 **Size.** M.
+
+**Outcome (landed 2026-09-29, merge `6325283df`).** The owner extended the scope to
+`pkg/gateway/podlifecycle/podsession/binder.go` and `cmd/lenny-gateway/stores.go`, because R13, R22, and
+R23 edit the binder and R13 and R18 edit the store construction. Five move-only commits split the eight
+files into 91 new files in the same packages. Every top-level declaration is byte-identical before and
+after, no test file changed, and per-test verdicts are identical between the base and the result at tiers
+0, 1, 2, 3, 4, 7a, and the in-process part of tier 9. The plan and its evidence are kept outside the
+repository under `scratchpad/r5-carve-up/` on the machine that ran it.
 
 ### R6. Podspec and chart decoupling, and the deployment-boundary gate
 
@@ -1919,6 +1935,8 @@ Any reshuffling must preserve these.
 **Safe compressions.** Pull R11, R23, and R24 into slack (all off-path and self-contained), and start
 R25's reconciliation test early with its two seed cases.
 
+The proposal track that runs alongside these waves, and the status of every step, are in section 10.
+
 ---
 
 ## 7. Test and infrastructure strategy
@@ -2194,3 +2212,142 @@ figure.
 working tree at `fcda83e3`. Anyone reading it after §28 and §29 land must treat §28 and §29 as
 authoritative for current behavior. The tier-11 header test makes that instruction unavoidable rather than
 optional, and it does not make the frozen content correct.
+
+---
+
+## 10. Execution status and checklist
+
+Status as of 2026-10-01, verified against the working tree. Check an item off in the same change that lands
+it, and name the commit or merge.
+
+### 10.1 Remediation steps
+
+- [x] **R0.** Proposal 0062 reads `Retired`.
+- [x] **R1a.** Naming law, registers, and prose, landed through proposals 0064 to 0066.
+- [x] **R1b.** Wire rename, landed through proposals 0064 to 0066. `schemas/lenny-adapter.proto` carries
+  `rpc AdapterEvents`, and `pkg/adapter/lifecyclechannel.go` no longer exists.
+- [x] **R2a.** `spec/28_communication-channels.md` (proposal 0067, applied 2026-08-03) and
+  `spec/29_communication-scenarios.md`.
+- [ ] **R2b.** Citation and heading surgery. Late exclusive freeze, after every code-moving step.
+- [x] **R3.** Specification and test tooling: the `scripts/specshift` gates, the line-citation ratchet
+  (`tests/registers/line-citations.yaml`), the register contract (`tests/registers/README.md`), the
+  `UNVERIFIED` verdict state in `cmd/lenny-test`, and the change-graph coverage registers (proposals 0065
+  and 0066).
+- [ ] **R4.** Not started. `srv.GracefulStop()` in `cmd/lenny-adapter/main.go` still has no bound or
+  `Stop()` fallback, and `TestAdapterExitsWithinGraceBudget` does not exist. It is overdue against its wave
+  0 placement. Proposal 0078 adds `CloseListener` at the same signal-handler site, so whichever lands second
+  calls `CloseListener` on both the graceful path and the fallback path.
+- [x] **R5.** Landed 2026-09-29, merge `6325283df`, with the scope extension recorded in the R5 section.
+- [ ] **R6.** Not started (`podspec.go` is still one file). Landing it before proposal 0087's code avoids
+  serializing the pod-builder edits under rule S-4.
+- [ ] **R7.** Not started.
+- [ ] **R8.** Not started. The claim register carries rows deferred to it.
+- [ ] **R9.** Not started.
+- [ ] **R10a.** Not started.
+- [ ] **R10b.** Not started.
+- [ ] **R11a.** Status not verified against the tree.
+- [ ] **R11.** Not started. The claim register carries rows deferred to it.
+- [ ] **R12.** Not started. The claim register carries rows deferred to it.
+- [ ] **R13.** Not started. The claim register carries rows deferred to it.
+- [ ] **R14.** Not started. The claim register carries rows deferred to it.
+- [ ] **R15.** Not started. `ready_for_input` is absent from `schemas/runtime-ops-events.schema.json`.
+- [ ] **R16.** Not started. After proposal 0079, no `terminate` frame is sent at pod exit or at the
+  coordinator hold timeout, and pod-exit drain coordination belongs to R16 and R17.
+- [ ] **R17.** Not started.
+- [ ] **R18.** Not started. The claim register carries rows deferred to it.
+- [ ] **R19.** Not started. The claim register carries rows deferred to it.
+- [ ] **R20.** Not started. The claim register carries rows deferred to it.
+- [ ] **R21.** Not started.
+- [ ] **R22.** Not started.
+- [ ] **R23.** Not started. The claim register carries rows deferred to it.
+- [ ] **R24.** Not started.
+- [ ] **R25.** Not started.
+
+### 10.2 Proposal track
+
+The order below is the hybrid ordering the owner adopted on 2026-10-01 after a sequencing analysis of the
+supervised runtime process (`scratchpad/sequencing/supervisor-sequencing.md` on the machine that ran it).
+Proposal 0087 builds on proposal 0079, so it follows 0079. It precedes proposals 0084 and 0071 and the
+pinned-idle proposal, so each of those is converged once against the final set of runtime lifetimes.
+
+**Phase 0: proposals settled, side tasks in parallel**
+
+- [x] Proposal 0082 (concurrent finalize) implemented 2026-09-28 (`79ec0e93c`), ahead of R5.
+- [x] Proposal 0078 (keep the pod-scoped `CH-MSGSOCK` listener) re-converged and `Reviewed` (`a9c7bd6c6`).
+  It stays listener-only.
+- [ ] Proposal 0079 (keep the runtime process on recycling pools) converged and approved. The spec loop is
+  at its convergence tail. Remaining: apply open decision 11 (delete the cross-tenant drain), relax checklist
+  step S20's dependency on the runtime-SDK proposal, reconcile the step references, run a short spec
+  confirmation, and run the first non-spec review loop.
+- [x] Proposal 0087 part 1 (supervised runtime process, restart lifetime) drafted and merged (`0f86420bf`).
+  It is not converged, and its prerequisite list predates this ordering.
+- [ ] Validation spike on gVisor and Kata for the properties the supervisor relies on: PID-namespace init
+  signal immunity, `PR_SET_DUMPABLE` against same-UID inspection, `kill(-1)` scope, and `si_pid`. Its result
+  gates whether the restart lifetime reaches `sandboxed` (gVisor) pools.
+- [ ] BUILD-GAPS F-4.7.25, the `SO_PEERCRED` half: `CH-MSGSOCK` accepts only the agent UID. The specification
+  already requires it, so it lands as a BUILD-GAPS fix with tier-1 and tier-9 tests.
+- [ ] R6, if it can be scheduled before proposal 0087's code.
+
+**Phase 1: proposals 0078 and 0079 implemented**
+
+- [ ] Proposal 0078 implemented. Its deviations file is checked against the symbols proposal 0079 relies
+  on (`CloseListener`, the occupancy-zero branch, the per-connection reset, the exit-time call site, and
+  the test names); a deviation there triggers a citations and edit-sites review of 0079.
+- [ ] Proposal 0079 implemented through its checklist (spec steps first, then gateway and controller,
+  adapter transport, liveness and retirement, comments, cluster and conformance tests, and docs). Closes
+  BUILD-GAPS F-5.2.33 part (b).
+
+**Phase 2: two proposals in parallel after proposal 0079**
+
+The two share §4.7, §15.4, §15.7, and the runtime-author guide, so their spec steps land one after the
+other while their code proceeds in parallel.
+
+- [ ] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out),
+  approved, and implemented. It defines `CH-SUPERVISE` as JSON Lines and adds no proto field.
+- [ ] Runtime-SDK proposal (not yet written): the Go, Python, and TypeScript SDKs serve sequential sessions
+  keyed by `sessionId` with an end-of-session signal, the first-session manifest-ordering fix on sidecar
+  pods, the nonce half of F-4.7.25 on both the runtime and adapter sides, and the Go `Handler` doc-comment
+  correction moved out of proposal 0079. It lands before any release, which is the condition under which
+  proposal 0079's S20 no longer waits for it.
+
+**Phase 3: after proposal 0087 part 1**
+
+- [ ] Pinned-idle inventory proposal (not yet written): a per-pool bound on tenant-pinned idle pods beyond
+  `maxWarm`, summed by the §17 quota floor, with an idle TTL for pinned pods. It is independent of proposal
+  0087 and can start right after proposal 0079.
+- [ ] Proposal 0084 (session attribution on pools where one runtime process serves several sessions)
+  re-converged once against proposals 0079 and 0087, then implemented.
+- [ ] Proposal 0071 (route a runtime frame to one consumer) re-derived once against the kept connection and
+  the supervisor, then implemented.
+- [ ] Proposal 0087 part 2: cross-tenant reuse on `in-place` pools by resetting the tenant pin after a
+  proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first; gVisor only
+  if the spike passed.
+
+**Contingency.** If the spike fails on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
+proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
+narrows to Kata.
+
+**Not yet scheduled.** The later phases of the restart design: SDK warm-up for sidecar runtimes, an optional
+restart after a runtime crash, and starting the next runtime before its session arrives.
+
+### 10.3 Owner decisions this track depends on
+
+- A recycling pool with `maxSessionsPerPod > 1` keeps its runtime process across sessions, including
+  across occupancy zero, up to `maxSessionsPerPod`. `scrubProfile: vm-restart` pools still retire after
+  every session (2026-09-30).
+- Keeping the process requires `acknowledgeProcessLevelIsolation: true`, enforced by rejecting the pool at
+  admission, with `vm-restart` pools exempt. A pool edit that takes a pool outside that rule fails closed:
+  the gateway refuses and drains an already-used pod at its next acquisition (2026-09-30 and 2026-10-01).
+- A kept runtime never serves a second tenant. `recycle.allowCrossTenantReuse` stays in the schema and has
+  no effect until proposal 0087 part 2; the cross-tenant drain is deleted (2026-10-01).
+- No `terminate` frame is sent at pod exit or at the coordinator hold timeout (2026-09-30).
+- Pinned idle inventory ships an interim rule in proposal 0079; the bound and the idle TTL belong to the
+  pinned-idle proposal (2026-09-30).
+- The runtime-SDK multi-session change is a separate proposal, and proposal 0079's S20 does not wait for it
+  provided it lands before any release (2026-10-01).
+
+### 10.4 Related work outside this track
+
+These items are independent of the order above and can run whenever capacity allows: BUILD-GAPS F-10.3.26
+(admission webhooks never reload a renewed serving certificate), draft proposals 0085 and 0086, draft
+proposal 0072 split into its separate items, and draft proposal 0080 split into per-concern proposals.
