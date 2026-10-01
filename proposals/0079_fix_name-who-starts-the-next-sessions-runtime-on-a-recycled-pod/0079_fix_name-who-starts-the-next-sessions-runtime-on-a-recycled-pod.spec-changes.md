@@ -459,7 +459,7 @@ A pod retired under the Pod retirement policy's "Runtime not live" condition tak
 
 (d) In §15.4.1, delete ` — the runtime knows it's receiving its first message by virtue of just having started`, so the sentence reads `No `sessionState` field.`
 
-**SPEC-12 — `spec/29_communication-scenarios.md` §29.2, §29.4, and §29.9.**
+**SPEC-12 — `spec/29_communication-scenarios.md` §29.2, §29.4, §29.9, and §29.10.**
 
 (a) In §29.2, replace step 25 (from `25. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter spawns the runtime` through its closing `([§4.7](04_system-components.md#47-runtime-adapter)).`) with:
 
@@ -500,6 +500,8 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 (f) In §29.9, delete step 4b (from `4b. `unstated`. The specification names `eviction`` through `and it does not fix the relative order of steps 4a and 4b.`) and the blank line before it. Renumber `4a.` as `4.` and re-indent its continuation lines from four spaces to three, as step 5's are. With 4b gone no step is unordered against step 4, so the §29 **Step numbering.** rule gives it no letter suffix. The path sends the runtime no `CH-RUNTIMEOPS` frame, as §15.4.2 states.
 
 (g) In §29.2 step 7, after the sentence that begins `When the pod is instead` / `held for the same tenant under a `reserved` claim within its hold window` and ends with its closing citation `([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).`, insert `On a pool whose configuration keeps no runtime process across sessions, the gateway ends that hold with the same precondition-guarded claim `DELETE` instead and acquires another pod through steps 6 and 7 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer acknowledgment (runtime process kept across sessions)").`, wrapped to the step's width with its three-space continuation indent.
+
+(h) In §29.10 **The condition.**, delete the sentence `Nothing in this subsection applies to a pod serving one session at a time, because the co-tenancy it analyses requires two sessions sharing one pod.`, leaving the text around it unchanged.
 
 **SPEC-13 — `spec/11_policy-and-controls.md` §11.4, the full-revoke propagation mechanism, step 3.** Replace `3. The pod's runtime adapter initiates graceful shutdown (SIGTERM to agent, wait up to 10s, then SIGKILL).` with:
 

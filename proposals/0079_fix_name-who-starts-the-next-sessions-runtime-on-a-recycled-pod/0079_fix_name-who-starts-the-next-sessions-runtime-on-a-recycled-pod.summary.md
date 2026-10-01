@@ -111,7 +111,7 @@ The human adjudicated decisions 1 to 5 and the redesign decisions A to C on 2026
 - **SPEC-9** (`spec/06_warm-pod-model.md`): §6.1 and §6.2.
 - **SPEC-10** (`spec/07_session-lifecycle.md`): the §7.1 `podReuse` and `residualStateWarning` rows.
 - **SPEC-11** (`spec/15_external-api-surface.md`): §15.4, §15.4.1, §15.4.2, and §15.4.3.
-- **SPEC-12** (`spec/29_communication-scenarios.md`): §29.2, §29.4, and §29.9.
+- **SPEC-12** (`spec/29_communication-scenarios.md`): §29.2, §29.4, §29.9, and §29.10.
 - **SPEC-13** (`spec/11_policy-and-controls.md`): step 3 of the §11.4 full-revoke propagation mechanism.
 - **SPEC-14** (`spec/28_communication-channels.md`): §28.3, §28.5.3, and §28.8.
 - **SPEC-15** (`spec/13_security-model.md`): the §13.1 credential-read boundary.
