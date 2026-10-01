@@ -41,7 +41,7 @@
 - **Scrub reach does not follow from `shareProcessNamespace: false` alone.** `buildSidecar` mounts `workspace`, the credential volume, `tmp`, `sessions`, `artifacts`, `/dev/shm`, and `shared` into both containers (`pkg/controller/sandbox/podspec/podspec.go:536-557`), so the filesystem steps cross the boundary. Step 1b removes only the adapter UID's segments.
 - **The tier-11 pinned phrases.** `tests/tier11_docs/vm_restart_reprovision_consistency_test.go:176-209` pins phrases in the §5.2 recycle-lifecycle sentence and the §6.2 projection sentence. SPEC-5(a) edits the §5.2 recycle-lifecycle line without rewording a pinned phrase, and no staged edit touches the §6.2 projection sentence.
 - **Ending a reserved hold on a pool outside the process-reuse rule stamps no drain request**; the next acquisition that reads the pod `idle` stamps it once no SandboxClaim holds the pod (D16, non-spec §4.4).
-- **The pinned-idle bound on admin-API pools** is zero only until demand is observed (D14); a finding that assumes it is always zero is wrong.
+- **The pinned-idle bound on admin-API pools** is not always zero; D14 states when it is.
 - **`cmd/lenny-adapter/main.go:86-88` states a "shared-uid pod layout".** The pod renders the adapter and runtime under distinct UIDs, and CODE-9 corrects the comment.
 
 ## Goals
@@ -68,10 +68,9 @@ spec-changes.md §9.1 carries the detail and the evidence for each item.
 
 ## Open decisions for human to make
 
-The human adjudicated decisions 1 to 5 and the redesign decisions A to C on 2026-09-30, and decisions 6 to 11 and the step ordering in decision 3 on 2026-10-01, and spec-changes.md §12 records each. The spec loop routed the two decisions below after those adjudications, and both remain open.
+The human adjudicated decisions 1 to 5 and the redesign decisions A to C on 2026-09-30, and decisions 6 to 11 and the step ordering in decision 3 on 2026-10-01, and spec-changes.md §12 records each. The spec loop routed the decision below after those adjudications, and it remains open.
 
 12. **A failed drain stamp on a pool outside the process-reuse rule.** After an admitted edit takes a pool outside the process-reuse rule, every acquisition refuses a pod that has served a session and stamps the `lenny.dev/drain-request` annotation on each refused pinned idle pod that no SandboxClaim holds (D16, SPEC-8(d)). The question is whether a failed stamp, such as a transient Pod patch error, fails the session's acquisition. As staged, it does. The idle scan returns the `DrainRefusedPod` error whether or not it then binds another pod, and the Postgres fallback returns the first stamp error even when `ClaimIdle` committed a row (non-spec-changes.md §4.4, CODE-8). The specification states nothing about a failed stamp. The ground the review log records (spec.16.review-docs-alignment.1) is that the refusal alone keeps the session off the pod, so the stamp only retires a pod that no acquisition admits, and every later acquisition that scans past the pod stamps it again. A later round (spec.18.review-reliability.1) read the staging as retrying a failed stamp at the next acquisition without failing the current one, which does not match non-spec-changes.md §4.4. The alternative to the staged behaviour is to log a failed stamp and let the acquisition continue. The spec loop derived no recommendation, and the open-decisions-and-impact-review phase supplies one.
-13. **How text outside the implementation checklist refers to a checklist step.** The redesign applied its default, Option A: the summary, spec-changes.md, non-spec-changes.md, and the review log name a step by the deliverables it lands, and only the checklist's own lines carry step numbers. The ground the review log records (spec.16.redesign1:apply.1) is that two renumberings of the checklist, in commits 2eda02844 and 286ff45c2, each left stale step numbers in spec-changes.md and the review log. Option B restores step numbers at the sites the redesign rewrote, including the §5 SDK row, the §9.1 SDK bullet, and §12 decisions 3 and 7 of spec-changes.md, and drops the review log's Settled rule. The redesign's default is Option A, and no human has confirmed it.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -141,7 +140,7 @@ The human adjudicated decisions 1 to 5 and the redesign decisions A to C on 2026
 - **TEST-13** (`pkg/gateway/podlifecycle/podsession`, `tests/tier2_component/stores/agentpodstatestore_test.go`, `pkg/agentpodstate/memstore`): tier-1 and tier-2 fallback claim pin and drain-ordering cases.
 - **TEST-14** (`tests/tier9_security/tenant_isolation_test.go`): the tier-9 second-tenant case.
 - **TEST-15** (`tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition/scenario.go`): the tier-7a scenario extension.
-- **TEST-16** (`tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go`): the tier-11 lifetime reconciliation, staged-site phrase, and retire single-home gates.
+- **TEST-16** (`tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go`): the tier-11 documentation gates.
 - **TEST-18** (`pkg/controller/warmpool/plan/plan_test.go`, `pkg/controller/warmpool/controller_test.go`): tier-1 and tier-2 pinned idle inventory cases.
 - **TEST-19** (`pkg/gateway/runtime/poolstore`, `pkg/gateway/externalapi/admin`, `tests/tier2_component/stores/poolstore_test.go`, `tests/tier9_security/pool_admission_isolation_test.go`): tier-1, tier-2, and tier-9 admission cases, and the fixture literals the rule reaches.
 - **TEST-20** (`pkg/adapter/holdstate_test.go`, `tests/tier7a_load_local/coordinator_hold_termination_race_test.go`, `tests/tier9_security/adapter_hold_termination_surface_test.go`): tier-1, tier-7a, and tier-9 coordinator hold timeout teardown cases.
