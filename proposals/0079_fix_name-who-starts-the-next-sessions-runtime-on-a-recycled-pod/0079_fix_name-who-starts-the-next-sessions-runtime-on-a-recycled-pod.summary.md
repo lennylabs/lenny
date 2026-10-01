@@ -10,9 +10,9 @@
 - `SocketRuntimeProcess.Close` and `Interrupt` stop tearing the transport down, and the active set that decided the teardown is deleted. The transport records a sticky ended state when the runtime closes its end, and `Start` and `Output` fail at once after it.
 - The adapter reports on `ReportPodScrub`, in a new `runtime_live` field sampled after the whole-pod scrub, whether its runtime can serve the next session. `pkg/sandbox/podscrub.Decide` retires the pod with `runtime_not_live` when the report says it cannot or omits the field.
 - Pool admission refuses a recycling pool that keeps its runtime process across sessions without `sessionPolicy.acknowledgeProcessLevelIsolation: true`, on create, update, bootstrap seed, and dry-run (D5, CODE-11). The new `runtime_not_live` reason is non-counting and sits after the session-count and uptime retirements, and the gateway logs the reason of every `released` retire at `Info`.
-- The gateway reads the tenant pin on every idle-pod acquisition, including the Postgres fallback claim, and refuses a pod pinned to another tenant. On an `allowCrossTenantReuse` pool it also drains that pod. The fallback claim stamps the pin and leaves the mirror row unchanged when it refuses a pod. The warm-pool planner keeps pinned idle pods out of the unpinned inventory that satisfies `minWarm` and drains those that do not fit under `maxWarm`, which is the interim rule (SPEC-8(c), D14).
+- The gateway reads the tenant pin on every idle-pod acquisition, including the Postgres fallback claim, and refuses a pod pinned to another tenant. On an `allowCrossTenantReuse` pool it also drains that pod. On a pool whose configuration keeps no runtime process across sessions, which an admitted edit can produce, every acquisition, including the reserved-hold rebind, refuses a pod that has served a session (D16). The fallback claim stamps the pin and leaves the mirror row unchanged when it refuses a pod. The warm-pool planner keeps pinned idle pods out of the unpinned inventory that satisfies `minWarm` and drains those that do not fit under `maxWarm`, which is the interim rule (SPEC-8(c), D14).
 - The adapter no longer sends the `CH-RUNTIMEOPS` `terminate` frame, whose only send was at occupancy zero, `drainViaLifecycle` is deleted, and §15.4.2 and §15.4.3 state that no drain coordination exists at pod exit (D8). The runtime generation no longer resets when `runtimeLive` empties, so `soleSession` is empty on every session after a kept process's first.
-- §4.6.1, §4.6.3, §4.7, §4.7.9, §4.7.10, §5.1, §5.2, §6.1, §6.2, §7.1, §10.1.4, §11.4, §13.1, §15.4, §15.4.1, §15.4.2, §15.4.3, §16.1, §17.8.2, §28.5.3, §28.8, §29.2, §29.4, and §29.9 state the lifetime, the acknowledgment, the tenant rule, the admission rule, the new retire reason, the scrub's reach, and the widened disclosure.
+- §4.6.1, §4.6.3, §4.7, §4.7.9, §4.7.10, §5.1, §5.2, §6.1, §6.2, §7.1, §10.1.4, §11.4, §13.1, §15.4, §15.4.1, §15.4.2, §15.4.3, §16.1, §17.8.2, §28.3, §28.5.3, §28.8, §29.2, §29.4, and §29.9 state the lifetime, the acknowledgment, the tenant rule, the admission rule, the new retire reason, the scrub's reach, and the widened disclosure.
 
 **Decisions.**
 
@@ -25,20 +25,22 @@
 - The new retire condition is stated once, in the §5.2 Pod retirement policy item "Runtime not live" (D15). Every other staged specification site names it by its label, and TEST-16 fails on a restatement.
 - Pod-global surfaces fail closed on every session after a kept process's first, and proposal 0084 carries per-session attribution (spec-changes §12, decision 1).
 - Pool admission refuses a recycling pool that would keep its runtime process across sessions without `sessionPolicy.acknowledgeProcessLevelIsolation: true`, and no recycle-boundary retire re-checks the rule (spec-changes §12, decision 2, Alternative B; D5, CODE-11).
-- A follow-up proposal carries the runtime SDKs' multi-session change, and this proposal stages the `sessionId` keying statements only (spec-changes §12, decision 3).
+- A follow-up proposal carries the runtime SDKs' multi-session change and the Go SDK's doc-comment correction, and checklist S19 waits for it. This proposal stages the `sessionId` keying statements in the specification and the runtime-author guide, and it edits no file under `sdks/` (spec-changes §12, decisions 3 and 7).
 - Proposal 0078 lands first and unchanged (spec-changes §12, decision 4).
 - No adapter path sends the `CH-RUNTIMEOPS` `terminate` frame, and the specification states that no drain coordination exists at pod exit (spec-changes §12, decision 5; D8). The pod-exit drain belongs to remediation-plan steps R16 and R17.
+- An admitted edit that takes a pool outside the process-reuse rule ends reuse at the next acquisition, by the human decision of 2026-10-01 (spec-changes §12, decision 6; D16). Every acquisition, including the reserved-hold rebind and the Postgres fallback, refuses a pod that has served a session (D16), so `sessionIsolationLevel` never understates a kept process for the claim made at creation. SPEC-8(d) is the rule's one home.
 - The CODE-7 `Info` log records a `released` retire's reason, SPEC-5(b) names "Runtime not live", and DOC-6 stays its own deliverable (spec-changes §12, decisions A, B, and C).
 
 **Watch out for.**
 
 - **The earlier attempt.** Commits 8cdd5d6d through ccaeb30d, reverted by 39e08bb4, oscillated between keeping and closing the runtime inside proposal 0073, against spec text that required closing. Their facets (drain-frame suppression, a generation reset failing open, runtime redial, a phantom sibling in the active set, a reader closing the wrong subscribers, and a parked accept goroutine) are closed here by deletion or by the sticky ended state. None returns while nothing tears the transport down per session, the adapter sends no terminate frame, the generation does not reset, and nothing redials.
 - **Ordering against proposal 0078.** 0078 keeps the listener and leaves `Close`'s occupancy-zero connection close in place, so landed alone it turns a recycled sidecar pod's failed second `Start` from immediate into a 30-second accept wait. Land 0078 immediately before this proposal. CODE-4 extends 0078's `CloseListener` and keeps its name and signature, so 0078's callers and test cleanups compile unchanged. 0078's TEST-1 and TEST-9 assert a second accept after the last `Close`, which the kept connection removes; TEST-1 disposes of them.
-- **Runtimes written for one session per process.** A runtime built on a shipped runtime SDK serves a later session on a kept process under the first session's context, so S4 waits on the follow-up runtime-SDK proposal (spec-changes §12, decision 3).
-- **The admission rule refuses recycling pool definitions that lack the acknowledgment.** Once CODE-11 lands, every pool definition under the rule D5 cites that passes through `ValidateSessionPolicy` without the field fails validation. The test literals TEST-19 lists and `task-mode-echo-pool` (FIXTURE-1) gain the field in S6, the step that lands the rule.
+- **Runtimes written for one session per process.** A runtime built on a shipped runtime SDK serves a later session on a kept process under the first session's context, so S19 waits on the follow-up runtime-SDK proposal (spec-changes §12, decision 3).
+- **The admission rule refuses recycling pool definitions that lack the acknowledgment.** Once CODE-11 lands, every pool definition under the rule D5 cites that passes through `ValidateSessionPolicy` without the field fails validation. The test literals TEST-19 lists and `task-mode-echo-pool` (FIXTURE-1) gain the field in S21, the step that lands the rule.
 - **The Postgres fallback claim reads and writes no tenant pin** (`pkg/gateway/podlifecycle/podsession/fallbackclaim.go:91-133`, `pkg/agentpodstate/pgstore/pgstore.go:245-279`). CODE-8 closes it in the same step that keeps a runtime across tenants' reach.
 - **Scrub reach does not follow from `shareProcessNamespace: false` alone.** `buildSidecar` mounts `workspace`, the credential volume, `tmp`, `sessions`, `artifacts`, `/dev/shm`, and `shared` into both containers (`pkg/controller/sandbox/podspec/podspec.go:536-557`), so the filesystem steps cross the boundary. Step 1b removes only the adapter UID's segments.
 - **The tier-11 pinned phrases.** `tests/tier11_docs/vm_restart_reprovision_consistency_test.go:176-209` pins phrases in the §5.2 recycle-lifecycle sentence and the §6.2 projection sentence. SPEC-5(a) edits the §5.2 recycle-lifecycle line without rewording a pinned phrase, and no staged edit touches the §6.2 projection sentence.
+- **Ending a reserved hold on a pool outside the process-reuse rule stamps no drain request.** The WarmPoolController writes `draining` from whatever phase the Sandbox holds (`pkg/controller/warmpool/pod_reconciler.go:609-618`, `:666-672`), so a stamp written with the claim `DELETE` can drive `reserved → draining`, an edge §6.2 does not have. The next acquisition that reads the pod `idle` stamps it (D16). Every drain stamp on a refused pinned pod first confirms with a direct read that no `claim-<name>` SandboxClaim exists, because the gateway stamps the pin after it creates the claim and a claimed pod is another replica's acquisition in progress (non-spec §4.4).
 - **The pinned-idle bound on admin-API pools** is zero only until demand is observed (D14); a finding that assumes it is always zero is wrong.
 - **`cmd/lenny-adapter/main.go:86-88` states a "shared-uid pod layout".** The pod renders the adapter and runtime under distinct UIDs, and CODE-9 corrects the comment.
 
@@ -46,7 +48,7 @@
 
 - A recycled pod serves its pinned tenant's later sessions with the runtime process that served the first, until `recycle.maxSessionsPerPod` or another retire trigger ends the pod, in both deployment models.
 - Pool admission accepts process reuse only on a pool that sets `sessionPolicy.acknowledgeProcessLevelIsolation: true`.
-- A kept runtime process serves one tenant. Every idle-pod acquisition reads the tenant pin and refuses a pod pinned to another tenant, and the warm-pool planner keeps pinned idle pods out of the inventory that satisfies `minWarm`.
+- A kept runtime process serves one tenant. Every idle-pod acquisition reads the tenant pin and refuses a pod pinned to another tenant, and the warm-pool planner keeps pinned idle pods out of the inventory that satisfies `minWarm`. After an admitted edit takes a pool outside the process-reuse rule, no acquisition places a session on a pod that has served one.
 - A pod whose runtime cannot serve the next session retires at the recycle boundary with `runtime_not_live`, and a runtime that stops during the `reserved` hold fails the next start at once.
 - The specification names who starts the runtime process, states its lifetime and what the whole-pod scrub reaches, and discloses to clients that a recycled session may run in a runtime process that served an earlier session of the same tenant.
 - The proposal closes part (b) of BUILD-GAPS finding F-5.2.33.
@@ -66,7 +68,17 @@ spec-changes.md §9.1 carries the detail and the evidence for each item.
 
 ## Open decisions for human to make
 
-No decision is open for the human. The human adjudicated decisions 1 to 5 and the redesign decisions A to C on 2026-09-30, and spec-changes.md §12 records each.
+The human adjudicated decisions 1 to 5 and the redesign decisions A to C on 2026-09-30 and decisions 6 and 7 on 2026-10-01, and spec-changes.md §12 records each. The review passes routed the questions below and no pass has closed them. Where an entry says the review log records no recommendation, the open-decisions-and-impact-review phase supplies one. Step identifiers refer to the implementation checklist.
+
+1. **Sidecar `preConnect`.** Should §6.1 restrict `preConnect`, the SDK-warm pod mode, to the embedded deployment model? After SPEC-1 and SPEC-2 the adapter starts and restarts no process in a sidecar runtime container, so a sidecar pod has no mechanism that makes it SDK-warm. The only SDK-warm runtime in the tree is the embedded `SDKWarmInProcessRuntime`. The specification states no such restriction today, and the gap predates this proposal. The review log records no recommendation.
+2. **Drains per acquisition on an `allowCrossTenantReuse` pool.** Should one acquisition drain at most one refused pinned pod? As SPEC-8(c) stages it, an acquisition stamps the drain request on every pinned pod its scan refuses to a different tenant, so when no admissible pod exists, one claim drains the pool's entire pinned idle inventory. The reviewer did not file it as a defect, because the replacements add unpinned capacity during exhaustion and the behaviour agrees with D6. The review log records no recommendation.
+3. **The Postgres fallback's pin read inside the row lock.** Should the fallback claim keep calling `AdmitTenantPin` inside the `SELECT ... FOR UPDATE` transaction of `ClaimIdle`? As non-spec §4.4 stages it, each refused row costs an API-server Pod read, and on an `allowCrossTenantReuse` pool a drain patch, while the row lock and the Postgres connection are held. The fallback runs only while the API-server watch stream is degraded, when §4.6.1 already expects 5 to 15 seconds of added latency. The log names one alternative, filtering on the mirror row's `tenant_id` in SQL first, and records that the mirror writes `tenant_id` empty for idle rows today. The review log records no recommendation.
+4. **The claim-absence check before the cross-tenant drain.** Should both drain triggers stamp the drain request only after a direct `Get` of the pod's `claim-<name>` SandboxClaim returns NotFound? The staging does so (SPEC-8(c), D6, D16, and non-spec §4.4), at the cost of one uncached `Get` per refused pinned pod. The alternative checks only when `KeepsRuntime` is false, which leaves the cross-tenant drain able to drain another gateway replica's acquisition in progress and gives the predicate two forms. The redesign applied the staged form as its default.
+5. **Review-log entries that describe the withdrawn transition staging.** Should the review log delete the Ledger entries that let a `reserved` or pinned idle pod serve one more session after an admitted edit takes its pool outside the process-reuse rule, or keep them as written behind the Settled entry for decision 6? The redesign kept them as its default. The choice affects the review log only.
+6. **The §15.7 Go SDK snippet.** Should the spec-changes §9.1 SDK bullet name the §15.7 snippet's `CreateRequest.SessionID` comment ("the session this runtime instance is bound to") and `TaskID` comment ("OnCreate is invoked once with this value") as sentences the follow-up runtime-SDK proposal owns? Both read as per-session on a recycling pool, and the review log's blast-radius table classifies only §15.7's "before spawning" clause. A later docs-alignment pass declined to file them again because the follow-up owns the SDK contract. The review log records no recommendation.
+7. **Where SPEC-4(h) inserts its delete in the §4.6.3 ownership row.** Should SPEC-4(h) append the acquisition-path delete after "orphan GC" instead of inserting it mid-row, so the `claimOwnershipRowSentence` pin in `tests/tier11_docs/spec_28_register_writers_test.go` keeps matching after S4? SPEC-14(g) breaks the same test's `claimWriterSetCell` pin either way, so tier 11 stays red from S14 until S21 lands. The review log records no recommendation.
+8. **Where SPEC-12(g) places the hold-ending `DELETE`.** Should the `DELETE` that ends a reserved hold stay in §29.2 step 7, where SPEC-12(g) places it, although it precedes the step 6 `CREATE` it hands off to and the §29 **Step numbering.** rule numbers steps in the order they occur? The reviewer did not file it as a defect, because step 6 already loops. The review log records no recommendation.
+9. **A hold-timeout no-frame assertion.** Should TEST-3 gain a tier-1 case asserting that the coordinator hold timeout writes no `CH-RUNTIMEOPS` `terminate` frame? No staged test asserts it, and the existing hold-timeout test asserts only the next session's teardown. The review log records no recommendation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -91,9 +103,9 @@ No decision is open for the human. The human adjudicated decisions 1 to 5 and th
 ## Deliverable index
 
 - **SPEC-1** (`spec/04_system-components.md`): the §4.7.9 runtime-start step.
-- **SPEC-2** (`spec/04_system-components.md`): the §4.7.10 **Runtime process lifetime** paragraph and its row.
+- **SPEC-2** (`spec/04_system-components.md`): the §4.7.10 **Runtime process lifetime** paragraph and its trade-off table row.
 - **SPEC-3** (`spec/04_system-components.md`): the §4.7 adapter RPC table rows for `Shutdown` and `ReportPodScrub`.
-- **SPEC-4** (`spec/04_system-components.md`): the §4.6.1 and §4.6.3 retire and pin statements.
+- **SPEC-4** (`spec/04_system-components.md`): the §4.6.1 and §4.6.3 retire, pin, and reserved-hold statements.
 - **SPEC-5** (`spec/05_runtime-registry-and-pool-model.md`): the §5.1 setup commands and the §5.2 recycle lifecycle and scrub procedure.
 - **SPEC-6** (`spec/05_runtime-registry-and-pool-model.md`): the §5.2 scrub steps and what the scrub reaches.
 - **SPEC-7** (`spec/05_runtime-registry-and-pool-model.md`): §5.2 retirement and sizing.
@@ -103,23 +115,23 @@ No decision is open for the human. The human adjudicated decisions 1 to 5 and th
 - **SPEC-11** (`spec/15_external-api-surface.md`): §15.4, §15.4.1, §15.4.2, and §15.4.3.
 - **SPEC-12** (`spec/29_communication-scenarios.md`): §29.2, §29.4, and §29.9.
 - **SPEC-13** (`spec/11_policy-and-controls.md`): step 3 of the §11.4 full-revoke propagation mechanism.
-- **SPEC-14** (`spec/28_communication-channels.md`): §28.5.3 and §28.8.
+- **SPEC-14** (`spec/28_communication-channels.md`): §28.3, §28.5.3, and §28.8.
 - **SPEC-15** (`spec/13_security-model.md`): the §13.1 credential-read boundary.
-- **SPEC-16** (`spec/16_observability.md`): the §16.1 `lenny_warmpool_idle_pods` row.
+- **SPEC-16** (`spec/16_observability.md`): the §16.1 `lenny_warmpool_idle_pods` and `lenny_warmpool_reserved_pods` rows.
 - **SPEC-17** (`spec/17_deployment-topology.md`): the §17.8.2 idle pod-minutes guidance.
-- **SPEC-18** (`spec/10_gateway-internals.md`): the §10.1.4 **Hold state timeout:** bullet: no `terminate` frame, and the runtime connection closed at the timeout.
+- **SPEC-18** (`spec/10_gateway-internals.md`): the §10.1.4 **Hold state timeout:** bullet.
 - **CODE-1** (`pkg/adapter/socketruntime.go`): the transport kept for the pod's life and its sticky ended state.
 - **CODE-2** (`pkg/adapter/session.go`, `pkg/adapter/slotsession.go`): the terminate frame removed from the session teardown, and `drainViaLifecycle` deleted.
 - **CODE-3** (`pkg/adapter/runtimegeneration.go`): the runtime generation without reset.
 - **CODE-4** (`pkg/adapter/socketruntime.go`, `pkg/adapter/holdstate.go`): the pod-scope teardown and its call at the coordinator hold timeout.
-- **CODE-5** (`pkg/adapter/podscrub.go` and the report carriers): the liveness sample and the `runtime_live` wire field.
+- **CODE-5** (`pkg/adapter/podscrub.go`, the report carriers, and `schemas/lenny-adapter.proto`): the liveness sample and the `runtime_live` wire field.
 - **CODE-6** (`pkg/sandbox/podscrub/podscrub.go`): the `Decide` retire branch and reason.
 - **CODE-7** (`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, `pkg/gateway/session/recycle/scrubreporter_seams.go`): the gateway threading and the `released` retire log.
-- **CODE-8** (`pkg/gateway/podlifecycle/podclaim`, `podsession`, `sessionserver`, and `pkg/agentpodstate`): tenant pin admission on every idle acquisition.
+- **CODE-8** (`pkg/gateway/podlifecycle/podclaim`, `podsession`, `sessionserver`, `pkg/gateway/runtime/poolstore`, and `pkg/agentpodstate`): tenant pin admission on every idle acquisition, and the refusal and drain of a pod that served a session on a pool outside the process-reuse rule.
 - **CODE-9** (the files listed under CODE-9 in non-spec-changes.md §8.2): the comment corrections.
 - **CODE-10** (`pkg/controller/warmpool/plan/plan.go`, `pkg/controller/warmpool/controller.go`, `cmd/lenny-controller/controllers.go`, `pkg/apis/lenny/v1alpha1/sandboxwarmpool_types.go`): pinned idle inventory.
-- **CODE-11** (`pkg/gateway/runtime/poolstore/poolstore.go`, `pkg/gateway/externalapi/openapi/openapi.json`): the process-reuse admission rule.
-- **FIXTURE-1** (`tests/testinfra/kind/install.sh`): the acknowledgment on `task-mode-echo-pool`.
+- **CODE-11** (`pkg/gateway/runtime/poolstore/poolstore.go`, `pkg/admission/pool_config_validator/validator.go`, `pkg/gateway/externalapi/openapi/openapi.json`): the process-reuse admission rule.
+- **FIXTURE-1** (`tests/testinfra/kind/install.sh`, `tests/testinfra/kind/bootstrap-overlay.gen.yaml`): the acknowledgment on `task-mode-echo-pool`.
 - **TEST-1** (`pkg/adapter/socketruntime_test.go`): tier-1 transport cases and the disposition of proposal 0078's socket cases.
 - **TEST-2** (`pkg/adapter/socketruntime_e2e_test.go`): tier-1 spawned-runtime signalling at pod teardown.
 - **TEST-3** (`pkg/adapter/drain_test.go`, `pkg/adapter/slotsession_test.go`): tier-1 deletion of the drain cases and the no-frame session-teardown cases.
@@ -132,16 +144,17 @@ No decision is open for the human. The human adjudicated decisions 1 to 5 and th
 - **TEST-10** (`tests/tier10_conformance/recycle_scrub_conformance_test.go`): the tier-10 conformance case.
 - **TEST-11** (`tests/tier5_e2e_kind/execution_modes_test.go`): the tier-5 un-skip.
 - **TEST-12** (`pkg/gateway/podlifecycle/podclaim`): tier-2 `AdmitTenantPin` cases.
-- **TEST-13** (`pkg/gateway/podlifecycle/podsession`): tier-2 fallback claim pin cases.
+- **TEST-13** (`pkg/gateway/podlifecycle/podsession`, `tests/tier2_component/stores/agentpodstatestore_test.go`): tier-2 fallback claim pin cases.
 - **TEST-14** (`tests/tier9_security/tenant_isolation_test.go`): the tier-9 second-tenant case.
 - **TEST-15** (`tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition/scenario.go`): the tier-7a scenario extension.
 - **TEST-16** (`tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go`): the tier-11 lifetime reconciliation, staged-site phrase, and retire single-home gates.
 - **TEST-18** (`pkg/controller/warmpool/plan/plan_test.go`, `pkg/controller/warmpool/controller_test.go`): tier-1 and tier-2 pinned idle inventory cases.
 - **TEST-19** (`pkg/gateway/runtime/poolstore`, `pkg/gateway/externalapi/admin`, `tests/tier2_component/stores/poolstore_test.go`, `tests/tier9_security/pool_admission_isolation_test.go`): tier-1, tier-2, and tier-9 admission cases, and the fixture literals the rule reaches.
 - **TEST-20** (`pkg/adapter/holdstate_test.go`, `tests/tier7a_load_local/coordinator_hold_termination_race_test.go`, `tests/tier9_security/adapter_hold_termination_surface_test.go`): tier-1, tier-7a, and tier-9 coordinator hold timeout teardown cases.
-- **DOC-1** (`docs/runtime-author-guide/lifecycle.md`): the kept-process contract for runtime authors.
-- **DOC-2** (`docs/reference/execution-modes.md`): the reuse condition on the reference and configuration pages.
-- **DOC-3** (`docs/runtime-author-guide/integration-levels.md`): the runtime-cooperation statements.
-- **DOC-4** (`docs/operator-guide/`): the operator narratives.
-- **DOC-5** (`docs/client-guide/session-lifecycle.md`): the client and adapter references.
-- **DOC-6** (`docs/runtime-author-guide/`, `docs/getting-started/concepts.md`, `docs/about/contributing.md`, `docs/tutorials/build-a-runtime.md`, `docs/reference/adapter-contract.md`, `docs/api/internal.md`, `docs/client-guide/session-lifecycle.md`, `docs/api/mcp.md`, and `docs/assets/diagrams/rpc-lifecycle.svg`): the reader-facing mirrors of who starts the runtime, of what a session end, an interrupt, and a missed heartbeat do to it, and of drain coordination at pod exit.
+- **TEST-21** (`pkg/gateway/runtime/poolstore`, `pkg/gateway/sessionserver`, `pkg/gateway/podlifecycle/podclaim`, `pkg/gateway/podlifecycle/podsession`, `tests/tier9_security/tenant_isolation_test.go`, `tests/tier11_docs/spec_28_register_writers_test.go`): tier-1, tier-2, tier-9, and tier-11 cases for acquisition on a pool outside the process-reuse rule.
+- **DOC-1** (`docs/runtime-author-guide/lifecycle.md`, `docs/runtime-author-guide/index.md`): the kept-process contract for runtime authors.
+- **DOC-2** (`docs/reference/execution-modes.md`, `docs/reference/glossary.md`, and the other files listed under DOC-2 in non-spec-changes.md §13): the reuse condition on the reference and configuration pages.
+- **DOC-3** (`docs/runtime-author-guide/integration-levels.md`, `docs/about/why-lenny.md`, `docs/about/contributing.md`): the runtime-cooperation statements.
+- **DOC-4** (`docs/operator-guide/`, and the `docs/reference/`, `docs/runtime-author-guide/`, and `docs/getting-started/` files listed under DOC-4 in non-spec-changes.md §13): the operator narratives and the reserved-hold exception for a pool outside the process-reuse rule.
+- **DOC-5** (`docs/client-guide/session-lifecycle.md`, `docs/api/rest.md`, `docs/api/mcp.md`, `docs/reference/adapter-contract.md`): the client and adapter references.
+- **DOC-6** (the files listed under DOC-6 in non-spec-changes.md §13): the reader-facing mirrors of who starts the runtime, of what a session end, an interrupt, and a missed heartbeat do to it, and of drain coordination at pod exit.
