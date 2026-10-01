@@ -15,4 +15,4 @@ implemented-by:
 
 ## Review history
 
-An adversarial review run executed on 2026-09-30. The spec loop ran six rounds and did not converge. The run fixed five findings. Two full-pool sweeps were performed during the spec loop. The non-spec loop was not run. Because the spec loop did not converge, open decisions the review examined remain unsettled.
+An adversarial review run executed on 2026-09-30. The spec loop ran eleven rounds and did not converge. The run performed four full-pool sweeps and fixed three findings. The non-spec loop was not run. Because the spec loop did not converge, decisions the review examined remain open.

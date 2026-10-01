@@ -1527,6 +1527,12 @@ UNVERIFIED: for the security lens. On a recycling pool, §11.4 full-revoke step 
 - USEFUL [spec.9.review-single-source.1 DECISION]: its per-rule home inventory held unchanged this round, so only the one changed hunk needed a fresh sweep.
 - USEFUL [spec.10.review-docs-alignment.1 FACT on InspectForRecycle]: it confirmed the new SPEC-8(d) sentence against the code, so I did not have to re-derive whether an updated pool applies at the next boundary.
 
+### [f1.cleanup.2]
+FACT: summary.md already carries the listed sections in order, with `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, and `**Watch out for.**` under `## Summary`, and this pass edited nothing in it. `## Deliverable index` is last and unchanged. The heading carries a `.2` suffix because an earlier firing-1 cleanup already holds `[f1.cleanup]`.
+FACT: no item this firing adjudicated is open for the human. The out-of-scope items that stand are the existing entries under `## Defects in the shipped tree that this proposal does not stage`, and the 0084, 0071, and 0080 impact items are the three existing rows under `## Impacts on other proposals`. The `## Open decisions for human to make` preamble holds against spec-changes.md §12, which records decisions 1 to 5 and A to C as adjudicated and states that no decision is open.
+WATCHOUT: the gate refuted the adapter-signals item (marker spec-11), and the summary still carries it as the sixth entry under `## Defects in the shipped tree that this proposal does not stage`. This format pass did not re-adjudicate it. Its tree claims hold today: `SocketRuntimeProcess` holds a process handle only for `SpawnPath` (pkg/adapter/socketruntime.go:62-65), `pkg/adapter` non-test code writes no `"shutdown"` frame, `SubprocessExecutor` captures stderr (pkg/gateway/session/executor/subprocess.go:309-333), and the sidecar runtime container carries no `Lifecycle` while the adapter and embedded containers carry `preStopDrainHook` (pkg/controller/sandbox/podspec/podspec.go:606, :608-619, :700).
+WATCHOUT: the `**Watch out for.**` item on proposal 0078 and the `**Decisions.**` bullet on proposal 0073's SCHEMA-1 still assert things about other proposals outside `## Impacts on other proposals`. Both sit in listed parts, and the gate refuted the 0078 impact row again this firing, so both stay in place (f1.cleanup, f2.cleanup).
+
 ## Retired
 
 The legacy single-file proposal carried no `Resolved in adversarial review` history, so this section has no entries.
