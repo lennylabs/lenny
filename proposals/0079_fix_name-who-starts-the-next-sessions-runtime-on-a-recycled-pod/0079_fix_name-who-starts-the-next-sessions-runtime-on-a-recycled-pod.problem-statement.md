@@ -22,7 +22,7 @@ The adapter ends the runtime at occupancy zero. `SocketRuntimeProcess.Close` clo
 
 The gateway patches the claim to `recycling`, the adapter runs the scrub against a runtime container whose process is already gone, the scrub reports success, and the disposition decider reuses the pod (`pkg/sandbox/podscrub/podscrub.go:328`). The claim reaches `reserved`, the pod is held for its pinned tenant, and the tenant's next session is dispatched onto it with no acquisition round trip. `StartSession` reaches `Runtime.Start` (`pkg/adapter/session.go:156`), `SocketRuntimeProcess.Start` finds no live connection and waits out the accept bound, and the session fails. The gateway categorises the failure as transient and retries onto another pod, so the client usually sees a slower session rather than an error and the operator sees nothing: the scrub succeeded, the pod was reused, the retry worked.
 
-The consequence for capacity is concrete. §5.2's `mode_factor` converges toward `recycle.maxSessionsPerPod` on a `standard` or `in-place` recycling pool (§5.2), so a pool configured for twenty sessions per pod is provisioned for a fraction of the pods it actually needs.
+The consequence for capacity is concrete. §5.2's `mode_factor` converges toward `recycle.maxSessionsPerPod` on a `standard` or `in-place` recycling pool (§5.2), so a pool configured for twenty sessions per pod is provisioned for a fraction of the pods it needs.
 
 ### 1.4 The two subsidiary false statements
 
