@@ -2366,6 +2366,25 @@ restart after a runtime crash, and starting the next runtime before its session 
 - The runtime-SDK multi-session change is a separate proposal, and proposal 0079's S20 does not wait for it
   provided it lands before any release (2026-10-01).
 
+Answered on 2026-10-01 for the later phases:
+
+- R6 lands before proposal 0087's code when it can be scheduled in Phase 0 or Phase 1.
+- New sequential recycling pools get no default runtime lifetime: `recycle.runtimeProcess` is required,
+  as `maxSessionsPerPod` is, so the deployer makes the isolation choice explicitly.
+- The lifetime setting lives on the pool. A Runtime-level declaration of multi-session support can be added
+  later if needed.
+- At the recycle boundary the supervisor ends the runtime before the deployer's `cleanupCommands` run, so
+  cleanup never races a live runtime.
+- The `restart` lifetime does not require `acknowledgeProcessLevelIsolation`. The remaining shared state is
+  covered by `acknowledgeBestEffortScrub`, which every recycling pool already requires.
+- The adapter-to-supervisor channel is named `CH-SUPERVISE`.
+- The runtime-SDK proposal signals the end of a session on `CH-MSGSOCK`, which every runtime has, rather than
+  on `CH-RUNTIMEOPS`, which only Full-level runtimes use and which R17 has not enabled in deployed pods.
+- Cross-tenant reuse on `in-place` microVM pools with a fresh runtime process plus the scrub is accepted
+  behind the existing explicit opt-in, with T4 still prohibited and the remaining guest-kernel and adapter
+  residuals documented. Proposal 0087 part 2's review directs its security lens at this question.
+- A supervised pod keeps retiring on a runtime crash. Restart after a crash stays deferred.
+
 ### 10.4 Related work outside this track
 
 These items are independent of the order above and can run whenever capacity allows: BUILD-GAPS F-10.3.26
@@ -2374,49 +2393,27 @@ proposal 0072 split into its separate items, and draft proposal 0080 split into 
 
 ### 10.5 Decisions still open
 
-Each decision is listed with the phase that needs it and the recommendation on record.
+Each decision is listed with the phase that needs it. Decisions answered on 2026-10-01 are in section 10.3.
 
 **Before or during Phase 0**
 
 - **What a gVisor failure in the validation spike means.** Either it ends the restart lifetime on
-  `sandboxed` pools, or it delays it until a gVisor-specific design exists. No recommendation is recorded.
-- **Whether R6 lands before proposal 0087's code.** This is a scheduling call. Landing R6 first removes the
-  S-4 serialization of pod-builder edits.
+  `sandboxed` pools, or it delays it until a gVisor-specific design exists. The recommendation on record is
+  to delay.
 
 **At proposal 0087 part 1's convergence (Phase 2)**
 
 - **The trust model.** Is a platform process running at the agent UID, in the same container as the
-  author's binary, acceptable, and on which isolation profiles (runc, gVisor, and Kata)? The design makes
-  gVisor validation a hard gate.
-- **The default lifetime for new sequential recycling pools,** `keep` or `restart`. `restart` adds the
-  runtime's cold start to every session until the design's later phase that starts the next runtime early.
-- **Supervisor scope.** The recommendation is restart pools only, with supervision of every sidecar pod left
-  to a later proposal.
+  author's binary, acceptable, and on which isolation profiles (runc, gVisor, and Kata)? The recommendation
+  on record is to accept it on Kata and on gVisor once validated, and on runc only under an explicit trust
+  decision.
+- **Supervisor scope.** Restart pools only, or every sidecar pod. The recommendation on record is restart
+  pools only, with supervision of every sidecar pod left to a later proposal.
 - **Where the runtime's start command comes from:** a registration field, a registry lookup by image digest,
-  or both. The 0087 draft stages a `Runtime.spec.command` field.
-- **What `restart` means for embedded runtimes,** which run inside the adapter process.
-- **Whether the lifetime choice lives on the pool, on the Runtime, or on both.**
-- **Ordering of the runtime's end against the deployer's `cleanupCommands`.**
-- **Whether the restart lifetime still requires `acknowledgeProcessLevelIsolation`** for state other than the
-  runtime process.
-- **The new channel's name.** The working name is `CH-SUPERVISE`. Stems built on "spawn" are unavailable,
-  because §8 binds that word to child-session delegation.
-
-**At proposal 0087 part 2's convergence (Phase 3)**
-
-- **Whether a fresh runtime process plus the whole-pod scrub is enough isolation for cross-tenant reuse on
-  `in-place` microVM pools,** given residue in the guest kernel and the adapter process that persists across
-  tenants.
-
-**At the runtime-SDK proposal's convergence (Phase 2)**
-
-- **The end-of-session signal.** Whether the SDKs learn that a session ended through a new frame, and on
-  which channel. A new frame passes through §28, the frame schema, and a tier-3 contract test.
-
-**Deferred by the restart design, not yet scheduled**
-
-- **Whether a supervised pod restarts its runtime after a crash.** That would change the no-restart policy
-  in §4.7.11 item 5 and §5.2.
+  or both. The 0087 draft stages a `Runtime.spec.command` field, and the recommendation on record is that
+  field.
+- **What `restart` means for embedded runtimes,** which run inside the adapter process. The recommendation
+  on record is a fresh in-process runtime instance, with the persisting adapter process documented.
 
 ### 10.6 Context and rationale for the proposal track
 
