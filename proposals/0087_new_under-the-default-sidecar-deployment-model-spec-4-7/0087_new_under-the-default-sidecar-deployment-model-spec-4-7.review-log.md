@@ -11,3 +11,7 @@
 ### Deferred
 
 ## Ledger
+
+### [f1.cleanup]
+
+FACT: Open-decisions firing 1 cleanup found the summary already carrying the listed sections in order, with an empty open-decisions section, and moved no content.
