@@ -2237,6 +2237,19 @@ DECISION: did not file the direct-mode token fold to no session on a kept proces
 - USEFUL [spec.15.review-single-source.1 DECISION]: its per-rule home inventory (SPEC-8(d) hold end and refusal; SPEC-8(c) pin, cross-tenant drain, pinned idle; SPEC-7(a); SPEC-18(b); SPEC-6(b)) held through the redesign; only the drain-cap hunks needed a fresh sweep.
 - USEFUL [spec.2.review-single-source.1 WATCHOUT D11]: D-entries, the §3 overview, and §5 rows restating staged text are the proposal's format; skipped again.
 
+### [f3.impact-0073]
+- DECISION: wrote the 0073 row under summary.md `## Impacts on other proposals` for item `marker:0073:session at a time, because the co-tenancy it analyses requires two sessions sharing one pod. the`. The row records that SPEC-12(h) deletes the §29.10 **The condition.** single-session sentence 0073's SPEC-5 landed, that CODE-3 deletes the `noteRuntimeClosed` reset 0073's CODE-1 landed, and that CODE-1 reverses 0073 SCHEMA-1 for `SocketRuntimeProcess`. It moved the summary `**Decisions.**` bullet on the SCHEMA-1 reversal into the row, because the impacts section is the one place the summary states another proposal's validity. — EVIDENCE: spec-changes.md:504 (SPEC-12(h)); non-spec-changes.md:53 (CODE-1) and :57 (CODE-3); proposals/0073_fix_give-every-session-a-slot-and-absence-one-meaning.md:3 (Implemented (2026-08-31)), :2050 (SCHEMA-1), :2727-2739 (SPEC-5), :3451-3453 (CODE-1)
+- FACT: git blame assigns spec/29_communication-scenarios.md:1460-1461 to commit 7bd002003, whose message names proposal 0073; the `noteRuntimeClosed` reset at pkg/adapter/runtimegeneration.go:139-142 landed in commit 040323634; the last commit on the 0073 file is cdcd7e9e1 (2026-08-31, "Record proposal 0073 as implemented").
+- WATCHOUT: 0073 made one restatement of the §29.10 scoping sentence; the slot-presence clause is the pre-0073 text it replaced, so the row does not call it a second restatement. `proposal-status.mjs` cannot read 0073 because it is a legacy single file; the status comes from 0073 .md:3.
+
+
+### [f3.cleanup]
+FACT: summary.md already has the listed sections in order. `**Problem statement.**`, `**What changes.**`, `**Decisions.**`, and `**Watch out for.**` sit under `## Summary`, and this pass edited nothing in the file. `## Deliverable index` is last and unchanged.
+FACT: id:11 stands as the only entry under `## Open decisions for human to make` and keeps its identifier `11.`. The section has no retired block. Its preamble still holds against spec-changes.md §12, which records decisions 1 to 10 and A to C as adjudicated.
+FACT: the f3.impact-0073 pass moved the `**Decisions.**` bullet on 0073's SCHEMA-1 into the 0073 row under `## Impacts on other proposals`. That makes the f1.cleanup, f2.cleanup, and f1.cleanup.2 WATCHOUTs about that bullet obsolete. The f2.cleanup.2 WATCHOUT on entries 3 and 9 is also obsolete, because redesign1.apply.5 removed both entries.
+FACT: the `## Non-goals` preamble ("spec-changes.md §9.1 carries the detail and the evidence for each item") still holds. Every non-goal has a matching §9.1 bullet.
+WATCHOUT: some text still asserts things about proposals 0078 and 0084 outside `## Impacts on other proposals`. For 0078, these are the `**Decisions.**` bullet "Proposal 0078 lands first and unchanged", the `**Watch out for.**` item **Ordering against proposal 0078.**, and the non-goal on the listener teardown. For 0084, they are the `**Decisions.**` bullet and the non-goal on per-session attribution. All of them sit in listed parts and restate adjudicated decisions 4 and 1. The 0084 row agrees with them, and 0078 has no row because the gate refuted it, so they stay where they are (f1.cleanup, f2.cleanup).
+
 ## Retired
 
 The legacy single-file proposal carried no `Resolved in adversarial review` history, so this section has no entries.
