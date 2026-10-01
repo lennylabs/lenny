@@ -8,9 +8,9 @@
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands the `spec/04_system-components.md` §4.7 adapter RPC table edits.
       Tiers 0, 11. Depends on: S2
-- [ ] **S4 · spec** — SPEC-4. Lands the `spec/04_system-components.md` §4.6.1 and §4.6.3 edits. Its tier-11 run leaves the `spec_28_register_writers_test.go` case red until S21 lands.
+- [ ] **S4 · spec** — SPEC-4. Lands the `spec/04_system-components.md` §4.6.1 and §4.6.3 edits. Its tier-11 run leaves the `spec_28_register_writers_test.go` case red until S19 lands.
       Tiers 0, 11. Depends on: S3
-- [ ] **S5 · spec** — SPEC-5. Lands the `spec/05_runtime-registry-and-pool-model.md` §5.1 setup commands edit and the §5.2 recycle lifecycle and scrub procedure edits.
+- [ ] **S5 · spec** — SPEC-5. Lands the `spec/05_runtime-registry-and-pool-model.md` §5.1 setup commands and Runtime definition example edits and the §5.2 recycle lifecycle and scrub procedure edits.
       Tiers 0, 11. Depends on: S4
 - [ ] **S6 · spec** — SPEC-6. Lands the `spec/05_runtime-registry-and-pool-model.md` §5.2 scrub steps edits.
       Tiers 0, 11. Depends on: S5
@@ -28,7 +28,7 @@
       Tiers 0, 11. Depends on: S11
 - [ ] **S13 · spec** — SPEC-13. Lands the `spec/11_policy-and-controls.md` §11.4 full-revoke step 3 edit.
       Tiers 0, 11. Depends on: S12
-- [ ] **S14 · spec** — SPEC-14. Lands the `spec/28_communication-channels.md` §28.3, §28.5.3, and §28.8 edits. Its tier-11 run leaves the `spec_28_register_writers_test.go` case red until S21 lands.
+- [ ] **S14 · spec** — SPEC-14. Lands the `spec/28_communication-channels.md` §28.3, §28.5.3, and §28.8 edits. Its tier-11 run leaves the `spec_28_register_writers_test.go` case red until S19 lands.
       Tiers 0, 11. Depends on: S13
 - [ ] **S15 · spec** — SPEC-15. Lands the `spec/13_security-model.md` §13.1 credential-read boundary edits.
       Tiers 0, 11. Depends on: S14
@@ -38,15 +38,15 @@
       Tiers 0, 11. Depends on: S16
 - [ ] **S18 · spec** — SPEC-18. Lands the `spec/10_gateway-internals.md` §10.1.4 **Hold state timeout:** edits.
       Tiers 0, 11. Depends on: S17
-- [ ] **S19 · code** — CODE-1, CODE-2, CODE-3, and CODE-4 with TEST-1, TEST-2, TEST-3, TEST-4, TEST-5, and TEST-20. The transport, the terminate-frame deletion, the runtime generation, and the pod-scope teardown at adapter exit and at the coordinator hold timeout.
-      Tiers 0, 1, 7a, 9. Depends on: S1, S2, S3, S7, S11, S12, S13, S14, S18, proposal 0078, and the follow-up runtime-SDK proposal (spec-changes §12, decision 3)
-- [ ] **S20 · code** — CODE-5, CODE-6, and CODE-7 with TEST-6, TEST-7, TEST-8, and TEST-9. The liveness report, the `Decide` branch, and the gateway threading.
-      Tiers 0, 1, 3, 4. Depends on: S3, S7, S9, and S19
-- [ ] **S21 · code** — CODE-8, CODE-10, and CODE-11 with FIXTURE-1, TEST-12, TEST-13, TEST-14, TEST-18, TEST-19, and TEST-21. Tenant pin admission, the acquisition refusal on a pool outside the process-reuse rule, pinned idle inventory, and the process-reuse admission rule.
-      Tiers 0, 1, 2, 4, 5, 9, 11. Depends on: S4, S8, S9, S12, S14, and S16
+- [ ] **S19 · code** — CODE-8, CODE-10, and CODE-11 with FIXTURE-1, TEST-12, TEST-13, TEST-14, TEST-18, TEST-19, and TEST-21. Tenant pin admission, the capped cross-tenant drain, the acquisition refusal on a pool outside the process-reuse rule, pinned idle inventory, and the process-reuse admission rule. It precedes S20, so no landed tree keeps a runtime process across sessions without the pin read and the admission rule.
+      Tiers 0, 1, 2, 4, 5, 9, 11. Depends on: S4, S8, S9, S12, S14, S16, and S17
+- [ ] **S20 · code** — CODE-1, CODE-2, CODE-3, and CODE-4 with TEST-1, TEST-2, TEST-3, TEST-4, TEST-5, and TEST-20. The transport, the terminate-frame deletion, the runtime generation, and the pod-scope teardown at adapter exit and at the coordinator hold timeout.
+      Tiers 0, 1, 7a, 9. Depends on: S1, S2, S3, S5, S7, S9, S11, S12, S13, S14, S18, S19, proposal 0078, and the follow-up runtime-SDK proposal (spec-changes §12, decision 3)
+- [ ] **S21 · code** — CODE-5, CODE-6, and CODE-7 with TEST-6, TEST-7, TEST-8, and TEST-9. The liveness report, the `Decide` branch, and the gateway threading.
+      Tiers 0, 1, 3, 4. Depends on: S3, S7, S9, and S20
 - [ ] **S22 · code** — CODE-9. The comment corrections and the regenerated SandboxClaim CRD descriptions.
-      Tiers 0, 1. Depends on: S2, S3, S4, S5, S6, S8, S11, S14, S16, S20, and S21
+      Tiers 0, 1. Depends on: S2, S3, S4, S5, S6, S8, S11, S14, S16, S19, and S21
 - [ ] **S23 · test** — TEST-10, TEST-11, and TEST-15. The conformance, cluster, and scenario tests.
-      Tiers 0, 5, 7a, 10. Depends on: S20 and S21
+      Tiers 0, 5, 7a, 10. Depends on: S19 and S21
 - [ ] **S24 · docs** — DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, and DOC-6 with TEST-16. The documentation.
       Tiers 0, 11. Depends on: S18 and S22
