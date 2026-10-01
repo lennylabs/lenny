@@ -1959,6 +1959,16 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
   restored. It was the only site in the tree carrying this assertion.
 
 
+### - [ ] F-4.7.25 — The runtime message socket (`CH-MSGSOCK`) accepts any connecting process without peer authentication [High] — OPEN
+
+**Spec:** §4.7.11 item 1 (**Separate UIDs and connection authentication:**) states that abstract Unix sockets use `SO_PEERCRED` for peer UID verification and that "the adapter accepts connections only from the expected agent UID". The `CH-MSGSOCK` contract card (§28.5.3, **Endpoint.**) states the channel's protections as the `SO_PEERCRED` peer-UID check against the expected agent UID and the manifest-nonce handshake presented as the first message on the socket, and, when `Runtime.spec.requireSoPeercred` is `false`, a per-connection 128-bit challenge with an `HMAC-SHA256` response.
+**Evidence:**
+- `SocketRuntimeProcess.accept` (`pkg/adapter/socketruntime.go:279-300`) calls `p.listener.Accept()` on the abstract socket bound in `NewSocketRuntimeProcess` (`:157`) and returns the connection with no `SO_PEERCRED` check and no nonce exchange.
+- The adapter's peer check exists (`peerCheckedListener`, `pkg/adapter/peercred.go:13-20`, and `checkPeerUID` in `peercred_linux.go:14`), but it wraps only the MCP listeners (`pkg/adapter/platformmcp.go`), not the `CH-MSGSOCK` listener.
+- Proposal 0078's review recorded the missing nonce handshake on `CH-MSGSOCK` as a shipped-tree defect it does not stage. The sidecar-restart design exploration of 2026-10-01 (`scratchpad/sidecar-restart/design.md` on the machine that ran it) confirmed both halves are absent.
+**Gap:** Any process in the pod's network namespace that can reach the abstract socket can become the adapter's runtime connection: receive every session's message frames, write responses and tool calls the adapter attributes to the runtime, and hold the connection that the next session binds to. With the runtime kept across sessions (proposal 0079) and the pod-scoped listener kept across session teardowns (proposal 0078), a stale or foreign peer queued in the listener backlog is accepted by the next `Start`. A future runtime-restart mechanism also depends on tying each accepted connection to one runtime generation, which needs authenticated connections.
+**Suggested resolution:** Wrap the `CH-MSGSOCK` listener in `peerCheckedListener` with the agent UID, and implement the manifest-nonce handshake the `CH-MSGSOCK` card states (which requires the nonce to be in the manifest before the runtime connects, so it depends on the first-session manifest-ordering fix on sidecar pods or a nonce written at adapter boot). Add tier-1 and tier-9 tests that a connection from another UID, or without the nonce, is refused.
+
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
 ### Summary
 
