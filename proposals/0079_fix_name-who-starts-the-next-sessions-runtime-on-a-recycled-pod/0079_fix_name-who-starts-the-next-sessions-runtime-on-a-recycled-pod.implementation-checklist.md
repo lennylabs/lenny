@@ -24,7 +24,7 @@
       Tiers 0, 11. Depends on: S9
 - [ ] **S11 · spec** — SPEC-11. Lands the `spec/15_external-api-surface.md` §15.4, §15.4.1, §15.4.2, and §15.4.3 edits.
       Tiers 0, 11. Depends on: S10
-- [ ] **S12 · spec** — SPEC-12. Lands the `spec/29_communication-scenarios.md` §29.2, §29.4, and §29.9 edits.
+- [ ] **S12 · spec** — SPEC-12. Lands the `spec/29_communication-scenarios.md` §29.2, §29.4, §29.9, and §29.10 edits.
       Tiers 0, 11. Depends on: S11
 - [ ] **S13 · spec** — SPEC-13. Lands the `spec/11_policy-and-controls.md` §11.4 full-revoke step 3 edit.
       Tiers 0, 11. Depends on: S12
@@ -38,14 +38,14 @@
       Tiers 0, 11. Depends on: S16
 - [ ] **S18 · spec** — SPEC-18. Lands the `spec/10_gateway-internals.md` §10.1.4 **Hold state timeout:** edits.
       Tiers 0, 11. Depends on: S17
-- [ ] **S19 · code** — CODE-8, CODE-10, and CODE-11 with FIXTURE-1, TEST-12, TEST-13, TEST-14, TEST-18, TEST-19, and TEST-21. Tenant pin admission, the capped cross-tenant drain, the acquisition refusal on a pool outside the process-reuse rule, pinned idle inventory, and the process-reuse admission rule. It precedes S20, so no landed tree keeps a runtime process across sessions without the pin read and the admission rule.
+- [ ] **S19 · code** — CODE-8, CODE-10, and CODE-11 with FIXTURE-1, TEST-12, TEST-13, TEST-14, TEST-18, TEST-19, and TEST-21. Tenant pin admission, the acquisition refusal and drain on a pool outside the process-reuse rule, pinned idle inventory, and the process-reuse admission rule. It precedes S20, so no landed tree keeps a runtime process across sessions without the pin read and the admission rule.
       Tiers 0, 1, 2, 4, 5, 9, 11. Depends on: S4, S8, S9, S12, S14, S16, and S17
 - [ ] **S20 · code** — CODE-1, CODE-2, CODE-3, and CODE-4 with TEST-1, TEST-2, TEST-3, TEST-4, TEST-5, and TEST-20. The transport, the terminate-frame deletion, the runtime generation, and the pod-scope teardown at adapter exit and at the coordinator hold timeout.
-      Tiers 0, 1, 7a, 9. Depends on: S1, S2, S3, S5, S7, S9, S11, S12, S13, S14, S18, S19, proposal 0078, and the follow-up runtime-SDK proposal (spec-changes §12, decision 3)
+      Tiers 0, 1, 7a, 9. Depends on: S1, S2, S3, S5, S6, S7, S9, S11, S12, S13, S14, S18, S19, and proposal 0078
 - [ ] **S21 · code** — CODE-5, CODE-6, and CODE-7 with TEST-6, TEST-7, TEST-8, and TEST-9. The liveness report, the `Decide` branch, and the gateway threading.
-      Tiers 0, 1, 3, 4. Depends on: S3, S7, S9, and S20
+      Tiers 0, 1, 3, 4. Depends on: S3, S4, S7, S9, and S20
 - [ ] **S22 · code** — CODE-9. The comment corrections and the regenerated SandboxClaim CRD descriptions.
-      Tiers 0, 1. Depends on: S2, S3, S4, S5, S6, S8, S11, S14, S16, S19, and S21
+      Tiers 0, 1. Depends on: S1, S2, S3, S4, S5, S6, S8, S11, S14, S16, S18, S19, and S21
 - [ ] **S23 · test** — TEST-10, TEST-11, and TEST-15. The conformance, cluster, and scenario tests.
       Tiers 0, 5, 7a, 10. Depends on: S19 and S21
 - [ ] **S24 · docs** — DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, and DOC-6 with TEST-16. The documentation.
