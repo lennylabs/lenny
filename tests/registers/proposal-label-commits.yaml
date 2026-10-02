@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+#
+# Range and exemptions for the proposal-label gate over commit messages and
+# added non-Go source lines.
+#
+# tests/tier0_static/proposal_label_commit_test.go reads this file. It scans
+# the message of every commit in since..HEAD, and every line the same range
+# adds to a .proto, .yaml, .yml, or .sh file outside testdata/ and
+# proposals/, for proposal scaffolding labels: a lane prefix (the spec,
+# code, test, doc, fixture, resolution, schema, or conformance lane), a
+# hyphen, and a number or a letter with an optional number, a bare decision
+# identifier (a D and one or two digits), and a bare build step (an S and one
+# or two digits, the S3 service name excepted). Go comments are held by the
+# proposal-label comment ratchet instead.
+#
+# A commit listed under exempt is published history that cannot be
+# rewritten. The gate fails an exempt commit whose message no longer carries
+# a label, so the list holds only commits the gate would otherwise reject.
+# Do not add a commit here to pass the gate: reword the message before it is
+# pushed, and name the spec section and the behavior instead.
+kind: proposal-label-commit-baseline
+version: 1
+since: 5eaade824f915c48438f7d2b8149a16d5cf238e7
+exempt:
+  - commit: 8bcead7f0a5cd6632a07b951072edaf00c1a062d
+    reason: >-
+      Published before the gate landed. Its body names a spec-change
+      identifier of proposal 0079 where it means the §5.2 deployer
+      acknowledgment for a recycling pool that keeps its runtime process
+      across sessions, the tenant pin for the life of a recycled pod, the
+      pinned idle inventory, and the widened client disclosure. The
+      integration commit for the proposal names that section and behavior.
