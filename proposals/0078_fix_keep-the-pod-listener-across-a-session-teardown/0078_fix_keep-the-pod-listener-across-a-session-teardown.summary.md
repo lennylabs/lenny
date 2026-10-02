@@ -69,40 +69,10 @@ specification text that already stands, and it changes no specification sentence
 
 ## Open decisions for human to make
 
-- **Should the window a last-slot `Interrupt` leaves stay out of 0078's scope?**
-  - *Question.* On the socket transport one runtime connection serves every session on the pod. When the
-    last active session ends through `Interrupt`, `SocketRuntimeProcess.Interrupt` closes that connection
-    but leaves `p.connected` true and `p.conn` set (`pkg/adapter/socketruntime.go:398-417`); only `Close`
-    clears them (`:449-450`). A `Start` that lands before the interrupted session's `Close` therefore
-    returns nil without accepting (`:182-186`), and that session stays on the dead connection until its own
-    `Close`. The gateway's interrupt moves the session to suspended rather than closing it
-    (`pkg/gateway/sessionserver/interrupt.go`), and the heartbeat-hung path issues the same clean
-    `Interrupt` (`pkg/adapter/heartbeat.go:160-168`), so on a pool with `maxSessionsPerPod` > 1 a sibling
-    `Start` can land in the window. The defect exists today in the first
-    connection generation. Once 0078 keeps the listener bound, later generations can form, and the window
-    can recur in each of them. Should 0078 leave this out of scope and accept the window until a separate
-    fix, or widen its code and test deliverable to clear `connected` and `conn` on a last-slot `Interrupt`?
-  - *Recommendation.* Keep it out of 0078, and record the window outside 0078 as one new BUILD-GAPS
-    finding.
-  - *Ground.* 0078 neither creates nor cures the window (non-spec-changes.md §5, third row). The sibling
-    hazard of the same session-cohort release, a departing connection's fan-out reader acting on the next
-    connection's subscribers, is folded in as CODE-3 because the listener's survival creates it
-    (non-spec-changes.md §7.7). The `Interrupt` window predates that survival. Clearing the state on a
-    terminal `Interrupt` also changes `Interrupt`'s observable behavior, since a later `Start` would then
-    accept a new connection, and the specification states no post-`Interrupt` connection state for the
-    adapter to meet.
-  - *Alternatives.* Folding the clear and its tests into 0078 widens a code-only listener fix to a second
-    teardown path with its own contract question, and it lost for that reason. Handing the window to
-    proposal 0079 fits its ownership of `Close`'s occupancy-zero branch (non-spec-changes.md D8), which
-    `Interrupt` mirrors, but 0079's text does not mention `Interrupt`, so that routing is ungrounded.
-  - *Cost of deciding otherwise.* Folding it in adds `Interrupt` code and tier-1 and tier-7a tests to the
-    staged set. Keeping it out leaves the window open from 0078's landing until a separate fix lands. The
-    recommended finding is not yet staged: on the recommended answer the staging adds the filing to
-    non-spec-changes.md §10 and §12 and lists the window under **Defects in the shipped tree that this
-    proposal does not stage**.
-  - *Confidence.* Low. The gate refuted an earlier out-of-scope-stands adjudication for this item, and
-    whether 0079's redesign must revisit `Interrupt`'s teardown is unconfirmed.
-  - *Identifier.* ``marker:non-spec-changes §8:- **clearing `connected` and `conn` on a terminal `interrupt`, and scoping the fan-out reader to a``
+None. The last-slot `Interrupt` window was adjudicated by the human on 2026-09-30 and 2026-10-01: it stays
+out of this proposal, and proposal 0079 (approved 2026-10-02) closes it, because its D3 makes per-session
+`Close` and `Interrupt` leave the shared runtime connection open and its staged test pins that a last-slot
+`Interrupt` followed by a sibling `Start` binds to a live connection.
 
 ## Defects in the shipped tree that this proposal does not stage
 

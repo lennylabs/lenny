@@ -2,13 +2,13 @@
 proposal: 0078_fix_keep-the-pod-listener-across-a-session-teardown
 title: Keep the pod's runtime listener across a session teardown
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-08-25
 drafted-by: 
 reviewed-date: 2026-09-30
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-02
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---

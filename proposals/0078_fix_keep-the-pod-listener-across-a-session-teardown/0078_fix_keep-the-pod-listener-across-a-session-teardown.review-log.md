@@ -774,3 +774,7 @@ USEFUL [non-spec.1.fix-G4.1]: the construction-site inventory held against the c
 ## Retired
 
 The legacy single-file proposal recorded no adversarial review history.
+
+### [human.2026-10-02.interrupt-window]
+
+DECISION: The last-slot Interrupt window stays out of 0078 (human, 2026-09-30 and 2026-10-01). Proposal 0079, approved 2026-10-02, closes it through D3 and a staged test. No separate BUILD-GAPS finding is filed. The human approved 0078 on 2026-10-02.
