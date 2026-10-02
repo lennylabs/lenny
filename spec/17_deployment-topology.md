@@ -1139,7 +1139,7 @@ For first deployments, use the per-tier `minWarm` values in the table above as c
 
 - **`lenny_warmpool_idle_pods`** — if consistently near zero, `minWarm` is too low; increase by 50%.
 - **`WarmPoolLow` alert** — if this fires repeatedly (more than twice per hour), `minWarm` is undersized for current demand.
-- **`lenny_warmpool_idle_pod_minutes`** — if idle pod-minutes per hour exceeds `minWarm × 30` (i.e., most pods sit idle for half the hour), `minWarm` is oversized; reduce by 25%.
+- **`lenny_warmpool_idle_pod_minutes`** — if idle pod-minutes per hour exceeds `minWarm × 30` (i.e., most pods sit idle for half the hour), `minWarm` is oversized; reduce by 25%. On a recycling pool whose `maxWarm` exceeds `minWarm`, the counter also accrues idle pods pinned to a tenant ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), tenant pinning), so compare against `maxWarm × 30` there.
 - **`lenny_pod_claim_queue_wait_seconds`** (P99 derived from histogram — canonical name per [§16.1](16_observability.md#161-metrics)) — if P99 claim latency exceeds 2s, the pool is not keeping up with demand; increase `minWarm` or investigate pod startup times.
 
 After 48–72 hours of production traffic, the PoolScalingController will have sufficient `base_demand_p95` and `burst_p99_claims` data to auto-scale. At that point, switch from the manual `minWarm` override to controller-managed scaling by removing the `minWarm` override from Helm values (or calling `DELETE /v1/admin/pools/{name}/bootstrap-override`) and confirming the controller's computed target is reasonable. Re-evaluate weekly for the first month.
