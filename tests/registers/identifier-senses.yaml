@@ -405,9 +405,6 @@ entries:
     occurrence: 1
     channel: CH-ADAPTEREVENTS
     carrier: go-symbol
-  - file: pkg/adapter/drain_test.go
-    occurrence: 1
-    channel: CH-RUNTIMEOPS
   - file: pkg/adapter/files_updated_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS

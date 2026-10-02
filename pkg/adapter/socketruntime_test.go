@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"runtime"
@@ -255,14 +256,16 @@ func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing
 	}
 }
 
-// spec: §5.2 — a
-// per-slot Close on one slot while a sibling slot is still active must not
-// tear the shared runtime connection down: the sibling keeps writing and
-// reading over it. Only the last slot's Close closes the connection.
+// spec: §5.2, §4.7.10 (Runtime process lifetime) — a per-slot Close on one
+// slot while a sibling slot is still active must not tear the shared runtime
+// connection down: the sibling keeps writing and reading over it. The last
+// slot's Close leaves it up too, because the connection lives as long as the
+// pod.
 //
 // diagnosis: a failure here means a normal completion of one slot destroys
-// the shared connection siblings are still using, so per-slot multiplexing
-// over the single connection regressed to a whole-pod teardown.
+// the shared connection siblings or later sessions are still using, so
+// per-slot multiplexing over the single connection regressed to a whole-pod
+// teardown.
 func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
 	sp, err := adapter.NewSocketRuntimeProcess(socket)
@@ -304,24 +307,40 @@ func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 		t.Errorf("runtime received %q after sibling Close, want %q", strings.TrimSpace(line), frame)
 	}
 
-	// The last slot's Close tears the shared connection down: the runtime
-	// observes EOF.
+	// The last slot's Close leaves the connection up: the runtime reads a
+	// further frame rather than EOF.
 	if err := sp.Close(context.Background(), "sess-b"); err != nil {
 		t.Fatalf("Close(sess-b): %v", err)
 	}
-	if _, err := reader.ReadString('\n'); err == nil {
-		t.Error("runtime should observe EOF after the last slot's Close")
+	requireRuntimeReadsFrame(t, sp, runtimeConn, reader, "after the last slot's Close")
+}
+
+// requireRuntimeReadsFrame writes one envelope and fails the test unless the
+// runtime reads it over runtimeConn, which shows the connection is still up.
+func requireRuntimeReadsFrame(t *testing.T, sp *adapter.SocketRuntimeProcess, runtimeConn net.Conn, reader *bufio.Reader, when string) {
+	t.Helper()
+	frame := `{"type":"message","sessionId":"sess-next"}`
+	if err := sp.WriteEnvelope("sess-next", []byte(frame)); err != nil {
+		t.Fatalf("WriteEnvelope %s: %v", when, err)
+	}
+	_ = runtimeConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("runtime read %s: %v, want the frame (the connection was closed)", when, err)
+	}
+	if strings.TrimSpace(line) != frame {
+		t.Errorf("runtime received %q %s, want %q", strings.TrimSpace(line), when, frame)
 	}
 }
 
-// spec: §5.2 — a clean Interrupt (the §28.5.3
-// heartbeat-hung SIGTERM) on one slot while a sibling is active must not
-// close the shared connection: only the last active slot's Interrupt EOFs
-// the runtime.
+// spec: §5.2, §4.7.10 (Runtime process lifetime) — a clean Interrupt (the
+// §28.5.3 heartbeat-hung interrupt) on one slot while a sibling is active
+// must not close the shared connection, and neither does the last active
+// slot's Interrupt, because the connection lives as long as the pod.
 //
 // diagnosis: a failure here means one slot's heartbeat timeout kills the
-// shared connection every sibling depends on, regressing slot independence
-// over the single connection.
+// shared connection every sibling and later session depends on, regressing
+// slot independence over the single connection.
 func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
 	sp, err := adapter.NewSocketRuntimeProcess(socket)
@@ -361,18 +380,16 @@ func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 		t.Errorf("runtime received %q after sibling Interrupt, want %q", strings.TrimSpace(line), frame)
 	}
 
-	// Interrupting the last active slot closes the shared connection.
+	// Interrupting the last active slot leaves the shared connection up.
 	if err := sp.Interrupt(context.Background(), "sess-b", false); err != nil {
 		t.Fatalf("Interrupt(sess-b): %v", err)
 	}
-	if _, err := reader.ReadString('\n'); err == nil {
-		t.Error("runtime should observe EOF after the last slot's Interrupt")
-	}
+	requireRuntimeReadsFrame(t, sp, runtimeConn, reader, "after the last slot's Interrupt")
 }
 
 // dialRuntimeSocketErr dials the socket the way dialRuntimeSocket does but
-// returns the error, so a test can report a refused second-generation dial
-// with a diagnosable message rather than a helper fatal.
+// returns the error, so a test can report a refused dial with a diagnosable
+// message rather than a helper fatal.
 func dialRuntimeSocketErr(socket string) (net.Conn, error) {
 	addr := socket
 	if strings.HasPrefix(socket, "@") {
@@ -384,10 +401,11 @@ func dialRuntimeSocketErr(socket string) (net.Conn, error) {
 	return d.DialContext(ctx, "unix", addr)
 }
 
-// startGeneration dials the runtime socket and runs Start for sessionID,
-// returning the runtime side of the accepted connection. A refused dial or a
-// failed Start fails the test with the error text, which names a closed
-// listener when a session teardown unbound the pod's address.
+// startGeneration dials the runtime socket and runs the pod's first Start,
+// for sessionID, returning the runtime side of the accepted connection. A
+// refused dial or a failed Start fails the test with the error text. Later
+// sessions on the same pod call Start directly: they ride the accepted
+// connection and dial nothing.
 func startGeneration(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID string) net.Conn {
 	t.Helper()
 	type dialResult struct {
@@ -402,17 +420,17 @@ func startGeneration(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID s
 	startErr := sp.Start(context.Background(), sessionID)
 	d := <-dialed
 	if d.err != nil {
-		t.Fatalf("runtime dial for %s after an earlier session ended: %v (the pod's listener was unbound by a session teardown)", sessionID, d.err)
+		t.Fatalf("runtime dial for %s: %v", sessionID, d.err)
 	}
 	if startErr != nil {
 		_ = d.conn.Close()
-		t.Fatalf("Start(%s) after an earlier session ended: %v (a 'use of closed network connection' error means a session teardown closed the pod's listener)", sessionID, startErr)
+		t.Fatalf("Start(%s): %v", sessionID, startErr)
 	}
 	return d.conn
 }
 
 // roundTrip writes one adapter-to-runtime envelope and one runtime-to-adapter
-// frame over a generation's connection and asserts both arrive.
+// frame over the pod's runtime connection and asserts both arrive.
 func roundTrip(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID string, runtimeConn net.Conn) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -443,130 +461,19 @@ func roundTrip(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID string,
 	}
 }
 
-// spec: §15.4.3 (runtime integration levels), §5.2 (pool configuration and execution modes), §4.7.9 (startup sequence for type: agent runtimes), §28.5.3 (intra-pod)
+// spec: §4.7.10 (Runtime process lifetime), §28.5.3 (intra-pod), §5.2 (pool configuration and execution modes)
 //
-// The pod's runtime listener is bound once at adapter start and every
-// session the pod serves is accepted on it, so the last session's Close
-// releases the shared connection and leaves the address bound. A second
-// session on the same pod then dials the same address and is accepted.
+// CloseListener is the transport's pod-scope teardown. It ends the live
+// runtime connection, so the runtime reads EOF and the session's output
+// stream closes, it makes the address refuse a new dial, and a repeated call
+// returns nil, because test cleanups and the adapter's exit path may both
+// reach it.
 //
-// diagnosis: a failure here means a session teardown unbound the pod's
-// runtime socket, so no recycling pod can serve a second session.
-func TestSocketRuntimeListenerOutlivesTheLastSessionAndAcceptsTheNext_spec_15_4_3(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
-	if err != nil {
-		t.Fatalf("NewSocketRuntimeProcess: %v", err)
-	}
-	t.Cleanup(func() { _ = sp.CloseListener() })
-	addr := sp.SocketPath()
-
-	first := startGeneration(t, sp, "sess-a")
-	defer first.Close()
-	roundTrip(t, sp, "sess-a", first)
-	if err := sp.Close(context.Background(), "sess-a"); err != nil {
-		t.Fatalf("Close(sess-a) = %v, want nil: the last-session teardown leaves the listener bound", err)
-	}
-
-	second := startGeneration(t, sp, "sess-b")
-	defer second.Close()
-	roundTrip(t, sp, "sess-b", second)
-	if got := sp.SocketPath(); got != addr {
-		t.Errorf("SocketPath() = %q after the second session's Start, want the address bound at construction %q", got, addr)
-	}
-	if err := sp.Close(context.Background(), "sess-b"); err != nil {
-		t.Fatalf("Close(sess-b): %v", err)
-	}
-}
-
-// spec: §5.2 (pool configuration and execution modes), §28.5.3 (intra-pod), §15.4.3 (runtime integration levels)
-//
-// Each accepted connection's fan-out reader delivers to and closes only the
-// subscribers registered against that connection. A first connection's
-// reader is parked on a stalled subscriber when its session ends and the
-// next connection is accepted; once released, the reader drains the frames
-// it had already buffered and exits on the closed connection. None of
-// those frames, and not its exit, may reach the second connection's
-// subscriber.
-//
-// diagnosis: a failure here means a departing connection's reader broadcast
-// into, or closed, the next session's output stream, so a recycled pod's
-// second session receives the first runtime's frames or loses its stream.
-func TestSocketRuntimeDepartingReaderLeavesTheNextConnectionsSubscribers_spec_5_2(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
-	if err != nil {
-		t.Fatalf("NewSocketRuntimeProcess: %v", err)
-	}
-	t.Cleanup(func() { _ = sp.CloseListener() })
-
-	first := startGeneration(t, sp, "sess-a")
-	defer first.Close()
-	ctxA, cancelA := context.WithCancel(context.Background())
-	defer cancelA()
-	if _, err := sp.Output(ctxA, "sess-a"); err != nil {
-		t.Fatalf("Output(sess-a): %v", err)
-	}
-	// The subscriber's channel is never read, so its pump holds one frame
-	// and its buffered intake fills; the remaining frames park the reader
-	// with the rest already buffered in its scanner.
-	const frames = 200
-	var batch strings.Builder
-	for i := 0; i < frames; i++ {
-		fmt.Fprintf(&batch, `{"type":"response","sessionId":"sess-a","seq":%d}`+"\n", i)
-	}
-	if _, err := first.Write([]byte(batch.String())); err != nil {
-		t.Fatalf("first runtime write: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	if err := sp.Close(context.Background(), "sess-a"); err != nil {
-		t.Fatalf("Close(sess-a): %v", err)
-	}
-	second := startGeneration(t, sp, "sess-b")
-	defer second.Close()
-	ctxB, cancelB := context.WithCancel(context.Background())
-	defer cancelB()
-	outB, err := sp.Output(ctxB, "sess-b")
-	if err != nil {
-		t.Fatalf("Output(sess-b): %v", err)
-	}
-
-	// Release the parked reader of the first connection.
-	cancelA()
-	select {
-	case line, ok := <-outB:
-		if !ok {
-			t.Fatal("sess-b's output closed when the first connection's reader exited")
-		}
-		t.Fatalf("sess-b's output received %q from the first connection's reader", line)
-	case <-time.After(500 * time.Millisecond):
-	}
-
-	want := `{"type":"response","sessionId":"sess-b"}`
-	if _, err := second.Write([]byte(want + "\n")); err != nil {
-		t.Fatalf("second runtime write: %v", err)
-	}
-	select {
-	case line, ok := <-outB:
-		if !ok || string(line) != want {
-			t.Fatalf("sess-b's first value = %q (open=%v), want %q", line, ok, want)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("sess-b's output yielded no frame within 5s")
-	}
-	_ = sp.Close(context.Background(), "sess-b")
-}
-
-// spec: §28.5.3 (intra-pod), §4.7.10 (deployment model), §5.2 (pool configuration and execution modes)
-//
-// CloseListener releases the pod-scoped runtime listener the adapter process
-// owns. It leaves the live runtime connection serving its session, it makes
-// the address refuse a new dial, and a repeated call returns nil, because
-// test cleanups and the adapter's exit path may both reach it.
-//
-// diagnosis: a failure here means releasing the runtime socket at adapter
-// exit either tore down the session's live connection, left the address
-// accepting dials, or failed on a second release.
-func TestSocketRuntimeCloseListenerReleasesOnlyTheListenerAndIsIdempotent_spec_28_5_3(t *testing.T) {
+// diagnosis: a failure here means the pod-scope teardown left the runtime's
+// connection up (a kept runtime goes on holding a terminated session's
+// credentials), left the address accepting dials, or failed on a second
+// call.
+func TestSocketRuntimeCloseListenerEndsTheConnectionAndIsIdempotent_spec_4_7_10(t *testing.T) {
 	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
@@ -576,13 +483,20 @@ func TestSocketRuntimeCloseListenerReleasesOnlyTheListenerAndIsIdempotent_spec_2
 
 	conn := startGeneration(t, sp, "sess-a")
 	defer conn.Close()
+	roundTrip(t, sp, "sess-a", conn)
+	out, err := sp.Output(context.Background(), "sess-a")
+	if err != nil {
+		t.Fatalf("Output(sess-a): %v", err)
+	}
 
 	if err := sp.CloseListener(); err != nil {
 		t.Fatalf("CloseListener() = %v, want nil", err)
 	}
-	// The accepted connection is not the listener's: the session keeps
-	// round-tripping frames after the listener is gone.
-	roundTrip(t, sp, "sess-a", conn)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := bufio.NewReader(conn).ReadString('\n'); !errors.Is(err, io.EOF) {
+		t.Fatalf("runtime read after CloseListener = %v, want io.EOF", err)
+	}
+	requireOutputCloses(t, out, "after CloseListener")
 
 	if c, err := dialRuntimeSocketErr(addr); err == nil {
 		_ = c.Close()
@@ -594,6 +508,23 @@ func TestSocketRuntimeCloseListenerReleasesOnlyTheListenerAndIsIdempotent_spec_2
 	}
 	if err := sp.Close(context.Background(), "sess-a"); err != nil {
 		t.Fatalf("Close(sess-a) after CloseListener = %v, want nil", err)
+	}
+}
+
+// requireOutputCloses fails the test unless out closes within 2 seconds,
+// discarding any frame still buffered ahead of the close.
+func requireOutputCloses(t *testing.T, out <-chan []byte, when string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-out:
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("Output channel did not close %s", when)
+		}
 	}
 }
 
@@ -611,13 +542,12 @@ func assertDialable(t *testing.T, addr, when string) {
 
 // spec: §5.2 (pool configuration and execution modes), §15.4.3 (runtime integration levels), §28.5.3 (intra-pod)
 //
-// A clean Interrupt of the last active session closes the shared connection
-// and leaves the pod's runtime listener bound, the same as the last
-// session's Close, so the next session's runtime can still dial the address.
+// A clean Interrupt of the last active session ends nothing: it leaves the
+// shared connection up and the pod's runtime listener bound, the same as the
+// last session's Close. Only the pod-scope teardown unbinds the address.
 //
 // diagnosis: a failure here means the last-slot Interrupt path unbinds the
-// pod's runtime socket, so a pod whose last session ended on a heartbeat
-// timeout cannot accept another runtime connection.
+// pod's runtime socket, which only the pod-scope teardown may do.
 func TestSocketRuntimeInterruptLeavesTheListenerBound_spec_5_2(t *testing.T) {
 	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
 	if err != nil {
@@ -637,9 +567,10 @@ func TestSocketRuntimeInterruptLeavesTheListenerBound_spec_5_2(t *testing.T) {
 //
 // A session teardown never reports an error from the pod's listener, so a
 // socket runtime's per-session scrub cannot reach the leaked outcome through
-// it. Across two sessions on one pod, each last-session Close returns nil, a
-// repeated Close for a released session returns nil, and a Close on a process
-// that never accepted a connection returns nil and leaves the address bound.
+// it. Across two sequential sessions on one pod's connection, each
+// last-session Close returns nil, a repeated Close for a released session
+// returns nil, and a Close on a process that never accepted a connection
+// returns nil and leaves the address bound.
 //
 // diagnosis: a failure here means a per-session Close surfaces a listener
 // error or unbinds the address, so the session scrub reports a spurious leak
@@ -651,9 +582,12 @@ func TestSocketRuntimeCloseReportsNoListenerErrorAcrossGenerations_spec_5_2(t *t
 	}
 	t.Cleanup(func() { _ = sp.CloseListener() })
 
+	conn := startGeneration(t, sp, "sess-a")
+	defer conn.Close()
 	for _, sessionID := range []string{"sess-a", "sess-b"} {
-		conn := startGeneration(t, sp, sessionID)
-		defer conn.Close()
+		if err := sp.Start(context.Background(), sessionID); err != nil {
+			t.Fatalf("Start(%s): %v", sessionID, err)
+		}
 		if err := sp.Close(context.Background(), sessionID); err != nil {
 			t.Fatalf("last-session Close(%s) = %v, want nil", sessionID, err)
 		}
@@ -679,8 +613,8 @@ func TestSocketRuntimeCloseReportsNoListenerErrorAcrossGenerations_spec_5_2(t *t
 // by CloseListener. Session teardowns leave it bound and never rebind it, so
 // SocketPath is the same address across sessions. CloseListener unbinds it:
 // a dial is refused, the filesystem socket file is removed, a following Start
-// fails at once with the closed-listener error instead of waiting out the
-// accept timeout, and a second CloseListener returns nil.
+// fails at once with the ended error instead of waiting out the accept
+// timeout, and a second CloseListener returns nil.
 //
 // diagnosis: a failure here means the adapter's exit path no longer releases
 // the runtime socket (a filesystem-path socket then blocks a restarted
@@ -707,8 +641,9 @@ func TestSocketRuntimeCloseListenerUnbindsTheAddress_spec_4_7(t *testing.T) {
 		t.Fatalf("Close(sess-a): %v", err)
 	}
 	assertSocketPath("after the last session's Close")
-	second := startGeneration(t, sp, "sess-b")
-	defer second.Close()
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b): %v", err)
+	}
 	assertSocketPath("after the second session's Start")
 	if err := sp.Close(context.Background(), "sess-b"); err != nil {
 		t.Fatalf("Close(sess-b): %v", err)
@@ -733,8 +668,8 @@ func TestSocketRuntimeCloseListenerUnbindsTheAddress_spec_4_7(t *testing.T) {
 	sp.AcceptTimeout = 10 * time.Second
 	began := time.Now()
 	err = sp.Start(context.Background(), "sess-c")
-	if !errors.Is(err, net.ErrClosed) {
-		t.Fatalf("Start after CloseListener = %v, want an error wrapping net.ErrClosed", err)
+	if !errors.Is(err, adapter.ErrRuntimeConnectionEnded) {
+		t.Fatalf("Start after CloseListener = %v, want the runtime-connection-ended error", err)
 	}
 	if elapsed := time.Since(began); elapsed >= sp.AcceptTimeout/2 {
 		t.Fatalf("Start after CloseListener returned after %s, want it to fail at once rather than wait out the %s accept timeout", elapsed, sp.AcceptTimeout)
@@ -742,5 +677,139 @@ func TestSocketRuntimeCloseListenerUnbindsTheAddress_spec_4_7(t *testing.T) {
 
 	if err := sp.CloseListener(); err != nil {
 		t.Fatalf("second CloseListener() = %v, want nil", err)
+	}
+}
+
+// spec: §4.7.10 (Runtime process lifetime), §5.2 (pool configuration and execution modes)
+//
+// The connection accepted at the pod's first session start serves the pod's
+// later sessions across occupancy zero. alice starts and closes, then bob
+// starts: bob's Start returns without a second dial, bob's envelope arrives
+// on alice's runtime connection, and the runtime reads no EOF.
+//
+// diagnosis: the adapter ended the runtime at occupancy zero, and the
+// recycled pod cannot serve its next session.
+func TestSocketRuntimeProcessKeepsTheConnectionAcrossOccupancyZero_spec_4_7_10(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+	sp.AcceptTimeout = 30 * time.Second
+
+	conn := startGeneration(t, sp, "alice")
+	defer conn.Close()
+	roundTrip(t, sp, "alice", conn)
+	if err := sp.Close(context.Background(), "alice"); err != nil {
+		t.Fatalf("Close(alice): %v", err)
+	}
+
+	// No runtime dials again. A Start that waited for an accept would run
+	// to the 30s bound; one on the kept connection returns at once.
+	began := time.Now()
+	if err := sp.Start(context.Background(), "bob"); err != nil {
+		t.Fatalf("Start(bob) after alice's Close = %v, want nil on the kept connection", err)
+	}
+	if elapsed := time.Since(began); elapsed > time.Second {
+		t.Fatalf("Start(bob) took %s, want it to return on the kept connection without an accept", elapsed)
+	}
+	roundTrip(t, sp, "bob", conn)
+
+	// The runtime reads no EOF: its read deadline expires instead.
+	_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	_, err = bufio.NewReader(conn).ReadString('\n')
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("runtime read after bob's round trip = %v, want a read-deadline timeout (no EOF)", err)
+	}
+}
+
+// spec: §4.7.10 (Runtime process lifetime), §5.2 (Runtime not live)
+//
+// When the runtime closes its end, the transport records a sticky ended
+// state: Start and Output return the ended error at once, with a 30s accept
+// bound that a Start waiting for a reconnect would run to.
+//
+// diagnosis: a later session's start waits out the accept bound on a pod
+// whose runtime has exited, or starts over a dead connection.
+func TestSocketRuntimeProcessStartFailsFastAfterTheRuntimeExits_spec_4_7_10(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+	sp.AcceptTimeout = 30 * time.Second
+
+	conn := startGeneration(t, sp, "alice")
+	out, err := sp.Output(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("Output(alice): %v", err)
+	}
+	_ = conn.Close()
+	requireOutputCloses(t, out, "after the runtime closed its end")
+
+	began := time.Now()
+	if err := sp.Start(context.Background(), "bob"); !errors.Is(err, adapter.ErrRuntimeConnectionEnded) {
+		t.Fatalf("Start(bob) after the runtime exited = %v, want the runtime-connection-ended error", err)
+	}
+	if _, err := sp.Output(context.Background(), "bob"); !errors.Is(err, adapter.ErrRuntimeConnectionEnded) {
+		t.Fatalf("Output(bob) after the runtime exited = %v, want the runtime-connection-ended error", err)
+	}
+	if elapsed := time.Since(began); elapsed > time.Second {
+		t.Fatalf("Start and Output took %s after the runtime exited, want under 1s", elapsed)
+	}
+
+	// A runtime that dials again is not accepted: the ended state is sticky.
+	if c, err := dialRuntimeSocketErr(sp.SocketPath()); err == nil {
+		defer c.Close()
+	}
+	if err := sp.Start(context.Background(), "carol"); !errors.Is(err, adapter.ErrRuntimeConnectionEnded) {
+		t.Fatalf("Start(carol) after a redial = %v, want the runtime-connection-ended error", err)
+	}
+}
+
+// spec: §5.2 (Runtime not live), §4.7.10 (Runtime process lifetime)
+//
+// ServesNextSession is false before the first accept, true once the runtime
+// has connected, still true after the last session's Close, false once the
+// runtime closes its end, and false for the rest of the pod's life.
+//
+// diagnosis: the whole-pod scrub report misstates whether the runtime can
+// serve the next session, so the gateway reuses a pod whose runtime is gone
+// or retires one whose runtime is live.
+func TestSocketRuntimeProcessServesNextSession_spec_5_2(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+
+	if sp.ServesNextSession() {
+		t.Fatal("ServesNextSession() = true before any runtime connected, want false")
+	}
+	conn := startGeneration(t, sp, "alice")
+	if !sp.ServesNextSession() {
+		t.Fatal("ServesNextSession() = false after the accept, want true")
+	}
+	out, err := sp.Output(context.Background(), "alice")
+	if err != nil {
+		t.Fatalf("Output(alice): %v", err)
+	}
+	if err := sp.Close(context.Background(), "alice"); err != nil {
+		t.Fatalf("Close(alice): %v", err)
+	}
+	if !sp.ServesNextSession() {
+		t.Fatal("ServesNextSession() = false after the last session's Close, want true")
+	}
+	_ = conn.Close()
+	requireOutputCloses(t, out, "after the runtime closed its end")
+	if sp.ServesNextSession() {
+		t.Fatal("ServesNextSession() = true after the runtime closed its end, want false")
+	}
+	if err := sp.Start(context.Background(), "bob"); err == nil {
+		t.Fatal("Start(bob) after the runtime closed its end = nil, want an error")
+	}
+	if sp.ServesNextSession() {
+		t.Fatal("ServesNextSession() = true after a refused Start, want false for the rest of the pod's life")
 	}
 }

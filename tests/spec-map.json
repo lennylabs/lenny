@@ -918,7 +918,17 @@
         "tests/tier4_integration/concurrent_workspace_test.go",
         "pkg/adapter/embedded_test.go",
         "pkg/adapter/embedded_sdkwarm_test.go",
-        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go"
+        "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go",
+        "pkg/adapter/socketruntime_test.go",
+        "pkg/adapter/socketruntime_e2e_test.go",
+        "pkg/adapter/runtimegeneration_test.go",
+        "pkg/adapter/holdstate_test.go",
+        "pkg/adapter/slotsession_test.go",
+        "tests/tier7a_load_local/socket_runtime_reader_stop_race_test.go",
+        "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
+        "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4",
+        "pkg/adapter/export_test.go"
       ],
       "packages": [
         "pkg/adapter",
@@ -1149,7 +1159,6 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
-        "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
         "tests/tier2_component/slotrelease/revoke_double_teardown_test.go",
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotFailedBodyNamesSession_spec_5_2",
@@ -1333,7 +1342,8 @@
         "pkg/gateway/runtime/poolstore/poolstore_test.go::TestValidateSessionPolicy_spec_5_2",
         "pkg/gateway/externalapi/admin/pools_runtime_reuse_test.go::TestCreatePoolRefusesUnacknowledgedRuntimeReuse_spec_5_2",
         "pkg/gateway/externalapi/admin/pools_runtime_reuse_test.go::TestUpdatePoolRefusesRemovingRuntimeReuseAcknowledgment_spec_5_2",
-        "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2"
+        "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2",
+        "tests/tier7a_load_local/socket_runtime_reader_stop_race_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1543,7 +1553,6 @@
         "pkg/adapter/staging_test.go",
         "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSessionDispatchConformance",
-        "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
         "tests/tier7a_load_local/racestart_testsupport_test.go",
         "tests/tier3_contract/adapter_negotiate/negotiate_workspace_base_wire_test.go",
         "tests/tier2_component/warmlayout/warm_layout_test.go",
@@ -2309,7 +2318,8 @@
         "tests/tier7a_load_local/coordinator_hold_termination_race_test.go",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestSharedPlatformMCPRefusesBetweenHoldTerminatedMembers_spec_10_1",
-        "pkg/adapter/holdstate_test.go"
+        "pkg/adapter/holdstate_test.go",
+        "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4"
       ],
       "packages": [
         "pkg/gateway"
@@ -3859,7 +3869,6 @@
         "tests/tier9_security/tracing_context_session_isolation_test.go",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSessionDispatchConformance",
-        "tests/tier7a_load_local/shutdown_drain_gate_race_test.go",
         "tests/tier11_docs/frame_identifier_schema_reconciliation_test.go",
         "pkg/adapter/socketruntime_e2e_test.go",
         "pkg/gateway/sessionserver/messages_test.go",
@@ -3873,7 +3882,6 @@
         "tests/tier3_contract/adapter_session_address/session_address_wire_test.go",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestMessageBodyIgnoresStaleSlotAddress_spec_7_2",
         "pkg/adapter/holdstate_test.go",
-        "pkg/adapter/drain_test.go",
         "tests/tier4_integration/mcp_runtime_lifecycle_test.go",
         "pkg/adapter/slotsession_test.go",
         "tests/tier3_contract/adapter_bind_attempt/...",
@@ -3900,7 +3908,6 @@
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
         "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
-        "tests/tier7a_load_local/shutdown_drain_gate_race_test.go::TestShutdownDrainRacesAnIncomingSession_spec_6_4",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection",
@@ -3918,12 +3925,12 @@
         "tests/tier11_docs/session_scoped_frame_population_doc_reconciliation_test.go",
         "pkg/adapter/holdstate_test.go",
         "pkg/adapter/checkpoint_stream_test.go",
-        "pkg/adapter/drain_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPRejectsNonceLessAdversary_spec_4_7",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestConnectorMCPRejectsNonceLessAdversary_spec_4_7",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7",
-        "pkg/adapter/integrationlevel_test.go"
+        "pkg/adapter/integrationlevel_test.go",
+        "pkg/adapter/runtimegeneration_test.go"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
@@ -5770,7 +5777,9 @@
         "tests/tier11_docs/spec_28_register_writers_test.go",
         "tests/tier11_docs/spec_28_reserved_phrase_test.go",
         "tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go",
-        "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go"
+        "tests/tier3_contract/adapter_generation_fence/generation_fence_wire_test.go",
+        "pkg/adapter/runtimegeneration_test.go",
+        "pkg/adapter/holdstate_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "0",

@@ -86,7 +86,7 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	// alice's Shutdown: the locked cancel-deregister step has run and the
 	// runtime close is still in flight.
 	s.mu.Lock()
-	_, removed, _ := s.deregisterSlotLocked("alice")
+	_, removed := s.deregisterSlotLocked("alice")
 	s.mu.Unlock()
 	if !removed {
 		t.Fatal("deregister alice removed no entry")
@@ -248,7 +248,7 @@ func TestPodMCPArmingReportsTheLiveArming_spec_15_4_3(t *testing.T) {
 	// The release that leaves the pod's shared runtime process serving no
 	// session cancels the surface, so the arming it reported is gone.
 	s.mu.Lock()
-	_, removed, _ := s.deregisterSlotLocked("alice")
+	_, removed := s.deregisterSlotLocked("alice")
 	s.mu.Unlock()
 	if !removed {
 		t.Fatal("deregister alice removed no entry")

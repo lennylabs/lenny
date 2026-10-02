@@ -157,9 +157,20 @@ func (s *Server) exitHoldState() {
 }
 
 // onHoldTimeout runs when no new coordinator fenced within
-// coordinatorHoldTimeoutSeconds. It lowers the gauge and self-terminates
-// every session the adapter has started on this pod, so no agent process
-// is left running with live provider credentials and no coordinator.
+// coordinatorHoldTimeoutSeconds. It lowers the gauge, ends the sidecar
+// runtime through the pod-scope teardown, and self-terminates every session
+// the adapter has started on this pod, so no agent process is left running
+// with live provider credentials and no coordinator. The runtime process
+// lives as long as the pod and a per-session close no longer ends it, so
+// the pod-scope teardown is what ends it here; the pod then serves no later
+// session and is retired.
+//
+// The teardown runs after the hold is cleared and before pass 1, with no
+// lock held. It sets the transport's ended state before pass 1 reads the
+// registry, so a Start admitted once the hold cleared fails at once rather
+// than confirming against an entry pass 1 never collected, and it closes
+// the connection before pass 2 removes any credential file. No
+// CH-RUNTIMEOPS frame is written on this path.
 //
 // The termination runs as two passes. Pass 1 is one critical section that
 // deregisters every started entry, which is what makes the termination and
@@ -173,7 +184,8 @@ func (s *Server) exitHoldState() {
 // StartSession admitted before the arming can claim and start afterwards,
 // and a recorded set would leave that session running unsupervised.
 //
-// spec: §10.1; §10.1.4; §4.7.
+// spec: §10.1; §10.1.4 (Hold state timeout); §4.7; §4.7.10 (Runtime process
+// lifetime).
 func (s *Server) onHoldTimeout() {
 	s.hold.mu.Lock()
 	if !s.hold.active {
@@ -185,6 +197,8 @@ func (s *Server) onHoldTimeout() {
 	s.hold.timer = nil
 	setCoordinatorHold(false)
 	s.hold.mu.Unlock()
+
+	s.endRuntimeForHoldTimeout()
 
 	// Pass 1.
 	members := s.deregisterStartedSessions()
@@ -200,14 +214,37 @@ func (s *Server) onHoldTimeout() {
 	// still takes it, because the acquisition tries the guard before it
 	// consults the context. Each member's close runs on its own
 	// ten-second context, minted after its acquisition returns, so no
-	// member's close is spent on another member's guard wait. A runtime
-	// process serving more than one session still returns from a non-last
-	// close without touching the child, so only the last member's close
-	// consumes its grace. spec: §5.2 (slot-identifier reclaim hold).
+	// member's close is spent on another member's guard wait.
+	// spec: §5.2 (slot-identifier reclaim hold).
 	guardCtx, cancel := context.WithTimeout(context.Background(), heldSessionCloseWindow)
 	defer cancel()
 	for _, m := range members {
 		s.terminateHeldSession(guardCtx, m)
+	}
+}
+
+// podScopeRuntime is a runtime whose transport has a pod-scope teardown
+// that ends the runtime process's connection. The sidecar
+// SocketRuntimeProcess implements it; the embedded runtimes, the MCP
+// runtime, and the developer-loop executor do not, and the hold timeout
+// leaves them to their per-session Close.
+type podScopeRuntime interface {
+	CloseListener() error
+}
+
+// endRuntimeForHoldTimeout runs the runtime's pod-scope teardown at the
+// coordinator hold timeout. The sidecar runtime process lives as long as the
+// pod and no per-session close ends it, so without this teardown it would go
+// on holding the terminated sessions' credentials with no coordinator. A
+// teardown error is logged and does not stop the termination.
+// spec: §10.1.4 (Hold state timeout); §4.7.10 (Runtime process lifetime).
+func (s *Server) endRuntimeForHoldTimeout() {
+	rt, ok := s.Runtime.(podScopeRuntime)
+	if !ok {
+		return
+	}
+	if err := rt.CloseListener(); err != nil {
+		slog.Warn("runtime_teardown_failed", "reason", reasonCoordinatorLost, "error", err)
 	}
 }
 
@@ -277,14 +314,13 @@ func (s *Server) terminateHeldSession(guardCtx context.Context, m heldSession) {
 	// budget_return.lua (§8.3) with its complete token totals.
 	s.emitFinalUsage(ctx, m.sessionID)
 
-	// Best-effort graceful runtime termination. The close takes the
-	// session off the pod's shared runtime process, so the generation
-	// state moves with it: a terminated session must not keep naming the
-	// process's sole occupant, or the intra-pod MCP surface would keep
-	// forwarding a tool call under a principal whose session has ended and
-	// the pod surface could never be cancelled for the next claim.
-	// The loop passes no teardown condition: the runtime's own active set
-	// closes the shared process on the last member.
+	// The close ends the session's use of the pod's shared runtime process,
+	// so the generation state moves with it: a terminated session must not
+	// keep naming the process's sole occupant, or the intra-pod MCP surface
+	// would keep forwarding a tool call under a principal whose session has
+	// ended and the pod surface could never be cancelled for the next claim.
+	// A sidecar runtime was already ended by the pod-scope teardown that
+	// onHoldTimeout ran before pass 1.
 	// spec: §10.1; §15.4.3.
 	closeErr := error(nil)
 	if s.Runtime != nil {

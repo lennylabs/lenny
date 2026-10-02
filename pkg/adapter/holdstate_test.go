@@ -3,14 +3,20 @@
 package adapter
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -443,31 +449,25 @@ func TestCoordinatorHoldTerminationLeavesTheRuntimeGeneration_spec_10_1(t *testi
 	}
 }
 
-// sharedHoldRuntime models the pod's one shared runtime process the way
-// the socket runtime behaves: Close removes the named session from the
-// process's active set and ends the process only when the last member
-// leaves, so a non-last close tears nothing down. onClose runs with the
-// closing member's identifier before the removal, so a case can observe
-// adapter state at the instant a member's runtime is closed.
+// sharedHoldRuntime models the pod's one shared runtime process. Close
+// records the closing member and ends nothing, as SocketRuntimeProcess.Close
+// does: the runtime process lives as long as the pod. It has no pod-scope
+// teardown, so on its own it models a transport the hold timeout does not
+// end, such as InProcessRuntime. onClose runs with the closing member's
+// identifier, so a case can observe adapter state at the instant a member's
+// runtime is closed.
 type sharedHoldRuntime struct {
 	mu       sync.Mutex
-	active   map[string]struct{}
 	closedIn []string
-	procEnds int
 	onClose  func(sessionID string)
 }
 
 func newSharedHoldRuntime() *sharedHoldRuntime {
-	return &sharedHoldRuntime{active: map[string]struct{}{}}
+	return &sharedHoldRuntime{}
 }
 
-func (r *sharedHoldRuntime) Start(_ context.Context, sessionID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.active[sessionID] = struct{}{}
-	return nil
-}
-func (r *sharedHoldRuntime) WriteEnvelope(string, []byte) error { return nil }
+func (r *sharedHoldRuntime) Start(context.Context, string) error { return nil }
+func (r *sharedHoldRuntime) WriteEnvelope(string, []byte) error  { return nil }
 func (r *sharedHoldRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	ch := make(chan []byte)
 	close(ch)
@@ -482,13 +482,6 @@ func (r *sharedHoldRuntime) Close(_ context.Context, sessionID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.closedIn = append(r.closedIn, sessionID)
-	if _, ok := r.active[sessionID]; !ok {
-		return nil
-	}
-	delete(r.active, sessionID)
-	if len(r.active) == 0 {
-		r.procEnds++
-	}
 	return nil
 }
 
@@ -498,10 +491,35 @@ func (r *sharedHoldRuntime) closes() []string {
 	return append([]string(nil), r.closedIn...)
 }
 
-func (r *sharedHoldRuntime) processEnds() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.procEnds
+// podScopedHoldRuntime is sharedHoldRuntime with a counting pod-scope
+// teardown, the shape of the sidecar SocketRuntimeProcess. onTeardown runs
+// inside CloseListener at call time, so a case can record adapter state at
+// the instant the hold timeout ends the runtime.
+type podScopedHoldRuntime struct {
+	*sharedHoldRuntime
+	teardownMu sync.Mutex
+	nTeardowns int
+	onTeardown func()
+}
+
+func newPodScopedHoldRuntime() *podScopedHoldRuntime {
+	return &podScopedHoldRuntime{sharedHoldRuntime: newSharedHoldRuntime()}
+}
+
+func (r *podScopedHoldRuntime) CloseListener() error {
+	if r.onTeardown != nil {
+		r.onTeardown()
+	}
+	r.teardownMu.Lock()
+	defer r.teardownMu.Unlock()
+	r.nTeardowns++
+	return nil
+}
+
+func (r *podScopedHoldRuntime) teardowns() int {
+	r.teardownMu.Lock()
+	defer r.teardownMu.Unlock()
+	return r.nTeardowns
 }
 
 // recordingScrubReporter counts the §5.2 cleanup-outcome reports the
@@ -583,12 +601,12 @@ func drainControlEvents(t *testing.T, stream *fakeControlStream, want int) []con
 // timeout), 4.7 (the started entries the timeout terminates)
 //
 // The timeout terminates every session the adapter started on the pod,
-// once per member. A single-valued termination on a pod holding two
-// started sessions is inert rather than partial: the shared runtime
-// process's own active set makes a non-last close return without touching
-// the child, so one close tears nothing down and both agent processes go
-// on running with live provider credentials and no coordinator, on a pod
-// that admits every RPC again from the line that clears the hold.
+// once per member, and ends the runtime through the pod-scope teardown
+// once. Closing each member ends nothing, because the runtime process lives
+// as long as the pod, so without the teardown both sessions' code goes on
+// running with live provider credentials and no coordinator. The teardown
+// runs before the deregistration pass, so it records the two started
+// entries still in the registry.
 //
 // diagnosis: a failure means the coordinator-lost termination has gone
 // back to acting on one session. Either a co-tenant's agent process
@@ -597,8 +615,10 @@ func drainControlEvents(t *testing.T, stream *fakeControlStream, want int) []con
 // budget_return input with it, or a terminal event goes out unattributed.
 func TestCoordinatorHoldTimeoutTerminatesEveryStartedSession_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
-	rt := newSharedHoldRuntime()
+	rt := newPodScopedHoldRuntime()
 	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	slotsAtTeardown := -1
+	rt.onTeardown = func() { slotsAtTeardown = s.slotCount() }
 	meter := NewSessionUsageMeter(time.Now)
 	meter.Add("sess-a", 11, 1)
 	meter.Add("sess-b", 22, 2)
@@ -613,8 +633,12 @@ func TestCoordinatorHoldTimeoutTerminatesEveryStartedSession_spec_10_1(t *testin
 	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
 		t.Fatalf("runtime Close calls = %v, want [sess-a sess-b]", got)
 	}
-	if got := rt.processEnds(); got != 1 {
-		t.Errorf("the shared runtime process ended %d time(s), want 1 (on the last member)", got)
+	if got := rt.teardowns(); got != 1 {
+		t.Errorf("the pod-scope teardown ran %d time(s), want 1", got)
+	}
+	if slotsAtTeardown != 2 {
+		t.Errorf("the slot registry held %d entries when the teardown ran, want 2; the teardown "+
+			"must run before the deregistration pass", slotsAtTeardown)
 	}
 	for _, id := range []string{"sess-a", "sess-b"} {
 		if _, err := os.ReadFile(filepath.Join(s.PostMortemDir, "coordinator_lost-"+id+".json")); err != nil {
@@ -877,19 +901,21 @@ func TestCoordinatorHoldTimeoutRemovesEveryTerminatedSessionsSlotTree_spec_10_1(
 	}
 }
 
-// spec: 10.1.4 (the hold timeout's deregistration pass), 15.4.2 (the
-// CH-RUNTIMEOPS drain signal), 28.5.3 (an unaddressed inbound frame)
+// spec: 10.1.4 (the hold timeout's deregistration pass), 4.7.10 (Runtime
+// process lifetime), 28 (CH-MCP-PLATFORM exclusivity)
 //
 // The deregistration pass is what lets the pod serve a next session at
-// all. Without it the terminated sessions' entries survive, so the next
-// session's own teardown finds a bound co-tenant and sends no drain
-// signal, and every unaddressed inbound frame on the pod is refused
-// because the registry holds more than one entry. Both regressions are
-// silent: the drain send error is swallowed.
+// all. Without it the terminated sessions' entries survive in the slot
+// registry beside the next session's. The runtime here has no pod-scope
+// teardown, the way InProcessRuntime has none, so the timeout leaves it to
+// its per-session Close. The process has been given three sessions, so no
+// session is sole, and the next session's teardown writes no CH-RUNTIMEOPS
+// frame.
 //
 // diagnosis: a failure means the hold timeout left the registry populated,
 // so the pod is permanently degraded for every session placed on it after
-// a coordinator loss.
+// a coordinator loss, or a session teardown sent the kept runtime a
+// terminate frame.
 func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	lc, fr := startRuntimeOps(t)
@@ -906,10 +932,19 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 	if err := rt.Start(context.Background(), "sess-next"); err != nil {
 		t.Fatalf("start the next session: %v", err)
 	}
-	// §28.5.3 — an inbound frame carrying no session identifier resolves on
-	// a pod holding one session, which is what the pass restored.
-	if got := s.soleSession(); got != "sess-next" {
-		t.Errorf("sole session after the timeout = %q, want sess-next", got)
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.slots))
+	for id := range s.slots {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	if len(ids) != 1 || ids[0] != "sess-next" {
+		t.Errorf("slot registry after the timeout = %v, want [sess-next] alone", ids)
+	}
+	// The process has been given sess-a, sess-b, and sess-next, so no
+	// session is sole on it.
+	if got := s.soleSession(); got != "" {
+		t.Errorf("sole session after the timeout = %q, want empty", got)
 	}
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
@@ -919,9 +954,187 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Shutdown the next session: %v", err)
 	}
-	if got := fr.read(); got.Type != "terminate" {
-		t.Errorf("the next session's teardown sent %q, want the CH-RUNTIMEOPS terminate frame; "+
-			"a surviving hold-terminated entry holds the drain gate false", got.Type)
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("the next session's teardown sent a %q frame on CH-RUNTIMEOPS, want none", frame.Type)
+	}
+}
+
+// spec: 10.1.4 (Hold state timeout)
+//
+// The coordinator hold timeout runs the pod-scope teardown and terminates
+// every started session, and it writes no CH-RUNTIMEOPS frame on the way.
+//
+// diagnosis: the coordinator hold timeout wrote a CH-RUNTIMEOPS frame; a
+// terminate frame tells the runtime process to exit, and no drain
+// coordination exists on this path.
+func TestCoordinatorHoldTimeoutSendsNoTerminateFrame_spec_10_1_4(t *testing.T) {
+	setCoordinatorHold(false)
+	rt := newPodScopedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+	s.Lifecycle = lc
+
+	fireHoldTimeout(t, s, clk)
+
+	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
+		t.Fatalf("runtime Close calls = %v, want [sess-a sess-b]", got)
+	}
+	if got := rt.teardowns(); got != 1 {
+		t.Fatalf("the pod-scope teardown ran %d time(s), want 1", got)
+	}
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("the coordinator hold timeout wrote a %q frame on CH-RUNTIMEOPS, want none", frame.Type)
+	}
+}
+
+// holdSocketSeq numbers the abstract addresses holdSocketAddr hands out.
+var holdSocketSeq atomic.Int64
+
+// holdSocketAddr returns a test-unique abstract socket address for a
+// hold-timeout case driven over a real SocketRuntimeProcess. It is numbered
+// rather than named for the test, because a subtest name overruns the
+// sun_path limit.
+func holdSocketAddr(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("@lenny-hold-%d-%d", os.Getpid(), holdSocketSeq.Add(1))
+}
+
+// heldSocketPod builds an adapter holding one started session, sess-a, over
+// a real SocketRuntimeProcess whose peer dials once. It returns the server,
+// the hold clock, the transport, and the peer's end of the connection.
+func heldSocketPod(t *testing.T) (*Server, *fakeExpiryClock, *SocketRuntimeProcess, net.Conn) {
+	t.Helper()
+	sp, err := NewSocketRuntimeProcess(holdSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+	sp.AcceptTimeout = 30 * time.Second
+	dialed := make(chan net.Conn, 1)
+	go func() {
+		var d net.Dialer
+		c, err := d.DialContext(context.Background(), "unix", "\x00"+sp.SocketPath()[1:])
+		if err != nil {
+			t.Errorf("runtime dial: %v", err)
+		}
+		dialed <- c
+	}()
+	s, clk := holdTerminationServer(t, sp, "sess-a")
+	peer := <-dialed
+	if peer == nil {
+		t.FailNow()
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+	return s, clk, sp, peer
+}
+
+// requirePeerEOF fails the test unless the runtime's end reads io.EOF within
+// 2 seconds.
+func requirePeerEOF(t *testing.T, peer net.Conn) {
+	t.Helper()
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := bufio.NewReader(peer).ReadString('\n'); !errors.Is(err, io.EOF) {
+		t.Fatalf("runtime read after the hold timeout = %v, want io.EOF", err)
+	}
+}
+
+// spec: 10.1.4 (Hold state timeout), 4.7.10 (Runtime process lifetime)
+//
+// The coordinator hold timeout ends the sidecar runtime through the
+// pod-scope teardown: the runtime reads EOF, the transport reports that it
+// cannot serve the next session, and a later Start fails at once. A hold a
+// coordinator fenced ends nothing, and the teardown runs even when every
+// started session was released before the timer fired.
+//
+// diagnosis: a kept sidecar runtime survives the coordinator hold timeout
+// with a terminated session's credentials and no coordinator, or a fenced
+// pod loses its runtime.
+func TestCoordinatorHoldTimeoutEndsTheSidecarRuntime_spec_10_1_4(t *testing.T) {
+	t.Run("timeout ends the runtime", func(t *testing.T) {
+		setCoordinatorHold(false)
+		s, clk, sp, peer := heldSocketPod(t)
+		fireHoldTimeout(t, s, clk)
+		requirePeerEOF(t, peer)
+		if sp.ServesNextSession() {
+			t.Error("ServesNextSession() = true after the hold timeout, want false")
+		}
+		began := time.Now()
+		if err := sp.Start(context.Background(), "sess-next"); !errors.Is(err, errRuntimeConnectionEnded) {
+			t.Errorf("Start(sess-next) after the hold timeout = %v, want errRuntimeConnectionEnded", err)
+		}
+		if elapsed := time.Since(began); elapsed > time.Second {
+			t.Errorf("Start(sess-next) took %s, want under 1s", elapsed)
+		}
+	})
+	t.Run("fenced hold keeps the runtime", func(t *testing.T) {
+		setCoordinatorHold(false)
+		s, clk, sp, peer := heldSocketPod(t)
+		s.enterHoldState()
+		armed := clk.last()
+		if armed == nil {
+			t.Fatal("hold timer not armed")
+		}
+		s.exitHoldState()
+		armed.fire()
+		_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		_, err := bufio.NewReader(peer).ReadString('\n')
+		var ne net.Error
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			t.Errorf("runtime read after a fenced hold = %v, want a read-deadline timeout (no EOF)", err)
+		}
+		if !sp.ServesNextSession() {
+			t.Error("ServesNextSession() = false after a fenced hold, want true")
+		}
+	})
+	t.Run("timeout after every session was released", func(t *testing.T) {
+		setCoordinatorHold(false)
+		s, clk, _, peer := heldSocketPod(t)
+		s.enterHoldState()
+		armed := clk.last()
+		if armed == nil {
+			t.Fatal("hold timer not armed")
+		}
+		_ = s.deregisterStartedSessions()
+		armed.fire()
+		requirePeerEOF(t, peer)
+	})
+}
+
+// failingTeardownRuntime is a pod-scoped runtime whose teardown fails, so a
+// case can assert the hold timeout logs the failure and still terminates.
+type failingTeardownRuntime struct {
+	*sharedHoldRuntime
+}
+
+func (failingTeardownRuntime) CloseListener() error { return errors.New("teardown boom") }
+
+// spec: 10.1.4 (Hold state timeout)
+//
+// A pod-scope teardown that fails is logged at Warn as
+// runtime_teardown_failed, and the termination of every started session
+// still runs.
+//
+// diagnosis: a failed teardown at the hold timeout went unlogged, or it
+// stopped the coordinator-lost termination of the pod's sessions.
+func TestCoordinatorHoldTimeoutLogsAFailedRuntimeTeardown_spec_10_1_4(t *testing.T) {
+	setCoordinatorHold(false)
+	logBuf := &bytes.Buffer{}
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	rt := failingTeardownRuntime{sharedHoldRuntime: newSharedHoldRuntime()}
+	s, clk := holdTerminationServer(t, rt, "sess-a")
+	fireHoldTimeout(t, s, clk)
+
+	if got := rt.closes(); len(got) != 1 || got[0] != "sess-a" {
+		t.Errorf("runtime Close calls = %v, want [sess-a]", got)
+	}
+	out := logBuf.String()
+	if !strings.Contains(out, `"msg":"runtime_teardown_failed"`) || !strings.Contains(out, `"level":"WARN"`) ||
+		!strings.Contains(out, "teardown boom") {
+		t.Errorf("log output lacks a WARN runtime_teardown_failed record carrying the error:\n%s", out)
 	}
 }
 

@@ -90,8 +90,9 @@ func newScrubOps() scrub.DefaultOps {
 	return scrub.DefaultOps{}
 }
 
-// closeRuntimeListener releases the pod-scoped runtime socket listener at
-// process exit and logs, rather than returns, a close failure: the process is
+// closeRuntimeListener runs the sidecar transport's pod-scope teardown at
+// process exit, which ends the runtime's connection and releases the
+// pod-scoped listener, and logs, rather than returns, a close failure: the process is
 // already exiting, so a failed close has no caller left to act on it. The
 // closer and the log function are injected so a unit test exercises both
 // branches without binding a real socket. spec: §4.7.10, §28.5.3.
@@ -367,8 +368,9 @@ func main() {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
 		adapterSrv.Runtime = sp
-		// Release the pod-scoped listener (see adapter.SocketRuntimeProcess) at
-		// process exit. main returns only after srv.Serve returns, so this runs once
+		// Run the pod-scope teardown (see adapter.SocketRuntimeProcess) at
+		// process exit: it ends the runtime's connection and releases the
+		// listener. main returns only after srv.Serve returns, so this runs once
 		// the gRPC server has stopped serving. spec: §4.7.10, §28.5.3.
 		defer closeRuntimeListener(sp.CloseListener, log.Printf)
 		log.Printf("lenny-adapter: §4.7 sidecar runtime transport on socket %s", sp.SocketPath())

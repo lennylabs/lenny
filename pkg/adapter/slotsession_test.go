@@ -35,10 +35,8 @@ func (fr *fakeRuntime) readWithin(d time.Duration) (lifecycleFrame, bool) {
 
 // probeRuntime is a RuntimeProcess that runs a probe on entry to Close,
 // before it records the session it closed. The merged shutdown handler runs
-// the drain, the close, and the per-slot tree removal in that order, so a
-// probe taken here observes the pod one step after the §15.4.2 grace window
-// opens. The window's own opening is observed from the runtime side instead,
-// by a reader that probes as soon as the terminate frame arrives.
+// the close and then the per-slot tree removal, so a probe taken here
+// observes the pod while the session's use of the runtime is ending.
 //
 // onStart runs inside Start on the calling goroutine, so a case can act on
 // the registry between a start's claim and its confirmation with no
@@ -105,17 +103,18 @@ func slotTreeProbe(t *testing.T, s *Server, sessionID string) (current, credenti
 	return curErr == nil, credErr == nil
 }
 
-// spec: §15.4.2 (the drain precedes the hard close), §6.4 (the per-slot
-// tree is removed on slot cleanup), §6.1 (the per-slot credential file)
+// spec: §6.4 (the per-slot tree is removed on slot cleanup), §6.1 (the
+// per-slot credential file), §4.7.10 (Runtime process lifetime)
 //
 // The merged shutdown handler removes the ending session's per-slot tree
 // after Runtime.Close has returned. The removal is the second of the two
-// release steps for that reason: the agent process is still reading its
-// §6.1 credential file and its §6.4 cwd for the whole §15.4.2 grace window
-// the drain opens, and a removal folded back into the locked deregistration
-// step deletes both out from under it. Both call orders compile at every
-// caller, so nothing but this ordering assertion holds the split.
-func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T) {
+// release steps for that reason: the session's use of the runtime ends at
+// the close, and a removal folded back into the locked deregistration step
+// deletes the §6.1 credential file and the §6.4 cwd while the session still
+// uses them. Both call orders compile at every caller, so nothing but this
+// ordering assertion holds the split. The teardown writes no CH-RUNTIMEOPS
+// frame, because the runtime process lives as long as the pod.
+func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_6_4(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
@@ -125,26 +124,8 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T
 	type probe struct {
 		current, credentials bool
 	}
-	var atDrain, atClose, atReport probe
-	// The drain observation is taken from the runtime side, at the moment
-	// the peer reads the terminate frame, which is where the §15.4.2 grace
-	// window opens. Close's own observation is taken independently one step
-	// later, so the two assertions below read two samples rather than one.
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		got, ok := fr.readWithin(4 * time.Second)
-		if !ok {
-			t.Errorf("no CH-RUNTIMEOPS frame reached the runtime end before Runtime.Close")
-			return
-		}
-		if got.Type != "terminate" {
-			t.Errorf("frame read at the drain = %q, want terminate", got.Type)
-		}
-		atDrain.current, atDrain.credentials = slotTreeProbe(t, s, "alice")
-	}()
+	var atClose, atReport probe
 	rt := &probeRuntime{onClose: func(string) {
-		<-drained
 		atClose.current, atClose.credentials = slotTreeProbe(t, s, "alice")
 	}}
 	s.Runtime = rt
@@ -170,14 +151,13 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T
 		t.Fatalf("Shutdown: %v", err)
 	}
 
-	if !atDrain.current || !atDrain.credentials {
-		t.Errorf("at the drain: cwd present = %v, credential file present = %v, want both; the per-slot "+
-			"tree was removed inside the locked deregistration step, so the agent process lost its "+
-			"credential file and its cwd inside the grace window the drain opened",
-			atDrain.current, atDrain.credentials)
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("CH-RUNTIMEOPS carried a %q frame at the session teardown; the runtime process "+
+			"lives as long as the pod and no teardown sends it a terminate frame", frame.Type)
 	}
 	if !atClose.current || !atClose.credentials {
-		t.Errorf("on entry to Runtime.Close: cwd present = %v, credential file present = %v, want both",
+		t.Errorf("on entry to Runtime.Close: cwd present = %v, credential file present = %v, want both; "+
+			"the per-slot tree was removed inside the locked deregistration step",
 			atClose.current, atClose.credentials)
 	}
 	if atReport.current || atReport.credentials {
@@ -194,18 +174,19 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_15_4_2(t *testing.T
 }
 
 // spec: §5.2 (the slot registry holds one entry per session on every pod),
-// §15.4.2 (the pod-global drain signal names no session)
+// §4.7.10 (Runtime process lifetime)
 //
-// The pair of teardowns on one two-slot pod pins both arms of the
-// bound-entry quantity the drain is gated on. A session ending on a
-// co-tenanted pod sends no drain: the signal is pod-global and terminates
-// the shared runtime process, so sending it while a co-tenant is still bound
-// tears down a runtime that is still serving. The co-tenant keeps its slot
-// entry, its message path, and its runtime, and the ending session's final
-// usage report and cleanup outcome name that session alone. The second
-// session's shutdown then sends the drain before closing that session's
-// runtime, because deregistering it leaves no bound entry.
-func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
+// Neither teardown on a two-slot pod writes a CH-RUNTIMEOPS frame. A session
+// ending on a co-tenanted pod leaves the co-tenant its slot entry, its
+// message path, and its runtime, and the ending session's final usage report
+// and cleanup outcome name that session alone. The co-tenant's own teardown,
+// which leaves the pod at occupancy zero, also sends no frame and closes the
+// co-tenant's runtime once, because the runtime process lives as long as the
+// pod and serves the pod's later sessions.
+//
+// diagnosis: a session teardown sent the runtime a terminate frame, which
+// tells a process the pod keeps across sessions to exit.
+func TestShutdownOfACoTenantedPodSendsNoDrain_spec_5_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
@@ -231,8 +212,8 @@ func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
 	}
 
 	if frame, ok := fr.readWithin(750 * time.Millisecond); ok {
-		t.Errorf("CH-RUNTIMEOPS carried a %q frame while a co-tenant was still bound; the drain "+
-			"terminates the shared runtime process the co-tenant is being served by", frame.Type)
+		t.Errorf("CH-RUNTIMEOPS carried a %q frame while a co-tenant was still bound; a session "+
+			"teardown sends the runtime no frame", frame.Type)
 	}
 
 	s.mu.Lock()
@@ -268,33 +249,8 @@ func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
 		t.Errorf("session scrub reports = %+v, want one naming alice", reports)
 	}
 
-	// The second teardown on the same pod deregisters the last bound entry,
-	// so the drain the first teardown withheld goes out, and it goes out
-	// before the runtime the co-tenant was being served by is closed. The
-	// bound-entry answer is therefore read from the registry the
-	// deregistration left behind rather than from how many entries the pod
-	// has ever held.
-	var (
-		drainFrame lifecycleFrame
-		drainRead  bool
-	)
-	drained := make(chan struct{})
-	go func() {
-		drainFrame, drainRead = fr.readWithin(30 * time.Second)
-		close(drained)
-	}()
-	closedBeforeDrain := false
-	rt.onClose = func(sessionID string) {
-		if sessionID != "bob" {
-			return
-		}
-		select {
-		case <-drained:
-		case <-time.After(5 * time.Second):
-			closedBeforeDrain = true
-		}
-	}
-
+	// The second teardown leaves the pod at occupancy zero and still sends
+	// no frame.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
 		UnconditionalTeardown: true,
 		SessionId:             &adapterv1.SessionId{Value: "bob"},
@@ -303,18 +259,9 @@ func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Shutdown bob: %v", err)
 	}
-
-	<-drained
-	if !drainRead {
-		t.Fatal("no CH-RUNTIMEOPS drain signal reached the runtime once the last bound entry was " +
-			"deregistered; the pod is serving no session and its runtime is closed without a graceful drain")
-	}
-	if drainFrame.Type != "terminate" || drainFrame.DeadlineMs != 3500 || drainFrame.Reason != "session_complete" {
-		t.Errorf("drain frame = %+v, want terminate with deadlineMs 3500 and reason session_complete", drainFrame)
-	}
-	if closedBeforeDrain {
-		t.Error("the co-tenant's runtime was closed before the drain signal reached it; the grace " +
-			"window the drain opens is the window the close ends")
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("CH-RUNTIMEOPS carried a %q frame at the occupancy-zero teardown; the runtime "+
+			"process lives as long as the pod", frame.Type)
 	}
 	if len(rt.closed) != 2 || rt.closed[0] != "alice" || rt.closed[1] != "bob" {
 		t.Errorf("runtime closed = %v, want [alice bob]", rt.closed)
@@ -322,14 +269,16 @@ func TestShutdownWithholdsDrainWhileACoTenantIsBound_spec_5_2(t *testing.T) {
 }
 
 // spec: §5.2 (the slot registry distinguishes a bound entry from a
-// registered one), §15.4.2 (the drain goes out once no bound entry remains)
+// registered one), §4.7.10 (Runtime process lifetime)
 //
-// A session ending beside another session's workspace preparation sends the
-// drain. The preparation RPCs register a slot entry without binding it, so a
-// gate that counts registry entries rather than bound ones withholds the
-// §15.4.2 drain behind an entry no session is being served on, and the
-// shared runtime is killed without a graceful drain.
-func TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2(t *testing.T) {
+// A session ending beside another session's workspace preparation sends no
+// CH-RUNTIMEOPS frame. The preparation RPCs register a slot entry without
+// binding it, so the pod reaches occupancy zero in its bound sessions, and
+// the runtime process lives on to serve the session being prepared.
+//
+// diagnosis: a session teardown sent the runtime a terminate frame, which
+// tells a process the pod keeps across sessions to exit.
+func TestShutdownWithARegisteredUnboundEntrySendsNoDrain_spec_5_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
@@ -353,13 +302,8 @@ func TestShutdownDrainsWhileARegisteredUnboundEntrySurvives_spec_5_2(t *testing.
 		t.Fatalf("Shutdown alice: %v", err)
 	}
 
-	frame, ok := fr.readWithin(30 * time.Second)
-	if !ok {
-		t.Fatal("no CH-RUNTIMEOPS drain signal reached the runtime; a registered-but-unbound entry " +
-			"must not withhold the drain")
-	}
-	if frame.Type != "terminate" || frame.DeadlineMs != 2500 {
-		t.Errorf("drain frame = %+v, want terminate with deadlineMs 2500", frame)
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("CH-RUNTIMEOPS carried a %q frame at the session teardown, want none", frame.Type)
 	}
 }
 
@@ -786,9 +730,7 @@ func TestShutdownOfARegisteredUnboundEntryRemovesItsTree_spec_4_7_1(t *testing.T
 // A Shutdown of a bound-but-unstarted entry removes the entry, the
 // credential file and the tree, cancels the armed expiry timer, and runs no
 // runtime teardown: no close, no cleanup report, no FINAL_USAGE_REPORT and
-// no terminate frame on CH-RUNTIMEOPS. No other bound entry is on the pod,
-// so a terminate withheld here is withheld by the started gate rather than
-// by a co-tenant.
+// no terminate frame on CH-RUNTIMEOPS.
 func TestShutdownOfABoundUnstartedEntryRunsNoRuntimeTeardown_spec_4_7_1(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
@@ -840,26 +782,17 @@ func TestShutdownOfABoundUnstartedEntryRunsNoRuntimeTeardown_spec_4_7_1(t *testi
 	}
 }
 
-// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §15.4.2
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
 //
-// A Shutdown of a started session the runtime holds runs today's full
-// teardown in order: the drain signal, the close, the tree removal and one
-// released cleanup report.
+// A Shutdown of a started session the runtime holds runs the full teardown
+// in order: the close, the tree removal and one released cleanup report.
 func TestShutdownOfAStartedSessionRunsTheFullTeardown_spec_4_7_1(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 	s, reporter := slotPod(t)
 	s.Lifecycle = lc
 	var order []string
-	drained := make(chan struct{})
-	go func() {
-		defer close(drained)
-		if frame, ok := fr.readWithin(10 * time.Second); ok && frame.Type == "terminate" {
-			order = append(order, "drain")
-		}
-	}()
 	rt := &probeRuntime{onClose: func(string) {
-		<-drained
 		order = append(order, "close")
 	}}
 	s.Runtime = rt
@@ -873,8 +806,11 @@ func TestShutdownOfAStartedSessionRunsTheFullTeardown_spec_4_7_1(t *testing.T) {
 	if _, err := s.Shutdown(context.Background(), fencedShutdown("alice", shutdownAttempt)); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
-	if strings.Join(order, ",") != "drain,close,tree,report" {
-		t.Errorf("teardown order = %v, want [drain close tree report]", order)
+	if strings.Join(order, ",") != "close,tree,report" {
+		t.Errorf("teardown order = %v, want [close tree report]", order)
+	}
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("CH-RUNTIMEOPS carried a %q frame at the session teardown, want none", frame.Type)
 	}
 	if r := reporter.snapshot(); len(r) != 1 || r[0].sessionID != "alice" || r[0].outcome != gatewaycontrol.SessionScrubReleased {
 		t.Errorf("session scrub reports = %+v, want one released for alice", r)

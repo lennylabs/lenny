@@ -92,3 +92,8 @@ func (s *Server) WaitPendingCheckpointForTest(sessionID string, timeout time.Dur
 	}
 	return false
 }
+
+// ErrRuntimeConnectionEnded exposes the socket transport's sticky ended
+// error so the package's external tests can assert that a Start or Output
+// after the runtime's connection ended fails with it. spec: §4.7.10.
+var ErrRuntimeConnectionEnded = errRuntimeConnectionEnded

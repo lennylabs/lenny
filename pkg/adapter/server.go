@@ -357,12 +357,13 @@ type Server struct {
 	// pod's one shared runtime process and not yet finished closing.
 	// spec: §15.4.3.
 	runtimeLive map[string]struct{}
-	// runtimeCohort counts the sessions handed to the current generation
-	// of that process, meaning those started since runtimeLive was last
-	// empty. soleSession reports a session only while it is one.
+	// runtimeCohort counts the sessions handed to that process for the
+	// pod's life. It never resets, because the process lives as long as
+	// the pod (§4.7.10). soleSession reports a session only while it is
+	// one and that session is still live.
 	runtimeCohort int
-	// cohortSession is the identifier of the current generation's first
-	// session.
+	// cohortSession is the identifier of the first session the process
+	// was given.
 	cohortSession string
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
 	// the slot identifier, which for a session-mode slot is the session's

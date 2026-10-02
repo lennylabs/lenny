@@ -5,24 +5,24 @@
 // Tier-7a load_local concurrency coverage for the pod-scoped runtime
 // listener of the sidecar socket transport.
 //
-// The adapter binds its runtime socket once, when the pod boots, and every
-// session the pod serves is accepted on that one listener. A session's
-// teardown releases the session and, when it was the last active one, the
-// shared runtime connection, but it leaves the listener bound. The window
-// this case pins is a few microseconds wide: the last session's Close runs
-// while a new session's Start is already in flight. The arriving Start
-// either takes the runtime process's lock before the Close clears the
-// connection and reuses it, or takes it afterwards and accepts its own
-// connection on the still-bound listener. Neither ordering may surface a
-// closed-listener error, which is what a teardown that unbinds the address
-// produces on the second ordering.
+// The adapter binds its runtime socket once, when the pod boots, and accepts
+// the runtime's connection at the pod's first session start. The runtime
+// process lives as long as the pod, so a session's teardown, including the
+// last one before occupancy zero, ends nothing: the connection and the
+// listener both stay up, and only the pod-scope teardown closes them. The
+// window this case pins is a few microseconds wide: the last session's Close
+// runs while a new session's Start is already in flight. On every ordering
+// the arriving Start returns on the kept connection without an accept, and
+// neither call surfaces a closed-listener error. A second runtime dial sits
+// unaccepted in the listener's backlog, because the transport accepts one
+// connection for the pod's life.
 //
 // The case carries a stress budget:
 //
 //	lenny-test stress --test TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2 --runs 50 --pkg ./tests/tier7a_load_local/... --tag load_local
 //
 // spec: §5.2 (Pool Configuration and Execution Modes), §15.4.3 (Runtime
-// Integration Levels).
+// Integration Levels), §4.7.10 (Runtime process lifetime).
 package tier7a_load_local_test
 
 import (
@@ -41,16 +41,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 )
 
-// listenerRaceAcceptTimeout bounds the arriving Start's accept. Its runtime
-// dials before the rendezvous, so the connection is already queued in the
+// listenerRaceAcceptTimeout bounds the first Start's accept. Its runtime
+// dials before the Start, so the connection is already queued in the
 // listener's backlog when the Start reaches accept; the bound only stops a
 // regression from hanging the case.
 const listenerRaceAcceptTimeout = 5 * time.Second
 
-// spec: §5.2 (Pool Configuration and Execution Modes), §15.4.3 (Runtime Integration Levels)
-// diagnosis: a failure means the session boundary can still unbind the pod's
-// runtime socket address under a concurrent start, so a session arriving as
-// the last one departs finds no listener to be accepted on.
+// spec: §5.2 (Pool Configuration and Execution Modes), §15.4.3 (Runtime Integration Levels), §4.7.10 (Runtime process lifetime)
+// diagnosis: a failure means the session boundary can still end the pod's
+// runtime connection or unbind its address under a concurrent start, so a
+// session arriving as the last one departs is not served by the runtime
+// process the pod kept.
 func TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2(t *testing.T) {
 	for attempt := range raceAttempts {
 		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
@@ -60,10 +61,9 @@ func TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2(t *testi
 }
 
 // closeStartListenerAttempt runs one race on a fresh runtime process: the
-// last active session's Close against a new session's dial and Start,
-// released from a common rendezvous. It then checks that the arriving
-// session is served by exactly one live connection and that the address
-// still accepts a later session.
+// last active session's Close against a new session's Start, released from
+// a common rendezvous. It then checks that the arriving session is served by
+// the kept connection and that a later session still starts on it.
 func closeStartListenerAttempt(t *testing.T) {
 	t.Helper()
 	rt, socket := newListenerRaceRuntime(t)
@@ -72,11 +72,10 @@ func closeStartListenerAttempt(t *testing.T) {
 		t.Fatalf("start the departing session: %v", err)
 	}
 
-	// The arriving session's runtime dials before the rendezvous rather
-	// than after it. A dial inside the race is a system call ahead of the
-	// Start, long enough that the Close wins every attempt and the reuse
-	// ordering is never reached; dialing first puts the Start and the Close
-	// on the runtime process's lock at the same instant.
+	// A second runtime dial is queued before the rendezvous. The transport
+	// never accepts it, because the arriving Start rides the kept
+	// connection; it stands in for a runtime that redials, which must not
+	// take the session over.
 	second := dialRuntimeSocket(t, socket)
 	var closeErr, startErr error
 	rendezvous := newRaceStart(2)
@@ -102,7 +101,7 @@ func closeStartListenerAttempt(t *testing.T) {
 		if errors.Is(startErr, net.ErrClosed) {
 			t.Fatalf("the arriving Start hit a closed listener: %v", startErr)
 		}
-		t.Fatalf("the arriving Start = %v, want it to reuse the live connection or accept its own", startErr)
+		t.Fatalf("the arriving Start = %v, want it to return on the kept connection", startErr)
 	}
 	assertArrivingSessionServedByOneConnection(t, rt, first, second)
 	assertListenerStillAccepts(t, rt, socket)
@@ -142,30 +141,25 @@ func dialRuntimeSocket(t *testing.T, socket string) net.Conn {
 }
 
 // assertArrivingSessionServedByOneConnection writes one envelope for the
-// arriving session and checks that it reaches exactly one of the two
-// runtime-side connections. When the Start reused the first connection, the
-// departing session's Close found a sibling still active and left that
-// connection up, so the envelope arrives there. When the Start accepted its
-// own connection, the Close tore the first connection down and the envelope
-// arrives on the second.
+// arriving session and checks that it reaches the first, kept runtime-side
+// connection alone. The departing session's Close ends nothing, so the
+// arriving Start rides the connection accepted at the pod's first session
+// start, and the second dial is never accepted.
 func assertArrivingSessionServedByOneConnection(t *testing.T, rt *adapter.SocketRuntimeProcess, first, second net.Conn) {
 	t.Helper()
 	const envelope = `{"type":"message","sessionId":"bob"}`
 	if err := rt.WriteEnvelope("bob", []byte(envelope)); err != nil {
 		t.Fatalf("write the arriving session's envelope: %v", err)
 	}
-	got := make(chan bool, 2)
-	for _, conn := range []net.Conn{first, second} {
-		go func(conn net.Conn) { got <- readsEnvelope(conn, envelope) }(conn)
+	onFirst := make(chan bool, 1)
+	onSecond := make(chan bool, 1)
+	go func() { onFirst <- readsEnvelope(first, envelope) }()
+	go func() { onSecond <- readsEnvelope(second, envelope) }()
+	if !<-onFirst {
+		t.Error("the arriving session's envelope did not reach the kept runtime connection")
 	}
-	delivered := 0
-	for range 2 {
-		if <-got {
-			delivered++
-		}
-	}
-	if delivered != 1 {
-		t.Errorf("the arriving session's envelope reached %d runtime connections, want exactly 1", delivered)
+	if <-onSecond {
+		t.Error("the arriving session's envelope reached a second runtime connection, want the kept one alone")
 	}
 }
 
@@ -182,8 +176,8 @@ func readsEnvelope(conn net.Conn, envelope string) bool {
 }
 
 // assertListenerStillAccepts ends the arriving session and checks that the
-// address is still bound: a new runtime dial succeeds and a later session's
-// Start completes on it.
+// address is still bound and that a later session's Start completes on the
+// kept connection.
 func assertListenerStillAccepts(t *testing.T, rt *adapter.SocketRuntimeProcess, socket string) {
 	t.Helper()
 	if err := rt.Close(context.Background(), "bob"); err != nil {

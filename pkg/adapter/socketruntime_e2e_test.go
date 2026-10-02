@@ -182,14 +182,15 @@ func requireSocketEcho(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID
 	}
 }
 
-// TestSpawnedRuntimeIsSignalledOnClose pins the developer-loop half of the
-// §4.7 socket transport: a runtime the adapter spawned is the adapter's own
-// child, so Close signals it rather than leaving it to notice the closed
-// connection and run on to the SIGKILL at the grace deadline.
+// TestSpawnedRuntimeIsSignalledOnPodTeardown pins the test-only SpawnPath
+// half of the §4.7 socket transport: a runtime the adapter spawned is the
+// adapter's own child, and the pod-scope teardown, CloseListener, closes its
+// connection and reaps it inside the grace window. A session's Close ends
+// nothing, so the child still answers after the last session's Close.
 //
-// spec: §4.7 (sidecar deployment model), §15.4 (SIGTERM, then SIGKILL at
-// the grace deadline).
-func TestSpawnedRuntimeIsSignalledOnClose(t *testing.T) {
+// spec: §4.7.10 (Runtime process lifetime), §15.4 (the clean-exit EOF, then
+// SIGKILL at the grace deadline).
+func TestSpawnedRuntimeIsSignalledOnPodTeardown(t *testing.T) {
 	echoBin := buildRuntime(t, "cmd/runtimes/echo")
 
 	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
@@ -204,15 +205,25 @@ func TestSpawnedRuntimeIsSignalledOnClose(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	requireSocketEcho(t, sp, "sess-a", "spawned")
-
-	// The grace window is the §11.4 10s default; a signalled child exits
-	// far inside it, and a child that misses the closed connection burns
-	// the whole window before the SIGKILL.
-	start := time.Now()
 	if err := sp.Close(context.Background(), "sess-a"); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+	if err := sp.Start(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Start(sess-b) after the last session's Close: %v", err)
+	}
+	requireSocketEcho(t, sp, "sess-b", "kept")
+
+	// The grace window is the §11.4 10s default; a child whose connection
+	// closed exits far inside it, and a child that misses the closed
+	// connection burns the whole window before the SIGKILL.
+	start := time.Now()
+	if err := sp.CloseListener(); err != nil {
+		t.Fatalf("CloseListener: %v", err)
+	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Errorf("Close took %s; the spawned runtime was not signalled and ran to the grace deadline", elapsed)
+		t.Errorf("CloseListener took %s; the spawned runtime was not ended and ran to the grace deadline", elapsed)
+	}
+	if sp.ServesNextSession() {
+		t.Error("ServesNextSession() = true after the pod-scope teardown, want false")
 	}
 }

@@ -20,9 +20,14 @@
 package tier9_security_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -185,8 +190,8 @@ func TestSharedPlatformMCPRefusesAfterCoordinatorLostTermination_spec_10_1(t *te
 
 // holdGateRuntime parks the first §10.1.4 hold-termination close so a case
 // can drive the intra-pod MCP surface in the window between the two
-// members' Runtime.Close calls. The window is real because a non-last
-// close returns without touching the shared connection or the child, the
+// members' Runtime.Close calls. The window is real because a close
+// returns without touching the shared connection or the child, the
 // hold-state interceptor covers the adapter's gRPC surface alone, and the
 // timeout clears the hold before either pass runs.
 type holdGateRuntime struct {
@@ -310,5 +315,80 @@ func TestSharedPlatformMCPRefusesBetweenHoldTerminatedMembers_spec_10_1(t *testi
 	}
 	if got := fwd.platformCallCount(); got != 0 {
 		t.Errorf("the surface forwarded %d platform call(s) mid-termination, want 0", got)
+	}
+}
+
+// keptRuntimePod starts sess-alice on an adapter wired as holdTerminationPod
+// wires one, but whose runtime is a real SocketRuntimeProcess the runtime's
+// end has dialed. It returns the server and the runtime's end of the
+// connection.
+func keptRuntimePod(t *testing.T, fwd *recordingForwarder) (*adapter.Server, net.Conn) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-rt-*")
+	if err != nil {
+		t.Fatalf("temp runtime socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sp, err := adapter.NewSocketRuntimeProcess(filepath.Join(dir, "r.sock"))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+	sp.AcceptTimeout = 30 * time.Second
+	peer, err := net.Dial("unix", sp.SocketPath())
+	if err != nil {
+		t.Fatalf("runtime dial: %v", err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+
+	s := adapter.New("test")
+	s.WorkspaceBase = t.TempDir()
+	s.Runtime = sp
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortMCPSocket(t)
+	s.PlatformForwarder = fwd
+	s.ConnectorForwarder = fwd
+	s.CoordinatorHoldTimeout = 20 * time.Millisecond
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-alice"},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession(sess-alice): %v", err)
+	}
+	return s, peer
+}
+
+// spec: 10.1.4 (Hold state timeout), 4.7.10 (Runtime process lifetime), 13.1
+// (isolation boundaries)
+//
+// The runtime process the pod keeps across sessions ends at the coordinator
+// hold timeout: its connection closes, so it stops holding the terminated
+// session's credentials, and the pod accepts no later session on it.
+//
+// diagnosis: a runtime process the pod keeps across sessions goes on holding
+// a coordinator-lost session's credentials, or accepts a session, with no
+// coordinator.
+func TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4(t *testing.T) {
+	fwd := &recordingForwarder{}
+	s, peer := keptRuntimePod(t, fwd)
+	client := serveAdapterOverBufconn(t, s)
+
+	dropCoordinatorStream(t, s, client)
+
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := bufio.NewReader(peer).ReadString('\n'); !errors.Is(err, io.EOF) {
+		t.Fatalf("runtime read after the coordinator-lost termination = %v, want io.EOF; "+
+			"the kept runtime still holds the terminated session's connection", err)
+	}
+
+	began := time.Now()
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-bob"},
+		Runtime:   "echo",
+	}); err == nil {
+		t.Fatal("StartSession(sess-bob) after the coordinator-lost termination succeeded, want an error")
+	}
+	if elapsed := time.Since(began); elapsed > time.Second {
+		t.Errorf("StartSession(sess-bob) took %s, want it to fail within 1s", elapsed)
 	}
 }

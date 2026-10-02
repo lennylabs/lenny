@@ -4,8 +4,6 @@ package adapter
 
 import (
 	"context"
-	"errors"
-	"log"
 	"log/slog"
 	"time"
 
@@ -41,11 +39,17 @@ func setupOptionsFromProto(p *adapterv1.SetupPolicy, workdir string) workspace.S
 	return opts
 }
 
-// RuntimeProcess manages the pod's runtime process. The §4.7 adapter
-// starts it at session start, forwards message envelopes to it,
-// signals it on interrupt, and closes it at session teardown.
+// RuntimeProcess is the adapter's handle on the pod's runtime process. The
+// §4.7 adapter makes the runtime live for a session at session start,
+// forwards message envelopes to it, and ends the session's use of it on
+// interrupt and at session teardown. The runtime process lives as long as
+// the pod (§4.7.10), so ending a session's use of it may keep the process.
 type RuntimeProcess interface {
-	// Start spawns the runtime process for the session.
+	// Start makes the runtime live for the session. The sidecar
+	// implementation accepts the runtime's connection once and carries
+	// every later session on that connection; the embedded implementation
+	// invokes the runtime loop inside the adapter's process. Only the
+	// developer-loop executor and the test-only SpawnPath spawn a process.
 	Start(ctx context.Context, sessionID string) error
 	// WriteEnvelope forwards a pre-encoded message envelope to the
 	// runtime's stdin.
@@ -55,11 +59,13 @@ type RuntimeProcess interface {
 	// closed when the runtime's output ends; the context bounds the
 	// reader so a stalled consumer does not leak it.
 	Output(ctx context.Context, sessionID string) (<-chan []byte, error)
-	// Interrupt signals the runtime process. A hard interrupt sends
-	// SIGKILL; a clean interrupt sends SIGTERM so the runtime can pause
-	// or checkpoint within the gateway's grace deadline.
+	// Interrupt ends the session's use of the runtime on an interrupt. An
+	// implementation that owns a per-session process signals it (SIGKILL
+	// when hard, SIGTERM otherwise); one whose process lives as long as the
+	// pod keeps the process.
 	Interrupt(ctx context.Context, sessionID string, hard bool) error
-	// Close tears the runtime process down.
+	// Close ends the session's use of the runtime at session teardown. It
+	// may keep the process, which serves the pod's later sessions.
 	Close(ctx context.Context, sessionID string) error
 }
 
@@ -236,24 +242,19 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // paragraph and disposition table; the inline comments give the reasons.
 //
 // The runtime teardown must not run for an unstarted session. For a
-// bound-but-unstarted entry the handler this replaced sent the §15.4.2
-// drain whenever no other bound entry remained, which a
-// registered-but-unbound co-tenant about to call StartSession does not
-// hold off, and filed a ReportSessionScrub that advanced sessionsServed
-// for a session the pod never ran. Runtime.Close is also not uniformly
-// session-scoped: InProcessRuntime.Close and MCPRuntime.Close ignore the
-// session identifier and tear the runtime down on any call, and
-// SocketRuntimeProcess.Close tears down the shared connection and the child
-// whenever its active set is empty, which
-// Interrupt of the last active session produces without clearing the
-// connection.
+// bound-but-unstarted entry an earlier handler filed a ReportSessionScrub
+// that advanced sessionsServed for a session the pod never ran.
+// Runtime.Close is also not uniformly session-scoped: InProcessRuntime.Close
+// and MCPRuntime.Close ignore the session identifier and tear the runtime
+// down on any call. SocketRuntimeProcess.Close ends nothing, because the
+// sidecar runtime's connection lives as long as the pod (§4.7.10).
 //
 // A non-positive deadline_ms leaves Runtime.Close on the inbound context;
 // a positive one bounds it, so the runtime's SIGTERM/SIGKILL pivot honors
 // the §11.4 graceful window.
 //
 // spec: §4.7; §4.7.1 (role and gateway RPC contract), rules 10 through 15;
-// §5.2 (slot-identifier reclaim hold); §11.4; §15.4.2.
+// §5.2 (slot-identifier reclaim hold); §11.4.
 func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -312,17 +313,16 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 		s.mu.Unlock()
 		return s.answerShutdown(req, outcome, true, untokened)
 	}
-	st, _, boundRemains, release := s.reclaimSlotLocked(sessionID)
+	st, _, release := s.reclaimSlotLocked(sessionID)
 	r := reclaimedSlot{
 		st: st,
 		// st.started is set inside claimSessionSlotUnderLock before
 		// Runtime.Start runs, so gating the runtime teardown on it fails
 		// closed on a start still in flight, which is torn down rather than
 		// skipped.
-		started:      st.started,
-		live:         s.runtimeHoldsLocked(sessionID),
-		boundRemains: boundRemains,
-		guarded:      guarded,
+		started: st.started,
+		live:    s.runtimeHoldsLocked(sessionID),
+		guarded: guarded,
 	}
 	// spec: §5.2 (slot-identifier reclaim hold). The deregistration and the
 	// hold are one critical section, so no bind is admitted between them.
@@ -392,9 +392,6 @@ type reclaimedSlot struct {
 	// holds the session, which noteRuntimeStarted records only after
 	// Runtime.Start returned, so the slot reached §6.2's running.
 	live bool
-	// boundRemains reports that another bound entry survives the
-	// deregistration, which withholds the pod-global §15.4.2 drain.
-	boundRemains bool
 	// guarded reports that the section holds the slot's guard.
 	guarded bool
 }
@@ -412,8 +409,11 @@ type reclaimedSlot struct {
 // once. The gateway advances the pod's served-session count on every report
 // with no per-session dedup, so the one-report rule has to hold here.
 //
+// No CH-RUNTIMEOPS terminate frame is sent: the runtime process lives as
+// long as the pod, and no drain coordination exists at pod exit (§15.4.2).
+//
 // spec: §4.7.1 (role and gateway RPC contract), rules 12 and 14; §5.2 (pool
-// configuration and execution modes); §15.4.2.
+// configuration and execution modes); §4.7.10 (Runtime process lifetime).
 func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.ShutdownRequest, r reclaimedSlot) (exitedCleanly, completed bool) {
 	sessionID := req.GetSessionId().GetValue()
 	closeErr := error(nil)
@@ -422,15 +422,6 @@ func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.Shutd
 		// so the gateway can run budget_return.lua (§8.3) with the
 		// session's complete token totals.
 		s.emitFinalUsage(ctx, sessionID)
-		// spec: §15.4.2 / §15.4.3. The drain signal is pod-global and names
-		// no session, so it goes out only when the deregistration left no
-		// bound entry; a bound co-tenant is still being served. It precedes
-		// the close because the last session's close tears the shared
-		// runtime down and a terminate frame sent afterwards reaches a dead
-		// runtime.
-		if !r.boundRemains {
-			s.drainViaLifecycle(req.GetDeadlineMs(), req.GetReason())
-		}
 		if s.Runtime != nil {
 			closeCtx, cancel := contextWithGraceDeadline(ctx, time.Duration(req.GetDeadlineMs())*time.Millisecond)
 			closeErr = s.Runtime.Close(closeCtx, sessionID)
@@ -442,9 +433,8 @@ func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.Shutd
 	// The slot release runs for any entry the call removed, bound or not,
 	// which reclaims the tree and the empty credential directory the
 	// workspace-preparation RPCs created for a registered-but-unbound
-	// entry. It follows the drain and the close so the agent process is not
-	// reading a credential file the teardown already removed inside the
-	// §15.4.2 grace window. The armed §4.9 expiry timers were cancelled by
+	// entry. It follows the runtime close, so the session's use of the
+	// runtime has ended before its credential file is removed. The armed §4.9 expiry timers were cancelled by
 	// deregisterSlotLocked. cancelPodMCPIfRuntimeIdle is safe here for an
 	// unbound entry: it cancels nothing while the shared runtime process
 	// serves a session or the arming session still holds a slot.
@@ -502,35 +492,6 @@ func (s *Server) answerShutdown(req *adapterv1.ShutdownRequest, outcome adapterv
 		ExitedCleanly: exitedCleanly,
 		SlotReclaim:   outcome,
 	}, nil
-}
-
-// drainViaLifecycle sends the §15.4.2 DRAINING-state graceful-shutdown
-// signal on the CH-RUNTIMEOPS before the hard runtime close. It is a
-// no-op when the runtime has no CH-RUNTIMEOPS (Basic/Standard level)
-// or has not yet connected; any other send error is logged rather than
-// surfaced so a drain hiccup never blocks termination.
-func (s *Server) drainViaLifecycle(deadlineMs int32, reason string) {
-	if s.Lifecycle == nil {
-		return
-	}
-	if err := s.Lifecycle.Terminate(deadlineMs, drainReason(reason)); err != nil &&
-		!errors.Is(err, errLifecycleNotConnected) && !errors.Is(err, errLifecycleClosed) {
-		log.Printf("lenny-adapter: lifecycle drain signal: %v", err)
-	}
-}
-
-// drainReason maps a §4.7 ShutdownRequest reason to the lifecycle
-// `terminate` frame's reason enum (session_complete, budget_exhausted,
-// eviction, operator), defaulting an empty or unrecognized value to
-// session_complete so the wire frame always carries a valid reason.
-// spec: §15.4.2 — terminate reason enum.
-func drainReason(reason string) string {
-	switch reason {
-	case "session_complete", "budget_exhausted", "eviction", "operator":
-		return reason
-	default:
-		return "session_complete"
-	}
 }
 
 // contextWithGraceDeadline derives a context bounded by `grace` from

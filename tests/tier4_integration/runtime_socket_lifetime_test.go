@@ -3,21 +3,22 @@
 //go:build integration
 
 // Tier-4 flows for the lifetime of the pod's runtime socket (CH-MSGSOCK).
-// The adapter binds that address once when it starts, and the address
-// outlives every session the pod serves: a session teardown closes the
-// session's runtime connection and leaves the listener bound, and the
-// adapter process releases the listener when it exits.
+// The adapter binds that address once when it starts and accepts the
+// runtime's connection at the pod's first session start. The runtime process
+// lives as long as the pod: a session teardown ends nothing, the one
+// connection serves every later session, and the pod-scope teardown the
+// adapter process runs at exit closes the connection and the listener.
 //
 // The file carries two flows. The first drives a real adapter.Server over
 // its gRPC contract through two complete sessions in sequence on one
-// SocketRuntimeProcess, so the second session's runtime has to dial the same
-// address the first session's runtime used. The second builds and runs the
+// SocketRuntimeProcess, so the second session is served by the runtime
+// process and the connection the first session used. The second builds and runs the
 // real cmd/lenny-adapter binary with a filesystem-path runtime socket,
 // stops it with SIGTERM, and asserts that the socket file is gone, which is
 // what lets a restarted adapter bind the same path.
 //
 // spec: §5.2 (Pool Configuration and Execution Modes), §15.4.3 (Runtime
-// Integration Levels), §4.7.10 (Deployment Model), §28.5.3 (Intra-pod).
+// Integration Levels), §4.7.10 (Runtime process lifetime), §28.5.3 (Intra-pod).
 package tier4_integration_test
 
 import (
@@ -46,11 +47,11 @@ import (
 )
 
 // spec: §15.4.3 (Runtime Integration Levels), §5.2 (Pool Configuration and
-// Execution Modes), §4.7.10 (Deployment Model).
-// diagnosis: a failure means the pod lost its runtime ingress at the first
-// session's end: the first session's teardown unbound the pod's runtime
-// socket address, so the second session's runtime had nothing to dial and no
-// recycling pod can serve a second session.
+// Execution Modes), §4.7.10 (Runtime process lifetime).
+// diagnosis: a failure means the pod lost its runtime at the first session's
+// end: the first session's teardown ended the runtime's connection or
+// unbound the pod's runtime socket address, so no recycling pod can serve a
+// second session.
 func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *testing.T) {
 	echoBin := buildRepoBinary(t, "cmd/runtimes/echo")
 
@@ -65,12 +66,13 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
-	// The listener is pod-scoped and outlives every session Close, so it is
-	// released separately. Registered first, this cleanup runs last.
+	// The transport outlives every session Close, so the pod-scope teardown
+	// runs separately. Registered first, this cleanup runs last.
 	t.Cleanup(func() { _ = rt.CloseListener() })
-	// SpawnPath is the test-only spawn hook: each session whose start finds
-	// no live runtime connection execs the echo runtime, which dials the
-	// pod's address. The flow therefore asserts the adapter half alone.
+	// SpawnPath is the test-only spawn hook: the pod's first session start
+	// execs the echo runtime once, which dials the pod's address, and the
+	// second session rides the same connection. The flow therefore asserts
+	// the adapter half alone.
 	rt.SpawnPath = echoBin
 	rt.AcceptTimeout = 15 * time.Second
 	srv.Runtime = rt
@@ -81,6 +83,9 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 		runOneSession(t, client, sessionID)
 		if got := rt.SocketPath(); got != addr {
 			t.Fatalf("runtime socket address after %s = %q, want the boot-time address %q", sessionID, got, addr)
+		}
+		if !rt.ServesNextSession() {
+			t.Fatalf("ServesNextSession() after %s = false, want the kept runtime able to serve the next session", sessionID)
 		}
 	}
 }

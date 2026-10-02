@@ -23,7 +23,16 @@ import (
 // occupancy rather than a statement about it. The state below counts the
 // sessions given to the process instead.
 //
-// spec: §15.4.3; §9.1; §11.2.
+// The runtime process lives as long as the pod (§4.7.10): no session
+// teardown and no occupancy-zero boundary ends it, so a later session on a
+// recycled pod runs in the process that served the earlier ones. The
+// generation therefore counts every session the process has been given for
+// the pod's life and never resets. Once a second session has been given to
+// the process, no session is sole again, and pod-global surfaces fail
+// closed for every later session.
+//
+// spec: §28 (CH-MCP-PLATFORM exclusivity); §15.4.3; §4.7.10 (Runtime process
+// lifetime); §9.1; §11.2.
 
 // noteRuntimeStarted records the pod's one shared runtime process as holding
 // sessionID, the record at which the slot reaches §6.2 running, and reports
@@ -122,31 +131,26 @@ func (s *Server) noteRuntimeStartedLocked(sessionID string) {
 	}
 }
 
-// noteRuntimeClosed records that sessionID's Runtime.Close has returned.
-// When the removal leaves the generation empty it resets the generation,
-// so the next session admitted to a process serving nobody is sole again.
-// A close for a session the generation never held moves nothing: keying
-// the removal on membership rather than on a bare count is what keeps a
-// close of a bound-not-started session from emptying a generation a
-// co-tenant is still resident in.
+// noteRuntimeClosed records that sessionID's Runtime.Close has returned by
+// removing it from runtimeLive. It leaves runtimeCohort and cohortSession
+// alone: the process that served the session lives on and serves the pod's
+// later sessions, so the next session is not sole even when the process
+// serves no session at the moment it arrives. A close for a session the
+// generation never held moves nothing.
+// spec: §4.7.10 (Runtime process lifetime); §15.4.3.
 func (s *Server) noteRuntimeClosed(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.runtimeLive[sessionID]; !ok {
-		return
-	}
 	delete(s.runtimeLive, sessionID)
-	if len(s.runtimeLive) == 0 {
-		s.runtimeCohort = 0
-		s.cohortSession = ""
-	}
 }
 
-// soleSession returns the session the pod's one shared runtime process
-// has been given, and nothing else, since it was last serving none. It is
-// the empty string whenever another session's code may still be resident
-// in that process, so a pod-global surface fails closed rather than
-// acting under a session other than the caller's.
+// soleSession returns the session the pod's runtime process has been
+// given, and nothing else, for the pod's life, while that session is still
+// live in the process. It is the empty string whenever another session's
+// code may be or may have been resident in that process, and once the one
+// session it was given has closed, so a pod-global surface fails closed
+// rather than acting under a session other than the caller's.
+// spec: §28 (CH-MCP-PLATFORM exclusivity); §15.4.3.
 func (s *Server) soleSession() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,6 +160,9 @@ func (s *Server) soleSession() string {
 // soleSessionLocked is soleSession with s.mu already held.
 func (s *Server) soleSessionLocked() string {
 	if s.runtimeCohort != 1 {
+		return ""
+	}
+	if _, live := s.runtimeLive[s.cohortSession]; !live {
 		return ""
 	}
 	return s.cohortSession

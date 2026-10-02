@@ -4252,6 +4252,13 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Gap:** Operators see a scrub-failure reason for a configuration change.
 **Suggested resolution:** Retire such a pod with a reason that names the configuration change. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [x] F-5.2.44 — `SocketRuntimeProcess.Close` returns nil, which reverses proposal 0073's frozen `Runtime.Close` behavior for the sidecar transport [Info] — CLOSED
+
+**Spec:** §4.7.10 **Runtime process lifetime.** states that the runtime process lives as long as the pod and that no session's teardown, interrupt, or heartbeat escalation, and no occupancy-zero boundary, closes the sidecar runtime's `CH-MSGSOCK` connection or signals the process.
+**Evidence:** Proposal 0079 (`proposals/0079_fix_name-who-starts-the-next-sessions-runtime-on-a-recycled-pod/`) gives `SocketRuntimeProcess.Close` and `SocketRuntimeProcess.Interrupt` bodies that return nil (`pkg/adapter/socketruntime.go`), deletes the active set that decided the occupancy-zero teardown, and makes `CloseListener`, the pod-scope teardown, the transport's only close. Proposal 0073's SCHEMA-1 states that `Runtime.Close` is unchanged by that proposal's deliverable, in signature and in behavior. The signature is unchanged; the behavior of `Close` on the sidecar transport is not. `InProcessRuntime`, `SDKWarmInProcessRuntime`, `MCPRuntime`, and `SubprocessExecutor` keep their `Close` behavior, so the reversal applies to `SocketRuntimeProcess` alone.
+**Gap:** None. This entry records the reversal so a reader of proposal 0073 finds where its SCHEMA-1 statement stopped holding. Proposal 0073 is a landed record and is not edited.
+**Resolution:** Recorded on application of proposal 0079, which states the reversal in its own text.
+
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
 

@@ -110,8 +110,9 @@ func TestSoleSessionIsEmptyAcrossAConcurrentRelease_spec_9_1(t *testing.T) {
 		t.Errorf("SoleSessionID after the outstanding close returned = %q, want empty", got)
 	}
 
-	// Once every session the process was given has closed, the next start
-	// is on a process serving nobody else and is named.
+	// The runtime process lives as long as the pod, so it has been given
+	// every earlier session; the next start on it is not sole even after
+	// every one of them has closed.
 	if _, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
 		UnconditionalTeardown: true,
 		SessionId:             &adapterv1.SessionId{Value: "carol"},
@@ -122,8 +123,8 @@ func TestSoleSessionIsEmptyAcrossAConcurrentRelease_spec_9_1(t *testing.T) {
 		t.Errorf("SoleSessionID on an idle pod = %q, want empty", got)
 	}
 	startDrainSession(t, s, "dave")
-	if got := s.SoleSessionID(); got != "dave" {
-		t.Errorf("SoleSessionID after a fresh sole start = %q, want dave", got)
+	if got := s.SoleSessionID(); got != "" {
+		t.Errorf("SoleSessionID after a start on a process given earlier sessions = %q, want empty", got)
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
@@ -131,4 +132,15 @@ func TestSoleSessionIsEmptyAcrossAConcurrentRelease_spec_9_1(t *testing.T) {
 			SessionId:             &adapterv1.SessionId{Value: "dave"},
 		})
 	})
+}
+
+// startDrainSession drives a full StartSession and fails the case when it
+// does not return cleanly.
+func startDrainSession(t *testing.T, s *adapter.Server, sessionID string) {
+	t.Helper()
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID}, Runtime: "echo",
+	}); err != nil {
+		t.Fatalf("start %s: %v", sessionID, err)
+	}
 }

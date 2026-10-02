@@ -190,23 +190,18 @@ func runCancels(cancels []context.CancelFunc) {
 
 // deregisterSlotLocked is the first of the two release steps: under s.mu
 // it cancels every direct-mode lease-expiry timer armed on the session's
-// entry, deletes the entry, and reports whether any bound entry remains.
-// It returns the deregistered state so the caller can run the second step
-// after the lock is released.
+// entry and deletes the entry. It returns the deregistered state so the
+// caller can run the second step after the lock is released.
 //
 // The cancellation belongs here because an armed timer left behind fires
 // AUTH_EXPIRED against a session that has already ended, and both teardown
 // paths this step replaces cancelled before the runtime close. It is
 // unconditional on the binding, and Shutdown's reclaim of an unbound or
 // unstarted entry relies on that as much as the bound teardown does.
+// Callers hold s.mu.
 //
-// The bound-entry answer is the outcome of the same critical section that
-// removed the entry rather than a read taken before it, so two co-tenants
-// ending at once cannot each observe the other and both decline the
-// pod-wide action the answer gates. Callers hold s.mu.
-//
-// spec: §4.9; §15.4.2.
-func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed, boundRemains bool) {
+// spec: §4.9.
+func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed bool) {
 	st, removed = s.slots[sessionID]
 	if removed {
 		for provider := range st.timers {
@@ -214,13 +209,7 @@ func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed,
 		}
 		delete(s.slots, sessionID)
 	}
-	for _, other := range s.slots {
-		if other.sessionID != "" {
-			boundRemains = true
-			break
-		}
-	}
-	return st, removed, boundRemains
+	return st, removed
 }
 
 // reclaimSlotLocked is the deregistration every release that then destroys
@@ -237,12 +226,12 @@ func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed,
 //
 // spec: §5.2 (slot-identifier reclaim hold); §4.7.1 (role and gateway RPC
 // contract), the registry critical section.
-func (s *Server) reclaimSlotLocked(sessionID string) (st *slotState, removed, boundRemains bool, release func()) {
-	st, removed, boundRemains = s.deregisterSlotLocked(sessionID)
+func (s *Server) reclaimSlotLocked(sessionID string) (st *slotState, removed bool, release func()) {
+	st, removed = s.deregisterSlotLocked(sessionID)
 	if !removed {
-		return st, false, boundRemains, noHoldRelease
+		return st, false, noHoldRelease
 	}
-	return st, true, boundRemains, s.openReclaimHoldLocked(sessionID)
+	return st, true, s.openReclaimHoldLocked(sessionID)
 }
 
 // reclaimSlotIfOwnedLocked is reclaimSlotLocked for a release made on behalf
@@ -264,8 +253,7 @@ func (s *Server) reclaimSlotIfOwnedLocked(sessionID string, entry *slotState) (s
 	if cur, ok := s.slots[sessionID]; !ok || cur != entry {
 		return nil, false, noHoldRelease
 	}
-	st, removed, _, release = s.reclaimSlotLocked(sessionID)
-	return st, removed, release
+	return s.reclaimSlotLocked(sessionID)
 }
 
 // releaseClaimedSlot is the compensating release a start handler that holds
@@ -350,7 +338,7 @@ func (s *Server) releaseSessionSlot(ctx context.Context, sessionID string) {
 // spec: §4.7; §5.2 (slot-identifier reclaim hold); §15.4.3.
 func (s *Server) releaseSessionSlotUnderGuard(sessionID string, guarded bool) {
 	s.mu.Lock()
-	st, removed, _, release := s.reclaimSlotLocked(sessionID)
+	st, removed, release := s.reclaimSlotLocked(sessionID)
 	s.mu.Unlock()
 	s.finishSlotRelease(sessionID, st, removed, guarded, release)
 }
@@ -527,8 +515,8 @@ func (s *Server) startedSessionCount() int {
 // removes nothing and skips its teardown, and one whose step runs first
 // takes the member out of the set collected here. Without the pass, every
 // terminated session's entry would survive for the life of the pod,
-// holding the §15.4.2 drain gate false and the §28.5.3 inbound count above
-// one on a pod that goes on serving.
+// holding the §28.5.3 inbound count above one on a pod that goes on
+// serving.
 //
 // The order is fixed rather than incidental: s.slots is a map and Go
 // randomizes a map's range order, so an unsorted collection would leave
@@ -547,10 +535,9 @@ func (s *Server) deregisterStartedSessions() []heldSession {
 	sort.Strings(ids)
 	members := make([]heldSession, 0, len(ids))
 	for _, id := range ids {
-		// The bound-entry result exists to decide the §15.4.2 drain, which
-		// this path does not send, so it is discarded here. The reclaim hold
-		// opens with the deregistration and pass 2 carries its release.
-		st, removed, _, release := s.reclaimSlotLocked(id)
+		// The reclaim hold opens with the deregistration and pass 2 carries
+		// its release.
+		st, removed, release := s.reclaimSlotLocked(id)
 		if !removed {
 			continue
 		}

@@ -171,15 +171,17 @@ func (f *holdEventStream) attach(t *testing.T, s *adapter.Server) {
 	}
 }
 
-// holdSharedRuntime models the pod's one shared runtime process: Close
-// removes the named session from the process's active set and ends the
-// process only when the last member leaves, so a non-last close returns
-// without touching the child. Gates let a case park a Start or a Close.
+// holdSharedRuntime models the pod's one shared runtime process the way
+// the sidecar transport behaves: Close removes the named session from the
+// sessions resident in the process and ends nothing, because the process
+// lives as long as the pod. CloseListener is the pod-scope teardown the
+// hold timeout runs, and it is counted. Gates let a case park a Start or a
+// Close.
 type holdSharedRuntime struct {
-	mu       sync.Mutex
-	active   map[string]struct{}
-	closed   []string
-	procEnds int
+	mu        sync.Mutex
+	active    map[string]struct{}
+	closed    []string
+	teardowns int
 
 	startGate map[string]chan struct{}
 	closeGate map[string]chan struct{}
@@ -242,12 +244,7 @@ func (r *holdSharedRuntime) Close(_ context.Context, sessionID string) error {
 	}
 	r.mu.Lock()
 	r.closed = append(r.closed, sessionID)
-	if _, ok := r.active[sessionID]; ok {
-		delete(r.active, sessionID)
-		if len(r.active) == 0 {
-			r.procEnds++
-		}
-	}
+	delete(r.active, sessionID)
 	r.mu.Unlock()
 	if r.onClosed != nil {
 		r.onClosed(sessionID)
@@ -261,10 +258,18 @@ func (r *holdSharedRuntime) closes() []string {
 	return append([]string(nil), r.closed...)
 }
 
-func (r *holdSharedRuntime) processEnds() int {
+// CloseListener counts the pod-scope teardown.
+func (r *holdSharedRuntime) CloseListener() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.procEnds
+	r.teardowns++
+	return nil
+}
+
+func (r *holdSharedRuntime) podTeardowns() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.teardowns
 }
 
 func (r *holdSharedRuntime) resident() []string {
@@ -488,8 +493,8 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 		awaitClosed(t, rt, "sess-a", "sess-b")
 		evs := observer.settle(t, 100*time.Millisecond)
 
-		if got := rt.processEnds(); got != 1 {
-			t.Errorf("the shared runtime process ended %d time(s), want 1 (on the last member)", got)
+		if got := rt.podTeardowns(); got != 1 {
+			t.Errorf("the pod-scope teardown ran %d time(s), want 1", got)
 		}
 		terminating := map[string]int{}
 		for _, ev := range evs {
@@ -619,8 +624,10 @@ func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.
 						"the termination loop performs no scrub", attempt, id, got)
 				}
 			}
-			if got := rt.processEnds(); got != 1 {
-				t.Fatalf("attempt %d: the shared runtime process ended %d time(s), want 1", attempt, got)
+			// The teardown does not read the collected set, so it runs once
+			// whichever side of the race removed a member.
+			if got := rt.podTeardowns(); got != 1 {
+				t.Fatalf("attempt %d: the pod-scope teardown ran %d time(s), want 1", attempt, got)
 			}
 		}
 	})
