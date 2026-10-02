@@ -849,6 +849,7 @@ func TestUpdatePoolRejectsEnablingCrossTenantReuseOnT4Runtime_spec_5_2_396(t *te
 		Name: "t4-pool", RuntimeRef: "phi-agent", ExecutionMode: "session",
 		IsolationProfile: "microvm",
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
@@ -1011,7 +1012,8 @@ func TestCreatePoolRoundTripsSessionPolicy_spec_5_2(t *testing.T) {
 		IsolationProfile: "microvm",
 		ExecutionMode:    "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
-			MaxSessionRetries: &mt,
+			AcknowledgeProcessLevelIsolation: true,
+			MaxSessionRetries:                &mt,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                         true,
 				AcknowledgeBestEffortScrub:      true,
@@ -1109,7 +1111,8 @@ func TestUpdatePoolClearsSessionPolicy_spec_5_2(t *testing.T) {
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
 		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
-			Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -1135,7 +1138,8 @@ func TestUpdatePoolMutexClearAndSetSessionPolicy_spec_5_2(t *testing.T) {
 	rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
 		Name: "p1", RuntimeRef: "claude-code", ExecutionMode: "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
-			Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
+			AcknowledgeProcessLevelIsolation: true,
+			Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5},
 		},
 	})
 	if rr.Code != http.StatusCreated {
@@ -1185,6 +1189,7 @@ func TestCreateSessionPoolPersistsRecycleMaxPodUptime_spec_5_2(t *testing.T) {
 		IsolationProfile: "sandboxed",
 		ExecutionMode:    "session",
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
@@ -1207,6 +1212,7 @@ func TestCreateSessionPoolPersistsRecycleMaxPodUptime_spec_5_2(t *testing.T) {
 	// A PUT updates the cap (If-Match the created pool's version 1).
 	put := putPoolRaw(t, router.Handler(), "recycle-pool", `"1"`, admin.UpdatePoolRequest{
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,

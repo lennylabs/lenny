@@ -309,7 +309,7 @@ func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
 		OnRebind: func(podID string) { rebound = append(rebound, podID) },
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-2", TenantID: "acme",
+		Pool: testPool, SessionID: "sess-2", TenantID: "acme", KeepsRuntime: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -344,7 +344,7 @@ func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 		Now: func() time.Time { return now.Add(time.Minute) }, // past the 10s hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-3", TenantID: "acme",
+		Pool: testPool, SessionID: "sess-3", TenantID: "acme", KeepsRuntime: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -371,7 +371,7 @@ func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
 		Client: c, Namespace: testNS, Now: func() time.Time { return now.Add(5 * time.Second) },
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-4", TenantID: "acme",
+		Pool: testPool, SessionID: "sess-4", TenantID: "acme", KeepsRuntime: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)

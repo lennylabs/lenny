@@ -94,42 +94,7 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	// last successful full checkpoint; an unresolvable manifest (dev mode,
 	// a checkpoint predating the chunked model) leaves the chunk set empty.
 	chunks := s.resolveResumeChunks(ctx, row)
-	result, err := s.podBinder.Resume(ctx, podsession.ResumeRequest{
-		Pool:                    match.Pool,
-		SessionID:               row.ID,
-		TenantID:                row.TenantID,
-		Runtime:                 row.RuntimeRef,
-		CheckpointID:            row.WorkspaceSnapshot.Ref,
-		ExperimentContext:       experimentContextToProto(row.ExperimentContext),
-		TracingContext:          row.TracingContext,
-		AgentInterface:          agentInterface,
-		MinPlatformVersion:      minPlatformVersion,
-		RecoveryGeneration:      row.RecoveryGeneration,
-		ExpectedWorkspaceBytes:  expectedBytes,
-		WorkspaceSizeLimitBytes: match.WorkspaceSizeLimitBytes,
-		// spec: §7.3 step (d) — "Recreate same absolute `cwd`
-		// path." The gateway carries the original session's adapter-
-		// reported WorkspaceRoot (captured on the §15.5 handshake and
-		// persisted at first bind) on every Resume. An empty value
-		// (legacy row, adapter on an older protocol) disables the
-		// assertion on the adapter side. F-7.3.15.
-		ExpectedWorkspaceRoot: row.WorkspaceRoot,
-		// spec: §5.2 — the resume reserves one counted slot on the
-		// replacement pod on the pools the start path reserves one on, and
-		// delivers the pool's uptime cap onto that pod. Normalize the bound
-		// to a minimum of 1: Binder.Resume scopes the reservation on it.
-		MaxConcurrentSessions: maxConcurrentSessions(match.MaxConcurrentSessions),
-		MaxPodUptimeSeconds:   match.MaxPodUptimeSeconds,
-		// spec: §5.2 — carry the pool's recycle disposition and whole-pod
-		// scrub parameters onto the resume, the same way the start path
-		// carries them onto a bind. The resumed session's release reads
-		// them off the bind result, so a resume that dropped them would
-		// retire a recycling pod instead of recycling it.
-		Recycle:               match.Recycle,
-		CleanupCommands:       match.CleanupCommands,
-		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
-		Chunks:                chunks,
-	})
+	result, err := s.podBinder.Resume(ctx, checkpointResumeRequest(row, match, agentInterface, minPlatformVersion, expectedBytes, chunks))
 	if err != nil {
 		accountResumeSlotFailure(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement,
 			s.slotLeakGauge, match, err)
@@ -186,4 +151,48 @@ func (s *Server) fenceResumedPod(ctx context.Context, adapter *adapterclient.Cli
 		log.Printf("sessionserver: coordinator fence for session %s best-effort failed: %v", sessionID, err)
 	}
 	return nil
+}
+
+// checkpointResumeRequest assembles the §7.1 ResumeRequest that restores row
+// from its checkpoint onto a pod of the resolved pool match. KeepsRuntime is
+// copied from the pool match so the resume's claim applies the §5.2
+// process-reuse rule the session's pool configuration resolves to.
+func checkpointResumeRequest(row sessionstore.Session, match podsession.PoolMatch, agentInterface []byte, minPlatformVersion string, expectedBytes int64, chunks []adapterclient.ChunkGrant) podsession.ResumeRequest {
+	return podsession.ResumeRequest{
+		Pool:                    match.Pool,
+		SessionID:               row.ID,
+		TenantID:                row.TenantID,
+		KeepsRuntime:            match.KeepsRuntime,
+		Runtime:                 row.RuntimeRef,
+		CheckpointID:            row.WorkspaceSnapshot.Ref,
+		ExperimentContext:       experimentContextToProto(row.ExperimentContext),
+		TracingContext:          row.TracingContext,
+		AgentInterface:          agentInterface,
+		MinPlatformVersion:      minPlatformVersion,
+		RecoveryGeneration:      row.RecoveryGeneration,
+		ExpectedWorkspaceBytes:  expectedBytes,
+		WorkspaceSizeLimitBytes: match.WorkspaceSizeLimitBytes,
+		// spec: §7.3 step (d) — "Recreate same absolute `cwd`
+		// path." The gateway carries the original session's adapter-
+		// reported WorkspaceRoot (captured on the §15.5 handshake and
+		// persisted at first bind) on every Resume. An empty value
+		// (legacy row, adapter on an older protocol) disables the
+		// assertion on the adapter side. F-7.3.15.
+		ExpectedWorkspaceRoot: row.WorkspaceRoot,
+		// spec: §5.2 — the resume reserves one counted slot on the
+		// replacement pod on the pools the start path reserves one on, and
+		// delivers the pool's uptime cap onto that pod. Normalize the bound
+		// to a minimum of 1: Binder.Resume scopes the reservation on it.
+		MaxConcurrentSessions: maxConcurrentSessions(match.MaxConcurrentSessions),
+		MaxPodUptimeSeconds:   match.MaxPodUptimeSeconds,
+		// spec: §5.2 — carry the pool's recycle disposition and whole-pod
+		// scrub parameters onto the resume, the same way the start path
+		// carries them onto a bind. The resumed session's release reads
+		// them off the bind result, so a resume that dropped them would
+		// retire a recycling pod instead of recycling it.
+		Recycle:               match.Recycle,
+		CleanupCommands:       match.CleanupCommands,
+		CleanupTimeoutSeconds: match.CleanupTimeoutSeconds,
+		Chunks:                chunks,
+	}
 }

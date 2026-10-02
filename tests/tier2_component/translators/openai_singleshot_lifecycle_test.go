@@ -253,7 +253,8 @@ func ssRecyclingPool(name, runtimeRef string) poolstore.Pool {
 		RuntimeRef:    runtimeRef,
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			MaxConcurrentSessions: 1,
+			AcknowledgeProcessLevelIsolation: true,
+			MaxConcurrentSessions:            1,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,

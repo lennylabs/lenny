@@ -92,12 +92,12 @@ func applyStatus(ctx context.Context, c client.Client, obj client.Object) error 
 // kube-apiserver so the §4.6.3 SSA Apply path the controllers use
 // works; the fake client does not yet implement SSA
 // (kubernetes/kubernetes#115598).
-func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Client {
+func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	env := envtest.Start(t)
-	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
+	c, err := client.NewWithWatch(env.RESTConfig(), client.Options{Scheme: s})
 	if err != nil {
-		t.Fatalf("client.New: %v", err)
+		t.Fatalf("client.NewWithWatch: %v", err)
 	}
 	ctx := context.Background()
 	if err := c.Create(ctx, &corev1.Namespace{

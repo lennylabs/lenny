@@ -297,6 +297,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/podlifecycle/podclaim/reserveslotonpod_test.go",
 	"pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go",
 	"pkg/gateway/podlifecycle/podclaim/tenant_label_test.go",
+	"pkg/gateway/podlifecycle/podclaim/tenantpin_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_archive_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_phases_test.go",
 	"pkg/gateway/podlifecycle/podsession/binder_readopt_test.go",

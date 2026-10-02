@@ -29,6 +29,10 @@
 //     requirement: concurrent slots share the pod process namespace,
 //     /tmp, cgroup memory, network stack, and credential group-read
 //     access, so the deployer must set acknowledgeProcessLevelIsolation.
+//   - The runtime-process acknowledgment requirement: a recycling pool with
+//     maxSessionsPerPod above 1 and a scrubProfile other than vm-restart
+//     keeps one runtime process across the sessions it serves, so it also
+//     requires acknowledgeProcessLevelIsolation.
 //
 // Each adversarial pool is created via POST /v1/admin/pools and must be
 // rejected with 400 VALIDATION_ERROR. A companion control pool (the same
@@ -155,7 +159,7 @@ type poolAdmissionGate struct {
 	wantSub         string
 }
 
-// poolAdmissionGateCases builds the four derived-property gate cases. Each
+// poolAdmissionGateCases builds the derived-property gate cases. Each
 // pool name carries the per-run suffix so a soft-deleted leftover from a
 // prior run never collides with a fresh create. The JSON bodies carry no
 // single quotes so the probe's shell quoting holds.
@@ -168,6 +172,8 @@ func poolAdmissionGateCases(suffix string) []poolAdmissionGate {
 	ctlConcurrentNoXtenant := "t9-padm-concurrent-noxtenant" + suffix
 	badConcurrentNoAck := "t9-padm-concurrent-noack" + suffix
 	ctlConcurrentAck := "t9-padm-concurrent-ack" + suffix
+	badRecycleNoAck := "t9-padm-recycle-noack" + suffix
+	ctlRecycleAck := "t9-padm-recycle-ack" + suffix
 	return []poolAdmissionGate{
 		{
 			// Sequential cross-tenant reuse requires microvm isolation.
@@ -259,6 +265,27 @@ func poolAdmissionGateCases(suffix string) []poolAdmissionGate {
 					`"acknowledgeProcessLevelIsolation":true}`,
 			}),
 		},
+		{
+			// spec: 5.2 (Deployer acknowledgment (runtime process kept across
+			// sessions)). A recycling pool with maxSessionsPerPod above 1 keeps
+			// one runtime process across the sessions it serves, which the
+			// whole-pod scrub does not reach, so it requires the same
+			// acknowledgment.
+			name:            "recycle-runtime-reuse-ack-requirement",
+			poolName:        badRecycleNoAck,
+			controlPoolName: ctlRecycleAck,
+			wantSub:         "acknowledgeProcessLevelIsolation",
+			badBody: poolBodyJSON(poolFields{
+				name: badRecycleNoAck, runtimeRef: poolAdmissionRuntime,
+				isolationProfile: "sandboxed", executionMode: "session",
+				sessionPolicy: recycleNoCrossTenantUnacknowledged(),
+			}),
+			goodBody: poolBodyJSON(poolFields{
+				name: ctlRecycleAck, runtimeRef: poolAdmissionRuntime,
+				isolationProfile: "sandboxed", executionMode: "session",
+				sessionPolicy: recycleNoCrossTenant(),
+			}),
+		},
 	}
 }
 
@@ -287,8 +314,18 @@ func recycleCrossTenantScrubbed() string {
 }
 
 // recycleNoCrossTenant is the same recycling sessionPolicy without the
-// cross-tenant flag, the corrected control for the T4 case.
+// cross-tenant flag, the corrected control for the T4 case. maxSessionsPerPod
+// above 1 keeps the pod's runtime process across sessions, so §5.2 requires
+// the process-level isolation acknowledgment.
 func recycleNoCrossTenant() string {
+	return `"sessionPolicy":{"acknowledgeProcessLevelIsolation":true,` +
+		`"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,"maxSessionsPerPod":10}}`
+}
+
+// recycleNoCrossTenantUnacknowledged is recycleNoCrossTenant without the
+// process-level isolation acknowledgment, the adversarial body for the
+// runtime-reuse acknowledgment gate.
+func recycleNoCrossTenantUnacknowledged() string {
 	return `"sessionPolicy":{"recycle":{"enabled":true,"acknowledgeBestEffortScrub":true,` +
 		`"maxSessionsPerPod":10}}`
 }

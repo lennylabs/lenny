@@ -101,7 +101,10 @@ const (
 		"cleanup-outcome report (`ReportSessionScrub`) and on each failed whole-pod scrub (`ReportPodScrub`) respectively"
 
 	claimOwnershipRowSentence = "Created by the gateway at pod acquisition; binding state written via the status " +
-		"subresource; deleted by the gateway at hold expiry or by the WarmPoolController at pod termination and orphan GC"
+		"subresource; deleted by the gateway at hold expiry or when its acquisition path ends the hold on a pool " +
+		"outside the runtime-process acknowledgment rule " +
+		"([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or by the " +
+		"WarmPoolController at pod termination and orphan GC"
 
 	forwardMessageTransportSentence = "The coordinator forwarding mechanism reuses the same internal gRPC " +
 		"`ForwardMessage` RPC used for all cross-replica message routing"
@@ -118,8 +121,10 @@ const (
 // present. §12.6 states a split-writer rule for `agent_pod_state` (the
 // WarmPoolController maintains the mirror and exactly `sessions_served`
 // and `scrub_failure_count` are gateway-written), and §4.6.3 assigns the
-// create, the status-subresource writes, and the hold-expiry delete to the
-// gateway and only the pod-termination and orphan-GC deletes to the
+// create, the status-subresource writes, the hold-expiry delete, and the
+// delete when an acquisition ends the hold on a pool outside the
+// runtime-process acknowledgment rule to the gateway and only the
+// pod-termination and orphan-GC deletes to the
 // WarmPoolController leader; an unattributed name check cannot tell either
 // rule from its inverse.
 //
@@ -129,8 +134,8 @@ const (
 		"for `sessions_served` and `scrub_failure_count`"
 
 	claimWriterSetCell = "Gateway replicas for the create, the status-subresource binding-state writes, and the " +
-		"hold-expiry delete, and the WarmPoolController leader for the deletes at pod termination and orphan " +
-		"garbage collection"
+		"deletes at hold expiry and when an acquisition ends the hold, and the WarmPoolController leader for the " +
+		"deletes at pod termination and orphan garbage collection"
 )
 
 // The heading of the claim-register subsection and the sentence it opens
@@ -689,8 +694,8 @@ func assertReassignedWriterSetIsRejected(t *testing.T, entries registerTable) {
 			want:       claimWriterSetCell,
 			reassigned: []string{
 				"WarmPoolController leader for the create, the status-subresource binding-state writes, and " +
-					"the hold-expiry delete, and the Gateway replicas for the deletes at pod termination and " +
-					"orphan garbage collection",
+					"the deletes at hold expiry and when an acquisition ends the hold, and the Gateway replicas " +
+					"for the deletes at pod termination and orphan garbage collection",
 				claimWriterSetCell + ", and the RuntimeAdapter for the binding-state writes",
 			},
 		},

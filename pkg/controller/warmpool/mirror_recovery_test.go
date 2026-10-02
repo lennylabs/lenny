@@ -35,7 +35,7 @@ func (m *recordingMirror) GetByPodID(context.Context, string) (agentpodstate.Pod
 	return agentpodstate.PodState{}, false, nil
 }
 
-func (m *recordingMirror) ClaimIdle(context.Context, string, string, string) (agentpodstate.PodState, bool, error) {
+func (m *recordingMirror) ClaimIdle(context.Context, string, string, string, []string, agentpodstate.AdmitFunc) (agentpodstate.PodState, bool, error) {
 	return agentpodstate.PodState{}, false, nil
 }
 

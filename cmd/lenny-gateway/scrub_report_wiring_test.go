@@ -119,7 +119,7 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 		Name:          poolName,
 		RuntimeRef:    "rt",
 		ExecutionMode: runtimestore.ExecutionModeSession,
-		SessionPolicy: &runtimestore.SessionPolicy{Recycle: &runtimestore.RecyclePolicy{
+		SessionPolicy: &runtimestore.SessionPolicy{AcknowledgeProcessLevelIsolation: true, Recycle: &runtimestore.RecyclePolicy{
 			Enabled: true, AcknowledgeBestEffortScrub: true,
 			OnScrubFailure:   runtimestore.CleanupFailureWarn,
 			MaxScrubFailures: 3, MaxSessionsPerPod: 50,

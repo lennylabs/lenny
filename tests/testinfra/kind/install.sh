@@ -838,7 +838,10 @@ bootstrap:
     # serves the next session") still routes the tenant's second session
     # back onto the same recycled pod. maxSessionsPerPod is required with
     # no default when recycle.enabled is true (§5.2); 5 gives the test
-    # headroom for more than one cycle.
+    # headroom for more than one cycle. maxSessionsPerPod above 1 keeps the
+    # pod's runtime process across the sessions it serves, so §5.2 requires
+    # sessionPolicy.acknowledgeProcessLevelIsolation: true, and pool
+    # admission refuses the bootstrap seed without it.
     - name: task-mode-echo-pool
       runtimeRef: echo-runtime-task-mode
       isolationProfile: standard
@@ -847,6 +850,7 @@ bootstrap:
       allowStandardIsolation: true
       dnsPolicy: cluster-default
       sessionPolicy:
+        acknowledgeProcessLevelIsolation: true
         recycle:
           enabled: true
           acknowledgeBestEffortScrub: true

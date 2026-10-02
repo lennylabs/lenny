@@ -21,6 +21,13 @@ type ResumeRequest struct {
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
+	// KeepsRuntime is true when the pool the session server resolved lets a
+	// pod serve a later session in its kept runtime process
+	// (poolstore.KeepsRuntimeAcrossSessions). The claim copies it into
+	// podclaim.ClaimRequest; the zero value refuses every pod that has served
+	// a session. spec: §5.2 (Deployer acknowledgment (runtime process kept
+	// across sessions)).
+	KeepsRuntime bool
 	// Runtime is the runtime name passed to the adapter's Resume.
 	Runtime string
 	// CheckpointID is the §4.4 checkpoint the workspace is restored
@@ -118,7 +125,9 @@ type ResumeResult struct {
 // BindResult plus the §4.4 / §7.2 mode the adapter reported and the
 // echoed §4.2 recovery_generation. F-7.3.22.
 func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, error) {
-	sb, cl, neg, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	sb, cl, neg, err := b.connect(ctx, podclaim.ClaimRequest{
+		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: req.KeepsRuntime,
+	})
 	if err != nil {
 		return ResumeResult{}, err
 	}

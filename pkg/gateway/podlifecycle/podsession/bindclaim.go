@@ -5,6 +5,8 @@ package podsession
 import (
 	"context"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // ClaimResult reports the §7.1-step-4 pod claim made at session create,
@@ -53,7 +55,9 @@ type ClaimResult struct {
 // the client uploads. spec: §4.1 (proposal), §7.1 step 4; §6.3.
 func (b *Binder) Claim(ctx context.Context, req BindRequest) (*ClaimResult, error) {
 	phaseStart := time.Now()
-	sb, cl, neg, err := b.connect(ctx, req.Pool, req.SessionID, req.TenantID)
+	sb, cl, neg, err := b.connect(ctx, podclaim.ClaimRequest{
+		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: req.KeepsRuntime,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -147,6 +147,7 @@ func (s *Server) exclusiveBindRequest(ctx context.Context, row sessionstore.Sess
 		Pool:                     match.Pool,
 		SessionID:                row.ID,
 		TenantID:                 row.TenantID,
+		KeepsRuntime:             match.KeepsRuntime,
 		Runtime:                  row.RuntimeRef,
 		DeclaredIntegrationLevel: s.runtimeIntegrationLevel(ctx, row.RuntimeRef),
 		Plan:                     podsession.WorkspacePlanToProto(plan),

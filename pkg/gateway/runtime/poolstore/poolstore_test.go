@@ -594,17 +594,92 @@ func TestValidateSessionPolicy_spec_5_2(t *testing.T) {
 			wantSub: "onPoolExhausted is not a recognised",
 		},
 		{
+			name: "recycling pool that keeps its runtime without the process-level acknowledgment is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10},
+				},
+			},
+			wantSub: "acknowledgeProcessLevelIsolation=true",
+		},
+		{
+			name: "in-place recycling pool without the process-level acknowledgment is rejected",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
+						ScrubProfile: runtimestore.MicrovmScrubInPlace, AcknowledgeMicrovmResidualState: true,
+					},
+				},
+			},
+			wantSub: "acknowledgeProcessLevelIsolation=true",
+		},
+		{
+			name: "recycling pool with the process-level acknowledgment is admitted",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					AcknowledgeProcessLevelIsolation: true,
+					Recycle:                          &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10},
+				},
+			},
+		},
+		{
+			name: "maxSessionsPerPod 1 needs no process-level acknowledgment",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 1},
+				},
+			},
+		},
+		{
+			name: "vm-restart recycling needs no process-level acknowledgment",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{
+						Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10,
+						ScrubProfile: runtimestore.MicrovmScrubVMRestart,
+					},
+				},
+			},
+		},
+		{
+			name: "a disabled recycle block needs no process-level acknowledgment",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					Recycle: &runtimestore.RecyclePolicy{Enabled: false, MaxSessionsPerPod: 10},
+				},
+			},
+		},
+		{
+			name: "an unacknowledged concurrent recycling pool keeps the concurrent-session error",
+			pool: poolstore.Pool{
+				ExecutionMode: runtimestore.ExecutionModeSession,
+				SessionPolicy: &runtimestore.SessionPolicy{
+					MaxConcurrentSessions: 4,
+					Recycle:               &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 10},
+				},
+			},
+			wantSub: "maxConcurrentSessions > 1 requires acknowledgeProcessLevelIsolation",
+		},
+		{
 			name: "full session policy is admitted",
 			pool: poolstore.Pool{
 				IsolationProfile: isolation.ProfileMicrovm,
 				ExecutionMode:    runtimestore.ExecutionModeSession,
 				SessionPolicy: &runtimestore.SessionPolicy{
-					MaxConcurrentSessions: 1,
-					CleanupCommands:       []string{"rm -rf /tmp/x"},
-					CleanupTimeoutSeconds: 30,
-					MaxSessionRetries:     &mt,
-					OnPoolExhausted:       runtimestore.PoolExhaustedQueue,
-					MaxQueueWaitSeconds:   30,
+					MaxConcurrentSessions:            1,
+					AcknowledgeProcessLevelIsolation: true,
+					CleanupCommands:                  []string{"rm -rf /tmp/x"},
+					CleanupTimeoutSeconds:            30,
+					MaxSessionRetries:                &mt,
+					OnPoolExhausted:                  runtimestore.PoolExhaustedQueue,
+					MaxQueueWaitSeconds:              30,
 					Recycle: &runtimestore.RecyclePolicy{
 						Enabled:                         true,
 						AcknowledgeBestEffortScrub:      true,
@@ -651,7 +726,8 @@ func TestCreatePersistsSessionPolicy(t *testing.T) {
 		Name:          "sp",
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			CleanupCommands: []string{"pkill -f jupyter_kernel"},
+			AcknowledgeProcessLevelIsolation: true,
+			CleanupCommands:                  []string{"pkill -f jupyter_kernel"},
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
@@ -744,5 +820,35 @@ func crossTenantPool(crossTenant bool) poolstore.Pool {
 		SessionPolicy: &runtimestore.SessionPolicy{
 			Recycle: &runtimestore.RecyclePolicy{AllowCrossTenantReuse: crossTenant},
 		},
+	}
+}
+
+// spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions))
+func TestKeepsRuntimeAcrossSessions_spec_5_2(t *testing.T) {
+	recycle := func(maxSessions int, profile runtimestore.MicrovmScrubMode) *runtimestore.RecyclePolicy {
+		return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: maxSessions, ScrubProfile: profile}
+	}
+	crossTenant := recycle(5, runtimestore.MicrovmScrubInPlace)
+	crossTenant.AllowCrossTenantReuse = true
+	cases := []struct {
+		name string
+		sp   *runtimestore.SessionPolicy
+		want bool
+	}{
+		{"concurrent without recycle", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4}, true},
+		{"concurrent with recycle", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, "")}, true},
+		{"concurrent with vm-restart", &runtimestore.SessionPolicy{MaxConcurrentSessions: 4, Recycle: recycle(5, runtimestore.MicrovmScrubVMRestart)}, true},
+		{"recycling standard", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubStandard)}, true},
+		{"recycling in-place", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubInPlace)}, true},
+		{"recycling in-place with cross-tenant reuse", &runtimestore.SessionPolicy{Recycle: crossTenant}, true},
+		{"nil policy", nil, false},
+		{"vm-restart recycling", &runtimestore.SessionPolicy{Recycle: recycle(5, runtimestore.MicrovmScrubVMRestart)}, false},
+		{"one session per pod", &runtimestore.SessionPolicy{Recycle: recycle(1, "")}, false},
+		{"recycling disabled", &runtimestore.SessionPolicy{Recycle: &runtimestore.RecyclePolicy{MaxSessionsPerPod: 5}}, false},
+	}
+	for _, tc := range cases {
+		if got := poolstore.KeepsRuntimeAcrossSessions(tc.sp); got != tc.want {
+			t.Errorf("%s: KeepsRuntimeAcrossSessions = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

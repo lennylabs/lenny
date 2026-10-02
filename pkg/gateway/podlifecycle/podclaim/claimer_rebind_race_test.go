@@ -65,7 +65,7 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 		Now: func() time.Time { return now.Add(5 * time.Second) }, // within the hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-race", TenantID: "acme",
+		Pool: testPool, SessionID: "sess-race", TenantID: "acme", KeepsRuntime: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: the rebind-vs-expiry race must fall through, got %v", err)

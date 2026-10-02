@@ -385,7 +385,9 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 // residual-state gate of the §5.2 sessionPolicy.recycle block; the
 // remaining sessionPolicy acknowledgment derivations
 // (acknowledgeBestEffortScrub when recycling, acknowledgeProcessLevelIsolation
-// when maxConcurrentSessions > 1, the microvm cross-tenant gate, the T4
+// when maxConcurrentSessions > 1 and when a recycling pool with
+// maxSessionsPerPod > 1 and a scrubProfile other than vm-restart keeps its
+// runtime process across sessions, the microvm cross-tenant gate, the T4
 // cross-tenant prohibition, and the maxConcurrentSessions > 1 categorical
 // cross-tenant rejection) key off the gateway-side sessionPolicy mirror,
 // which the gateway poolstore enforces at admin admission. The CRD type
@@ -425,8 +427,10 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	// short-circuits; on allow, the §10.1 termination-budget rule below
 	// still runs for every mode. The §5.2 sessionPolicy acknowledgment
 	// derivations (acknowledgeBestEffortScrub when recycling,
-	// acknowledgeProcessLevelIsolation when maxConcurrentSessions > 1,
-	// the cross-tenant microvm and T4 gates) re-key onto the gateway-side
+	// acknowledgeProcessLevelIsolation when maxConcurrentSessions > 1 and
+	// when a recycling pool with maxSessionsPerPod > 1 and a scrubProfile
+	// other than vm-restart keeps its runtime process across sessions, the
+	// cross-tenant microvm and T4 gates) re-key onto the gateway-side
 	// sessionPolicy mirror in the pool-config-validator step; the CRD
 	// carries only the scrub-profile residual-state gate, enforced here so
 	// the fail-closed `in-place` acknowledgment survives the mode collapse.
@@ -510,8 +514,10 @@ func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 // explicit acknowledgeMicrovmResidualState acknowledgment. The gate is
 // fail-closed: a pool that selects `in-place` without the acknowledgment
 // is rejected. The remaining sessionPolicy acknowledgment derivations
-// (acknowledgeBestEffortScrub, acknowledgeProcessLevelIsolation, the
-// cross-tenant microvm and T4 reuse gates) key off the gateway-side
+// (acknowledgeBestEffortScrub, acknowledgeProcessLevelIsolation for
+// concurrent pools and for recycling pools that keep their runtime process
+// across sessions, the cross-tenant microvm and T4 reuse gates) key off the
+// gateway-side
 // sessionPolicy mirror, which the pool-config-validator step folds in.
 //
 // spec: §5.2 (deployer acknowledgment for recycling, Kata/microvm scrub

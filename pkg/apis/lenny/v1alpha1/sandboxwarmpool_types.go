@@ -164,12 +164,16 @@ type SandboxWarmPoolSpec struct {
 // SDKWarmCircuitBreaker carve-out, which the PoolScalingController
 // owns.
 type SandboxWarmPoolStatus struct {
-	// WarmCount is the current number of idle pods held in the pool.
+	// WarmCount is the current number of unclaimed pods that are warming or
+	// idle, counting only pods that are not pinned to a tenant. An idle pod
+	// whose tenant pin is set and that no SandboxClaim holds is claimable
+	// only by its tenant and is not counted (§5.2 pinned idle inventory).
 	// +optional
 	WarmCount int32 `json:"warmCount,omitempty"`
 
 	// ReadyCount is the number of idle pods that have reached a
-	// claimable ready state.
+	// claimable ready state and are not pinned to a tenant (§5.2 pinned
+	// idle inventory).
 	// +optional
 	ReadyCount int32 `json:"readyCount,omitempty"`
 

@@ -33,8 +33,11 @@ func (w *controllerWiring) registerCoreControllers() {
 
 	warmPool := &warmpool.Reconciler{
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Events: w.opsEmitter,
+		// §5.2 pinned idle inventory: the uncached reader confirms a cached
+		// SandboxClaim NotFound before an idle pod counts as pinned.
+		APIReader: mgr.GetAPIReader(),
+		Scheme:    mgr.GetScheme(),
+		Events:    w.opsEmitter,
 		// §5.3: validate the pool's RuntimeClass exists before
 		// sizing it. The reader-backed checker uses the manager's uncached
 		// API reader so the RuntimeClass get needs only the `get` verb the

@@ -105,6 +105,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		RuntimeRef:    "standard-reuse-runtime",
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,

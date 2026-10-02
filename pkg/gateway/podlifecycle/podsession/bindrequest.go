@@ -18,6 +18,13 @@ type BindRequest struct {
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
+	// KeepsRuntime is true when the pool the session server resolved lets a
+	// pod serve a later session in its kept runtime process
+	// (poolstore.KeepsRuntimeAcrossSessions). The claim copies it into
+	// podclaim.ClaimRequest; the zero value refuses every pod that has served
+	// a session. spec: §5.2 (Deployer acknowledgment (runtime process kept
+	// across sessions)).
+	KeepsRuntime bool
 	// Runtime is the runtime name passed to the adapter's StartSession.
 	Runtime string
 	// DeclaredIntegrationLevel is the runtime's §5.1 author-declared

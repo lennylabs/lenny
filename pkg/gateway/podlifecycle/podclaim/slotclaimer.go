@@ -40,7 +40,7 @@ import (
 // has a stable predicate to match on.
 const LabelTenant = "lenny.dev/tenant-id"
 
-// stampPodTenant lands the §5.2 tenant pin on the agent *pod*
+// StampPodTenant lands the §5.2 tenant pin on the agent *pod*
 // (not only the Sandbox CR) at first assignment, so the pod-scoped
 // lenny-tenant-label-immutability ValidatingAdmissionWebhook (§17.2 item
 // 5) actually sees the `unset → {tenant_id}` transition it is meant to
@@ -61,7 +61,7 @@ const LabelTenant = "lenny.dev/tenant-id"
 //
 // spec: §5.2 / §17.2
 // (immutable labels enforced on agent pods) / §13.2 NET-003. F-17.2.3.
-func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tenantID string) error {
+func StampPodTenant(ctx context.Context, cl client.Client, namespace, name, tenantID string) error {
 	if tenantID == "" {
 		return nil
 	}
@@ -86,7 +86,7 @@ func stampPodTenant(ctx context.Context, cl client.Client, namespace, name, tena
 // RFC3339Nano request instant so a re-stamp is idempotent in effect and the
 // WarmPoolController can age the request.
 //
-// A JSON-merge patch is used (matching stampPodTenant) so a missing pod
+// A JSON-merge patch is used (matching StampPodTenant) so a missing pod
 // returns NotFound rather than being created annotation-only; an absent or
 // terminating pod is tolerated because a pod with no slots needs no drain.
 //
@@ -154,7 +154,7 @@ func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName
 // matching the field's optional status and mirroring the expiredByUptime and
 // podscrub.Decide `maxPodUptimeSeconds > 0` guards.
 //
-// A JSON-merge patch is used (matching stampPodTenant and StampDrainRequest) so
+// A JSON-merge patch is used (matching StampPodTenant and StampDrainRequest) so
 // a missing pod returns NotFound rather than being created annotation-only; an
 // absent or terminating pod is tolerated because a pod that is already gone
 // needs no cap. The gateway's `get`/`patch` on agent Pods grant covers this
@@ -496,6 +496,20 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			// derived from the pod CreationTimestamp.
 			continue
 		}
+		// §5.2 tenant pinning: read the pin before the fresh acquisition. Every
+		// pool routed to the slot path keeps its runtime process across
+		// sessions, so the request admits a pod pinned to its own tenant and
+		// refuses one pinned elsewhere; this pass never drains a refused pod. A
+		// failed pin read ends the claim as a failed claim read does.
+		admitted, err := AdmitTenantPin(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
+			Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID, KeepsRuntime: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !admitted {
+			continue
+		}
 		res, conflict, err := c.reserveSlot(ctx, sb, nil, req, true)
 		if err != nil {
 			return nil, err
@@ -720,7 +734,7 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	// the pod-scoped lenny-tenant-label-immutability webhook binds where the
 	// §13.2 NET-003 NetworkPolicies select. Best-effort: a missing pod is
 	// tolerated and the next assignment re-stamps it.
-	if err := stampPodTenant(ctx, c.Client, sb.Namespace, sb.Name, tenantID); err != nil {
+	if err := StampPodTenant(ctx, c.Client, sb.Namespace, sb.Name, tenantID); err != nil {
 		// spec: §5.2 — Counter.Reserve has already incremented
 		// lenny:pod:{pod_id}:active_slots, so a reservation that fails here
 		// retains no increment on either arm. The claim DELETE stays

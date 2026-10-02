@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,7 +123,8 @@ func unlabeledSandbox(name, podIP string) *lennyv1.Sandbox {
 
 // fakeMirror is an in-memory agentpodstate.Store for exercising the
 // §4.6.1 Binder fallback claim without a Postgres container. ClaimIdle
-// hands out idle pods from the pool's queue; lag is a fixed knob.
+// hands out idle pods from the pool's queue in order, honouring skip and
+// admit as the Postgres store does; lag is a fixed knob.
 type fakeMirror struct {
 	// idle maps poolID to the pod IDs the mirror reports as idle.
 	idle map[string][]string
@@ -130,6 +132,15 @@ type fakeMirror struct {
 	lag float64
 	// claims records each (pool, pod, session, tenant) ClaimIdle served.
 	claims []agentpodstate.PodState
+	// calls counts ClaimIdle invocations.
+	calls int
+	// skips records the skip list each ClaimIdle call received.
+	skips [][]string
+	// offered records each pod_id ClaimIdle offered to admit, in order.
+	offered []string
+	// open is set for the whole of ClaimIdle, admit callbacks included, so
+	// a client interceptor can observe calls issued under the row lock.
+	open atomic.Bool
 }
 
 func (m *fakeMirror) Sync(context.Context, string, []agentpodstate.PodState) error {
@@ -148,19 +159,36 @@ func (m *fakeMirror) GetByPodID(context.Context, string) (agentpodstate.PodState
 	return agentpodstate.PodState{}, false, nil
 }
 
-func (m *fakeMirror) ClaimIdle(_ context.Context, poolID, sessionID, tenantID string) (agentpodstate.PodState, bool, error) {
+func (m *fakeMirror) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string, skip []string, admit agentpodstate.AdmitFunc) (agentpodstate.PodState, bool, error) {
+	m.open.Store(true)
+	defer m.open.Store(false)
+	m.calls++
+	m.skips = append(m.skips, append([]string(nil), skip...))
 	pods := m.idle[poolID]
-	if len(pods) == 0 {
-		return agentpodstate.PodState{}, false, nil
+	for i, podID := range pods {
+		if slices.Contains(skip, podID) {
+			continue
+		}
+		if admit != nil {
+			m.offered = append(m.offered, podID)
+			ok, err := admit(ctx, podID)
+			if err != nil {
+				return agentpodstate.PodState{}, false, err
+			}
+			if !ok {
+				// A refused row stays idle with its prior columns.
+				continue
+			}
+		}
+		m.idle[poolID] = append(append([]string(nil), pods[:i]...), pods[i+1:]...)
+		claimed := agentpodstate.PodState{
+			PodID: podID, PoolID: poolID, State: "claimed",
+			SessionID: sessionID, TenantID: tenantID,
+		}
+		m.claims = append(m.claims, claimed)
+		return claimed, true, nil
 	}
-	podID := pods[0]
-	m.idle[poolID] = pods[1:]
-	claimed := agentpodstate.PodState{
-		PodID: podID, PoolID: poolID, State: "claimed",
-		SessionID: sessionID, TenantID: tenantID,
-	}
-	m.claims = append(m.claims, claimed)
-	return claimed, true, nil
+	return agentpodstate.PodState{}, false, nil
 }
 
 // The recycle-counter accessors are unused on the §4.6.1 fallback-claim
@@ -178,7 +206,7 @@ func (m *fakeMirror) RecycleCounters(context.Context, string) (agentpodstate.Rec
 	return agentpodstate.RecycleCounters{}, false, nil
 }
 
-func k8sClient(t *testing.T, objs ...client.Object) client.Client {
+func k8sClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	// envtest backs the client with a real kube-apiserver so the
 	// §4.6.3 SSA Apply path the gateway slot-claimer uses works.
@@ -189,9 +217,9 @@ func k8sClient(t *testing.T, objs ...client.Object) client.Client {
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme corev1: %v", err)
 	}
-	c, err := client.New(env.RESTConfig(), client.Options{Scheme: s})
+	c, err := client.NewWithWatch(env.RESTConfig(), client.Options{Scheme: s})
 	if err != nil {
-		t.Fatalf("client.New: %v", err)
+		t.Fatalf("client.NewWithWatch: %v", err)
 	}
 	ctx := context.Background()
 	if err := c.Create(ctx, &corev1.Namespace{

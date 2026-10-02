@@ -119,7 +119,16 @@ type Store interface {
 	// locked. The mirror is a read-optimized copy, so a successful claim
 	// here is provisional until the caller flips the authoritative
 	// Sandbox CRD phase and creates the binding SandboxClaim.
-	ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string) (PodState, bool, error)
+	//
+	// skip names pod_ids the call never selects, locks, or offers: the
+	// gateway passes the pods its Kubernetes-API idle scan already refused
+	// on the tenant pin. A nil skip skips nothing. admit is called for each
+	// selected row inside the transaction, after the row is locked and
+	// before it is updated, with the context ClaimIdle was given; a false
+	// result leaves the row unchanged and moves to the next idle row, and an
+	// error ends the call with the row unchanged. A nil admit admits every
+	// row. spec: §5.2 (Tenant pinning: the fallback claim reads the pin).
+	ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string, skip []string, admit AdmitFunc) (PodState, bool, error)
 
 	// IncrementSessionsServed adds one to the pod's sessions_served recycle
 	// counter and returns the new value. A NULL counter (never written) is
@@ -148,6 +157,11 @@ type Store interface {
 	// spec: §12.6 (agent_pod_state schema), §5.2 (recycle disposition).
 	RecycleCounters(ctx context.Context, podID string) (RecycleCounters, bool, error)
 }
+
+// AdmitFunc decides, inside the ClaimIdle transaction, whether the row for
+// podID may be claimed. It returns false to pass over the row and an error to
+// end the claim. The gateway's callback reads the pod's §5.2 tenant pin.
+type AdmitFunc func(ctx context.Context, podID string) (bool, error)
 
 // ErrEmptyPoolID is returned by Sync, MirrorLagSeconds, and ClaimIdle
 // when poolID is empty. A pool-scoped operation with no pool key would

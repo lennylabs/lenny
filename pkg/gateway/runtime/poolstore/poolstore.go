@@ -523,6 +523,12 @@ func ValidateSDKWarmConfig(p Pool) error {
 //   - recycle.enabled requires acknowledgeBestEffortScrub: true and
 //     maxSessionsPerPod >= 1 (§5.2 deployer acknowledgment).
 //
+//   - recycle.enabled with maxSessionsPerPod > 1 and a scrubProfile other
+//     than vm-restart requires acknowledgeProcessLevelIsolation: the pod
+//     keeps one runtime process across the sessions it serves, and the
+//     whole-pod scrub does not reach it (§5.2 runtime-process
+//     acknowledgment).
+//
 //   - recycle.allowCrossTenantReuse is permitted only with microvm
 //     isolation and only on the sequential-reuse path
 //     (maxConcurrentSessions == 1) (§5.2). The further §5.2 T4 prohibition
@@ -586,8 +592,10 @@ func ValidateSessionPolicy(p Pool) error {
 // best-effort-scrub acknowledgment, the required session-count limit, the
 // microvm-only cross-tenant gate, the cross-tenant scrub-profile floor
 // (standard is insufficient; vm-restart or in-place is required), and the
-// in-place residual-state acknowledgment. spec: §5.2 (recycle lifecycle,
-// Kata scrub variant).
+// in-place residual-state acknowledgment, and last the runtime-process
+// acknowledgment a recycling pool that keeps its runtime process across
+// sessions requires. spec: §5.2 (recycle lifecycle, Kata scrub variant,
+// Deployer acknowledgment (runtime process kept across sessions)).
 func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.Enabled {
 		if !r.AcknowledgeBestEffortScrub {
@@ -630,7 +638,43 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.MaxScrubFailures < 0 || r.MaxPodUptimeSeconds < 0 {
 		return errors.New("poolstore: recycle numeric fields must be >= 0 (§5.2)")
 	}
+	// spec: §5.2 (Deployer acknowledgment (runtime process kept across
+	// sessions)) — the clause runs last so every earlier rejection keeps its
+	// message. ValidateSessionPolicy has already rejected an unacknowledged
+	// maxConcurrentSessions > 1 pool, so this binds sequential pools.
+	if recycleKeepsRuntime(r) && !p.SessionPolicy.AcknowledgeProcessLevelIsolation {
+		return errors.New("poolstore: recycle.enabled with recycle.maxSessionsPerPod > 1 requires " +
+			"sessionPolicy.acknowledgeProcessLevelIsolation=true unless recycle.scrubProfile is vm-restart; " +
+			"the pod keeps one runtime process across the sessions it serves, and the whole-pod scrub " +
+			"does not reach that process (§5.2)")
+	}
 	return nil
+}
+
+// KeepsRuntimeAcrossSessions reports whether a pod of a pool with session
+// policy sp keeps one runtime process across the sessions it serves: true
+// when maxConcurrentSessions is above 1, or when the recycle block keeps the
+// runtime (recycleKeepsRuntime). A nil policy keeps none. These are the pools
+// whose definitions require sessionPolicy.acknowledgeProcessLevelIsolation,
+// and the gateway admits a session to a pod that has served an earlier
+// session only on such a pool. spec: §5.2 (Deployer acknowledgment (runtime
+// process kept across sessions)).
+func KeepsRuntimeAcrossSessions(sp *runtimestore.SessionPolicy) bool {
+	if sp == nil {
+		return false
+	}
+	return sp.MaxConcurrentSessions > 1 || recycleKeepsRuntime(sp.Recycle)
+}
+
+// recycleKeepsRuntime reports whether a recycle block reuses a pod for more
+// than one session in its kept runtime process: recycling is enabled,
+// maxSessionsPerPod is above 1, and the scrub profile is not vm-restart,
+// which retires the pod at every occupancy-zero recycle boundary. A nil
+// block keeps none. spec: §5.2 (Deployer acknowledgment (runtime process
+// kept across sessions); Pod retirement policy).
+func recycleKeepsRuntime(r *runtimestore.RecyclePolicy) bool {
+	return r != nil && r.Enabled && r.MaxSessionsPerPod > 1 &&
+		r.ScrubProfile != runtimestore.MicrovmScrubVMRestart
 }
 
 // ValidateCrossTenantReuseTier enforces the §5.2 T4 cross-tenant

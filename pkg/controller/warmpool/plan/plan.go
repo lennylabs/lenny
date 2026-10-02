@@ -39,6 +39,14 @@
 //   - Drain candidates are limited to idle pods, so the planner never
 //     drains a pod whose claim carries live sessions or sits in the
 //     reserved hold window.
+//   - A pinned idle pod (§5.2 "Pinned idle inventory": an idle pod whose
+//     tenant pin is set and that no SandboxClaim holds) is claimable only
+//     by its tenant, so it is not inventory for minWarm. It is counted in
+//     neither WarmCount nor ReadyCount, the create and excess-drain rules
+//     run over unpinned pods only, and it is surfaced in PinnedIdleCount.
+//     It counts toward maxWarm: the planner keeps at most maxWarm minus the
+//     warm target pinned idle pods and lists the rest, in sorted name
+//     order, in DrainPinned. Drain never holds a pinned pod.
 package plan
 
 import (
@@ -54,6 +62,10 @@ type Pod struct {
 	Name string
 	// Phase is the Sandbox's observed §6.2 lifecycle phase.
 	Phase state.State
+	// Pinned marks an idle pod held for one tenant under §5.2 (its tenant
+	// pin is set and no SandboxClaim holds it). It is ignored in every
+	// other phase.
+	Pinned bool
 }
 
 // Inputs is the planner's full input for one pool reconcile pass.
@@ -90,6 +102,14 @@ type Plan struct {
 	// candidates. The controller publishes this count to the §16.1
 	// lenny_warmpool_reserved_pods gauge.
 	ReservedCount int
+	// PinnedIdleCount is the count of idle pods pinned to a tenant (§5.2
+	// "Pinned idle inventory"). They are excluded from WarmCount and
+	// ReadyCount and never drained through Drain.
+	PinnedIdleCount int
+	// DrainPinned lists, in sorted order, the pinned idle Sandbox names to
+	// drain because the pinned idle pods exceed maxWarm minus the warm
+	// target. It never overlaps Drain.
+	DrainPinned []string
 }
 
 // isWarming reports whether a phase is an unclaimed pod still being
@@ -101,13 +121,19 @@ func isWarming(s state.State) bool {
 // Compute applies the §4.6.1 warm-pool convergence rules and returns
 // the create/drain plan plus the warm and ready counts for the status
 // subresource. It is pure: equal Inputs always yield an equal Plan.
+//
+// spec: §4.6.1 (Warm Pool Controller), §5.2 (Pinned idle inventory).
 func Compute(in Inputs) Plan {
 	target := warmTarget(in.MinWarm, in.MaxWarm)
 
 	var warmCount, readyCount, reservedCount int
-	var idleNames []string
+	var idleNames, pinnedNames []string
 	for _, p := range in.Pods {
 		switch {
+		case p.Phase == state.Idle && p.Pinned:
+			// spec: §5.2 (Pinned idle inventory) — claimable only by its
+			// tenant, so not inventory for minWarm.
+			pinnedNames = append(pinnedNames, p.Name)
 		case p.Phase == state.Idle:
 			warmCount++
 			readyCount++
@@ -123,7 +149,12 @@ func Compute(in Inputs) Plan {
 		}
 	}
 
-	plan := Plan{WarmCount: warmCount, ReadyCount: readyCount, ReservedCount: reservedCount}
+	plan := Plan{
+		WarmCount:       warmCount,
+		ReadyCount:      readyCount,
+		ReservedCount:   reservedCount,
+		PinnedIdleCount: len(pinnedNames),
+	}
 
 	switch {
 	case warmCount < target:
@@ -140,7 +171,32 @@ func Compute(in Inputs) Plan {
 		sort.Strings(idleNames)
 		plan.Drain = idleNames[:excess]
 	}
+	plan.DrainPinned = pinnedOverBound(pinnedNames, clampZero(in.MaxWarm)-target)
 	return plan
+}
+
+// pinnedOverBound returns the first len(pinned) minus bound pinned idle
+// names in sorted order, the ones to drain so that bound pinned pods remain.
+// A negative bound is treated as zero. spec: §5.2
+// (Pinned idle inventory: at most maxWarm minus the warm target pinned idle
+// pods are kept).
+func pinnedOverBound(pinned []string, bound int) []string {
+	if bound < 0 {
+		bound = 0
+	}
+	if len(pinned) <= bound {
+		return nil
+	}
+	sort.Strings(pinned)
+	return pinned[:len(pinned)-bound]
+}
+
+// clampZero returns n, or zero when n is negative.
+func clampZero(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // warmTarget resolves the warm-pod target from the pool bounds. Both

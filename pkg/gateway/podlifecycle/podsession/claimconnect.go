@@ -40,8 +40,10 @@ type negotiated struct {
 // failure, and owns the returned Sandbox object for chaining §6.2 phase
 // transitions. The shared claim-and-handshake path of Bind and Resume.
 // The negotiated return value carries the handshake-reported metadata
-// (workspace root, etc.) the caller threads onto BindResult.
-func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) (sb *lennyv1.Sandbox, cl *adapterclient.Client, neg negotiated, err error) {
+// (workspace root, etc.) the caller threads onto BindResult. req carries the
+// pool, session, tenant, and the resolved pool's KeepsRuntime.
+func (b *Binder) connect(ctx context.Context, req podclaim.ClaimRequest) (sb *lennyv1.Sandbox, cl *adapterclient.Client, neg negotiated, err error) {
+	pool := req.Pool
 	claimer := &podclaim.Claimer{
 		Client:    b.Client,
 		Namespace: b.Namespace,
@@ -54,17 +56,19 @@ func (b *Binder) connect(ctx context.Context, pool, sessionID, tenantID string) 
 			}
 		},
 	}
-	req := podclaim.ClaimRequest{
-		Pool:      pool,
-		SessionID: sessionID,
-		TenantID:  tenantID,
-	}
 	var sandboxName string
 	claim, err := claimer.Claim(ctx, req)
 	if errors.Is(err, podclaim.ErrNoIdlePod) {
 		// The Kubernetes-API claim found no idle pod. Attempt the §4.6.1
-		// Postgres-backed fallback claim before surfacing the error.
-		sandboxName, err = b.fallbackClaim(ctx, req)
+		// Postgres-backed fallback claim before surfacing the error, skipping
+		// the pods the idle scan refused on the tenant pin (§5.2). A failed
+		// pin read is not ErrNoIdlePod and starts no fallback.
+		var noIdle *podclaim.NoIdlePodError
+		var refused []string
+		if errors.As(err, &noIdle) {
+			refused = noIdle.Refused
+		}
+		sandboxName, err = b.fallbackClaim(ctx, req, refused)
 		if err != nil {
 			return nil, nil, negotiated{}, err
 		}

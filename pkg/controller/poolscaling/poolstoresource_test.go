@@ -121,6 +121,7 @@ func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
 		ExecutionMode:    runtimestore.ExecutionModeSession,
 		WarmCount:        2,
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                         true,
 				AcknowledgeBestEffortScrub:      true,

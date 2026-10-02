@@ -135,6 +135,11 @@ type Reconciler struct {
 	// Client is the controller-runtime client backed by the manager
 	// cache.
 	Client client.Client
+	// APIReader is the manager's uncached reader. The §5.2 pinned-idle
+	// detection confirms a cached SandboxClaim NotFound through it, because
+	// the cache can show a pod's tenant pin before the claim the pin
+	// follows. Nil leaves every idle pod unpinned.
+	APIReader client.Reader
 	// Scheme is required to stamp owner references on created
 	// Sandboxes.
 	Scheme *runtime.Scheme
@@ -254,6 +259,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		sb := &sandboxes.Items[i]
 		in.Pods = append(in.Pods, plan.Pod{Name: sb.Name, Phase: observedPhase(sb)})
 	}
+	// spec: §5.2 (Pinned idle inventory) — an idle pod pinned to a tenant
+	// is not inventory for minWarm and counts toward maxWarm. A failed read
+	// fails the reconcile before the plan, so no pod is drained on it.
+	if err := r.markPinnedIdle(ctx, &pool, tmpl, in.Pods); err != nil {
+		return ctrl.Result{}, err
+	}
 	decision := plan.Compute(in)
 
 	// spec: §5.3 — validate the pool's RuntimeClass exists
@@ -277,7 +288,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	for _, name := range decision.Drain {
+	for _, name := range append(append([]string(nil), decision.Drain...), decision.DrainPinned...) {
 		if err := r.drainSandbox(ctx, sandboxes.Items, name); err != nil {
 			return ctrl.Result{}, fmt.Errorf("drain sandbox %s: %w", name, err)
 		}
@@ -294,15 +305,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.observePoolPhase(ctx, &pool, decision)
 
-	// Accrue §4.6.1 idle-pod-minutes for the pool's currently-idle
-	// (claimable) pods, labeled by pool and template resource class.
-	// spec: §4.6.1 line "lenny_warmpool_idle_pod_minutes ... tracks
-	// cumulative idle pod-minutes".
+	// Accrue §4.6.1 idle-pod-minutes for every currently-idle pod, pinned
+	// and unpinned, labeled by pool and template resource class. A pinned
+	// idle pod is not claimable inventory but its cost accrues.
+	// spec: §4.6.1 ("lenny_warmpool_idle_pod_minutes ... tracks cumulative
+	// idle pod-minutes"), §5.2 (Pinned idle inventory).
 	resourceClass := tmpl.Spec.ResourceClass
 	if resourceClass == "" {
 		resourceClass = "unspecified"
 	}
-	r.idle.observe(req.NamespacedName.String(), pool.Name, resourceClass, decision.ReadyCount)
+	r.idle.observe(req.String(), pool.Name, resourceClass, decision.ReadyCount+decision.PinnedIdleCount)
 
 	// Publish the §16.1 lenny_warmpool_idle_pods gauge — the
 	// instantaneous idle-pod count keyed by pool. §17.8.2's

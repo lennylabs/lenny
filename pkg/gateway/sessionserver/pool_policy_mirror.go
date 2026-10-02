@@ -71,6 +71,12 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 	}
 	if sp := p.SessionPolicy; sp != nil {
 		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
+		// §5.2 process-reuse rule: an acquisition admits a pod that has served
+		// a session only when the stored policy keeps a runtime process across
+		// sessions. Read from the stored pool on every resolution, so an
+		// admitted update that takes the pool outside the rule ends reuse at
+		// the next acquisition.
+		mirror.KeepsRuntime = poolstore.KeepsRuntimeAcrossSessions(sp)
 		// §5.2 / §4.6.1 pool-exhaustion disposition: fold the queue-vs-reject
 		// choice and its wait bound from the session policy so the start
 		// path's claim queue reads the gateway-enforced values.

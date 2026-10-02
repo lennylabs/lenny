@@ -218,11 +218,15 @@ func (s *Store) GetByPodID(ctx context.Context, podID string) (agentpodstate.Pod
 // LOCKED takes a row lock and skips any row a concurrent transaction
 // already holds, so two racing ClaimIdle calls select distinct pods
 // instead of contending for one. ORDER BY updated_at claims the
-// longest-idle pod first, spreading load across the pool.
+// longest-idle pod first, spreading load across the pool. $2 is the
+// exclusion list: the pods the caller skips and the rows this transaction
+// already refused. SKIP LOCKED does not skip a row the transaction itself
+// holds, so a refused row is excluded by pod_id on the re-select. The list
+// must be a non-NULL array, because pod_id <> ALL(NULL) matches no row.
 const claimSelectSQL = `SELECT pod_id, state, isolation_profile, execution_mode,
 	resource_version, node_name
 	FROM agent_pod_state
-	WHERE pool_id = $1 AND state = 'idle'
+	WHERE pool_id = $1 AND state = 'idle' AND pod_id <> ALL($2)
 	ORDER BY updated_at
 	LIMIT 1
 	FOR UPDATE SKIP LOCKED`
@@ -236,13 +240,23 @@ const claimUpdateSQL = `UPDATE agent_pod_state
 
 // ClaimIdle is the §4.6.1 Postgres-backed fallback claim. In one
 // transaction it locks the pool's oldest idle row with FOR UPDATE SKIP
-// LOCKED, marks it claimed for the session and tenant, and returns the
-// claimed PodState. When the pool has no idle row it returns
-// (agentpodstate.PodState{}, false, nil). The SELECT and the UPDATE
-// share one transaction so the row stays locked from selection through
-// the state flip; SKIP LOCKED makes concurrent callers claim distinct
-// pods.
-func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string) (agentpodstate.PodState, bool, error) {
+// LOCKED, offers it to admit, marks the first admitted row claimed for the
+// session and tenant, and returns the claimed PodState. When the pool has
+// no idle row left to offer it returns (agentpodstate.PodState{}, false,
+// nil). The SELECT and the UPDATE share one transaction so the row stays
+// locked from selection through the state flip; SKIP LOCKED makes
+// concurrent callers claim distinct pods.
+//
+// A row in skip is never selected, locked, or offered. A row admit refuses
+// is never updated, so it stays idle with its prior columns, and the
+// transaction re-selects with that row excluded. The refused row stays
+// locked until the transaction ends. An admit error, or the expiry of ctx,
+// returns a wrapped error before any UPDATE; the deferred rollback (or, on
+// an expired context, pgx closing the connection) releases every lock.
+//
+// spec: §4.6.1 (Postgres-backed fallback claim), §5.2 (Tenant pinning: the
+// fallback claim reads the pin before it claims a pod).
+func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string, skip []string, admit agentpodstate.AdmitFunc) (agentpodstate.PodState, bool, error) {
 	if poolID == "" {
 		return agentpodstate.PodState{}, false, agentpodstate.ErrEmptyPoolID
 	}
@@ -253,15 +267,49 @@ func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID strin
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// A non-nil copy: pgx encodes a nil slice as NULL, and the caller's
+	// slice must not grow with this transaction's refusals.
+	excluded := append(make([]string, 0, len(skip)), skip...)
+	for {
+		pod, found, err := selectIdleForClaim(ctx, tx, poolID, excluded)
+		if err != nil || !found {
+			return agentpodstate.PodState{}, false, err
+		}
+		if admit != nil {
+			ok, err := admit(ctx, pod.PodID)
+			if err != nil {
+				return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim admit pod %s: %w", pod.PodID, err)
+			}
+			if !ok {
+				excluded = append(excluded, pod.PodID)
+				continue
+			}
+		}
+		if _, err := tx.Exec(ctx, claimUpdateSQL, pod.PodID, sessionID, tenantID); err != nil {
+			return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim update: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim commit: %w", err)
+		}
+		pod.State = "claimed"
+		pod.SessionID = sessionID
+		pod.TenantID = tenantID
+		return pod, true, nil
+	}
+}
+
+// selectIdleForClaim runs claimSelectSQL inside tx and returns the locked
+// row. found is false when the pool has no claimable idle row outside
+// excluded: either it is exhausted or every idle row is locked by a
+// concurrent claim.
+func selectIdleForClaim(ctx context.Context, tx pgx.Tx, poolID string, excluded []string) (agentpodstate.PodState, bool, error) {
 	pod := agentpodstate.PodState{PoolID: poolID}
 	var nodeName *string
-	err = tx.QueryRow(ctx, claimSelectSQL, poolID).Scan(
+	err := tx.QueryRow(ctx, claimSelectSQL, poolID, excluded).Scan(
 		&pod.PodID, &pod.State, &pod.IsolationProfile, &pod.ExecutionMode,
 		&pod.ResourceVersion, &nodeName,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// The pool has no claimable idle row: either it is genuinely
-		// exhausted or every idle row is locked by a concurrent claim.
 		return agentpodstate.PodState{}, false, nil
 	}
 	if err != nil {
@@ -270,17 +318,6 @@ func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID strin
 	if nodeName != nil {
 		pod.NodeName = *nodeName
 	}
-
-	if _, err := tx.Exec(ctx, claimUpdateSQL, pod.PodID, sessionID, tenantID); err != nil {
-		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim update: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim commit: %w", err)
-	}
-
-	pod.State = "claimed"
-	pod.SessionID = sessionID
-	pod.TenantID = tenantID
 	return pod, true, nil
 }
 

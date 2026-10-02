@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -283,7 +285,7 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Sync: %v", err)
 		}
-		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, nil)
 		if err != nil {
 			t.Fatalf("ClaimIdle: %v", err)
 		}
@@ -323,7 +325,7 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Sync: %v", err)
 		}
-		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, nil)
 		if err != nil {
 			t.Fatalf("ClaimIdle: %v", err)
 		}
@@ -337,7 +339,7 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 
 	t.Run("returns no claim for an empty pool", func(t *testing.T) {
 		pool := "pool-" + newUUID(t)[:8]
-		_, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		_, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, nil)
 		if err != nil {
 			t.Fatalf("ClaimIdle: %v", err)
 		}
@@ -347,7 +349,7 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 	})
 
 	t.Run("empty pool id is rejected", func(t *testing.T) {
-		if _, _, err := store.ClaimIdle(ctx, "", "sess-1", "acme"); !errors.Is(err, agentpodstate.ErrEmptyPoolID) {
+		if _, _, err := store.ClaimIdle(ctx, "", "sess-1", "acme", nil, nil); !errors.Is(err, agentpodstate.ErrEmptyPoolID) {
 			t.Errorf("ClaimIdle with empty poolID: got %v, want ErrEmptyPoolID", err)
 		}
 	})
@@ -369,7 +371,7 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 			pool+"-new", pool); err != nil {
 			t.Fatalf("seed newer idle pod: %v", err)
 		}
-		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme")
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, nil)
 		if err != nil || !claimed {
 			t.Fatalf("ClaimIdle: claimed=%v err=%v", claimed, err)
 		}
@@ -405,7 +407,7 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 			go func(sid string) {
 				defer done.Done()
 				start.Wait() // release both goroutines together
-				pod, claimed, err := store.ClaimIdle(ctx, pool, sid, "acme")
+				pod, claimed, err := store.ClaimIdle(ctx, pool, sid, "acme", nil, nil)
 				if err != nil {
 					t.Errorf("ClaimIdle (%s): %v", sid, err)
 					return
@@ -439,6 +441,163 @@ func TestAgentPodStateClaimIdle(t *testing.T) {
 			t.Errorf("post-race session = %v, want the winning claim %q", row.sessionID, winnerS)
 		}
 	})
+
+	// spec: 5.2 (Tenant pinning), 4.6.1 (Postgres-backed fallback claim)
+	// The skip list and the admit callback: a skipped row is never offered or
+	// locked, a refused row stays idle and is offered once, and a callback
+	// error or an expired context returns before any UPDATE with every lock
+	// released.
+	seedTwoIdle := func(t *testing.T) (pool, older, newer string) {
+		t.Helper()
+		pool = "pool-" + newUUID(t)[:8]
+		older, newer = pool+"-old", pool+"-new"
+		if err := store.Sync(ctx, pool, []agentpodstate.PodState{
+			{PodID: older, PoolID: pool, State: "idle", IsolationProfile: "standard", ExecutionMode: "session", ResourceVersion: 1},
+		}); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+		if _, err := pg.Pool.Exec(ctx,
+			`INSERT INTO agent_pod_state
+			   (pod_id, pool_id, state, isolation_profile, execution_mode, resource_version, updated_at)
+			 VALUES ($1, $2, 'idle', 'standard', 'session', 1, now())`, newer, pool); err != nil {
+			t.Fatalf("seed newer idle pod: %v", err)
+		}
+		return pool, older, newer
+	}
+	assertIdle := func(t *testing.T, podIDs ...string) {
+		t.Helper()
+		for _, id := range podIDs {
+			row, ok := getPodRow(t, ctx, pg, id)
+			if !ok || row.state != "idle" || row.sessionID != nil || row.tenantID != nil {
+				t.Errorf("row %s = %+v (exists=%v), want idle with no session or tenant", id, row, ok)
+			}
+		}
+	}
+
+	t.Run("a skipped row is never offered or locked", func(t *testing.T) {
+		pool, older, newer := seedTwoIdle(t)
+		var offered []string
+		var lockErr error
+		admit := func(ctx context.Context, podID string) (bool, error) {
+			offered = append(offered, podID)
+			lockErr = tryLockRow(ctx, pg, older)
+			return true, nil
+		}
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", []string{older}, admit)
+		if err != nil || !claimed || got.PodID != newer {
+			t.Fatalf("ClaimIdle = (%q, %v, %v), want %s claimed", got.PodID, claimed, err, newer)
+		}
+		if len(offered) != 1 || offered[0] != newer {
+			t.Errorf("offered %v, want only %s", offered, newer)
+		}
+		if lockErr != nil {
+			t.Errorf("the skipped row was locked by ClaimIdle: %v", lockErr)
+		}
+	})
+
+	t.Run("a refusing callback claims the next row and is offered each row once", func(t *testing.T) {
+		pool, older, newer := seedTwoIdle(t)
+		offered := map[string]int{}
+		admit := func(_ context.Context, podID string) (bool, error) {
+			offered[podID]++
+			return podID != older, nil
+		}
+		got, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, admit)
+		if err != nil || !claimed || got.PodID != newer {
+			t.Fatalf("ClaimIdle = (%q, %v, %v), want %s claimed", got.PodID, claimed, err, newer)
+		}
+		if offered[older] != 1 || offered[newer] != 1 {
+			t.Errorf("offer counts = %v, want one per row", offered)
+		}
+		assertIdle(t, older)
+	})
+
+	t.Run("an all-refusing callback claims nothing and releases every lock", func(t *testing.T) {
+		pool, older, newer := seedTwoIdle(t)
+		refuse := func(context.Context, string) (bool, error) { return false, nil }
+		_, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, refuse)
+		if err != nil || claimed {
+			t.Fatalf("ClaimIdle = (claimed=%v, %v), want no claim", claimed, err)
+		}
+		assertIdle(t, older, newer)
+		for _, id := range []string{older, newer} {
+			if err := tryLockRow(ctx, pg, id); err != nil {
+				t.Errorf("row %s still locked after ClaimIdle returned: %v", id, err)
+			}
+		}
+	})
+
+	t.Run("an erroring callback returns the error with the rows unchanged", func(t *testing.T) {
+		pool, older, newer := seedTwoIdle(t)
+		boom := errors.New("pin read boom")
+		fail := func(context.Context, string) (bool, error) { return false, boom }
+		if _, _, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, fail); !errors.Is(err, boom) {
+			t.Fatalf("ClaimIdle error = %v, want the callback error", err)
+		}
+		assertIdle(t, older, newer)
+	})
+
+	t.Run("an expired context ends the call and releases the offered row", func(t *testing.T) {
+		pool, older, newer := seedTwoIdle(t)
+		block := func(ctx context.Context, _ string) (bool, error) {
+			<-ctx.Done()
+			return false, ctx.Err()
+		}
+		bounded, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		_, _, err := store.ClaimIdle(bounded, pool, "sess-1", "acme", nil, block)
+		returned := time.Now()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("ClaimIdle error = %v, want one wrapping context.DeadlineExceeded", err)
+		}
+		assertIdle(t, older, newer)
+		for {
+			lockErr := tryLockRow(ctx, pg, older)
+			if lockErr == nil {
+				break
+			}
+			if time.Since(returned) > time.Second {
+				t.Fatalf("offered row still locked 1s after ClaimIdle returned: %v", lockErr)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	t.Run("the offered row is locked while the callback runs", func(t *testing.T) {
+		pool, older, _ := seedTwoIdle(t)
+		var lockErr error
+		admit := func(ctx context.Context, podID string) (bool, error) {
+			if podID == older {
+				lockErr = tryLockRow(ctx, pg, older)
+			}
+			return true, nil
+		}
+		if _, claimed, err := store.ClaimIdle(ctx, pool, "sess-1", "acme", nil, admit); err != nil || !claimed {
+			t.Fatalf("ClaimIdle: claimed=%v err=%v", claimed, err)
+		}
+		var pgErr *pgconn.PgError
+		if !errors.As(lockErr, &pgErr) || pgErr.Code != "55P03" {
+			t.Errorf("lock attempt inside the callback = %v, want SQLSTATE 55P03", lockErr)
+		}
+		if err := tryLockRow(ctx, pg, older); err != nil {
+			t.Errorf("row still locked after ClaimIdle returned: %v", err)
+		}
+	})
+}
+
+// tryLockRow takes the agent_pod_state row lock for podID on a second
+// connection with NOWAIT and releases it at once. It returns the lock error,
+// SQLSTATE 55P03 when another transaction holds the row.
+func tryLockRow(ctx context.Context, pg *containers.Postgres, podID string) error {
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var got string
+	return tx.QueryRow(ctx,
+		`SELECT pod_id FROM agent_pod_state WHERE pod_id = $1 FOR UPDATE NOWAIT`, podID).Scan(&got)
 }
 
 // spec: 4.6.1

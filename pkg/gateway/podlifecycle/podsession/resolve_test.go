@@ -757,3 +757,40 @@ func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 		})
 	}
 }
+
+// spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions))
+// diagnosis: the resolved pool match drops the process-reuse flag, so the
+// claim refuses a pod its tenant may reuse, or reports a pool with no mirror
+// row or no reader as one that keeps its runtime process.
+func TestResolvePoolCopiesKeepsRuntime_spec_5_2(t *testing.T) {
+	tmpl := sandboxTemplate("keep-tmpl", "keep-runtime", "sandboxed")
+	c := k8sClient(t, warmPool("keep-pool", "keep-tmpl"), tmpl)
+
+	withMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"keep-pool": {KeepsRuntime: true},
+	}}
+	got, err := podsession.ResolvePool(context.Background(), c, withMirror, testNS, "keep-runtime", "sandboxed", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (mirror): %v", err)
+	}
+	if !got.KeepsRuntime {
+		t.Error("KeepsRuntime = false, want true from the mirror")
+	}
+
+	noRow := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
+	got, err = podsession.ResolvePool(context.Background(), c, noRow, testNS, "keep-runtime", "sandboxed", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (no mirror row): %v", err)
+	}
+	if got.KeepsRuntime {
+		t.Error("KeepsRuntime = true with no mirror row, want false")
+	}
+
+	got, err = podsession.ResolvePool(context.Background(), c, nil, testNS, "keep-runtime", "sandboxed", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (no reader): %v", err)
+	}
+	if got.KeepsRuntime {
+		t.Error("KeepsRuntime = true with no reader, want false")
+	}
+}

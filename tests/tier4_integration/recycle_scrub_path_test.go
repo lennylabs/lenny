@@ -263,8 +263,9 @@ func newRecycleCoordinator(t *testing.T, c client.Client) *recycle.RecycleBounda
 		RuntimeRef:    "echo",
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			MaxConcurrentSessions: 1,
-			CleanupTimeoutSeconds: 1,
+			AcknowledgeProcessLevelIsolation: true,
+			MaxConcurrentSessions:            1,
+			CleanupTimeoutSeconds:            1,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,

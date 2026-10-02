@@ -111,6 +111,15 @@ type PoolMatch struct {
 	// poolstore sessionPolicy mirror.
 	AllowCrossTenantReuse bool
 	MicrovmScrubMode      string
+	// KeepsRuntime reports whether the pool lets a pod serve a later session
+	// in its kept runtime process: maxConcurrentSessions above 1, or a
+	// recycling pool whose maxSessionsPerPod is above 1 and whose
+	// scrubProfile is not vm-restart. It is folded in from the poolstore
+	// sessionPolicy mirror; a resolution with no reader or no mirror row
+	// leaves it false, so every acquisition refuses a pod that has served a
+	// session. The claim copies it into podclaim.ClaimRequest. spec: §5.2
+	// (Deployer acknowledgment (runtime process kept across sessions)).
+	KeepsRuntime bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 deployer
 	// cleanup commands and their aggregate cap, run by the adapter's
 	// whole-pod scrub after the credential purge and before the standard
@@ -192,6 +201,11 @@ type PoolPolicyMirror struct {
 	Recycle bool
 	// AllowCrossTenantReuse is sessionPolicy.recycle.allowCrossTenantReuse.
 	AllowCrossTenantReuse bool
+	// KeepsRuntime is poolstore.KeepsRuntimeAcrossSessions of the stored
+	// sessionPolicy: true when a pod of the pool keeps one runtime process
+	// across the sessions it serves. spec: §5.2 (Deployer acknowledgment
+	// (runtime process kept across sessions)).
+	KeepsRuntime bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2
 	// sessionPolicy.cleanupCommands and sessionPolicy.cleanupTimeoutSeconds
 	// the adapter's whole-pod scrub runs at the recycle boundary. They are
@@ -375,6 +389,9 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	// mirror row that happens to omit the flag.
 	m.Recycle = m.Recycle || mirror.Recycle
 	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
+	// §5.2 process-reuse rule: whether an acquisition may admit a pod that
+	// has served a session. A pool with no mirror row keeps false.
+	m.KeepsRuntime = mirror.KeepsRuntime
 	// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
 	// aggregate cap are gateway-enforced and live on the mirror, so fold them
 	// onto PoolMatch beside AllowCrossTenantReuse. The recycle-path Shutdown

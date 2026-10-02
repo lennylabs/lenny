@@ -209,3 +209,72 @@ func TestComputeDrainIsDeterministic(t *testing.T) {
 		t.Errorf("Drain = %v, want %v (sorted ascending)", gotForward.Drain, want)
 	}
 }
+
+func pinned(names ...string) []plan.Pod {
+	pods := make([]plan.Pod, len(names))
+	for i, n := range names {
+		pods[i] = plan.Pod{Name: n, Phase: state.Idle, Pinned: true}
+	}
+	return pods
+}
+
+// spec: 5.2 (Pinned idle inventory), 4.6.1 (Warm Pool Controller)
+func TestComputePinnedIdleInventory_spec_5_2(t *testing.T) {
+	tests := []struct {
+		name string
+		in   plan.Inputs
+		want plan.Plan
+	}{
+		{
+			name: "pinned pods are not minWarm inventory and drain at maxWarm == minWarm",
+			in:   plan.Inputs{MinWarm: 2, MaxWarm: 2, Pods: pinned("p1", "p2")},
+			want: plan.Plan{Create: 2, PinnedIdleCount: 2, DrainPinned: []string{"p1", "p2"}},
+		},
+		{
+			name: "maxWarm above minWarm keeps one pinned pod and drains the first in sorted order",
+			in:   plan.Inputs{MinWarm: 2, MaxWarm: 3, Pods: pinned("p2", "p1")},
+			want: plan.Plan{Create: 2, PinnedIdleCount: 2, DrainPinned: []string{"p1"}},
+		},
+		{
+			name: "a wide maxWarm keeps every pinned pod",
+			in:   plan.Inputs{MinWarm: 2, MaxWarm: 4, Pods: pinned("p1", "p2")},
+			want: plan.Plan{Create: 2, PinnedIdleCount: 2},
+		},
+		{
+			name: "zero bounds drain every idle pod, pinned and unpinned",
+			in:   plan.Inputs{MinWarm: 0, MaxWarm: 0, Pods: append(pinned("p1"), idle("u1", "u2")...)},
+			want: plan.Plan{WarmCount: 2, ReadyCount: 2, PinnedIdleCount: 1, Drain: []string{"u1", "u2"}, DrainPinned: []string{"p1"}},
+		},
+		{
+			name: "a pinned reserved pod counts only as reserved",
+			in:   plan.Inputs{MinWarm: 1, MaxWarm: 1, Pods: []plan.Pod{{Name: "r1", Phase: state.Reserved, Pinned: true}}},
+			want: plan.Plan{Create: 1, ReservedCount: 1},
+		},
+		{
+			name: "an unpinned idle pod counts as before",
+			in:   plan.Inputs{MinWarm: 1, MaxWarm: 1, Pods: idle("u1")},
+			want: plan.Plan{WarmCount: 1, ReadyCount: 1},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := plan.Compute(tc.in)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("Compute = %+v, want %+v", got, tc.want)
+			}
+			if len(got.Drain) > got.ReadyCount || got.ReadyCount > got.WarmCount {
+				t.Errorf("want len(Drain) <= ReadyCount <= WarmCount, got %d, %d, %d", len(got.Drain), got.ReadyCount, got.WarmCount)
+			}
+			for _, d := range got.Drain {
+				for _, p := range got.DrainPinned {
+					if d == p {
+						t.Errorf("%s is in both Drain and DrainPinned", d)
+					}
+				}
+			}
+			if got.WarmCount+got.Create-len(got.Drain) < 0 || got.ReadyCount-len(got.Drain) < 0 {
+				t.Errorf("a status count goes negative: %+v", got)
+			}
+		})
+	}
+}
