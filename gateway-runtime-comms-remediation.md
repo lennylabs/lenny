@@ -2298,9 +2298,11 @@ pinned-idle proposal, so each of those is converged once against the final set o
 
 **Phase 1: proposals 0078 and 0079 implemented**
 
-- [ ] Proposal 0078 implemented. Its deviations file is checked against the symbols proposal 0079 relies
-  on (`CloseListener`, the occupancy-zero branch, the per-connection reset, the exit-time call site, and
-  the test names); a deviation there triggers a citations and edit-sites review of 0079.
+- [x] Proposal 0078 implemented (`1118a0ecb` through `0f689cd3a`, records `5eaade824`, status
+  `a33468c05`). Its deviations file is checked against the symbols proposal 0079 relies on
+  (`CloseListener`, the occupancy-zero branch, the per-connection reset, the exit-time call site, and the
+  test names). Both recorded deviations concern test placement and dial order, so neither triggers a
+  citations and edit-sites review of 0079.
 - [ ] Proposal 0079 implemented through its checklist. Closes BUILD-GAPS F-5.2.33 part (b). The step
   numbering below is the checklist's as of 2026-10-01; the proposal's own checklist is authoritative.
   - [ ] S1 to S18, the spec steps. Each lands its staged edits under a scoped spec write lease: §4.7.9,
