@@ -905,7 +905,17 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 4. Adapter signals READY to gateway — pod enters warm pool
 5. Gateway assigns session: `PrepareWorkspace` → `FinalizeWorkspace` → `RunSetup` → `AssignCredentials(leases)` → `StartSession`. A stage that fails takes the failure branch stated in [Section 7.1](07_session-lifecycle.md#71-normal-flow).
 6. Adapter writes **final manifest** (connector servers now known from leases; all provider credentials available)
-7. Adapter spawns runtime binary
+7. The runtime process becomes live for the pod's first session. In the sidecar
+   deployment model ([§4.7.10](#4710-deployment-model)) the kubelet started the
+   runtime container when the pod started; the runtime dials the adapter on
+   `CH-MSGSOCK` ([§28.5.3](28_communication-channels.md#2853-intra-pod)), and
+   the adapter accepts that connection here. The adapter does not spawn a
+   process in the runtime container: the two containers share no process namespace
+   ([§13.1](13_security-model.md#131-pod-security)) and the runtime binary exists
+   only in the runtime container's image. A later session on the same pod skips
+   this step and steps 8 and 9, and uses the connections the runtime opened on
+   the pod's first session. In the embedded deployment model the adapter runs
+   the runtime loop in its own process for each session.
 8. Runtime reads manifest, connects to MCP servers (Standard/Full), opens CH-RUNTIMEOPS (Full)
 9. Adapter sends `lifecycle_capabilities` (Full); receives `lifecycle_support`
 10. Adapter delivers first `{type: "message"}` on stdin
