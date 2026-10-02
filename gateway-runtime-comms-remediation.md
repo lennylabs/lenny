@@ -2322,12 +2322,17 @@ tree, the owner has adjudicated each entry in the proposal's deviations file, th
 The two share §4.7, §15.4, §15.7, and the runtime-author guide, so their spec steps land one after the
 other while their code proceeds in parallel.
 
-- [ ] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out),
-  approved, and implemented. It defines `CH-SUPERVISE` as JSON Lines and adds no proto field.
-- [ ] Runtime-SDK proposal (not yet written): the Go, Python, and TypeScript SDKs serve sequential sessions
-  keyed by `sessionId` with an end-of-session signal, the first-session manifest-ordering fix on sidecar
-  pods, the nonce half of F-4.7.25 on both the runtime and adapter sides, and the Go `Handler` doc-comment
-  correction moved out of proposal 0079. It lands before any release, which is the condition under which
+- [ ] Proposal 0087 part 1 converged (prerequisites corrected to this ordering, part 2 split out, scope
+  widened to every sidecar pod per section 10.3), approved, and implemented. It defines `CH-SUPERVISE` as
+  JSON Lines and adds no proto field, requires `command` on every sidecar Runtime including through the
+  admin registration API, designs supervision for `preConnect` and service-mode runtimes, and carries the
+  gVisor implementation conditions and the conformance check recorded in section 10.3.
+- [ ] Runtime-SDK proposal (not yet written): the single runtime lifetime contract in section 10.3, with
+  session-start and session-end frames on `CH-MSGSOCK`, per-session context delivered by frame, the Go,
+  Python, and TypeScript SDKs serving sessions keyed by `sessionId`, the runtime side of the per-generation
+  nonce, the tier-10 conformance case, and the Go `Handler` doc-comment correction moved out of proposal
+  0079. The supervisor in proposal 0087 now fixes the first-session manifest-ordering defect for sidecar
+  pods, so this proposal no longer owns it. It lands before any release, which is the condition under which
   proposal 0079's S20 no longer waits for it.
 
 **Phase 3: after proposal 0087 part 1**
@@ -2391,6 +2396,47 @@ Answered on 2026-10-01 for the later phases:
   inside the adapter process, which persists for the pod's life, so a fresh in-process instance would not
   give the process-level separation `restart` promises. Embedded recycling pools use `keep` or
   `vm-restart`.
+- gVisor spike result (2026-10-02, `scratchpad/gvisor-spike/REPORT.md` on the machine that ran it; runsc
+  `release-20260714.0`, systrap platform): on gVisor a same-UID process can kill or stop the container's
+  PID 1 (property (a) fails; it holds on runc), while non-dumpable protection (b), sender identification (c),
+  and `kill(-1)` reach (d) hold on both runtimes. Kata was not tested, because the host has no `/dev/kvm`.
+- The `restart` lifetime is offered on gVisor pools (2026-10-02). Killing or stopping the supervisor fails
+  closed: the container dies with it or its end-of-session request times out, and the pod retires; a runtime
+  can only cost its own pod, as a crash would. Proposal 0087 must therefore require: a supervisor written as
+  a single-threaded binary with no language runtime that installs signal handlers (C, for example; a Go
+  supervisor loses `si_pid` to the Go runtime's handlers and dies on default-action signals); handlers for
+  every catchable signal, so that only `SIGKILL` and `SIGSTOP` remain effective; acting on a shutdown
+  signal only when `si_pid == 0` and `si_code == SI_USER`, because queued signals can also present
+  `si_pid 0` (on gVisor `si_pid` is a thread ID); and documentation that a runtime can kill or freeze its
+  own pod's supervisor, which retires the pod.
+- Trust model (2026-10-02): a platform supervisor at the agent UID is accepted on runc and gVisor. On
+  microVM pools the `restart` lifetime is gated on the same four properties passing on a KVM-capable host
+  before release. Proposal 0087 adds a conformance or preflight check that runs the four properties on the
+  deployer's actual RuntimeClasses and refuses `restart` where they fail.
+- Supervisor scope (2026-10-02): every sidecar pod runs the supervisor, whatever its lifetime, so every
+  sidecar runtime has one startup contract: it is launched by the supervisor after the manifest exists,
+  gets its command, environment, and socket address the same way, receives shutdown signals, and reports
+  crashes with exit codes. Consequences for proposal 0087: every sidecar Runtime declares `command`, and the
+  admin registration API gains `command` (admin-registered runtimes are all sidecars); SDK-warm
+  (`preConnect`) and service-mode runtimes get supervised designs rather than exclusions; the test-only
+  egress-capture container moves off the agent UID; and the supervisor fixes the first-session
+  manifest-ordering defect and supplies the per-generation nonce for every sidecar pod.
+- One runtime lifetime contract (2026-10-02): a runtime process may serve any number of sessions, one after
+  another and, on concurrent pools, at once; every session-scoped frame carries `sessionId`; per-session
+  context (task ID, credentials path, workspace path, session variables) arrives in a session-start frame
+  and a session-end frame releases it; and no runtime relies on its process exiting at session end.
+  `restart` adds a guarantee (a fresh process at each occupancy-zero boundary) and imposes no different
+  requirement, so changing a pool's lifetime in either direction is safe for a compliant runtime. The
+  runtime-SDK proposal owns this contract, the session-start and session-end frames on `CH-MSGSOCK`, the
+  multi-session SDKs, and a tier-10 conformance case that serves two sequential sessions with different
+  contexts. Because session context arrives by frame, the supervisor can launch the runtime at pod warm-up,
+  which removes the cold start from the session path and gives `preConnect` runtimes a natural design.
+- No runtime capability declaration for sequential sessions (2026-10-02). It would be self-attested and
+  would guard only runtimes that ignore the contract, which the conformance case checks directly; the
+  platform is pre-deployment, so no runtime needs grandfathering.
+- The lifetime value keeps the name `restart` (2026-10-02). It means the runtime process is replaced each
+  time the pod reaches occupancy zero and is reused; pod retirement at `maxSessionsPerPod` or
+  `maxPodUptimeSeconds` is a separate event that happens under every lifetime.
 - The refusal is enforced at the gateway's pool admission through a derived predicate (2026-10-02). The
   RuntimeReconciler mirrors a "can be supervised" flag into the gateway runtime registry: true for a
   sidecar runtime that declares `command` and is neither service-mode nor `preConnect`. Pool admission
@@ -2409,22 +2455,8 @@ proposal 0072 split into its separate items, and draft proposal 0080 split into 
 
 ### 10.5 Decisions still open
 
-Each decision is listed with the phase that needs it. Decisions answered on 2026-10-01 are in section 10.3.
-
-**Before or during Phase 0**
-
-- **What a gVisor failure in the validation spike means.** Either it ends the restart lifetime on
-  `sandboxed` pools, or it delays it until a gVisor-specific design exists. The recommendation on record is
-  to delay.
-
-**At proposal 0087 part 1's convergence (Phase 2)**
-
-- **The trust model.** Is a platform process running at the agent UID, in the same container as the
-  author's binary, acceptable, and on which isolation profiles (runc, gVisor, and Kata)? The recommendation
-  on record is to accept it on Kata and on gVisor once validated, and on runc only under an explicit trust
-  decision.
-- **Supervisor scope.** Restart pools only, or every sidecar pod. The recommendation on record is restart
-  pools only, with supervision of every sidecar pod left to a later proposal.
+None as of 2026-10-02. Decisions answered so far are in section 10.3. New open decisions that the proposals'
+reviews raise are recorded here.
 
 ### 10.6 Context and rationale for the proposal track
 
