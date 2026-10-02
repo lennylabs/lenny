@@ -1047,6 +1047,98 @@ func stagedSectionMismatch(staged, landed []string) []string {
 	return out
 }
 
+// stagedLineSupersession records one edit that a later implemented
+// proposal made to a line the section's staging proposal staged. An
+// implemented proposal is a historical record and is never edited, so
+// when a later proposal rewrites a staged line, the staged block keeps
+// the old wording and this register carries the rewrite instead. The
+// gate applies each entry to the staged block before the comparison, so
+// the landed line must carry the superseding wording exactly, and a
+// landed line that matches neither the staged nor the superseding wording
+// is still reported.
+type stagedLineSupersession struct {
+	// proposal names the implemented proposal directory that staged the
+	// rewrite, so a reader traces the entry to its approval.
+	proposal string
+	// linePrefix selects the staged line the rewrite applies to. Exactly
+	// one staged line must start with it.
+	linePrefix string
+	// from is the staged text the later proposal replaced. It must occur
+	// exactly once in the selected line.
+	from string
+	// to is the text the later proposal put in its place.
+	to string
+}
+
+// stagedLineSupersessions is the register of staged lines that a later
+// implemented proposal rewrote. An entry is added only with the proposal
+// that lands the rewrite, and an entry that no longer selects a staged
+// line is reported as stale.
+//
+// spec: §28.3 (Registers)
+var stagedLineSupersessions = []stagedLineSupersession{
+	{
+		// The REG-CLAIM writer cell follows the §4.6.3 SandboxClaim
+		// ownership row, which gained the gateway delete that ends a hold
+		// when an acquisition ends it.
+		proposal:   "0079_fix_name-who-starts-the-next-sessions-runtime-on-a-recycled-pod",
+		linePrefix: "| `REG-CLAIM` |",
+		from:       "and the hold-expiry delete,",
+		to:         "and the deletes at hold expiry and when an acquisition ends the hold,",
+	},
+}
+
+// applySupersessions returns a copy of staged with every register entry
+// applied, and one message per entry that does not select exactly one
+// staged line carrying its replaced text exactly once. A stale entry is
+// reported rather than skipped, so the register cannot accept a rewrite
+// of a line the staged block no longer holds.
+func applySupersessions(staged []string, register []stagedLineSupersession) (current, stale []string) {
+	current = append([]string(nil), staged...)
+	for _, entry := range register {
+		idx := -1
+		count := 0
+		for i, line := range current {
+			if strings.HasPrefix(line, entry.linePrefix) {
+				idx = i
+				count++
+			}
+		}
+		if count != 1 || strings.Count(current[idx], entry.from) != 1 {
+			stale = append(stale, fmt.Sprintf("the supersession by %s selects %d staged lines starting %q, and the selected line must carry %q exactly once",
+				entry.proposal, count, entry.linePrefix, entry.from))
+			continue
+		}
+		current[idx] = strings.Replace(current[idx], entry.from, entry.to, 1)
+	}
+	return current, stale
+}
+
+// assertSupersessionsAreApplied pins the register's two directions: a
+// landed line that keeps the staged wording a later proposal replaced is
+// reported, and an entry selecting no staged line is reported as stale.
+//
+// spec: §28.3 (Registers)
+func assertSupersessionsAreApplied(t *testing.T, staged, landed []string) {
+	t.Helper()
+	current, _ := applySupersessions(staged, stagedLineSupersessions)
+	reverted := append([]string(nil), landed...)
+	for _, entry := range stagedLineSupersessions {
+		for i, line := range reverted {
+			if strings.HasPrefix(line, entry.linePrefix) {
+				reverted[i] = strings.Replace(line, entry.to, entry.from, 1)
+			}
+		}
+	}
+	if got := stagedSectionMismatch(current, reverted); len(got) == 0 {
+		t.Errorf("a landed section keeping the superseded staged wording was accepted")
+	}
+	unknown := []stagedLineSupersession{{proposal: "absent", linePrefix: "| `REG-NONE` |", from: "x", to: "y"}}
+	if _, stale := applySupersessions(staged, unknown); len(stale) != 1 {
+		t.Errorf("a supersession selecting no staged line was not reported as stale: %v", stale)
+	}
+}
+
 // markdownFileLines splits a markdown file's content into the lines a
 // fenced block holds it as, dropping the single trailing newline every
 // tracked file ends with so the two sides carry the same last line.
@@ -1082,9 +1174,14 @@ func assertStagedSectionTextMatchesTheLandedFile(t *testing.T) {
 			channelsProposalFile, len(blocks), channelsSpecFile)
 	}
 	landed := markdownFileLines(string(section))
-	for _, msg := range stagedSectionMismatch(blocks[0], landed) {
+	current, stale := applySupersessions(blocks[0], stagedLineSupersessions)
+	for _, msg := range stale {
+		t.Errorf("%s", msg)
+	}
+	for _, msg := range stagedSectionMismatch(current, landed) {
 		t.Errorf("the text %s stages and the landed %s disagree: %s", channelsProposalFile, channelsSpecFile, msg)
 	}
+	assertSupersessionsAreApplied(t, blocks[0], landed)
 
 	// The comparison reports the two divergences that pass every other
 	// check in this file: a block written one level shallower throughout,
