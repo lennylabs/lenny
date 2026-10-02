@@ -15,4 +15,4 @@ implemented-by:
 
 ## Review history
 
-An adversarial review run executed on 2026-10-01. The spec loop ran 20 rounds and converged, performing 9 full-pool sweeps. The non-spec loop ran 7 rounds and converged, performing 2 full-pool sweeps. The run fixed 28 findings. The run as a whole did not converge, and findings remain open.
+An adversarial review run executed on 2026-10-02. The spec loop ran 23 rounds and converged, performing 11 full-pool sweeps. The non-spec loop ran 12 rounds and did not converge, performing 5 full-pool sweeps. The run fixed 9 findings. The non-spec loop did not converge, and findings it had not closed remain open.
