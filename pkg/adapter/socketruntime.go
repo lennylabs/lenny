@@ -83,6 +83,9 @@ type SocketRuntimeProcess struct {
 	// torn down only when this set empties, so per-slot teardown is scoped
 	// to the named slot and siblings keep running. spec: §5.2.
 	active map[string]struct{}
+	// listenerClosed records that CloseListener has released the pod-scoped
+	// listener, so a second call is a no-op. Guarded by mu.
+	listenerClosed bool
 }
 
 // subscriber is one Output consumer of the shared runtime connection. The
@@ -487,6 +490,26 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 	}
 	// The listener is pod-scoped and stays bound; see the type comment.
 	return nil
+}
+
+// CloseListener closes the pod-scoped listener (see the type comment). It
+// leaves the shared connection and the active set alone, and it is safe to
+// call more than once.
+//
+// The adapter process calls it once at exit; no session teardown does,
+// because nothing rebinds the address. A second call returns nil rather than
+// the error a second net.Listener.Close produces. An accept blocked in
+// Start returns net.ErrClosed when the listener closes, so its goroutine
+// exits. spec: §4.7.10, §5.2, §28.5.3.
+func (p *SocketRuntimeProcess) CloseListener() error {
+	p.mu.Lock()
+	if p.listenerClosed {
+		p.mu.Unlock()
+		return nil
+	}
+	p.listenerClosed = true
+	p.mu.Unlock()
+	return p.listener.Close()
 }
 
 // defaultSocketShutdownGrace is the SIGTERM-to-SIGKILL pivot window the

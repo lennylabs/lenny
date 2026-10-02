@@ -537,3 +537,44 @@ func TestSocketRuntimeDepartingReaderLeavesTheNextConnectionsSubscribers_spec_5_
 	}
 	_ = sp.Close(context.Background(), "sess-b")
 }
+
+// spec: §28.5.3 (intra-pod), §4.7.10 (deployment model), §5.2 (pool configuration and execution modes)
+//
+// CloseListener releases the pod-scoped runtime listener the adapter process
+// owns. It leaves the live runtime connection serving its session, it makes
+// the address refuse a new dial, and a repeated call returns nil, because
+// test cleanups and the adapter's exit path may both reach it.
+//
+// diagnosis: a failure here means releasing the runtime socket at adapter
+// exit either tore down the session's live connection, left the address
+// accepting dials, or failed on a second release.
+func TestSocketRuntimeCloseListenerReleasesOnlyTheListenerAndIsIdempotent_spec_28_5_3(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+	addr := sp.SocketPath()
+
+	conn := startGeneration(t, sp, "sess-a")
+	defer conn.Close()
+
+	if err := sp.CloseListener(); err != nil {
+		t.Fatalf("CloseListener() = %v, want nil", err)
+	}
+	// The accepted connection is not the listener's: the session keeps
+	// round-tripping frames after the listener is gone.
+	roundTrip(t, sp, "sess-a", conn)
+
+	if c, err := dialRuntimeSocketErr(addr); err == nil {
+		_ = c.Close()
+		t.Fatalf("dial %q after CloseListener succeeded, want the address unbound", addr)
+	}
+
+	if err := sp.CloseListener(); err != nil {
+		t.Fatalf("second CloseListener() = %v, want nil", err)
+	}
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a) after CloseListener = %v, want nil", err)
+	}
+}

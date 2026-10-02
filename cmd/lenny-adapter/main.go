@@ -356,6 +356,14 @@ func main() {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
 		adapterSrv.Runtime = sp
+		// Release the pod-scoped listener (see adapter.SocketRuntimeProcess) at
+		// process exit. main returns only after srv.Serve returns, so this runs once
+		// the gRPC server has stopped serving. spec: §4.7.10, §28.5.3.
+		defer func() {
+			if err := sp.CloseListener(); err != nil {
+				log.Printf("lenny-adapter: close runtime socket listener: %v", err)
+			}
+		}()
 		log.Printf("lenny-adapter: §4.7 sidecar runtime transport on socket %s", sp.SocketPath())
 	case *runtimeBin != "":
 		// Developer loop: exec the runtime as a child and drive it over
