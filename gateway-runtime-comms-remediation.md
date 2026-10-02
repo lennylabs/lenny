@@ -2384,6 +2384,13 @@ Answered on 2026-10-01 for the later phases:
   behind the existing explicit opt-in, with T4 still prohibited and the remaining guest-kernel and adapter
   residuals documented. Proposal 0087 part 2's review directs its security lens at this question.
 - A supervised pod keeps retiring on a runtime crash. Restart after a crash stays deferred.
+- The supervisor learns the runtime's start command from a registration field, `Runtime.spec.command`
+  (2026-10-02). Images are digest-pinned, so the field cannot drift under a fixed image reference; a check
+  against the image config can be added later if drift becomes a problem.
+- `recycle.runtimeProcess: restart` is refused for embedded runtimes (2026-10-02). An embedded runtime runs
+  inside the adapter process, which persists for the pod's life, so a fresh in-process instance would not
+  give the process-level separation `restart` promises. Embedded recycling pools use `keep` or
+  `vm-restart`.
 
 ### 10.4 Related work outside this track
 
@@ -2409,11 +2416,11 @@ Each decision is listed with the phase that needs it. Decisions answered on 2026
   decision.
 - **Supervisor scope.** Restart pools only, or every sidecar pod. The recommendation on record is restart
   pools only, with supervision of every sidecar pod left to a later proposal.
-- **Where the runtime's start command comes from:** a registration field, a registry lookup by image digest,
-  or both. The 0087 draft stages a `Runtime.spec.command` field, and the recommendation on record is that
-  field.
-- **What `restart` means for embedded runtimes,** which run inside the adapter process. The recommendation
-  on record is a fresh in-process runtime instance, with the persisting adapter process documented.
+- **How the refusal of `restart` on embedded runtimes is enforced** (the owner chose to refuse it on
+  2026-10-02). The gateway's pool admission cannot see a Runtime's `deploymentModel`, which is CRD-only.
+  The options are a controller-side refusal when the pod is built, mirroring the full `deploymentModel`
+  into the gateway registry, or mirroring a derived "can be supervised" predicate that the gateway's pool
+  admission checks.
 
 ### 10.6 Context and rationale for the proposal track
 
