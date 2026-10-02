@@ -91,15 +91,20 @@ func (c *Client) ReportSessionScrub(ctx context.Context, podID, sessionID string
 // gateway when occupancy reaches zero on a recycling pod and the gateway
 // has patched the pod's SandboxClaim to recycling. podID is the
 // agent_pod_state row key the gateway resolves the claim from; there is
-// no session because occupancy is zero at the recycle boundary. detail
-// carries an optional failure description for the audit trail on a failed
-// outcome. A transport or gateway failure is returned as a wrapped error.
-// spec: §4.7 (Adapter → Gateway RPCs); §5.2.
-func (c *Client) ReportPodScrub(ctx context.Context, podID string, outcome PodScrubOutcome, detail string) error {
+// no session because occupancy is zero at the recycle boundary.
+// runtimeLive states whether the adapter's runtime process can serve the
+// pod's next session, sampled after the scrub; the gateway retires the pod
+// with runtime_not_live when it is false. detail carries an optional failure
+// description for the audit trail on a failed outcome. A transport or
+// gateway failure is returned as a wrapped error.
+// spec: §4.7 (Adapter → Gateway RPCs); §5.2 (Pod retirement policy, Runtime
+// not live).
+func (c *Client) ReportPodScrub(ctx context.Context, podID string, outcome PodScrubOutcome, runtimeLive bool, detail string) error {
 	req := &adapterv1.ReportPodScrubRequest{
-		PodId:   podID,
-		Outcome: outcome.proto(),
-		Detail:  detail,
+		PodId:       podID,
+		Outcome:     outcome.proto(),
+		Detail:      detail,
+		RuntimeLive: runtimeLive,
 	}
 	if _, err := c.rpc.ReportPodScrub(ctx, req); err != nil {
 		return fmt.Errorf("gatewaycontrol: ReportPodScrub for pod %s: %w", podID, err)

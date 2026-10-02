@@ -35,8 +35,11 @@ import (
 // by retire-and-reprovision rather than by an in-guest restart the pod cannot
 // perform.
 //
-// spec: §5.2 (whole-pod scrub, retire-and-reprovision at the gateway); §4.7
-// (ReportPodScrub).
+// The report also carries whether the runtime process can serve the pod's
+// next session, sampled after the scrub (see sampleRuntimeLiveness).
+//
+// spec: §5.2 (whole-pod scrub, retire-and-reprovision at the gateway; Pod
+// retirement policy, Runtime not live); §4.7 (ReportPodScrub).
 func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 	go func() {
 		defer s.signalScrubDone()
@@ -68,6 +71,10 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 		// over a set that may be missing every leaked session's residue.
 		// spec: §5.2 (whole-pod scrub outcome).
 		outcome, detail := scrubOutcome(rep, errors.Join(err, enumErr))
+		// The liveness sample is taken below, after the scrub has run:
+		// step 4 clears the /tmp and /dev/shm mounts the runtime container
+		// shares, and a runtime that exits over that must be reported as
+		// not live. spec: §5.2 (Pod retirement policy, Runtime not live).
 		if s.PodScrubReporter == nil {
 			// The dev path has no gateway link; the missing-report timeout is
 			// the backstop. Nothing to report through.
@@ -75,11 +82,50 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 				"pod", rc.GetPodId(), "outcome", outcome)
 			return
 		}
-		if reportErr := s.PodScrubReporter.ReportPodScrub(ctx, rc.GetPodId(), outcome, detail); reportErr != nil {
+		live := s.sampleRuntimeLiveness(rc.GetPodId())
+		if reportErr := s.PodScrubReporter.ReportPodScrub(ctx, rc.GetPodId(), outcome, live, detail); reportErr != nil {
 			// The gateway missing-report timeout is the backstop; log and move on.
 			slog.Error("adapter: ReportPodScrub failed", "pod", rc.GetPodId(), "err", reportErr)
 		}
 	}()
+}
+
+// nextSessionRuntime is the optional capability of a RuntimeProcess that can
+// say whether it serves the pod's next session. It is declared here, at its
+// only consumer, so the RuntimeProcess interface and its test doubles stay
+// unchanged; a runtime without the method reads as not live, which retires
+// the pod rather than placing a session on a runtime nothing confirmed.
+// spec: §5.2 (Pod retirement policy, Runtime not live); §4.7.10 (Runtime
+// process lifetime).
+type nextSessionRuntime interface {
+	ServesNextSession() bool
+}
+
+// runtimeServesNextSession reports whether s.Runtime can serve the pod's
+// next session. A nil runtime, and one that does not implement
+// nextSessionRuntime, report false, so the gateway retires the pod with
+// runtime_not_live (fail closed). spec: §5.2 (Pod retirement policy,
+// Runtime not live).
+func (s *Server) runtimeServesNextSession() bool {
+	rt, ok := s.Runtime.(nextSessionRuntime)
+	if !ok {
+		return false
+	}
+	return rt.ServesNextSession()
+}
+
+// sampleRuntimeLiveness samples runtimeServesNextSession for the
+// ReportPodScrub request and logs a false sample at Warn with the pod
+// identifier, so the adapter's log names the retire the gateway is about to
+// take. spec: §5.2 (Pod retirement policy, Runtime not live); §4.7
+// (ReportPodScrub).
+func (s *Server) sampleRuntimeLiveness(podID string) bool {
+	live := s.runtimeServesNextSession()
+	if !live {
+		slog.Warn("adapter: runtime cannot serve the next session; reporting runtime_live=false so the pod retires",
+			"pod", podID)
+	}
+	return live
 }
 
 // signalScrubDone fires the optional scrubDone test seam once the async scrub

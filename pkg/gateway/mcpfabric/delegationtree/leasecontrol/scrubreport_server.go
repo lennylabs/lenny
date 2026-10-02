@@ -55,12 +55,15 @@ type ScrubReportService interface {
 	// coordinates the SDK re-warm before reserving, a non-preConnect pod
 	// patches the claim directly to reserved; on retire (a limit reached, or
 	// the §6.2 unschedulable-host-node trigger when the label reads "false"
-	// or is absent), it writes the terminal disposition so the projection
-	// drains. detail carries an optional adapter-side failure description for
-	// the audit trail. A gateway-side failure is returned as an error.
+	// or is absent, or the §5.2 runtime-not-live retire when runtimeLive is
+	// false), it writes the terminal disposition so the projection drains.
+	// runtimeLive is the adapter's report that its runtime process can serve
+	// the pod's next session. detail carries an optional adapter-side failure
+	// description for the audit trail. A gateway-side failure is returned as
+	// an error.
 	// spec: §4.7 (ReportPodScrub increments scrubFailureCount, computes
-	// disposition), §5.2, §6.2.
-	RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error
+	// disposition), §5.2 (Pod retirement policy, Runtime not live), §6.2.
+	RecordPodScrub(ctx context.Context, podID string, failed, runtimeLive bool, detail string) error
 }
 
 // ReportSessionScrub handles the §4.7 adapter→gateway per-slot cleanup
@@ -121,7 +124,10 @@ func (s *Service) ReportPodScrub(ctx context.Context, req *adapterv1.ReportPodSc
 	if err != nil {
 		return nil, err
 	}
-	if err := s.scrubReports.RecordPodScrub(ctx, podID, failed, req.GetDetail()); err != nil {
+	// An absent runtime_live reads as false, so a report that omits the
+	// fact retires the pod (fail closed). spec: §5.2 (Pod retirement
+	// policy, Runtime not live).
+	if err := s.scrubReports.RecordPodScrub(ctx, podID, failed, req.GetRuntimeLive(), req.GetDetail()); err != nil {
 		return nil, status.Errorf(codes.Internal, "leasecontrol: record pod scrub for pod %s: %v", podID, err)
 	}
 	return &adapterv1.ReportPodScrubResponse{}, nil
@@ -331,9 +337,23 @@ type ClaimDispositionDriver interface {
 	// [scrub_warning]` case); the limit-reached and fail-policy retires clear
 	// it. reason is the stable observability label, and detail is the optional
 	// adapter-side failure description retained in the audit trail on a FAILED
-	// outcome. spec: §6.2, §5.2 (audit retention of
-	// the failed pod's metadata).
-	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error
+	// outcome. lifetime carries the pod's lifetime session count and uptime
+	// the disposition read, which the driver records on the Info log of a
+	// released retire. spec: §6.2, §5.2 (audit retention of the failed pod's
+	// metadata; Pod retirement policy).
+	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime PodLifetime, detail string) error
+}
+
+// PodLifetime is the pod's lifetime usage the recycle disposition read: the
+// sessions it has served, including the one that just ended, and its
+// wall-clock uptime. The retire path logs it so an operator can tell a pod
+// that retired on a limit from one that retired early, such as on
+// runtime_not_live. spec: §5.2 (Pod retirement policy).
+type PodLifetime struct {
+	// SessionsServed is the pod's lifetime served-session count.
+	SessionsServed int
+	// UptimeSeconds is the pod's wall-clock uptime in seconds.
+	UptimeSeconds int64
 }
 
 // RetirementMetrics records the §16.1 pod-retirement and scrub-failure
@@ -493,8 +513,10 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, sessionID
 // schedulability, and drives the resulting disposition onto the claim
 // binding state. detail carries an optional adapter-side failure
 // description that the retire path retains in the audit trail on a FAILED
-// outcome. spec: §4.7; §5.2; §6.2.
-func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error {
+// outcome. runtimeLive is the adapter's report that its runtime process can
+// serve the pod's next session; false retires the pod with runtime_not_live.
+// spec: §4.7; §5.2 (Pod retirement policy, Runtime not live); §6.2.
+func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed, runtimeLive bool, detail string) error {
 	// Resolve the recycle policy first: it carries the pool and
 	// runtime_class dimensions the §16.1 scrub-failure and retirement
 	// metrics require, so the counter advance below can emit them. A pod or
@@ -526,8 +548,10 @@ func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed
 		PodUptimeSeconds:    policy.PodUptimeSeconds,
 		MaxPodUptimeSeconds: policy.MaxPodUptimeSeconds,
 		HostSchedulable:     policy.HostSchedulable,
+		RuntimeNotLive:      !runtimeLive,
 	})
-	return r.applyDisposition(ctx, podID, policy, detail, d)
+	lifetime := PodLifetime{SessionsServed: sessionsServed, UptimeSeconds: policy.PodUptimeSeconds}
+	return r.applyDisposition(ctx, podID, policy, lifetime, detail, d)
 }
 
 // advanceScrubCounters increments the scrub-failure counter on a failed
@@ -583,9 +607,11 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 // increment. On a concurrent non-vm-restart pool the session_count_limit
 // counter is additionally suppressed here because the per-release
 // SessionCountRetirer owns that emission for that pod class; the occupancy-zero
-// disposition still retires the pod as the state backstop. spec: §6.2,
-// §16.1, §5.2 (per-release maxSessionsPerPod drain).
-func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, detail string, d podscrub.Disposition) error {
+// disposition still retires the pod as the state backstop. lifetime is the
+// pod's served-session count and uptime the disposition read, passed to the
+// driver's retire log. spec: §6.2, §16.1, §5.2 (per-release maxSessionsPerPod
+// drain; Pod retirement policy).
+func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, lifetime PodLifetime, detail string, d podscrub.Disposition) error {
 	pool, runtimeClass := policy.Pool, policy.RuntimeClass
 	if d.Retire {
 		// lenny_gateway_pod_retirement_total{reason} carries only the
@@ -633,7 +659,7 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, poli
 		// residual-state marker the disposition computed is retained. detail
 		// carries the adapter-side failure description for the audit trail on a
 		// FAILED outcome.
-		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.ScrubWarning, d.Reason, detail); err != nil {
+		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.ScrubWarning, d.Reason, lifetime, detail); err != nil {
 			return fmt.Errorf("retire pod %s (%s): %w", podID, d.Reason, err)
 		}
 		return nil

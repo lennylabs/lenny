@@ -505,11 +505,18 @@ enum PodScrubOutcome {
 // agent_pod_state row key the gateway resolves the claim and disposition
 // from; there is no session_id because occupancy is zero at the recycle
 // boundary. detail carries an optional adapter-side failure description
-// for the audit trail on a FAILED outcome. spec: §4.7; §5.2; §6.2.
+// for the audit trail on a FAILED outcome. runtime_live states whether the
+// adapter's runtime process can serve the pod's next session, sampled after
+// the whole-pod scrub finishes; a sidecar runtime whose connection is open
+// is reported live whether or not it answers heartbeats. The field is
+// positive so that an absent value reads as not live, and the gateway
+// retires the pod with the non-counting runtime_not_live reason when it is
+// false. spec: §4.7; §5.2 (Pod retirement policy, Runtime not live); §6.2.
 message ReportPodScrubRequest {
   string pod_id = 1;
   PodScrubOutcome outcome = 2;
   string detail = 3;
+  bool runtime_live = 4;
 }
 
 // ReportPodScrubResponse acknowledges the §5.2 whole-pod scrub report. It

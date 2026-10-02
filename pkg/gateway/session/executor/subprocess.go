@@ -335,6 +335,15 @@ func (e *SubprocessExecutor) session(sessionID string) (*subprocessSession, erro
 	return s, nil
 }
 
+// ServesNextSession reports true: the executor spawns a fresh runtime
+// process for each session it starts, so the next session never depends on
+// the process that served the previous one. The adapter samples it after the
+// whole-pod scrub and reports it on ReportPodScrub.
+// spec: §5.2 (Pod retirement policy, Runtime not live); §4.7 (ReportPodScrub).
+func (e *SubprocessExecutor) ServesNextSession() bool {
+	return true
+}
+
 // Close implements Executor. It closes the child's stdin (which the
 // §15.4 contract treats as a clean-exit signal) and waits for the
 // process to exit.

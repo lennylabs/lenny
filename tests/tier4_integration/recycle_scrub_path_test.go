@@ -126,17 +126,18 @@ type recycleScrubReporter struct {
 }
 
 type recycleReport struct {
-	podID   string
-	outcome gatewaycontrol.PodScrubOutcome
+	podID       string
+	outcome     gatewaycontrol.PodScrubOutcome
+	runtimeLive bool
 }
 
 func newRecycleScrubReporter() *recycleScrubReporter {
 	return &recycleScrubReporter{reported: make(chan struct{})}
 }
 
-func (r *recycleScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, _ string) error {
+func (r *recycleScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, runtimeLive bool, _ string) error {
 	r.mu.Lock()
-	r.reports = append(r.reports, recycleReport{podID: podID, outcome: outcome})
+	r.reports = append(r.reports, recycleReport{podID: podID, outcome: outcome, runtimeLive: runtimeLive})
 	r.mu.Unlock()
 	r.once.Do(func() { close(r.reported) })
 	return nil
@@ -311,8 +312,14 @@ func (a *recordingArmer) armedSnapshot() []string {
 }
 
 // recycleFakeRuntime is a minimal RuntimeProcess for the adapter Server the
-// binder's StartSession drives at Bind and Close tears down at Shutdown.
+// binder's StartSession drives at Bind and Close tears down at Shutdown. It
+// reports that it serves the pod's next session, as a live runtime process
+// that lives as long as the pod does.
 type recycleFakeRuntime struct{}
+
+// ServesNextSession reports the runtime live for the whole-pod scrub report.
+// spec: 5.2 (Pod retirement policy)
+func (recycleFakeRuntime) ServesNextSession() bool { return true }
 
 func (recycleFakeRuntime) Start(context.Context, string) error           { return nil }
 func (recycleFakeRuntime) WriteEnvelope(string, []byte) error            { return nil }
@@ -467,16 +474,21 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
 	}
+	if !reps[0].runtimeLive {
+		t.Errorf("reported runtime_live = false for a live runtime, want true")
+	}
 
-	// The gateway consumer side maps the reported outcome onto the §6.2
-	// disposition. A succeeded scrub on a schedulable host reuses the pod: a
-	// non-preConnect recycling pod is held in `reserved` for its pinned tenant.
+	// The gateway consumer side maps the reported outcome and liveness onto
+	// the §6.2 disposition. A succeeded scrub on a schedulable host with a live
+	// runtime reuses the pod: a non-preConnect recycling pod is held in
+	// `reserved` for its pinned tenant.
 	disp := podscrub.Decide(podscrub.Inputs{
 		Scrub:             scrubResultFor(reps[0].outcome),
 		OnCleanupFailure:  podscrub.OnCleanupWarn,
 		MaxSessionsPerPod: 25,
 		SessionsServed:    1,
 		HostSchedulable:   true,
+		RuntimeNotLive:    !reps[0].runtimeLive,
 	})
 	if disp.Retire {
 		t.Fatalf("succeeded scrub retired the pod (reason %q), want reuse", disp.Reason)
@@ -1075,7 +1087,7 @@ func (perReleaseNoopInspector) InspectForRecycle(context.Context, string) (lease
 type perReleaseNoopDriver struct{}
 
 func (perReleaseNoopDriver) Recycle(context.Context, string, bool, bool) error { return nil }
-func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub.RetireReason, string) error {
+func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub.RetireReason, leasecontrol.PodLifetime, string) error {
 	return nil
 }
 

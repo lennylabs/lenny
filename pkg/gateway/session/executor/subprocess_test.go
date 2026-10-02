@@ -263,3 +263,16 @@ func TestSubprocessExecutorOutputClosesWhenRuntimeExits(t *testing.T) {
 		}
 	}
 }
+
+// TestSubprocessExecutorServesNextSession_spec_5_2 pins that the subprocess
+// executor reports itself able to serve the pod's next session: it spawns a
+// fresh runtime process per session, so the adapter's whole-pod scrub report
+// carries runtime_live true and the gateway does not retire the pod with
+// runtime_not_live.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
+func TestSubprocessExecutorServesNextSession_spec_5_2(t *testing.T) {
+	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: "/bin/true"})
+	if !e.ServesNextSession() {
+		t.Error("ServesNextSession() = false, want true for a per-session subprocess")
+	}
+}

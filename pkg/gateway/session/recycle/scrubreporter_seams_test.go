@@ -1267,7 +1267,7 @@ func TestClaimDispositionRetireClaimGoneIsNoOp_spec_3_4(t *testing.T) {
 		},
 	})
 	d := mustDispositionDriver(t, cl)
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
 		t.Errorf("Retire with gone claim: err = %v, want nil (no-op)", err)
 	}
 }

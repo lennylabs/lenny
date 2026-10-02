@@ -203,6 +203,19 @@ func (r *InProcessRuntime) Close(_ context.Context, sessionID string) error {
 	return nil
 }
 
+// ServesNextSession reports whether the embedded runtime can serve the pod's
+// next session. The runtime loop runs in the adapter's own process, which
+// lives as long as the pod, so the loop serves a later session once the
+// previous session's Close has unbound it. It reports false while a session
+// is still bound. SDKWarmInProcessRuntime inherits it.
+// spec: §5.2 (Pod retirement policy, Runtime not live); §4.7.10 (Runtime
+// process lifetime).
+func (r *InProcessRuntime) ServesNextSession() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.session == ""
+}
+
 // compile-time assertion that InProcessRuntime satisfies the
 // RuntimeProcess contract the §4.7 adapter drives.
 var _ RuntimeProcess = (*InProcessRuntime)(nil)

@@ -1336,12 +1336,19 @@ func (*ReportSessionScrubResponse) Descriptor() ([]byte, []int) {
 // agent_pod_state row key the gateway resolves the claim and disposition
 // from; there is no session_id because occupancy is zero at the recycle
 // boundary. detail carries an optional adapter-side failure description
-// for the audit trail on a FAILED outcome. spec: §4.7; §5.2; §6.2.
+// for the audit trail on a FAILED outcome. runtime_live states whether the
+// adapter's runtime process can serve the pod's next session, sampled after
+// the whole-pod scrub finishes; a sidecar runtime whose connection is open
+// is reported live whether or not it answers heartbeats. The field is
+// positive so that an absent value reads as not live, and the gateway
+// retires the pod with the non-counting runtime_not_live reason when it is
+// false. spec: §4.7; §5.2 (Pod retirement policy, Runtime not live); §6.2.
 type ReportPodScrubRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PodId         string                 `protobuf:"bytes,1,opt,name=pod_id,json=podId,proto3" json:"pod_id,omitempty"`
 	Outcome       PodScrubOutcome        `protobuf:"varint,2,opt,name=outcome,proto3,enum=lenny.adapter.v1.PodScrubOutcome" json:"outcome,omitempty"`
 	Detail        string                 `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
+	RuntimeLive   bool                   `protobuf:"varint,4,opt,name=runtime_live,json=runtimeLive,proto3" json:"runtime_live,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1395,6 +1402,13 @@ func (x *ReportPodScrubRequest) GetDetail() string {
 		return x.Detail
 	}
 	return ""
+}
+
+func (x *ReportPodScrubRequest) GetRuntimeLive() bool {
+	if x != nil {
+		return x.RuntimeLive
+	}
+	return false
 }
 
 // ReportPodScrubResponse acknowledges the §5.2 whole-pod scrub report. It
@@ -6611,11 +6625,12 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x02 \x01(\v2\x1b.lenny.adapter.v1.SessionIdR\tsessionId\x12?\n" +
 	"\aoutcome\x18\x04 \x01(\x0e2%.lenny.adapter.v1.SessionScrubOutcomeR\aoutcomeJ\x04\b\x03\x10\x04R\aslot_id\"\x1c\n" +
-	"\x1aReportSessionScrubResponse\"\x83\x01\n" +
+	"\x1aReportSessionScrubResponse\"\xa6\x01\n" +
 	"\x15ReportPodScrubRequest\x12\x15\n" +
 	"\x06pod_id\x18\x01 \x01(\tR\x05podId\x12;\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2!.lenny.adapter.v1.PodScrubOutcomeR\aoutcome\x12\x16\n" +
-	"\x06detail\x18\x03 \x01(\tR\x06detail\"\x18\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\x12!\n" +
+	"\fruntime_live\x18\x04 \x01(\bR\vruntimeLive\"\x18\n" +
 	"\x16ReportPodScrubResponse\"\x8c\f\n" +
 	"\x05Error\x125\n" +
 	"\x04code\x18\x01 \x01(\x0e2!.lenny.adapter.v1.Error.ErrorCodeR\x04code\x12<\n" +

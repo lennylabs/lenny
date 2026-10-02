@@ -121,15 +121,16 @@ type recordingPodScrubReporter struct {
 }
 
 type podScrubReport struct {
-	podID   string
-	outcome gatewaycontrol.PodScrubOutcome
-	detail  string
+	podID       string
+	outcome     gatewaycontrol.PodScrubOutcome
+	runtimeLive bool
+	detail      string
 }
 
-func (r *recordingPodScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, detail string) error {
+func (r *recordingPodScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, runtimeLive bool, detail string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reports = append(r.reports, podScrubReport{podID: podID, outcome: outcome, detail: detail})
+	r.reports = append(r.reports, podScrubReport{podID: podID, outcome: outcome, runtimeLive: runtimeLive, detail: detail})
 	return r.err
 }
 

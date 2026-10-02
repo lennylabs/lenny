@@ -126,14 +126,15 @@ type scrubConformanceReporter struct {
 }
 
 type scrubConformanceReport struct {
-	podID   string
-	outcome gatewaycontrol.PodScrubOutcome
+	podID       string
+	outcome     gatewaycontrol.PodScrubOutcome
+	runtimeLive bool
 }
 
-func (r *scrubConformanceReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, _ string) error {
+func (r *scrubConformanceReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, runtimeLive bool, _ string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reports = append(r.reports, scrubConformanceReport{podID: podID, outcome: outcome})
+	r.reports = append(r.reports, scrubConformanceReport{podID: podID, outcome: outcome, runtimeLive: runtimeLive})
 	return nil
 }
 

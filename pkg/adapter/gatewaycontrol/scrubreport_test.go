@@ -80,7 +80,7 @@ func TestReportPodScrubSucceeded_spec_3_4(t *testing.T) {
 	stub := &stubGatewayControl{}
 	client := dialStub(t, stub)
 
-	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubSucceeded, ""); err != nil {
+	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubSucceeded, true, ""); err != nil {
 		t.Fatalf("ReportPodScrub: %v", err)
 	}
 	got := stub.gotPodScrubReq
@@ -93,6 +93,25 @@ func TestReportPodScrubSucceeded_spec_3_4(t *testing.T) {
 	if got.GetDetail() != "" {
 		t.Errorf("detail = %q, want empty on success", got.GetDetail())
 	}
+	if !got.GetRuntimeLive() {
+		t.Error("runtime_live = false on the wire, want the reported true")
+	}
+}
+
+// TestReportPodScrubCarriesRuntimeNotLive_spec_5_2: a report that the runtime
+// cannot serve the next session reaches the gateway as runtime_live false, so
+// the gateway retires the pod with runtime_not_live.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
+func TestReportPodScrubCarriesRuntimeNotLive_spec_5_2(t *testing.T) {
+	stub := &stubGatewayControl{}
+	client := dialStub(t, stub)
+
+	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubSucceeded, false, ""); err != nil {
+		t.Fatalf("ReportPodScrub: %v", err)
+	}
+	if stub.gotPodScrubReq.GetRuntimeLive() {
+		t.Error("runtime_live = true on the wire, want the reported false")
+	}
 }
 
 // TestReportPodScrubFailedCarriesDetail: a failed whole-pod scrub carries
@@ -103,7 +122,7 @@ func TestReportPodScrubFailedCarriesDetail_spec_3_4(t *testing.T) {
 	stub := &stubGatewayControl{}
 	client := dialStub(t, stub)
 
-	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubFailed, "shred timed out on /tmp"); err != nil {
+	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubFailed, true, "shred timed out on /tmp"); err != nil {
 		t.Fatalf("ReportPodScrub: %v", err)
 	}
 	got := stub.gotPodScrubReq
@@ -122,7 +141,7 @@ func TestReportPodScrubTransportError_spec_4_7(t *testing.T) {
 	stub := &stubGatewayControl{podScrubErr: status.Error(codes.Internal, "claim patch failed")}
 	client := dialStub(t, stub)
 
-	err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubSucceeded, "")
+	err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubSucceeded, true, "")
 	if err == nil {
 		t.Fatal("ReportPodScrub should return the gateway error")
 	}
@@ -146,7 +165,7 @@ func TestScrubOutcomeUnspecifiedMapsToProtoZero_spec_5_2(t *testing.T) {
 		t.Errorf("session outcome = %v, want UNSPECIFIED", got)
 	}
 
-	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubUnspecified, ""); err != nil {
+	if err := client.ReportPodScrub(context.Background(), "pod-7", gatewaycontrol.PodScrubUnspecified, true, ""); err != nil {
 		t.Fatalf("ReportPodScrub: %v", err)
 	}
 	if got := stub.gotPodScrubReq.GetOutcome(); got != adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_UNSPECIFIED {

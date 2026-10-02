@@ -579,7 +579,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseRecyclingPatchesClaimToRecycling_spec_6_2",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseNonRecyclingDeletesClaimWritesNoSandboxStatus_spec_4_6_3",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindWritesNoSandboxStatusThroughSetupChain_spec_4_6_3",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestReleaseExpiredDeletesClaimWithoutSandboxStatus_spec_4_6_3",
+        "pkg/gateway/session/recycle/retire_log_test.go::TestClaimDispositionReleasedRetireLogsReasonAtInfo_spec_5_2"
       ],
       "packages": [
         "pkg/admission/ownership",
@@ -689,7 +690,15 @@
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
         "tests/tier3_contract/adapter_bind_attempt/...",
-        "tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go"
+        "tests/tier3_contract/adapter_generation_fence/barrier_unfenced_session_wire_test.go",
+        "pkg/adapter/podscrub_liveness_test.go::TestPodScrubReportsRuntimeLiveFromTheRuntime_spec_5_2",
+        "pkg/adapter/podscrub_liveness_test.go::TestPodScrubSamplesRuntimeLiveAfterTheScrub_spec_5_2",
+        "pkg/adapter/gatewaycontrol/scrubreport_test.go::TestReportPodScrubCarriesRuntimeNotLive_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportPodScrubDelegatesRuntimeLive_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2",
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go::TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2",
+        "tests/tier4_integration/recycle_runtime_not_live_test.go::TestRecyclePathRuntimeNotLiveRetires_spec_5_2",
+        "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2"
       ],
       "packages": [
         "pkg/adapter",
@@ -928,7 +937,8 @@
         "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4",
-        "pkg/adapter/export_test.go"
+        "pkg/adapter/export_test.go",
+        "pkg/adapter/podscrub_liveness_test.go::TestInProcessRuntimeServesNextSessionAfterClose_spec_5_2"
       ],
       "packages": [
         "pkg/adapter",
@@ -1343,7 +1353,20 @@
         "pkg/gateway/externalapi/admin/pools_runtime_reuse_test.go::TestCreatePoolRefusesUnacknowledgedRuntimeReuse_spec_5_2",
         "pkg/gateway/externalapi/admin/pools_runtime_reuse_test.go::TestUpdatePoolRefusesRemovingRuntimeReuseAcknowledgment_spec_5_2",
         "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2",
-        "tests/tier7a_load_local/socket_runtime_reader_stop_race_test.go"
+        "tests/tier7a_load_local/socket_runtime_reader_stop_race_test.go",
+        "pkg/sandbox/podscrub/podscrub_test.go::TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2",
+        "pkg/adapter/podscrub_liveness_test.go::TestPodScrubReportsRuntimeLiveFromTheRuntime_spec_5_2",
+        "pkg/adapter/podscrub_liveness_test.go::TestPodScrubSamplesRuntimeLiveAfterTheScrub_spec_5_2",
+        "pkg/adapter/podscrub_liveness_test.go::TestRuntimeServesNextSessionNilRuntimeIsNotLive_spec_5_2",
+        "pkg/adapter/podscrub_liveness_test.go::TestInProcessRuntimeServesNextSessionAfterClose_spec_5_2",
+        "pkg/adapter/gatewaycontrol/scrubreport_test.go::TestReportPodScrubCarriesRuntimeNotLive_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReportPodScrubDelegatesRuntimeLive_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2",
+        "pkg/gateway/session/recycle/retire_log_test.go::TestClaimDispositionReleasedRetireLogsReasonAtInfo_spec_5_2",
+        "pkg/gateway/session/recycle/retire_log_test.go::TestClaimDispositionFailedRetireKeepsWarnRecordOnly_spec_5_2",
+        "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go::TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2",
+        "tests/tier4_integration/recycle_runtime_not_live_test.go::TestRecyclePathRuntimeNotLiveRetires_spec_5_2",
+        "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1519,7 +1542,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeFailureCompensatesWithItsOwnToken_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
-        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1"
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1",
+        "pkg/sandbox/podscrub/podscrub_test.go::TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -4109,7 +4133,8 @@
         "tests/tier11_docs/slot_compensation_metric_reference_test.go",
         "pkg/gateway/podlifecycle/podsession/slotbinder_test.go",
         "pkg/adapter/slotsession_test.go",
-        "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2"
+        "pkg/controller/warmpool/pinned_test.go::TestReconcilePinnedIdleMetrics_spec_5_2",
+        "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2"
       ],
       "packages": [
         "pkg/observability/metrics",

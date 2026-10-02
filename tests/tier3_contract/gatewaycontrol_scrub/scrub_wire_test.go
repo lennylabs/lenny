@@ -183,8 +183,10 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 }
 
 // TestReportPodScrubRequestRoundTrip pins that the ReportPodScrubRequest
-// fields (pod id, outcome, detail) survive a proto binary round-trip.
-// spec: 4.7 (Adapter → Gateway RPCs), 3.4 (recycle disposition)
+// fields (pod id, outcome, detail, runtime_live) survive a proto binary
+// round-trip.
+// spec: 4.7 (Adapter → Gateway RPCs), 3.4 (recycle disposition), 5.2 (Pod
+// retirement policy)
 //
 // diagnosis: a failure means a field of ReportPodScrubRequest was
 // renumbered, retyped, or dropped in schemas/lenny-adapter.proto without
@@ -193,9 +195,10 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 // computed from the report.
 func TestReportPodScrubRequestRoundTrip_spec_3_4(t *testing.T) {
 	in := &adapterv1.ReportPodScrubRequest{
-		PodId:   "pod-7",
-		Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_FAILED,
-		Detail:  "shred timed out on /tmp",
+		PodId:       "pod-7",
+		Outcome:     adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_FAILED,
+		Detail:      "shred timed out on /tmp",
+		RuntimeLive: true,
 	}
 	raw, err := proto.Marshal(in)
 	if err != nil {
@@ -207,6 +210,41 @@ func TestReportPodScrubRequestRoundTrip_spec_3_4(t *testing.T) {
 	}
 	if !proto.Equal(in, &out) {
 		t.Errorf("round-trip mismatch:\n got %v\nwant %v", &out, in)
+	}
+	if !out.GetRuntimeLive() {
+		t.Error("runtime_live = false after the round-trip, want true")
+	}
+}
+
+// TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2 pins that bytes
+// encoded without field 4, as an adapter that never samples the runtime
+// sends them, decode to runtime_live false, which the gateway reads as a
+// runtime that cannot serve the next session.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
+//
+// diagnosis: the liveness fact is lost on the wire, so the gateway retires
+// every recycled pod or reuses one whose runtime is gone.
+func TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2(t *testing.T) {
+	// Field 1 (pod_id, length-delimited) "pod-7" and field 2 (outcome,
+	// varint) SUCCEEDED, with no field 4.
+	raw := []byte{0x0a, 0x05, 'p', 'o', 'd', '-', '7', 0x10, 0x01}
+	var out adapterv1.ReportPodScrubRequest
+	if err := proto.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.GetPodId() != "pod-7" || out.GetOutcome() != adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED {
+		t.Fatalf("decoded %v, want pod-7 SUCCEEDED", &out)
+	}
+	if out.GetRuntimeLive() {
+		t.Error("runtime_live = true for bytes without field 4, want false")
+	}
+	// Field 4 is a varint bool: a live report encodes as tag 0x20 value 1.
+	live, err := proto.Marshal(&adapterv1.ReportPodScrubRequest{RuntimeLive: true})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if want := []byte{0x20, 0x01}; string(live) != string(want) {
+		t.Errorf("runtime_live=true encodes as %x, want %x (field 4, varint)", live, want)
 	}
 }
 
@@ -250,14 +288,18 @@ func TestReportPodScrubGRPCContract_spec_3_4(t *testing.T) {
 	client := dialScrub(t, srv)
 
 	sent := &adapterv1.ReportPodScrubRequest{
-		PodId:   "pod-7",
-		Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		PodId:       "pod-7",
+		Outcome:     adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		RuntimeLive: true,
 	}
 	if _, err := client.ReportPodScrub(context.Background(), sent); err != nil {
 		t.Fatalf("ReportPodScrub: %v", err)
 	}
 	if !proto.Equal(sent, srv.gotPod) {
 		t.Errorf("server received %v, want %v", srv.gotPod, sent)
+	}
+	if !srv.gotPod.GetRuntimeLive() {
+		t.Error("server received runtime_live = false, want the sent true")
 	}
 }
 

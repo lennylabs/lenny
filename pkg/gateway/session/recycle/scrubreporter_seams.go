@@ -955,10 +955,14 @@ func (d *claimDispositionDriver) signalBoundary(podID string, preConnect bool) {
 // residual-state marker is retained on the draining pod for the audit trail.
 // reason and detail are the observability metadata the §5.2 audit trail
 // retains for a FAILED outcome; the binding-state writer records the terminal
-// phase. spec: §6.2 (retire disposition), §4.6.3 (released vs failed
+// phase. A released retire (failed false) is logged at Info with the pod
+// identifier, the reason, and the pod's lifetime session count and uptime, so
+// a retire the §16.1 counter does not carry, such as runtime_not_live, is
+// still recorded. spec: §6.2 (retire disposition), §4.6.3 (released vs failed
 // terminals), §6.2 (cordon-drain retains the scrub_warning marker), §5.2
-// (the failed pod's metadata is retained in the audit log).
-func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error {
+// (the failed pod's metadata is retained in the audit log; Pod retirement
+// policy, Runtime not live).
+func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime, detail string) error {
 	// The §6.2 cordon-drain-under-warn path retains the residual-state
 	// marker on the draining pod; stamp it before the terminal write so the
 	// audit trail sees the annotation on the pod. A stamp failure aborts the
@@ -997,8 +1001,26 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 			slog.String("reason", string(reason)),
 			slog.String("detail", detail),
 		)
+		return nil
 	}
+	d.logReleasedRetire(ctx, podID, reason, lifetime)
 	return nil
+}
+
+// logReleasedRetire records a released (non-failed) recycle-boundary retire
+// at Info. The §16.1 retirement counter carries only the limit triggers, so
+// this record is where a non-counting retire such as runtime_not_live,
+// host_unschedulable, or vm_restart_reprovision is visible, with the pod's
+// lifetime session count and uptime to tell an early retire from a limit.
+// spec: §5.2 (Pod retirement policy, Runtime not live).
+func (d *claimDispositionDriver) logReleasedRetire(ctx context.Context, podID string, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime) {
+	d.log.LogAttrs(
+		ctx, slog.LevelInfo, "recycle: pod retired at the recycle boundary",
+		slog.String("pod_id", podID),
+		slog.String("reason", string(reason)),
+		slog.Int("sessions_served", lifetime.SessionsServed),
+		slog.Int64("uptime_seconds", lifetime.UptimeSeconds),
+	)
 }
 
 // RetirementMetricsSink records the §16.1 scrub-failure and retirement

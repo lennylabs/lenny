@@ -154,10 +154,12 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 	}
 
 	// A clean whole-pod scrub on a schedulable host drives the recycle
-	// disposition: the non-preConnect claim is reserved.
+	// disposition: the non-preConnect claim is reserved. The adapter reports
+	// its runtime live; an omitted runtime_live would retire the pod.
 	if _, err := svc.ReportPodScrub(ctx, &adapterv1.ReportPodScrubRequest{
-		PodId:   podID,
-		Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		PodId:       podID,
+		Outcome:     adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		RuntimeLive: true,
 	}); err != nil {
 		if status.Code(err) == codes.Unimplemented {
 			t.Fatal("ReportPodScrub returned Unimplemented: the scrub-report service is not wired")

@@ -13,9 +13,16 @@
 //	reserved [scrub_warning]       (non-preConnect, warn-failed, schedulable host)
 //	sdk_connecting                 (preConnect, scrub ok, schedulable host)
 //	sdk_connecting [scrub_warning] (preConnect, warn-failed, schedulable host)
-//	draining                       (a retirement limit reached, or cordoned host)
+//	draining                       (a retirement limit reached, runtime not live, or cordoned host)
+//	draining [scrub_warning]       (warn-failed with the runtime not live)
 //	draining [scrub_warning]       (warn-failed on a cordoned host)
 //	failed                         (onScrubFailure: fail)
+//
+// A pod whose runtime process cannot serve the next session (the adapter's
+// ReportPodScrub states so, or omits the fact) retires with the
+// non-counting runtime_not_live reason after every retirement that would
+// retire the pod anyway (spec: §5.2 Pod retirement policy, "Runtime not
+// live").
 //
 // The non-preConnect reuse path advances to `reserved` because, with the
 // per-pod occupancy claim, a successfully scrubbed pod is held for its
@@ -137,6 +144,13 @@ type Inputs struct {
 	// ("absent, which is treated as unschedulable"; the trigger applies to
 	// non-preConnect pools as well).
 	HostSchedulable bool
+
+	// RuntimeNotLive is true to retire: the adapter's ReportPodScrub stated
+	// that its runtime process cannot serve the pod's next session, or
+	// omitted that fact. The zero value keeps every other disposition, so a
+	// literal that does not set it decides as it did before the field
+	// existed. spec: §5.2 (Pod retirement policy, Runtime not live).
+	RuntimeNotLive bool
 }
 
 // RetireReason is a stable label for the disposition the driver records in
@@ -195,6 +209,21 @@ const (
 	// (host-node schedulability retire), spec/16 §16.1.1 (retirement-reason
 	// vocabulary is the three limit triggers only).
 	ReasonHostUnschedulable RetireReason = "host_unschedulable"
+	// ReasonRuntimeNotLive: the adapter reported that its runtime process
+	// cannot serve the pod's next session, or omitted that fact, so the
+	// recycle disposition retires the pod instead of reserving or re-warming
+	// it for a session whose start would fail. The runtime process lives as
+	// long as the pod and nothing inside the pod starts it again, so the
+	// retire and a fresh replacement are the only recovery. This is a
+	// liveness retire rather than one of the three retirement-limit
+	// triggers, so it is NOT a member of the
+	// lenny_gateway_pod_retirement_total{reason} vocabulary and
+	// CountsOnRetirementTotal reports false for it; the disposition still
+	// drives the drain and records the reason in the audit trail and the
+	// gateway's Info retire log. spec: §5.2 (Pod retirement policy, Runtime
+	// not live), §4.7.10 (Runtime process lifetime), spec/16 §16.1.1
+	// (retirement-reason vocabulary is the three limit triggers only).
+	ReasonRuntimeNotLive RetireReason = "runtime_not_live"
 	// ReasonScrubReportTimeout: the adapter never sent ReportPodScrub within
 	// the gateway-side missing-report timeout (cleanupTimeoutSeconds plus a
 	// grace) armed at the bound → recycling transition, so the gateway retires
@@ -283,7 +312,8 @@ type Disposition struct {
 
 	// ScrubWarning is true when the pod carries the scrub_warning
 	// annotation into NextPhase. It is set only on the reuse (reserve or
-	// re-warm) and cordon-drain paths under a warn-policy scrub failure
+	// re-warm), cordon-drain, runtime-not-live, and vm-restart paths under a
+	// warn-policy scrub failure
 	// (spec: §6.2 recycle disposition — the annotation persists through the
 	// reserve and the re-warm). The limit-based retirement drains and the
 	// fail-policy termination clear it: the pod is leaving the pool for
@@ -312,8 +342,9 @@ type Disposition struct {
 // Decide maps the recycle-disposition inputs to the single §6.2
 // disposition. The precedence is: pending (wait) → fail-policy
 // termination → scrub exhaustion → vm-restart reprovision retire →
-// count/uptime retirement → host-schedulability retire gate → reuse
-// (preConnect re-warm or non-preConnect reserve). Higher-precedence
+// count/uptime retirement → runtime-not-live retire →
+// host-schedulability retire gate → reuse (preConnect re-warm or
+// non-preConnect reserve). Higher-precedence
 // retirement reasons short-circuit lower ones, so a pod that has both
 // failed its scrub (under warn, not exhausted) and reached
 // recycle.maxSessionsPerPod retires on session_count_limit rather than
@@ -324,7 +355,10 @@ type Disposition struct {
 // vm_restart_reprovision reason. The host-schedulability retire (§6.2)
 // sits below the limit retirements but above every reuse path, so it
 // preempts both the preConnect re-warm and the non-preConnect reserve when
-// the host node is cordoned.
+// the host node is cordoned. The runtime-not-live retire (§5.2) replaces a
+// reuse, so it sits below every retirement that would retire the pod anyway
+// and above the host-schedulability gate, because a runtime that cannot
+// serve the next session cannot serve it on any node.
 func Decide(in Inputs) Disposition {
 	if in.Scrub == ScrubPending {
 		return Disposition{} // Ready == false; the driver waits.
@@ -412,6 +446,28 @@ func Decide(in Inputs) Disposition {
 			NextPhase: state.Draining,
 			Retire:    true,
 			Reason:    ReasonMaxUptimeExceeded,
+		}
+	}
+
+	// spec: §5.2 (Pod retirement policy, Runtime not live). The runtime
+	// process lives as long as the pod, and nothing inside the pod starts
+	// it again, so a pod whose runtime cannot serve the next session would
+	// fail that session's start. The branch replaces a reuse, so it runs
+	// after every retirement that would retire the pod anyway: a pod at
+	// maxSessionsPerPod or maxPodUptimeSeconds keeps its counting limit
+	// reason, a vm-restart pod keeps vm_restart_reprovision, and the
+	// fail-policy and scrub-exhaustion branches keep their terminal and
+	// reason. It precedes the host-schedulability branch, because a runtime
+	// that cannot serve the next session cannot serve it on any node.
+	// ScrubWarning carries the annotation onto the drain under a warn-policy
+	// failure, matching host_unschedulable.
+	if in.RuntimeNotLive {
+		return Disposition{
+			Ready:        true,
+			NextPhase:    state.Draining,
+			ScrubWarning: warned,
+			Retire:       true,
+			Reason:       ReasonRuntimeNotLive,
 		}
 	}
 

@@ -337,7 +337,7 @@ func TestClaimDispositionRetireReleased_spec_3_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", ""); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", leasecontrol.PodLifetime{}, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
@@ -361,7 +361,7 @@ func TestClaimDispositionRetireFailed_spec_3_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Failed) {
@@ -503,7 +503,7 @@ func TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning_spec_6_39(
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", false, true, "host_unschedulable", ""); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", false, true, "host_unschedulable", leasecontrol.PodLifetime{}, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
@@ -535,7 +535,7 @@ func TestClaimDispositionRetireLimitLeavesNoMarker_spec_3_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", ""); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", leasecontrol.PodLifetime{}, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
@@ -760,7 +760,7 @@ func TestClaimDispositionRetireClaimGoneAgainstApiserver_spec_3_4(t *testing.T) 
 	seedRecyclingClaim(t, c, "pod-1")
 	deleteClaim(t, c, "pod-1")
 	d := newDispositionDriver(t, c)
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
 		t.Fatalf("Retire with gone claim: err = %v, want nil (no-op)", err)
 	}
 }
