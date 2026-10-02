@@ -920,9 +920,9 @@ func TestShutdownOfAClaimedButUnrecordedStartTearsDownWithoutReporting_spec_4_7_
 //
 // Interrupt of the last active session leaves SocketRuntimeProcess
 // connected with an empty active set, the state in which any Close tears
-// down the shared connection, the child and the listener. A Shutdown of a
+// down the shared connection and the child. A Shutdown of a
 // bound-but-unstarted entry on that pod runs no runtime close, so the
-// listener stays bound and the runtime can still reach the adapter.
+// shared connection stays up.
 func TestShutdownOfAnUnstartedEntryLeavesTheSocketRuntimeIntact_spec_4_7_1(t *testing.T) {
 	sp, err := NewSocketRuntimeProcess(shortSocketName(t, "rt.sock"))
 	if err != nil {

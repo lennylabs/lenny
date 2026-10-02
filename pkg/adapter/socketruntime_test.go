@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // runtimeSocketAddr returns a socket address the test binds: a Linux
@@ -300,61 +299,6 @@ func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
-//
-// Interrupt of the last active session leaves the process connected with an
-// empty active set, and in that state a Close for any session tears down the
-// shared connection and the listener. A Shutdown of a bound-but-unstarted
-// entry on such a pod must therefore run no runtime close: the listener
-// stays bound and the runtime can still dial the adapter afterwards.
-//
-// diagnosis: a failure here means the reclaim of a session that never
-// started closed the pod's shared runtime, which no later session on the
-// pod can reach again because the listener is never rebound.
-func TestSocketRuntimeProcessSurvivesTheReclaimOfAnUnstartedSlot_spec_4_7_1(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
-	if err != nil {
-		t.Fatalf("NewSocketRuntimeProcess: %v", err)
-	}
-	connCh := make(chan net.Conn, 1)
-	go func() { connCh <- dialRuntimeSocket(t, sp.SocketPath()) }()
-	if err := sp.Start(context.Background(), "carol"); err != nil {
-		t.Fatalf("Start(carol): %v", err)
-	}
-	runtimeConn := <-connCh
-	defer runtimeConn.Close()
-	if err := sp.Interrupt(context.Background(), "carol", false); err != nil {
-		t.Fatalf("Interrupt(carol): %v", err)
-	}
-
-	base := t.TempDir()
-	s := adapter.New("socket-reclaim-test")
-	s.WorkspaceBase = base + "/workspace"
-	s.SessionsRoot = base + "/sessions"
-	s.ArtifactsRoot = base + "/artifacts"
-	s.CredentialsDir = base + "/run/lenny"
-	s.Runtime = sp
-	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		BindAttempt: "attempt-a",
-		SessionId:   &adapterv1.SessionId{Value: "alice"},
-	}); err != nil {
-		t.Fatalf("AssignCredentials(alice): %v", err)
-	}
-	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId:   &adapterv1.SessionId{Value: "alice"},
-		BindAttempt: "attempt-a",
-	})
-	if err != nil {
-		t.Fatalf("Shutdown(alice): %v", err)
-	}
-	if resp.GetSlotReclaim() != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED {
-		t.Errorf("slot_reclaim = %v, want RECLAIMED", resp.GetSlotReclaim())
-	}
-	c := dialRuntimeSocket(t, sp.SocketPath())
-	_ = c.Close()
-	_ = sp.Close(context.Background(), "carol")
-}
-
 // spec: §5.2 — a clean Interrupt (the §28.5.3
 // heartbeat-hung SIGTERM) on one slot while a sibling is active must not
 // close the shared connection: only the last active slot's Interrupt EOFs
@@ -408,4 +352,188 @@ func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 	if _, err := reader.ReadString('\n'); err == nil {
 		t.Error("runtime should observe EOF after the last slot's Interrupt")
 	}
+}
+
+// dialRuntimeSocketErr dials the socket the way dialRuntimeSocket does but
+// returns the error, so a test can report a refused second-generation dial
+// with a diagnosable message rather than a helper fatal.
+func dialRuntimeSocketErr(socket string) (net.Conn, error) {
+	addr := socket
+	if strings.HasPrefix(socket, "@") {
+		addr = "\x00" + socket[1:]
+	}
+	var d net.Dialer
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return d.DialContext(ctx, "unix", addr)
+}
+
+// startGeneration dials the runtime socket and runs Start for sessionID,
+// returning the runtime side of the accepted connection. A refused dial or a
+// failed Start fails the test with the error text, which names a closed
+// listener when a session teardown unbound the pod's address.
+func startGeneration(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID string) net.Conn {
+	t.Helper()
+	type dialResult struct {
+		conn net.Conn
+		err  error
+	}
+	dialed := make(chan dialResult, 1)
+	go func() {
+		c, err := dialRuntimeSocketErr(sp.SocketPath())
+		dialed <- dialResult{conn: c, err: err}
+	}()
+	startErr := sp.Start(context.Background(), sessionID)
+	d := <-dialed
+	if d.err != nil {
+		t.Fatalf("runtime dial for %s after an earlier session ended: %v (the pod's listener was unbound by a session teardown)", sessionID, d.err)
+	}
+	if startErr != nil {
+		_ = d.conn.Close()
+		t.Fatalf("Start(%s) after an earlier session ended: %v (a 'use of closed network connection' error means a session teardown closed the pod's listener)", sessionID, startErr)
+	}
+	return d.conn
+}
+
+// roundTrip writes one adapter-to-runtime envelope and one runtime-to-adapter
+// frame over a generation's connection and asserts both arrive.
+func roundTrip(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID string, runtimeConn net.Conn) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out, err := sp.Output(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("Output(%s): %v", sessionID, err)
+	}
+	if err := sp.WriteEnvelope(sessionID, []byte(`{"type":"message","sessionId":"`+sessionID+`"}`)); err != nil {
+		t.Fatalf("WriteEnvelope(%s): %v", sessionID, err)
+	}
+	_ = runtimeConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := bufio.NewReader(runtimeConn).ReadString('\n')
+	if err != nil || !strings.Contains(got, sessionID) {
+		t.Fatalf("runtime read for %s = %q, %v", sessionID, got, err)
+	}
+	want := `{"type":"response","sessionId":"` + sessionID + `"}`
+	if _, err := runtimeConn.Write([]byte(want + "\n")); err != nil {
+		t.Fatalf("runtime write for %s: %v", sessionID, err)
+	}
+	select {
+	case line, ok := <-out:
+		if !ok || string(line) != want {
+			t.Fatalf("Output(%s) yielded %q (open=%v), want %q", sessionID, line, ok, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Output(%s) yielded no frame within 5s", sessionID)
+	}
+}
+
+// spec: §15.4.3 (runtime integration levels), §5.2 (pool configuration and execution modes), §4.7.9 (startup sequence for type: agent runtimes), §28.5.3 (intra-pod)
+//
+// The pod's runtime listener is bound once at adapter start and every
+// session the pod serves is accepted on it, so the last session's Close
+// releases the shared connection and leaves the address bound. A second
+// session on the same pod then dials the same address and is accepted.
+//
+// diagnosis: a failure here means a session teardown unbound the pod's
+// runtime socket, so no recycling pod can serve a second session.
+func TestSocketRuntimeListenerOutlivesTheLastSessionAndAcceptsTheNext_spec_15_4_3(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	addr := sp.SocketPath()
+
+	first := startGeneration(t, sp, "sess-a")
+	defer first.Close()
+	roundTrip(t, sp, "sess-a", first)
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a) = %v, want nil: the last-session teardown leaves the listener bound", err)
+	}
+
+	second := startGeneration(t, sp, "sess-b")
+	defer second.Close()
+	roundTrip(t, sp, "sess-b", second)
+	if got := sp.SocketPath(); got != addr {
+		t.Errorf("SocketPath() = %q after the second session's Start, want the address bound at construction %q", got, addr)
+	}
+	if err := sp.Close(context.Background(), "sess-b"); err != nil {
+		t.Fatalf("Close(sess-b): %v", err)
+	}
+}
+
+// spec: §5.2 (pool configuration and execution modes), §28.5.3 (intra-pod), §15.4.3 (runtime integration levels)
+//
+// Each accepted connection's fan-out reader delivers to and closes only the
+// subscribers registered against that connection. A first connection's
+// reader is parked on a stalled subscriber when its session ends and the
+// next connection is accepted; once released, the reader drains the frames
+// it had already buffered and exits on the closed connection. None of
+// those frames, and not its exit, may reach the second connection's
+// subscriber.
+//
+// diagnosis: a failure here means a departing connection's reader broadcast
+// into, or closed, the next session's output stream, so a recycled pod's
+// second session receives the first runtime's frames or loses its stream.
+func TestSocketRuntimeDepartingReaderLeavesTheNextConnectionsSubscribers_spec_5_2(t *testing.T) {
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+
+	first := startGeneration(t, sp, "sess-a")
+	defer first.Close()
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	if _, err := sp.Output(ctxA, "sess-a"); err != nil {
+		t.Fatalf("Output(sess-a): %v", err)
+	}
+	// The subscriber's channel is never read, so its pump holds one frame
+	// and its buffered intake fills; the remaining frames park the reader
+	// with the rest already buffered in its scanner.
+	const frames = 200
+	var batch strings.Builder
+	for i := 0; i < frames; i++ {
+		fmt.Fprintf(&batch, `{"type":"response","sessionId":"sess-a","seq":%d}`+"\n", i)
+	}
+	if _, err := first.Write([]byte(batch.String())); err != nil {
+		t.Fatalf("first runtime write: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if err := sp.Close(context.Background(), "sess-a"); err != nil {
+		t.Fatalf("Close(sess-a): %v", err)
+	}
+	second := startGeneration(t, sp, "sess-b")
+	defer second.Close()
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+	outB, err := sp.Output(ctxB, "sess-b")
+	if err != nil {
+		t.Fatalf("Output(sess-b): %v", err)
+	}
+
+	// Release the parked reader of the first connection.
+	cancelA()
+	select {
+	case line, ok := <-outB:
+		if !ok {
+			t.Fatal("sess-b's output closed when the first connection's reader exited")
+		}
+		t.Fatalf("sess-b's output received %q from the first connection's reader", line)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	want := `{"type":"response","sessionId":"sess-b"}`
+	if _, err := second.Write([]byte(want + "\n")); err != nil {
+		t.Fatalf("second runtime write: %v", err)
+	}
+	select {
+	case line, ok := <-outB:
+		if !ok || string(line) != want {
+			t.Fatalf("sess-b's first value = %q (open=%v), want %q", line, ok, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sess-b's output yielded no frame within 5s")
+	}
+	_ = sp.Close(context.Background(), "sess-b")
 }

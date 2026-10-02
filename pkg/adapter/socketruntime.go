@@ -50,12 +50,17 @@ const maxJSONLFrameBytes = 50 * 1024 * 1024
 //
 // Interrupt and Close are scoped to the named session: each Start
 // registers the session in the active set, and Close (or a hard Interrupt)
-// releases it. The shared connection, the spawned child, and the listener
-// are torn down only when the last active session is released, so a
-// per-slot teardown of one slot leaves sibling slots running over the same
-// connection (spec/05:534 — "Slots fail independently"; spec/05:537 —
-// per-slot teardown and release). A clean Interrupt is the §28.5.3 heartbeat-hung SIGTERM for one slot; it ends only that slot when
-// siblings remain active.
+// releases it. The shared connection and the spawned child are torn down
+// only when the last active session is released, so a per-slot teardown of
+// one slot leaves sibling slots running over the same connection
+// (spec/05:534 — "Slots fail independently"; spec/05:537 — per-slot
+// teardown and release). A clean Interrupt is the §28.5.3 heartbeat-hung
+// SIGTERM for one slot; it ends only that slot when siblings remain active.
+// The listener is pod-scoped: it is bound once at construction, before the
+// pod is claimable, every session the pod serves is accepted on it, and
+// CloseListener closes it when the adapter process exits. No session
+// teardown closes it, because nothing rebinds the address.
+// spec: §4.7.9, §5.2, §28.5.3.
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
@@ -213,10 +218,15 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
 	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLFrameBytes)
 
+	// The new connection gets its own subscriber set. A departing
+	// connection's reader may still be running when this one is accepted,
+	// and it acts only on the set it was launched with, so it never delivers
+	// into or closes this connection's subscribers. spec: §5.2, §28.5.3.
+	subs := map[*subscriber]struct{}{}
 	p.mu.Lock()
 	p.conn = conn
 	p.connected = true
-	p.subscribers = map[*subscriber]struct{}{}
+	p.subscribers = subs
 	p.addActiveLocked(sessionID)
 	p.mu.Unlock()
 
@@ -224,7 +234,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 	// to all subscribers, so concurrent per-slot Attach streams each see
 	// the runtime's full output and demultiplex by sessionId.
 	// spec: §28.5.3.
-	go p.fanOut(scanner)
+	go p.fanOut(scanner, subs)
 	return nil
 }
 
@@ -234,22 +244,31 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, sessionID string) erro
 // stream observes the EOF. Each subscriber owns its own buffered intake
 // (subscriber.feed), so a slow or dead consumer on one slot's Attach
 // stream never head-of-line-blocks the reader from delivering a sibling
-// slot's frames. spec: §28.5.3.
-func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner) {
-	defer p.closeSubscribers()
+// slot's frames.
+//
+// The reader acts on its own connection's subscriber set, subs, which Start
+// built when it accepted the connection. The pod's listener outlives a
+// session teardown, so a later Start can accept the next connection while
+// this reader is still draining the departing one; delivering to or closing
+// p.subscribers here would hand the old runtime's frames to the new
+// connection's consumers and close their streams at the old connection's
+// EOF. spec: §5.2, §28.5.3.
+func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner, subs map[*subscriber]struct{}) {
+	defer p.closeSubscribers(subs)
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
-		p.broadcast(line)
+		p.broadcast(subs, line)
 	}
 }
 
-// broadcast hands one frame to every current subscriber. Each subscriber
-// has a dedicated pump goroutine draining its buffered feed into its Output
-// channel, so the send to one subscriber never blocks delivery to another.
-func (p *SocketRuntimeProcess) broadcast(line []byte) {
+// broadcast hands one frame to every subscriber currently in set. Each
+// subscriber has a dedicated pump goroutine draining its buffered feed into
+// its Output channel, so the send to one subscriber never blocks delivery to
+// another.
+func (p *SocketRuntimeProcess) broadcast(set map[*subscriber]struct{}, line []byte) {
 	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(p.subscribers))
-	for s := range p.subscribers {
+	subs := make([]*subscriber, 0, len(set))
+	for s := range set {
 		subs = append(subs, s)
 	}
 	p.mu.Unlock()
@@ -258,16 +277,18 @@ func (p *SocketRuntimeProcess) broadcast(line []byte) {
 	}
 }
 
-// closeSubscribers shuts every still-registered subscriber down so its
-// Output channel closes and the per-slot Attach stream observes the
-// runtime's connection close. A subscriber the consumer already
-// unsubscribed is absent from the map, so each closes exactly once.
-func (p *SocketRuntimeProcess) closeSubscribers() {
+// closeSubscribers shuts every subscriber still registered in set down so
+// its Output channel closes and the per-slot Attach stream observes the
+// runtime's connection close. set is the subscriber set of the connection
+// whose reader is exiting, so a later connection's subscribers are left
+// alone. A subscriber the consumer already unsubscribed is absent from the
+// set, so each closes exactly once. spec: §5.2, §28.5.3.
+func (p *SocketRuntimeProcess) closeSubscribers(set map[*subscriber]struct{}) {
 	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(p.subscribers))
-	for s := range p.subscribers {
+	subs := make([]*subscriber, 0, len(set))
+	for s := range set {
 		subs = append(subs, s)
-		delete(p.subscribers, s)
+		delete(set, s)
 	}
 	p.mu.Unlock()
 	for _, s := range subs {
@@ -420,9 +441,9 @@ func (p *SocketRuntimeProcess) Interrupt(_ context.Context, sessionID string, ha
 // every slot over the single connection (spec/05:509), so Close is scoped
 // to the named session: it releases that slot's bookkeeping, and only when
 // the last active session is released does it close the shared socket
-// connection (the §15.4 clean-exit signal), wait the resolved grace window
-// for a spawned child to exit, and close the listener. A Close for one slot
-// while siblings remain active leaves the connection up so the siblings'
+// connection (the §15.4 clean-exit signal) and wait the resolved grace window
+// for a spawned child to exit. The listener is pod-scoped and stays bound;
+// see the type comment. A Close for one slot while siblings remain active leaves the connection up so the siblings'
 // streams survive (spec/05:534 — "Slots fail independently"; spec/05:536 —
 // "Other slots continue unaffected"). It is idempotent: a Close for a
 // session not in the active set (already released, or after the connection
@@ -464,7 +485,8 @@ func (p *SocketRuntimeProcess) Close(ctx context.Context, sessionID string) erro
 			<-done
 		}
 	}
-	return p.listener.Close()
+	// The listener is pod-scoped and stays bound; see the type comment.
+	return nil
 }
 
 // defaultSocketShutdownGrace is the SIGTERM-to-SIGKILL pivot window the

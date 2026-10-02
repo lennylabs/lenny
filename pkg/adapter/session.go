@@ -243,8 +243,8 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // for a session the pod never ran. Runtime.Close is also not uniformly
 // session-scoped: InProcessRuntime.Close and MCPRuntime.Close ignore the
 // session identifier and tear the runtime down on any call, and
-// SocketRuntimeProcess.Close tears down the shared connection, the child
-// and the never-rebound listener whenever its active set is empty, which
+// SocketRuntimeProcess.Close tears down the shared connection and the child
+// whenever its active set is empty, which
 // Interrupt of the last active session produces without clearing the
 // connection.
 //
