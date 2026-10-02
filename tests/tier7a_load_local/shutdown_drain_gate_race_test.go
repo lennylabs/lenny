@@ -305,7 +305,7 @@ func concurrentShutdownDrainAttempt(t *testing.T) {
 	}
 }
 
-// spec: 6.4, 5.2, 15.4.2
+// spec: 6.4, 5.2, 15.4.2, 15.4.3 (Runtime Integration Levels)
 // diagnosis: a session ended while another session's workspace was being
 // prepared and the drain was withheld, or the pod's shared runtime
 // connection did not take the disposition the teardown order implies. A
@@ -314,7 +314,9 @@ func concurrentShutdownDrainAttempt(t *testing.T) {
 // suppresses the ending session's §15.4.2 drain. A surviving connection on
 // the first leg, or a torn-down one on the second, means the shared
 // runtime's active-set accounting no longer tracks which sessions the
-// close is the last of.
+// close is the last of. A non-timeout start error on the first leg means
+// the session teardown closed the pod's runtime listener, which §15.4.3
+// scopes to the pod rather than to a session.
 func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 	t.Run("teardown_lands_before_the_incoming_start", func(t *testing.T) {
 		s, peer, dial := socketDrainPod(t)
