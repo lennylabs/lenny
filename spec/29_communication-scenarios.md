@@ -171,7 +171,11 @@ state that the READY signal is one of them.
    held for the same tenant under a `reserved` claim within its hold window, this step is a
    `reserved` → `bound` status patch and step 6 does not occur, because the pod is dispatched onto
    with no acquisition round trip
-   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). On a pool whose
+   configuration keeps no runtime process across sessions, the gateway ends that hold with the same
+   precondition-guarded claim `DELETE` instead and acquires another pod through steps 6 and 7
+   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer
+   acknowledgment (runtime process kept across sessions)").
 
 8. On a pool whose `sessionPolicy.maxConcurrentSessions` is greater than 1: `gateway` → `redis`,
    `REG-SLOTCOUNT`, Redis. The gateway reserves the intra-pod slot with a Lua script that checks the
@@ -293,10 +297,13 @@ state that the READY signal is one of them.
     connector is authorized and is never absent (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-25. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter spawns the runtime
-    binary ([§4.7](04_system-components.md#47-runtime-adapter)).
+25. On the first session of a pod-warm pod whose `type: agent` runtime runs in the sidecar deployment
+    model: `runtime` → `adapter`, `CH-MSGSOCK`, `intra-pod`. The runtime process dials the connection
+    the adapter accepts ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes)
+    step 7, [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).
 
-26a. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime: `runtime` → `adapter`,
+26a. On the first session of a pod-warm pod with a Standard-level or Full-level `type: agent` runtime:
+    `runtime` → `adapter`,
     `CH-MCP-PLATFORM`, `intra-pod`. The runtime reads the manifest and connects to the platform MCP
     server, presenting the manifest's
     `mcpNonce` as the top-level `_lennyNonce` field of the `initialize` request's `params` object. The
@@ -311,13 +318,15 @@ state that the READY signal is one of them.
     to no MCP server and this step does not occur
     ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-26b. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime and at least one
+26b. On the first session of a pod-warm pod with a Standard-level or Full-level `type: agent` runtime
+    and at least one
     authorized connector: `runtime` → `adapter`, `CH-MCP-CONNECTOR`, `intra-pod`. The runtime connects to
     each authorized connector's own MCP server, presenting the nonce on each connection separately
     (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-26c. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
+26c. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
+    `adapter`, `CH-RUNTIMEOPS`,
     `intra-pod`. The runtime opens the channel on the abstract Unix socket `@lenny-runtime-ops` the
     manifest advertises, presenting the
     manifest nonce as the first message on the socket; the adapter checks the peer UID with `SO_PEERCRED`
@@ -328,21 +337,22 @@ state that the READY signal is one of them.
     26a, 26b, and 26c as one startup step and does not fix their relative order
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-27. On a pod-warm pod with a Full-level `type: agent` runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`,
+27. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `adapter` →
+    `runtime`, `CH-RUNTIMEOPS`,
     `intra-pod`. The adapter sends `lifecycle_capabilities` as the first message on channel open
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-28. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
+28. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
+    `adapter`, `CH-RUNTIMEOPS`,
     `intra-pod`. The runtime replies with `lifecycle_support`, which is the handshake the gateway reads
     to select the credential-rotation
     strategy for the session ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-29. On a pod-warm pod with a `type: agent` runtime: `unstated`. The specification does not state when the
-    runtime opens `CH-MSGSOCK`. §28.3 records the
-    runtime as the dialling participant on that channel and §28.5.3 states the transport protections for
-    the adapter-agent boundary, while the startup sequence names the manifest read, the MCP connections,
-    and the `CH-RUNTIMEOPS` open without naming this channel's open
-    ([§4.7](04_system-components.md#47-runtime-adapter), §28.3).
+29. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. In the sidecar deployment
+    model the adapter serves this session on the pod's `CH-MSGSOCK` connection, which the runtime dialled
+    on the pod's first session (step 25), and in the embedded deployment model the adapter runs the
+    runtime loop in its own process
+    ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 7).
 
 30. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
     `AttachSession` with the session identifier
@@ -640,8 +650,8 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
    `interrupt_acknowledged` does not arrive within `deadlineMs`, the adapter transitions the session to
    `suspended` anyway and reports an `INTERRUPT_TIMEOUT` status
    ([§4.7](04_system-components.md#47-runtime-adapter), §28.5.3). A Basic-level or Standard-level runtime
-   opens no `CH-RUNTIMEOPS` channel, so this step does not occur and the interrupt degrades to
-   SIGTERM-based termination with no opportunity for the runtime to reach a safe stop point
+   opens no `CH-RUNTIMEOPS` channel, so this step does not occur and the interrupt degrades as the
+   `Interrupt` row states
    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3).
 
 7. On `POST /v1/sessions/{id}/interrupt`: `adapter` → `gateway`, no register entry, the internal control
@@ -693,24 +703,18 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
 12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
-    `Shutdown`, the graceful end-of-session shutdown of the pod's runtime. On the default disposition the
-    adapter closes the session runtime and the pod is replaced. On the recycle disposition, which applies
+    `Shutdown`, the graceful end-of-session teardown of the named session. On the default disposition the
+    pod is replaced. On the recycle disposition, which applies
     when occupancy reaches zero on a recycling pod, the request also carries the pod identity and the
-    whole-pod scrub parameters, and the adapter keeps the pod process alive across the recycle boundary
-    and runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
+    whole-pod scrub parameters, and the adapter keeps its own process and the runtime process alive across
+    the recycle boundary and runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 
-13. On a session end against a Full-level runtime, triggered by `POST /v1/sessions/{id}/terminate`, by
-    `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `runtime`, `CH-RUNTIMEOPS`,
-    `intra-pod`. The adapter writes the `terminate` frame, carrying `deadlineMs` and a `reason` drawn from
-    `session_complete`, `budget_exhausted`, `eviction`, and `operator`. The runtime must exit within
-    `deadlineMs`, and the adapter sends SIGTERM on timeout (§28.5.3 `CH-RUNTIMEOPS`,
-    [§4.7](04_system-components.md#47-runtime-adapter)). A Basic-level or Standard-level runtime opens no
-    `CH-RUNTIMEOPS` channel, so this step does not occur and shutdown is SIGTERM-based
-    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3). On a pod serving
-    concurrent sessions this step occurs only under the condition the
-    [§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row states for the graceful-shutdown signal.
+13. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
+    by an expiry timer: `adapter`, `internal`. The adapter writes no `CH-RUNTIMEOPS` frame and sends the
+    runtime process no signal ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row,
+    [§4.7.10](04_system-components.md#4710-deployment-model)).
 
 14. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
     `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
@@ -749,7 +753,7 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     disposition the gateway patches the claim's binding state from `bound` to `recycling`, the whole-pod
     scrub runs while the pod projects `claimed`, the adapter reports its outcome with `ReportPodScrub`,
     and the gateway then patches the claim to `reserved`, coordinates the SDK re-warm on a preConnect
-    pool, or retires the pod when the recycle limits or the host-node schedulability check say so
+    pool, or retires the pod when the Pod retirement policy or the host-node schedulability check says so
     ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
@@ -1402,20 +1406,14 @@ and be persisted to object storage
    message name for this signal (§28.5.2 `CH-ADAPTEREVENTS`,
    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3).
 
-4a. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The coordinating replica drives the eviction
-    checkpoint on the `Checkpoint` stream under its held lease, with the `TriggerEviction` trigger. The
-    trigger selects the eviction retry budget of exponential backoff from 500ms at factor 2, capped at 5
-    seconds per attempt and 30 seconds in total, and the checkpoint path is bounded by the 60-second
-    checkpoint timeout every checkpoint path enforces from the initial quiescence request to completion.
-    The capture the stream carries is traced in §29.5
-    (§28.5.1 `CH-CHECKPOINT`, [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
-    [§4.4](04_system-components.md#44-event--checkpoint-store)).
-
-4b. `unstated`. The specification names `eviction` among the reasons the adapter's `terminate` frame
-    carries to the runtime on `CH-RUNTIMEOPS`, and states that the adapter sends SIGTERM when the runtime
-    has not exited by that frame's `deadlineMs` ([§4.7](04_system-components.md#47-runtime-adapter),
-    §28.5.3 `CH-RUNTIMEOPS`). It does not state at what point of this path the adapter sends that frame,
-    and it does not fix the relative order of steps 4a and 4b.
+4. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The coordinating replica drives the eviction
+   checkpoint on the `Checkpoint` stream under its held lease, with the `TriggerEviction` trigger. The
+   trigger selects the eviction retry budget of exponential backoff from 500ms at factor 2, capped at 5
+   seconds per attempt and 30 seconds in total, and the checkpoint path is bounded by the 60-second
+   checkpoint timeout every checkpoint path enforces from the initial quiescence request to completion.
+   The capture the stream carries is traced in §29.5
+   (§28.5.1 `CH-CHECKPOINT`, [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
+   [§4.4](04_system-components.md#44-event--checkpoint-store)).
 
 5. `agent pod`, `internal`. The pod terminates
    ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
@@ -1457,8 +1455,7 @@ that sets the first without the second
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
 [§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). Each simultaneous session occupies one
 slot, identified by a `slotId` the gateway mints, and every mechanism below is keyed by that identifier
-or is not. Nothing in this subsection applies to a pod serving one session at a time, because the
-co-tenancy it analyses requires two sessions sharing one pod. SDK-warm mode is not
+or is not. SDK-warm mode is not
 available under this condition: a pool that combines `capabilities.preConnect: true` with
 `maxConcurrentSessions` above 1 is rejected at validation time, because each slot requires independent
 workspace materialization and independent agent initialization
