@@ -51,6 +51,7 @@ func TestSidecarSocketTransportDrivesTheEchoRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
 	// SpawnPath makes Start exec the runtime — the developer-loop path
 	// that exercises the same transport one process can drive.
 	sp.SpawnPath = echoBin
@@ -195,6 +196,7 @@ func TestSpawnedRuntimeIsSignalledOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
 	sp.SpawnPath = echoBin
 	sp.AcceptTimeout = 10 * time.Second
 

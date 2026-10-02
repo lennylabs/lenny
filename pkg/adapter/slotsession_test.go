@@ -928,7 +928,7 @@ func TestShutdownOfAnUnstartedEntryLeavesTheSocketRuntimeIntact_spec_4_7_1(t *te
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
-	defer func() { _ = sp.listener.Close() }()
+	t.Cleanup(func() { _ = sp.CloseListener() })
 	dialed := make(chan net.Conn, 1)
 	go func() {
 		c, derr := net.Dial("unix", sp.SocketPath())
