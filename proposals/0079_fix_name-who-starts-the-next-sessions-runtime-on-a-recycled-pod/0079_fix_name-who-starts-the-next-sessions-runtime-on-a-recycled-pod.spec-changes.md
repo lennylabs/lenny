@@ -94,7 +94,8 @@ if in.RuntimeNotLive {
 | Scale-to-zero window or paused experiment (`minWarm` 0, `maxWarm` kept) | Up to `maxWarm` pinned idle pods stay until claimed, certificate-replaced, or retired; they accrue idle pod-minutes | SPEC-8(c) |
 | Idle pod mid-acquisition (pin stamped, claim present, projection not landed) | Counted as unpinned idle inventory, as today, and never named for the pinned drain | CODE-10 |
 | Service-mode pool | The planner reads no pin; router-labelled service pods count as today | CODE-10 |
-| Postgres fallback claim | Reads the pin inside the row-locked transaction before claiming the mirror row, leaves the row unchanged on a refusal, writes no drain stamp, and stamps the pin on success | D6, D16, CODE-8, TEST-13 |
+| Postgres fallback claim | Skips the pods the idle scan refused, reads the pin of any other row inside the row-locked transaction before claiming the mirror row, holds that transaction no longer than `podClaimFallbackMaxMirrorLagSeconds`, leaves the row unchanged on a refusal, writes no drain stamp, and stamps the pin on success | D6, D16, CODE-8, TEST-13 |
+| Pin read fails with an error other than NotFound, or the fallback's time bound expires | No pod is bound, and nothing is written to the pod whose read failed or to its mirror row; the acquisition ends with its endpoint's retryable claim-failure error, the Kubernetes-API claim does not go on to the Postgres fallback, and a `queue` pool neither holds nor re-enters the request | SPEC-8(c), SPEC-4(i), CODE-8, TEST-12, TEST-13 |
 | Pool edit that removes the acknowledgment | Refused while the pool stays under the SPEC-8(d) rule, and admitted when the same edit takes the pool outside it | D5, CODE-11, SPEC-8(d) |
 | Admitted edit takes a pool outside the SPEC-8(d) rule while a pod is `reserved` | No acquisition rebinds it; the next claim on the pool ends the hold with the precondition-guarded `DELETE` and places the session on another pod, and the pod returns to `idle` pinned, where the next row applies | SPEC-8(d), D16, CODE-8, TEST-21 |
 | Admitted edit takes a pool outside the rule while a pod is pinned idle | Every acquisition that reads it refuses it; the idle scan stamps its drain request when no `SandboxClaim` holds it, and a failed claim read or stamp is logged at `Warn` while the acquisition goes on to another pod; the Postgres fallback leaves its row `idle` and stamps nothing | SPEC-8(d), D16, CODE-8, TEST-21 |
@@ -181,7 +182,7 @@ and insert after the sentence ending `rather than reserving or re-warming ([Sect
 A pod retired under the Pod retirement policy's "Runtime not live" condition takes the same terminal retire ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 ```
 
-**SPEC-4 — `spec/04_system-components.md` §4.6.1 and §4.6.3.** Each part names a §5.2 Pod retirement policy condition by its label under D15, states the pin scope, or states that the acquisition path ends a reserved hold on a pool outside the process-reuse rule, and cites §5.2 for the rule.
+**SPEC-4 — `spec/04_system-components.md` §4.6.1 and §4.6.3.** Each part names a §5.2 Pod retirement policy condition by its label under D15, states the pin scope, states that the acquisition path ends a reserved hold on a pool outside the process-reuse rule, or bounds the Postgres fallback's transaction, and cites §5.2 for the rule.
 
 (a) In §4.6.3, the `released` bullet, replace `or the `vm-restart` recycle-boundary reprovision` with `, the `vm-restart` recycle-boundary reprovision, or a retire under the Pod retirement policy's "Runtime not live" condition`.
 
@@ -196,6 +197,12 @@ In the same paragraph, delete ` when a pod crosses the unhealthy threshold`, kee
 (g) In §4.6.1, **Reserved hold (claim retention across same-tenant sessions):**, replace the last sentence, from `The `lenny.dev/tenant-id` pin persists across the recycle-to-idle edge` through `available to that tenant alone.`, with `[Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the `lenny.dev/tenant-id` pin rule for a recycled idle pod, including its claim and inventory accounting.`
 
 (h) In §4.6.1, **Reserved hold (claim retention across same-tenant sessions):**, after `If the TTL expires first, the holder deletes the claim and the pod returns to `idle` with no second re-warm.` insert `On a pool whose configuration keeps no runtime process across sessions, the acquisition path ends the hold with the same precondition-guarded `DELETE` instead of rebinding it ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Deployer acknowledgment (runtime process kept across sessions)").` In the occupancy-projection list, replace `` `idle` when the claim is deleted while the pod projects `reserved` (hold expiry). `` with `` `idle` when the claim is deleted while the pod projects `reserved` (hold expiry, or a hold the acquisition path ends under [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). `` (h) and (g) edit different sentences of the same paragraph; apply (g) after (h). In §4.6.1, the CRD table's `SandboxClaim` row, replace `and deleted when the reserved hold expires or the pod terminates;` with `and deleted when the reserved hold expires, when the acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or when the pod terminates;`, and in the same row replace `(hold expiry, orphan GC, or pod termination)` with `(hold expiry, a hold the acquisition path ends, orphan GC, or pod termination)`. In §4.6.3, the CRD field-ownership table's `SandboxClaim` row, replace `deleted by the gateway at hold expiry or by the WarmPoolController at pod termination and orphan GC` with `deleted by the gateway at hold expiry or when its acquisition path ends the hold on a pool outside the runtime-process acknowledgment rule ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)), or by the WarmPoolController at pod termination and orphan GC`. In §4.6.3, the `reserved` binding-state bullet, replace `held for its pinned tenant until `holdExpiresAt`;` with `held for its pinned tenant until `holdExpiresAt` or until an acquisition ends the hold ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes));`.
+
+(i) In §4.6.1, **Fallback preconditions (mirror freshness and admission reachability).**, item 1 (**Mirror freshness.**), after the sentence ending `"Mirror table staleness detection".` append:
+
+```
+Once the fallback is activated, the same value bounds how long it holds its row-locked transaction; a transaction cut off at that bound binds no pod and ends the acquisition with the retryable error of a failed pin read ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), "Tenant pinning:") rather than following `onPoolExhausted`.
+```
 
 **SPEC-5 — `spec/05_runtime-registry-and-pool-model.md` §5.1 setup commands and Runtime definition example, and §5.2 recycle lifecycle and scrub procedure.**
 
@@ -297,7 +304,16 @@ on every idle-pod acquisition, including the Postgres-backed fallback claim
 ([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)),
 before it creates the claim and passes over a pod the pin refuses to the next
 idle candidate; the fallback claim stamps the pin at first assignment as the
-primary claim path does. A pod the pin refuses stays pinned for its tenant on
+primary claim path does. A pin read that fails for a reason other than the
+pod's absence binds no pod, writes nothing to the pod, and is not pool
+exhaustion: the acquisition ends with the retryable error its endpoint returns
+for any other failed claim (`SESSION_CREATION_FAILED`, `STARTING_FAILED`, or
+`RESUME_FAILED`, [Section 15.1](15_external-api-surface.md#151-rest-api)). A
+failed pin read on the Kubernetes-API claim does not start the Postgres-backed
+fallback, and no failed pin read returns `WARM_POOL_EXHAUSTED` or holds the
+request in the `onPoolExhausted: queue` wait
+([Section 4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
+"Pool exhaustion behavior"). A pod the pin refuses stays pinned for its tenant on
 every pool whose pods keep their runtime process, including a pool with
 `recycle.allowCrossTenantReuse: true`, and the acquisition writes nothing to it.
 The runtime-process acknowledgment below states when an acquisition drains a
@@ -372,7 +388,9 @@ its `lenny.dev/drain-request` annotation when no SandboxClaim holds it, whether
 or not the acquisition then binds another pod, and the pod retires. The
 Postgres-backed fallback claim reads pod state from its mirror and stamps
 no drain request. A failed stamp, or a failed read of the pod's SandboxClaim, does not
-fail the acquisition, and the next acquisition that refuses the pod stamps it.
+fail the acquisition, and the next acquisition that refuses the pod stamps it. A
+failed read of the pin itself ends the acquisition as the tenant pinning
+paragraphs above state.
 A session already bound when
 the update lands completes in its pod, and no acquisition admits that pod
 afterwards. The recycling configurations outside the rule keep no runtime
@@ -552,6 +570,7 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 - **SDK-warm mode on a sidecar runtime.** No sidecar transport implements `SDKWarmRuntime`, so a sidecar pool whose runtime declares `capabilities.preConnect: true` fails its sessions at `ConfigureWorkspace` or `DemoteSDK`, which return Unimplemented. The gap predates this proposal, which adds neither a §6.1 rule restricting `preConnect` to the embedded model nor a sidecar SDK-warm path; file it separately.
 - **Embedded recycling wiring.** `cmd/runtimes/echo-embedded` and `cmd/runtimes/preconnect-echo` wire no `ScrubOps`, so an embedded recycling pod never reports its scrub and retires by timeout. File it separately.
 - **Claim-path defects outside the pin check.** `Claimer.Claim` leaks a bound claim when `stampPodTenant` fails (`pkg/gateway/podlifecycle/podclaim/claimer.go:157-159`), and `CRDPodRegistry.ClaimPod` has no pin check and no production caller (`pkg/podregistry/crd.go:170-209`). File them separately.
+- **Resume row state on a generic claim failure.** `holdOrFailOnResumeError` fails the session row for every error that `isTransientPodClaimError` does not list (`pkg/gateway/sessionserver/resume.go:192-203`, `podclaimerror.go:450-499`), including a failed Kubernetes read on the claim path. §15.1 states that `RESUME_FAILED` leaves the row in `awaiting_client_action`. A failed pin read on resume, including one the fallback bound cuts off, inherits that behaviour. Before this proposal, a resume whose claim-path read hung ended with the request context's error, which takes the same non-transient branch. File it separately.
 - **Runtime-level and CRD-level enforcement of the process-reuse acknowledgment.** The runtime registration validator (`pkg/gateway/externalapi/admin/runtimes.go:407-439`) enforces no §5.2 acknowledgment, and the recycle disposition reads only the pool record (`pkg/gateway/session/recycle/scrubreporter_seams.go:681-686`). The SandboxTemplate CRD carries neither `recycle.enabled`, `maxSessionsPerPod`, nor `acknowledgeProcessLevelIsolation` (`pkg/apis/lenny/v1alpha1/sandboxtemplate_types.go:28-67`). The gateway pool store is therefore the single enforcement site, as it is for the concurrent-session acknowledgment.
 - **A recovery claim after an update that brings a pool into pod reuse.** `sessionIsolationLevel` is computed at creation and persisted (`pkg/gateway/sessionserver/isolationlevel.go:156-184`), and a later claim for the same session (the resume-rebuild `Bind`, `pod_launch.go:208`; `resumeOnPod`, `resume_rebind.go:75-97`; the concurrent `bindSlotWithRetry`, `slot_bind.go:98`) re-resolves the pool. An update in between that brings the pool into pod reuse can place a session whose persisted level reports `podReuse: false` on a reused pod or a shared process. The case predates this proposal for pod reuse and concurrent slot sharing. The fix, which admits such a pod only to a session whose persisted `scrubPolicy` is non-empty on every claim path including `SlotClaimer.ClaimSlot`, is filed separately.
 - **The occupancy-zero report on a pool that stopped recycling.** A session bound before an update to `recycle.enabled: false` still takes the recycle path, because `BindResult.Recycle` is resolved at bind time. Its `ReportPodScrub` is a no-op (`pkg/gateway/session/recycle/scrubreporter_seams.go:618-626`, `pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go:504-510`), and only the disposition driver cancels the missing-report timer (`scrubreporter_seams.go:945`), so the pod retires through that timer with `scrub_report_timeout` and the `failed` terminal (`pkg/gateway/session/recycle/recycleboundary.go:367-409`). The misleading reason predates this proposal; file it separately.
@@ -561,7 +580,7 @@ In steps 26a, 26b, 26c, 27, and 28, replace the opening `On a pod-warm pod` with
 
 ## 12. Adjudicated decisions
 
-The human adjudicated decisions 1 to 5 and A to C on 2026-09-30, decisions 6 to 11 and the step ordering in decision 3 on 2026-10-01, and decision 12 on 2026-10-02. No decision is open. Each entry states the question, the choice, and what the choice fixes in the staging, and a later review does not reopen it.
+The human adjudicated decisions 1 to 5 and A to C on 2026-09-30, decisions 6 to 11 and the step ordering in decision 3 on 2026-10-01, and decision 12 on 2026-10-02. The summary lists the decisions still open. Each entry states the question, the choice, and what the choice fixes in the staging, and a later review does not reopen it.
 
 1. **Pod-global surfaces after a kept process's first session.** Adjudicated at the default. D9 fails closed: once a kept runtime process has been given a second session, intra-pod MCP forwarding, the direct-mode token fold, and the control-event stamp name no session for any later session on the pod, in both deployment models, as they do on a concurrent pod. The shipped runtime-author guide already states the rule that covers this case (`docs/runtime-author-guide/platform-tools.md:23`, `docs/runtime-author-guide/integration-levels.md:99`). Per-session attribution of calls a runtime addresses by session is draft proposal 0084, whose addressed arm reads the slot registry rather than the generation. This proposal stages no attribution change (summary, Impacts on other proposals).
 

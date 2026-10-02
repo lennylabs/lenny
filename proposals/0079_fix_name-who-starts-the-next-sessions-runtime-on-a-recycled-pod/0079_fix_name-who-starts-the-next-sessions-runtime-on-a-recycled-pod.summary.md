@@ -10,7 +10,7 @@
 - `SocketRuntimeProcess.Close` and `Interrupt` stop tearing the transport down, and the active set that decided the teardown is deleted. The transport records a sticky ended state when the runtime closes its end, and `Start` and `Output` fail at once after it.
 - The adapter reports on `ReportPodScrub`, in a new `runtime_live` field sampled after the whole-pod scrub, whether its runtime can serve the next session. `pkg/sandbox/podscrub.Decide` retires the pod with `runtime_not_live` when the report says it cannot or omits the field.
 - Pool admission refuses a recycling pool that keeps its runtime process across sessions without `sessionPolicy.acknowledgeProcessLevelIsolation: true`, on create, update, bootstrap seed, and dry-run (D5, CODE-11). The new `runtime_not_live` reason is non-counting and sits after the session-count and uptime retirements, and the gateway logs the reason of every `released` retire at `Info`.
-- The gateway reads the tenant pin on every idle-pod acquisition, including the Postgres fallback claim, and refuses a pod pinned to another tenant. A refused pod stays pinned for its tenant on every pool that keeps its runtime process, including an `allowCrossTenantReuse` pool, where the field changes no acquisition decision (spec-changes §12, decision 11). On a pool whose configuration keeps no runtime process across sessions, which an admitted edit can produce, every acquisition, including the reserved-hold rebind, refuses a pod that has served a session (D16). The fallback claim stamps the pin and leaves the mirror row unchanged when it refuses a pod. The warm-pool planner keeps pinned idle pods out of the unpinned inventory that satisfies `minWarm` and drains those that do not fit under `maxWarm`, which is the interim rule (SPEC-8(c), D14).
+- The gateway reads the tenant pin on every idle-pod acquisition, including the Postgres fallback claim, and refuses a pod pinned to another tenant. A refused pod stays pinned for its tenant on every pool that keeps its runtime process, including an `allowCrossTenantReuse` pool, where the field changes no acquisition decision (spec-changes §12, decision 11). On a pool whose configuration keeps no runtime process across sessions, which an admitted edit can produce, every acquisition, including the reserved-hold rebind, refuses a pod that has served a session (D16). The fallback claim skips the pods the idle scan refused, reads the pin of any other row inside its row lock for no longer than `podClaimFallbackMaxMirrorLagSeconds`, leaves the mirror row unchanged when it refuses a pod, and stamps the pin when it claims one. A failed pin read, including one the fallback's time bound cuts off, ends the acquisition with the endpoint's retryable claim-failure error and is not pool exhaustion (SPEC-8(c), SPEC-4(i)). The warm-pool planner keeps pinned idle pods out of the unpinned inventory that satisfies `minWarm` and drains those that do not fit under `maxWarm`, which is the interim rule (SPEC-8(c), D14).
 - The adapter no longer sends the `CH-RUNTIMEOPS` `terminate` frame, whose only send was at occupancy zero, `drainViaLifecycle` is deleted, and §15.4.2 and §15.4.3 state that no drain coordination exists at pod exit (D8). The runtime generation no longer resets when `runtimeLive` empties, so `soleSession` is empty on every session after a kept process's first.
 - §4.6.1, §4.6.3, §4.7, §4.7.9, §4.7.10, §5.1, §5.2, §6.1, §6.2, §7.1, §10.1.4, §11.4, §13.1, §15.4, §15.4.1, §15.4.2, §15.4.3, §16.1, §17.8.2, §28.3, §28.5.3, §28.8, §29.2, §29.4, §29.9, and §29.10 state the lifetime, the acknowledgment, the tenant rule, the admission rule, the new retire reason, the scrub's reach, and the widened disclosure.
 
@@ -69,7 +69,20 @@ spec-changes.md §9.1 carries the detail and the evidence for each item.
 
 ## Open decisions for human to make
 
-The human adjudicated decisions 1 to 12 and A to C, and spec-changes.md §12 records them. No decision is open.
+The human adjudicated decisions 1 to 12 and A to C, and spec-changes.md §12 records them. The staging applies the recommendation of each open decision below.
+
+13. **What bounds the Postgres fallback's `ClaimIdle` transaction?** The fallback reads a Pod inside a transaction that holds mirror row locks, and the WarmPoolController's mirror `Sync` for the pool waits on those locks, so a hung Pod `Get` stalls the pool's mirror and, with the default single reconcile worker, every pool's reconcile.
+    - **What is staged.** `fallbackClaim` runs `ClaimIdle` under a deadline equal to the resolved `podClaimFallbackMaxMirrorLagSeconds` (default 10 s), with no setting of its own (non-spec §4.4; SPEC-4(i)).
+    - **Recommendation.** Keep the staged bound. Confidence: medium.
+    - **Ground.** The freshness precondition already refuses the fallback on a mirror staler than that value, so the same value bounds how long one fallback holds the mirror still, and the bound adds no gateway setting.
+    - **Alternative: a dedicated gateway setting with a 5 s default and its own flag and environment variable.** It keeps a shorter default and a knob independent of the freshness threshold. It lost because it adds a setting, a flag, an environment variable, and `cmd/lenny-gateway` wiring for a value the existing parameter already supplies.
+    - **Cost of the staged bound.** One hung fallback can delay the WarmPoolController's reconciles for up to 10 s rather than 5 s, the bound cannot be tuned apart from the freshness threshold, and no operator can change it until `cmd/lenny-gateway` wires the mirror-lag flag the specification already names.
+14. **Does the fallback skip the pods the idle scan refused?** The fallback runs only after the idle scan returned `ErrNoIdlePod`, by which time the scan has read the pin of every Sandbox it saw `idle`.
+    - **What is staged.** The scan returns its refusals in `*podclaim.NoIdlePodError`, `connect` passes them through `fallbackClaim`, and `ClaimIdle` never selects, locks, or reads a skipped row (non-spec §4.4, CODE-8, TEST-12, TEST-13).
+    - **Recommendation.** Keep the skip. Confidence: medium.
+    - **Ground.** A refusal stays valid for the whole acquisition, because the tenant-label webhook permits only the unset-to-tenant and tenant-to-`unassigned` transitions and `AdmitTenantPin` refuses `unassigned`. On a recycling pool whose idle pods are all pinned to other tenants, the skip saves a Pod `Get` and a row lock on every idle row.
+    - **Alternative: the fallback reads every selected row again inside the row lock.** It is the smaller mechanism, and the time bound of decision 13 alone keeps a hung read from stalling the mirror. It lost because it repeats a read the scan has already made, under a row lock.
+    - **Cost of the staged skip.** It adds the `NoIdlePodError` type, a `skip` parameter on `ClaimIdle` and its four implementers, a `refused` parameter on `fallbackClaim`, and the test cases that pin them.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -102,7 +115,7 @@ The human adjudicated decisions 1 to 12 and A to C, and spec-changes.md §12 rec
 - **SPEC-1** (`spec/04_system-components.md`): the §4.7.9 runtime-start step.
 - **SPEC-2** (`spec/04_system-components.md`): the §4.7.10 **Runtime process lifetime** paragraph and its trade-off table row.
 - **SPEC-3** (`spec/04_system-components.md`): the §4.7 adapter RPC table rows for `Shutdown` and `ReportPodScrub`.
-- **SPEC-4** (`spec/04_system-components.md`): the §4.6.1 and §4.6.3 retire, pin, and reserved-hold statements.
+- **SPEC-4** (`spec/04_system-components.md`): the §4.6.1 and §4.6.3 retire, pin, reserved-hold, and fallback time-bound statements.
 - **SPEC-5** (`spec/05_runtime-registry-and-pool-model.md`): the §5.1 setup commands and Runtime definition example, and the §5.2 recycle lifecycle and scrub procedure.
 - **SPEC-6** (`spec/05_runtime-registry-and-pool-model.md`): the §5.2 scrub steps and what the scrub reaches.
 - **SPEC-7** (`spec/05_runtime-registry-and-pool-model.md`): §5.2 retirement and sizing.
@@ -124,7 +137,7 @@ The human adjudicated decisions 1 to 12 and A to C, and spec-changes.md §12 rec
 - **CODE-5** (`pkg/adapter/podscrub.go`, `pkg/adapter/embedded.go`, `pkg/gateway/session/executor/subprocess.go`, `pkg/adapter/podscrubreporter.go`, `pkg/adapter/gatewaycontrol/scrubreport.go`, and `schemas/lenny-adapter.proto`): the liveness sample and the `runtime_live` wire field.
 - **CODE-6** (`pkg/sandbox/podscrub/podscrub.go`): the `Decide` retire branch and reason.
 - **CODE-7** (`pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go`, `pkg/gateway/session/recycle/scrubreporter_seams.go`): the gateway threading and the `released` retire log.
-- **CODE-8** (`pkg/gateway/podlifecycle/podclaim`, `podsession`, `sessionserver`, `pkg/gateway/runtime/poolstore`, `pkg/agentpodstate`, and `cmd/lenny-gateway`): tenant pin admission on every idle acquisition and the refusal and drain of a pod that served a session on a pool outside the process-reuse rule.
+- **CODE-8** (`pkg/gateway/podlifecycle/podclaim`, `podsession`, `sessionserver`, `pkg/gateway/runtime/poolstore`, and `pkg/agentpodstate`): tenant pin admission on every idle acquisition and the refusal and drain of a pod that served a session on a pool outside the process-reuse rule.
 - **CODE-9** (the files listed under CODE-9 in non-spec-changes.md §8.2): the comment corrections.
 - **CODE-10** (`pkg/controller/warmpool/plan/plan.go`, `pkg/controller/warmpool/controller.go`, `cmd/lenny-controller/controllers.go`, `pkg/apis/lenny/v1alpha1/sandboxwarmpool_types.go`): pinned idle inventory.
 - **CODE-11** (`pkg/gateway/runtime/poolstore/poolstore.go`, `pkg/admission/pool_config_validator/validator.go`, `pkg/gateway/externalapi/openapi/openapi.json`): the process-reuse admission rule.
@@ -140,8 +153,8 @@ The human adjudicated decisions 1 to 12 and A to C, and spec-changes.md §12 rec
 - **TEST-9** (`tests/tier4_integration/recycle_scrub_path_test.go`): tier-4 recycle scrub path.
 - **TEST-10** (`tests/tier10_conformance/recycle_scrub_conformance_test.go`): the tier-10 conformance case.
 - **TEST-11** (`tests/tier5_e2e_kind/execution_modes_test.go`): the tier-5 un-skip.
-- **TEST-12** (`pkg/gateway/podlifecycle/podclaim`): tier-2 tenant pin admission cases, including a pod refused to another tenant left unstamped.
-- **TEST-13** (`pkg/gateway/podlifecycle/podsession`, `tests/tier2_component/stores/agentpodstatestore_test.go`, `pkg/agentpodstate/memstore`): tier-1 and tier-2 fallback claim pin cases, including no write under the row lock and no drain stamp.
+- **TEST-12** (`pkg/gateway/podlifecycle/podclaim`): tier-2 tenant pin admission cases, including a pod refused to another tenant left unstamped, a failed pin read that ends the acquisition without pool exhaustion, and the idle scan's refused pods carried in its no-idle-pod result.
+- **TEST-13** (`pkg/gateway/podlifecycle/podsession`, `tests/tier2_component/stores/agentpodstatestore_test.go`, `pkg/agentpodstate/memstore`): tier-1 and tier-2 fallback claim pin cases, including the idle scan's refusals skipped by `ClaimIdle`, no write under the row lock, the mirror-lag time bound, a failed primary pin read that starts no fallback, and no drain stamp.
 - **TEST-14** (`tests/tier9_security/tenant_isolation_test.go`): the tier-9 second-tenant case.
 - **TEST-15** (`tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition/scenario.go`): the tier-7a scenario extension.
 - **TEST-16** (`tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go`, `tests/tier11_docs/vm_restart_reprovision_doc_reconciliation_test.go`, `tests/tier11_docs/basic_level_echo_stamp_doc_reconciliation_test.go`): the tier-11 documentation gates and the anchors of the existing gates that the DOC edits move.
