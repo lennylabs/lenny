@@ -3,6 +3,9 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
@@ -85,6 +88,46 @@ func TestEnvIntOr_spec_11_3(t *testing.T) {
 			got := envIntOr("LENNY_KEEPALIVE_TEST", tc.def)
 			if got != tc.want {
 				t.Errorf("envIntOr() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCloseRuntimeListenerReleasesAndLogsOnlyOnFailure_spec_4_7_10 pins the
+// process-exit release of the pod-scoped runtime socket listener. The closer
+// runs exactly once on every exit; a successful close logs nothing, and a
+// failed close is logged with its error rather than dropped.
+//
+// spec: 4.7.10 (Deployment Model), 28.5.3 (Intra-pod)
+func TestCloseRuntimeListenerReleasesAndLogsOnlyOnFailure_spec_4_7_10(t *testing.T) {
+	closeErr := errors.New("listener already closed")
+	tests := []struct {
+		name    string
+		err     error
+		wantLog bool
+	}{
+		{name: "clean close logs nothing", err: nil, wantLog: false},
+		{name: "failed close is logged", err: closeErr, wantLog: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			var logged []string
+			closeRuntimeListener(
+				func() error { calls++; return tc.err },
+				func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) },
+			)
+			if calls != 1 {
+				t.Fatalf("closer called %d times, want 1", calls)
+			}
+			if !tc.wantLog {
+				if len(logged) != 0 {
+					t.Fatalf("clean close logged %q, want nothing", logged)
+				}
+				return
+			}
+			if len(logged) != 1 || !strings.Contains(logged[0], closeErr.Error()) {
+				t.Fatalf("failed close logged %q, want one line carrying %q", logged, closeErr)
 			}
 		})
 	}
