@@ -938,7 +938,10 @@
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier9_security/adapter_hold_termination_surface_test.go::TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4",
         "pkg/adapter/export_test.go",
-        "pkg/adapter/podscrub_liveness_test.go::TestInProcessRuntimeServesNextSessionAfterClose_spec_5_2"
+        "pkg/adapter/podscrub_liveness_test.go::TestInProcessRuntimeServesNextSessionAfterClose_spec_5_2",
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go::TestRecycleScrubShutdownConformance",
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go::TestRecycleScrubRuntimeNotLiveConformance",
+        "tests/tier5_e2e_kind/execution_modes_test.go::TestTaskModeRecycleScrubsWorkspaceBetweenSessions"
       ],
       "packages": [
         "pkg/adapter",
@@ -1366,7 +1369,9 @@
         "pkg/gateway/session/recycle/retire_log_test.go::TestClaimDispositionFailedRetireKeepsWarnRecordOnly_spec_5_2",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go::TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2",
         "tests/tier4_integration/recycle_runtime_not_live_test.go::TestRecyclePathRuntimeNotLiveRetires_spec_5_2",
-        "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2"
+        "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2",
+        "tests/tier10_conformance/recycle_scrub_conformance_test.go::TestRecycleScrubRuntimeNotLiveConformance",
+        "tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition"
       ],
       "packages": [
         "pkg/admission/label_immutability",

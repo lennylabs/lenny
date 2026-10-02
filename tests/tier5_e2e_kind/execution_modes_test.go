@@ -95,35 +95,23 @@ const executionModesNamespace = "lenny-agents"
 // "Verify scrub by stat-checking the workspace path... if any path is
 // non-empty after scrub... the scrub is marked failed."
 //
+// spec: §4.7.10 (Runtime process lifetime) — the runtime process lives as
+// long as the pod, and a later session on a recycled pod is served by the
+// runtime process that served the first.
+//
 // diagnosis: a failure here means §5.2 sequential pod reuse ("task
 // mode") is broken on a real agent pod: either the second session on a
 // recycling pod did not land on the same pod as the first (pod reuse
 // itself regressed — the pod was retired and replaced instead of
-// scrubbed and recycled) or the first session's workspace content
-// survived into the second session (the whole-pod scrub regressed or
-// never ran). This is the residual-state boundary between successive
+// scrubbed and recycled, for example with runtime_not_live because the
+// adapter ended the runtime at occupancy zero), the first session's
+// workspace content survived into the second session (the whole-pod
+// scrub regressed or never ran), or the runtime container restarted or
+// stopped across the recycle boundary. This is the residual-state boundary between successive
 // tasks on one pod that only a real pod — not the tier-4 compose stack —
 // can exercise, since it depends on the adapter's own scrub sequence
 // running against a real filesystem.
 func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
-	// The pod-reuse half of this case does not hold on the §4.7 sidecar
-	// transport, and the platform records that rather than fixing it. The
-	// ending session's Shutdown reaches Runtime.Close, which closes the shared
-	// socket; the sidecar runtime dialed that socket once and exits on the
-	// clean-exit EOF; the agent pod carries RestartPolicy: Never, so nothing
-	// re-dials. Session B therefore cannot land on session A's pod, and the
-	// reuse assertion below fails for a reason no test-side change can cure.
-	//
-	// Proposal 0073 §9 states this property and states that the proposal
-	// "neither creates nor cures" it. The case is skipped with this reason
-	// rather than deleted, because the scrub half it also covers is real and
-	// the reuse half is a genuine defect that should fail loudly once the
-	// runtime lifetime contract is specified. See the BUILD-GAPS entry for
-	// §5.2 recycle pod reuse on the sidecar transport.
-	t.Skip("precondition not met: §5.2 recycle pod reuse does not hold on the §4.7 sidecar transport " +
-		"(the runtime exits at the clean-exit EOF and RestartPolicy: Never does not re-dial); " +
-		"proposal 0073 §9 records the property and does not cure it")
-
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
 	requirePoolReadyPods(t, c, taskModePoolName, 1)
@@ -209,6 +197,27 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	if podGlobal != "absent" {
 		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path on every pool class, "+
 			"including a maxConcurrentSessions: 1 pool", podA, podGlobal)
+	}
+
+	requireRuntimeContainerKept(t, c, podA)
+}
+
+// requireRuntimeContainerKept asserts that the pod's runtime container is
+// the one the kubelet started with the pod: it has never restarted and is
+// still running. The runtime process lives as long as the pod (§4.7.10), so
+// session B on a recycled pod is served by the runtime process that served
+// session A rather than by a restarted container.
+func requireRuntimeContainerKept(t *testing.T, c *kind.Cluster, pod string) {
+	t.Helper()
+	restarts := podField(t, c, pod, `{.status.containerStatuses[?(@.name=="runtime")].restartCount}`)
+	if restarts != "0" {
+		t.Errorf("pod %s: runtime container restartCount = %q, want 0; the runtime process must live as long "+
+			"as the pod and serve every session the pod serves", pod, restarts)
+	}
+	startedAt := podField(t, c, pod, `{.status.containerStatuses[?(@.name=="runtime")].state.running.startedAt}`)
+	if startedAt == "" {
+		t.Errorf("pod %s: runtime container is not running after the recycled session; the runtime process "+
+			"ended across the recycle boundary", pod)
 	}
 }
 
