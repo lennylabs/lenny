@@ -2391,6 +2391,15 @@ Answered on 2026-10-01 for the later phases:
   inside the adapter process, which persists for the pod's life, so a fresh in-process instance would not
   give the process-level separation `restart` promises. Embedded recycling pools use `keep` or
   `vm-restart`.
+- The refusal is enforced at the gateway's pool admission through a derived predicate (2026-10-02). The
+  RuntimeReconciler mirrors a "can be supervised" flag into the gateway runtime registry: true for a
+  sidecar runtime that declares `command` and is neither service-mode nor `preConnect`. Pool admission
+  refuses `recycle.runtimeProcess: restart` on a runtime whose flag is false, so the deployer gets a
+  synchronous error, and the same check also refuses `restart` on a sidecar runtime with no `command`. The
+  gateway still does not learn the deployment model itself, and `deploymentModel` and `command` stay
+  CRD-only. A controller-side refusal at pod build was rejected because it accepts the pool and fails later
+  without a write-time error; mirroring the full `deploymentModel` was rejected because it reverses the
+  decision to keep that field CRD-only.
 
 ### 10.4 Related work outside this track
 
@@ -2416,11 +2425,6 @@ Each decision is listed with the phase that needs it. Decisions answered on 2026
   decision.
 - **Supervisor scope.** Restart pools only, or every sidecar pod. The recommendation on record is restart
   pools only, with supervision of every sidecar pod left to a later proposal.
-- **How the refusal of `restart` on embedded runtimes is enforced** (the owner chose to refuse it on
-  2026-10-02). The gateway's pool admission cannot see a Runtime's `deploymentModel`, which is CRD-only.
-  The options are a controller-side refusal when the pod is built, mirroring the full `deploymentModel`
-  into the gateway registry, or mirroring a derived "can be supervised" predicate that the gateway's pool
-  admission checks.
 
 ### 10.6 Context and rationale for the proposal track
 
