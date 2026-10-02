@@ -261,7 +261,7 @@ Three levels:
 
 1. Gateway looks up all active sessions for the user (via SessionStore).
 2. For each session in the user's task tree: gateway sends a `Shutdown` RPC to the pod with reason `USER_REVOKED`.
-3. The pod's runtime adapter initiates graceful shutdown (SIGTERM to agent, wait up to 10s, then SIGKILL).
+3. The pod's runtime adapter tears down the session ([Section 4.7](04_system-components.md#47-runtime-adapter), `Shutdown`), which does not end the runtime process ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").
 4. Gateway marks all sessions as terminated in SessionStore.
 5. The user's issued tokens are revoked in the durable Postgres issued-token index (the authoritative revocation store; see [§13.3](13_security-model.md#133-credential-flow)), each revoked token id is pushed into the gateway's in-memory revocation cache, and the revocations are fanned out to peer replicas so every replica's cache rejects the tokens within seconds.
 6. Credential leases held by the user's sessions are revoked (returned to pool).
