@@ -45,7 +45,7 @@
 - [ ] **S21 · code** — CODE-5, CODE-6, and CODE-7 with TEST-6, TEST-7, TEST-8, and TEST-9. The liveness report, the `Decide` branch, and the gateway threading.
       Tiers 0, 1, 2, 3, 4. Depends on: S3, S4, S7, S9, and S20
 - [ ] **S22 · code** — CODE-9. The comment corrections and the regenerated SandboxClaim CRD descriptions.
-      Tiers 0, 1. Depends on: S1, S2, S3, S4, S5, S6, S8, S11, S14, S16, S18, S19, and S21
+      Tiers 0, 1. Depends on: S1, S2, S3, S4, S5, S6, S8, S11, S13, S14, S16, S18, S19, and S21
 - [ ] **S23 · test** — TEST-10, TEST-11, and TEST-15. The conformance, cluster, and scenario tests.
       Tiers 0, 5, 7a, 10. Depends on: S19 and S21
 - [ ] **S24 · docs** — DOC-1, DOC-2, DOC-3, DOC-4, DOC-5, and DOC-6 with TEST-16. The documentation.
