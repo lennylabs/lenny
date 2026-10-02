@@ -935,8 +935,34 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 | Language support       | Any language (stdin/stdout)                              | Go only (or language with gRPC support)    |
 | Isolation              | Process isolation; abstract sockets + read-only manifest | Single process, shared memory              |
 | Recommended for        | Third-party runtimes, community adapters                 | First-party runtimes where latency matters |
+| Runtime process lifetime | The pod's lifetime; one connection serves every session | The pod's lifetime (the adapter process); one loop per session |
 
 > **Note:** Third-party authors should always use the sidecar model. The embedded model is for first-party runtimes where the adapter and agent binary are developed together.
+
+**Runtime process lifetime.** The runtime process lives as long as the pod. In
+the sidecar model it is the process the kubelet started in the runtime
+container, and its `CH-MSGSOCK` connection, accepted once, serves every session
+the pod serves, multiplexed by `sessionId`. No session's teardown, interrupt,
+or heartbeat escalation, and no occupancy-zero boundary, closes that connection
+or sends the process a signal. The adapter closes the connection when the pod
+terminates, and when the coordinator hold times out with no new coordinator and
+the adapter terminates every session it started on the pod
+([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)). The pod's
+termination ends the process. In the
+embedded model the runtime process is the adapter process, which also lives as
+long as the pod, and the adapter runs one runtime loop per session inside it. On a pool whose runtime declares `preConnect`, the SDK process, which
+[Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) calls
+the agent process and which `DemoteSDK` tears down and the SDK re-warm restarts, is
+distinct from the runtime process, and neither ends the runtime process. A
+runtime process that stops, or whose connection the hold timeout closed, is not
+re-created or reconnected inside the pod: the adapter
+reports it at the next recycle boundary and refuses the next session's start,
+and the pod is retired
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+A recycling pool whose pods serve more than one session in the kept process
+requires a deployer acknowledgment
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+"Deployer acknowledgment (runtime process kept across sessions)").
 
 **Health check:** gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` only after the health check passes.
 
