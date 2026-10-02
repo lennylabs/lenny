@@ -1060,6 +1060,7 @@
       "title": "Pool Configuration and Execution Modes",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
+        "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2",
@@ -3838,6 +3839,7 @@
       "title": "Runtime Integration Levels \u2014 Full",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection",

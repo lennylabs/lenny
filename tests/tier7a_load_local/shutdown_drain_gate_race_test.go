@@ -47,6 +47,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -357,10 +358,16 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 		// bound, but nothing re-dials it here, so the incoming session's
 		// start fails in accept rather than re-establishing the
 		// connection.
-		if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		_, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 			SessionId: &adapterv1.SessionId{Value: "bob"}, Runtime: "echo",
-		}); err == nil {
-			t.Error("the incoming session's start succeeded after the shared runtime connection was torn down")
+		})
+		if err == nil {
+			t.Fatal("the incoming session's start succeeded after the shared runtime connection was torn down")
+		}
+		// A closed-listener error would mean the teardown unbound the pod's
+		// address; only the accept timeout shows the listener stayed bound.
+		if !strings.Contains(err.Error(), acceptTimeoutMessage) {
+			t.Errorf("the incoming session's start = %v, want the accept-timeout error (%q)", err, acceptTimeoutMessage)
 		}
 	})
 
@@ -402,6 +409,15 @@ func TestShutdownDrainRacesAnIncomingSession_spec_6_4(t *testing.T) {
 	})
 }
 
+// drainAcceptTimeout bounds how long a start waits for the runtime to
+// connect on the drain fixture's socket runtime.
+const drainAcceptTimeout = 250 * time.Millisecond
+
+// acceptTimeoutMessage is the text SocketRuntimeProcess.Start's accept
+// timeout carries through StartSession's status. The runtime process
+// exposes no sentinel for the condition, so the case matches the text.
+const acceptTimeoutMessage = "runtime did not connect within"
+
 // socketDrainPod returns an adapter whose runtime is a real
 // SocketRuntimeProcess, together with its CH-RUNTIMEOPS peer and the dial
 // func that stands in for the pod's one runtime process connecting. The
@@ -420,9 +436,16 @@ func socketDrainPod(t *testing.T) (*adapter.Server, *drainPeer, func() net.Conn)
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
-	// A start that has to accept a connection nobody will make is the
-	// failure the first leg asserts; bound it well under the case timeout.
-	rt.AcceptTimeout = 5 * time.Second
+	// The adapter process releases the listener at exit, which this cleanup
+	// stands in for. Registered first, it runs after every later cleanup.
+	t.Cleanup(func() { _ = rt.CloseListener() })
+	// The listener is pod-scoped and survives a session teardown, so a start
+	// that nobody re-dials now fails by accept timeout rather than on a
+	// closed listener. The unsequenced loop pays this window once per
+	// attempt, so keep it short.
+	// A start whose runtime dialed before it is accepted from the backlog at
+	// once, well inside this window even under the race detector.
+	rt.AcceptTimeout = drainAcceptTimeout
 	s, peer := drainPod(t, rt)
 	return s, peer, func() net.Conn {
 		conn, derr := net.Dial("unix", socket)
