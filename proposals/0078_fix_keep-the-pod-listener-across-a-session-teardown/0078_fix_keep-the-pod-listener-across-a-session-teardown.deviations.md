@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: TEST-1 and TEST-9 landed in S1 without listener cleanups
+## Accepted: TEST-1 and TEST-9 landed in S1 without listener cleanups
 
-**Status:** proposed
+**Status:** accepted
 
 **What the proposal says.** The implementation checklist scopes S1 to code only (CODE-1 and CODE-3). It assigns the tier-1 cases TEST-1 and TEST-9 to S3, together with the conversion of the existing socket cases' cleanups to `CloseListener` (non-spec-changes.md §9 and §7.5).
 
@@ -14,9 +14,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader following the checklist would expect TEST-1 and TEST-9 to be absent until S3, and would expect every socket case in the file to close its listener. S3 still has to add the `CloseListener` cleanups to TEST-1 and TEST-9 and to land TEST-2, TEST-3, and TEST-4.
 
-## Proposed: TEST-6 dials the arriving runtime before the rendezvous
+## Accepted: TEST-6 dials the arriving runtime before the rendezvous
 
-**Status:** proposed
+**Status:** accepted
 
 **What the proposal says.** non-spec-changes.md §9 TEST-6 describes a race in which one goroutine closes the last session while another goroutine dials the runtime socket and calls `Start`, both released from a common rendezvous.
 
