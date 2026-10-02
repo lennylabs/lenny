@@ -2281,7 +2281,8 @@ pinned-idle proposal, so each of those is converged once against the final set o
   confirmation, and run the first non-spec review loop.
 - [x] Proposal 0087 part 1 (supervised runtime process, restart lifetime) drafted and merged (`0f86420bf`).
   It is not converged, and its prerequisite list predates this ordering.
-- [ ] Validation spike on gVisor and Kata for the properties the supervisor relies on: PID-namespace init
+- [x] Validation spike on gVisor (2026-10-02; Kata untested, no `/dev/kvm` on the host; results in section
+  10.3) for the properties the supervisor relies on: PID-namespace init
   signal immunity, `PR_SET_DUMPABLE` against same-UID inspection, `kill(-1)` scope, and `si_pid`. Its result
   gates whether the restart lifetime reaches `sandboxed` (gVisor) pools.
 - [ ] BUILD-GAPS F-4.7.25, the `SO_PEERCRED` half: `CH-MSGSOCK` accepts only the agent UID. The specification
@@ -2348,7 +2349,8 @@ other while their code proceeds in parallel.
   proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first; gVisor only
   if the spike passed.
 
-**Contingency.** If the spike fails on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
+**Contingency (superseded on 2026-10-02: the spike found that gVisor fails only the signal-immunity
+property, which fails closed, so `restart` is offered on gVisor).** If the spike had failed on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
 proposal 0087, the keep lifetime remains the only reuse path on `sandboxed` pools, and proposal 0087
 narrows to Kata.
 
