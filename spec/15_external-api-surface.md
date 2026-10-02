@@ -1474,7 +1474,7 @@ The artifacts are versioned by Lenny release tag. Breaking changes to the `.prot
 
 #### 15.4.1 Message Format and Binary I/O Requirements
 
-The `message` type carries an `input` field containing a `MessagePart[]` array (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field — the runtime knows it's receiving its first message by virtue of just having started. No `follow_up` or `prompt` type anywhere in the protocol.
+The `message` type carries an `input` field containing a `MessagePart[]` array (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field. No `follow_up` or `prompt` type anywhere in the protocol.
 
 **`input_required` outbound message type removed.** Replaced by `lenny/request_input` blocking MCP tool call on the platform MCP server.
 
@@ -1693,9 +1693,9 @@ The adapter follows a well-defined state machine:
 
 ```
 INIT ──→ READY ──→ ACTIVE ──→ DRAINING ──→ TERMINATED
-                     │                          ▲
-                     └──────────────────────────┘
-                       (session ends normally)
+           ▲         │
+           └─────────┘
+  (session ends; the pod is recycled)
 ```
 
 | State        | Description                                                                                           |
@@ -1703,10 +1703,10 @@ INIT ──→ READY ──→ ACTIVE ──→ DRAINING ──→ TERMINATED
 | `INIT`       | Adapter process starts, opens gRPC connection to gateway (mTLS), writes placeholder manifest. The adapter sends an `AdapterInit` message on the control stream with `adapterProtocolVersion` (semver string, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` (the highest compatible version the gateway supports) or closes the stream with `PROTOCOL_VERSION_INCOMPATIBLE` if no compatible version exists. Major version changes are breaking; minor/patch are backwards compatible. Current protocol version: `"1.0.0"`. |
 | `READY`      | Adapter signals readiness. Pod enters warm pool. Gateway may now assign sessions.                     |
 | `ACTIVE`     | A session is in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, and stdin/stdout relay.     |
-| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange and signals the agent to stop. |
+| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange. No drain coordination exists at pod exit at any integration level: the adapter writes no `CH-RUNTIMEOPS` `terminate` frame, and the runtime process ends with the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). |
 | `TERMINATED` | The adapter has exited. The gateway marks the pod as no longer available.                             |
 
-Transitions are initiated by either the gateway (e.g., session assignment, drain request) or the adapter itself (e.g., readiness signal, exit on completion).
+Transitions are initiated by either the gateway (e.g., session assignment, drain request) or the adapter itself (e.g., readiness signal).
 
 #### 15.4.3 Runtime Integration Levels
 
@@ -1716,7 +1716,7 @@ To lower the barrier for third-party runtime authors, the spec defines three int
 
 - stdin/stdout binary protocol only
 - Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout
-- Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds causes SIGTERM
+- Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds ends the session ([Section 28.5.3](28_communication-channels.md#2853-intra-pod))
 - Must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`
 - Zero Lenny knowledge required beyond the above message types
 - No checkpoint/restore support, no detailed health reporting
@@ -1763,7 +1763,6 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
 
 - Opens the CH-RUNTIMEOPS for operational signals
 - True session continuity, clean interrupt points, mid-session credential rotation
-- `DRAINING` state with graceful shutdown coordination
 - Checkpoint/restore support
 
 **Level Comparison Matrix**
@@ -1778,27 +1777,26 @@ The following matrix enumerates every level-sensitive capability with its behavi
 | **Connector MCP servers**                                                  | N/A — no connector access                                                                                                                     | Yes                                                                                                                                        | Yes                                                                                                                                             |
 | **CH-RUNTIMEOPS**                                                      | N/A — operates in fallback-only mode                                                                                                          | N/A — operates in fallback-only mode                                                                                                       | Yes                                                                                                                                             |
 | **Checkpoint / restore**                                                   | No checkpoint support; pod failure loses in-flight context. Gateway restarts session from last gateway-persisted state.                       | Best-effort snapshot without runtime pause (`consistency: best-effort`). Minor workspace inconsistencies possible on resume ([Section 4.4](04_system-components.md#44-event--checkpoint-store)). | Consistent checkpoint with runtime pause via CH-RUNTIMEOPS `checkpoint_request` / `checkpoint_ready`.                                       |
-| **Interrupt**                                                              | No clean interrupt. Gateway sends SIGTERM; runtime has no opportunity to reach a safe stop point.                                             | No clean interrupt. Same SIGTERM-based termination as Basic.                                                                               | Clean interrupt via `interrupt_request` on CH-RUNTIMEOPS; runtime acknowledges with `interrupt_acknowledged` and reaches a safe stop point. |
+| **Interrupt**                                                              | No clean interrupt, and the runtime process receives no signal ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").                                             | No clean interrupt. Same as Basic.                                                                               | Clean interrupt via `interrupt_request` on CH-RUNTIMEOPS; runtime acknowledges with `interrupt_acknowledged` and reaches a safe stop point. |
 | **Credential rotation**                                                    | Checkpoint → pod restart → `AssignCredentials` with new lease → `Resume`. If checkpoint unsupported, in-flight context is lost ([Section 4.7](04_system-components.md#47-runtime-adapter)). | Checkpoint → pod restart → `AssignCredentials` with new lease → `Resume`. Brief session pause; client sees reconnect.                      | In-place rotation via `RotateCredentials` RPC and `credentials_rotated` lifecycle message. No session interruption.                             |
-| **Deadline / expiry warning**                                              | No advance warning. `DEADLINE_APPROACHING` signal requires CH-RUNTIMEOPS; Basic-level receives only `shutdown` at expiry.                | No advance warning. Same as Basic — no CH-RUNTIMEOPS to deliver `DEADLINE_APPROACHING`.                                                | `DEADLINE_APPROACHING` signal delivered on CH-RUNTIMEOPS before session expiry ([Section 10](10_gateway-internals.md)).                                                |
-| **Graceful drain (`DRAINING` state)**                                      | No drain coordination. Adapter sends `shutdown` with `deadline_ms`; SIGTERM on timeout.                                                       | No drain coordination. Same as Basic.                                                                                                      | `DRAINING` state via CH-RUNTIMEOPS enables graceful shutdown coordination before `shutdown`.                                                |
+| **Deadline / expiry warning**                                              | No advance warning. `DEADLINE_APPROACHING` signal requires CH-RUNTIMEOPS.                | No advance warning. Same as Basic — no CH-RUNTIMEOPS to deliver `DEADLINE_APPROACHING`.                                                | `DEADLINE_APPROACHING` signal delivered on CH-RUNTIMEOPS before session expiry ([Section 10](10_gateway-internals.md)).                                                |
+| **Graceful drain (`DRAINING` state)**                                      | No drain coordination. Adapter sends `shutdown` with `deadline_ms`; SIGTERM on timeout.                                                       | No drain coordination. Same as Basic.                                                                                                      | No drain coordination at pod exit ([Section 15.4.2](#1542-rpc-lifecycle-state-machine)).                                                |
 | **Simplified response shorthand** (`{type: "response", sessionId: "...", text: "..."}`)      | Yes — adapter normalizes to the canonical `MessagePart` form, which carries the same `sessionId` the runtime echoed ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)).                                                                     | Yes — available but typically unused since Standard runtimes produce structured output.                                                    | Yes — available but typically unused.                                                                                                           |
 | **MessagePart minimal fields**                                              | Only `type` and `inline` required; all other fields optional with defaults ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)).                                                  | Full `MessagePart` schema available.                                                                                                        | Full `MessagePart` schema available.                                                                                                             |
 | **MessageEnvelope fields**                                                 | Only `type`, `id`, and `input` needed; all other envelope fields safely ignored ([Section 15.4](#messageenvelope--unified-message-format)). `sessionId` is excepted from that permission: a Basic-level runtime echoes it on the session-scoped frames it emits in response, on every pod.                                                 | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                       | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                            |
 
-Pod recycling under `sessionPolicy.recycle` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) is not a level-sensitive capability and does not appear in the matrix: the platform scrubs the pod and starts a fresh runtime process for each session, so recycling requires no runtime cooperation and is available at every integration level.
+Pod recycling under `sessionPolicy.recycle` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) is not a level-sensitive capability and does not appear in the matrix: recycling needs no CH-RUNTIMEOPS exchange and is available at every integration level, on the terms [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Recycling and integration levels** states.
 
 > **Basic-level limitations — complete list:**
 > Basic-level runtimes operate without the CH-RUNTIMEOPS and without platform MCP server access. The following capabilities are **unavailable** at Basic level and have no fallback:
 >
 > - **Checkpoint / restore:** Pod failure loses all in-flight context. The gateway restarts the session from the last gateway-persisted state; any unsaved intermediate work is gone.
-> - **Clean interrupt:** No opportunity for the runtime to reach a safe stop point. The gateway issues `shutdown` on stdin and follows with SIGTERM after `deadline_ms`; the runtime cannot acknowledge an interrupt cleanly.
+> - **Clean interrupt:** No opportunity for the runtime to reach a safe stop point. The runtime cannot acknowledge an interrupt cleanly.
 > - **Credential rotation without disruption:** Rotation requires a full pod restart (checkpoint → restart → `AssignCredentials` → `Resume`). If the runtime does not support checkpoint, the in-flight context is lost during rotation.
 > - **Delegation (`lenny/delegate_task`):** Requires the platform MCP server, which is unavailable at Basic level. Basic-level runtimes cannot spawn sub-tasks.
 > - **Platform MCP tools** (including `lenny/output`, `lenny/request_input`, `lenny/discover_agents`): All platform-side tools are inaccessible. Runtimes must produce all output via the stdout binary protocol.
 > - **Connector MCP servers:** No connector (GitHub, filesystem, etc.) tool access.
-> - **`DEADLINE_APPROACHING` warning:** Requires the CH-RUNTIMEOPS. Basic-level runtimes receive only the `shutdown` message at expiry with no advance notice.
-> - **Graceful drain (`DRAINING` state):** No drain coordination signal. Shutdown is `shutdown`-on-stdin followed by SIGTERM.
+> - **`DEADLINE_APPROACHING` warning:** Requires the CH-RUNTIMEOPS. Basic-level runtimes receive no advance notice of a session's expiry.
 > - **Inter-session messaging (`lenny/send_message`):** Requires the platform MCP server. Basic-level runtimes cannot send messages to other sessions or participate in sibling coordination patterns.
 > - **Input-required blocking (`lenny/request_input`):** Requires the platform MCP server. Basic-level runtimes cannot request clarification from a parent or client mid-task. `one_shot` Basic-level runtimes must produce their response based solely on the initial input.
 >
