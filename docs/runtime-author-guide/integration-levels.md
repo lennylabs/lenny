@@ -25,11 +25,11 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **Connector tool servers** (GitHub, Jira, Slack, etc.) | -- | Yes | Yes |
 | **CH-RUNTIMEOPS** | -- | -- | Yes |
 | **Checkpoint and restore** | None -- pod failure loses context | Best-effort -- minor inconsistencies possible | Cooperative handshake -- consistent snapshots |
-| **Interrupt** | SIGTERM only, no safe stop point | SIGTERM only | Clean `interrupt_request` / `interrupt_acknowledged` |
+| **Interrupt** | No clean interrupt; the runtime process receives no signal | No clean interrupt; same as Basic | Clean `interrupt_request` / `interrupt_acknowledged` |
 | **Credential rotation** | Pod restart, in-flight context lost (no checkpoint) | Pod restart, brief pause (best-effort checkpoint) | Rotated in place, no interruption |
-| **Advance deadline warning** | `shutdown` only, no advance notice | `shutdown` only | `deadline_approaching` signal before expiry |
-| **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | Coordinated via the CH-RUNTIMEOPS |
-| **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no runtime cooperation | Yes | Yes |
+| **Advance deadline warning** | No advance notice of a session's expiry | No advance notice; same as Basic | `deadline_approaching` signal before expiry |
+| **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | No drain coordination at pod exit |
+| **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no CH-RUNTIMEOPS exchange; reuse requires a runtime that serves sequential sessions | Yes | Yes |
 
 ---
 
@@ -48,7 +48,7 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 
 - **Workspace files** at `/workspace/slots/{sessionId}/current/` -- the session's working directory, derived from its own session identifier.
 - **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) through the `tool_call` / `tool_result` stdin/stdout exchange.
-- **Process lifecycle management** -- the sidecar starts your binary, delivers messages, and coordinates shutdown.
+- **Process lifecycle management** -- the sidecar delivers messages and coordinates shutdown.
 
 ### What's off the table at this level
 
@@ -56,9 +56,9 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 - No platform tools like asking the user a question or streaming incremental output.
 - No connector access (GitHub, Jira, and so on).
 - No inter-session messaging.
-- No clean interrupt handling -- you only get SIGTERM.
+- No clean interrupt handling -- the runtime process receives no signal when a session is interrupted.
 - No cooperative checkpointing -- a pod failure loses everything in flight.
-- No advance deadline warnings -- you just get `shutdown` when time's up.
+- No advance deadline warnings -- there is no advance notice of a session's expiry.
 
 ### What happens if the pod dies
 
@@ -149,7 +149,7 @@ Somewhere around 150-200 lines, plus an MCP client library.
 | `credential_rotation` | In-place `credentials_rotated` / `credentials_acknowledged` -- the session keeps going |
 | `deadline_signal` | `deadline_approaching` so the runtime can wrap up before it's terminated |
 
-Declare only the capabilities you implement. Anything you don't declare falls back to Standard-level behavior -- an unimplemented checkpoint becomes best-effort, an unimplemented interrupt becomes SIGTERM.
+Declare only the capabilities you implement. Anything you don't declare falls back to Standard-level behavior -- an unimplemented checkpoint becomes best-effort, and an unimplemented interrupt is not clean and sends the runtime process no signal.
 
 ### What a cooperative checkpoint looks like
 

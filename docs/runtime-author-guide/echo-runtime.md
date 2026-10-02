@@ -135,7 +135,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "echo-runtime: received tool_result id=%s (ignored)\n", msg.ID)
 
 		case "heartbeat":
-			// Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
+			// Respond immediately. A missed ack within 10 seconds ends the session;
+			// the runtime process receives no signal.
 			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 
 		case "shutdown":
@@ -231,7 +232,7 @@ case "heartbeat":
 	writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 ```
 
-The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds or the adapter sends SIGTERM. The heartbeat handler should be immediate --- do not do any heavy work here.
+The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds. A missed acknowledgment ends the session, and the runtime process receives no signal. The heartbeat handler should be immediate --- do not do any heavy work here.
 
 ### Handling `shutdown`
 
@@ -240,7 +241,7 @@ case "shutdown":
 	os.Exit(0)
 ```
 
-The adapter sends `shutdown` when the pod is being drained, the session has completed, or the budget is exhausted. Exit cleanly within `deadline_ms`. For the echo runtime, there is no cleanup needed, so we exit immediately.
+The adapter sends `shutdown` when the pod is being drained. Exit cleanly within `deadline_ms`. For the echo runtime, there is no cleanup needed, so we exit immediately.
 
 ### Writing to stdout
 
@@ -265,11 +266,11 @@ When the pod starts, the adapter:
 3. Signals readiness to the gateway (pod enters the warm pool).
 4. Waits for session assignment.
 5. Receives workspace files from the gateway and materializes them to `/workspace/slots/{sessionId}/current/`.
-6. Spawns your binary with stdin/stdout pipes connected.
+6. Accepts the connection your binary dials. The kubelet starts your binary through the runtime image's entrypoint when the pod starts, the adapter accepts the connection at the pod's first session, and later sessions on the pod reach the same process.
 7. Delivers the first `message` on stdin.
 8. Relays your `response` from stdout to the gateway.
 9. Sends periodic `heartbeat` messages.
-10. On session end, sends `shutdown` and waits for your binary to exit.
+10. On session end, sends your binary nothing; the process keeps serving the pod.
 
 Your binary does not handle any of these steps. It reads from stdin and writes to stdout, and the adapter does the rest.
 

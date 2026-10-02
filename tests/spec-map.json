@@ -923,6 +923,7 @@
       "title": "Deployment Model",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2",
         "tests/tier4_integration/concurrent_workspace_test.go",
         "pkg/adapter/embedded_test.go",
@@ -1108,6 +1109,7 @@
       "title": "Pool Configuration and Execution Modes",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2",
@@ -3932,10 +3934,20 @@
       "blocked_until_phase": "1",
       "notes": "Phase 1 ships the wire-contract artifacts. Phase 2 ships the Basic-level echo runtime (cmd/runtimes/echo) and the conformance harness (cmd/lenny-compliance). Phase 2.8 ships the Full-level streaming-echo runtime, the runtime-ops-events JSON Schema, and the --level full conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). pkg/gateway/outputpartfidelity encodes the \u00a715.4 Translation Fidelity Matrix and ships per-MessagePart translators that the tier-10 TestFidelityMatrix exercises. Standard-level tests (tool-call correlation, adapter-local tools) and the gateway-side response-shorthand normalisation are skipped until the relevant runtimes ship in later phases."
     },
+    "15.4.2": {
+      "title": "RPC Lifecycle State Machine",
+      "spec_file": "spec/15_external-api-surface.md",
+      "tests": [
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
+        "pkg/adapter/slotsession_test.go"
+      ],
+      "packages": []
+    },
     "15.4.3": {
       "title": "Runtime Integration Levels \u2014 Full",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "tests/tier7a_load_local/socket_listener_close_start_race_test.go::TestLastSessionCloseRacingAnArrivingStartKeepsTheListener_spec_5_2",
         "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
@@ -5889,6 +5901,7 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "tests/tier11_docs/runtime_process_lifetime_doc_reconciliation_test.go",
         "pkg/adapter/slotframe_test.go",
         "pkg/outputtype/outputtype_test.go",
         "pkg/sessionrecord/record_test.go",

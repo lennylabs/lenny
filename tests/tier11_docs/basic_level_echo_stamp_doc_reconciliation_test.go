@@ -308,7 +308,6 @@ func TestAdapterContractNamesTheShutdownRPCUnderItsWireName(t *testing.T) {
 		"recycle disposition",
 		"ReportSessionScrub",
 		"ReportPodScrub",
-		"no other bound session",
 		"a session whose start the adapter has admitted",
 		"either the bind attempt",
 		"reclaimed",

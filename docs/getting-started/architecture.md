@@ -62,7 +62,7 @@ graph TB
         end
         subgraph "Pod C (idle)"
             RA3[Runtime Adapter]
-            AB3["Agent Binary<br/>(not started)"]
+            AB3[Agent Binary]
         end
     end
 
@@ -229,7 +229,7 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 | `SandboxTemplate` | Declares a pool: runtime, isolation profile, resource class, warm count range, scaling policy |
 | `SandboxWarmPool` | Manages warm pod inventory with configurable `minWarm`/`maxWarm` |
 | `Sandbox` | Represents a managed agent pod. Status subresource carries the coarse occupancy phase, projected from the claim. |
-| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates. |
+| `SandboxClaim` | Represents a pod-occupancy claim with the deterministic name `claim-<podName>`. Created by the gateway when it acquires an idle pod, deleted when the reserved hold expires or the pod terminates, or when an acquisition ends the hold on a pool that no longer keeps runtime processes across sessions. |
 
 **Key responsibilities:**
 
@@ -242,7 +242,7 @@ Manages individual pod lifecycle, state transitions, and health. Built on the **
 
 **Leader election:** Runs as a multi-replica Deployment with Kubernetes Lease-based leader election. During failover (up to 25 seconds on crash), existing sessions continue unaffected; only new pod creation and pool reconciliation pause.
 
-**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using per-pod `SandboxClaim` resources. The deterministic `claim-<podName>` name resolves the acquisition race between replicas at CREATE, and the `lenny-sandboxclaim-guard` `ValidatingAdmissionWebhook` intercepts CREATE to reject a second non-terminal claim for the same pod. Claim traffic scales with pod-occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and a short reserved hold extends an episode across idle gaps so a same-tenant session rebinds with no acquisition round trip. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions, and the session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. This keeps the controller off the claim hot path entirely.
+**Pod claiming:** Gateway replicas claim pods directly via the Kubernetes API using per-pod `SandboxClaim` resources. The deterministic `claim-<podName>` name resolves the acquisition race between replicas at CREATE, and the `lenny-sandboxclaim-guard` `ValidatingAdmissionWebhook` intercepts CREATE to reject a second non-terminal claim for the same pod. Claim traffic scales with pod-occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and a short reserved hold extends an episode across idle gaps so a same-tenant session rebinds with no acquisition round trip. On a pool that no longer keeps runtime processes across sessions, the next acquisition ends the hold instead of rebinding it. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions, and the session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. This keeps the controller off the claim hot path entirely.
 
 ---
 

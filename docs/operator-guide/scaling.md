@@ -187,11 +187,11 @@ Pod recycling, concurrent sessions, and service mode change the relationship bet
 | Configuration | `mode_factor` | `burst_mode_factor` |
 |---|---|---|
 | `session`, `maxConcurrentSessions: 1`, `recycle.enabled: false` | 1.0 | 1.0 |
-| `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true` | expected sessions per pod lifetime (`lenny_pod_session_reuse_count` p50, converges toward `recycle.maxSessionsPerPod`) | `maxConcurrentSessions` (1) |
+| `session`, `maxConcurrentSessions: 1`, `recycle.enabled: true` | expected sessions per pod lifetime (`lenny_pod_session_reuse_count` p50; converges toward `recycle.maxSessionsPerPod` only when tenants return to their pods while the pods are held) | `maxConcurrentSessions` (1) |
 | `session`, `maxConcurrentSessions: N` | expected sessions per pod lifetime | `maxConcurrentSessions` (N) |
 | `service` | `maxConcurrent` | `maxConcurrent` |
 
-`mode_factor` is the expected number of sessions a pod serves over its lifetime in session mode; on a recycling pool the controller uses the observed `lenny_pod_session_reuse_count` p50, falling back to `mode_factor = 1.0` during cold start (default: 100 completed sessions) and bounded above by `recycle.maxSessionsPerPod`. `burst_mode_factor` reflects how many simultaneous arrivals a single pod can absorb: `maxConcurrentSessions` in session mode (1 for a one-session-per-pod or recycling pod) and `maxConcurrent` in service mode.
+`mode_factor` is the expected number of sessions a pod serves over its lifetime in session mode; on a recycling pool the controller uses the observed `lenny_pod_session_reuse_count` p50, falling back to `mode_factor = 1.0` during cold start (default: 100 completed sessions) and bounded above by `recycle.maxSessionsPerPod`. On a sequential recycling pool a pod serves only its pinned tenant, and across an occupancy-zero boundary only while the pod is held for that tenant (see [Multi-Tenancy](multi-tenancy.md)), so `mode_factor` approaches `recycle.maxSessionsPerPod` only when tenants return to their pods while the pods are held, and the observed p50 governs otherwise. `burst_mode_factor` reflects how many simultaneous arrivals a single pod can absorb: `maxConcurrentSessions` in session mode (1 for a one-session-per-pod or recycling pod) and `maxConcurrent` in service mode.
 
 **Adjusted formula:**
 

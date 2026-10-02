@@ -128,7 +128,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 
 | Metric | Type | Labels | Description | Used by |
 |:-------|:-----|:-------|:------------|:--------|
-| `lenny_warmpool_idle_pods` | Gauge | `pool` | Pods in `idle` state ready to be claimed. | `WarmPoolLow`, `WarmPoolExhausted`, `PodClaimQueueSaturated` alerts. |
+| `lenny_warmpool_idle_pods` | Gauge | `pool` | Pods in `idle` state ready to be claimed. Idle pods pinned to a tenant are excluded. | `WarmPoolLow`, `WarmPoolExhausted`, `PodClaimQueueSaturated` alerts. |
 | `lenny_warmpool_reserved_pods` | Gauge | `pool` | Pods whose occupancy claim is in the `reserved` hold window, excluded from idle inventory. | Reserved-hold-window monitoring. |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | `pool`, `isolation_profile` | Time from pod creation to `idle` state. | `WarmPoolReplenishmentSlow` alert. |
 | `lenny_warmpool_replenishment_rate` | Gauge | `pool` | Pods per minute entering `idle` state. | Operational monitoring. |

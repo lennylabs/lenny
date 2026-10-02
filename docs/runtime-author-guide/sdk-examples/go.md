@@ -139,7 +139,8 @@ func main() {
 			handleToolResult(msg)
 
 		case "heartbeat":
-			// Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
+			// Respond immediately. A missed ack within 10 seconds ends the session;
+			// the runtime process receives no signal.
 			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 
 		case "shutdown":

@@ -79,7 +79,8 @@ service RuntimeAdapter {
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
 
   // StopSession gracefully terminates the current session.
-  // The adapter sends shutdown to the agent binary and waits for exit.
+  // The adapter sends shutdown to the agent binary; the runtime process
+  // stays alive after the session ends.
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
 
   // Attach opens a bidirectional stream for real-time communication
@@ -197,7 +198,7 @@ message AttachMessage {
 
 - The gateway sends periodic heartbeat pings on the Attach stream.
 - The adapter must respond with `HeartbeatAck` within **10 seconds**.
-- Failure to ack triggers SIGTERM to the agent process.
+- A missed acknowledgment ends the session, and the runtime process receives no signal.
 - Heartbeat interval is configurable (default: 30 seconds).
 
 #### Checkpoint
@@ -444,7 +445,7 @@ The runtime must exit within `deadlineMs`.
 3. **Readiness signal:** The adapter signals `READY` via the Health service. The pod enters the warm pool.
 4. **Session assignment:** The gateway calls `StartSession`. The adapter transitions to `ACTIVE`.
 5. **Active session:** The gateway opens an `Attach` bidirectional stream. All content flows through this stream.
-6. **Session end:** The gateway calls `StopSession` or the agent exits naturally. The adapter transitions to `TERMINATED`.
+6. **Session end:** The gateway calls `StopSession`. On a recycled pod the adapter returns to `READY` for the pod's next session; otherwise the pod drains through `DRAINING` to `TERMINATED`.
 
 ### Reconnection
 
@@ -459,15 +460,15 @@ If the `Attach` stream is interrupted during an active session:
 
 ## RPC lifecycle state machine
 
-![RPC lifecycle: INIT, READY, ACTIVE, DRAINING, TERMINATED. When a session ends normally, ACTIVE transitions directly to TERMINATED.](../assets/diagrams/rpc-lifecycle.svg)
+![RPC lifecycle: INIT, READY, ACTIVE, DRAINING, TERMINATED. When a session ends on a recycled pod, ACTIVE returns to READY.](../assets/diagrams/rpc-lifecycle.svg)
 
 <!--
 ASCII fallback for the diagram above (rpc-lifecycle):
 
   INIT ===> READY ===> ACTIVE ===> DRAINING ===> TERMINATED
-                        |                            ^
-                        +============================+
-                          (session ends normally)
+             ^           |
+             +===========+
+      (session ends; the pod is recycled)
 -->
 
 
@@ -476,10 +477,10 @@ ASCII fallback for the diagram above (rpc-lifecycle):
 | `INIT` | Adapter starts, opens gRPC connection, sends `AdapterInit` with protocol version |
 | `READY` | Adapter signals readiness. Pod enters warm pool. Gateway may assign sessions. |
 | `ACTIVE` | Session in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, stdin/stdout. |
-| `DRAINING` | Graceful shutdown requested. Finishes current exchange, signals agent to stop. |
+| `DRAINING` | Graceful shutdown requested. Finishes current exchange. No drain coordination exists at pod exit: the adapter writes no CH-RUNTIMEOPS `terminate` frame, and the runtime process ends with the pod. |
 | `TERMINATED` | Adapter has exited. Gateway marks pod as unavailable. |
 
-Transitions are initiated by the gateway (session assignment, drain request) or the adapter (readiness signal, exit on completion).
+Transitions are initiated by the gateway (session assignment, drain request) or the adapter (readiness signal).
 
 ---
 

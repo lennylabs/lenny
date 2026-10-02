@@ -85,7 +85,7 @@ The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurre
 | Field | Type | Default | Description | Validation |
 |:------|:-----|:--------|:------------|:-----------|
 | `sessionPolicy.maxConcurrentSessions` | int | 1 | Simultaneous sessions per pod. | `> 1` requires `acknowledgeProcessLevelIsolation: true`. |
-| `sessionPolicy.acknowledgeProcessLevelIsolation` | bool | `false` | Acknowledges process-level co-tenancy. | Required when `maxConcurrentSessions > 1`. |
+| `sessionPolicy.acknowledgeProcessLevelIsolation` | bool | `false` | Acknowledges process-level co-tenancy, and on a recycling pool acknowledges that the pod keeps one runtime process across its sessions. | Required when `maxConcurrentSessions > 1`, and on a pool with `recycle.enabled: true`, `recycle.maxSessionsPerPod` above 1, and a `recycle.scrubProfile` other than `vm-restart`; pool admission refuses such a pool without it. |
 | `sessionPolicy.recycle.enabled` | bool | `false` | Reuse the pod across sequential sessions with a whole-pod scrub at the occupancy-zero boundary. | `true` requires `acknowledgeBestEffortScrub: true`. |
 | `sessionPolicy.recycle.acknowledgeBestEffortScrub` | bool | `false` | Acknowledges that the recycle scrub is best-effort. | Required when `recycle.enabled: true`. |
 | `sessionPolicy.recycle.maxSessionsPerPod` | int | none | Sessions served before the pod retires. Counts every session served. | Required when `recycle.enabled: true`. |
@@ -93,8 +93,8 @@ The `sessionPolicy` block parameterizes session mode. `taskPolicy` and `concurre
 | `sessionPolicy.recycle.maxScrubFailures` | int | 3 | Cumulative scrub failures before the pod retires. | Must be `> 0`. |
 | `sessionPolicy.recycle.onScrubFailure` | string | `warn` | Disposition on a failed scrub below the limit. | One of `warn`, `fail`. |
 | `sessionPolicy.recycle.scrubProfile` | string | `standard` | Scrub procedure. `vm-restart` retires the pod at the recycle boundary and provisions a fresh replacement pod, which is a fresh guest VM, from the warm pool; `in-place` runs the standard scrub inside the continuing VM guest. | One of `standard`, `vm-restart`, `in-place`. |
-| `sessionPolicy.recycle.acknowledgeMicrovmResidualState` | bool | `false` | Acknowledges cross-tenant guest-kernel residual state. | Required when `scrubProfile: in-place`. |
-| `sessionPolicy.recycle.allowCrossTenantReuse` | bool | `false` | Permit cross-tenant sequential reuse. | Requires `isolationProfile: microvm`; never permitted when `maxConcurrentSessions > 1`. |
+| `sessionPolicy.recycle.acknowledgeMicrovmResidualState` | bool | `false` | Acknowledges that guest-kernel residual state persists across the pinned tenant's sessions in the continuing guest. | Required when `scrubProfile: in-place`. |
+| `sessionPolicy.recycle.allowCrossTenantReuse` | bool | `false` | Applies only to the sequential-reuse path under `microvm` isolation. A recycled pod stays pinned to its tenant and is never reused across tenants (see [Multi-Tenancy](../operator-guide/multi-tenancy.md)). | Requires `isolationProfile: microvm`; never permitted when `maxConcurrentSessions > 1`. |
 | `sessionPolicy.cleanupCommands` | string[] | `[]` | Deployer cleanup commands run at the recycle boundary. | -- |
 | `sessionPolicy.cleanupTimeoutSeconds` | int | 60 | Timeout for `cleanupCommands` plus the scrub-report grace. | Must be `> 0`. |
 | `sessionPolicy.maxSessionRetries` | int | 1 | Crash re-dispatch budget (2 total attempts; 0 disables). | Must be `>= 0`. |

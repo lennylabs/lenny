@@ -105,7 +105,7 @@ For the full wizard reference, the answer-file schema, and the tier presets, see
 | Component | Why you'd add it | When it's needed |
 |---|---|---|
 | gVisor (`runsc`) | Runs each pod inside a user-space kernel that intercepts system calls, so a compromised agent can't reach the host kernel. This is the default isolation profile. | Recommended for all production workloads. |
-| Kata Containers | Runs each pod in a full lightweight VM, for the strongest isolation Lenny supports. | High-risk workloads, partially trusted code, or multi-tenant clusters where pods may be reused across tenants. |
+| Kata Containers | Runs each pod in a full lightweight VM, for the strongest isolation Lenny supports. | High-risk workloads, partially trusted code, or multi-tenant clusters. A pod is never reused across tenants, because a recycled pod keeps the runtime process that served its pinned tenant; `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path under this profile. |
 | OPA Gatekeeper or Kyverno | Admission policies that keep untrusted pods on the right sandboxing profile and prevent accidental privilege escalation. | Required for production. |
 | External Secrets Operator | Syncs LLM keys and connector secrets from an external vault -- AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager. | Large deployments with hundreds of credentials per pool, or when your secrets already live in an external vault. |
 | KEDA | Scales deployments off a direct Prometheus query, bypassing the Prometheus Adapter cache for faster reactions to load. | Optional alternative to the Prometheus Adapter. |

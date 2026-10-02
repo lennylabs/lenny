@@ -77,7 +77,7 @@ For idempotent creation, set the `Idempotency-Key` request header (see [Idempote
 | `isolationProfile` | string | `runc`, `gvisor`, or `microvm` |
 | `podReuse` | boolean | `true` when the pool recycles pods (`recycle.enabled`), runs `maxConcurrentSessions > 1`, or is service mode |
 | `scrubPolicy` | string | Present only when `podReuse: true`; `best-effort`, `vm-restart`, `best-effort-in-place`, `best-effort-per-slot`, or `none` (service mode) |
-| `residualStateWarning` | boolean | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests |
+| `residualStateWarning` | boolean | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests. On a recycling pool a session may run in a runtime process that served an earlier session of the same tenant. |
 | `conversationContinuity` | string | `platform` for session mode; `none` for service mode |
 
 In service mode (`conversationContinuity: none`) every message is self-contained and the gateway may route successive messages to different replicas. A client of a `multi_turn` runtime in service mode must re-inject any needed context into each message's `input`. `GET /v1/sessions/{id}` returns the same `sessionIsolationLevel` object.

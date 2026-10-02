@@ -157,7 +157,7 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 }
 ```
 
-`sessionIsolationLevel` is an object describing the assigned pool's isolation posture. `executionMode` is `session` or `service`; `podReuse` and `residualStateWarning` are `true` when the pool recycles pods, runs `maxConcurrentSessions > 1`, or is service mode; `scrubPolicy` is present only when `podReuse: true`; and `conversationContinuity` is `"platform"` for session mode and `"none"` for service mode. In service mode every message is self-contained, so a `multi_turn` runtime's client must re-inject any needed context into each message's `input`.
+`sessionIsolationLevel` is an object describing the assigned pool's isolation posture. `executionMode` is `session` or `service`; `podReuse` and `residualStateWarning` are `true` when the pool recycles pods, runs `maxConcurrentSessions > 1`, or is service mode; `scrubPolicy` is present only when `podReuse: true`; on a recycling pool a session may run in a runtime process that served an earlier session of the same tenant, which `residualStateWarning` signals; and `conversationContinuity` is `"platform"` for session mode and `"none"` for service mode. In service mode every message is self-contained, so a `multi_turn` runtime's client must re-inject any needed context into each message's `input`.
 
 **Error codes:**
 
@@ -825,7 +825,7 @@ Returns the artifact content as an MCP resource with the appropriate MIME type. 
 
 ### `terminate_session`
 
-End a session. Valid in any non-terminal state. Triggers graceful shutdown of the agent runtime.
+End a session. Valid in any non-terminal state. Ending a session ends the session and sends the runtime process no signal.
 
 **Input schema:**
 

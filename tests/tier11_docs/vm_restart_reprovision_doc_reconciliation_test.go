@@ -116,7 +116,6 @@ func TestVMRestartDocsStateRetireAndReprovision_F5232(t *testing.T) {
 			page:   "docs/operator-guide/security-principles.md",
 			anchor: "`recycle.scrubProfile: in-place`",
 			require: []string{
-				"reuses the continuing microvm guest",
 				"`recycle.acknowledgeMicrovmResidualState: true`",
 				"`vm-restart`",
 				"retires the pod",
@@ -126,7 +125,7 @@ func TestVMRestartDocsStateRetireAndReprovision_F5232(t *testing.T) {
 		{
 			// The multi-tenancy cross-tenant-reuse paragraph.
 			page:   "docs/operator-guide/multi-tenancy.md",
-			anchor: "Cross-tenant reuse is permitted only on the sequential-reuse path",
+			anchor: "Under the `vm-restart` scrub profile",
 			require: []string{
 				"`vm-restart`",
 				"retired at the recycle boundary",

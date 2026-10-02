@@ -46,22 +46,24 @@ sessionPolicy:                    # session mode only
 | Preset | `maxConcurrentSessions` | `recycle.enabled` | Behavior |
 |:--|:--|:--|:--|
 | One session per pod | 1 | `false` | Each pod is exclusive to one session and terminates when the session ends (default). |
-| Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. |
+| Pod reuse | 1 | `true` | The pod is recycled across sequential sessions of the same tenant with a whole-pod scrub at the occupancy-zero boundary. The pod keeps one runtime process across its sessions, so a pool with `maxSessionsPerPod` above 1 and a `scrubProfile` other than `vm-restart` requires `acknowledgeProcessLevelIsolation: true`. |
 | Concurrent | N | `true` | The pod serves up to N simultaneous sessions and recycles when occupancy reaches zero. |
 | Bounded cohort | N | `false` | The pod serves N concurrent sessions, then terminates after the cohort drains. |
 
-The acknowledgments, tenant pinning, `residualStateWarning`, and the scaling factors derive from `sessionPolicy` properties: `acknowledgeBestEffortScrub` is required when recycling is enabled, `acknowledgeProcessLevelIsolation` is required when concurrency exceeds one, `acknowledgeMicrovmResidualState` is required for `scrubProfile: in-place`, and tenant pinning is required when `maxConcurrentSessions > 1` or `recycle.enabled: true`.
+The acknowledgments, tenant pinning, `residualStateWarning`, and the scaling factors derive from `sessionPolicy` properties: `acknowledgeBestEffortScrub` is required when recycling is enabled, `acknowledgeProcessLevelIsolation` is required when concurrency exceeds one and on a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, `acknowledgeMicrovmResidualState` is required for `scrubProfile: in-place`, and tenant pinning is required when `maxConcurrentSessions > 1` or `recycle.enabled: true`.
+
+**Runtime process kept across sessions.** The runtime process lives as long as the pod, so on a recycling pool a later session runs in the runtime process that served the pod's earlier sessions, and that process carries state the whole-pod scrub does not reach. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, `acknowledgeProcessLevelIsolation: true` is required because the pod keeps one runtime process across its sessions, and pool admission refuses the pool without it. An admitted update that takes a pool outside this rule (`recycle.enabled: false`, `maxSessionsPerPod: 1`, or `scrubProfile: vm-restart`) takes effect at the next session: the gateway places no later session on a pod that served an earlier session, and drains each such pod an acquisition reads.
 
 ---
 
 ## Residual state and isolation
 
-The `sessionIsolationLevel` object in the `POST /v1/sessions` response reports the assigned pool's posture. `podReuse` and `residualStateWarning` are `true` whenever the pod serves more than one session over its lifetime.
+The `sessionIsolationLevel` object in the `POST /v1/sessions` response reports the assigned pool's posture. `podReuse` and `residualStateWarning` are `true` when `recycle.enabled` is `true`, when `maxConcurrentSessions > 1`, or when `executionMode` is `service`.
 
 | Configuration | Scrub at session release | `conversationContinuity` | Residual state across sessions |
 |:--|:--|:--|:--|
 | One session per pod | Per-slot cleanup at the session's release, then the pod is terminated | `platform` | None; the pod is never reused |
-| Pod reuse | Per-slot cleanup at each release plus a best-effort whole-pod scrub at occupancy zero | `platform` | DNS cache, TCP `TIME_WAIT`, page cache, residual processes may survive a best-effort scrub |
+| Pod reuse | Per-slot cleanup at each release plus a best-effort whole-pod scrub at occupancy zero | `platform` | DNS cache, TCP `TIME_WAIT`, page cache, residual processes may survive a best-effort scrub; the runtime process and its memory persist, because the pod keeps one runtime process across its sessions (requires `acknowledgeProcessLevelIsolation`) |
 | Concurrent (`maxConcurrentSessions > 1`) | Per-slot cleanup at each release plus a whole-pod scrub at occupancy zero | `platform` | Concurrent slots share process namespace, `/tmp`, cgroup memory, and network stack |
 | Service | None | `none` | Pods serve successive requests with no scrub; process space, network stack, `/tmp`, and page cache shared across same-tenant concurrent requests |
 
@@ -89,16 +91,16 @@ ASCII fallback for the diagram above (recycle-lifecycle):
   On a non-preConnect pool the scrub success patches recycling directly to reserved with no SDK re-warm leg.
 -->
 
-The reserved hold extends the occupancy episode across an idle gap: a same-tenant session arriving within the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s) rebinds the pod with no acquisition round trip. A pod retires when it reaches `recycle.maxSessionsPerPod`, `recycle.maxScrubFailures`, or `recycle.maxPodUptimeSeconds`, when a session ends in failure or a crash, or when its host node is unschedulable. See the full machine in [State Machines](state-machines).
+The reserved hold extends the occupancy episode across an idle gap: a same-tenant session arriving within the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s) rebinds the pod with no acquisition round trip. On a pool that no longer keeps runtime processes across sessions, the next acquisition ends the hold instead of rebinding it. A pod retires when it reaches `recycle.maxSessionsPerPod`, `recycle.maxScrubFailures`, or `recycle.maxPodUptimeSeconds`, when a session ends in failure or a crash, when its host node is unschedulable, or when the adapter reports that its runtime process cannot serve the next session (retirement reason `runtime_not_live`). See the full machine in [State Machines](state-machines).
 
 ---
 
 ## Decision guide
 
 - **Default to one session per pod.** Use it when each session must run in a clean, single-use pod. It carries no residual-state risk.
-- **Choose pod reuse (`recycle.enabled: true`) for sequential throughput** when cold-start cost dominates and the workload tolerates a best-effort scrub between sessions. Set `recycle.maxSessionsPerPod` to bound reuse.
+- **Choose pod reuse (`recycle.enabled: true`) for sequential throughput** when cold-start cost dominates and the workload tolerates a best-effort scrub between sessions. Set `recycle.maxSessionsPerPod` to bound reuse. With `maxSessionsPerPod` above 1 and a `scrubProfile` other than `vm-restart`, set `acknowledgeProcessLevelIsolation: true`, because the pod keeps one runtime process across its sessions; the runtime must serve sequential sessions.
 - **Choose concurrent sessions (`maxConcurrentSessions > 1`) for lightweight handlers** that share a pod's process space, accepting process-level isolation between same-tenant slots.
 - **Choose service mode for stateless, high-throughput request handling** where each message is self-contained. A `multi_turn` runtime in service mode requires the client to re-inject context into each message.
 - **Prefer the external connector model** over service mode when the workload is a long-lived MCP server that external clients connect to directly. Connectors carry gateway-managed OAuth and content-policy interception, which service mode does not.
 
-For cross-tenant reuse, only the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `isolationProfile: microvm` and `recycle.allowCrossTenantReuse: true` is permitted, and never on a `workspaceTier: T4` pool.
+`recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `isolationProfile: microvm`, and never on a `workspaceTier: T4` pool. A pod on such a pool is never reused across tenants, because a recycled pod keeps the runtime process that served its pinned tenant.

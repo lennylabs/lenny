@@ -34,7 +34,7 @@ stateDiagram-v2
     created --> finalizing: FinalizeWorkspace
     finalizing --> ready: Workspace materialized
     ready --> starting: StartSession
-    starting --> running: Agent binary started
+    starting --> running: Agent runtime reaches ready
     running --> suspended: Interrupt
     running --> input_required: Agent calls request_input
     running --> completed: Agent finishes
@@ -60,13 +60,13 @@ stateDiagram-v2
 
 ### What happens at each state
 
-**created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session but the agent binary has not started. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
+**created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
 
 **finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from the session's `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace _content_ — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
 
-**ready** -- Workspace materialization and setup commands have completed successfully. The session is ready for the agent binary to start.
+**ready** -- Workspace materialization and setup commands have completed successfully.
 
-**starting** -- The gateway has called `StartSession` on the adapter. The adapter is spawning the runtime binary with the finalized workspace as its working directory.
+**starting** -- The gateway has called `StartSession` on the adapter, and the runtime process becomes live for the session with the finalized workspace as its working directory. In the sidecar model the kubelet starts the runtime binary through the runtime image's entrypoint when the pod starts, and the binary dials the adapter. The adapter accepts that connection at the pod's first session, and later sessions on the pod reach the same process.
 
 **running** -- The agent binary is active and processing messages. The client can send messages, and the agent produces streaming output. This is the main interactive state.
 
@@ -76,7 +76,7 @@ stateDiagram-v2
 
 **resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a pod crash (when retries remain) or after a suspended session's pod hold expires. The gateway attempts to claim a new warm pod and restore the session from the last checkpoint.
 
-**resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the agent binary is restarted from the checkpointed state.
+**resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the `Resume` RPC restores the session from the checkpoint into the runtime process the new pod started with.
 
 **awaiting_client_action** -- The resume window (`maxResumeWindowSeconds`) has elapsed without a pod becoming available. The session is waiting for the client to take action (retry, cancel, or wait longer).
 
@@ -94,7 +94,7 @@ When a session is resumed (after pod failure or suspended pod release), the gate
 
 1. Claims a new warm pod from the pool.
 2. Materializes the workspace from the last successful checkpoint snapshot.
-3. Restarts the agent binary via the `Resume` RPC with the checkpointed session state.
+3. Restores the session from the checkpoint on the new pod via the `Resume` RPC, into the runtime process the pod started with.
 4. Emits a `session.resumed` event to the client with `resumeMode` (either `full` for a normal checkpoint restore, or `conversation_only` if only the minimal eviction state was preserved) and `workspaceLost` (boolean indicating whether workspace files were lost).
 5. Increments `recovery_generation` on the session record. Clients can observe this counter to track how many times a session has been recovered.
 
@@ -130,7 +130,7 @@ The floor: enough to get a custom runtime working without knowing anything Lenny
 - **Protocol:** stdin/stdout, one JSON object per line.
 - **Input:** reads `{type: "message"}` objects from stdin.
 - **Output:** writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
-- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds, or SIGTERM.
+- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds. A missed acknowledgment ends the session, and the runtime process receives no signal.
 - **Shutdown:** must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
 - **No MCP, no checkpointing, no lifecycle signals.**
 - **Credential rotation:** if the credential needs to change mid-session, Lenny checkpoints the session and restarts it on a new pod. Basic-level runtimes that do not checkpoint lose the in-flight context.
@@ -156,7 +156,6 @@ Everything in Standard, plus a CH-RUNTIMEOPS: a second local connection that car
 - Survives pod failures with consistent checkpoints.
 - Handles interrupts cleanly via `interrupt_request` / `interrupt_acknowledged`.
 - **Rotates credentials without restarting:** the platform sends `credentials_rotated`, the runtime rebinds its LLM provider in place, and replies `credentials_acknowledged`. The session keeps going.
-- Coordinates graceful shutdown via a `DRAINING` state when the pool is being drained.
 
 ### Runtime capabilities
 
@@ -169,7 +168,7 @@ Each runtime is configured with an **execution mode** that determines how pods a
 **`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Every session is bound to a [slot](../reference/glossary#slot) on every pod, whatever the pool's concurrency: each session gets its own workspace tree at `/workspace/slots/{sessionId}/current/` and its own credential lease. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
 
 - In the default configuration (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory.
-- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`.
+- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`. When `recycle.maxSessionsPerPod` is above 1 and `recycle.scrubProfile` is not `vm-restart`, `acknowledgeProcessLevelIsolation: true` is also required, because the pod keeps one runtime process across its sessions; pool admission refuses the pool without it.
 - With `maxConcurrentSessions > 1` the pod serves multiple sessions simultaneously. Those sessions share the pod's process namespace, `/tmp`, cgroup memory, and network stack, so isolation between them is process-level and filesystem-level only. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
 
 **`service`** -- The gateway routes each message to any ready replica rather than binding a session to a pod. Pods serve successive requests with no scrub and share process space, network stack, `/tmp`, and page cache across same-tenant concurrent requests. Service mode provides no cross-message conversation continuity: every message is self-contained. Service-mode pools are pinned to a single tenant by the tenant-affinity routing layer. Useful for high-throughput stateless workloads. See [Execution Modes and Pod Lifecycle](../reference/execution-modes.md) for the full settings matrix.

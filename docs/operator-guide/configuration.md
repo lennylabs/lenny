@@ -300,7 +300,10 @@ pools:
     executionMode: session
     sessionPolicy:
       maxConcurrentSessions: 1           # simultaneous sessions per pod; > 1 requires acknowledgeProcessLevelIsolation
-      acknowledgeProcessLevelIsolation: false  # required when maxConcurrentSessions > 1
+      acknowledgeProcessLevelIsolation: false  # required when maxConcurrentSessions > 1, and when recycling
+                                               # with maxSessionsPerPod > 1 and a scrubProfile other than
+                                               # vm-restart, because the pod keeps one runtime process
+                                               # across its sessions; admission refuses the pool without it
       recycle:
         enabled: false                   # true requires acknowledgeBestEffortScrub
         acknowledgeBestEffortScrub: false

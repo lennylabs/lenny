@@ -213,6 +213,34 @@ kubectl logs -n lenny-system -l app=lenny-token-service --tail=50
 
 ---
 
+### Recycling Pool Does Not Reuse Pods
+
+A recycling pool keeps one runtime process for each pod's life, so reuse depends on the runtime serving sequential sessions and on the pool carrying the matching acknowledgment.
+
+**Symptoms:**
+- `lenny_pod_session_reuse_count` p50 is 1 on a pool with `recycle.enabled: true` and `recycle.maxSessionsPerPod` above 1
+- Gateway `Info` records `recycle: pod retired at the recycle boundary` carry `reason=runtime_not_live`
+- A pool create or update is refused with `400 VALIDATION_ERROR` naming `acknowledgeProcessLevelIsolation`
+- Pods drain after a pool update, and gateway `Info` records carry `reason=kept_runtime_outside_rule`
+
+**Diagnosis:**
+
+```bash
+# Retirement reasons recorded at the recycle boundary
+kubectl logs -n lenny-system -l app=lenny-gateway --tail=500 | grep "retired at the recycle boundary"
+
+# Drains of pods refused after a pool update
+kubectl logs -n lenny-system -l app=lenny-gateway --tail=500 | grep kept_runtime_outside_rule
+```
+
+**Resolution:**
+
+1. Retirements with `reason=runtime_not_live` mean the runtime process exits after each session, so the adapter reports at the recycle boundary that it cannot serve the next session. The pod keeps one runtime process across its sessions; fix the runtime so it keeps running and serves each later session keyed by `sessionId`.
+2. A `400 VALIDATION_ERROR` naming `acknowledgeProcessLevelIsolation` means the pool recycles with `maxSessionsPerPod` above 1 and a `scrubProfile` other than `vm-restart`. Set `sessionPolicy.acknowledgeProcessLevelIsolation: true`, or set `recycle.maxSessionsPerPod: 1` or `recycle.scrubProfile: vm-restart`.
+3. Pods draining with `reason=kept_runtime_outside_rule` after an update that ended process reuse (`recycle.enabled: false`, `maxSessionsPerPod: 1`, or `scrubProfile: vm-restart`) are expected. The gateway places no later session on a pod that served an earlier session and drains each such pod an acquisition reads, so each tenant's next session starts on a fresh pod.
+
+---
+
 ### PoolConfigDrift Alert
 
 **Symptoms:**

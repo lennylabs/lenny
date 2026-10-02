@@ -256,7 +256,7 @@ A pod that can serve more than one session is pinned to a single tenant. Pinning
 - **Concurrent sessions** (`maxConcurrentSessions > 1`): the tenant is pinned on first slot assignment.
 - **Service mode:** the tenant-affinity routing layer pins each pod on first request and rejects a mismatched `tenantId`.
 
-Cross-tenant pod reuse is only permitted on the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation and explicit `recycle.allowCrossTenantReuse: true`.
+A pod is never reused across tenants, because a recycled pod keeps the runtime process that served its pinned tenant. `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation, and a pod on such a pool also stays pinned to its tenant.
 
 ### Tenant Label Immutability
 
@@ -276,6 +276,6 @@ The `lenny-tenant-label-immutability` webhook enforces immutability of the `lenn
 |---|---|---|---|
 | `standard` | runc | Linux cgroups + namespaces | Development, low-risk workloads |
 | `sandboxed` | gVisor (runsc) | Userspace syscall interception | **Default for production** |
-| `microvm` | Kata Containers | Full VM boundary per pod | High-risk, semi-trusted code, cross-tenant reuse |
+| `microvm` | Kata Containers | Full VM boundary per pod | High-risk, semi-trusted code, multi-tenant clusters |
 
 **Recommendation:** Use `sandboxed` (gVisor) as the default isolation profile for all production workloads. Use `microvm` (Kata) only for workloads that require a VM-level isolation boundary.

@@ -101,7 +101,7 @@ Agent runtimes run in one of two execution modes; session mode is parameterized 
 | `session`, `maxConcurrentSessions > 1` | Several sessions share one pod at the same time | Process-level only | Lightweight concurrent handlers |
 | `service` | Each message is routed to any ready replica | Process-level, no scrub | Stateless high-throughput handlers |
 
-Pod recycling, concurrent sessions, and service mode relax isolation in exchange for throughput, so the platform requires explicit operator acknowledgments to enable them (`acknowledgeBestEffortScrub` for recycling, `acknowledgeProcessLevelIsolation` for concurrent sessions) and refuses unsafe combinations. Recycling requires no runtime cooperation and works at every integration level.
+Pod recycling, concurrent sessions, and service mode relax isolation in exchange for throughput, so the platform requires explicit operator acknowledgments to enable them (`acknowledgeBestEffortScrub` for recycling, and `acknowledgeProcessLevelIsolation` for concurrent sessions and for a recycling pool with `maxSessionsPerPod` above 1 and a `scrubProfile` other than `vm-restart`, because that pod keeps one runtime process across its sessions) and refuses unsafe combinations. Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions.
 
 ### Pods are untrusted by default
 

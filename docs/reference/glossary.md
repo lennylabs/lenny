@@ -255,7 +255,7 @@ The unit of content delivery in Lenny sessions. MessageParts support multiple ty
 ### Occupancy Episode
 {: #occupancy-episode }
 
-The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates. See [State Machines](state-machines).
+The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates, or when an acquisition ends the hold on a pool that no longer keeps runtime processes across sessions. See [State Machines](state-machines).
 
 ## P
 
@@ -299,7 +299,7 @@ Kubernetes-defined security profiles (Privileged, Baseline, Restricted). Lenny u
 ### Recycle
 {: #recycle }
 
-A `sessionPolicy.recycle` configuration in session mode that reuses a pod across sequential sessions. When occupancy reaches zero the gateway runs a whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup) and, on a successful scrub, holds the pod for its pinned tenant through the claim's `reserved` state. The pod retires when it reaches `recycle.maxSessionsPerPod`, `recycle.maxScrubFailures`, or `recycle.maxPodUptimeSeconds`, or when a session ends in failure or a crash. Recycling requires no runtime cooperation and works at every integration level. See [Execution Modes and Pod Lifecycle](execution-modes) and [State Machines](state-machines).
+A `sessionPolicy.recycle` configuration in session mode that reuses a pod across sequential sessions. When occupancy reaches zero the gateway runs a whole-pod scrub (credential purge, `cleanupCommands`, workspace and `/tmp` cleanup) and, on a successful scrub, holds the pod for its pinned tenant through the claim's `reserved` state. Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions, because the pod keeps one runtime process across its sessions. See [Execution Modes and Pod Lifecycle](execution-modes) and [State Machines](state-machines).
 
 ### RLS (Row-Level Security)
 {: #rls }

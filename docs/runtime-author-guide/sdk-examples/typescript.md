@@ -293,7 +293,8 @@ function main(): void {
         break;
 
       case "heartbeat":
-        // Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
+        // Respond immediately. A missed ack within 10 seconds ends the session;
+        // the runtime process receives no signal.
         writeJSON({ type: "heartbeat_ack" });
         break;
 

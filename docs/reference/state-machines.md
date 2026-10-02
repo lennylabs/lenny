@@ -86,7 +86,7 @@ stateDiagram-v2
 | `created` | Session record created in Postgres. Pod claimed. Credential lease assigned. Upload token issued. Waiting for workspace upload. Governed by `maxCreatedStateTimeoutSeconds` (default: 300s). |
 | `finalizing` | `FinalizeWorkspace` called. Staging files validated and promoted to `/workspace/slots/{sessionId}/current`. Setup commands executing. |
 | `ready` | Workspace materialized. Pod ready to start the agent session. |
-| `starting` | `StartSession` called. Agent binary launching. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
+| `starting` | `StartSession` called. The runtime process becomes live for the session: in the sidecar model the kubelet starts the binary through the runtime image's entrypoint when the pod starts, the binary dials the adapter, the adapter accepts the connection at the pod's first session, and later sessions on the pod reach the same process. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
 | `running` | Agent session active. Bidirectional streaming between client and pod via gateway. |
 | `input_required` | Sub-state of `running` (not a peer state). Pod is live and runtime is active, but the agent is blocked inside `lenny/request_input` awaiting a response. Visible to clients via `status_change(state: "input_required")`. The session remains logically `running` while in this sub-state. |
 | `suspended` | Session paused via interrupt. Pod may still be held (up to `maxSuspendedPodHoldSeconds`). `maxSessionAge` timer paused. `maxClientIdleSeconds` timer paused. `perChildMaxAge` continues ticking. |
@@ -105,7 +105,7 @@ stateDiagram-v2
 | `created` | `finalizing` | Client calls FinalizeWorkspace | `POST /v1/sessions/{id}/finalize` |
 | `finalizing` | `ready` | Workspace validation and setup complete | Internal |
 | `ready` | `starting` | Client calls StartSession | `POST /v1/sessions/{id}/start` |
-| `starting` | `running` | Agent binary starts successfully | Internal |
+| `starting` | `running` | Agent runtime reaches ready | Internal |
 | `running` | `suspended` | Interrupt acknowledged (or timeout) | `POST /v1/sessions/{id}/interrupt` |
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
 | `running` | `completed` | Agent finishes | Internal |
@@ -217,13 +217,13 @@ When occupancy reaches zero on a recycling pod, the gateway patches the claim's 
 | `claimed` | `reserved` | `preConnect: false`, scrub reported, disposition is recycle; claim patched to `reserved` with no re-warm leg |
 | `sdk_connecting` | `reserved` | SDK re-warm completes within `sdkConnectTimeoutSeconds` measured from the re-warm-start stamp |
 | `sdk_connecting` | `failed` | Re-warm watchdog fires |
-| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session, or an unschedulable host node |
+| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session, an unschedulable host node, or a runtime reported as unable to serve the next session (see the [retirement list](execution-modes#recycle-lifecycle)) |
 | `reserved` | `claimed` | Same-tenant session rebinds within the hold TTL (`reserved → bound` claim patch, no acquisition) |
-| `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm |
-| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. |
+| `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm. The gateway also ends the hold, with the same precondition-guarded DELETE, on a pool that no longer keeps runtime processes across sessions |
+| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. The gateway also stamps the `lenny.dev/drain-request` annotation on a pinned idle pod that an acquisition refuses on a pool outside the [runtime-process acknowledgment rule](execution-modes#presets). |
 | `draining` | `terminated` | Replacement provisioned |
 
-The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
+The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. On a pool that no longer keeps runtime processes across sessions, the next acquisition ends the hold instead of rebinding it. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
 
 ### Per-slot sub-states
 

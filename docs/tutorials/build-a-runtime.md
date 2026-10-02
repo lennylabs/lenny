@@ -140,7 +140,8 @@ func main() {
 			writeJSON(resp)
 
 		case "heartbeat":
-			// Must respond to heartbeats within 10 seconds or get SIGTERM
+			// Respond within 10 seconds; a missed ack ends the session, and the
+			// runtime process receives no signal
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
 
 		case "shutdown":
@@ -461,7 +462,7 @@ func writeJSON(v interface{}) {
 
 2. **Tool calls are asynchronous within the stdin channel:** When you emit a `tool_call`, the result does not arrive on the next line. Other messages (heartbeats, additional user messages) may arrive first. Track pending tool calls by ID.
 
-3. **Heartbeats:** If you do not respond to a heartbeat within 10 seconds, the adapter sends SIGTERM. Always handle them in your main loop.
+3. **Heartbeats:** If you do not respond to a heartbeat within 10 seconds, the session ends, and the runtime process receives no signal. Always handle them in your main loop.
 
 4. **Unknown messages are ignored:** The protocol is forward-compatible. New message types may be added in future versions. Your runtime must not crash on unrecognized types.
 
@@ -550,8 +551,8 @@ USER agent
 
 COPY --from=builder /calc-runtime /usr/local/bin/calc-runtime
 
-# The adapter spawns this binary; it is NOT the container entrypoint.
-# The adapter is the entrypoint; it starts the runtime via the sidecar model.
+# The entrypoint is the runtime binary. In the sidecar model the kubelet
+# starts it when the pod starts, and the adapter runs in its own container.
 # For embedded model testing, you can use this entrypoint directly:
 ENTRYPOINT ["/usr/local/bin/calc-runtime"]
 ```

@@ -181,9 +181,8 @@ With it, you can support:
 - Clean interrupts, where the agent is told to stop and acknowledges when it's reached a safe point.
 - In-place credential rotation: the platform hands you a new credential and you acknowledge the swap, with no restart. At the Standard and Basic levels a credential change instead terminates the pod and starts a replacement, which is a restart; see the Credential Rotation section of [Pod Lifecycle](lifecycle.md) for when and why a restart happens at each level.
 - Advance warning before a deadline, so you can wrap up gracefully instead of being terminated.
-- Coordinated draining when the pool is shutting down.
 
-Pod recycling (`recycle.enabled`) requires no runtime cooperation and works at every integration level; the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated.
+Pod recycling (`recycle.enabled`) requires no CH-RUNTIMEOPS exchange and works at every integration level; the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated. Reuse requires a runtime that serves sequential sessions. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. No frame signals a session's end, a runtime that exits after its session makes the pod retire at the recycle boundary, and the whole-pod scrub clears the shared paths and does not reach your runtime process. See the Recycle Lifecycle section of [Pod Lifecycle](lifecycle.md).
 
 Use this level for agents that need to survive pod failures, handle interrupts, and rotate credentials without restarting. About 300-400 lines of code, including a small background thread or process to handle lifecycle signals.
 
