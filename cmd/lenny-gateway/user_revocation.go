@@ -44,14 +44,15 @@ var _ podterminateprop.LocalTerminator = (*podTerminateFanOut)(nil)
 // RPC the full_revoke fan-out sends to a revoked user's pods.
 const userRevokeReason = "USER_REVOKED"
 
-// userTerminateDeadline bounds the graceful phase of the §4.7 Terminate
-// RPC the full_revoke fan-out sends. Per §11.4 the pod's adapter sends
-// SIGTERM, waits this long, then sends SIGKILL.
+// userTerminateDeadline is the deadline the full_revoke fan-out sends on
+// the §4.7 Terminate RPC. The pod's adapter bounds the session's runtime
+// close by it. Per §11.4 the teardown does not end the runtime process
+// (§4.7.10).
 const userTerminateDeadline = 10 * time.Second
 
 // userTerminateRPCTimeout bounds each per-pod Terminate RPC. It exceeds
-// userTerminateDeadline so the gateway observes the pod's graceful exit
-// before giving up on the call.
+// userTerminateDeadline so the gateway observes the adapter's bounded
+// session teardown before giving up on the call.
 const userTerminateRPCTimeout = 20 * time.Second
 
 // podTerminateFanOut terminates the pods hosting a revoked user's

@@ -98,8 +98,8 @@ const (
 	// `reserved`). A pod that reaches reserved is always scrubbed and, on
 	// a preConnect pool, SDK-warm; it is excluded from idle inventory and
 	// rebinds to claimed when a same-tenant session arrives within the
-	// hold, or returns to idle when the hold TTL expires. spec: §6.2
-	// (reserved hold semantics).
+	// hold, or returns to idle when the hold TTL expires or the acquisition
+	// path ends the hold. spec: §6.2 (reserved hold semantics).
 	Reserved   State = "reserved"
 	Claimed    State = "claimed"
 	Failed     State = "failed"

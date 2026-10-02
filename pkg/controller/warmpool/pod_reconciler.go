@@ -160,9 +160,11 @@ type PodReconciler struct {
 	// over-uptime pod does not re-count it. Nil is a no-op.
 	//
 	// The drain-request consumer path deliberately does not invoke this seam:
-	// a drain-requested pod was already counted by whichever gateway path
-	// stamped lenny.dev/drain-request (the ceil-threshold or per-release
-	// maxSessionsPerPod stamp), so counting it here would double-count it.
+	// a drain-requested pod is not an uptime retirement. The ceil-threshold
+	// and per-release maxSessionsPerPod stamps of lenny.dev/drain-request
+	// already counted it on the gateway, so counting it here would
+	// double-count it, and the §5.2 acquisition that stamps a refused pinned
+	// idle pod logs its own retirement reason.
 	//
 	// spec: §4.6.1 (uptime drains are WarmPoolController-written).
 	OnUptimeRetirement func(pool, runtimeClass string)

@@ -128,8 +128,8 @@ func TestTenantLabelImmutabilityRejectsCrossTenantChange(t *testing.T) {
 	}
 }
 
-// spec: §5.2 — pool-return by the WarmPoolController is the
-// {tenant_id} → unassigned edge admitted by the tenant webhook.
+// spec: §5.2 — the tenant webhook admits the {tenant_id} → unassigned
+// edge for the WarmPoolController; a recycled pod never takes it.
 func TestTenantLabelImmutabilityAllowsPoolReturnByController(t *testing.T) {
 	resp := webhook.TenantLabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u6",

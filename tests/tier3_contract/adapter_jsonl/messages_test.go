@@ -159,8 +159,8 @@ func TestAdapterAcceptsCanonicalMessages(t *testing.T) {
 // spec: 15.4
 // diagnosis: heartbeat → heartbeat_ack must complete within 10 seconds.
 //
-//	If the adapter delays beyond that, the gateway sends SIGTERM
-//	per the spec.
+//	If the adapter delays beyond that, the adapter ends the session's
+//	stream per the spec.
 func TestAdapterHeartbeatAckWithin10s(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

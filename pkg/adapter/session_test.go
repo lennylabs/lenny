@@ -412,8 +412,8 @@ func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
 
 // TestShutdownPlumbsDeadlineMsIntoRuntimeClose asserts §11.4 step 3:
 // the §4.7 ShutdownRequest.deadline_ms field flows into the runtime
-// adapter's Close as a context deadline, so the §11.4 10s graceful
-// window is honored by the adapter instead of an internal default.
+// adapter's Close as a context deadline, so the gateway's deadline
+// bounds the session teardown instead of an internal default.
 // spec: §11.4.
 func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
 	s, rt, _ := sessionServer(t)

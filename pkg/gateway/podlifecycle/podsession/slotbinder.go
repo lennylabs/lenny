@@ -470,18 +470,18 @@ func compensationCause(err error) string {
 // runtime running for an abandoned session.
 //
 // The call carries two bounds and they differ deliberately. The fourth
-// argument of ShutdownReclaim is the graceful window the adapter spends on
-// the runtime close, and the RPC deadline is the budget, which outlasts that
-// window so the gateway does not give up on the adapter's SIGTERM pivot. A
+// argument of ShutdownReclaim is the deadline the adapter applies to the
+// runtime close, and the RPC deadline is the budget, which outlasts that
+// deadline so the gateway does not give up on the adapter's teardown. A
 // cleanup whose tree removal outruns the remaining budget answers nothing in
 // time, and that is the unanswered reclaim §7.1 accounts. The §11.4 revoke
 // fan-out holds the same relation between its RPC timeout and the shorter
 // graceful window it sends.
 //
 // The reclaim reuses the connection the failed stage holds for cost; §7.1
-// states that the fence does not depend on it. The reason string maps onto
-// the intra-pod terminate frame's session_complete default at the adapter,
-// so the compensation mints no new wire value.
+// states that the fence does not depend on it. The adapter writes no
+// CH-RUNTIMEOPS frame on a teardown (§4.7), so the reason string reaches no
+// intra-pod frame and the compensation mints no new wire value.
 //
 // spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract); §5.2
 // (pool configuration and execution modes).

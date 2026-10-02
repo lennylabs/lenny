@@ -26,9 +26,11 @@ const (
 
 	// AnnotationDrainRequest is stamped by the gateway on an agent Pod when
 	// the pod crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
-	// slots failed or leaked within the rolling window). The
-	// WarmPoolController consumes the annotation as the source of the
-	// unhealthy-threshold drain transition, so the gateway never writes
+	// slots failed or leaked within the rolling window), when a concurrent
+	// pod's release count reaches maxSessionsPerPod, or when an acquisition
+	// refuses a pinned idle pod that no SandboxClaim holds (§5.2 deployer
+	// acknowledgment). The WarmPoolController consumes the annotation as
+	// the source of the drain transition, so the gateway never writes
 	// Sandbox.status.phase=draining itself: the WarmPoolController is the
 	// sole writer of Sandbox.status (§4.6.3 ownership decomposition). The
 	// gateway's `get`/`patch` on agent Pods grant covers this annotation

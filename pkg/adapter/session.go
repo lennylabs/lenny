@@ -73,10 +73,13 @@ type RuntimeProcess interface {
 // (§4.7, §6.1). It is the final RPC of the §4.7 session assignment
 // sequence: the workspace is already materialized by FinalizeWorkspace
 // and setup is already run by RunSetup, so StartSession claims the pod,
-// writes the §15.4 adapter manifest, and starts the runtime process. It
+// writes the §15.4 adapter manifest, and starts the session on the
+// runtime process, which the kubelet started with the pod (§4.7.9). It
 // rejects the call with Unavailable when the pod already holds a
-// session. A session-mode pod is one-session-only: the pod is
-// terminated and replaced after the session ends rather than reused.
+// session. A pod with maxConcurrentSessions 1 holds one session at a
+// time: with recycling enabled it serves sequential sessions of one
+// tenant in one runtime process, and otherwise it is terminated and
+// replaced after the session ends (§5.2).
 //
 // On any failure after the session is tentatively claimed, the pod is
 // returned to the idle state so a retry can land on a fresh pod.
@@ -250,8 +253,8 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // sidecar runtime's connection lives as long as the pod (§4.7.10).
 //
 // A non-positive deadline_ms leaves Runtime.Close on the inbound context;
-// a positive one bounds it, which honors the §11.4 graceful window on a
-// transport that ends a process at Close. The sidecar transport's Close
+// a positive one bounds it, which honors the gateway's teardown deadline on
+// a transport that ends a process at Close. The sidecar transport's Close
 // returns at once.
 //
 // spec: §4.7; §4.7.1 (role and gateway RPC contract), rules 10 through 15;

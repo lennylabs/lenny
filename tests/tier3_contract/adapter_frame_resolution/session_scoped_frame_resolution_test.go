@@ -244,7 +244,8 @@ func TestUnaddressedFrameIsRejectedOnAPodHoldingTwoSlots_spec_28_5_3(t *testing.
 // diagnosis: a failure means the demultiplexer narrowed to every frame
 //
 //	rather than to the session-scoped set, so a pod-global runtime that
-//	acks unstamped misses every heartbeat and is SIGTERMed.
+//	acks unstamped misses every heartbeat and has its session's stream
+//	ended.
 func TestProtocolFrameIsRelayedOnAPodHoldingTwoSlots_spec_28_5_3(t *testing.T) {
 	rt, client := resolutionPod(t, "sess-a", "sess-b")
 	streamA := attach(t, client, "sess-a")

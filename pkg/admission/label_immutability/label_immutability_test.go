@@ -125,7 +125,7 @@ func TestDecideRejectsTenantInitialAssignmentByOtherSA(t *testing.T) {
 	}
 }
 
-// Pool return: tenant_id → unassigned allowed only for WarmPoolController.
+// Tenant reset: tenant_id → unassigned allowed only for WarmPoolController.
 func TestDecideAllowsTenantResetByWarmPoolController(t *testing.T) {
 	d, err := Decide(Request{
 		OldLabels:        map[string]string{LabelTenantID: "acme"},

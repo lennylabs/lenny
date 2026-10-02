@@ -12,7 +12,7 @@
 // reaps it. The credential-lease and token revocations (steps 5-6)
 // already fan out over pub/sub, but the Terminate RPC (steps 2-4) did
 // not, so a revoked user's peer-replica pods ran for up to the
-// orphan-sweep window without the graceful SIGTERM the spec mandates.
+// orphan-sweep window without the session teardown the spec mandates.
 //
 // Propagator closes that gap. Publish marshals the user's session ids
 // and publishes them on a Redis channel; Run subscribes and applies a

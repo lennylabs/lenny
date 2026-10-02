@@ -45,9 +45,9 @@ import (
 const SocketEnvVar = "LENNY_ADAPTER_SOCKET"
 
 // dialTimeout bounds how long DialSocket waits for the adapter's
-// listener to accept. The adapter spawns the runtime container after it
-// has already bound the socket (§4.7 startup sequence), but the runtime
-// process may still race the listener; a bounded retry absorbs that.
+// listener to accept. The kubelet starts the runtime container with the
+// pod, and the adapter does not spawn it (§4.7.9 startup sequence), so the
+// runtime process may race the listener; a bounded retry absorbs that.
 const dialTimeout = 5 * time.Second
 
 // Transport is a resolved §28.5.3 byte transport: an io.Reader for

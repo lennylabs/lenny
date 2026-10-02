@@ -235,8 +235,8 @@ func (r *MCPRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) 
 
 // Interrupt signals the agent's MCP-server process. A type: mcp runtime
 // has no §15.4.3 CH-RUNTIMEOPS, so a clean interrupt is a SIGTERM
-// and a hard interrupt is a SIGKILL — the same signal path the §4.7
-// Interrupt RPC falls back to for any runtime without a CH-RUNTIMEOPS.
+// and a hard interrupt is a SIGKILL. A type: agent runtime without a
+// CH-RUNTIMEOPS receives no signal on the §4.7 Interrupt RPC (§15.4.3).
 func (r *MCPRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 	r.mu.Lock()
 	cmd := r.cmd

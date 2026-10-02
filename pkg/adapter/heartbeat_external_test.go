@@ -15,8 +15,9 @@ import (
 )
 
 // spec: §28.5.3 — a runtime that does not answer a heartbeat
-// within the ack window is hung; the adapter sends SIGTERM (the clean
-// Interrupt) and ends the Attach stream with DeadlineExceeded.
+// within the ack window is hung; the adapter calls the clean Interrupt,
+// which sends the sidecar runtime process no signal, and ends the Attach
+// stream with DeadlineExceeded.
 func TestAttachHeartbeatHungSendsSIGTERM_spec_15_4_1_1826(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	// Unbuffered, never-closed output keeps the runtime "alive" with no

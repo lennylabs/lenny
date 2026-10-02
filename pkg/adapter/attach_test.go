@@ -298,8 +298,8 @@ func TestAttachDemultiplexesConcurrentSlotsBySessionID_spec_6_4(t *testing.T) {
 // session-scoped-frame rule; the protocol-level frames sit outside it.
 //
 // diagnosis: a failure means the demultiplexer swallows the protocol-level
-// frames too, so every runtime misses its heartbeat ack deadline and is
-// SIGTERMed mid-session.
+// frames too, so every runtime misses its heartbeat ack deadline and has
+// its session's stream ended mid-session.
 func TestAttachRelaysAProtocolLevelFrame_spec_28_5_3(t *testing.T) {
 	s, rt := concurrentServer(t)
 	rt.output = make(chan []byte, 4)

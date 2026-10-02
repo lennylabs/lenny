@@ -120,7 +120,7 @@ type Manifest struct {
 	TracingContext map[string]string `json:"tracingContext,omitempty"`
 	// CredentialsPath is the §4.7 absolute path of this session's own
 	// credential file, /run/lenny/slots/{sessionId}/credentials.json.
-	// The adapter writes the file before spawning the runtime binary and
+	// The adapter writes the file on AssignCredentials for this session and
 	// rewrites it in place on a rotation for this session, so a runtime
 	// that reads credential material reads its path from here rather
 	// than assuming a fixed location. Empty only on an adapter wired

@@ -172,7 +172,8 @@ type SessionReleaser interface {
 // SessionReleaser (pod-backed) and otherwise falling back to Close (echo,
 // subprocess). Draining the pod is the §11.4 clean-cancellation
 // mechanism: the §6.2 claimed → draining → terminated transition triggers the
-// adapter's graceful shutdown (SIGTERM, wait, then SIGKILL). This is the single
+// adapter's session teardown, which sends the runtime process no signal; the
+// process ends with the pod (§4.7.10). This is the single
 // release entry point shared by the session-server terminal path, the §8.10
 // cascade, and the §8.5 lenny/cancel_child cascade so every cancellation route
 // drains the runtime the same way. A nil executor is a no-op.

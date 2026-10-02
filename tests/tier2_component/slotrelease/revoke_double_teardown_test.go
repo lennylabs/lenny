@@ -71,8 +71,8 @@ const (
 	// enough to hold the revoked session beside a co-tenant, which is what
 	// makes the occupancy-zero edge a separate event from the revocation.
 	releaseMaxConcurrent = 4
-	// userTerminateDeadline is the §11.4 step-3 graceful window the
-	// gateway pins at full revoke.
+	// userTerminateDeadline is the deadline the gateway sends on the §11.4
+	// step-2 Shutdown at full revoke; it bounds the step-3 session teardown.
 	userTerminateDeadline = 10 * time.Second
 )
 

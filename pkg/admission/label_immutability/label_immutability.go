@@ -18,7 +18,8 @@
 //     - unset → {tenant_id} : allowed only for the gateway SA on
 //     initial first-assignment of a pod to a tenant.
 //     - {tenant_id} → "unassigned" : allowed only for the
-//     WarmPoolController SA when a pod is returned to the pool.
+//     WarmPoolController SA. A recycled pod never takes this edge: the
+//     tenant pin persists for the pod's lifetime (§5.2).
 //     - {tenant_id} → {different_tenant_id} : always rejected.
 //     - {tenant_id} → unset, "unassigned" → {tenant_id} etc are
 //     outside the documented permitted transitions and are rejected.
@@ -42,9 +43,10 @@ const (
 	LabelTenantID      = "lenny.dev/tenant-id"
 )
 
-// UnassignedTenantID is the sentinel tenant-id value used when a pod
-// has been returned to the warm pool. The transition
-// {tenant_id} → unassigned is the only legal teardown edge.
+// UnassignedTenantID is the sentinel tenant-id value the
+// {tenant_id} → unassigned transition writes. That transition is the
+// only legal teardown edge, and a recycled pod never takes it, because the
+// tenant pin persists for the pod's lifetime (§5.2).
 const UnassignedTenantID = "unassigned"
 
 // ServiceAccount usernames whose admission UserInfo grants the
@@ -183,8 +185,9 @@ func DecideTenantTransition(r Request) (Decision, error) {
 		return Decision{Allowed: true, Code: 200}, nil
 
 	case oldTenant != "" && newTenant == UnassignedTenantID:
-		// Pool return: only the WarmPoolController SA may reset
-		// tenant-id to "unassigned".
+		// Tenant reset: only the WarmPoolController SA may reset
+		// tenant-id to "unassigned". A recycled pod never takes this edge
+		// (§5.2).
 		if r.UserInfoUsername != WarmPoolControllerSA {
 			return Decision{
 				Allowed: false,
