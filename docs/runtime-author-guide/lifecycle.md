@@ -327,7 +327,7 @@ Full-level runtimes receive a `terminate` message on the CH-RUNTIMEOPS as the pr
 | `deadlineMs` | integer | Time in milliseconds before the adapter sends SIGTERM. |
 | `reason` | string | One of `"session_complete"`, `"budget_exhausted"`, `"eviction"`, or `"operator"`. |
 
-Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod the runtime exits at each session end; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no CH-RUNTIMEOPS handshake.
+Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod the runtime exits at each session end; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no CH-RUNTIMEOPS handshake. The adapter's socket address is bound for the pod's lifetime and does not change between sessions.
 
 ---
 
