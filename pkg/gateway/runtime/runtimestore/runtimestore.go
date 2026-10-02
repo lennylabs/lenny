@@ -1022,9 +1022,16 @@ type SessionPolicy struct {
 	MaxConcurrentSessions int `json:"maxConcurrentSessions,omitempty"`
 
 	// AcknowledgeProcessLevelIsolation is the §5.2 deployer acknowledgment
-	// that concurrent slots share the pod process namespace, /tmp, cgroup
-	// memory, network stack, and credential group-read access. Required
-	// when MaxConcurrentSessions > 1.
+	// that sessions on one pod share its runtime process: concurrent slots
+	// share the pod process namespace, /tmp, cgroup memory, network stack,
+	// and credential group-read access, and a recycled pod carries the
+	// state the whole-pod scrub does not reach into its next session.
+	// Required when MaxConcurrentSessions > 1, and on a pool with
+	// Recycle.Enabled, Recycle.MaxSessionsPerPod > 1, and a
+	// Recycle.ScrubProfile other than `vm-restart`, because the pod then
+	// keeps one runtime process across its sessions. Pool admission
+	// refuses the pool without it. spec: §5.2 (Deployer acknowledgment
+	// (runtime process kept across sessions)).
 	AcknowledgeProcessLevelIsolation bool `json:"acknowledgeProcessLevelIsolation,omitempty"`
 
 	// Recycle is the §5.2 sequential pod-reuse policy. It is nil when the
@@ -1075,16 +1082,21 @@ type RecyclePolicy struct {
 	// the workspace scrub is best-effort. Required when Enabled is true.
 	AcknowledgeBestEffortScrub bool `json:"acknowledgeBestEffortScrub,omitempty"`
 
-	// AllowCrossTenantReuse permits a recycling pod to serve sessions from
-	// more than one tenant on the sequential-reuse path. §5.2 permits it
-	// only with microvm isolation and only when MaxConcurrentSessions is 1.
+	// AllowCrossTenantReuse is the §5.2 cross-tenant sequential-reuse
+	// request. §5.2 admits it only with microvm isolation,
+	// MaxConcurrentSessions 1, a `vm-restart` or `in-place` ScrubProfile,
+	// and a non-T4 runtime. A recycled pod stays pinned to its first
+	// tenant because it keeps the runtime process that served that tenant,
+	// so the field does not change which tenant a pod serves.
 	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
 
 	// ScrubProfile is the §5.2 whole-pod scrub variant: `standard` (the
-	// default, in-guest scrub steps), `vm-restart` (boot a fresh guest
-	// between tenants on a microvm cross-tenant-reuse pool), or `in-place`
-	// (reuse the running guest with documented residual state). The store
-	// enum matches the CRD `scrubProfile` enum value-for-value.
+	// default, in-guest scrub steps), `vm-restart` (retire the pod at every
+	// recycle boundary and reprovision a fresh guest), or `in-place` (keep
+	// the running guest across the pinned tenant's sessions with documented
+	// residual state). Neither microvm variant reuses a pod across tenants.
+	// The store enum matches the CRD `scrubProfile` enum value-for-value.
+	// spec: §5.2 (Kata/microvm scrub variant).
 	ScrubProfile MicrovmScrubMode `json:"scrubProfile,omitempty"`
 
 	// AcknowledgeMicrovmResidualState is the §5.2 acknowledgment that

@@ -46,12 +46,13 @@ type SessionPolicy struct {
 // poolstore. spec: §5.2 (recycle lifecycle, Kata scrub variant).
 type RecyclePolicy struct {
 	// ScrubProfile selects the whole-pod scrub variant: `standard` (the
-	// default) runs the in-guest scrub steps; `vm-restart` boots a fresh
-	// guest VM between tenants on a microvm cross-tenant-reuse pool;
-	// `in-place` reuses the running guest and leaves guest-kernel residual
-	// state. The pool controller rejects `standard` on a pool with
-	// `recycle.allowCrossTenantReuse: true`. spec: §5.2 (Kata/microvm
-	// scrub variant).
+	// default) runs the in-guest scrub steps; `vm-restart` retires the pod
+	// at every recycle boundary and reprovisions a fresh guest VM;
+	// `in-place` keeps the running guest across the pinned tenant's later
+	// sessions and leaves guest-kernel residual state. No recycled pod is
+	// reused across tenants under any profile. The pool controller rejects
+	// `standard` on a pool with `recycle.allowCrossTenantReuse: true`.
+	// spec: §5.2 (Kata/microvm scrub variant).
 	// +kubebuilder:validation:Enum=standard;vm-restart;in-place
 	// +optional
 	ScrubProfile string `json:"scrubProfile,omitempty"`
@@ -59,9 +60,11 @@ type RecyclePolicy struct {
 	// AcknowledgeMicrovmResidualState records the deployer's
 	// acknowledgment that guest-kernel residual state (DNS cache, TCP
 	// TIME_WAIT, page cache, inotify/fanotify registrations) persists
-	// across tenants. The pool controller requires it when ScrubProfile is
-	// `in-place` and rejects the pool otherwise. spec: §5.2 (Kata/microvm
-	// scrub variant).
+	// across the pinned tenant's sessions in the continuing `in-place`
+	// guest. No recycled pod is reused across tenants, so the state never
+	// reaches another tenant. The pool controller requires it when
+	// ScrubProfile is `in-place` and rejects the pool otherwise. spec: §5.2
+	// (Kata/microvm scrub variant).
 	// +optional
 	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
 }

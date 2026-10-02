@@ -73,8 +73,12 @@ const DefaultCleanupTimeout = 30 * time.Second
 // commands inside the agent pod.
 type Ops interface {
 	// KillUserProcesses runs scrub step 1: kill all remaining user
-	// processes (kill -9 -1 as the sandbox user). It terminates the
-	// runtime's SDK process along with every other task process.
+	// processes (kill -9 -1 as the sandbox user). It signals only processes
+	// in the container that runs the scrub and spares that container's
+	// first process. In the sidecar model it never reaches the runtime
+	// container, and in the embedded model it ends only the processes the
+	// runtime started, so the runtime process is kept in both models.
+	// spec: §5.2 ("What the scrub reaches").
 	KillUserProcesses(ctx context.Context) error
 
 	// PurgeIPCShm runs scrub step 1b: purge all shmget-allocated IPC

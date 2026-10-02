@@ -262,11 +262,10 @@ const heldSessionCloseWindow = 10 * time.Second
 // locked step would have had to remove for its teardown to run, so that
 // request skips the teardown that carries the flush.
 //
-// The loop sends no CH-RUNTIMEOPS drain signal and reports no §5.2 session
-// scrub. The drain asks the runtime to finish its current exchange inside
-// a grace window a coordinator collects, and this is the path on which no
-// coordinator exists; the scrub report is the record of a scrub a Shutdown
-// teardown performed, and this path performs none.
+// The loop sends no CH-RUNTIMEOPS drain signal, and no adapter path sends
+// one. It reports no §5.2 session scrub, because the scrub report is the
+// record of a scrub a Shutdown teardown performed and this path performs
+// none.
 //
 // The generation the records carry is the member's own last fenced value,
 // read off the registry entry pass 1 deregistered, and zero for a session
@@ -314,14 +313,14 @@ func (s *Server) terminateHeldSession(guardCtx context.Context, m heldSession) {
 	// budget_return.lua (§8.3) with its complete token totals.
 	s.emitFinalUsage(ctx, m.sessionID)
 
-	// The close ends the session's use of the pod's shared runtime process,
-	// so the generation state moves with it: a terminated session must not
-	// keep naming the process's sole occupant, or the intra-pod MCP surface
-	// would keep forwarding a tool call under a principal whose session has
-	// ended and the pod surface could never be cancelled for the next claim.
-	// A sidecar runtime was already ended by the pod-scope teardown that
-	// onHoldTimeout ran before pass 1.
-	// spec: §10.1; §15.4.3.
+	// The close takes the session off the pod's runtime process, so the
+	// generation state moves with it: a terminated session must not keep
+	// naming the process's sole occupant, or the intra-pod MCP surface would
+	// keep forwarding a tool call under a principal whose session has ended
+	// and the pod surface could never be cancelled for the next claim. On
+	// the sidecar transport the close ends nothing: the pod-scope teardown
+	// that onHoldTimeout ran before pass 1 has already ended that runtime.
+	// spec: §10.1; §15.4.3; §4.7.10 (Runtime process lifetime).
 	closeErr := error(nil)
 	if s.Runtime != nil {
 		closeErr = s.Runtime.Close(ctx, m.sessionID)

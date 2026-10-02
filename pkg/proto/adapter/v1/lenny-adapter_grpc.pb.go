@@ -139,7 +139,7 @@ type AdapterClient interface {
 	// receives no chance to drain in-flight requests; emergency revocation.
 	RevokeCredentials(ctx context.Context, in *RevokeCredentialsRequest, opts ...grpc.CallOption) (*RevokeCredentialsResponse, error)
 	// Interrupt asks the agent to pause and (optionally) checkpoint. Two
-	// modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+	// modes: clean (graceful, with deadline) and hard (immediate).
 	Interrupt(ctx context.Context, in *InterruptRequest, opts ...grpc.CallOption) (*InterruptResponse, error)
 	// Checkpoint is the gateway-driven bidirectional grant/confirm stream
 	// that exports recoverable session state (§4.7 RPC table, §10.1). The
@@ -223,9 +223,11 @@ type AdapterClient interface {
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error)
-	// Shutdown asks the adapter to terminate the agent and release the pod.
-	// The adapter forwards a JSONL `shutdown` to the agent with the supplied
-	// deadline. Returns when the agent process has exited.
+	// Shutdown ends the named session's use of the pod's runtime process,
+	// which stays alive for the pod's life (§4.7.10), and releases the
+	// session's slot. The adapter forwards a JSONL `shutdown` to the agent
+	// with the supplied deadline. Returns without waiting for the runtime
+	// process to exit.
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
 	// DemoteSDK is required for runtimes that declare
 	// `capabilities.preConnect: true`. The gateway calls DemoteSDK when an
@@ -598,7 +600,7 @@ type AdapterServer interface {
 	// receives no chance to drain in-flight requests; emergency revocation.
 	RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error)
 	// Interrupt asks the agent to pause and (optionally) checkpoint. Two
-	// modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+	// modes: clean (graceful, with deadline) and hard (immediate).
 	Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error)
 	// Checkpoint is the gateway-driven bidirectional grant/confirm stream
 	// that exports recoverable session state (§4.7 RPC table, §10.1). The
@@ -682,9 +684,11 @@ type AdapterServer interface {
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error)
-	// Shutdown asks the adapter to terminate the agent and release the pod.
-	// The adapter forwards a JSONL `shutdown` to the agent with the supplied
-	// deadline. Returns when the agent process has exited.
+	// Shutdown ends the named session's use of the pod's runtime process,
+	// which stays alive for the pod's life (§4.7.10), and releases the
+	// session's slot. The adapter forwards a JSONL `shutdown` to the agent
+	// with the supplied deadline. Returns without waiting for the runtime
+	// process to exit.
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)
 	// DemoteSDK is required for runtimes that declare
 	// `capabilities.preConnect: true`. The gateway calls DemoteSDK when an

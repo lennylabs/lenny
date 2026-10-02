@@ -69,9 +69,10 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	// against the pod's slot count.
 	out := demuxSessionOutput(ctx, rawOut, sessionID, s.slotCount)
 
-	// spec: §28.5.3 — the adapter probes runtime liveness
-	// with periodic heartbeats and SIGTERMs a process that misses the ack
-	// deadline. Disabled (hbHung == nil) unless HeartbeatInterval is set.
+	// spec: §28.5.3 — the adapter probes runtime liveness with periodic
+	// heartbeats and ends the session's stream when the runtime misses the
+	// ack deadline; the runtime process receives no signal on the sidecar
+	// transport (§4.7.10, Runtime process lifetime). Disabled (hbHung == nil) unless HeartbeatInterval is set.
 	hb := s.startHeartbeat(ctx, sessionID, rt)
 	var hbHung <-chan struct{}
 	if hb != nil {
@@ -143,12 +144,15 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			}
 			return err
 		case <-hbHung:
-			// spec: §28.5.3 — the runtime missed the heartbeat
-			// ack deadline. The adapter SIGTERMs the hung process and ends
-			// the stream with DeadlineExceeded so the gateway sees the
-			// unresponsive-agent escalation rather than a clean close.
+			// spec: §28.5.3 — the runtime missed the heartbeat ack
+			// deadline. The adapter calls Runtime.Interrupt, which signals a
+			// process only on the developer-loop executor and ends nothing on
+			// the sidecar transport, and ends the stream with
+			// DeadlineExceeded so the gateway sees the unresponsive-agent
+			// escalation rather than a clean close. spec: §4.7.10 (Runtime
+			// process lifetime).
 			s.onHeartbeatHung(ctx, sessionID, rt)
-			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; sent SIGTERM (§28.5.3)")
+			return status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline; session stream ended (§28.5.3)")
 		case <-ctx.Done():
 			return ctx.Err()
 		}

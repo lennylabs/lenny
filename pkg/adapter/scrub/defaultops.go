@@ -24,7 +24,11 @@ type DefaultOps struct {
 }
 
 // KillUserProcesses runs scrub step 1: kill -9 -1 terminates every process
-// the sandbox user can signal. spec: §5.2 step 1.
+// the sandbox user can signal in the container that runs the scrub, except
+// that container's first process. It never reaches the runtime container in
+// the sidecar model, and in the embedded model it ends only the runtime's
+// child processes, so the runtime process is kept.
+// spec: §5.2 step 1; §5.2 ("What the scrub reaches").
 func (d DefaultOps) KillUserProcesses(ctx context.Context) error {
 	// `kill -9 -1` signals every process except the caller. Running it
 	// through `sh -c` keeps the -1 target literal across su wrapping.

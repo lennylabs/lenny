@@ -479,10 +479,12 @@ func (lc *RuntimeOps) SignalDeadlineApproaching(remainingMs int32, trigger strin
 	})
 }
 
-// Terminate tells the runtime to exit cleanly within deadlineMs. reason
-// is one of "session_complete", "budget_exhausted", "eviction",
-// "operator". The adapter sends SIGTERM if the runtime has not exited
-// when the deadline elapses.
+// Terminate writes the CH-RUNTIMEOPS terminate frame, which asks the
+// runtime to exit cleanly within deadlineMs. reason is one of
+// "session_complete", "budget_exhausted", "eviction", "operator". It sends
+// no signal after the frame. No production code calls it: the runtime
+// process lives as long as the pod, and the pod-scope teardown ends it.
+// spec: §4.7.10 (Runtime process lifetime).
 func (lc *RuntimeOps) Terminate(deadlineMs int32, reason string) error {
 	return lc.writeFrame(lifecycleFrame{
 		Type:       "terminate",

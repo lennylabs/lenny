@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// defaultHeartbeatAckTimeout is the §28.5.3 window the runtime
-// has to answer a heartbeat before the adapter treats it as hung and
-// sends SIGTERM. spec: §28.5.3.
+// defaultHeartbeatAckTimeout is the §28.5.3 window the runtime has to
+// answer a heartbeat before the adapter treats it as hung and ends the
+// session's stream. spec: §28.5.3.
 const defaultHeartbeatAckTimeout = 10 * time.Second
 
 // jsonlFrameType returns the top-level `type` discriminant of a §28.5.3
@@ -35,8 +35,8 @@ func jsonlFrameType(line []byte) string {
 // it sends a `{type:heartbeat,ts}` frame to the runtime every interval
 // and expects a `heartbeat_ack` within ackTimeout. When an ack does not
 // arrive in time the runtime is considered hung and onHung fires once
-// (the Attach loop SIGTERMs the runtime and ends the stream). spec:
-// §28.5.3.
+// (the Attach loop calls Runtime.Interrupt and ends the session's
+// stream). spec: §28.5.3.
 type heartbeatMonitor struct {
 	interval   time.Duration
 	ackTimeout time.Duration
@@ -156,13 +156,16 @@ func (s *Server) startHeartbeat(ctx context.Context, sessionID string, rt Runtim
 	return mon
 }
 
-// onHeartbeatHung performs the §28.5.3 unresponsive-agent
-// escalation: it sends SIGTERM (the clean Interrupt) to the hung runtime
-// and logs the escalation. The Attach loop calls it once when the
-// monitor's hung channel closes, then ends the stream.
+// onHeartbeatHung performs the §28.5.3 unresponsive-agent escalation:
+// it calls the clean Runtime.Interrupt for the session and logs the
+// escalation. The Attach loop calls it once when the monitor's hung
+// channel closes, then ends the session's stream. Interrupt signals a
+// process only on the developer-loop executor; the sidecar transport ends
+// nothing, because the runtime process lives as long as the pod.
+// spec: §28.5.3; §4.7.10 (Runtime process lifetime).
 func (s *Server) onHeartbeatHung(ctx context.Context, sessionID string, rt RuntimeProcess) {
-	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; sending SIGTERM (§28.5.3)", sessionID)
+	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; ending the session's stream (§28.5.3)", sessionID)
 	if err := rt.Interrupt(ctx, sessionID, false); err != nil {
-		log.Printf("lenny-adapter: SIGTERM of hung runtime for session %s failed: %v", sessionID, err)
+		log.Printf("lenny-adapter: interrupt of hung runtime for session %s failed: %v", sessionID, err)
 	}
 }

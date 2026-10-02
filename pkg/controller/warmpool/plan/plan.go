@@ -29,7 +29,7 @@
 //     returns to idle or terminates.
 //   - A reserved pod is one whose §4.6 claim sits in the §6.2 reserved
 //     hold window: scrubbed and held for its pinned tenant until the
-//     claim-hold TTL expires. The §4.6.2 rule "reserved pods count as
+//     claim-hold TTL expires or an acquisition ends the hold. The §4.6.2 rule "reserved pods count as
 //     occupied" excludes it from claimable idle inventory (it is not
 //     counted in WarmCount or ReadyCount) and counts it occupied for
 //     scaling, so a long gateway.claimHoldTTLSeconds depresses apparent

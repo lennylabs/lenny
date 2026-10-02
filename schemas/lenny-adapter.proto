@@ -108,7 +108,7 @@ service Adapter {
   rpc RevokeCredentials(RevokeCredentialsRequest) returns (RevokeCredentialsResponse) {}
 
   // Interrupt asks the agent to pause and (optionally) checkpoint. Two
-  // modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+  // modes: clean (graceful, with deadline) and hard (immediate).
   rpc Interrupt(InterruptRequest) returns (InterruptResponse) {}
 
   // Checkpoint is the gateway-driven bidirectional grant/confirm stream
@@ -200,9 +200,11 @@ service Adapter {
   // last call. The gateway uses this for budget enforcement and billing.
   rpc ReportUsage(ReportUsageRequest) returns (ReportUsageResponse) {}
 
-  // Shutdown asks the adapter to terminate the agent and release the pod.
-  // The adapter forwards a JSONL `shutdown` to the agent with the supplied
-  // deadline. Returns when the agent process has exited.
+  // Shutdown ends the named session's use of the pod's runtime process,
+  // which stays alive for the pod's life (§4.7.10), and releases the
+  // session's slot. The adapter forwards a JSONL `shutdown` to the agent
+  // with the supplied deadline. Returns without waiting for the runtime
+  // process to exit.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse) {}
 
   // DemoteSDK is required for runtimes that declare
@@ -874,7 +876,9 @@ message WorkspacePlanWarning {
 // session assignments the gateway skips the RunSetup RPC entirely so the
 // adapter's pod-level setup-completion state is implicit (no second
 // RunSetup means no second execution). Per-session setup belongs in the
-// runtime's initialization rather than in setupCommands.
+// runtime's handling of the session's first message rather than in
+// setupCommands, because a runtime process kept across sessions
+// initializes once per pod.
 message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;
@@ -1171,8 +1175,8 @@ message InterruptRequest {
   reserved "slot_id";
   enum Mode {
     MODE_UNSPECIFIED = 0;
-    MODE_CLEAN = 1; // SIGTERM with grace
-    MODE_HARD = 2;  // immediate SIGKILL
+    MODE_CLEAN = 1; // graceful, with deadline
+    MODE_HARD = 2;  // immediate
   }
 }
 

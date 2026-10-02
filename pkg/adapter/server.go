@@ -296,8 +296,10 @@ type Server struct {
 	HeartbeatInterval time.Duration
 	// HeartbeatAckTimeout is the §28.5.3 window the runtime has
 	// to answer a heartbeat with `heartbeat_ack`. When the window elapses
-	// with no ack the adapter considers the process hung and sends SIGTERM
-	// (RuntimeProcess.Interrupt with hard=false). Zero selects the spec
+	// with no ack the adapter considers the runtime hung, ends the
+	// session's stream, and calls RuntimeProcess.Interrupt with hard=false,
+	// which signals a process only on the developer-loop executor and ends
+	// nothing on the sidecar transport (§4.7.10). Zero selects the spec
 	// default (10s) whenever HeartbeatInterval > 0.
 	HeartbeatAckTimeout time.Duration
 

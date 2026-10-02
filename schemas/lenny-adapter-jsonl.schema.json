@@ -87,7 +87,7 @@
 
     "heartbeat": {
       "title": "heartbeat",
-      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter sends SIGTERM. A protocol-level frame: it carries no per-session identifier and is outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3.",
+      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter ends the session's stream; the runtime process receives no signal. A protocol-level frame: it carries no per-session identifier and is outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3.",
       "type": "object",
       "required": ["type", "ts"],
       "properties": {

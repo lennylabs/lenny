@@ -13,11 +13,14 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// Interrupt signals the pod's runtime to pause (§4.7). A clean
-// interrupt sends SIGTERM so the runtime can pause and checkpoint; a
-// hard interrupt sends SIGKILL. The request's deadline_ms grace window
-// is observed by the runtime and tracked by the gateway; the adapter
-// delivers the signal and reports acknowledgement.
+// Interrupt asks the pod's runtime to pause the session (§4.7). A clean
+// interrupt goes over CH-RUNTIMEOPS when the runtime declared it, and the
+// runtime acknowledges at a safe stop point. Otherwise, and for a hard
+// interrupt, the handler calls Runtime.Interrupt, whose effect is the
+// transport's: the developer-loop executor signals its process, and the
+// sidecar transport sends no signal because the runtime process lives as
+// long as the pod. The request's deadline_ms grace window is tracked by
+// the gateway. spec: §4.7; §15.4.3; §4.7.10 (Runtime process lifetime).
 func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest) (*adapterv1.InterruptResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -49,8 +52,8 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 
 	// §4.7: a clean interrupt of a Full-level runtime is delivered over
 	// CH-RUNTIMEOPS; the runtime acknowledges at a safe stop point. A
-	// hard interrupt, or any runtime without CH-RUNTIMEOPS, uses the
-	// signal path.
+	// hard interrupt, or any runtime without CH-RUNTIMEOPS, calls
+	// Runtime.Interrupt, and the sidecar transport sends no signal.
 	if mode == adapterv1.InterruptRequest_MODE_CLEAN && s.Lifecycle != nil && s.Lifecycle.Supports("interrupt") {
 		return s.interruptViaLifecycle(ctx, req)
 	}
@@ -81,8 +84,8 @@ func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadline
 		return nil, err
 	}
 	if s.Lifecycle == nil || !s.Lifecycle.Supports("deadline_signal") {
-		// spec: §15 — without CH-RUNTIMEOPS the runtime
-		// receives only `shutdown` at expiry with no advance notice.
+		// spec: §15.4.3 — without CH-RUNTIMEOPS the runtime receives no
+		// advance notice of the session's expiry.
 		return &adapterv1.SignalDeadlineResponse{Delivered: false}, nil
 	}
 	trigger := req.GetTrigger()

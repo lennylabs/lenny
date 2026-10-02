@@ -2473,8 +2473,10 @@ gateway:
   # pod's occupancy reaches zero the gateway patches the per-pod
   # SandboxClaim to `reserved` and holds it for this many seconds so a
   # back-to-back same-tenant session rebinds (reserved → bound) with no
-  # acquisition round trip. On expiry the holder deletes the claim and
-  # the pod returns to idle. A reserved pod is counted as occupied for
+  # acquisition round trip. On a pool whose configuration keeps no
+  # runtime process across sessions, the gateway's next acquisition
+  # deletes the claim instead (§5.2). On expiry the holder deletes the
+  # claim and the pod returns to idle. A reserved pod is counted as occupied for
   # inventory and scaling (§4.6.2), so a high value depresses apparent
   # idle inventory and delays retirement-limit evaluation; the gateway
   # warns at startup when it is set high. Default 10s. Rendered into

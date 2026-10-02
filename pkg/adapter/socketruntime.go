@@ -491,9 +491,9 @@ func waitThenKill(cmd *exec.Cmd, grace time.Duration) {
 	}
 }
 
-// defaultSocketShutdownGrace is the window the pod-scope teardown gives a
-// spawned child to exit after its connection closes, before it kills the
-// child. It matches the §11.4 step-3 10s default the gateway sends.
+// defaultSocketShutdownGrace bounds the pod-scope teardown's wait for a
+// spawned child to exit after its connection closes, before the teardown
+// kills the child. Only the test-only SpawnPath creates a child.
 const defaultSocketShutdownGrace = 10 * time.Second
 
 // killSpawned kills a child started by spawn during a failed Start.

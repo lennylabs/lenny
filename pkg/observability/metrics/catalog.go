@@ -65,7 +65,8 @@ var metricCatalog = []MetricSpec{
 	// lenny_warmpool_reserved_pods is the §16.1 gauge of pods whose
 	// occupancy claim is in the `reserved` hold window: scrubbed, SDK-warm
 	// on preConnect pools, held for the pinned tenant until the claim-hold
-	// TTL expires, and excluded from idle inventory. spec: §16.1 — reserved
+	// TTL expires or an acquisition ends the hold, and excluded from idle
+	// inventory. spec: §16.1 — reserved
 	// pods.
 	{"lenny_warmpool_reserved_pods", TypeGauge, "Pods whose occupancy claim is in the reserved hold window"},
 	{"lenny_warmpool_stale_pods", TypeGauge, "Warm pods idle beyond the pool maxIdleSeconds threshold"},

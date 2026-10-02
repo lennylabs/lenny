@@ -131,7 +131,7 @@ type SDKWarmRuntime interface {
 	ConfigureWorkspace(ctx context.Context, sessionID, cwd string) error
 	// DemoteSDK tears down the pre-connected SDK process so the pod falls
 	// back to pod-warm materialization (§4.7, the gateway bounds it at 5s).
-	// After it returns, a StartSession starts a fresh runtime.
+	// After it returns, a StartSession makes the runtime live.
 	DemoteSDK(ctx context.Context) error
 }
 
@@ -308,7 +308,7 @@ func (s *Server) refuseUnconfirmedSDKWarmStart(ctx context.Context, sw SDKWarmRu
 // fallback. It applies only to pods whose runtime declares
 // capabilities.preConnect: true; a pod-warm adapter returns Unimplemented
 // as the §4.7 contract specifies. After it returns, the pod is idle and a
-// StartSession starts a fresh runtime.
+// StartSession makes the runtime live.
 func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (*adapterv1.DemoteSDKResponse, error) {
 	sw, ok := s.sdkWarmRuntime()
 	if !ok {

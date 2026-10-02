@@ -250,8 +250,9 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 // sidecar runtime's connection lives as long as the pod (§4.7.10).
 //
 // A non-positive deadline_ms leaves Runtime.Close on the inbound context;
-// a positive one bounds it, so the runtime's SIGTERM/SIGKILL pivot honors
-// the §11.4 graceful window.
+// a positive one bounds it, which honors the §11.4 graceful window on a
+// transport that ends a process at Close. The sidecar transport's Close
+// returns at once.
 //
 // spec: §4.7; §4.7.1 (role and gateway RPC contract), rules 10 through 15;
 // §5.2 (slot-identifier reclaim hold); §11.4.
@@ -496,8 +497,9 @@ func (s *Server) answerShutdown(req *adapterv1.ShutdownRequest, outcome adapterv
 
 // contextWithGraceDeadline derives a context bounded by `grace` from
 // `parent`, returning a no-op cancel when `grace` is non-positive. The
-// adapter's RuntimeProcess.Close implementations read the derived
-// context's deadline to size their SIGTERM/SIGKILL pivot. spec: §11.4.
+// deadline bounds RuntimeProcess.Close on a transport that ends a process
+// at Close; the sidecar transport's Close returns at once, because its
+// runtime process lives as long as the pod. spec: §11.4; §4.7.10.
 func contextWithGraceDeadline(parent context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
 	if grace <= 0 {
 		return parent, func() {}

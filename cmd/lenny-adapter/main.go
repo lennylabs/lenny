@@ -83,9 +83,11 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 // on every recycle, which the default warn policy treats as a reuse: the
 // gateway would hand the pod to the next session with no scrub having run (a
 // between-session isolation regression). SandboxUser is left empty, so scrub
-// step 1 (`kill -9 -1`) runs as the adapter's own user; the shared-uid pod
-// layout kills the runtime's processes without an su hop. spec: §5.2 (whole-pod
-// scrub, steps 0-6).
+// step 1 (`kill -9 -1`) runs as the adapter's own user and signals the
+// adapter container's processes only. In the sidecar model the runtime
+// container has its own process namespace and UID, and its process is kept for
+// the pod's life. spec: §5.2 (whole-pod scrub, steps 0-6); §5.2 ("What the
+// scrub reaches").
 func newScrubOps() scrub.DefaultOps {
 	return scrub.DefaultOps{}
 }
@@ -198,7 +200,7 @@ func main() {
 		"§28.5.3 cadence (seconds) at which the adapter sends a heartbeat liveness ping to the runtime. 0 disables heartbeats. Default 30s.")
 	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
-		"§28.5.3 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and sends SIGTERM. Default 10s.")
+		"§28.5.3 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and ends the session's stream; the runtime process receives no signal. Default 10s.")
 	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
 		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
 		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
@@ -307,9 +309,11 @@ func main() {
 	// returns to receive the AdapterTerminating event.
 	adapterSrv.CoordinatorHoldTimeout = time.Duration(*coordinatorHoldTimeoutSec) * time.Second
 	adapterSrv.PostMortemDir = *postMortemDir
-	// spec: §28.5.3 — production sidecar probes runtime
-	// liveness with heartbeats and SIGTERMs a process that misses the ack
-	// window. A zero interval disables the probe.
+	// spec: §28.5.3 — production sidecar probes runtime liveness with
+	// heartbeats and ends the session's stream when the runtime misses the
+	// ack window. Runtime.Interrupt then ends nothing on the sidecar
+	// transport, whose runtime process lives as long as the pod (§4.7.10).
+	// A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
 	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
 	// §6.4: decode the inline shared-asset set the controller

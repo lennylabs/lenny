@@ -470,8 +470,8 @@ type InterruptRequest_Mode int32
 
 const (
 	InterruptRequest_MODE_UNSPECIFIED InterruptRequest_Mode = 0
-	InterruptRequest_MODE_CLEAN       InterruptRequest_Mode = 1 // SIGTERM with grace
-	InterruptRequest_MODE_HARD        InterruptRequest_Mode = 2 // immediate SIGKILL
+	InterruptRequest_MODE_CLEAN       InterruptRequest_Mode = 1 // graceful, with deadline
+	InterruptRequest_MODE_HARD        InterruptRequest_Mode = 2 // immediate
 )
 
 // Enum value maps for InterruptRequest_Mode.
@@ -2525,7 +2525,9 @@ func (x *WorkspacePlanWarning) GetLosingSourceIndex() int32 {
 // session assignments the gateway skips the RunSetup RPC entirely so the
 // adapter's pod-level setup-completion state is implicit (no second
 // RunSetup means no second execution). Per-session setup belongs in the
-// runtime's initialization rather than in setupCommands.
+// runtime's handling of the session's first message rather than in
+// setupCommands, because a runtime process kept across sessions
+// initializes once per pod.
 type RunSetupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     *SessionId             `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`

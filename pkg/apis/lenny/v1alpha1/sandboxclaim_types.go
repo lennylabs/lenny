@@ -57,10 +57,13 @@ type SandboxClaimStatus struct {
 	// stamps when it patches the claim to `reserved`: the reservation time
 	// plus the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`,
 	// default 10s). A same-tenant session arriving before this deadline
-	// rebinds the claim (`reserved → bound`); after it the holder deletes
-	// the claim and the pod returns to `idle`. Empty until the claim
-	// enters `reserved`. spec: §4.6.3 (reserved hold), §6.2 (pod state
-	// machine).
+	// rebinds the claim (`reserved → bound`); on a pool whose
+	// configuration keeps no runtime process across sessions, the gateway's
+	// next acquisition deletes the claim instead. After the deadline the
+	// holder deletes the claim and the pod returns to `idle`. Empty until
+	// the claim enters `reserved`. spec: §4.6.3 (reserved hold), §4.6.1
+	// (Reserved hold), §5.2 (Deployer acknowledgment (runtime process kept
+	// across sessions)), §6.2 (pod state machine).
 	// +optional
 	HoldExpiresAt *metav1.Time `json:"holdExpiresAt,omitempty"`
 

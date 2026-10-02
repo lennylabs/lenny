@@ -478,9 +478,9 @@ const (
 	InterruptStatusBusy         InterruptStatus = 3
 )
 
-// Interrupt asks the pod's runtime to pause (§4.7). A hard interrupt
-// sends SIGKILL; a clean interrupt sends SIGTERM and grants the runtime
-// deadline to pause and checkpoint. The returned status carries the
+// Interrupt asks the pod's runtime to pause (§4.7). A clean interrupt
+// grants the runtime deadline to pause and checkpoint at a safe stop
+// point; a hard interrupt stops the session at once. The returned status carries the
 // §4.7 InterruptResponse.Status disposition so the caller can branch on
 // ACKNOWLEDGED, INTERRUPT_TIMEOUT (still transitions to suspended per
 // §7.2), or BUSY (retry).
@@ -903,20 +903,22 @@ func (a *AttachStream) CloseSend() error {
 	return a.stream.CloseSend()
 }
 
-// Shutdown tears the named session down: the adapter closes its runtime,
+// Shutdown tears the named session down: the adapter ends the session's
+// use of the pod's runtime process, which stays alive for the pod's life,
 // removes its per-slot tree, and releases the slot it held. reason is an
 // opaque cause string surfaced to the adapter — the §11.4 full_revoke
-// fan-out passes `USER_REVOKED` — and deadline bounds the graceful phase,
-// after which the adapter's SIGTERM pivots to SIGKILL. A zero deadline
-// lets the adapter apply its default grace period. The returned bool
-// reports whether the runtime exited cleanly.
+// fan-out passes `USER_REVOKED` — and deadline bounds the graceful phase.
+// A zero deadline lets the adapter apply its default grace period. The
+// returned bool reports whether the session's close and slot teardown
+// completed cleanly.
 //
 // The request is addressed by the session identifier alone, which under
 // §5.2 also names the slot that session holds, and the handler is
 // idempotent: a request naming a session the adapter has already released
 // is a no-op reporting a clean exit.
 //
-// spec: §4.7; §5.2; §11.4.
+// spec: §4.7 (Shutdown row); §4.7.10 (runtime process lifetime); §5.2;
+// §11.4.
 func (c *Client) Shutdown(ctx context.Context, sessionID, reason string, deadline time.Duration) (bool, error) {
 	return c.shutdown(ctx, sessionID, reason, deadline, nil)
 }
