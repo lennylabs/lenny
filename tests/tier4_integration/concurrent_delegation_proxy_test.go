@@ -164,6 +164,10 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
+	// The listener is pod-scoped and outlives every session Close, so it is
+	// released separately. Registered first, this cleanup runs last.
+	// spec: §4.7.10 (Deployment Model).
+	t.Cleanup(func() { _ = rt.CloseListener() })
 	rt.SpawnPath = echoConcurrentBin
 	rt.AcceptTimeout = 15 * time.Second
 	srv.Runtime = rt

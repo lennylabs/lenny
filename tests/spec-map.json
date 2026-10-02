@@ -890,6 +890,7 @@
       "title": "Deployment Model",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2",
         "pkg/adapter/embedded_test.go",
         "pkg/adapter/embedded_sdkwarm_test.go",
         "tests/tier3_contract/embedded_gatewaycallback/callback_reachability_test.go"
@@ -1059,6 +1060,8 @@
       "title": "Pool Configuration and Execution Modes",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
+        "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
+        "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2",
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2",
         "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestDrainLedgerCountsARepeatedSlotOnce_spec_5_2",
         "pkg/gateway/runtime/slothealth/slothealth_test.go::TestRecordLeakIsKeyedBySlot_spec_5_2",
@@ -3835,6 +3838,7 @@
       "title": "Runtime Integration Levels \u2014 Full",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier4_integration/runtime_socket_lifetime_test.go::TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate",
         "tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection",
         "tests/tier9_security/adapter_hold_termination_surface_test.go",

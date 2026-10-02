@@ -54,7 +54,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -73,7 +72,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // concurrentPool names the deployer pool contract this flow stands up: a
@@ -134,6 +132,10 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
+	// The listener is pod-scoped and outlives every session Close, so it is
+	// released separately. Registered first, this cleanup runs last.
+	// spec: §4.7.10 (Deployment Model).
+	t.Cleanup(func() { _ = rt.CloseListener() })
 	rt.SpawnPath = echoConcurrentBin
 	rt.AcceptTimeout = 15 * time.Second
 	srv.Runtime = rt
@@ -320,15 +322,7 @@ func recvResponse(t *testing.T, stream adapterv1.Adapter_AttachClient) slotRespo
 // path rather than a fake.
 func buildConcurrentRuntime(t *testing.T) string {
 	t.Helper()
-	root := schematest.RepoRoot(t)
-	bin := filepath.Join(t.TempDir(), "echo-concurrent")
-	cmd := exec.Command("go", "build", "-o", bin, "./cmd/runtimes/echo-concurrent")
-	cmd.Dir = root
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("build echo-concurrent: %v", err)
-	}
-	return bin
+	return buildRepoBinary(t, "cmd/runtimes/echo-concurrent")
 }
 
 // concurrentSocketAddr returns the abstract Unix socket the adapter binds
@@ -545,6 +539,10 @@ func newAbandonFixture(t *testing.T) *abandonFixture {
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
+	// The listener is pod-scoped and outlives every session Close, so it is
+	// released separately. Registered first, this cleanup runs last.
+	// spec: §4.7.10 (Deployment Model).
+	t.Cleanup(func() { _ = proc.CloseListener() })
 	proc.SpawnPath = echoConcurrentBin
 	proc.AcceptTimeout = 15 * time.Second
 	rt := &injectingRuntime{RuntimeProcess: proc}
