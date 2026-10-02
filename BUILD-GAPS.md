@@ -4161,6 +4161,20 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Gap:** The retirement metric undercounts session-count retirements after a pool edit that lowers `maxSessionsPerPod`.
 **Suggested resolution:** Count the retirement once per pod on the first release at which `count >= maxSessionsPerPod` (for example by counting when the stamp transitions a pod that was not already marked for draining, or by recording the counted crossing on the pod), keeping the existing suppression for a pod already over its `maxPodUptimeSeconds` cap. Add a tier-1 case that lowers the limit below the current count and asserts exactly one increment.
 
+### - [ ] F-5.2.36 — Deployer `cleanupCommands` run at the adapter UID through agent-planted symlinks [High] — OPEN
+
+**Spec:** §5.2 recycle lifecycle and **Lenny scrub procedure**: the deployer's `cleanupCommands` run during the whole-pod scrub with the workspace base as the working directory. §13.1 separates the adapter and agent UIDs so that agent code cannot write where only the adapter may.
+**Evidence:** `pkg/adapter/scrub` runs each cleanup command through `exec.CommandContext` in the adapter process (`pkg/adapter/scrub/defaultops.go`), so at the adapter UID, with `CleanupDir` set to the workspace base (`pkg/adapter/podscrub.go`). Symlinks the agent creates under the workspace survive the processes the scrub kills. Found by the adversarial security review of 2026-10-02 (`scratchpad/supervisor-security-review/review.md`, finding 7, on the machine that ran it).
+**Gap:** A cleanup command that follows a link (for example `cp`, `chmod -R`, or a shell redirect) writes with the adapter's permissions to a target the agent chose and cannot write itself, such as the read-only `/workspace/shared`, the credential volume under `/run/lenny`, or `/sessions`. The agent turns the deployer's cleanup into a confused deputy. Whether the adapter's own `ClearContents` and log truncation follow links is unverified.
+**Suggested resolution:** Remove every agent-owned entry under the workspace base, symlinks included, after the runtime's processes are ended and before `cleanupCommands` run; resolve adapter file operations with `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`; or run `cleanupCommands` at the agent UID followed by a second process sweep. Scheduled in proposal 0087 part 1 (`gateway-runtime-comms-remediation.md` §10.2).
+
+### - [ ] F-5.2.37 — The whole-pod scrub leaves System V message queues and semaphores, POSIX message queues, and agent files outside the slot trees, and `warn` reuses a pod that failed verification [Medium] — OPEN
+
+**Spec:** §5.2 **Lenny scrub procedure** steps 0 to 6 and the `onScrubFailure` behaviors (default `warn`).
+**Evidence:** Step 1b runs `ipcrm --all=shm` (`PurgeIPCShm`, `pkg/adapter/scrub/defaultops.go`), which removes shared-memory segments only. The runtime container mounts `/sessions` and `/artifacts` read-write (`buildSidecar`, `pkg/controller/sandbox/podspec/podspec.go`), and the scrub's file steps cover the slot trees, `/tmp`, and `/dev/shm`, not agent-owned files under the workspace base outside `slots/`, `/sessions`, or `/artifacts`. Under `onScrubFailure: warn` a pod whose step-6 verification failed returns to the pool with a `scrub_warning`. Found by the adversarial security review of 2026-10-02 (finding 5).
+**Gap:** On a recycling pool these stores carry one session's data into the next session on the same pod. With cross-tenant reuse they would carry it across tenants. Whether §5.2's residual-state list already discloses each item is to be checked.
+**Suggested resolution:** Remove System V message queues and semaphores (matching on `cuid`, because `IPC_SET` can change `uid`) and POSIX message queues; remove every agent-owned entry in every agent-writable volume; and for cross-tenant reuse require `onScrubFailure: fail` and key the tenant-pin reset on a clean verification. Scheduled in proposal 0087 part 1 (cleanup halves) and part 2 (the cross-tenant gate) (`gateway-runtime-comms-remediation.md` §10.2).
+
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
 
@@ -24513,6 +24527,20 @@ and fail-closed.
 **Resolution:** Verify-closed; `Decide` / `violation` (`pkg/admission/ephemeral_container_cred_guard/guard.go:102-144`) still enforce all four §13.1 conditions, and the webhook stays fail-closed on the cited subresource.
 
 ---
+
+### - [ ] F-13.1.23 — Nothing enforces, after mutating admission, that only the runtime container runs at the agent UID [High] — OPEN
+
+**Spec:** §13.1 and §4.7.11 item 1 (**Separate UIDs and connection authentication:**): the adapter and the agent binary run at different UIDs, and the adapter accepts connections only from the expected agent UID.
+**Evidence:** The pod-security admission webhook does not read `RunAsUser` (`pkg/admission/webhook/pod_security.go`), and `basePod` sets no pod-level `runAsUser` (`pkg/controller/sandbox/podspec/podspec.go`). The test-only egress-capture container runs at the agent UID (`injectEgressCaptureSidecar`, `containerSecurityContext(in.agentUID())`). Found by the adversarial security review of 2026-10-02 (finding 3).
+**Gap:** A container a deployer's mutating webhook injects (a service mesh, a Vault agent, or a log shipper) whose image `USER` equals the agent UID passes every `SO_PEERCRED` check: it can connect to the runtime's adapter sockets (and `CH-MSGSOCK`, which today checks nothing, F-4.7.25), it shares the pod's network namespace for abstract sockets, it holds the credential readers group through `fsGroup`, and it runs outside the runtime container's PID namespace, so no process sweep in that container reaches it.
+**Suggested resolution:** A validating webhook clause, evaluated after mutation, that requires an explicit `runAsUser` on every init, regular, and ephemeral container and allows only the container named `runtime` to equal the agent UID; a pod-level `runAsUser` default that is neither the agent nor the adapter UID; the egress-capture container moved off the agent UID. Scheduled in Phase 0 of the proposal track, with the `SO_PEERCRED` half of F-4.7.25 (`gateway-runtime-comms-remediation.md` §10.2).
+
+### - [ ] F-13.1.24 — Agent pods set no `runAsGroup`, so the primary GID comes from the image or defaults to 0 [Medium] — OPEN
+
+**Spec:** §13.1 pod security context requirements.
+**Evidence:** `pkg/controller/sandbox/podspec/podspec.go` sets no `runAsGroup` at pod or container level (`basePod`, `containerSecurityContext`). Without it the container runtime resolves the primary group from the image's `/etc/passwd`, or uses 0. Found by the adversarial security review of 2026-10-02 (finding 1).
+**Gap:** The author's image chooses the runtime process's primary GID, including GID 0, which affects group-owned files on shared volumes and any group-based check. A future platform process in the runtime container would inherit the same image-chosen GID.
+**Suggested resolution:** Set `runAsGroup` explicitly on every agent-pod container, and add it to the pod-security webhook's checks. Scheduled in Phase 0 of the proposal track (`gateway-runtime-comms-remediation.md` §10.2).
 
 ## §13.2 Network Isolation <a id="13.2"></a>
 Spec: `spec/13_security-model.md` §13.2 (lines 31–536)

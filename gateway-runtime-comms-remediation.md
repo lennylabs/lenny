@@ -2285,8 +2285,16 @@ pinned-idle proposal, so each of those is converged once against the final set o
   10.3) for the properties the supervisor relies on: PID-namespace init
   signal immunity, `PR_SET_DUMPABLE` against same-UID inspection, `kill(-1)` scope, and `si_pid`. Its result
   gates whether the restart lifetime reaches `sandboxed` (gVisor) pools.
-- [ ] BUILD-GAPS F-4.7.25, the `SO_PEERCRED` half: `CH-MSGSOCK` accepts only the agent UID. The specification
-  already requires it, so it lands as a BUILD-GAPS fix with tier-1 and tier-9 tests.
+- [ ] Pod identity hardening, landing together because each one alone leaves the agent-UID boundary open:
+  - BUILD-GAPS F-4.7.25, the `SO_PEERCRED` half: `CH-MSGSOCK` accepts only the agent UID. The specification
+    already requires it, so it lands as a BUILD-GAPS fix with tier-1 and tier-9 tests.
+  - BUILD-GAPS F-13.1.23: a validating webhook clause, evaluated after mutating admission, requires an
+    explicit `runAsUser` on every init, regular, and ephemeral container and allows only the `runtime`
+    container to run at the agent UID; a pod-level `runAsUser` default that is neither the agent nor the
+    adapter UID; the test-only egress-capture container moved off the agent UID.
+  - BUILD-GAPS F-13.1.24: an explicit `runAsGroup` on every agent-pod container, checked by the webhook.
+  Where existing specification text does not already state a rule, the rule lands through a small proposal
+  rather than as a BUILD-GAPS fix.
 - [ ] R6, if it can be scheduled before proposal 0087's code.
 
 **Phase 1: proposals 0078 and 0079 implemented**
@@ -2328,12 +2336,52 @@ other while their code proceeds in parallel.
   JSON Lines and adds no proto field, requires `command` on every sidecar Runtime including through the
   admin registration API, designs supervision for `preConnect` and service-mode runtimes, and carries the
   gVisor implementation conditions and the conformance check recorded in section 10.3.
+  It also closes every finding of the adversarial security review of 2026-10-02
+  (`scratchpad/supervisor-security-review/review.md` on the machine that ran it) that is not assigned to
+  another step below:
+  - Review finding 2: re-baseline the draft to section 10.3. The supervisor is a boundary for the reuse and
+    tenant-change decisions, it is a single-threaded binary with no language runtime from its own
+    digest-pinned image, it handles every catchable signal, it acts on a stop only when `si_pid == 0` and
+    `si_code == SI_USER`, and it ends the runtime before `cleanupCommands`.
+  - Review finding 1: a fully static supervisor with no program interpreter and no libc or NSS loading,
+    `clearenv()` first and an explicit runtime environment, no file opened from the author's root
+    filesystem (only `/proc` and platform volumes, through `openat` with `O_NOFOLLOW`), and a CI check of
+    the binary.
+  - Review finding 3, the supervisor's part: mutual authentication on `CH-SUPERVISE` (the supervisor checks
+    that the listener's peer UID is the adapter UID) and no read-write mount of the supervisor volume. The
+    pod-wide agent-UID rule is the Phase 0 hardening above.
+  - Review finding 5, the cleanup half (BUILD-GAPS F-5.2.37): the supervisor removes System V message
+    queues and semaphores by `cuid`, POSIX message queues, and every agent-owned entry in every
+    agent-writable volume, including the workspace base outside `slots/`, `/sessions`, and `/artifacts`; an
+    END failure retires the pod through `runtime_not_live`, which takes precedence over `warn`.
+  - Review finding 6: author-facing work (tree removal, stderr capture) runs in a forked worker that holds
+    no `CH-SUPERVISE` descriptor, after `kill(-1)`, and the parent repeats `kill(-1)` and the `/proc` check
+    before replying; only enumerated error codes cross the wire; the adapter decodes strictly, rejecting
+    unknown and duplicate keys; the tree walker and parsers are fuzzed.
+  - Review finding 7 (BUILD-GAPS F-5.2.36): every agent-owned entry under the workspace base, symlinks
+    included, is removed after END and before `cleanupCommands`, and adapter file operations resolve with
+    `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`.
+  - Review finding 8: a generation number and a request ID on every `CH-SUPERVISE` message; a mismatch is a
+    link failure that retires the pod; the runtime's exit status is diagnostic only.
+  - Review finding 9: two consecutive clean `kill(-1)` and `/proc` passes, `pids.current` where readable, a
+    pod PID limit, and the spike re-run with a fork bomb, several containers, `--oci-seccomp`, and gVisor's
+    ptrace and KVM platforms.
+  - Review finding 10: a periodic `CH-SUPERVISE` liveness ping whose missed deadline marks the pod not
+    live, and any catchable signal from outside the namespace treated as the stop request, so an image
+    `STOPSIGNAL` cannot bypass the filter.
+  - Review finding 11: normative ordering in §4.7.9 and §5.2: LAUNCH only after scrub steps 0 to 6, the
+    verification, and the attestation; every adapter listener the runtime uses bound before LAUNCH; no
+    pre-launch on a pod carrying a `scrub_warning`; tier-7a tests.
+  - Review finding 12: a node-level process-limit note, the supervisor's own log channel kept separate from
+    the runtime's stdout, no secrets in the supervisor's argv, exit (never re-dial) when its connection
+    closes, and the gVisor and Kata checks re-run on runtime version changes.
 - [ ] Runtime-SDK proposal (not yet written): the single runtime lifetime contract in section 10.3, with
   session-start and session-end frames on `CH-MSGSOCK`, per-session context delivered by frame, the Go,
   Python, and TypeScript SDKs serving sessions keyed by `sessionId`, the runtime side of the per-generation
   nonce, the tier-10 conformance case, and the Go `Handler` doc-comment correction moved out of proposal
-  0079. The supervisor in proposal 0087 now fixes the first-session manifest-ordering defect for sidecar
-  pods, so this proposal no longer owns it. It lands before any release, which is the condition under which
+  0079, and the runtime side of per-generation nonce rotation on `CH-MSGSOCK`, the intra-pod MCP servers,
+  and `CH-RUNTIMEOPS` (security review finding 4). The supervisor in proposal 0087 now fixes the
+  first-session manifest-ordering defect for sidecar pods, so this proposal no longer owns it. It lands before any release, which is the condition under which
   proposal 0079's S20 no longer waits for it.
 
 **Phase 3: after proposal 0087 part 1**
@@ -2342,12 +2390,20 @@ other while their code proceeds in parallel.
   `maxWarm`, summed by the §17 quota floor, with an idle TTL for pinned pods. It is independent of proposal
   0087 and can start right after proposal 0079.
 - [ ] Proposal 0084 (session attribution on pools where one runtime process serves several sessions)
-  re-converged once against proposals 0079 and 0087, then implemented.
+  re-converged once against proposals 0079 and 0087, then implemented. It also closes security review
+  finding 4 for the intra-pod MCP listeners: they are closed and rebound only after a successful END
+  attestation and before the next LAUNCH, their nonce rotates per runtime generation, and each server sends
+  a challenge before reading a request, so a connection queued by an ended generation cannot act in the
+  next one.
 - [ ] Proposal 0071 (route a runtime frame to one consumer) re-derived once against the kept connection and
   the supervisor, then implemented.
 - [ ] Proposal 0087 part 2: cross-tenant reuse on `in-place` pools by resetting the tenant pin after a
-  proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first; gVisor only
-  if the spike passed.
+  proven runtime restart, which gives `recycle.allowCrossTenantReuse` effect again. Kata first, after the
+  four supervisor properties pass on a KVM-capable host. Hard gate: security review findings 1, 3, 4, and 5
+  are closed (the Phase 0 hardening, 0087 part 1, proposal 0084, and the runtime-SDK proposal above).
+  Part 2 itself requires `onScrubFailure: fail` on cross-tenant pools and keys the tenant-pin reset on a
+  successful attestation plus a clean step-6 verification, never on a scrub report alone (BUILD-GAPS
+  F-5.2.37, the cross-tenant half).
 
 **Contingency (superseded on 2026-10-02: the spike found that gVisor fails only the signal-immunity
 property, which fails closed, so `restart` is offered on gVisor).** If the spike had failed on gVisor, the runtime-SDK proposal and proposal 0084 move ahead of
