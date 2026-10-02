@@ -2247,7 +2247,8 @@ it, and name the commit or merge.
 - [ ] **R10b.** Not started.
 - [ ] **R11a.** Status not verified against the tree.
 - [ ] **R11.** Not started. The claim register carries rows deferred to it.
-- [ ] **R12.** Not started. The claim register carries rows deferred to it.
+- [ ] **R12.** Not started. The claim register carries rows deferred to it. It also closes BUILD-GAPS
+  F-10.1.20: the gateway consumes `AdapterTerminating` after a coordinator hold timeout.
 - [ ] **R13.** Not started. The claim register carries rows deferred to it.
 - [ ] **R14.** Not started. The claim register carries rows deferred to it.
 - [ ] **R15.** Not started. `ready_for_input` is absent from `schemas/runtime-ops-events.schema.json`.
@@ -2275,10 +2276,8 @@ pinned-idle proposal, so each of those is converged once against the final set o
 - [x] Proposal 0082 (concurrent finalize) implemented 2026-09-28 (`79ec0e93c`), ahead of R5.
 - [x] Proposal 0078 (keep the pod-scoped `CH-MSGSOCK` listener) re-converged and `Reviewed` (`a9c7bd6c6`).
   It stays listener-only.
-- [ ] Proposal 0079 (keep the runtime process on recycling pools) converged and approved. The spec loop is
-  at its convergence tail. Remaining: apply open decision 11 (delete the cross-tenant drain), relax checklist
-  step S20's dependency on the runtime-SDK proposal, reconcile the step references, run a short spec
-  confirmation, and run the first non-spec review loop.
+- [x] Proposal 0079 (keep the runtime process on recycling pools) converged (`Reviewed`, `f59e5e9dd`) and
+  approved 2026-10-02 (`2c243f19b`), with decisions 1 to 13 and A to C adjudicated.
 - [x] Proposal 0087 part 1 (supervised runtime process, restart lifetime) drafted and merged (`0f86420bf`).
   It is not converged, and its prerequisite list predates this ordering.
 - [x] Validation spike on gVisor (2026-10-02; Kata untested, no `/dev/kvm` on the host; results in section
@@ -2372,6 +2371,11 @@ other while their code proceeds in parallel.
   - Review finding 11: normative ordering in §4.7.9 and §5.2: LAUNCH only after scrub steps 0 to 6, the
     verification, and the attestation; every adapter listener the runtime uses bound before LAUNCH; no
     pre-launch on a pod carrying a `scrub_warning`; tier-7a tests.
+  - Defects recorded by proposal 0079's review that universal supervision closes: BUILD-GAPS F-4.7.26 (the
+    first-session manifest-ordering defect, since the supervisor launches the runtime after the manifest
+    exists), F-4.7.27 (the specification's adapter signals, `shutdown` deadline, and exit-code observation
+    become true or are corrected), F-6.1.28 (supervised SDK-warm for sidecar `preConnect` runtimes), and
+    the step-3 half of F-5.2.39 (each runtime generation is launched with a clean environment).
   - Review finding 12: a node-level process-limit note, the supervisor's own log channel kept separate from
     the runtime's stdout, no secrets in the supervisor's argv, exit (never re-dial) when its connection
     closes, and the gVisor and Kata checks re-run on runtime version changes.
@@ -2389,6 +2393,21 @@ other while their code proceeds in parallel.
 - [ ] Pinned-idle inventory proposal (not yet written): a per-pool bound on tenant-pinned idle pods beyond
   `maxWarm`, summed by the §17 quota floor, with an idle TTL for pinned pods. It is independent of proposal
   0087 and can start right after proposal 0079.
+- [ ] Recycling follow-up proposal (not yet written), which closes the recycling defects that have no other
+  owner: BUILD-GAPS F-5.2.34 (pool admission refuses `maxSessionsPerPod < maxConcurrentSessions`, with the
+  §5.2 statement that a concurrent pod can exceed the limit by at most its in-flight sessions), F-5.2.35
+  (the per-release retirement counter counts a crossing past the limit), F-5.2.38 (the §16.1 retirement row
+  names the non-counting reasons), F-5.2.39 (the step-5 log truncation and the preConnect re-warm after a
+  scrub report), F-5.2.40 (`ScrubOps` wired in the embedded reference runtimes, with an embedded recycling
+  fixture pool), F-5.2.41 (the process-reuse acknowledgment enforced in the runtime registration validator
+  and the SandboxTemplate CRD), F-5.2.42 (a recovery claim after a pool edit does not under-report
+  isolation), F-5.2.43 (a retire reason that names a recycling-disabled edit), F-4.6.23 (`Claimer.Claim`
+  deletes its claim on a failed tenant stamp; the unused `ClaimPod` implementations read the pin or are
+  deleted), F-4.6.24 (`WarmPoolOversized` corrected and evaluated), F-4.6.25 (the
+  `podClaimFallbackMaxMirrorLagSeconds` gateway flag), F-6.2.27 (the §6.2 `idle → draining` trigger list),
+  and F-15.1.41 (a failed resume claim leaves the row in `awaiting_client_action`). It can start right
+  after proposal 0079. It edits §5.2, §4.6.1, and the warm-pool controller like the pinned-idle proposal,
+  so the two are drafted together or one immediately after the other, with their spec steps serialized.
 - [ ] Proposal 0084 (session attribution on pools where one runtime process serves several sessions)
   re-converged once against proposals 0079 and 0087, then implemented. It also closes security review
   finding 4 for the intra-pod MCP listeners: they are closed and rebound only after a successful END

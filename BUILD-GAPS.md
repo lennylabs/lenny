@@ -1453,6 +1453,27 @@ Lenny implements the two-controller split (WarmPoolController, PoolScalingContro
 
 ---
 
+### - [ ] F-4.6.23 — `Claimer.Claim` leaves its bound claim in place when the tenant stamp fails, and the registry `ClaimPod` implementations read no tenant pin [Medium] — OPEN
+
+**Spec:** §5.2 tenant pinning; §4.6.1 claim lifecycle.
+**Evidence:** After `CreateClaim` and `writeBoundStatus` succeed, `Claimer.Claim` returns the `stampPodTenant` error without deleting the `SandboxClaim` (`pkg/gateway/podlifecycle/podclaim/claimer.go`), whereas `reserveSlot` deletes it (`slotclaimer.go`). `CRDPodRegistry.ClaimPod`, `PostgresPodRegistry.ClaimPod`, and `AgentSandboxPodLifecycleManager.ClaimPod` claim idle pods without reading the pin; none has a non-test caller. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** A failed stamp leaks a claim; the unused `ClaimPod` implementations would bypass the pin if ever wired.
+**Suggested resolution:** Delete the claim on a stamp failure in `Claim`, and either add the pin read to the `ClaimPod` implementations or delete them. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.6.24 — The `WarmPoolOversized` recommendation rule compares idle pod-minutes against `minWarm × 30` on every pool, and no evaluator runs it [Low] — OPEN
+
+**Spec:** §4.6.1 warm-pool idle cost visibility.
+**Evidence:** Recorded in proposal 0079 spec-changes §9.1, **The `WarmPoolOversized` recommendation rule**. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** The recommendation never fires, and its formula ignores pinned idle inventory.
+**Suggested resolution:** Correct the rule and run it. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.6.25 — `podClaimFallbackMaxMirrorLagSeconds` has no gateway flag, so operators cannot change it [Low] — OPEN
+
+**Spec:** §4.6.1 (`podClaimFallbackMaxMirrorLagSeconds`, default 10 s, "configurable via gateway flag").
+**Evidence:** `Binder.FallbackMaxMirrorLagSeconds` falls back to `DefaultFallbackMaxMirrorLagSeconds` (`pkg/gateway/podlifecycle/podsession/fallbackclaim.go`), and nothing in `cmd/lenny-gateway` sets it. Proposal 0079 also makes this value bound the fallback claim's row-locked transaction (0079 decision 13). Noted by 0079's review, filed 2026-10-02.
+**Gap:** The specified flag does not exist.
+**Suggested resolution:** Add the flag and its environment variable in `cmd/lenny-gateway`. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §4.7 Runtime Adapter <a id="4.7"></a>
 ### Summary
 
@@ -1968,6 +1989,20 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
 - Proposal 0078's review recorded the missing nonce handshake on `CH-MSGSOCK` as a shipped-tree defect it does not stage. The sidecar-restart design exploration of 2026-10-01 (`scratchpad/sidecar-restart/design.md` on the machine that ran it) confirmed both halves are absent.
 **Gap:** Any process in the pod's network namespace that can reach the abstract socket can become the adapter's runtime connection: receive every session's message frames, write responses and tool calls the adapter attributes to the runtime, and hold the connection that the next session binds to. With the runtime kept across sessions (proposal 0079) and the pod-scoped listener kept across session teardowns (proposal 0078), a stale or foreign peer queued in the listener backlog is accepted by the next `Start`. A future runtime-restart mechanism also depends on tying each accepted connection to one runtime generation, which needs authenticated connections.
 **Suggested resolution:** Wrap the `CH-MSGSOCK` listener in `peerCheckedListener` with the agent UID, and implement the manifest-nonce handshake the `CH-MSGSOCK` card states (which requires the nonce to be in the manifest before the runtime connects, so it depends on the first-session manifest-ordering fix on sidecar pods or a nonce written at adapter boot). Add tier-1 and tier-9 tests that a connection from another UID, or without the nonce, is refused.
+
+### - [ ] F-4.7.26 — The sidecar runtime reads the adapter manifest before the adapter writes it on a pod's first session [High] — OPEN
+
+**Spec:** §4.7 adapter manifest (written before the runtime is spawned) and the §4.7.9 startup sequence.
+**Evidence:** The sidecar runtime container starts with the pod, and the Go runtime SDK reads the manifest as soon as its transport opens (`sdks/runtime/go/runtime/runtime.go`); a missing file leaves the runtime with no manifest, so it degrades and dials no platform MCP server or `CH-RUNTIMEOPS`. The adapter writes the manifest only when a session starts (`pkg/adapter/session.go`, `sdkwarm.go`, `resume.go`). Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** Every sidecar pod's first session runs without the manifest's capabilities.
+**Suggested resolution:** The supervisor launches the runtime only after the manifest exists, on every sidecar pod (proposal 0087 part 1, universal supervision), and the runtime-SDK proposal's per-session context by frame removes the per-session dependence on the file. Scheduled in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-4.7.27 — The specification promises adapter signals, a `CH-MSGSOCK` `shutdown` frame, and exit-code observation that no production transport performs [Medium] — OPEN
+
+**Spec:** §4.7 and §15.4 sentences on adapter-sent SIGTERM and SIGKILL, the `shutdown` frame deadline, and `RUNTIME_CRASH` built from the exit code and stderr (classes P1 and P2 of proposal 0079's blast-radius table).
+**Evidence:** The sidecar adapter shares no process namespace with the runtime; `SocketRuntimeProcess` holds a process handle only for the test-only `SpawnPath` child; `pkg/adapter` writes no `shutdown` frame; only the developer-loop `SubprocessExecutor` reads an exit status. The kubelet, not the adapter, signals the runtime container at pod deletion. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** The specification describes behavior that does not happen.
+**Suggested resolution:** The supervisor on every sidecar pod delivers the signals, observes exit codes, and reports crashes (proposal 0087 part 1); any sentence it does not make true is corrected there. Scheduled in `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
 ### Summary
@@ -4175,6 +4210,48 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Gap:** On a recycling pool these stores carry one session's data into the next session on the same pod. With cross-tenant reuse they would carry it across tenants. Whether §5.2's residual-state list already discloses each item is to be checked.
 **Suggested resolution:** Remove System V message queues and semaphores (matching on `cuid`, because `IPC_SET` can change `uid`) and POSIX message queues; remove every agent-owned entry in every agent-writable volume; and for cross-tenant reuse require `onScrubFailure: fail` and key the tenant-pin reset on a clean verification. Scheduled in proposal 0087 part 1 (cleanup halves) and part 2 (the cross-tenant gate) (`gateway-runtime-comms-remediation.md` §10.2).
 
+### - [ ] F-5.2.38 — The §16.1 pod-retirement counter row does not state that the gateway's other retire reasons go uncounted [Low] — OPEN
+
+**Spec:** §16.1, `lenny_gateway_pod_retirement_total` row; §5.2 retirement policy.
+**Evidence:** The row lists the `reason` values `session_count_limit` and `scrub_failure_limit`. The gateway also retires with `host_unschedulable`, `scrub_report_timeout`, and `vm_restart_reprovision` (`pkg/sandbox/podscrub/podscrub.go`), for which `CountsOnGatewayRetirementTotal` reports false; §5.2 names only `vm_restart_reprovision` among them. Proposal 0079 adds a further non-counting reason, `runtime_not_live`. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** A reader of §16.1 cannot tell which retirements the counter omits.
+**Suggested resolution:** State in the §16.1 row that the gateway's other retire reasons are non-counting and name them. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.39 — Whole-pod scrub steps 3 and 5 never run, and no component re-runs the SDK pre-connect after a recycle [Medium] — OPEN
+
+**Spec:** §5.2 **Lenny scrub procedure** steps 3 (purge the previous session's injected environment) and 5 (truncate adapter-local log buffers); §6.1 and §6.2, the `claimed → sdk_connecting` re-warm edge after a preConnect pod's scrub report.
+**Evidence:** `Server.scrubConfig` sets neither `ResetEnv` nor `TruncateLogs` (`pkg/adapter/podscrub.go`), and the scrub records a step whose callback is nil as skipped (`pkg/adapter/scrub/scrub.go`). The only production call to `Server.PreConnect` is at adapter startup in `cmd/runtimes/preconnect-echo/main.go`. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** Two specified scrub steps are silently skipped on every recycle, and a recycled preConnect pod is never re-warmed.
+**Suggested resolution:** Wire step 5 in the adapter and the re-warm after a preConnect pod's scrub report (recycling follow-up item); step 3, the runtime environment, is reset by the supervisor launching each runtime generation with a clean environment (proposal 0087 part 1). Both scheduled in `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.40 — The embedded reference runtimes wire no whole-pod scrub operations, so an embedded recycling pod never reports its scrub [Medium] — OPEN
+
+**Spec:** §5.2 recycle lifecycle (the adapter runs the whole-pod scrub and reports it).
+**Evidence:** Only `cmd/lenny-adapter/main.go` assigns `ScrubOps`; `cmd/runtimes/echo-embedded` and `cmd/runtimes/preconnect-echo` assign none, although both obtain a `PodScrubReporter`. With `ScrubOps` nil, `startPodScrub` returns before the scrub and withholds `ReportPodScrub` (`pkg/adapter/podscrub.go`), so the gateway retires the pod with `scrub_report_timeout`. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** Embedded recycling pods never recycle; each retires through the missing-report timeout.
+**Suggested resolution:** Wire `ScrubOps` in the embedded reference runtimes and add a recycling fixture pool on an embedded runtime. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.41 — Neither the runtime registration validator nor the SandboxTemplate CRD enforces the process-reuse acknowledgment [Medium] — OPEN
+
+**Spec:** §5.2 deployer acknowledgment rule as amended by proposal 0079 (a recycling pool with `maxSessionsPerPod > 1`, other than `vm-restart`, requires `acknowledgeProcessLevelIsolation`).
+**Evidence:** Proposal 0079 enforces the rule only in the gateway pool store's validation (its CODE-11). Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** A pool definition reaching the platform through another path is not checked.
+**Suggested resolution:** Add the same clause to the runtime registration validator and the SandboxTemplate CRD validation. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.42 — A recovery claim after an update that brings a pool into pod reuse can place a session whose stored isolation level reports `podReuse: false` on a reused pod [Medium] — OPEN
+
+**Spec:** §5.2 **Client visibility of weak-isolation reuse**; §7.1 `sessionIsolationLevel`.
+**Evidence:** The session's isolation level is stored at creation. After proposal 0079 the recovery claim can also reach a runtime process kept from an earlier session of the same tenant, because 0079's CODE-8 sets `ResumeRequest.KeepsRuntime` from the pool the claim resolves. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** The client-visible disclosure under-reports the session's actual isolation.
+**Suggested resolution:** Recompute or refuse on recovery when the pool's reuse posture changed since the session's level was stored. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
+### - [ ] F-5.2.43 — A session bound before an update to `recycle.enabled: false` retires its pod with the misleading reason `scrub_report_timeout` [Low] — OPEN
+
+**Spec:** §5.2 retirement reasons and §16.1 retirement audit.
+**Evidence:** The pod is never `idle` or `reserved` before the missing-report timer retires it; the retire is fail-closed, so no reuse rule is broken. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** Operators see a scrub-failure reason for a configuration change.
+**Suggested resolution:** Retire such a pod with a reason that names the configuration change. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
 
@@ -4859,6 +4936,13 @@ matches spec §6.1's "rolling 5-minute demotion rate exceeds 90% (hardcoded safe
 
 ---
 
+### - [ ] F-6.1.28 — No sidecar runtime can be SDK-warm, so a sidecar pool whose runtime declares `capabilities.preConnect: true` fails its sessions [High] — OPEN
+
+**Spec:** §6.1 (the warm pool controller starts the SDK process once the pod is idle; `preConnect` is not restricted to a deployment model).
+**Evidence:** The adapter is SDK-warm only through a runtime implementing `SDKWarmRuntime`, and only the embedded `SDKWarmInProcessRuntime` does. On a sidecar preConnect pod `Server.PreConnect` is a no-op, `ConfigureWorkspace` returns Unimplemented and fails the bind (`bindlaunch.go`), and `DemoteSDK` returns Unimplemented, reported as `SDK_DEMOTION_NOT_SUPPORTED`. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** Every session on a sidecar preConnect pool fails.
+**Suggested resolution:** Design supervised SDK-warm for sidecar runtimes (proposal 0087 part 1, which supervises `preConnect` runtimes; launch at pod warm-up follows from the single lifetime contract). Scheduled in `gateway-runtime-comms-remediation.md` §10.2.
+
 ## §6.2 Pod State Machine <a id="6.2"></a>
 Spec source: `spec/06_warm-pod-model.md` lines 80–313.
 Implementation tree audited:
@@ -5082,6 +5166,13 @@ The §6.2 pod state machine is **declared** in code (`pkg/sandbox/state/state.go
 Secondary risk: the `lenny-sandboxclaim-guard` webhook's PATCH/PUT rule is pinned to `phase == claimed` and will fight the spec-mandated setup chain the moment H-6.2-01 is fixed (H-6.2-07). The ownership matrix carve-outs for the gateway-owned slot path are correct (SSA + ForceOwnership in `slotclaimer.go`), but the legacy `Client.Status().Update` writes in `claimer.go`, `binder.go`, and `podregistry/crd.go` (H-6.2-05) bypass the matrix.
 
 ---
+
+### - [ ] F-6.2.27 — The §6.2 `idle → draining` edge and its state-machine reference row name only the `maxPodUptimeSeconds` trigger [Low] — OPEN
+
+**Spec:** §6.2 pod state machine; `docs/reference/state-machines.md`.
+**Evidence:** The WarmPoolController drains idle pods on other triggers too, including the pinned-idle drain proposal 0079 adds (stated in §5.2 **Pinned idle inventory.**). Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** The edge's trigger list is incomplete.
+**Suggested resolution:** List every trigger on the edge or point to the §5.2 home. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §6.3 Startup Latency Analysis <a id="6.3"></a>
 Spec section: `spec/06_warm-pod-model.md` lines 315–372 (subsection 6.3).
@@ -13036,6 +13127,13 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 - `tests/tier8_chaos/store_failure_test.go:198–259` — chaos test for dual-store outage only checks process liveness, not the 503/SSE/Retry-After spec behaviour.
 
 ---
+
+### - [ ] F-10.1.20 — A coordinator hold timeout neither exits the adapter nor reaches a gateway consumer [Medium] — OPEN
+
+**Spec:** §10.1.4 **Hold state timeout:** and the orphan-session reconciler.
+**Evidence:** `onHoldTimeout` terminates the pod's sessions and returns without exiting (`pkg/adapter/holdstate.go`). No gateway code consumes `AdapterTerminating`; the runtime container runs under `RestartPolicyNever`, so the orphan-session reconciler never sees a terminated pod after a hold timeout. Proposal 0079 adds a pod-scope teardown at the timeout but not a gateway consumer. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** The gateway does not learn of the hold timeout.
+**Suggested resolution:** Consume `AdapterTerminating` at the gateway once the adapter-to-gateway direction exists. Scheduled with remediation step R12 (`gateway-runtime-comms-remediation.md` §10.1).
 
 ## §10.2 Authentication <a id="10.2"></a>
 Spec: `spec/10_gateway-internals.md` lines 183–300.
@@ -27658,6 +27756,13 @@ in the MCP Management Server inventory.
   reachable through the same binary.
 
 ---
+
+### - [ ] F-15.1.41 — A resume whose claim fails with a non-transient error moves the session to `failed`, although §15.1 says `RESUME_FAILED` leaves it in `awaiting_client_action` [Medium] — OPEN
+
+**Spec:** §15.1 `RESUME_FAILED` (the row stays in `awaiting_client_action`).
+**Evidence:** `handleResume` passes the claim error to `holdOrFailOnResumeError` and answers with the retryable 503 (`pkg/gateway/sessionserver/resume.go`); for an error `isTransientPodClaimError` does not list, `failSession` writes `failed` (`session_terminal.go`). Proposal 0079's bounded pin read adds a path to this outcome. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
+**Gap:** A retryable answer leaves a terminal row.
+**Suggested resolution:** Reclassify resume claim errors in `isTransientPodClaimError` so the row stays in `awaiting_client_action`. Scheduled in the recycling follow-up item of `gateway-runtime-comms-remediation.md` §10.2.
 
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).
