@@ -2,13 +2,13 @@
 proposal: 0079_fix_name-who-starts-the-next-sessions-runtime-on-a-recycled-pod
 title: Name who starts the next session's runtime on a recycled pod
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-08-25
 drafted-by: 
 reviewed-date: 2026-10-02
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-02
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---

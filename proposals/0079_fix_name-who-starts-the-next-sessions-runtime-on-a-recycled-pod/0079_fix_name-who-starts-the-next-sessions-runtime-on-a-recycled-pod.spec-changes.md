@@ -606,6 +606,8 @@ The human adjudicated decisions 1 to 5 and A to C on 2026-09-30, decisions 6 to 
 
 12. **A failed drain stamp on a pool outside the process-reuse rule.** Adjudicated on 2026-10-02: log and continue. A failed drain stamp is logged at `Warn` and does not fail the acquisition (non-spec §4.4, D16). SPEC-8(d) states the rule, D16 the design, non-spec §4.4 and CODE-8 the code, and TEST-12, TEST-13, and TEST-21 the tests.
 
+13. **What bounds the Postgres fallback's `ClaimIdle` transaction.** Adjudicated on 2026-10-02 at the staged bound. `fallbackClaim` runs `ClaimIdle` under a deadline equal to the resolved `podClaimFallbackMaxMirrorLagSeconds` (default 10 s), and no dedicated setting is added. The freshness precondition already refuses the fallback on a mirror staler than that value, so the same value bounds how long one fallback holds the mirror still. The rejected alternative was a dedicated gateway setting with a 5 s default.
+
 A. **How a `released` retire's reason is recorded.** Adjudicated at the default. CODE-7 logs every retire whose `failed` is false at `Info`, one record per retire, with the pod, the reason, the lifetime session count, and the uptime, and DOC-4's troubleshooting entry reads that record. A `vm-restart` pool logs one record per boundary.
 
 B. **Whether SPEC-5(b) names "Runtime not live".** Adjudicated at the default. The **Recycling and integration levels** paragraph names the Pod retirement policy item "Runtime not live" by its label, as D15 permits for a site that lists per-pod retire causes.

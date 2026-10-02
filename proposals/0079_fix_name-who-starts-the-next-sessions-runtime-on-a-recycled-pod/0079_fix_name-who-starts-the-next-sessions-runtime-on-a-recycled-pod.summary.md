@@ -69,14 +69,7 @@ spec-changes.md §9.1 carries the detail and the evidence for each item.
 
 ## Open decisions for human to make
 
-The human adjudicated decisions 1 to 12 and A to C, and spec-changes.md §12 records them. The staging applies the recommendation of each open decision below.
-
-13. **What bounds the Postgres fallback's `ClaimIdle` transaction?** The fallback reads a Pod inside a transaction that holds mirror row locks, and the WarmPoolController's mirror `Sync` for the pool waits on those locks, so a hung Pod `Get` stalls the pool's mirror and, with the default single reconcile worker, every pool's reconcile.
-    - **What is staged.** `fallbackClaim` runs `ClaimIdle` under a deadline equal to the resolved `podClaimFallbackMaxMirrorLagSeconds` (default 10 s), with no setting of its own (non-spec §4.4; SPEC-4(i)).
-    - **Recommendation.** Keep the staged bound. Confidence: medium.
-    - **Ground.** The freshness precondition already refuses the fallback on a mirror staler than that value, so the same value bounds how long one fallback holds the mirror still, and the bound adds no gateway setting.
-    - **Alternative: a dedicated gateway setting with a 5 s default and its own flag and environment variable.** It keeps a shorter default and a knob independent of the freshness threshold. It lost because it adds a setting, a flag, an environment variable, and `cmd/lenny-gateway` wiring for a value the existing parameter already supplies.
-    - **Cost of the staged bound.** One hung fallback can delay the WarmPoolController's reconciles for up to 10 s rather than 5 s, the bound cannot be tuned apart from the freshness threshold, and no operator can change it until `cmd/lenny-gateway` wires the mirror-lag flag the specification already names.
+None. The human adjudicated decisions 1 to 13 and A to C, and spec-changes.md §12 records them.
 
 ## Defects in the shipped tree that this proposal does not stage
 
