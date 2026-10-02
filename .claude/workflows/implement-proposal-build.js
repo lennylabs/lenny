@@ -2753,6 +2753,64 @@ async function runCompileGuard(label, phaseName) {
   return await agentTry(GUARD_PROMPT, { schema: GUARD, label: "compile-guard:" + label, phase: phaseName });
 }
 
+// Re-verification after a fix is scoped to what the fix changed.
+//
+// The whole-change Verify pass runs every reached tier, and on a large proposal
+// that takes hours. A re-run after a fix used to repeat all of it, so a fix that
+// touched one tier-11 test file cost a second multi-hour pass that could not
+// have failed differently. The first full pass is the baseline: a tier it
+// passed stays certified unless the fix's commits can reach it. The scope is
+// decided the same way the Build loop scopes a step fix, from the real diff
+// (classify-diff.mjs over a commit range, never the fixer's self-report) and
+// the class table, so the rule for "which tiers can this fix break" is stated
+// once. Changes to shared test infrastructure, build inputs, or images widen
+// the scope back to every reached tier, because they can break a tier without
+// touching its packages.
+
+// Captures HEAD before a fix, so the re-verify can diff exactly the fix's
+// commits. Returns null when the agent fails, which makes the re-verify fall
+// back to the full set.
+async function captureHead(label, phaseName) {
+  const r = await agentTry(
+    "Print the current git HEAD commit SHA in " + repo + " (run `git rev-parse HEAD`). Do not edit anything. Return it as {sha}.",
+    { schema: SHA, label: "head:" + label, phase: phaseName, model: "haiku", effort: "low" },
+  );
+  return r && r.sha ? r.sha.trim() : null;
+}
+
+// The prompt block telling a re-verify agent which tiers to run. fromSha is
+// HEAD before the fix; prior is the last VERIFY result, whose passing tiers
+// are carried forward when the fix cannot reach them.
+function REVERIFY_SCOPE(fromSha, prior) {
+  const fullSet = tierSet.join(", ") || "from the diff";
+  if (!fromSha || !prior) {
+    return "SCOPE: run every reached tier (" + fullSet + "), because there is no earlier full pass and fix range to scope against.";
+  }
+  const priorFailures = (prior.failures || []).map((f) => "- " + f).join("\n") || "- (none listed)";
+  return (
+    "SCOPE: a full pass over every reached tier (" + fullSet + ") already ran. Its tiers run: " +
+    ((prior.tiersRun || []).join(", ") || "(unrecorded)") + ". Tiers it carried forward or skipped: " +
+    ((prior.skipped || []).map((k) => k.tier + " (" + k.why + ")").join("; ") || "(none)") +
+    ". Its failures:\n" + priorFailures +
+    "\n\nEvery tier that pass ran or carried forward without a failure stays certified unless the fix commits can reach it. " +
+    "Run ONLY what the fix warrants, decided in this order.\n\n" +
+    "1. CLASSIFY THE REAL DIFF. Run `node " + repo + "/.claude/tools/classify-diff.mjs " + fromSha + "..HEAD --json` " +
+    "and read `git diff " + fromSha + "..HEAD` yourself. The script's comment-only, doc-only, and test-only verdicts " +
+    "are authoritative where they fire. Do not take a fixer's account of its change as the subject; the diff wins.\n\n" +
+    "2. MAP THE CLASS TO TIERS with this table, limited to the reached set (" + fullSet + "):\n" + CLASS_TABLE +
+    "\nAlways run tier 0, and always re-run every test named in the failures above by name, in the tier that owns it.\n\n" +
+    "3. WIDEN TO THE FULL REACHED SET when the range touches shared test infrastructure or build inputs: " +
+    "`tests/testinfra/`, `cmd/lenny-test/`, a test helper package imported across tiers, `go.mod` or `go.sum`, " +
+    "`charts/`, `migrations/`, a proto or generated file, a Dockerfile or image build script, or a file under " +
+    "`pkg/` imported by packages in more than one reached tier. Name the file that forced the widening.\n\n" +
+    "4. COVERAGE: recompute `lenny-test coverage --diff " + baseRef + "` only when the range changes non-test Go " +
+    "code; otherwise carry the earlier figure (" + (prior.changedLineCoverage || "unrecorded") + ") forward and say so.\n\n" +
+    "5. RECORD THE SCOPE. Return the class in `classification`, and one `skipped` entry per reached tier you did not " +
+    "re-run, with `why` naming it as carried forward from the earlier full pass and why the range cannot reach it. " +
+    "`tiersRun` lists only the tiers this run executed."
+  );
+}
+
 phase("Verify");
 const tierSet = Array.from(new Set(plan.steps.flatMap((s) => s.tiers || [])));
 let verify = await agentTry(
@@ -2788,6 +2846,8 @@ while (
 ) {
   vround++;
   log("Verify round " + vround + "/" + maxVerifyRounds + ": fixing " + verify.failures.length + " failure(s)");
+  const preFixSha = await captureHead("verify-fix:r" + vround, "Verify");
+  const priorVerify = verify;
   await agentTry(
     "Fix the test failures from the verification of an applied spec proposal's implementation.\n\n" +
       "Work in " +
@@ -2801,13 +2861,13 @@ while (
     { label: "verify-fix:r" + vround, phase: "Verify" },
   );
   verify = await agentTry(
-    "Re-run the reached tiers for the implementation in " +
+    "Re-verify the implementation in " +
       repo +
-      " and report whether everything is now green. Tiers: " +
-      (tierSet.join(", ") || "from the diff") +
-      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kubebuilder-envtest 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
+      " after a fix and report whether everything is now green.\n\n" +
+      REVERIFY_SCOPE(preFixSha, priorVerify) +
+      "\n\nMEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kubebuilder-envtest 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
       baseRef +
-      "`) at least " +
+      "`, recomputed or carried forward as the scope above says) at least " +
       coverageFloor +
       "%, with a behavior-preserving refactor exempt. Report green, the tiers run, the changed-line coverage, and any remaining failures precisely.",
     { schema: VERIFY, label: "verify-rerun:r" + vround, phase: "Verify" },
@@ -2885,8 +2945,10 @@ let reviewClean = false;
 let reviewRound = 0;
 let lastReviewFindings = [];
 let reviewFixApplied = false;
+let preReviewSha = null;
 if (green) {
   phase("Review");
+  preReviewSha = await captureHead("pre-review", "Review");
   while (reviewRound < maxReviewRounds && !reviewClean) {
     reviewRound++;
     const reviewResults = await parallel(
@@ -2952,15 +3014,15 @@ if (green) {
 let finalGreen = green;
 if (green && reviewFixApplied) {
   const recheck = await agentTry(
-    "Re-run the reached tiers for the implementation in " +
+    "Re-verify the implementation in " +
       repo +
-      " after the design-conformance fixes and report whether everything is still green. Tiers: " +
-      (tierSet.join(", ") || "from the diff") +
-      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`; reap stray envtest etcd/kube-apiserver between packages; `-p 1`/`-p 2` to cap memory; stream output, no `| tail`). Apply the coverage gate (changed-line coverage at least " +
+      " after the design-conformance fixes and report whether everything is still green.\n\n" +
+      REVERIFY_SCOPE(preReviewSha, verify) +
+      "\n\nMEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`; reap stray envtest etcd/kube-apiserver between packages; `-p 1`/`-p 2` to cap memory; stream output, no `| tail`). Apply the coverage gate (changed-line coverage at least " +
       coverageFloor +
       "% via `lenny-test coverage --diff " +
       baseRef +
-      "`, refactors exempt). REGRESSION-TEST GATE FOR REVIEW FIXES: the design-conformance review just caught defects the automated tests had passed over. Inspect the commits made during the review rounds (`git log` since the review began) and confirm each code fix with a runtime effect is pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — not merely line-covered by a pre-existing happy-path test. If any review-driven fix landed with no such regression test, set green=false and name the fix (file:line), the corrected behavior, and the missing test so the gap is closed before this returns. Report green, the tiers run, the coverage, and any remaining failures.",
+      "`, recomputed or carried forward as the scope above says, refactors exempt). REGRESSION-TEST GATE FOR REVIEW FIXES: the design-conformance review just caught defects the automated tests had passed over. Inspect the commits made during the review rounds (`git log` since the review began) and confirm each code fix with a runtime effect is pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — not merely line-covered by a pre-existing happy-path test. If any review-driven fix landed with no such regression test, set green=false and name the fix (file:line), the corrected behavior, and the missing test so the gap is closed before this returns. Report green, the tiers run, the coverage, and any remaining failures.",
     { schema: VERIFY, label: "verify-postreview", phase: "Review" },
   );
   finalGreen = !!(recheck && recheck.green);
