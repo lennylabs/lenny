@@ -2005,6 +2005,20 @@ F-5.3.14 closes with the same application (proposal Section 10); do not wire its
 **Gap:** The specification describes behavior that does not happen.
 **Suggested resolution:** The supervisor on every sidecar pod delivers the signals, observes exit codes, and reports crashes (proposal 0087 part 1); any sentence it does not make true is corrected there. Scheduled in `gateway-runtime-comms-remediation.md` §10.2.
 
+### - [ ] F-4.7.28 — The intra-pod MCP listeners apply the peer-UID check differently from `CH-MSGSOCK` [Medium] — OPEN
+
+**Spec:** §4.7.11 item 1 (**Separate UIDs and connection authentication:**) and the §28.5.3 `CH-MSGSOCK` card, **Endpoint.**: the adapter accepts connections only from the expected agent UID, and when `Runtime.spec.requireSoPeercred` is `false` the manifest nonce and a per-connection challenge authenticate in place of the peer check.
+**Evidence:** `Server.listenIntraPodMCP` (`pkg/adapter/connectormcp.go`) wraps the platform and connector MCP listeners in `peerCheckedListener` whenever `RuntimeUID != 0`, regardless of `--require-so-peercred`, and applies no check when `RuntimeUID` is 0. The `CH-MSGSOCK` listener (`NewSocketRuntimeProcess` with `SocketPeerAuth`, landed with the `SO_PEERCRED` half of F-4.7.25) skips the peer check in nonce-only mode and, with no UID configured, admits only UID 0 and makes the adapter exit at startup. Reported by the implementation of F-4.7.25's `SO_PEERCRED` half, filed 2026-10-03.
+**Gap:** On a pool with `requireSoPeercred: false`, which exists for runtimes where `SO_PEERCRED` does not report the expected UID, the MCP listeners still refuse by peer UID, so the legitimate runtime's MCP connections can be refused. With no runtime UID configured, the MCP listeners accept any peer, which fails open where `CH-MSGSOCK` fails closed.
+**Suggested resolution:** Route the MCP listeners through the same `SocketPeerAuth` decision as `CH-MSGSOCK`: no peer check in nonce-only mode, and no unauthenticated listener when no UID is configured. Tier-1 tests for both modes.
+
+### - [ ] F-4.7.29 — A timed-out runtime `Start` leaves its accept goroutine blocked on the pod-scoped listener [Medium] — OPEN
+
+**Spec:** §4.7.10 **Runtime process lifetime.** and the §28.5.3 `CH-MSGSOCK` card: the runtime dials `CH-MSGSOCK` once and the adapter accepts that connection for the pod's first session.
+**Evidence:** `SocketRuntimeProcess.accept` (`pkg/adapter/socketruntime.go`) runs `p.listener.Accept()` in a goroutine and returns on a timeout or context cancellation without closing the listener or draining the goroutine's result channel. The goroutine stays blocked in `Accept`. Since proposals 0078 and 0079 the listener is kept for the pod's life, so a runtime that dials after the timeout is accepted by the abandoned goroutine, its connection is sent into a channel nobody reads, and the next `Start` waits on a fresh `Accept` that the runtime, having already connected, never satisfies. Reported by the implementation of F-4.7.25's `SO_PEERCRED` half, filed 2026-10-03.
+**Gap:** A runtime slower to connect than the first session's start timeout leaves the pod with a leaked connection and a runtime that no later session reaches.
+**Suggested resolution:** Keep one accept loop per listener that hands accepted connections to the waiting `Start`, or have a later `accept` collect the result of an earlier abandoned one, and close any connection no `Start` claims. Tier-1 and tier-7a tests for a dial that arrives after a timed-out `Start`.
+
 ## §4.8 Gateway Policy Engine <a id="4.8"></a>
 ### Summary
 
