@@ -365,7 +365,6 @@ var table = map[string]entry{
 	"UPLOAD_ARCHIVE_LIMIT_EXCEEDED":                {CategoryPermanent, false}, // spec: 15:1093
 	"INVALID_CALLBACK_URL":                         {CategoryPermanent, false}, // spec: 15:1097
 	"LENNY_PLAYGROUND_BEARER_TYPE_REJECTED":        {CategoryPermanent, false}, // spec: 15:1098
-	"EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN":       {CategoryPermanent, false}, // spec: 15:1099
 	"REGION_CONSTRAINT_UNRESOLVABLE":               {CategoryPermanent, false}, // spec: 15:1058 (§15.4 family)
 	"KMS_REGION_UNRESOLVABLE":                      {CategoryPermanent, false}, // spec: 15:1060
 	// spec: §8.8 — a `one_shot` runtime's second input round is

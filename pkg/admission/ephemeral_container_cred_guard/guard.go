@@ -32,7 +32,9 @@ import (
 	"strings"
 )
 
-// RejectionCode is the §15.1 error code stamped on every rejection.
+// RejectionCode is the admission rejection label carried in every denial message.
+// It is not a §15.1 API error code.
+// spec: §17.2 (Rejection labels)
 const RejectionCode = "EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN"
 
 // credPathPrefix is the pod directory carrying the §4.7 per-session
