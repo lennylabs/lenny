@@ -1158,3 +1158,85 @@ func TestBuildRendersTheWorkspaceBaseOnBothAdapterArgvs_spec_6_4(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildContainerIdentity_spec_13_1 pins the §13.1 Container identity
+// rule at the producer. For the sidecar, embedded, and egress-capture
+// builds, at the default and at overridden UIDs, every container the
+// builder renders sets a nonzero container-level runAsUser and runAsGroup
+// with the primary GID equal to the UID, only the runtime container runs
+// at the agent UID, and only the adapter container runs at the adapter UID.
+// The pod sets no pod-level runAsUser or runAsGroup, because a pod-level
+// value does not satisfy the container-level rule. Before the builder set
+// runAsGroup, every container left the primary GID to the image; before
+// the egress-capture container moved to its own UID, it ran at the agent
+// UID. Either defect fails this test.
+//
+// spec: 13.1 (Pod Security)
+func TestBuildContainerIdentity_spec_13_1(t *testing.T) {
+	capture := &podspec.EgressCapture{
+		Image:    "ghcr.io/lennylabs/lenny-egress-capture:e2e",
+		Upstream: "api.openai.com:443",
+	}
+	type uids struct{ adapter, agent, gid int64 }
+	overrides := map[string]uids{
+		"default":    {},
+		"overridden": {adapter: 61000, agent: 61001, gid: 61002},
+	}
+	builds := map[string]func(*podspec.Inputs){
+		"sidecar":                func(*podspec.Inputs) {},
+		"embedded":               func(in *podspec.Inputs) { in.DeploymentModel = string(podspec.DeploymentEmbedded) },
+		"sidecar egress-capture": func(in *podspec.Inputs) { in.EgressCapture = capture },
+		"embedded egress-capture": func(in *podspec.Inputs) {
+			in.DeploymentModel = string(podspec.DeploymentEmbedded)
+			in.EgressCapture = capture
+		},
+	}
+	for oname, o := range overrides {
+		for bname, mutate := range builds {
+			t.Run(oname+"/"+bname, func(t *testing.T) {
+				in := inputs()
+				in.AdapterUID, in.AgentUID, in.CredReadersGID = o.adapter, o.agent, o.gid
+				mutate(&in)
+				pod, err := podspec.Build(in)
+				if err != nil {
+					t.Fatalf("Build: %v", err)
+				}
+				adapterUID, agentUID := podspec.AdapterUID, podspec.AgentUID
+				if o.adapter != 0 {
+					adapterUID, agentUID = o.adapter, o.agent
+				}
+				assertContainerIdentity(t, pod, adapterUID, agentUID)
+			})
+		}
+	}
+}
+
+// assertContainerIdentity checks the §13.1 Container identity rule over
+// every init and regular container of pod.
+func assertContainerIdentity(t *testing.T, pod *corev1.Pod, adapterUID, agentUID int64) {
+	t.Helper()
+	if psc := pod.Spec.SecurityContext; psc != nil && (psc.RunAsUser != nil || psc.RunAsGroup != nil) {
+		t.Errorf("pod-level runAsUser=%v runAsGroup=%v, want both unset", psc.RunAsUser, psc.RunAsGroup)
+	}
+	all := append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...)
+	for _, c := range all {
+		sc := c.SecurityContext
+		if sc == nil || sc.RunAsUser == nil || sc.RunAsGroup == nil {
+			t.Errorf("%s: runAsUser and runAsGroup must both be set at container level", c.Name)
+			continue
+		}
+		uid, gid := *sc.RunAsUser, *sc.RunAsGroup
+		if uid == 0 || gid == 0 {
+			t.Errorf("%s: runAsUser=%d runAsGroup=%d, want both nonzero", c.Name, uid, gid)
+		}
+		if gid != uid {
+			t.Errorf("%s: runAsGroup=%d, want it equal to runAsUser %d", c.Name, gid, uid)
+		}
+		if uid == agentUID && c.Name != "runtime" {
+			t.Errorf("%s: runs at the agent UID %d, which only the runtime container may hold", c.Name, uid)
+		}
+		if uid == adapterUID && c.Name != "adapter" {
+			t.Errorf("%s: runs at the adapter UID %d, which only the adapter container may hold", c.Name, uid)
+		}
+	}
+}

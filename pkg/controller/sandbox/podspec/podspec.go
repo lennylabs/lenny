@@ -752,6 +752,11 @@ const (
 	// listens on by default. The runtime container dials it instead
 	// of the real upstream.
 	defaultEgressCaptureListenPort int32 = 8443
+	// egressCaptureUID is the UID and primary GID of the test-only
+	// egress-capture container, which the builder injects only when the
+	// controller's egress-capture image is set. It lies outside the default
+	// adapter and agent UIDs, the default lenny-cred-readers GID, and 0.
+	egressCaptureUID int64 = 65531
 )
 
 // defaultEgressCapturePath is the default in-pod path for the
@@ -803,8 +808,13 @@ func injectEgressCaptureSidecar(in Inputs, pod *corev1.Pod, mountOn []int) {
 			Name:          "capture",
 			ContainerPort: listenPort,
 		}},
-		VolumeMounts:    []corev1.VolumeMount{captureMount, {Name: dshmVolumeName, MountPath: dshmMount}},
-		SecurityContext: containerSecurityContext(in.agentUID()),
+		VolumeMounts: []corev1.VolumeMount{captureMount, {Name: dshmVolumeName, MountPath: dshmMount}},
+		// spec: §13.1 (Container identity)
+		// The agent UID is reserved to the runtime container, so the
+		// capture container runs at its own non-reserved identity. The
+		// runtime still reads the capture file through the
+		// lenny-cred-readers group the fsGroup-managed emptyDir assigns.
+		SecurityContext: containerSecurityContext(egressCaptureUID),
 	})
 }
 
@@ -1272,7 +1282,16 @@ func injectSATokenVolume(in Inputs, pod *corev1.Pod, mountOn []int) {
 // masked /proc mount.
 func containerSecurityContext(uid int64) *corev1.SecurityContext {
 	return &corev1.SecurityContext{
-		RunAsUser:                ptr.To(uid),
+		RunAsUser: ptr.To(uid),
+		// spec: §13.1 (User row; Container identity)
+		// The primary GID equals the UID. Every agent-pod container sets
+		// runAsUser and runAsGroup explicitly at container level so the
+		// identity lenny-pod-security reads at admission is the identity
+		// that runs; leaving runAsGroup unset lets the image choose the
+		// primary GID, which can be 0 or the lenny-cred-readers GID. basePod
+		// deliberately sets no pod-level runAsUser or runAsGroup, because a
+		// pod-level value does not satisfy the container-level rule.
+		RunAsGroup:               ptr.To(uid),
 		RunAsNonRoot:             ptr.To(true),
 		AllowPrivilegeEscalation: ptr.To(false),
 		ReadOnlyRootFilesystem:   ptr.To(true),
