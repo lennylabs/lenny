@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -37,7 +38,7 @@ import (
 // credential fsGroup.
 const credFsGroupMissingReason = "POD_SPEC_CRED_FSGROUP_MISSING"
 
-// spec: 12.9.3
+// spec: 12.9.3, 13.1 (Pod Security)
 // diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
 // whose pod-level securityContext omits fsGroup. The test drives a pod
 // that is §13.1-compliant in every other respect but carries no
@@ -74,7 +75,8 @@ func TestAdmissionPolicyFsGroupMissing(t *testing.T) {
 // attributable to the missing fsGroup alone: runAsNonRoot and the
 // RuntimeDefault seccomp profile are set at the pod level, and the
 // container drops all capabilities, sets allowPrivilegeEscalation false,
-// and runs a read-only root filesystem.
+// runs a read-only root filesystem, and sets the explicit non-reserved
+// runAsUser and runAsGroup §13.1 (Container identity) requires.
 func fsGroupMissingPodManifest() string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -92,9 +94,11 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, agentNamespace)
+`, agentNamespace, injectedSidecarUID, injectedSidecarUID)
 }
 
 // credGroupOverbroadReason is the §13.1 reason code the lenny-pod-security
@@ -108,7 +112,7 @@ const credGroupOverbroadReason = "POD_SPEC_CRED_GROUP_OVERBROAD"
 // runAsGroup against it.
 const credReadersGID = 65534
 
-// spec: 12.9.3
+// spec: 12.9.3, 13.1 (Pod Security)
 // diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
 // whose non-adapter, non-agent container declares the lenny-cred-readers
 // GID in runAsGroup. §13.1 confines that group membership to the
@@ -142,8 +146,11 @@ func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
 // §13.1-compliant in every respect except that a third container,
 // neither the adapter nor the agent, declares the lenny-cred-readers
 // GID in runAsGroup. The adapter and runtime containers carry the §4.7
-// names the webhook reads as the credential containers, so the
-// rejection is attributable to the third container alone.
+// names the webhook reads as the credential containers and run at their
+// own reserved UIDs, and the third container runs at a non-reserved
+// UID, so the §13.1 container identity clause admits every container
+// and the rejection is attributable to the third container's group
+// alone.
 func credGroupOverbroadPodManifest() string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -157,27 +164,16 @@ spec:
     seccompProfile:
       type: RuntimeDefault
   containers:
-    - name: adapter
+%s%s    - name: sidecar
       image: busybox:1.36
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
-        capabilities:
-          drop: ["ALL"]
-    - name: runtime
-      image: busybox:1.36
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        capabilities:
-          drop: ["ALL"]
-    - name: sidecar
-      image: busybox:1.36
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
+        runAsUser: %d
         runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, agentNamespace, credReadersGID, credReadersGID)
+`, agentNamespace, credReadersGID,
+		containerYAML("adapter", podspec.AdapterUID), containerYAML("runtime", podspec.AgentUID),
+		injectedSidecarUID, credReadersGID)
 }

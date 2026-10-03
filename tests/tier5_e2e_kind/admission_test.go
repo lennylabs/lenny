@@ -19,6 +19,7 @@ package tier5_e2e_kind_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -130,28 +131,78 @@ spec:
 	t.Logf("pod-security rejected the unhardened pod: %s", strings.TrimSpace(out))
 }
 
-// spec: 13.1
+// spec: 13.1 (Pod Security)
 // diagnosis: the §13.1 pod-security webhook is over-broad and rejects
 // a compliant pod. The test applies a pod that sets every §13.1
 // securityContext field correctly (runAsNonRoot, the lenny-cred-readers
 // fsGroup 65534, RuntimeDefault seccomp, a container that drops ALL
-// capabilities and sets a read-only root filesystem) and expects the
+// capabilities, sets a read-only root filesystem, and sets an explicit
+// non-reserved container-level runAsUser and runAsGroup) and expects the
 // API server to admit it. This is the positive control for
 // TestAdmissionPodSecurity: a failure means the webhook rejects a
 // spec that satisfies §13.1.
 func TestAdmissionPodSecurityAdmitsCompliantPod(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	// A pod that satisfies every §13.1 invariant. fsGroup 65534 is the
-	// lenny-cred-readers GID from pkg/controller/sandbox/podspec.
-	// supplementalGroups carries the same GID: §13.1 requires the webhook
-	// to validate the presence of both the fsGroup and the
-	// supplementalGroups settings, so a pod that sets only the fsGroup is
-	// rejected with POD_SPEC_CRED_FSGROUP_MISSING.
-	const goodPod = `apiVersion: v1
+	// A pod that satisfies every §13.1 invariant (see compliantAgentPod).
+	// §13.1 (Container identity) requires each container to set its own
+	// nonzero runAsUser and runAsGroup; 1000 is outside the default
+	// adapter and agent UIDs, so no reservation applies.
+	out, err := dryRunApply(t, c, compliantAgentPod("e2e-admission-goodpod", 1000))
+	if err != nil {
+		t.Fatalf("API server rejected a §13.1-compliant agent pod; "+
+			"the lenny-pod-security webhook is over-broad.\noutput:\n%s", out)
+	}
+	t.Logf("pod-security admitted the compliant pod: %s", strings.TrimSpace(out))
+}
+
+// spec: 13.1 (Pod Security)
+// diagnosis: the §13.1 container identity clause is not enforced. The
+// test applies the compliant pod of
+// TestAdmissionPodSecurityAdmitsCompliantPod with its one container,
+// which is not named runtime, moved to the default agent UID that §13.1
+// reserves for the runtime container, and expects the lenny-pod-security
+// webhook to reject it with the reservation message. An admitted pod
+// means a non-runtime container can run at the agent UID and pass the
+// adapter's SO_PEERCRED check as the agent, or the loaded webhook image
+// predates the container identity clause.
+func TestAdmissionPodSecurityRejectsReservedUID(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	out, err := dryRunApply(t, c, compliantAgentPod("e2e-admission-reserveduid", defaultAgentUID))
+	if err == nil {
+		t.Fatalf("API server admitted an agent pod whose non-runtime container runs at the reserved "+
+			"agent UID %d; the lenny-pod-security webhook did not enforce §13.1 container identity.\noutput:\n%s",
+			defaultAgentUID, out)
+	}
+	if !strings.Contains(out, "pod-security.lenny.dev") {
+		t.Fatalf("rejection did not come from the pod-security webhook.\noutput:\n%s", out)
+	}
+	want := fmt.Sprintf("runAsUser %d is reserved for the", defaultAgentUID)
+	if !strings.Contains(out, want) {
+		t.Errorf("pod-security rejection lacks the §13.1 container identity reason %q.\noutput:\n%s", want, out)
+	}
+	t.Logf("pod-security rejected the reserved-UID pod: %s", strings.TrimSpace(out))
+}
+
+// defaultAgentUID is the chart default of security.podUIDs.agent, the
+// UID §13.1 (Container identity) reserves for the runtime container. It
+// mirrors podspec.AgentUID.
+const defaultAgentUID = 65533
+
+// compliantAgentPod renders an agent-namespace pod that satisfies every
+// §13.1 pod-level and container-level control, with its single
+// container, named agent, running at uid with runAsGroup equal to uid.
+// fsGroup 65534 is the lenny-cred-readers GID from
+// pkg/controller/sandbox/podspec. supplementalGroups carries the same
+// GID: §13.1 requires the webhook to validate the presence of both the
+// fsGroup and the supplementalGroups settings, so a pod that sets only
+// the fsGroup is rejected with POD_SPEC_CRED_FSGROUP_MISSING.
+func compliantAgentPod(name string, uid int64) string {
+	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
-  name: e2e-admission-goodpod
+  name: %s
   namespace: lenny-agents
 spec:
   securityContext:
@@ -166,15 +217,11 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`
-	out, err := dryRunApply(t, c, goodPod)
-	if err != nil {
-		t.Fatalf("API server rejected a §13.1-compliant agent pod; "+
-			"the lenny-pod-security webhook is over-broad.\noutput:\n%s", out)
-	}
-	t.Logf("pod-security admitted the compliant pod: %s", strings.TrimSpace(out))
+`, name, uid, uid)
 }
 
 // spec: 13.7

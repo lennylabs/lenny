@@ -261,11 +261,12 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         seccompProfile:
           type: RuntimeDefault
         capabilities:
           drop: ["ALL"]
-`, name, agentNamespace, probeNode, objectStoreCAConfigMap, probeImage, probeRunAsUser)
+`, name, agentNamespace, probeNode, objectStoreCAConfigMap, probeImage, probeRunAsUser, probeRunAsUser)
 
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
 	if out, err := c.ApplyStdin(t, manifest); err != nil {
@@ -374,7 +375,9 @@ func TestOpsUnreachableFromAgentPod_spec_25_1(t *testing.T) {
 // supplementalGroups membership, and RuntimeDefault seccomp, or
 // pod-security.lenny.dev rejects the CREATE. The container keeps the same
 // hardened, non-root, read-only-root, dropped-ALL profile the other probe
-// pods use, and is pinned to the node the curl image is loaded on so it
+// pods use, sets its own runAsUser and runAsGroup at container level
+// outside the reserved adapter and agent UIDs as §13.1 (Container
+// identity) requires, and is pinned to the node the curl image is loaded on so it
 // schedules offline with imagePullPolicy: Never.
 //
 // The pod carries lenny.dev/managed=true, the label every agent-egress
@@ -416,11 +419,12 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         seccompProfile:
           type: RuntimeDefault
         capabilities:
           drop: ["ALL"]
-`, name, agentNamespace, probeNode, probeImage, probeRunAsUser)
+`, name, agentNamespace, probeNode, probeImage, probeRunAsUser, probeRunAsUser)
 
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
 	if out, err := c.ApplyStdin(t, manifest); err != nil {

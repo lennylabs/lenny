@@ -314,7 +314,7 @@ func TestAdmissionDataResidency(t *testing.T) {
 		"and remains covered by the tier-2/3 component suites", webhook)
 }
 
-// spec: 13.28
+// spec: 13.28, 13.1 (Pod Security)
 // diagnosis: the §6.4 STR-003 lenny-t4-node-isolation webhook does not
 // enforce the T4 dedicated-node rule. The test applies a T4-labelled
 // pod with no T4 nodeSelector or toleration and expects the §6.4
@@ -335,9 +335,11 @@ func TestAdmissionT4NodeIsolation(t *testing.T) {
 
 	// A T4 pod (lenny.dev/workspace-tier: t4) with no T4 nodeSelector
 	// and no T4 toleration — a §6.4 STR-003 violation. The pod sets the
-	// full §13.1 hardened securityContext so the lenny-pod-security
-	// webhook, which also fires on Pod CREATE in agent namespaces,
-	// admits it; the only rejection in scope is the T4 webhook's.
+	// full §13.1 hardened securityContext, including the explicit
+	// non-reserved container identity §13.1 (Container identity)
+	// requires, so the lenny-pod-security webhook, which also fires on
+	// Pod CREATE in agent namespaces, admits it; the only rejection in
+	// scope is the T4 webhook's.
 	const badT4Pod = `apiVersion: v1
 kind: Pod
 metadata:
@@ -358,6 +360,8 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: 1000
+        runAsGroup: 1000
         capabilities:
           drop: ["ALL"]
 `
@@ -408,6 +412,8 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: 1000
+        runAsGroup: 1000
         capabilities:
           drop: ["ALL"]
 `
