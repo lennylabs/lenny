@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -231,7 +232,7 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	// The sink resolves through soleSession, which names a session only
 	// once the pod's shared runtime process has been given it and no other.
 	_ = s.noteRuntimeStarted("sess-wire", attempt)
-	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"))
+	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

@@ -129,7 +129,7 @@ func startLifecycle(t *testing.T) *adapter.RuntimeOps {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	lc, err := adapter.NewRuntimeOps(filepath.Join(dir, "lifecycle.sock"))
+	lc, err := adapter.NewRuntimeOps(filepath.Join(dir, "lifecycle.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

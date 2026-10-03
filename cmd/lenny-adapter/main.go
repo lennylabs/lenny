@@ -77,7 +77,8 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 }
 
 // agentSocketPeerAuth returns the SO_PEERCRED posture of the adapter-agent
-// sockets: the CH-MSGSOCK runtime socket and the intra-pod MCP sockets.
+// sockets: the CH-MSGSOCK runtime socket, the CH-RUNTIMEOPS socket, and the
+// intra-pod MCP sockets.
 // Outside nonce-only mode the listeners admit only runtimeUID. When the
 // adapter binds any of these sockets (bindsAgentSocket) and runtimeUID is
 // zero (no --runtime-uid and no LENNY_RUNTIME_UID), it refuses to start: it
@@ -92,7 +93,7 @@ func agentSocketPeerAuth(runtimeUID uint32, requireSoPeercred, bindsAgentSocket 
 		return adapter.SocketPeerAuth{ExpectedUID: runtimeUID, NonceOnly: true}, nil
 	}
 	if runtimeUID == 0 && bindsAgentSocket {
-		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket and --mcp-socket require the agent UID " +
+		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket, --runtime-ops-socket, and --mcp-socket require the agent UID " +
 			"(--runtime-uid or LENNY_RUNTIME_UID) for the SO_PEERCRED peer check")
 	}
 	return adapter.SocketPeerAuth{ExpectedUID: runtimeUID}, nil
@@ -176,8 +177,8 @@ func main() {
 	runtimeUID := flag.Uint("runtime-uid", 0,
 		"UID the agent runtime process runs as (the pod spec runAsUser); "+
 			"the adapter applies the §4.7/§13 SO_PEERCRED peer check against it on "+
-			"the --mcp-socket and --runtime-socket listeners. 0 falls back to "+
-			"LENNY_RUNTIME_UID; still 0 is refused when either socket is bound, "+
+			"the --mcp-socket, --runtime-socket, and --runtime-ops-socket listeners. 0 falls "+
+			"back to LENNY_RUNTIME_UID; still 0 is refused when any of them is bound, "+
 			"unless --require-so-peercred=false")
 	requireSoPeercred := flag.Bool("require-so-peercred", true,
 		"run the mandatory §4.7 SO_PEERCRED startup self-test and crash-loop on "+
@@ -362,7 +363,7 @@ func main() {
 	// nonce-only mode the MCP servers add the per-connection
 	// challenge-response to the static nonce.
 	peerAuth, err := agentSocketPeerAuth(resolveRuntimeUID(*runtimeUID), *requireSoPeercred,
-		*runtimeSocket != "" || *mcpSocket != "")
+		*runtimeSocket != "" || *mcpSocket != "" || *lifecycleSocket != "")
 	if err != nil {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
@@ -422,7 +423,7 @@ func main() {
 	// advertises it in the session manifest.
 	var lifecycle *adapter.RuntimeOps
 	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket)
+		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}

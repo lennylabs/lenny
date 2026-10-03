@@ -149,7 +149,7 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socketPath := filepath.Join(sockDir, "lc.sock")
 
-	lc, err := adapter.NewRuntimeOps(socketPath)
+	lc, err := adapter.NewRuntimeOps(socketPath, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
 	}

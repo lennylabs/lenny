@@ -966,6 +966,12 @@
       "title": "Adapter-Agent Security Boundary",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsRefusesForeignUIDAndServesTheRuntimeNext_spec_4_7_11",
+        "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsServesTheAgentUIDThroughSOPeercred_spec_4_7_11",
+        "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsNonceOnlyAndEmbeddedPosturesApplyNoPeerCheck_spec_4_7_11",
+        "pkg/adapter/runtimeops_peercred_linux_test.go::TestRuntimeOpsRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
+        "pkg/adapter/runtimeops_peercred_linux_test.go::TestRuntimeOpsFailsClosedWithoutAnAgentUID_spec_4_7_11",
+        "tests/tier9_security/runtime_socket_peercred_test.go::TestRuntimeOpsSocketRefusesForeignUIDPeer_spec_4_7_11",
         "pkg/adapter/platformmcp_test.go::TestEmbeddedPostureAppliesNoPeerCheckAndKeepsTheNonce_spec_4_7_11",
         "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerEmbeddedPostureAppliesNoPeerCheck_spec_4_7_11",
         "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerAdmitsOnlyTheAgentUID_spec_4_7_11",
@@ -5928,6 +5934,9 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsRefusesForeignUIDAndServesTheRuntimeNext_spec_4_7_11",
+        "pkg/adapter/runtimeops_peercred_linux_test.go::TestRuntimeOpsRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
+        "tests/tier9_security/runtime_socket_peercred_test.go::TestRuntimeOpsSocketRefusesForeignUIDPeer_spec_4_7_11",
         "pkg/adapter/socketruntime_accept_test.go::TestSocketRuntimeLateDialAfterTimedOutStartServesTheNextStart_spec_4_7_10",
         "pkg/adapter/socketruntime_accept_test.go::TestSocketRuntimeLateDialAfterCancelledStartServesTheNextStart_spec_4_7_10",
         "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11",

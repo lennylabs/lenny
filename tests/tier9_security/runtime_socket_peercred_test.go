@@ -2,8 +2,8 @@
 
 //go:build security && linux
 
-// Tier-9 SO_PEERCRED boundary on the CH-MSGSOCK runtime socket and the
-// intra-pod platform MCP socket, driven
+// Tier-9 SO_PEERCRED boundary on the CH-MSGSOCK runtime socket, the
+// CH-RUNTIMEOPS socket, and the intra-pod platform MCP socket, driven
 // against the real adapter.SocketRuntimeProcess listener and the host
 // kernel's SO_PEERCRED.
 //
@@ -179,5 +179,46 @@ func TestPlatformMCPSocketRefusesForeignUIDPeer_spec_4_7_11(t *testing.T) {
 	if n, err := conn.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
 		t.Fatalf("read on the platform MCP socket = (%d, %v), want (0, EOF): the adapter served "+
 			"a peer whose SO_PEERCRED UID is not the agent UID", n, err)
+	}
+}
+
+// spec: 4.7.11 (Separate UIDs and connection authentication), 28.5.3
+// (CH-RUNTIMEOPS)
+// diagnosis: a failure means a process running as a UID other than the
+// agent UID connected to the CH-RUNTIMEOPS socket and the adapter opened the
+// capability handshake with it, so a foreign process in the pod can receive
+// checkpoint, interrupt, credential-rotation, and terminate signals and
+// answer them as the runtime. Check that NewRuntimeOps wraps its listener
+// through SocketPeerAuth and that Run serves only connections the listener
+// yields.
+func TestRuntimeOpsSocketRefusesForeignUIDPeer_spec_4_7_11(t *testing.T) {
+	dir, err := os.MkdirTemp("", "rtops")
+	if err != nil {
+		t.Fatalf("temp CH-RUNTIMEOPS socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	lc, err := adapter.NewRuntimeOps(filepath.Join(dir, "o.sock"),
+		adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1})
+	if err != nil {
+		t.Fatalf("NewRuntimeOps: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- lc.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = lc.Close()
+		<-runErr
+	})
+
+	conn, err := net.Dial("unix", lc.SocketPath())
+	if err != nil {
+		t.Fatalf("dial CH-RUNTIMEOPS: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := conn.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("read on CH-RUNTIMEOPS = (%d, %v), want (0, EOF): the adapter served a peer whose "+
+			"SO_PEERCRED UID is not the agent UID", n, err)
 	}
 }

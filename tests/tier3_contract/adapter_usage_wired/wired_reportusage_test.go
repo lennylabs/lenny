@@ -87,7 +87,7 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	t.Helper()
 
 	sock := shortSocket(t, "lifecycle.sock")
-	lc, err := adapter.NewRuntimeOps(sock)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

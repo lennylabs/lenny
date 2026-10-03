@@ -129,7 +129,7 @@ func wiredAdapterClient(t *testing.T, sessionID string) (*adapterclient.Client, 
 	t.Helper()
 
 	sock := directUsageSocket(t)
-	lc, err := adapter.NewRuntimeOps(sock)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

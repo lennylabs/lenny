@@ -441,7 +441,7 @@ func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lifecycle.sock")
 
-	channel, err := adapter.NewRuntimeOps(sock)
+	channel, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
