@@ -2272,7 +2272,7 @@ supervised runtime process (`scratchpad/sequencing/supervisor-sequencing.md` on 
 Proposal 0087 builds on proposal 0079, so it follows 0079. It precedes proposals 0084 and 0071 and the
 pinned-idle proposal, so each of those is converged once against the final set of runtime lifetimes.
 
-**Phase 0: proposals settled, side tasks in parallel**
+**Phase 0: proposals settled and pod identity hardened**
 
 - [x] Proposal 0082 (concurrent finalize) implemented 2026-09-28 (`79ec0e93c`), ahead of R5.
 - [x] Proposal 0078 (keep the pod-scoped `CH-MSGSOCK` listener) re-converged and `Reviewed` (`a9c7bd6c6`).
@@ -2295,7 +2295,15 @@ pinned-idle proposal, so each of those is converged once against the final set o
   - BUILD-GAPS F-13.1.24: an explicit `runAsGroup` on every agent-pod container, checked by the webhook.
   Where existing specification text does not already state a rule, the rule lands through a small proposal
   rather than as a BUILD-GAPS fix.
-- [ ] R6, if it can be scheduled before proposal 0087's code.
+- [ ] R6, after the pod identity hardening and before proposal 0087's code. The hardening moves the
+  egress-capture container off the agent UID, which edits the pod builder, so R6 moves settled code.
+
+The pod identity hardening and R6 are prerequisites of Phase 2 (owner decision, 2026-10-03). The hardening
+edits the `CH-MSGSOCK` listener that the runtime-SDK proposal edits and that proposal 0087 rebinds before
+LAUNCH, and it states the pod-wide agent-UID rule that 0087's mutual authentication on `CH-SUPERVISE`
+relies on. Landing it after those proposals converge would move their edit sites and force another review
+pass. The pinned-idle and recycling follow-up proposals touch neither the listener nor the webhook, so
+they may be drafted while Phase 0 and R6 land.
 
 **Phase 1: proposals 0078 and 0079 implemented**
 
@@ -2333,7 +2341,7 @@ pinned-idle proposal, so each of those is converged once against the final set o
 tree, the owner has adjudicated each entry in the proposal's deviations file, the proposal is marked
 `Implemented`, the BUILD-GAPS findings it closes are closed, and the branch is pushed.
 
-**Phase 2: two proposals in parallel after proposal 0079**
+**Phase 2: two proposals in parallel after Phase 0 and proposal 0079**
 
 The two share §4.7, §15.4, §15.7, and the runtime-author guide, so their spec steps land one after the
 other while their code proceeds in parallel.
