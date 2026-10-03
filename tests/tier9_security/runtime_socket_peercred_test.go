@@ -2,7 +2,8 @@
 
 //go:build security && linux
 
-// Tier-9 SO_PEERCRED boundary on the CH-MSGSOCK runtime socket, driven
+// Tier-9 SO_PEERCRED boundary on the CH-MSGSOCK runtime socket and the
+// intra-pod platform MCP socket, driven
 // against the real adapter.SocketRuntimeProcess listener and the host
 // kernel's SO_PEERCRED.
 //
@@ -35,6 +36,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
 // foreignUIDRuntimeSocket binds a CH-MSGSOCK listener whose expected agent
@@ -134,5 +136,48 @@ func TestRuntimeSocketKeepsAcceptingAfterRefusals_spec_4_7_11(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start did not return after the pod-scope teardown closed the listener")
+	}
+}
+
+// spec: 4.7.11 (Separate UIDs and connection authentication)
+// diagnosis: a failure means a process running as a UID other than the
+// agent UID connected to the platform MCP socket and was not refused, so a
+// foreign process in the pod reaches the platform tool surface with only a
+// nonce between it and a privileged tool. Check that listenIntraPodMCP wraps
+// the listener through Server.PeerAuth and that the zero posture is not
+// treated as "no check".
+func TestPlatformMCPSocketRefusesForeignUIDPeer_spec_4_7_11(t *testing.T) {
+	s := adapter.New("test")
+	s.WorkspaceBase = t.TempDir()
+	s.Runtime = noopRuntime{}
+	s.ManifestDir = t.TempDir()
+	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1}
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-peer"},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-peer"},
+		})
+	})
+	m := decodeManifestFile(t, s.ManifestDir)
+	if m.PlatformMcpServer == nil || m.PlatformMcpServer.Socket == "" {
+		t.Fatalf("manifest carries no platform MCP socket: %+v", m.PlatformMcpServer)
+	}
+
+	conn, err := net.Dial("unix", m.PlatformMcpServer.Socket)
+	if err != nil {
+		t.Fatalf("dial platform MCP socket: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := conn.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("read on the platform MCP socket = (%d, %v), want (0, EOF): the adapter served "+
+			"a peer whose SO_PEERCRED UID is not the agent UID", n, err)
 	}
 }

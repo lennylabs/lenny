@@ -139,9 +139,12 @@ func main() {
 	// §9.1/§4.7: bind the platform MCP socket and, when a gateway address is
 	// configured, dial the gateway's GatewayControl service. ManifestDir is
 	// set above, since the platform MCP server reads the authenticating nonce
-	// from the manifest. In the embedded model the runtime and MCP server are
-	// one process and UID, so RuntimeUID stays zero (the SO_PEERCRED self-check
-	// is disabled, which is correct per §4.7).
+	// from the manifest. In the embedded model the runtime and the MCP server
+	// are one process, so the agent UID the MCP listener admits is this
+	// process's own UID. A process in another container of the pod that
+	// reaches the abstract socket runs as a different UID and is refused.
+	// spec: §4.7.11 (Separate UIDs and connection authentication). F-4.7.28.
+	adapterSrv.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
 	if err != nil {
 		log.Fatalf("echo-embedded: %v", err)

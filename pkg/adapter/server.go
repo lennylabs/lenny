@@ -127,17 +127,16 @@ type Server struct {
 	// MCP server. A manifest directory must also be configured, since
 	// the runtime reads the authenticating nonce from the manifest.
 	MCPSocket string
-	// RuntimeUID is the Unix UID the agent runtime process runs as.
-	// When non-zero the platform MCP server applies the §4.7 / §13
-	// SO_PEERCRED peer-credential check, rejecting any connection from
-	// a process running as a different UID. Zero disables the check.
-	RuntimeUID uint32
-	// NonceOnlyMode reports that SO_PEERCRED is disabled
-	// (--require-so-peercred=false), so the manifest nonce alone is the
-	// intra-pod MCP authentication boundary. When set, the platform MCP
-	// server supplements the static nonce with the §4.7 per-connection challenge-response, keeping forward security on each
-	// new connection.
-	NonceOnlyMode bool
+	// PeerAuth is the SO_PEERCRED posture of the intra-pod platform and
+	// connector MCP listeners, the same decision the CH-MSGSOCK listener
+	// takes. Outside nonce-only mode each listener admits only
+	// PeerAuth.ExpectedUID; the zero value admits only UID 0, so a caller
+	// that configures an MCP socket must name the agent UID. In nonce-only
+	// mode (--require-so-peercred=false) the listeners apply no peer check
+	// and the MCP servers add the §4.7 per-connection challenge-response to
+	// the static nonce. spec: §4.7.11 (Separate UIDs and connection
+	// authentication, Nonce-only fallback).
+	PeerAuth SocketPeerAuth
 	// PlatformForwarder forwards the §9.1 platform tool calls a type:agent
 	// runtime makes against the intra-pod platform MCP server to the
 	// gateway over GatewayControl. When set, startPlatformMCP wires it as

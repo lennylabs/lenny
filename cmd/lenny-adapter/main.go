@@ -76,23 +76,24 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 	return 0
 }
 
-// runtimeSocketPeerAuth returns the SO_PEERCRED posture of the CH-MSGSOCK
-// listener. Outside nonce-only mode the listener admits only runtimeUID, and
-// a zero runtimeUID (no --runtime-uid and no LENNY_RUNTIME_UID) is refused:
-// the adapter fails closed rather than binding a runtime socket any process
-// in the pod can become. The controller renders --runtime-uid on every
-// sidecar pod. In nonce-only mode (--require-so-peercred=false) the
-// specification states that the peer check is unavailable, so no UID is
-// required.
+// agentSocketPeerAuth returns the SO_PEERCRED posture of the adapter-agent
+// sockets: the CH-MSGSOCK runtime socket and the intra-pod MCP sockets.
+// Outside nonce-only mode the listeners admit only runtimeUID. When the
+// adapter binds any of these sockets (bindsAgentSocket) and runtimeUID is
+// zero (no --runtime-uid and no LENNY_RUNTIME_UID), it refuses to start: it
+// fails closed rather than binding a socket any process in the pod can
+// reach. The controller renders --runtime-uid on every sidecar pod. In
+// nonce-only mode (--require-so-peercred=false) the specification states
+// that the peer check is unavailable, so no UID is required.
 // spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
 // (CH-MSGSOCK, Endpoint).
-func runtimeSocketPeerAuth(runtimeUID uint32, requireSoPeercred bool) (adapter.SocketPeerAuth, error) {
+func agentSocketPeerAuth(runtimeUID uint32, requireSoPeercred, bindsAgentSocket bool) (adapter.SocketPeerAuth, error) {
 	if !requireSoPeercred {
 		return adapter.SocketPeerAuth{ExpectedUID: runtimeUID, NonceOnly: true}, nil
 	}
-	if runtimeUID == 0 {
-		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket requires the agent UID " +
-			"(--runtime-uid or LENNY_RUNTIME_UID) for the SO_PEERCRED runtime peer check")
+	if runtimeUID == 0 && bindsAgentSocket {
+		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket and --mcp-socket require the agent UID " +
+			"(--runtime-uid or LENNY_RUNTIME_UID) for the SO_PEERCRED peer check")
 	}
 	return adapter.SocketPeerAuth{ExpectedUID: runtimeUID}, nil
 }
@@ -175,9 +176,9 @@ func main() {
 	runtimeUID := flag.Uint("runtime-uid", 0,
 		"UID the agent runtime process runs as (the pod spec runAsUser); "+
 			"the adapter applies the §4.7/§13 SO_PEERCRED peer check against it on "+
-			"the MCP sockets and the --runtime-socket listener. 0 falls back to "+
-			"LENNY_RUNTIME_UID; still 0 disables the MCP check and is refused with "+
-			"--runtime-socket unless --require-so-peercred=false")
+			"the --mcp-socket and --runtime-socket listeners. 0 falls back to "+
+			"LENNY_RUNTIME_UID; still 0 is refused when either socket is bound, "+
+			"unless --require-so-peercred=false")
 	requireSoPeercred := flag.Bool("require-so-peercred", true,
 		"run the mandatory §4.7 SO_PEERCRED startup self-test and crash-loop on "+
 			"failure; set false only when gVisor SO_PEERCRED divergence is "+
@@ -356,10 +357,16 @@ func main() {
 	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
 		log.Fatalf("lenny-adapter: %v", err)
 	}
-	adapterSrv.RuntimeUID = resolveRuntimeUID(*runtimeUID)
-	// §4.7: in nonce-only mode the platform MCP server adds
-	// the per-connection challenge-response supplement to the static nonce.
-	adapterSrv.NonceOnlyMode = !*requireSoPeercred
+	// §4.7.11: one SO_PEERCRED posture governs every adapter-agent socket,
+	// the CH-MSGSOCK runtime socket and the intra-pod MCP sockets. In
+	// nonce-only mode the MCP servers add the per-connection
+	// challenge-response to the static nonce.
+	peerAuth, err := agentSocketPeerAuth(resolveRuntimeUID(*runtimeUID), *requireSoPeercred,
+		*runtimeSocket != "" || *mcpSocket != "")
+	if err != nil {
+		log.Fatalf("lenny-adapter: %v", err)
+	}
+	adapterSrv.PeerAuth = peerAuth
 	// §9.1: bind the platform MCP socket and, when a gateway
 	// address is configured, dial the gateway's GatewayControl service so
 	// the platform MCP server forwards a type:agent runtime's tools/list and
@@ -391,10 +398,6 @@ func main() {
 		// §4.7 sidecar model: bind the abstract socket the runtime
 		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
 		// the runtime container to this same name.
-		peerAuth, err := runtimeSocketPeerAuth(adapterSrv.RuntimeUID, *requireSoPeercred)
-		if err != nil {
-			log.Fatalf("lenny-adapter: %v", err)
-		}
 		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)

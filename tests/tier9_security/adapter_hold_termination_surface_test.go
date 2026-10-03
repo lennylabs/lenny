@@ -50,6 +50,7 @@ func holdTerminationPod(t *testing.T, fwd *recordingForwarder, sessionID string)
 	s.Runtime = noopRuntime{}
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
 	s.ConnectorForwarder = fwd
 	s.CoordinatorHoldTimeout = 20 * time.Millisecond
@@ -249,6 +250,7 @@ func TestSharedPlatformMCPRefusesBetweenHoldTerminatedMembers_spec_10_1(t *testi
 	s.Runtime = rt
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
 	s.ConnectorForwarder = fwd
 	s.CoordinatorHoldTimeout = 20 * time.Millisecond
@@ -346,6 +348,7 @@ func keptRuntimePod(t *testing.T, fwd *recordingForwarder) (*adapter.Server, net
 	s.Runtime = sp
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
 	s.ConnectorForwarder = fwd
 	s.CoordinatorHoldTimeout = 20 * time.Millisecond

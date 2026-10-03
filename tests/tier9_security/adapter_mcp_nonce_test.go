@@ -147,6 +147,7 @@ func nonceProbeManifest(t *testing.T, fwd *recordingForwarder) *adapter.Manifest
 	s.Runtime = noopRuntime{}
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
 	s.ConnectorForwarder = fwd
 

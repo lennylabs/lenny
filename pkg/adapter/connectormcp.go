@@ -81,7 +81,7 @@ func (s *Server) startConnectorMCP(sessionID, nonce string, c sessionConnector) 
 	// §4.7: mirror the platform server's per-connection
 	// challenge when SO_PEERCRED is disabled so the static nonce is not
 	// replayable on the connector sockets either.
-	srv.RequireChallenge = s.NonceOnlyMode
+	srv.RequireChallenge = s.PeerAuth.NonceOnly
 	srv.Provider = &connectorToolProvider{forwarder: s.ConnectorForwarder, server: s, connectorID: c.ID}
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := serveUntilCancelled(cancel, func() { _ = srv.Serve(ctx, serveLis, nonce) })
@@ -91,24 +91,22 @@ func (s *Server) startConnectorMCP(sessionID, nonce string, c sessionConnector) 
 	return nil
 }
 
-// listenIntraPodMCP binds an intra-pod MCP Unix socket, applying the §4.7
-// / §13 SO_PEERCRED peer-credential check when a runtime UID is
-// configured so a process not running as the agent UID cannot connect. It
-// is the shared listener path for the platform and per-connector MCP
-// servers. F-9.1.2.
+// listenIntraPodMCP binds an intra-pod MCP Unix socket and applies the
+// adapter's SO_PEERCRED posture to it: outside nonce-only mode only a
+// process running as PeerAuth.ExpectedUID is admitted, and a refused
+// connection is logged and closed. It is the shared listener path for the
+// platform and per-connector MCP servers. spec: §4.7.11 (Separate UIDs and
+// connection authentication). F-9.1.2, F-4.7.28.
 func (s *Server) listenIntraPodMCP(socket string) (net.Listener, error) {
 	lis, err := net.Listen("unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("listen on MCP socket %s: %w", socket, err)
 	}
-	if s.RuntimeUID != 0 {
-		uid := s.RuntimeUID
-		return &peerCheckedListener{
-			Listener: lis,
-			check:    func(c net.Conn) error { return checkPeerUID(c, uid) },
-		}, nil
+	auth := s.PeerAuth
+	onReject := func(err error) {
+		logPeerRefusal(nil, "mcp_peer_refused", socket, auth.ExpectedUID, err)
 	}
-	return lis, nil
+	return auth.wrap(lis, auth.check, onReject), nil
 }
 
 // connectorSocketName derives the intra-pod Unix socket a §9.3

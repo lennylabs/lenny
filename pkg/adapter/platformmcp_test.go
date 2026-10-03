@@ -21,6 +21,7 @@ func TestPlatformMCP(t *testing.T) {
 	manifestDir := t.TempDir()
 	s.ManifestDir = manifestDir
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
@@ -74,14 +75,17 @@ func TestPlatformMCP(t *testing.T) {
 	}
 }
 
-// spec: §4.7 — with SO_PEERCRED disabled (NonceOnlyMode),
+// spec: §4.7 — with SO_PEERCRED disabled (nonce-only mode),
 // the platform MCP server supplements the manifest nonce with a
 // per-connection HMAC challenge before completing initialize.
 func TestPlatformMCPNonceOnlyChallenge_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortSocketName(t, "m")
-	s.NonceOnlyMode = true
+	// Nonce-only mode applies no peer check, so an expected UID the test
+	// process does not run as still admits its dial, as the §4.7.11
+	// nonce-only fallback states.
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1, NonceOnly: true}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
@@ -201,6 +205,7 @@ func TestPlatformMCPForwardsToGateway_spec_9_1(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	fwd := &fakePlatformForwarder{
 		list:   []mcp.Tool{{Name: "lenny/delegate_task", Description: "delegate"}},
 		result: json.RawMessage(`{"content":[{"type":"text","text":"forwarded"}]}`),
@@ -284,6 +289,7 @@ func TestPlatformMCPRejectsBadNonce(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)

@@ -178,6 +178,7 @@ func TestPodMCPArmingSurvivesSessionHandoff_spec_15_4_3(t *testing.T) {
 	s.CredentialsDir = filepath.Join(base, "run", "lenny")
 	s.ManifestDir = manifestDir
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.Runtime = rt
 
 	ctx := context.Background()

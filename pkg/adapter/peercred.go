@@ -3,7 +3,9 @@
 package adapter
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 )
 
@@ -77,4 +79,66 @@ func matchPeerUID(conn net.Conn, expectedUID uint32, lookup func(net.Conn) (uint
 		return &PeerUIDMismatchError{Peer: uid, Expected: expectedUID}
 	}
 	return nil
+}
+
+// SocketPeerAuth is the connection-authentication posture of the adapter's
+// listeners on the adapter-agent sockets: the CH-MSGSOCK runtime socket and
+// the intra-pod platform and connector MCP sockets. The zero value requires
+// the peer to run as UID 0, so a caller that omits the agent UID admits no
+// unprivileged process rather than every process.
+// spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
+// (CH-MSGSOCK, Endpoint).
+type SocketPeerAuth struct {
+	// ExpectedUID is the agent UID the adapter accepts connections from: the
+	// runtime container's runAsUser, which is a UID within the pod's user
+	// namespace. The sidecar adapter receives it as --runtime-uid. An
+	// embedded runtime is the adapter process, so its expected UID is the
+	// process's own UID. A test that dials from its own process sets it to
+	// os.Getuid().
+	ExpectedUID uint32
+	// NonceOnly records that Runtime.spec.requireSoPeercred is false
+	// (--require-so-peercred=false), the mode for a confirmed gVisor
+	// SO_PEERCRED divergence. The specification states that the peer check
+	// is unavailable in this mode and that the manifest nonce and the
+	// per-connection HMAC-SHA256 challenge authenticate the connection
+	// instead, so the listeners apply no peer check. The MCP servers run the
+	// challenge; CH-MSGSOCK has neither exchange, which leaves that socket
+	// unauthenticated in this mode (BUILD-GAPS F-4.7.25).
+	NonceOnly bool
+}
+
+// check admits conn only when SO_PEERCRED reports the expected agent UID.
+func (a SocketPeerAuth) check(conn net.Conn) error {
+	return checkPeerUID(conn, a.ExpectedUID)
+}
+
+// wrap returns l wrapped in peerCheckedListener with check and onReject, or
+// l itself in nonce-only mode, where the specification states that the
+// peer check is unavailable. Every adapter-agent listener takes its peer
+// check through this one decision. spec: §4.7.11 (Separate UIDs and
+// connection authentication, Nonce-only fallback), §28.5.3 (CH-MSGSOCK,
+// Endpoint).
+func (a SocketPeerAuth) wrap(l net.Listener, check func(net.Conn) error, onReject func(error)) net.Listener {
+	if a.NonceOnly {
+		return l
+	}
+	return &peerCheckedListener{Listener: l, check: check, onReject: onReject}
+}
+
+// logPeerRefusal records a refused adapter-agent connection under event,
+// with the peer UID SO_PEERCRED reported or, when the UID could not be read,
+// the lookup error. The record carries identifiers only: a refused
+// connection never received a byte. A nil logger logs to slog.Default.
+func logPeerRefusal(logger *slog.Logger, event, socket string, expectedUID uint32, err error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	attrs := []any{"socket", socket, "expected_uid", expectedUID}
+	var mismatch *PeerUIDMismatchError
+	if errors.As(err, &mismatch) {
+		attrs = append(attrs, "peer_uid", mismatch.Peer)
+	} else {
+		attrs = append(attrs, "err", err)
+	}
+	logger.Warn(event, attrs...)
 }
