@@ -43,8 +43,10 @@ controller:
   # sidecar image. Empty by default; tier-9 credential-leakage
   # test overlays set it to enable the sidecar on Sandboxes whose
   # template annotates `lenny.dev/test-egress-capture-upstream`.
-  # Production rejects the sidecar via the lenny-pod-security webhook;
-  # this knob exists for the test overlay path only.
+  # Leave it empty outside test overlays: the empty value is what keeps
+  # the sidecar out of production, because the lenny-pod-security
+  # webhook admits it (it runs at a non-reserved identity and mounts no
+  # credential path).
   egressCaptureImage: ""
   image:
     repository: ghcr.io/lennylabs/lenny-controller
