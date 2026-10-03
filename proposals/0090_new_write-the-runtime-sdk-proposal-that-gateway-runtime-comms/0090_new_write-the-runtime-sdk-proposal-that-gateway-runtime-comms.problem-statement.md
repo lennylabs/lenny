@@ -106,7 +106,7 @@ Prior-art lens (verdict: revise).
 Scope lens (verdict: revise).
 
 - Confirmed: the spec, adapter, SDK, and conformance items form one wire contract and stay together.
-- Contested (load-bearing): the lens proposes cutting runtime authentication into a separate proposal, because nonce-only authentication on `CH-MSGSOCK` is a pre-existing gap that multi-session serving neither causes nor closes. The plan assigns the runtime side to this proposal and the SDK connect path is shared, so the statement keeps the runtime side (scope item 5) and marks it as separable. The split is listed for a human decision.
+- Contested (load-bearing): the lens proposes cutting runtime authentication into a separate proposal, because nonce-only authentication on `CH-MSGSOCK` is a pre-existing gap that multi-session serving neither causes nor closes. The plan assigns the runtime side to this proposal and the SDK connect path is shared, so the statement keeps the runtime side (scope item 5). Review resolved the split: the runtime side stays in this proposal.
 - Confirmed (load-bearing): finding 4's ownership is an unresolved cross-proposal decision; the statement stages only the SDK client half.
 - Added: the concurrent Standard-level conformance case depends on 0084's `_lennySessionId`.
 - Noted: if the proposal needs a size split, the seam is spec, adapter, Go SDK, and conformance first, then the Python and TypeScript ports.

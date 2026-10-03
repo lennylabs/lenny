@@ -12,7 +12,7 @@
 
 **Scenario traces (SPEC-7).** §29.2, §29.4, and §29.6 trace the frame writes the card states.
 
-**Runtime connection handshake (SPEC-8, Part B, separable).** §4.7.11 item 1 gains the wire lines of the nonce handshake on `CH-MSGSOCK` and `CH-RUNTIMEOPS`. The nonce's lifetime is left to proposal 0084.
+**Runtime connection handshake (SPEC-8, Part B).** §4.7.11 item 1 gains the wire lines of the nonce handshake on `CH-MSGSOCK` and `CH-RUNTIMEOPS`. The nonce's lifetime is left to proposal 0084.
 
 ## Edge cases and accepted failure modes
 
@@ -514,7 +514,7 @@ On an SDK-warm pod that startup sequence does not occur, because the session is 
     (§28.5.3 `CH-MSGSOCK`, [§4.7.10](04_system-components.md#4710-deployment-model)).
 ```
 
-### SPEC-8 · spec/04_system-components.md § 4.7.11, § 4.7.6, § 4.7.7; spec/15_external-api-surface.md § 15.4.3, § 15.4.4, § 15.7; spec/28_communication-channels.md § 28.5.3; spec/29_communication-scenarios.md § 29.2 (Part B, separable)
+### SPEC-8 · spec/04_system-components.md § 4.7.11, § 4.7.6, § 4.7.7; spec/15_external-api-surface.md § 15.4.3, § 15.4.4, § 15.7; spec/28_communication-channels.md § 28.5.3; spec/29_communication-scenarios.md § 29.2 (Part B)
 
 **Edit 1 (§4.7.11 item 1, new paragraph).** Insert after the **Nonce-only fallback: challenge-response supplement and escalation gate.** list (after its sentence ending `gated on the adapter's ephemeral challenge.`) and before **Activation.**, indented three spaces as part of item 1:
 

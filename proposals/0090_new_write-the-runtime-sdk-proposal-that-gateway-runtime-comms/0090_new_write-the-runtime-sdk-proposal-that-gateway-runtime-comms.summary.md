@@ -10,7 +10,7 @@
 - Adapter: one start helper and one end helper at every start and end site, `sessionId` on the session-scoped `CH-RUNTIMEOPS` frames, the developer-loop executor's minimal frame, and removal of the per-session manifest fields (CODE-1, CODE-2, CODE-3, CODE-8).
 - SDKs and harness: all three SDKs serve sessions keyed by `sessionId`, and the compliance harness and reference runtimes play the new contract (CODE-4, CODE-5, CODE-6).
 - Docs, records, and tests: runtime-author documentation, `BUILD-GAPS.md`, and new tests across tiers 1, 3, 4, 7a, and 10 (DOCS-1, RECORDS-1, TEST-1).
-- Part B, separable: the runtime connection handshake on `CH-MSGSOCK` and `CH-RUNTIMEOPS` (SPEC-8, CODE-7).
+- Part B: the runtime connection handshake on `CH-MSGSOCK` and `CH-RUNTIMEOPS` (SPEC-8, CODE-7).
 
 **Decisions.**
 1. Minimal design: two `CH-MSGSOCK` frames written through a Server-level helper pair over `RuntimeProcess.WriteEnvelope`, with no `RuntimeProcess` interface change.
@@ -101,8 +101,7 @@
 
 ## Open decisions for human to make
 
-None yet. The review loops write this section, and it is empty at drafting. The drafting pass raised three questions for those loops to adjudicate:
-- Whether Part B (SPEC-8, CODE-7) stays in this proposal.
+The drafting pass raised the questions below. Firing 1 of the open-decisions phase proposed a resolution for each, and the gate refuted both resolutions, so both questions remain open for the human. Neither entry yet carries a recommendation, alternatives, or a confidence.
 - Whether omitting the task ID and the workspace path from `session_start` matches the owner decision's intent.
 - The spec-lane ordering against 0084 and 0087.
 
@@ -115,13 +114,14 @@ None yet. The review loops write this section, and it is empty at drafting. The 
 - The first-session manifest-ordering race (the runtime reads the manifest before the adapter writes it, F-4.7.26) stays open for 0087's supervisor. This proposal removes only the per-session dependence on the manifest.
 - The `CH-MSGSOCK` card's **Degradation.** bullet says the adapter synthesizes `RUNTIME_CRASH` from the process exit code, and no adapter code reads one. The kept runtime process makes that bullet's per-process reading moot for session completion, and SPEC-3 corrects only the completion sentence that the lifetime contract contradicts.
 - The §15.4.6 Standard **MCP nonce handshake** row says the runtime connects "on startup". The SDKs still dial once per process, so it stays as written.
+- `SocketRuntimeProcess.WriteEnvelope` writes each `CH-MSGSOCK` frame to the connection all sessions share with one `conn.Write` call, sets no write deadline, and leaves the connection open after a write error, so a write that fails partway can leave a partial frame on the shared connection (`pkg/adapter/socketruntime.go:455-466`). The hazard predates this proposal and applies to every frame. The new `session_start` and `session_end` frames use the same write path, and no staged rule assumes a failed write was delivered, so this proposal does not stage a fix.
 
 ## Impacts on other proposals
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0084 | Draft | Contradicts its decision that SDKs stay single-session. SPEC-8 appends a sentence to the §4.7.6 `mcpNonce` row that 0084 rewrites, widens that row's level cell, and validates the handshake against the currently published nonce. SPEC-4 and CODE-3 make `sessionId` required on `llm_request_completed` and key direct-mode token attribution by it. | Re-baseline its "SDKs stay single-session" decision against this proposal, and keep the appended `mcpNonce` sentence and the widened level cell when it rewrites the row. Drop its optional `llm_request_completed` `sessionId` and that frame's occupancy fallback, and re-base its §11.2 residual-risk sentence on the required field. |
-| 0087 | Draft | Edits §4.7, §15.4, and §15.7 sections that 0087 also edits, and leaves the `restart` sentence of §4.7.10 **Runtime process lifetime.**, the `shutdown` semantics (F-4.7.27), launch-ordering wording, and the first-session manifest ordering (F-4.7.26) to 0087. | Serialize its spec steps after this proposal's, add the `restart` sentence to **Runtime process lifetime.** when it defines the selector, and re-baseline its D-STALE and nonce text against SPEC-8 if Part B stays. |
+| 0084 | Draft (drafted 2026-09-26) | Contradicts its decision that the first-party runtime SDKs stay single-session, because CODE-4 and CODE-5 make each SDK serve sessions keyed by `sessionId`. SPEC-4, SCHEMA-1, and CODE-3 make `sessionId` required on `llm_request_completed` and drop the counts of a frame that names no session or an unbound one. That removes the subject of its optional `llm_request_completed` `sessionId`, its occupancy fallback for that frame in the direct-mode token sink, and the premise of its §11.2 residual-risk sentence. SPEC-8 appends a sentence to the §4.7.6 `mcpNonce` row that 0084 rewrites, widens that row's level cell, and validates the handshake against the currently published nonce. Its `runtimeSession` resolver for platform and connector MCP, its §15.4.3 **Session address.** rules, its connector-refusal tolerance (its CODE-6 and CODE-7), and its nonce lifetime are unaffected. | Re-baseline its "SDKs stay single-session" decision against this proposal, and keep the appended `mcpNonce` sentence and the widened level cell when it rewrites the row. Make its `llm_request_completed` `sessionId` required, drop that frame's occupancy fallback and the docs that describe the optional field and the fallback, and re-base its §11.2 residual-risk sentence on the required field. |
+| 0087 | Draft | Edits §4.7, §15.4, and §15.7 sections that 0087 also edits, and leaves the `restart` sentence of §4.7.10 **Runtime process lifetime.**, the `shutdown` semantics (F-4.7.27), launch-ordering wording, and the first-session manifest ordering (F-4.7.26) to 0087. | Serialize its spec steps after this proposal's, add the `restart` sentence to **Runtime process lifetime.** when it defines the selector, and re-baseline its D-STALE and nonce text against SPEC-8. |
 | 0079 | Implemented | Discharges the work 0079 handed over: the SDK change, the `Handler` and `types.go` comment corrections, the §15.7 `CreateRequest` comments, and the §15.4.6 deadline category. | Nothing. Implemented proposals are not edited. |
 | 0080 | Draft | Discharges §1.9 with no change, because no SDK emits a `status` frame. | Record §1.9 as discharged by this proposal. |
 

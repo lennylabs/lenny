@@ -91,7 +91,7 @@ Targets: `cmd/lenny-compliance/{main,standard,full}.go` and their tests (`full_t
 5. `echo-concurrent/dispatch.go`: on `session_end`, close and wait for that session's worker and delete it from the map; ignore `session_end` for an unknown session; treat `session_start` as creating or keeping the worker. Add tier-1 tests in `main_test.go`.
 6. `tests/tier3_contract/sdks/runtime_sdk_test.go`: assert that the `session_lifetime` check passes for each SDK example.
 
-### CODE-7 · Part B (separable): adapter handshake on both runtime listeners and the SDK client half
+### CODE-7 · Part B: adapter handshake on both runtime listeners and the SDK client half
 
 Targets: `pkg/adapter/intrapodauth.go` (new), `pkg/adapter/socketruntime.go`, `pkg/adapter/runtimeops.go`, `pkg/adapter/mcp/challenge.go`, `pkg/runtimekit/transport.go`, `sdks/runtime/go/runtime` (both dials), `sdks/runtime/python/lenny_runtime/{transport,lifecycle}.py`, `sdks/runtime/typescript/src/{transport,lifecycle}.ts`, `cmd/lenny-compliance` dials, and every in-tree test or harness that dials `CH-MSGSOCK` or `CH-RUNTIMEOPS` (`pkg/adapter/*_test.go`, the tier-4, tier-7a, tier-9, and tier-10 files that dial either socket, the tier-3 SDK harness, and `cmd/lenny-gateway/direct_usage_quota_integration_test.go`).
 
@@ -140,7 +140,7 @@ Targets: `docs/reference/adapter-contract.md`; `docs/runtime-author-guide/{lifec
 2. `lifecycle.md` states the runtime process lifetime (one process serves many sessions, each bracketed by the frames, and connection end or `shutdown` ends them all), replaces the `terminate` section with `session_end` handling, and links to `adapter-contract.md` for the frames.
 3. `runtime-sdk.md` states per-session `OnCreate`, `OnMessage`, and `OnTerminate`, concurrency across sessions, and the new `OnTerminate` signature in its sample.
 4. `runtime-configuration.md` points per-session setup at `session_start` and `OnCreate`.
-5. `integration-levels.md` retargets the deadline row to `deadline_approaching` addressed by `sessionId` and states that the runtime keeps running. If Part B stays, it and `platform-tools.md`, `testing.md`, and `local-development.md` add the `_lennyNonce` first line on `CH-MSGSOCK` and `CH-RUNTIMEOPS` and the wait for the manifest before dialing, and `lifecycle.md` also replaces its Basic-level statement that the manifest is not required for core operation with the `mcpNonce` read on a socket connection. Every phrase that `tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go` pins in these pages stays.
+5. `integration-levels.md` retargets the deadline row to `deadline_approaching` addressed by `sessionId` and states that the runtime keeps running. It and `platform-tools.md`, `testing.md`, and `local-development.md` add the `_lennyNonce` first line on `CH-MSGSOCK` and `CH-RUNTIMEOPS` and the wait for the manifest before dialing, and `lifecycle.md` also replaces its Basic-level statement that the manifest is not required for core operation with the `mcpNonce` read on a socket connection. Every phrase that `tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go` pins in these pages stays.
 6. The SDK example pages and the tutorial drop `taskId` and the per-session fields from their manifest structs and take session context from `session_start`.
 7. `echo-runtime.md` adds one sentence: the echo runtime ignores `session_start` and `session_end` under the unknown-type rule.
 8. Retarget the three tier-11 `adapter_manifest_*` tests in the same commit so that each pins the frame carrier instead of the manifest rows, and, in `intra_pod_mcp_nonce_doc_reconciliation_test.go`, retarget the `adapter-contract.md` manifest-lead site's currency phrase to the pod-scoped lead that item 1 writes. That site's anchor sentence and nonce rules stay.
@@ -152,7 +152,7 @@ Targets: `docs/reference/adapter-contract.md`; `docs/runtime-author-guide/{lifec
 Target: `BUILD-GAPS.md`.
 
 1. F-4.7.26: add a partial-progress note. The per-session context half is closed by the `session_start` and `session_end` frames, and the first-session manifest-ordering half stays open for 0087's supervisor.
-2. F-4.7.25: if Part B stays in this proposal, add a note that CODE-7 closes the nonce half once both listeners enforce the handshake; otherwise leave the row unchanged.
+2. F-4.7.25: add a note that CODE-7 closes the nonce half once both listeners enforce the handshake.
 3. New finding: "The runtime SDKs' `CreateRequest.RuntimeOptions` and `CreateRequest.WorkspacePlan` are never populated." Give each field its own evidence. `RuntimeOptions` has no carrier from the gateway to the adapter (no field in `schemas/lenny-adapter.proto` carries it) and none from the adapter to the runtime (the Go SDK reads `manifest.RuntimeOptions`, which the adapter's `Manifest` never writes). `WorkspacePlan` reaches the adapter through `FinalizeWorkspaceRequest.workspace_plan`, but no carrier delivers it to the runtime and `CreateRequest.WorkspacePlan` stays nil.
 4. New finding: the runtime SDKs' `TerminationReason` (`{Reason, DeadlineMS}` in Go) differs from the §15 shared `TerminationReason` (`{Code, Detail}`).
 5. New finding: no adapter code populates the `llm.headers` member that §4.9 and the `CH-LLMPROXY` card advertise.
