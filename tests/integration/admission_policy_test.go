@@ -41,7 +41,7 @@ func admitAgentPod(t *testing.T, pod corev1.Pod) *admissionv1.AdmissionResponse 
 	if err != nil {
 		t.Fatalf("marshal pod: %v", err)
 	}
-	return webhook.PodSecurity(podspec.CredReadersGID, podspec.CredVolumeName, rcPolicy)(
+	return webhook.PodSecurity(podspec.AdapterUID, podspec.AgentUID, podspec.CredReadersGID, podspec.CredVolumeName, rcPolicy)(
 		context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:       "admission-policy",

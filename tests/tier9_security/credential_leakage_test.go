@@ -33,9 +33,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -175,10 +177,16 @@ func TestCredentialLeakageFilesystem(t *testing.T) {
 // boundary is exercised end-to-end. A missing sidecar or unparseable
 // capture is the probe's failure mode.
 //
-// spec: TESTING.md §12.9.8.
-// diagnosis: a failure means the egress-capture sidecar is unreachable
-// or its JSONL capture is malformed, so the TESTING.md §12.9.8 SentHash boundary
-// (hashed, never raw credential bytes) cannot be verified end-to-end.
+// spec: TESTING.md §12.9.8, 13.1 (Pod Security)
+// diagnosis: a failure means the egress-capture sidecar is unreachable,
+// its JSONL capture is malformed, or the runtime cannot read it. The
+// capture container runs at its own UID rather than the agent UID
+// (§13.1 Container identity reserves the agent UID to the runtime), so
+// the runtime reads the file only through the lenny-cred-readers group:
+// a mode other than 0640, a group other than that GID, or a cat that
+// fails for any reason but a missing file means the runtime has lost
+// read access and the TESTING.md §12.9.8 SentHash boundary (hashed, never
+// raw credential bytes) cannot be verified end-to-end.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pod := findCredShellPod(t, c)
@@ -191,13 +199,26 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 			pod, err, listing)
 	}
 
-	body, err := execContainer(t, c, pod, "runtime", "cat", "/run/lenny-capture/egress.jsonl")
+	stat, err := execContainer(t, c, pod, "runtime", "ls", "-ln", egressCapturePath)
 	if err != nil {
-		// Sidecar present but no capture yet — the pod has not emitted
-		// any outbound TCP. The mount existing is the meaningful
-		// assertion at this point.
-		t.Logf("TESTING.md §12.9.8 (egress): /run/lenny-capture/egress.jsonl not yet written (no egress traffic from cred-shell-echo); mount is in place. %v", err)
-		return
+		if strings.Contains(stat, missingFileMessage) {
+			// Sidecar present but no capture yet: the pod has not
+			// emitted any outbound TCP. The mount existing is the
+			// meaningful assertion at this point.
+			t.Logf("TESTING.md §12.9.8 (egress): %s not yet written (no egress traffic from cred-shell-echo); mount is in place.", egressCapturePath)
+			return
+		}
+		t.Fatalf("TESTING.md §12.9.8 (egress): ls -ln %s in the runtime container of pod %s failed: %v\noutput:\n%s",
+			egressCapturePath, pod, err, stat)
+	}
+	assertCaptureFileReadableByRuntime(t, stat)
+
+	// The file exists, so any cat failure (a permission denial above
+	// all) means the runtime cannot read the capture.
+	body, err := execContainer(t, c, pod, "runtime", "cat", egressCapturePath)
+	if err != nil {
+		t.Fatalf("TESTING.md §12.9.8 (egress) FAIL: the runtime container of pod %s cannot read %s: %v\noutput:\n%s",
+			pod, egressCapturePath, err, body)
 	}
 
 	// Parse each JSONL row. A malformed capture is a sidecar bug.
@@ -239,9 +260,101 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	}
 }
 
+// egressCapturePath is the capture file lenny-egress-capture writes,
+// as the runtime container sees it through its read-only mount.
+const egressCapturePath = "/run/lenny-capture/egress.jsonl"
+
+// missingFileMessage is the coreutils and busybox error text for a path
+// that does not exist, the one ls or cat failure that means "not yet
+// written" rather than "not readable".
+const missingFileMessage = "No such file or directory"
+
+// captureFileMode is the mode lenny-egress-capture creates the capture
+// file with, as ls -l renders it: owner read-write, group read, nothing
+// for other.
+const captureFileMode = "-rw-r-----"
+
+// assertCaptureFileReadableByRuntime checks the ls -ln line for the
+// capture file. The capture container runs at a UID of its own, so the
+// runtime reads the file only through the group: the fsGroup-managed
+// emptyDir gives it the lenny-cred-readers GID, which the runtime holds
+// as a supplementary group, and mode 0640 grants that group read.
+//
+// spec: 13.1 (Pod Security)
+func assertCaptureFileReadableByRuntime(t *testing.T, lsLine string) {
+	t.Helper()
+	mode, gid, err := parseLsLn(lsLine)
+	if err != nil {
+		t.Fatalf("TESTING.md §12.9.8 (egress): %v", err)
+	}
+	if mode != captureFileMode {
+		t.Errorf("§13.1 (egress capture) FAIL: %s has mode %s, want %s (0640) so the runtime reads it through the lenny-cred-readers group",
+			egressCapturePath, mode, captureFileMode)
+	}
+	if gid != podspec.CredReadersGID {
+		t.Errorf("§13.1 (egress capture) FAIL: %s is group-owned by GID %d, want the lenny-cred-readers GID %d",
+			egressCapturePath, gid, podspec.CredReadersGID)
+	}
+}
+
+// parseLsLn extracts the mode string and the numeric group from one
+// `ls -ln` line, for example "-rw-r----- 1 65531 65534 120 Oct  3 06:00 x".
+// Busybox and coreutils both print mode, link count, uid, and gid as the
+// first four fields.
+func parseLsLn(line string) (mode string, gid int64, err error) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 4 {
+		return "", 0, fmt.Errorf("unexpected ls -ln output %q", line)
+	}
+	gid, err = strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse group %q from ls -ln output %q: %w", fields[3], line, err)
+	}
+	// A trailing "." or "+" marks an SELinux context or an ACL and is
+	// not part of the permission bits.
+	return strings.TrimRight(fields[0], ".+"), gid, nil
+}
+
 // guard: keep static-analysis happy even if the only callers are
 // disabled by build tags or guards.
 var (
 	_ = errors.New
 	_ = fmt.Sprintf
 )
+
+// spec: 13.1 (Pod Security)
+// diagnosis: parseLsLn misreads the ls -ln line the egress-capture check
+// relies on, so the mode and group assertions on the capture file would
+// compare the wrong fields. The test needs no cluster.
+func TestParseLsLnReadsModeAndGroup(t *testing.T) {
+	cases := []struct {
+		name     string
+		line     string
+		wantMode string
+		wantGID  int64
+		wantErr  bool
+	}{
+		{name: "busybox", line: "-rw-r-----    1 65531    65534          120 Oct  3 06:00 /run/lenny-capture/egress.jsonl\n", wantMode: "-rw-r-----", wantGID: 65534},
+		{name: "coreutils with ACL marker", line: "-rw-r-----+ 1 65531 65534 120 Oct  3 06:00 egress.jsonl", wantMode: "-rw-r-----", wantGID: 65534},
+		{name: "too few fields", line: "-rw-r----- 1 65531", wantErr: true},
+		{name: "non-numeric group", line: "-rw-r----- 1 65531 lenny 120 Oct  3 06:00 egress.jsonl", wantErr: true},
+		{name: "empty", line: "", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mode, gid, err := parseLsLn(tc.line)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseLsLn(%q) = (%q, %d, nil), want an error", tc.line, mode, gid)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseLsLn(%q): %v", tc.line, err)
+			}
+			if mode != tc.wantMode || gid != tc.wantGID {
+				t.Errorf("parseLsLn(%q) = (%q, %d), want (%q, %d)", tc.line, mode, gid, tc.wantMode, tc.wantGID)
+			}
+		})
+	}
+}

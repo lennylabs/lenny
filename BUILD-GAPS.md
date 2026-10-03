@@ -24634,19 +24634,21 @@ and fail-closed.
 
 ---
 
-### - [ ] F-13.1.23 — Nothing enforces, after mutating admission, that only the runtime container runs at the agent UID [High] — OPEN
+### - [x] F-13.1.23 — Nothing enforces, after mutating admission, that only the runtime container runs at the agent UID [High] — CLOSED
 
 **Spec:** §13.1 and §4.7.11 item 1 (**Separate UIDs and connection authentication:**): the adapter and the agent binary run at different UIDs, and the adapter accepts connections only from the expected agent UID.
 **Evidence:** The pod-security admission webhook does not read `RunAsUser` (`pkg/admission/webhook/pod_security.go`), and `basePod` sets no pod-level `runAsUser` (`pkg/controller/sandbox/podspec/podspec.go`). The test-only egress-capture container runs at the agent UID (`injectEgressCaptureSidecar`, `containerSecurityContext(in.agentUID())`). Found by the adversarial security review of 2026-10-02 (finding 3).
 **Gap:** A container a deployer's mutating webhook injects (a service mesh, a Vault agent, or a log shipper) whose image `USER` equals the agent UID passes every `SO_PEERCRED` check: it can connect to the runtime's adapter sockets (and `CH-MSGSOCK`, which today checks nothing, F-4.7.25), it shares the pod's network namespace for abstract sockets, it holds the credential readers group through `fsGroup`, and it runs outside the runtime container's PID namespace, so no process sweep in that container reaches it.
 **Suggested resolution:** A validating webhook clause, evaluated after mutation, that requires an explicit `runAsUser` on every init, regular, and ephemeral container and allows only the container named `runtime` to equal the agent UID; a pod-level `runAsUser` default that is neither the agent nor the adapter UID; the egress-capture container moved off the agent UID. Scheduled in Phase 0 of the proposal track, with the `SO_PEERCRED` half of F-4.7.25 (`gateway-runtime-comms-remediation.md` §10.2).
+- **Resolution:** Closed with proposal 0088 (`proposals/0088_fix_agent-pods-have-no-enforced-rule-that-only-the/`). §13.1 **Container identity.** requires an explicit nonzero container-level `runAsUser` and `runAsGroup` on every init, regular, and ephemeral agent-pod container, and reserves the adapter UID to the regular container `adapter` and the agent UID to the regular container `runtime`. `pkg/podsecurity` (`identityViolations`) and the `lenny-pod-security` webhook (`pkg/admission/webhook/pod_security.go`, wired in `cmd/lenny-webhook`) enforce it after mutating admission. The egress-capture container runs at `egressCaptureUID` (65531) in `pkg/controller/sandbox/podspec`. No pod-level `runAsUser` default is set, by design (explicit per-container identity). Tests: `pkg/podsecurity`, `pkg/admission/webhook`, `tests/tier3_contract/admission_pod_security`, `tests/tier5_e2e_kind/admission_test.go`, and `tests/tier9_security/admission_security_test.go`.
 
-### - [ ] F-13.1.24 — Agent pods set no `runAsGroup`, so the primary GID comes from the image or defaults to 0 [Medium] — OPEN
+### - [x] F-13.1.24 — Agent pods set no `runAsGroup`, so the primary GID comes from the image or defaults to 0 [Medium] — CLOSED
 
 **Spec:** §13.1 pod security context requirements.
 **Evidence:** `pkg/controller/sandbox/podspec/podspec.go` sets no `runAsGroup` at pod or container level (`basePod`, `containerSecurityContext`). Without it the container runtime resolves the primary group from the image's `/etc/passwd`, or uses 0. Found by the adversarial security review of 2026-10-02 (finding 1).
 **Gap:** The author's image chooses the runtime process's primary GID, including GID 0, which affects group-owned files on shared volumes and any group-based check. A future platform process in the runtime container would inherit the same image-chosen GID.
 **Suggested resolution:** Set `runAsGroup` explicitly on every agent-pod container, and add it to the pod-security webhook's checks. Scheduled in Phase 0 of the proposal track (`gateway-runtime-comms-remediation.md` §10.2).
+- **Resolution:** Closed with proposal 0088 (`proposals/0088_fix_agent-pods-have-no-enforced-rule-that-only-the/`). `containerSecurityContext` in `pkg/controller/sandbox/podspec/podspec.go` sets `runAsGroup` equal to `runAsUser` on every container, and the `lenny-pod-security` webhook rejects a container without an explicit nonzero `runAsGroup`. Tests: `TestBuildContainerIdentity_spec_13_1` and the `pkg/podsecurity` identity cases.
 
 ## §13.2 Network Isolation <a id="13.2"></a>
 Spec: `spec/13_security-model.md` §13.2 (lines 31–536)

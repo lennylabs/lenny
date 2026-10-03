@@ -10,8 +10,11 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -227,4 +230,33 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.w.Write(p)
+}
+
+// TestOpenCaptureFileGroupReadable_spec_13_1 pins the capture file's mode
+// at 0640. The capture container runs at a UID other than the agent UID,
+// so the runtime container reads the file only through the
+// lenny-cred-readers group the fsGroup-managed emptyDir assigns; a mode
+// without the group-read bit (the earlier 0600) hides the file from the
+// runtime-side probe.
+//
+// spec: 13.1 (Pod Security)
+func TestOpenCaptureFileGroupReadable_spec_13_1(t *testing.T) {
+	old := syscall.Umask(0)
+	defer syscall.Umask(old)
+
+	path := filepath.Join(t.TempDir(), "egress.jsonl")
+	f, err := openCaptureFile(path)
+	if err != nil {
+		t.Fatalf("openCaptureFile: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Errorf("capture file mode = %#o, want 0640", got)
+	}
 }

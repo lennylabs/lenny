@@ -3295,7 +3295,9 @@
         "tests/tier11_docs/credential_path_literal_sweep_test.go",
         "tests/tier9_security/tracing_context_session_isolation_test.go::TestUnaddressedTracingFrameWritesNoCoTenantSession_spec_28_5_3",
         "tests/tier9_security/concurrent_slot_isolation_test.go::TestPerSlotCredentialFileReadScope_spec_6_60",
-        "pkg/controller/sandbox/podspec/podspec_test.go"
+        "pkg/controller/sandbox/podspec/podspec_test.go",
+        "tests/tier3_contract/admission_pod_security/container_identity_test.go",
+        "tests/tier9_security/admission_manifest_offline_test.go"
       ],
       "packages": [
         "pkg/podsecurity"

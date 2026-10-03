@@ -50,6 +50,21 @@ import (
 	"time"
 )
 
+// captureFileMode is the permission set of the JSONL capture file. The
+// capture container runs at its own UID, distinct from the agent UID the
+// runtime container holds, so an owner-only mode would hide the file from
+// the runtime-side probe. The capture emptyDir is fsGroup-managed and its
+// directory is setgid, so the file's group is lenny-cred-readers, which the
+// runtime container holds as a supplementary group and reads through. The
+// group bit is read-only; other users get nothing.
+const captureFileMode os.FileMode = 0o640
+
+// openCaptureFile opens the capture file for appending, creating it with
+// captureFileMode when absent.
+func openCaptureFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, captureFileMode)
+}
+
 func main() {
 	listen := flag.String("listen", ":8443", "address the sidecar listens on (the agent pod dials this).")
 	upstream := flag.String("upstream", "", "address the sidecar forwards every accepted connection to (e.g., api.openai.com:443).")
@@ -61,7 +76,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	out, err := os.OpenFile(*capture, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	out, err := openCaptureFile(*capture)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-egress-capture: open capture file %s: %v\n", *capture, err)
 		os.Exit(1)
