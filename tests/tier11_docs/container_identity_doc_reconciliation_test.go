@@ -109,6 +109,10 @@ func TestOperatorGuideStatesTheContainerIdentityCheckWithChartDefaults(t *testin
 
 	requireAllContain(t, "container identity item", item, []string{
 		"`CREATE` and `UPDATE`",
+		// kubectl debug attaches an ephemeral container through this
+		// subresource, which is not a Pod UPDATE, so the item must name it
+		// for the check to cover the point of attach.
+		"every `UPDATE` to the `pods/ephemeralcontainers` subresource",
 		"after mutating admission",
 		"every RuntimeClass",
 		"init, regular, and ephemeral container",
