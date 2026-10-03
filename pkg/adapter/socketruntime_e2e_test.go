@@ -47,7 +47,7 @@ func buildRuntime(t *testing.T, pkg string) string {
 func TestSidecarSocketTransportDrivesTheEchoRuntime(t *testing.T) {
 	echoBin := buildRuntime(t, "cmd/runtimes/echo")
 
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -193,7 +193,7 @@ func requireSocketEcho(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID
 func TestSpawnedRuntimeIsSignalledOnPodTeardown(t *testing.T) {
 	echoBin := buildRuntime(t, "cmd/runtimes/echo")
 
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}

@@ -860,7 +860,7 @@ func TestShutdownOfAClaimedButUnrecordedStartTearsDownWithoutReporting_spec_4_7_
 // bound-but-unstarted entry on that pod runs no runtime close, so the
 // shared connection stays up.
 func TestShutdownOfAnUnstartedEntryLeavesTheSocketRuntimeIntact_spec_4_7_1(t *testing.T) {
-	sp, err := NewSocketRuntimeProcess(shortSocketName(t, "rt.sock"))
+	sp, err := NewSocketRuntimeProcess(shortSocketName(t, "rt.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -1224,6 +1224,7 @@ func TestAStartWhoseSlotWasReclaimedRollsBackAndAborts_spec_4_7_1(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			s, reporter := slotPod(t)
 			s.MCPSocket = mcpSocketPath(t, "r.sock")
+			s.PeerAuth = SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 			rt := &probeRuntime{}
 			rt.onStart = func(sessionID string) { s.ReleaseSlotForTest(tc.removalAt(t), sessionID) }
 			s.Runtime = rt

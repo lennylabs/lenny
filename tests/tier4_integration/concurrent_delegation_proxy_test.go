@@ -160,7 +160,7 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 
 	// One real runtime process per pod serves every slot, multiplexed on
 	// sessionId over the single connection (§5.2, §28.5.3).
-	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t))
+	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}

@@ -70,6 +70,7 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	s := New("adapter-test")
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
+	s.PeerAuth = SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	aliceClaim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
@@ -137,6 +138,7 @@ func TestPodMCPArmingCancelledWhenNoSessionHoldsIt_spec_15_4_3(t *testing.T) {
 	s := New("adapter-test")
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
+	s.PeerAuth = SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	if claim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false); err != nil || !claim.startMCP {
 		t.Fatalf("claim alice: startMCP=%v err=%v", claim.startMCP, err)
@@ -178,6 +180,7 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 	s := New("adapter-test")
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
+	s.PeerAuth = SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	aliceClaim, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
 	if err != nil || !aliceClaim.startMCP {
@@ -220,6 +223,7 @@ func TestPodMCPArmingReportsTheLiveArming_spec_15_4_3(t *testing.T) {
 	s := New("adapter-test")
 	s.WorkspaceBase = t.TempDir()
 	s.MCPSocket = mcpSocketPath(t, "p.sock")
+	s.PeerAuth = SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	if session, nonce := s.PodMCPArming(); session != "" || nonce != "" {
 		t.Errorf("PodMCPArming on an unarmed pod = (%q, %q), want both empty", session, nonce)

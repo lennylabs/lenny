@@ -95,7 +95,7 @@ func startRuntimeOpsWithSink(t *testing.T, sink tokenSink) (*RuntimeOps, *fakeRu
 	t.Helper()
 	sock := shortSocketName(t, "lifecycle.sock")
 
-	lc, err := NewRuntimeOps(sock)
+	lc, err := NewRuntimeOps(sock, SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestRuntimeOpsAcceptsReconnect_spec_4_7(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lifecycle.sock")
 
-	lc, err := NewRuntimeOps(sock)
+	lc, err := NewRuntimeOps(sock, SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

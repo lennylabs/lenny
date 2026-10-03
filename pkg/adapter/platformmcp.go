@@ -19,9 +19,8 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	if s.MCPSocket == "" || nonce == "" {
 		return nil
 	}
-	// §4.7 / §13: when a runtime UID is configured, the shared listener
-	// helper rejects any MCP connection from a process not running as that
-	// UID.
+	// §4.7.11: the shared listener helper rejects any MCP connection from a
+	// process not running as the agent UID, except in nonce-only mode.
 	serveLis, err := s.listenIntraPodMCP(s.MCPSocket)
 	if err != nil {
 		return err
@@ -29,7 +28,7 @@ func (s *Server) startPlatformMCP(nonce string) error {
 	srv := mcp.NewServer()
 	// §4.7: when SO_PEERCRED is disabled, the static nonce
 	// is replayable, so the server adds a per-connection challenge-response.
-	srv.RequireChallenge = s.NonceOnlyMode
+	srv.RequireChallenge = s.PeerAuth.NonceOnly
 	// spec: §5.1 — record that the runtime connected to the platform MCP
 	// server so the observed-integration-level probe classifies it as at
 	// least Standard. F-5.1.11.

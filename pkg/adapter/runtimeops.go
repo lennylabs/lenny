@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -92,6 +93,17 @@ type lifecycleFrame struct {
 type RuntimeOps struct {
 	listener net.Listener
 
+	// auth is the SO_PEERCRED posture the listener enforces, fixed at
+	// construction. spec: §4.7.11.
+	auth SocketPeerAuth
+	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
+	// peer's UID. It is a test seam: a test process cannot dial from a
+	// second UID without root. It is written only before Run.
+	peerUID func(net.Conn) (uint32, error)
+	// logger receives the refusal record for each refused peer. Nil logs
+	// to slog.Default.
+	logger *slog.Logger
+
 	ready chan struct{} // closed once the handshake completes
 	done  chan struct{} // closed once Run returns
 
@@ -130,19 +142,45 @@ type tokenSink interface {
 
 // NewRuntimeOps listens on socketPath for the runtime's lifecycle
 // connection. socketPath is a filesystem path or, on Linux, an abstract
-// socket name beginning with `@`.
-func NewRuntimeOps(socketPath string) (*RuntimeOps, error) {
+// socket name beginning with `@`. auth is the SO_PEERCRED posture the
+// listener applies to each connecting process, the same decision the
+// CH-MSGSOCK and intra-pod MCP listeners take: outside nonce-only mode only
+// auth.ExpectedUID is admitted, and a refused connection is logged as
+// runtimeops_peer_refused, closed, and skipped inside Accept, so it never
+// becomes the runtime connection Run serves. The manifest-nonce handshake
+// the CH-RUNTIMEOPS card also states is not performed.
+// spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
+// (CH-RUNTIMEOPS, Endpoint).
+func NewRuntimeOps(socketPath string, auth SocketPeerAuth) (*RuntimeOps, error) {
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("CH-RUNTIMEOPS listen %s: %w", socketPath, err)
 	}
-	return &RuntimeOps{
-		listener: l,
+	lc := &RuntimeOps{
+		auth:     auth,
 		ready:    make(chan struct{}),
 		done:     make(chan struct{}),
 		pending:  map[string]chan error{},
 		inflight: map[string]int{},
-	}, nil
+	}
+	lc.listener = auth.wrap(l, lc.checkRuntimeOpsPeer, lc.logRefusedPeer)
+	return lc, nil
+}
+
+// checkRuntimeOpsPeer admits conn only when its peer runs as the expected
+// agent UID. It reads the UID through SO_PEERCRED unless a test installed
+// the peerUID seam.
+func (lc *RuntimeOps) checkRuntimeOpsPeer(conn net.Conn) error {
+	if lc.peerUID != nil {
+		return matchPeerUID(conn, lc.auth.ExpectedUID, lc.peerUID)
+	}
+	return lc.auth.check(conn)
+}
+
+// logRefusedPeer records a refused CH-RUNTIMEOPS connection. See
+// logPeerRefusal for the record's fields.
+func (lc *RuntimeOps) logRefusedPeer(err error) {
+	logPeerRefusal(lc.logger, "runtimeops_peer_refused", lc.listener.Addr().String(), lc.auth.ExpectedUID, err)
 }
 
 // SocketPath is the address the runtime dials to reach the channel.

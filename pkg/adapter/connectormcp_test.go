@@ -55,6 +55,7 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 	s.ManifestDir = t.TempDir()
 	// The derived per-connector sun_path must fit darwin's ~104-byte limit.
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	fwd := &fakeConnectorForwarder{
 		refs:   []mcp.ConnectorRef{{ID: "github", DisplayName: "GitHub"}},
 		list:   []mcp.Tool{{Name: "list_repos", Description: "list"}},
@@ -147,6 +148,7 @@ func TestConnectorServersEmptyWithoutForwarder_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)

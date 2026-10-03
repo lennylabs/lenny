@@ -4,6 +4,8 @@ package adapter
 
 import (
 	"context"
+	"log/slog"
+	"net"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -97,3 +99,17 @@ func (s *Server) WaitPendingCheckpointForTest(sessionID string, timeout time.Dur
 // error so the package's external tests can assert that a Start or Output
 // after the runtime's connection ended fails with it. spec: §4.7.10.
 var ErrRuntimeConnectionEnded = errRuntimeConnectionEnded
+
+// SetPeerUIDLookupForTest replaces the SO_PEERCRED lookup the CH-MSGSOCK
+// listener reads a connecting peer's UID with, so an external test can
+// present a peer UID other than its own without root. Call it before the
+// first Start.
+func (p *SocketRuntimeProcess) SetPeerUIDLookupForTest(lookup func(net.Conn) (uint32, error)) {
+	p.peerUID = lookup
+}
+
+// SetLoggerForTest routes the CH-MSGSOCK listener's refusal records to l so
+// an external test can assert on them. Call it before the first Start.
+func (p *SocketRuntimeProcess) SetLoggerForTest(l *slog.Logger) {
+	p.logger = l
+}

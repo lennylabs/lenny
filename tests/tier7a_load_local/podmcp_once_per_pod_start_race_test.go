@@ -99,6 +99,7 @@ func mcpRacePod(t *testing.T) *adapter.Server {
 	s.CredentialsDir = filepath.Join(base, "run", "lenny")
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.Runtime = newGatedRuntime()
 	s.PlatformForwarder = staticForwarder{}
 	s.ConnectorForwarder = staticForwarder{}

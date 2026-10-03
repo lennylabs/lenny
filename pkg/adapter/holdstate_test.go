@@ -1005,7 +1005,7 @@ func holdSocketAddr(t *testing.T) string {
 // the hold clock, the transport, and the peer's end of the connection.
 func heldSocketPod(t *testing.T) (*Server, *fakeExpiryClock, *SocketRuntimeProcess, net.Conn) {
 	t.Helper()
-	sp, err := NewSocketRuntimeProcess(holdSocketAddr(t))
+	sp, err := NewSocketRuntimeProcess(holdSocketAddr(t), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}

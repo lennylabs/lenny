@@ -119,7 +119,7 @@ func newListenerRaceRuntime(t *testing.T) (*adapter.SocketRuntimeProcess, string
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socket := filepath.Join(dir, "r.sock")
-	rt, err := adapter.NewSocketRuntimeProcess(socket)
+	rt, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}

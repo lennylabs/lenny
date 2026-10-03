@@ -139,9 +139,13 @@ func main() {
 	// §9.1/§4.7: bind the platform MCP socket and, when a gateway address is
 	// configured, dial the gateway's GatewayControl service. ManifestDir is
 	// set above, since the platform MCP server reads the authenticating nonce
-	// from the manifest. In the embedded model the runtime and MCP server are
-	// one process and UID, so RuntimeUID stays zero (the SO_PEERCRED self-check
-	// is disabled, which is correct per §4.7).
+	// from the manifest. The embedded model is a single trusted process with
+	// no adapter-agent socket boundary, so the MCP listener applies no
+	// SO_PEERCRED peer check and the manifest nonce authenticates the
+	// connection. EmbeddedPeerAuth states that posture explicitly, because
+	// the zero-value posture fails closed.
+	// spec: §4.7.11 (Separate UIDs and connection authentication).
+	adapterSrv.PeerAuth = adapter.EmbeddedPeerAuth()
 	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
 	if err != nil {
 		log.Fatalf("echo-embedded: %v", err)

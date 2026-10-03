@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -43,6 +44,7 @@ func sharedSurfacePod(t *testing.T, fwd *recordingForwarder, sessions ...string)
 	s.Runtime = noopRuntime{}
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
 	s.ConnectorForwarder = fwd
 

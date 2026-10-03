@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -72,10 +73,31 @@ var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 // transport can serve the next session, which the whole-pod scrub report
 // carries to the gateway. The listener is bound once at construction,
 // before the pod is claimable, and accepts one connection.
-// spec: §4.7.9, §4.7.10 (Runtime process lifetime), §5.2 (Runtime not
-// live), §28.5.3.
+//
+// The listener admits only the expected agent UID, which SO_PEERCRED
+// reports for each connecting process (see SocketPeerAuth). A refused
+// connection is logged and closed inside the listener's Accept, which then
+// waits for the next connection, so a foreign process neither becomes the
+// runtime connection nor consumes the accept the runtime's own dial is
+// owed. The manifest-nonce handshake the CH-MSGSOCK card also states is not
+// performed.
+// spec: §4.7.9, §4.7.10 (Runtime process lifetime), §4.7.11 (Separate UIDs
+// and connection authentication), §5.2 (Runtime not live), §28.5.3
+// (CH-MSGSOCK).
 type SocketRuntimeProcess struct {
 	listener net.Listener
+
+	// auth is the peer-authentication posture the listener enforces, fixed
+	// at construction.
+	auth SocketPeerAuth
+	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
+	// peer's UID. It is a test seam: a test process cannot dial from a
+	// second UID without root, so a tier-1 case stands in the UID the
+	// lookup reports. It is written only before the first Start.
+	peerUID func(net.Conn) (uint32, error)
+	// logger receives the refusal record for each refused peer. Nil logs
+	// to slog.Default.
+	logger *slog.Logger
 
 	// SpawnPath, when non-empty, is a runtime binary Start execs with
 	// LENNY_ADAPTER_SOCKET set. Empty means the runtime connects on its
@@ -100,6 +122,24 @@ type SocketRuntimeProcess struct {
 	// tornDown records that CloseListener has run, so a second call is a
 	// no-op. Guarded by mu.
 	tornDown bool
+	// reading records that the fan-out reader runs over conn. A connection
+	// the accept loop installs while no Start waits gets its reader at the
+	// next Start, so every reader start is a Start's. Guarded by mu.
+	reading bool
+
+	// acceptOnce starts the single accept loop at the first Start. The loop
+	// outlives a Start that times out or is cancelled, so a runtime that
+	// dials late is installed for the next Start rather than taken by an
+	// abandoned accept. spec: §4.7.10 (Runtime process lifetime).
+	acceptOnce sync.Once
+	// connReady is closed when the accept loop has installed the runtime's
+	// connection in conn.
+	connReady chan struct{}
+	// acceptDone is closed when the accept loop ends without installing a
+	// connection, after acceptErr records why: the listener closed, or the
+	// pod-scope teardown ran while the accepted connection was in flight.
+	acceptDone chan struct{}
+	acceptErr  error
 }
 
 // subscriber is one Output consumer of the shared runtime connection. The
@@ -174,13 +214,37 @@ func (s *subscriber) close() {
 // a RuntimeProcess that bridges the runtime over it. socket is a
 // filesystem path or, on Linux, an abstract address beginning with "@".
 // The socket is bound immediately so it is ready before the §4.7
-// startup sequence spawns or schedules the runtime.
-func NewSocketRuntimeProcess(socket string) (*SocketRuntimeProcess, error) {
+// startup sequence spawns or schedules the runtime. auth sets the
+// SO_PEERCRED check the listener applies to each connecting process.
+// spec: §4.7.11 (Separate UIDs and connection authentication).
+func NewSocketRuntimeProcess(socket string, auth SocketPeerAuth) (*SocketRuntimeProcess, error) {
 	l, err := net.Listen("unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("adapter: bind runtime socket %s: %w", socket, err)
 	}
-	return &SocketRuntimeProcess{listener: l}, nil
+	p := &SocketRuntimeProcess{
+		auth:       auth,
+		connReady:  make(chan struct{}),
+		acceptDone: make(chan struct{}),
+	}
+	p.listener = auth.wrap(l, p.checkRuntimePeer, p.logRefusedPeer)
+	return p, nil
+}
+
+// checkRuntimePeer admits conn only when its peer runs as the expected agent
+// UID. It reads the UID through SO_PEERCRED unless a test installed the
+// peerUID seam.
+func (p *SocketRuntimeProcess) checkRuntimePeer(conn net.Conn) error {
+	if p.peerUID != nil {
+		return matchPeerUID(conn, p.auth.ExpectedUID, p.peerUID)
+	}
+	return p.auth.check(conn)
+}
+
+// logRefusedPeer records a refused CH-MSGSOCK connection. See
+// logPeerRefusal for the record's fields.
+func (p *SocketRuntimeProcess) logRefusedPeer(err error) {
+	logPeerRefusal(p.logger, "runtime_peer_refused", p.listener.Addr().String(), p.auth.ExpectedUID, err)
 }
 
 // SocketPath is the address the runtime dials to reach the adapter. It
@@ -190,12 +254,15 @@ func (p *SocketRuntimeProcess) SocketPath() string {
 	return p.listener.Addr().String()
 }
 
-// Start makes the runtime live for a session. The first Start accepts the
-// runtime's connection; when SpawnPath is set it first execs that binary
-// with LENNY_ADAPTER_SOCKET pointing at the bound socket. Every later Start,
-// for a sibling slot or for a later session after occupancy zero, returns
-// nil on the live connection without accepting. Once the connection has
-// ended, Start returns errRuntimeConnectionEnded at once.
+// Start makes the runtime live for a session. The first Start starts the
+// listener's single accept loop and waits, bounded by AcceptTimeout and ctx,
+// for the loop to install the runtime's connection; when SpawnPath is set it
+// first execs that binary with LENNY_ADAPTER_SOCKET pointing at the bound
+// socket. A Start that times out or is cancelled leaves the loop running, so
+// a runtime that dials afterwards is installed and the next Start returns on
+// it. Every Start on an installed connection, for a sibling slot or for a
+// later session after occupancy zero, returns nil without accepting. Once the
+// connection has ended, Start returns errRuntimeConnectionEnded at once.
 // spec: §4.7.9, §4.7.10 (Runtime process lifetime), §5.2.
 func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 	p.mu.Lock()
@@ -204,6 +271,7 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 		return errRuntimeConnectionEnded
 	}
 	if p.connected {
+		p.startReaderLocked()
 		p.mu.Unlock()
 		return nil
 	}
@@ -221,42 +289,91 @@ func (p *SocketRuntimeProcess) Start(ctx context.Context, _ string) error {
 		}
 	}
 
-	conn, err := p.accept(ctx, timeout)
-	if err != nil {
+	if err := p.awaitConnection(ctx, timeout); err != nil {
 		p.killSpawned()
 		return err
 	}
+	return nil
+}
 
-	scanner := bufio.NewScanner(conn)
+// awaitConnection waits for the accept loop to install the runtime's
+// connection, bounded by timeout and ctx, and starts the fan-out reader on
+// it. Returning on the timeout or ctx leaves the loop running.
+func (p *SocketRuntimeProcess) awaitConnection(ctx context.Context, timeout time.Duration) error {
+	p.acceptOnce.Do(func() { go p.acceptLoop() })
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-p.connReady:
+	case <-p.acceptDone:
+		return fmt.Errorf("adapter: accept runtime connection: %w", p.acceptErr)
+	case <-timer.C:
+		return fmt.Errorf("adapter: runtime did not connect within %s", timeout)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ended {
+		return errRuntimeConnectionEnded
+	}
+	p.startReaderLocked()
+	return nil
+}
+
+// acceptLoop is the listener's single accept path. It accepts the first
+// connection the peer check admits, installs it as the runtime's connection,
+// and returns, so the listener accepts one connection for the pod's life and
+// a later dial stays unaccepted. A connection accepted after the pod-scope
+// teardown has run is closed here, because no Start can claim it. The loop
+// ends when the listener closes. spec: §4.7.10 (Runtime process lifetime),
+// §28.5.3 (CH-MSGSOCK).
+func (p *SocketRuntimeProcess) acceptLoop() {
+	conn, err := p.listener.Accept()
+	if err != nil {
+		p.endAccept(err)
+		return
+	}
+	p.mu.Lock()
+	if p.ended {
+		p.mu.Unlock()
+		_ = conn.Close()
+		p.endAccept(errRuntimeConnectionEnded)
+		return
+	}
+	p.conn = conn
+	p.connected = true
+	// The connection gets its own subscriber set, which its reader acts on.
+	p.subscribers = map[*subscriber]struct{}{}
+	p.mu.Unlock()
+	close(p.connReady)
+}
+
+// endAccept records why the accept loop ended without a connection and
+// releases every waiting Start.
+func (p *SocketRuntimeProcess) endAccept(err error) {
+	p.acceptErr = err
+	close(p.acceptDone)
+}
+
+// startReaderLocked starts the fan-out reader over the installed connection
+// once. One reader goroutine over the single connection fans every frame out
+// to all subscribers, so concurrent per-slot Attach streams each see the
+// runtime's full output and demultiplex by sessionId. The caller holds mu.
+// spec: §28.5.3.
+func (p *SocketRuntimeProcess) startReaderLocked() {
+	if p.reading {
+		return
+	}
+	p.reading = true
+	scanner := bufio.NewScanner(p.conn)
 	// spec: §28.5.3 — a single MessagePart may be up to 50 MB.
 	// The sidecar scanner must admit a frame at that ceiling; a 16 MB cap
 	// would fail framing on a legal 17–50 MB part before it reached the
 	// gateway's §28.5.3 ingress validation. Matches echocore and the
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
 	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLFrameBytes)
-
-	// The connection gets its own subscriber set, which its reader acts on.
-	subs := map[*subscriber]struct{}{}
-	p.mu.Lock()
-	if p.ended {
-		// The pod-scope teardown ran while the accept was in flight. It
-		// found no connection to close, so this one is closed here rather
-		// than kept on a transport that has ended.
-		p.mu.Unlock()
-		_ = conn.Close()
-		return errRuntimeConnectionEnded
-	}
-	p.conn = conn
-	p.connected = true
-	p.subscribers = subs
-	p.mu.Unlock()
-
-	// One reader goroutine over the single connection fans every frame out
-	// to all subscribers, so concurrent per-slot Attach streams each see
-	// the runtime's full output and demultiplex by sessionId.
-	// spec: §28.5.3.
-	go p.fanOut(scanner, subs)
-	return nil
+	go p.fanOut(scanner, p.subscribers)
 }
 
 // fanOut reads every §28.5.3 JSONL frame the runtime writes and broadcasts
@@ -312,30 +429,6 @@ func (p *SocketRuntimeProcess) closeSubscribers(set map[*subscriber]struct{}) {
 	p.mu.Unlock()
 	for _, s := range subs {
 		s.close()
-	}
-}
-
-// accept waits for the runtime's connection, bounded by timeout and ctx.
-func (p *SocketRuntimeProcess) accept(ctx context.Context, timeout time.Duration) (net.Conn, error) {
-	type result struct {
-		conn net.Conn
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		conn, err := p.listener.Accept()
-		ch <- result{conn: conn, err: err}
-	}()
-	select {
-	case r := <-ch:
-		if r.err != nil {
-			return nil, fmt.Errorf("adapter: accept runtime connection: %w", r.err)
-		}
-		return r.conn, nil
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("adapter: runtime did not connect within %s", timeout)
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 
@@ -450,8 +543,10 @@ func (p *SocketRuntimeProcess) Close(context.Context, string) error {
 // The adapter process runs it at exit, and the adapter runs it when the
 // coordinator hold times out. It is safe to call more than once: a second
 // call returns nil rather than the error a second net.Listener.Close
-// produces. An accept blocked in Start returns net.ErrClosed when the
-// listener closes, so its goroutine exits.
+// produces. The accept loop's Accept returns net.ErrClosed when the
+// listener closes, so the loop exits and every Start waiting on it returns.
+// A connection the loop accepts while the teardown runs is closed by the
+// loop, so no accepted connection outlives the teardown unclaimed.
 // spec: §4.7.10 (Runtime process lifetime), §10.1.4 (Hold state timeout),
 // §15.4, §28.5.3.
 func (p *SocketRuntimeProcess) CloseListener() error {

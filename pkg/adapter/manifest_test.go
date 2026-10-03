@@ -137,7 +137,7 @@ func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 
 	// With CH-RUNTIMEOPS configured, the manifest advertises its
 	// socket so a Full-level runtime can dial it.
-	lc, err := NewRuntimeOps(shortSocketName(t, "lifecycle.sock"))
+	lc, err := NewRuntimeOps(shortSocketName(t, "lifecycle.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

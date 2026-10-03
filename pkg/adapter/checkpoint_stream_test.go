@@ -187,7 +187,7 @@ func wireLifecycle(t *testing.T, s *adapter.Server) *fakeLifecycleRuntime {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lc.sock")
 
-	lc, err := adapter.NewRuntimeOps(sock)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

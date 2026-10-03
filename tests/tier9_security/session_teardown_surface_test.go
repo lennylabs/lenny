@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -43,6 +44,7 @@ func teardownPod(t *testing.T, fwd *recordingForwarder, sessions ...string) (*ad
 	s.Runtime = noopRuntime{}
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortMCPSocket(t)
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
 	s.ConnectorForwarder = fwd
 

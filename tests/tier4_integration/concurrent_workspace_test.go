@@ -128,7 +128,7 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 	// adapter binds the abstract socket and spawns the real echo-concurrent
 	// binary, which dials back and runs its sessionId dispatch loop over the one
 	// connection. Every slot rides this single connection (spec/05:509).
-	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t))
+	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
@@ -535,7 +535,7 @@ func newAbandonFixture(t *testing.T) *abandonFixture {
 	if runtime.GOOS == "linux" {
 		addr = fmt.Sprintf("@lenny-t4-abandon-%d", time.Now().UnixNano())
 	}
-	proc, err := adapter.NewSocketRuntimeProcess(addr)
+	proc, err := adapter.NewSocketRuntimeProcess(addr, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}

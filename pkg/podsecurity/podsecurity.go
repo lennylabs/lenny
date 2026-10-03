@@ -259,11 +259,12 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 	// §13.1: the adapter and agent UIDs are declared in the
 	// pod's spec.securityContext.supplementalGroups list, making
 	// lenny-cred-readers a shared group both containers are members of.
-	// Line 25 further states the admission webhook "validate[s] the
-	// presence ... of the fsGroup and supplementalGroups settings on
-	// every agent-pod template" — so the explicit declaration is
-	// required, not merely the kubelet's implicit fsGroup-to-
-	// supplementary-group propagation. A pod that sets the fsGroup but
+	// §13.1 **Cross-UID file delivery without `CAP_CHOWN`
+	// (fsGroup-based).** further states that the admission webhooks
+	// "validate the presence and immutability of the `fsGroup` and
+	// `supplementalGroups` settings on every agent-pod template", so the
+	// explicit declaration is required, not merely the kubelet's implicit
+	// fsGroup-to-supplementary-group propagation. A pod that sets the fsGroup but
 	// omits the supplementalGroups declaration would still deliver the
 	// file today (via that propagation side-effect), but the spec
 	// mandates the explicit membership so a future kubelet that decouples
