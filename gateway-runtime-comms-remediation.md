@@ -2303,25 +2303,30 @@ pinned-idle proposal, so each of those is converged once against the final set o
   (`CloseListener`, the occupancy-zero branch, the per-connection reset, the exit-time call site, and the
   test names). Both recorded deviations concern test placement and dial order, so neither triggers a
   citations and edit-sites review of 0079.
-- [ ] Proposal 0079 implemented through its checklist. Closes BUILD-GAPS F-5.2.33 part (b). The step
+- [x] Proposal 0079 implemented through its checklist. Closes BUILD-GAPS F-5.2.33 part (b). Implemented 2026-10-03 (spec
+  commits through `d3aa50051`, code `31078d39e` to `31ef365c7`, comment sweep `b53d40f26`, follow-ups
+  `2adcee533` and `136322f9d`, status `4e12204a0`); all 16 deviations accepted. The final verify ran
+  tiers 0 to 11. Its remaining failures also fail on the base commit: the `lenny-ops` nil-kube-config panic
+  at tier 4, and the two orphan-GC tests at tier 8, which need a Kind controller started with
+  `--postgres-dsn` and `--agent-namespaces`. The step
   numbering below is the checklist's as of 2026-10-01; the proposal's own checklist is authoritative.
-  - [ ] S1 to S18, the spec steps. Each lands its staged edits under a scoped spec write lease: §4.7.9,
+  - [x] S1 to S18, the spec steps. Each lands its staged edits under a scoped spec write lease: §4.7.9,
     §4.7.10, and the §4.7 adapter RPC table; §4.6.1 and §4.6.3; §5.1 and §5.2 (recycle lifecycle, scrub
     steps, retirement and sizing, the acknowledgment, the tenant pin, and client visibility); §6.1 and §6.2;
     §7.1; §10.1.4; §11.4; §13.1; §15.4 to §15.4.3; §16.1; §17.8.2; §28; and §29.
-  - [ ] S19, gateway and controller: the tenant-pin read on every claim path, the refuse-and-drain of an
+  - [x] S19, gateway and controller: the tenant-pin read on every claim path, the refuse-and-drain of an
     already-used pod after a pool edit takes the pool outside the process-reuse rule, the interim pinned-idle
     rule in the warm-pool planner, and the admission refusal of a recycling pool without the acknowledgment.
-  - [ ] S20, the adapter transport, which turns runtime reuse on: per-session `Close` and `Interrupt` no longer
+  - [x] S20, the adapter transport, which turns runtime reuse on: per-session `Close` and `Interrupt` no longer
     end the shared runtime connection, the pod-exit `terminate` frame is deleted, the runtime generation
     counter, and the pod-scope teardown at adapter exit and at the coordinator hold timeout. Needs proposal
     0078. It does not wait for the runtime-SDK proposal (section 10.3).
-  - [ ] S21: the adapter reports at the recycle boundary whether the runtime process is live, the gateway's
+  - [x] S21: the adapter reports at the recycle boundary whether the runtime process is live, the gateway's
     disposition retires the pod when it is not, and the gateway threads the report through.
-  - [ ] S22: comment corrections and regenerated CRD descriptions.
-  - [ ] S23: the tier-10 conformance, tier-5 cluster, and tier-7a scenario tests, including the un-skipped
+  - [x] S22: comment corrections and regenerated CRD descriptions.
+  - [x] S23: the tier-10 conformance, tier-5 cluster, and tier-7a scenario tests, including the un-skipped
     recycle case.
-  - [ ] S24: documentation and its tier-11 consistency gate.
+  - [x] S24: documentation and its tier-11 consistency gate.
 
 **Exit criteria for every implemented proposal in this track.** Every reached tier is green on the final
 tree, the owner has adjudicated each entry in the proposal's deviations file, the proposal is marked
