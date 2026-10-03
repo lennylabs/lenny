@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-//go:build security
+//go:build security && linux
 
 // Tier-9 SO_PEERCRED boundary on the CH-MSGSOCK runtime socket, driven
 // against the real adapter.SocketRuntimeProcess listener and the host
@@ -13,7 +13,8 @@
 // the listener keeps accepting, so a refused process cannot hold the
 // connection a later session binds to.
 //
-// A test process cannot dial from a second UID without root, so these cases
+// The file is Linux-only because SO_PEERCRED is a Linux socket option. A
+// test process cannot dial from a second UID without root, so these cases
 // configure an expected agent UID the test process does not run as and dial
 // from the test process itself. The positive case, where the expected UID's
 // dial is accepted after a refusal, runs at tier 1 through the peer-UID
@@ -30,7 +31,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -42,9 +42,6 @@ import (
 // a foreign peer under the host kernel's SO_PEERCRED.
 func foreignUIDRuntimeSocket(t *testing.T, acceptTimeout time.Duration) *adapter.SocketRuntimeProcess {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("SO_PEERCRED is Linux-only")
-	}
 	dir, err := os.MkdirTemp("", "rtpc")
 	if err != nil {
 		t.Fatalf("temp runtime socket dir: %v", err)

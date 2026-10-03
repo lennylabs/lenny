@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -187,30 +186,6 @@ func TestSocketRuntimeAcceptsTheExpectedUIDThroughSOPeercred_spec_4_7_11(t *test
 	}
 	if !sp.ServesNextSession() {
 		t.Fatal("ServesNextSession reported false after the expected UID connected")
-	}
-}
-
-// spec: 4.7.11 (Separate UIDs and connection authentication), 28.5.3
-// (CH-MSGSOCK)
-func TestSocketRuntimeRefusesOtherUIDThroughSOPeercred_spec_4_7_11(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("SO_PEERCRED is Linux-only")
-	}
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t),
-		adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1})
-	if err != nil {
-		t.Fatalf("NewSocketRuntimeProcess: %v", err)
-	}
-	t.Cleanup(func() { _ = sp.CloseListener() })
-	sp.AcceptTimeout = 300 * time.Millisecond
-	sp.SetLoggerForTest(slog.New(slog.NewJSONHandler(io.Discard, nil)))
-
-	started := startAsync(sp, "s1")
-	peer := dialRuntimeSocket(t, sp.SocketPath())
-	defer peer.Close()
-	requireRefused(t, peer, "peer running as another UID")
-	if err := <-started; err == nil {
-		t.Fatal("Start accepted a peer whose SO_PEERCRED UID is not the agent UID")
 	}
 }
 

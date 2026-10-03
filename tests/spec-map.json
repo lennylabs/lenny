@@ -963,7 +963,7 @@
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeRefusesForeignUIDAndAcceptsTheRuntimeNext_spec_4_7_11",
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeRefusesPeerWhoseCredentialsCannotBeRead_spec_4_7_11",
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeAcceptsTheExpectedUIDThroughSOPeercred_spec_4_7_11",
-        "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
+        "pkg/adapter/socketruntime_peercred_linux_test.go::TestSocketRuntimeRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11",
         "pkg/adapter/peercred_test.go::TestPeerCheckedListenerReportsEachRefusal_spec_4_7_11",
         "cmd/lenny-adapter/main_test.go::TestRuntimeSocketPeerAuth_spec_4_7_11",
@@ -5913,7 +5913,7 @@
       "tests": [
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeRefusesForeignUIDAndAcceptsTheRuntimeNext_spec_4_7_11",
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeRefusesPeerWhoseCredentialsCannotBeRead_spec_4_7_11",
-        "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
+        "pkg/adapter/socketruntime_peercred_linux_test.go::TestSocketRuntimeRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
         "pkg/adapter/socketruntime_peercred_test.go::TestSocketRuntimeNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11",
         "cmd/lenny-adapter/main_test.go::TestRuntimeSocketPeerAuth_spec_4_7_11",
         "tests/tier9_security/runtime_socket_peercred_test.go::TestRuntimeSocketRefusesForeignUIDPeer_spec_4_7_11",
