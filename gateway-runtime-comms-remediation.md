@@ -2294,7 +2294,21 @@ pinned-idle proposal, so each of those is converged once against the final set o
     adapter UID; the test-only egress-capture container moved off the agent UID.
   - BUILD-GAPS F-13.1.24: an explicit `runAsGroup` on every agent-pod container, checked by the webhook.
   Where existing specification text does not already state a rule, the rule lands through a small proposal
-  rather than as a BUILD-GAPS fix.
+  rather than as a BUILD-GAPS fix: proposal 0088 stages F-13.1.23 and F-13.1.24 (converged, `Reviewed`,
+  2026-10-03). Draft proposal 0087 lands after it.
+  - After proposal 0088 is implemented, on the hardening branch `worktree-agent-a14863c1e63bb8ccf` (owner
+    decision, 2026-10-03): the `SO_PEERCRED` peer check on the `CH-RUNTIMEOPS` listener
+    (`pkg/adapter/runtimeops.go` binds a plain listener with neither a peer check nor a nonce check), and the
+    code-hygiene items 0088 recorded: the comments in `podspec.go` and `cmd/lenny-controller/flags.go`
+    that claim `lenny-pod-security` rejects the egress-capture container in production, the line citation
+    above the supplementalGroups check in `pkg/podsecurity/podsecurity.go`, and the `lenny-pod-security`
+    chart template's header comment on matching Pod UPDATE. The `CH-RUNTIMEOPS` nonce belongs to the
+    runtime-SDK proposal.
+  - Draft proposal 0089 (unconverged) covers the rest of 0088's unstaged defects: the embedded-model gap
+    where an injected regular container named `adapter` passes the name-keyed reservation, together with
+    whether embedded agent sockets admit only the runtime container's UID; the §13.1 `setgroups(0, NULL)`
+    guidance that cannot succeed with every capability dropped; and the §13.1 rejection codes absent from
+    the §15.1 catalog. It assumes proposal 0088 is implemented.
 - [ ] R6, after the pod identity hardening and before proposal 0087's code. The hardening moves the
   egress-capture container off the agent UID, which edits the pod builder, so R6 moves settled code.
 
