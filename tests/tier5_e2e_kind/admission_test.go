@@ -98,8 +98,9 @@ func TestAdmissionPodSecurity(t *testing.T) {
 	c := kind.InstallLenny(t)
 
 	// A pod missing every §13.1 securityContext field. The
-	// lenny-pod-security webhook is scoped to Pod CREATE in agent
-	// namespaces, so this is in scope.
+	// lenny-pod-security webhook covers every Pod CREATE and UPDATE
+	// and every pods/ephemeralcontainers UPDATE in agent namespaces,
+	// so this Pod CREATE is in scope.
 	const badPod = `apiVersion: v1
 kind: Pod
 metadata:
