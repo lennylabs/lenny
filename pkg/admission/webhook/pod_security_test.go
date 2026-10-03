@@ -27,19 +27,33 @@ import (
 // psCredReadersGID is the lenny-cred-readers GID used in the tests.
 const psCredReadersGID int64 = 65534
 
+// psAdapterUID and psAgentUID are the reserved adapter and agent UIDs
+// the tests wire into the webhook: the security.podUIDs chart defaults.
+const (
+	psAdapterUID int64 = 65532
+	psAgentUID   int64 = 65533
+)
+
+// psFreeUID is a UID outside both reserved UIDs, for containers other
+// than adapter and runtime.
+const psFreeUID int64 = 1000
+
 // psCredVolumeName is the credential tmpfs volume name the §13.1
 // membership-boundary check keys on (POD_SPEC_CRED_GROUP_OVERBROAD).
 const psCredVolumeName = "credentials"
 
 // hardenedContainer returns a container that satisfies every §13.1
-// per-container invariant. It sets no seccomp profile of its own and
-// inherits the pod-level profile.
-func hardenedContainer(name string) corev1.Container {
+// per-container invariant, running at uid with its primary GID equal to
+// uid as the pod builder renders it. It sets no seccomp profile of its
+// own and inherits the pod-level profile.
+func hardenedContainer(name string, uid int64) corev1.Container {
 	return corev1.Container{
 		Name:  name,
 		Image: "ghcr.io/lennylabs/" + name + "@sha256:aaa",
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot:             ptr.To(true),
+			RunAsUser:                ptr.To(uid),
+			RunAsGroup:               ptr.To(uid),
 			AllowPrivilegeEscalation: ptr.To(false),
 			Privileged:               ptr.To(false),
 			ReadOnlyRootFilesystem:   ptr.To(true),
@@ -61,8 +75,8 @@ func hardenedPod() corev1.Pod {
 				SeccompProfile:     &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 			Containers: []corev1.Container{
-				hardenedContainer("adapter"),
-				hardenedContainer("runtime"),
+				hardenedContainer("adapter", psAdapterUID),
+				hardenedContainer("runtime", psAgentUID),
 			},
 		},
 	}
@@ -79,7 +93,7 @@ func psPodRaw(t *testing.T, pod corev1.Pod) runtime.RawExtension {
 
 func psDecide(t *testing.T, pod corev1.Pod) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -110,7 +124,7 @@ func TestPodSecurityRejectsHostSharing(t *testing.T) {
 // derives from the pod's runtimeClassName.
 func psDecideWithPolicy(t *testing.T, pod corev1.Pod, rc podsecurity.RuntimeClassPolicy) *admissionv1.AdmissionResponse {
 	t.Helper()
-	return webhook.PodSecurity(psCredReadersGID, psCredVolumeName, rc)(context.Background(), &admissionv1.AdmissionRequest{
+	return webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, rc)(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "ps",
 		Operation: admissionv1.Create,
 		Kind:      metav1.GroupVersionKind{Kind: "Pod"},
@@ -210,7 +224,7 @@ func TestPodSecurityValidatesInitContainers(t *testing.T) {
 	// An init container with an undropped capability set rejects the
 	// pod: §13.1 invariants apply to init containers too.
 	pod := hardenedPod()
-	bad := hardenedContainer("warm")
+	bad := hardenedContainer("warm", psFreeUID)
 	bad.SecurityContext.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"NET_ADMIN"}}
 	pod.Spec.InitContainers = []corev1.Container{bad}
 	resp := psDecide(t, pod)
@@ -235,11 +249,13 @@ func TestPodSecurityValidatesEphemeralContainers_spec_13_1(t *testing.T) {
 			Image: "busybox",
 			SecurityContext: &corev1.SecurityContext{
 				RunAsNonRoot: ptr.To(true),
+				RunAsUser:    ptr.To(psFreeUID),
+				RunAsGroup:   ptr.To(psFreeUID),
 				Privileged:   ptr.To(true),
 			},
 		},
 	}}
-	resp := webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:         "ps-eph",
 			Operation:   admissionv1.Update,
@@ -268,6 +284,8 @@ func TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1(t *tes
 			Image: "busybox",
 			SecurityContext: &corev1.SecurityContext{
 				RunAsNonRoot:             ptr.To(true),
+				RunAsUser:                ptr.To(psFreeUID),
+				RunAsGroup:               ptr.To(psFreeUID),
 				AllowPrivilegeEscalation: ptr.To(false),
 				Privileged:               ptr.To(false),
 				ReadOnlyRootFilesystem:   ptr.To(true),
@@ -276,7 +294,7 @@ func TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1(t *tes
 			VolumeMounts: []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/peek"}},
 		},
 	}}
-	resp := webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:         "ps-eph-mount",
 			Operation:   admissionv1.Update,
@@ -299,7 +317,7 @@ func TestPodSecurityRejectsEphemeralContainerMountingCredVolume_spec_13_1(t *tes
 // name and declares no cred-readers GID (F-13.1.10).
 func TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1(t *testing.T) {
 	pod := hardenedPod()
-	sidecar := hardenedContainer("nosy-sidecar")
+	sidecar := hardenedContainer("nosy-sidecar", psFreeUID)
 	sidecar.VolumeMounts = []corev1.VolumeMount{{Name: psCredVolumeName, MountPath: "/elsewhere"}}
 	pod.Spec.Containers = append(pod.Spec.Containers, sidecar)
 	resp := psDecide(t, pod)
@@ -312,7 +330,7 @@ func TestPodSecurityRejectsSidecarMountingCredVolume_spec_13_1(t *testing.T) {
 }
 
 func TestPodSecurityRejectsUndecodablePod(t *testing.T) {
-	resp := webhook.PodSecurity(psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
+	resp := webhook.PodSecurity(psAdapterUID, psAgentUID, psCredReadersGID, psCredVolumeName, podsecurity.RuntimeClassPolicy{})(context.Background(),
 		&admissionv1.AdmissionRequest{
 			UID:       "ps-bad",
 			Operation: admissionv1.Create,
@@ -324,5 +342,89 @@ func TestPodSecurityRejectsUndecodablePod(t *testing.T) {
 	}
 	if resp.Result.Code != http.StatusBadRequest {
 		t.Errorf("Code = %d, want 400", resp.Result.Code)
+	}
+}
+
+// TestPodSecurityRejectsInjectedContainerAtAgentUID_spec_13_1 asserts the
+// webhook enforces the §13.1 container identity reservation through the
+// full decode and translate path: a regular container a mutating webhook
+// injects at the agent UID is denied, because the agent UID belongs to
+// the runtime container alone.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsInjectedContainerAtAgentUID_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.Containers = append(pod.Spec.Containers, hardenedContainer("mesh-proxy", psAgentUID))
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "mesh-proxy" runAsUser 65533 is reserved for the "runtime" container (§13.1 Container identity)`)
+}
+
+// TestPodSecurityRejectsInitContainerAtAdapterUID_spec_13_1 asserts an
+// init container at the adapter UID is denied: init containers are
+// flattened into the validator and never join the credential set, so the
+// reservation holds even for an init container.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsInitContainerAtAdapterUID_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.InitContainers = []corev1.Container{hardenedContainer("setup", psAdapterUID)}
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "setup" runAsUser 65532 is reserved for the "adapter" container (§13.1 Container identity)`)
+}
+
+// TestPodSecurityRejectsInitContainerNamedAdapter_spec_13_1 asserts an
+// init container that borrows the name adapter holds no reservation: in
+// an embedded pod it is denied at the adapter UID, because only regular
+// containers enter the credential set.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsInitContainerNamedAdapter_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.Containers = []corev1.Container{hardenedContainer("runtime", psAgentUID)}
+	pod.Spec.InitContainers = []corev1.Container{hardenedContainer("adapter", psAdapterUID)}
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "adapter" runAsUser 65532 is reserved for the "adapter" container`)
+}
+
+// TestPodSecurityRejectsPodLevelOnlyRunAsUser_spec_13_1 asserts the
+// webhook reads the container-level runAsUser: a container whose only
+// runAsUser is the pod-level value is denied even though the kubelet
+// would run it at a nonzero UID.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsPodLevelOnlyRunAsUser_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	pod.Spec.SecurityContext.RunAsUser = ptr.To(psFreeUID)
+	pod.Spec.SecurityContext.RunAsGroup = ptr.To(psFreeUID)
+	pod.Spec.Containers[1].SecurityContext.RunAsUser = nil
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "runtime" must set non-zero runAsUser and runAsGroup (§13.1 Container identity)`)
+}
+
+// TestPodSecurityRejectsEphemeralContainerWithoutIdentity_spec_13_1
+// asserts the identity clause covers ephemeral containers attached via
+// pods/ephemeralcontainers: one that sets no runAsGroup is denied.
+//
+// spec: 13.1 (Pod Security)
+func TestPodSecurityRejectsEphemeralContainerWithoutIdentity_spec_13_1(t *testing.T) {
+	pod := hardenedPod()
+	debugger := hardenedContainer("debugger", psFreeUID)
+	debugger.SecurityContext.RunAsGroup = nil
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon(debugger),
+	}}
+	assertPodSecurityDenied(t, psDecide(t, pod),
+		`container "debugger" must set non-zero runAsUser and runAsGroup`)
+}
+
+// assertPodSecurityDenied fails t unless resp denies with a message
+// containing want.
+func assertPodSecurityDenied(t *testing.T, resp *admissionv1.AdmissionResponse, want string) {
+	t.Helper()
+	if resp.Allowed {
+		t.Fatalf("expected denial carrying %q, got admission", want)
+	}
+	if !strings.Contains(resp.Result.Message, want) {
+		t.Errorf("denial should carry %q, got %q", want, resp.Result.Message)
 	}
 }

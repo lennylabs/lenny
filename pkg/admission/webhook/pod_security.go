@@ -21,6 +21,15 @@ import (
 // a missing or wrong credential fsGroup, a root pod, a privileged or
 // privilege-escalating container, a writable root filesystem, an
 // undropped capability, or a seccomp profile other than RuntimeDefault.
+// It also enforces the §13.1 container identity clause on every init,
+// regular, and ephemeral container after mutating admission: each sets a
+// nonzero container-level runAsUser and runAsGroup, and only the regular
+// adapter container runs at adapterUID and only the regular runtime
+// container at agentUID.
+//
+// adapterUID and agentUID are the reserved UIDs from the chart values
+// security.podUIDs.adapter and security.podUIDs.agent. The parameter
+// order matches EphemeralContainerCredGuard.
 //
 // credReadersGID is the lenny-cred-readers GID the §13.1 cross-UID
 // credential-delivery path requires on the pod-level fsGroup. The
@@ -42,14 +51,14 @@ import (
 // carrying the per-session credential files under /run/lenny/slots/. The §13.1 membership boundary
 // (POD_SPEC_CRED_GROUP_OVERBROAD) rejects a non-adapter, non-agent
 // container that mounts it; the binary passes podspec.CredVolumeName.
-func PodSecurity(credReadersGID int64, credVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
+func PodSecurity(adapterUID, agentUID, credReadersGID int64, credVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		var pod corev1.Pod
 		if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
 			return Deny(http.StatusBadRequest, "decode Pod object: "+err.Error())
 		}
 
-		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, credVolumeName), credReadersGID, rcPolicy); err != nil {
+		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, adapterUID, agentUID, credVolumeName), credReadersGID, rcPolicy); err != nil {
 			return Deny(http.StatusForbidden, err.Error())
 		}
 		return Allow()
@@ -80,7 +89,7 @@ const (
 // containers are never treated as credential containers, so an ephemeral
 // container that mounts the credential volume trips the §13.1 membership
 // boundary here in addition to the cred-guard.
-func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpec {
+func translatePodSpec(pod *corev1.Pod, adapterUID, agentUID int64, credVolumeName string) podsecurity.PodSpec {
 	spec := podsecurity.PodSpec{
 		ShareProcessNamespace: derefBool(pod.Spec.ShareProcessNamespace),
 		HostPID:               pod.Spec.HostPID,
@@ -88,6 +97,8 @@ func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpe
 		HostIPC:               pod.Spec.HostIPC,
 		RuntimeClassName:      derefString(pod.Spec.RuntimeClassName),
 		CredVolumeName:        credVolumeName,
+		AdapterUID:            adapterUID,
+		AgentUID:              agentUID,
 	}
 
 	if sc := pod.Spec.SecurityContext; sc != nil {
@@ -125,6 +136,10 @@ func translateContainer(c corev1.Container) podsecurity.ContainerSpec {
 		out.Privileged = sc.Privileged
 		out.ReadOnlyRootFilesystem = sc.ReadOnlyRootFilesystem
 		out.RunAsNonRoot = sc.RunAsNonRoot
+		// spec: §13.1 (Container identity). Only the container-level
+		// value is copied: a pod-level runAsUser does not satisfy the
+		// identity clause.
+		out.RunAsUser = sc.RunAsUser
 		out.RunAsGroup = sc.RunAsGroup
 		out.SeccompProfileType = seccompType(sc.SeccompProfile)
 		if caps := sc.Capabilities; caps != nil {

@@ -6,6 +6,14 @@ flag (shareProcessNamespace, hostPID, hostNetwork, hostIPC), a missing
 or wrong credential fsGroup, a root pod, a privileged or
 privilege-escalating container, a writable root filesystem, an
 undropped capability, or a seccomp profile other than RuntimeDefault.
+It also enforces the §13.1 container identity clause on every init,
+regular, and ephemeral container after mutating admission, so a
+container a deployer's mutating webhook injects is checked too: each
+container sets a nonzero container-level runAsUser and runAsGroup, the
+security.podUIDs.adapter UID belongs only to the regular adapter
+container, and the security.podUIDs.agent UID only to the regular
+runtime container. The binary receives both UIDs through its
+--adapter-uid and --agent-uid flags.
 Scoped to Pod CREATE/UPDATE and the pods/ephemeralcontainers
 subresource (§13.1 — the per-container baseline applies to
 ephemeral debug containers too) in agent namespaces; fail-closed so a

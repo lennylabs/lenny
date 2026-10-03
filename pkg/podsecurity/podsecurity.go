@@ -4,6 +4,16 @@
 // pure-function check that a pod template satisfies every §13.1 Pod
 // Security row plus the §13.1 host-sharing prohibition.
 //
+// The checks cover host sharing, the pod-level fsGroup,
+// supplementalGroups, and runAsNonRoot, the per-container
+// securityContext baseline (privilege, privilege escalation, root
+// filesystem, capabilities, and seccomp), the lenny-cred-readers
+// membership boundary (runAsGroup and credential-volume mounts), and
+// the §13.1 container identity clause: every container sets a nonzero
+// container-level runAsUser and runAsGroup, the adapter UID belongs to
+// the regular container named adapter, and the agent UID belongs to the
+// regular container named runtime.
+//
 // The validator is keyed off a transport-agnostic PodSpec struct so
 // callers do not have to pull in the Kubernetes API types. Production
 // code paths translate `k8s.io/api/core/v1.PodSpec` and its
@@ -90,6 +100,18 @@ type PodSpec struct {
 	// the by-name match, leaving the by-path match in force.
 	CredVolumeName string
 
+	// AdapterUID is the adapter container's UID, carried by the chart
+	// value security.podUIDs.adapter. §13.1 (Container identity)
+	// reserves it for the regular container named adapter: any other
+	// container whose runAsUser equals it is rejected.
+	AdapterUID int64
+
+	// AgentUID is the runtime container's UID, carried by the chart
+	// value security.podUIDs.agent. §13.1 (Container identity) reserves it
+	// for the regular container named runtime, which is what lets the
+	// §4.7.11 SO_PEERCRED check identify the agent by UID.
+	AgentUID int64
+
 	// Containers describes every container in the pod (init + main
 	// + sidecars). Each must satisfy the §13.1 container-level
 	// SecurityContext invariants.
@@ -106,6 +128,12 @@ type ContainerSpec struct {
 	Privileged               *bool
 	ReadOnlyRootFilesystem   *bool
 	RunAsNonRoot             *bool
+
+	// RunAsUser is the container-level securityContext.runAsUser. §13.1
+	// (Container identity) requires it to be set and nonzero on every
+	// container; a pod-level runAsUser is not translated into this field
+	// and does not satisfy the rule.
+	RunAsUser *int64
 
 	// RunAsGroup is the container-level securityContext.runAsGroup.
 	// §13.1 forbids a non-adapter, non-agent container from declaring
@@ -303,6 +331,7 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 				c.Name, lennyCredReadersGID,
 			))
 		}
+		violations = append(violations, identityViolations(c, spec, credentialContainer)...)
 		// §13.1: the operative credential-read surface is the
 		// volume mount, not the group membership. The pod-level fsGroup
 		// grants every container lenny-cred-readers membership regardless
@@ -337,6 +366,56 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 		return nil
 	}
 	return &PodSecurityError{Violations: violations}
+}
+
+// adapterContainerName and runtimeContainerName are the regular
+// container names §13.1 (Container identity) binds the reserved adapter
+// and agent UIDs to.
+const (
+	adapterContainerName = "adapter"
+	runtimeContainerName = "runtime"
+)
+
+// identityViolations applies the §13.1 container identity clause to c.
+//
+// It reports a container whose container-level runAsUser or runAsGroup
+// is unset or 0, and a container whose runAsUser equals a reserved UID it
+// does not own. The adapter UID is owned only by a
+// container named adapter that is also in the credential set, and the
+// agent UID only by a container named runtime in the credential set. The
+// credential set holds regular containers only, so an init or ephemeral
+// container that borrows either name holds no reservation; keying on the
+// name alone would let an init container named adapter in an embedded
+// pod (whose credential set is runtime only) run at the adapter UID.
+//
+// No RuntimeClass relaxes this clause. When a reserved UID is 0, the
+// nonzero check already rejects every container at UID 0, so the
+// reservation check needs no zero guard.
+//
+// spec: §13.1 (Container identity)
+func identityViolations(c ContainerSpec, spec PodSpec, credentialContainer map[string]bool) []string {
+	var out []string
+	if c.RunAsUser == nil || *c.RunAsUser == 0 || c.RunAsGroup == nil || *c.RunAsGroup == 0 {
+		out = append(out, fmt.Sprintf("container %q must set non-zero runAsUser and runAsGroup (§13.1 Container identity)", c.Name))
+	}
+	if c.RunAsUser == nil {
+		return out
+	}
+	uid := *c.RunAsUser
+	owns := func(owner string) bool { return c.Name == owner && credentialContainer[c.Name] }
+	if uid == spec.AdapterUID && !owns(adapterContainerName) {
+		out = append(out, reservedUIDViolation(c.Name, uid, adapterContainerName))
+	}
+	if uid == spec.AgentUID && !owns(runtimeContainerName) {
+		out = append(out, reservedUIDViolation(c.Name, uid, runtimeContainerName))
+	}
+	return out
+}
+
+// reservedUIDViolation renders the §13.1 (Container identity) message
+// for a container running at a UID reserved for another container.
+func reservedUIDViolation(name string, uid int64, owner string) string {
+	return fmt.Sprintf("container %q runAsUser %d is reserved for the %q container (§13.1 Container identity)", name, uid, owner)
 }
 
 // effectiveSeccompProfile resolves the seccomp profile that applies to
