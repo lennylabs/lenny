@@ -20,14 +20,13 @@ Targets: `pkg/podsecurity/podsecurity.go` (`PodSpec`, `ContainerSpec`, `Validate
 
    ```go
    // spec: §13.1 (Container identity)
-   func identityViolations(c ContainerSpec, spec PodSpec, credGID int64, credentialContainer map[string]bool) []string
+   func identityViolations(c ContainerSpec, spec PodSpec, credentialContainer map[string]bool) []string
    ```
 
    It reports these violations, in this order, each as its own string:
 
    - (a) `container %q must set non-zero runAsUser and runAsGroup (§13.1 Container identity)` when `RunAsUser` or `RunAsGroup` is nil or 0.
    - (b) `container %q runAsUser %d is reserved for the %q container (§13.1 Container identity)` when `*RunAsUser == spec.AdapterUID` and the container is not (`Name == "adapter"` and `credentialContainer[Name]`), with `%q` = `adapter`; or when `*RunAsUser == spec.AgentUID` and the container is not (`Name == "runtime"` and `credentialContainer[Name]`), with `%q` = `runtime`.
-   - (c) `container "runtime" must not use the lenny-cred-readers GID %d as runAsGroup (§13.1 Container identity)` when `Name == "runtime"`, `credentialContainer[Name]`, and `*RunAsGroup == credGID`.
 
    The `credentialContainer[Name]` term is the discriminating condition. The credential set holds names of regular containers only (D2). Tier-1 fixtures bypass the apiserver, so they keep container names unique across the three lists. Do not key the reservation on the name alone. The clause applies under every RuntimeClass; `RuntimeClassPolicy` grants no identity relaxation. When `spec.AdapterUID` or `spec.AgentUID` is 0, clause (a) already rejects any container at UID 0, so (b) needs no zero guard.
 3. Update the package doc comment to list the identity clause among the checks the validator applies.
@@ -48,7 +47,7 @@ Targets: `pkg/admission/webhook/pod_security.go` (`PodSecurity`, `translatePodSp
 
 Targets: `pkg/controller/sandbox/podspec/podspec.go` (`containerSecurityContext`, `injectEgressCaptureSidecar`, a new constant beside `EgressCaptureContainerName`), `pkg/controller/sandbox/podspec/podspec_test.go`, `pkg/controller/sandbox/podspec/egress_capture_test.go`, `cmd/lenny-egress-capture/main.go`, `cmd/lenny-egress-capture/main_test.go`.
 
-1. In `containerSecurityContext(uid int64)`, add `RunAsGroup: ptr.To(uid)` with a `// spec: §13.1 (User row; Container identity)` comment. The comment states that the primary GID equals the UID and is deliberately not the `lenny-cred-readers` GID, as SPEC-1 **Container identity.** requires for the `runtime` container. `basePod` stays unchanged and sets no pod-level `runAsUser` or `runAsGroup`.
+1. In `containerSecurityContext(uid int64)`, add `RunAsGroup: ptr.To(uid)` with a `// spec: §13.1 (User row; Container identity)` comment. The comment states that the primary GID equals the UID. `basePod` stays unchanged and sets no pod-level `runAsUser` or `runAsGroup`.
 2. Add an unexported constant in the `const` block with `EgressCaptureContainerName`:
 
    ```go
@@ -90,11 +89,10 @@ Every test carries `// spec: 13.1 (Pod Security)`; tier-2-and-higher tests also 
 
 - Rejected under (a): `runAsUser` absent; `runAsGroup` absent; `runAsUser` 0; `runAsGroup` 0; a pod that sets only a pod-level `runAsUser`, modelled as a container with nil `RunAsUser`.
 - Rejected under (b): an injected regular container at the agent UID; an injected regular container at the adapter UID; an init container at the adapter UID; an init container with `restartPolicy: Always` at the agent UID; an embedded pod (only `runtime` in the credential set) whose init container is named `adapter` and runs at the adapter UID. The embedded-pod init `adapter` case is the one that discriminates a name-only check from the credential-set check.
-- Rejected under (c): `runtime` with `runAsGroup` equal to the cred-readers GID.
 - Admitted: `adapter` with `runAsGroup` equal to the cred-readers GID; a sidecar pod at the default UIDs with GID equal to UID; an embedded pod with `runtime` only; a non-reserved injected sidecar with explicit identities.
 - Boundary: `AdapterUID` and `AgentUID` overridden to non-default values, where a container at the old default UIDs is admitted and one at the new values is rejected.
 
-**Tier 1 (CODE-1), `pkg/podsecurity/runtimeclass_test.go`.** Under the gVisor and the Kata policy, each (a), (b), and (c) case still rejects.
+**Tier 1 (CODE-1), `pkg/podsecurity/runtimeclass_test.go`.** Under the gVisor and the Kata policy, each (a) and (b) case still rejects.
 
 **Tier 1 (CODE-1), `pkg/podsecurity/fuzz_test.go`.** Extend the fuzz input with `RunAsUser`, `AdapterUID`, `AgentUID`, and `CredentialContainerNames`. The property: an admitted pod has no container at `AdapterUID` unless it is named `adapter` and `adapter` is in `CredentialContainerNames`, no container at `AgentUID` unless it is named `runtime` and `runtime` is in `CredentialContainerNames`, and no container with a nil or zero identity.
 
@@ -108,7 +106,7 @@ Every test carries `// spec: 13.1 (Pod Security)`; tier-2-and-higher tests also 
 
 ### TEST-1 · Kind and security tiers, and the agent-namespace fixture sweep
 
-1. Tier 9, `tests/tier9_security/admission_security_test.go`: add `bypassCases` for an injected regular container at the agent UID, an injected regular container at the adapter UID, an init container at the adapter UID, a container that omits `runAsGroup`, and `runtime` with the cred-readers GID as `runAsGroup`, each keyed by the CODE-1 message substring in `wantReason`. Give `hardenedPodManifest` explicit container identities.
+1. Tier 9, `tests/tier9_security/admission_security_test.go`: add `bypassCases` for an injected regular container at the agent UID, an injected regular container at the adapter UID, an init container at the adapter UID, and a container that omits `runAsGroup`, each keyed by the CODE-1 message substring in `wantReason`. Give `hardenedPodManifest` explicit container identities.
 2. Tier 9, `tests/tier9_security/credential_leakage_test.go`: in `TestCredentialLeakageNetworkEgress`, assert from the `runtime` container's `ls -ln` that the capture file has mode 0640 and the `lenny-cred-readers` GID, and fail when the `runtime` container's `cat` of it fails for any reason other than a missing file. The existing not-yet-written return swallows a permission error.
 3. Tier 9, `tests/tier9_security/admission_ephemeral_test.go`: CODE-1 (a) also rejects the attach body, and the API server reports one webhook's denial, so the test accepts a denial naming either `ephemeral-container-cred-guard.lenny.dev` with `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` or `pod-security.lenny.dev` with the CODE-1 (a) message. Keep the body without `runAsGroup`: adding it makes both webhooks admit the attach. Revise the file header, `ephemeralAttachBody`, and diagnosis comments to match. The guard's own decision stays pinned by the tier-1 tests in `pkg/admission/ephemeral_container_cred_guard`.
 4. Tier 5, `tests/tier5_e2e_kind/admission_test.go`: give the compliant pod manifest explicit container identities, and add a rejected case for a container at a reserved UID.

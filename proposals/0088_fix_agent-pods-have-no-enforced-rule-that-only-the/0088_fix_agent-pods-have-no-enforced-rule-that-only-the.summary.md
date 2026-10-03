@@ -19,7 +19,7 @@
 - D2. The reservation is name-keyed and one-directional, and only regular containers named `adapter` or `runtime` can own a reserved UID.
 - D3. The rule applies uniformly to init (including native sidecars), regular, and ephemeral containers, with no container-kind marker or `restartPolicy` exemption.
 - D4. The builder sets each platform container's `runAsGroup` equal to its `runAsUser`.
-- D5. Admission rejects a `runtime` container whose `runAsGroup` is the `lenny-cred-readers` GID.
+- D5. (Withdrawn: owner decision 2026-10-03.)
 - D6. The §13.1 sentence permitting "`runAsGroup` for the adapter" stays unedited.
 - D7. The rule adds no error code, no §15.1 row, no flag, no chart value, no webhook, and no preflight check.
 - D8. Egress capture moves to a code constant UID and writes its capture file with mode 0640.
@@ -31,8 +31,8 @@ Reasons for each decision follow.
 - D2. The apiserver keeps container names unique across the three lists, and `translatePodSpec` fills the credential set from regular containers only, so an init or ephemeral container named `adapter` cannot own a reserved UID. A bidirectional binding (requiring `adapter` to run at the adapter UID) protects function rather than isolation, and only the builder writes those values. The embedded model meets the rule by construction.
 - D3. For ephemeral containers the clause overlaps cred-guard (i) and (iii) and adds the nonzero condition. An init-container exemption would let a container create files owned by a reserved UID on shared volumes.
 - D4. GID equal to UID reuses the existing tunable UIDs and adds no value or flag.
-- D5. Under D4, an operator who sets `security.podUIDs.agent` equal to `credReadersGID` would give the runtime `lenny-cred-readers` as its primary GID. The check is one comparison against values the webhook already holds, and it fails closed.
-- D6. The sentence stays true: the new rule constrains `runAsGroup` only to "set, nonzero, and not `lenny-cred-readers` on `runtime`", and `POD_SPEC_CRED_GROUP_OVERBROAD` still allows the GID on the adapter.
+- D5. (Withdrawn: owner decision 2026-10-03.)
+- D6. The sentence stays true: the new rule constrains `runAsGroup` only to "set and nonzero", and `POD_SPEC_CRED_GROUP_OVERBROAD` still allows the GID on the adapter.
 - D7. Existing `User`-row and per-container baseline violations reject with a cited row and no code, and nothing branches on a code. The new violations follow that precedent. The fail-closed webhook validates every Pod CREATE and UPDATE after mutation, and no deployments predate the rule, so a preflight audit adds nothing.
 - D8. The container is absent from the spec, so the move is code-only. The capture emptyDir is fsGroup-managed, so the file's group is `lenny-cred-readers`, which `runtime` holds as a supplementary group. A collision between the constant and an operator-chosen `security.podUIDs` value fails closed at the webhook.
 - D9. 0087 is a Draft whose next change-proposal round authors its own changes.
@@ -46,7 +46,6 @@ Reasons for each decision follow.
 - Once a webhook image built from S3 is loaded into a Kind cluster, every hand-written agent-namespace test pod without explicit container identities fails admission. Do not run tier 5, 8, or 9 between S3 and S4.
 - A pod-level `runAsUser` on a test fixture looks compliant and is rejected. Set identities on each container.
 - A fixture at UID 65532 collides with the default adapter UID, which is also the distroless `nonroot` UID.
-- Keep `RunAsGroup` equal to `RunAsUser` in the builder. Setting the runtime's `runAsGroup` to the cred-readers GID to "simplify" credential reads is rejected by CODE-1 (c).
 
 ## Goals
 
@@ -81,7 +80,7 @@ Reasons for each decision follow.
 
 ## Open decisions for human to make
 
-- **Should the rule that the `runtime` container's `runAsGroup` is not the `lenny-cred-readers` GID stay?** The rule is SPEC-1's `runtime` GID sentence, decision D5, CODE-1 clause (c), and the tests that exercise clause (c). The staging keeps it. The spec loop removed its original rationale, that the runtime drops the group with `setgroups(0, NULL)` in a pre-exec step, because `setgroups` needs `CAP_SETGID` and every agent-pod container drops all capabilities with `allowPrivilegeEscalation=false`. Without that rationale the rule has no stated security effect: `fsGroup` and `supplementalGroups` already make the runtime a `lenny-cred-readers` member, so the rule only pins that membership to the supplementary-group form at the cost of one comparison that fails closed. Dropping it removes the SPEC-1 sentence, D5, CODE-1 (c), and its tests together. The spec loop derived no recommendation between keeping and dropping; the open-decisions-and-impact-review phase supplies one.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
