@@ -908,32 +908,30 @@ repository under `scratchpad/r5-carve-up/` on the machine that ran it.
 
 ### R6. Podspec and chart decoupling, and the deployment-boundary gate
 
-**Closes:** the PodDisruptionBudget and eviction-API admission rows of 6a.4, and the chart half of 6c.7.
+**Closes:** the chart half of 6c.7.
 Provides G3a, the deployment-boundary recurrence guard, for the whole class in section 7.1: 6a.3 (R17
 renders it), the `--post-mortem-dir` half of 6a.2 (R12), the OTLP row of 6a.5 (R12), 6b.12 (R17), and the
 mTLS material for 6c.7 (R14). Verdict owner for 8.2, whose compatibility note this step carries.
 
-**Two rows of 6a.4 that the planning inputs left with no owner anywhere.** 6a.4 is a heading over an
-eleven-row table (`gateway-runtime-comms.md:1780-1792`), and it was assigned whole to R16 while 6a.5 and
-6b.15 were expanded into row tables. Two of its rows are owned by nothing:
-
-- **PodDisruptionBudget protection for a busy pod.** `pkg/controller/warmpool/pdb.go:70-76` sets
-  `Selector.MatchLabels[state.LabelState] = string(state.Idle)`, and a claimed pod resolves to the coarse
-  `active` state (`pkg/sandbox/state/state.go:78-88`), so every session-holding pod sits outside every
-  PDB.
-- **The eviction-API admission gate's default and its gated condition.** `charts/lenny/values.yaml:1696`
-  sets `drainReadiness: false`, and the webhook renders only under that flag
-  (`charts/lenny/templates/admission-policies/drain-readiness-webhook.yaml:11`). The gate also evaluates
-  artifact-store health rather than session liveness.
-
-Both land here, because both are chart and controller surfaces and neither is an adapter change. Without
-them R16 lands, 6a.4 is marked closed, and a busy pod is still evictable with no budget and no gate.
+**The two 6a.4 rows formerly assigned here conform to the specification (corrected 2026-10-03).** This step
+once also owned the busy-pod PodDisruptionBudget row and the eviction-API admission gate row of 6a.4. A
+validation of those rows (draft proposal 0090, found not viable and withdrawn; its record is in
+`scratchpad/r6/0090-not-viable/` on the machine that ran it) showed that the specification already decides
+both. §4.6.1 **Disruption protection for agent pods** makes the preStop-driven `TriggerEviction` checkpoint,
+followed by §7.2 resume on a replacement pod, the primary protection for a busy pod, and scopes the per-pool
+PDB to idle pods so that it does not interfere with that protection; §17.1 repeats both. The
+`lenny-drain-readiness` webhook is a MinIO-health precondition for planned drains (§12.5) that stays off by
+default until Phase 8 (§17.2, §18.22). The code conforms in both rows, and the audit marks the busy-pod PDB
+row ABSENT by design. A busy-pod budget or a session-liveness gate would stall node drains, which §4.6.1
+forbids, and a `maxUnavailable: 0` budget over `Sandbox` pods cannot be built without a `/scale`
+subresource. The observable harm, work lost when a busy pod is evicted, comes from the preStop hook
+signalling and polling without driving a checkpoint, which R16 owns. Both rows close as conforming when R16
+lands the preStop checkpoint, and the `features.drainReadiness` flip stays a Phase 8 exit action.
 
 **Scope.** Split `pkg/controller/sandbox/podspec/podspec.go` (1,351 lines, the only non-test file in its
 package) into per-concern builders. Convert the chart test's index-keyed and `lengthEqual` env assertions
 (`charts/lenny/tests/gateway-deployment_test.yaml:1033`, `:3240`) to name-keyed lookup, so a step can add
-an environment variable without renumbering a sibling's assertions. Fix the PDB selector. Flip the
-drain-readiness default and change what the gate evaluates.
+an environment variable without renumbering a sibling's assertions.
 
 **The gate.** A tier-0 bijection: every flag or environment variable a component reads must be set by the
 rendered podspec or carry a register row. Measured baseline: 27 adapter flags declared at
@@ -1456,7 +1454,7 @@ window opens (serialization rule S-2).
 
 **Closes:** 6a.6, 6b.2, 6b.3, 6b.13, the enforcement half of 6b.1, and the producer,
 best-effort-eviction-snapshot, and preStop rows of 6a.4. Verdict owner for 6a.4, whose closure
-additionally requires R6, R12, R13, and R18. R16 also settles the three kubelet-path SIGTERM comments
+additionally requires R12, R13, and R18. R16 also settles the three kubelet-path SIGTERM comments
 R1a left in place, either by making them true or by deleting them, and clears their claim-register rows.
 
 **Scope.** The adapter emits `AdapterEvicting` on kubelet-driven termination over `CH-ADAPTEREVENTS`. The
@@ -1476,8 +1474,8 @@ tier-8 eviction-edge matrix over the eleven rows of reference §7.3. Retire `Tes
 (`pkg/adapter/controlchannel_test.go:250`), today the only caller of `setEvicting`.
 
 **Dependencies.** R12 (the transport `AdapterEvicting` rides), R4's 8.3 verdict before the design commits,
-since R16 reorders exactly the `GracefulStop` call 8.3 investigates, and R6 (the PDB and admission rows of
-6a.4 must be in place or a busy pod remains evictable regardless).
+since R16 reorders exactly the `GracefulStop` call 8.3 investigates. R16 no longer depends on R6 for the
+PDB and admission rows of 6a.4, which conform to the specification (see R6).
 
 **Parallel with.** R18 and R22. Not parallel with R17 (S-5), and not parallel with R21, which extends it.
 
@@ -1823,7 +1821,7 @@ rule S-7 places it before R25 in the wave ordering.
 | R13 | R5, R2a, R18 design note | Bind helper split, the register, and the address format. |
 | R14 | R6, R7 | Certificate volumes and a harness that does not disable the PKI. |
 | R15 | R1b | The schema file and socket move. |
-| R16 | R12, R4, R6 | Transport, shutdown budget, and the PDB and admission rows. |
+| R16 | R12, R4 | Transport and shutdown budget. |
 | R17 | R16, R15, R6, R8 | S-5, schema conformance, podspec rendering, and host conformance. |
 | R18 | R7, R5 | Two replicas and the composition root. |
 | R19 | R18, R13, R20, R7 | Transport, resolvable coordinator, a real degrade path, and verification. |
@@ -1961,7 +1959,7 @@ prevents recurrence.
 | 6a.1 | G1 reachability closure, G2a RPC bijection, and G2b event bijection | 0, 3 | R12 |
 | 6a.2 | G1 transitive closure over the four-hop chain, and a tier-7a rolling restart with a concurrent-slot row | 0, 7a | R12 |
 | 6a.3 | G3a flag-to-podspec bijection, and `TestDirectModeUsagePullIsNonZero` | 0, 4 | R17 |
-| 6a.4 (11 rows) | G3a for the PDB and admission rows, G1 for the producer and transport rows, and a tier-5 terminate-and-checkpoint test | 0, 5 | R16, with R6, R12, R13, and R18 |
+| 6a.4 (11 rows) | G1 for the producer and transport rows, and a tier-5 terminate-and-checkpoint test; the PDB and admission rows conform to the specification (see R6) | 0, 5 | R16, with R12, R13, and R18 |
 | 6a.5 (18 rows) | G1's name closure for 10 rows; G3a for the OTLP row; G1 stage 3, the assignment-and-value-flow check, for `Options.InterReplicaAddress`, the LLM-proxy SPIFFE binding, `maxSuspendedPodHoldSeconds`, and `Adapter/Interrupt` hard mode; a tier-4 per-route assertion for `Adapter/Terminate` on the session paths; a tier-5 image assertion for `git-credential-lenny`; and a podspec render case for the egress sidecar default | 0, 4, 5 | R24, with R14 for the three security rows and R10 for `Adapter/Terminate` |
 | 6a.6 | G1, plus the tier-8 eviction-edge matrix | 0, 8 | R16 |
 | 6a.7 | G1 plus a tier-5 `preConnect: true` pool start | 0, 5 | R23 |
@@ -2060,7 +2058,7 @@ the three composites with their 36 rows gives 71 tracked units, a strict superse
 | 6a.1 | gRPC control stream has no gateway client | R12 | R9 | G1, G2a, G2b, and the tier-3 stream contract |
 | 6a.2 | Coordinator-loss hold state unarmable | R12 | R6, R7, R9 | G1 transitive closure, tier-7a rolling restart, concurrent-slot row |
 | 6a.3 | Runtime lifecycle channel never enabled | R17 | R6, R8, R15, R16 | G3a, G3b, tier-4 direct-mode usage |
-| 6a.4 | The whole agent-pod eviction chain (11 rows) | R16 | R6 (PDB and admission), R12, R13, R18 | G3a, G1, tier-5 terminate-and-checkpoint, tier-8 matrix |
+| 6a.4 | The whole agent-pod eviction chain (11 rows) | R16 | R12, R13, R18 | G3a, G1, tier-5 terminate-and-checkpoint, tier-8 matrix |
 | 6a.5 | Other implemented-but-uncalled paths (18 rows) | R24 | R14 (3 security rows), R10 (`Adapter/Terminate`), R6 (the G3a guard on the OTLP row), R9, R12 (OTLP), R13 (2 rows), R23 (`Server.PreConnect`) | G1's name closure for 10 rows, G3a for the OTLP row, G1 stage 3 for 4 rows, a tier-4 per-route assertion for `Adapter/Terminate`, a tier-5 image assertion, and a podspec render case |
 | 6a.6 | Dead branches gated on flags nothing sets | R16 | R17 | G1, tier-8 eviction-edge matrix |
 | 6a.7 | `preConnect: true` pool cannot start a session | R23 | R6, R9 | G1, tier-5 pool start |
@@ -2167,9 +2165,9 @@ the replica does not hold the binding is a visible availability change in every 
 until R19 lands. The alternative is to ship R10 in report-only mode first, which weakens the gate and
 delays the closure of the whole §5.2 matrix.
 
-**D8. Confirm the drain-readiness default flip (R6).** Turning `drainReadiness` on by default and changing
-what it evaluates from artifact-store health to session liveness changes the behavior of every node drain
-in an existing install. It is required for 6a.4, and it is an operational change rather than a code fix.
+**D8. Withdrawn (2026-10-03).** The drain-readiness default flip is not required for 6a.4: the webhook is a
+MinIO-health precondition that stays off until Phase 8 by specification, and busy pods are protected by the
+preStop checkpoint that R16 lands (see R6).
 
 ### 9.2 Open questions the plan cannot answer
 
