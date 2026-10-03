@@ -2237,8 +2237,11 @@ it, and name the commit or merge.
   (`closeRuntimeListener`), and proposal 0079 extended it to the pod-scope teardown, so R4 keeps that call
   on both the graceful path and the fallback path.
 - [x] **R5.** Landed 2026-09-29, merge `6325283df`, with the scope extension recorded in the R5 section.
-- [ ] **R6.** Not started (`podspec.go` is still one file). Landing it before proposal 0087's code avoids
-  serializing the pod-builder edits under rule S-4.
+- [x] **R6.** Landed 2026-10-03 on `r6/podspec-chart-decoupling`: `podspec.go` split into per-concern files
+  move-only (`86f3c2b14`, render dump and test lists identical to base), chart test list assertions keyed by
+  name (`f0abd58a2`), and the tier-0 deployment-boundary gate G3a with its registers (`efde9aceb`, 8 gap
+  rows and 13 default rows). The PDB and drain-readiness rows were dropped as conforming (see the R6
+  section).
 - [ ] **R7.** Not started.
 - [ ] **R8.** Not started. The claim register carries rows deferred to it.
 - [ ] **R9.** Not started.
@@ -2317,8 +2320,7 @@ pinned-idle proposal, so each of those is converged once against the final set o
     whether embedded agent sockets admit only the runtime container's UID; the §13.1 `setgroups(0, NULL)`
     guidance that cannot succeed with every capability dropped; and the §13.1 rejection codes absent from
     the §15.1 catalog. It assumes proposal 0088 is implemented.
-- [ ] R6, after the pod identity hardening and before proposal 0087's code. The hardening moves the
-  egress-capture container off the agent UID, which edits the pod builder, so R6 moves settled code.
+- [x] R6, after the pod identity hardening and before proposal 0087's code. Landed 2026-10-03 (see 10.1).
 
 The pod identity hardening and R6 are prerequisites of Phase 2 (owner decision, 2026-10-03). The hardening
 edits the `CH-MSGSOCK` listener that the runtime-SDK proposal edits and that proposal 0087 rebinds before
