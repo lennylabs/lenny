@@ -67,8 +67,9 @@ func PodSecurity(adapterUID, agentUID, credReadersGID int64, credVolumeName stri
 
 // Agent-pod credential-container names. The Sandbox podspec builder
 // names the §4.7 adapter container "adapter" and the agent runtime
-// container "runtime"; §13.1 confines the lenny-cred-readers GID to
-// exactly those two. The sidecar deployment model emits both; the
+// container "runtime"; §13.1 permits only those two to mount the
+// credential volume or declare the lenny-cred-readers GID in
+// container-level runAsGroup. The sidecar deployment model emits both; the
 // embedded model emits only "runtime".
 const (
 	adapterContainerName = "adapter"

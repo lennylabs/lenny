@@ -50,8 +50,7 @@ import (
 // registers. Rejection messages from it carry this name.
 const ephemeralCredGuardWebhook = "ephemeral-container-cred-guard.lenny.dev"
 
-// ephemeralCredRejectionCode is the §15.1 error code the guard stamps
-// on every rejection.
+// ephemeralCredRejectionCode is the §17.2 rejection label the guard carries in every denial message.
 const ephemeralCredRejectionCode = "EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN"
 
 // containerIdentityMissingReason is the substring of the

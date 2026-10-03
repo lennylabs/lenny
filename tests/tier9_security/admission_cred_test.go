@@ -115,8 +115,8 @@ const credReadersGID = 65534
 // spec: 12.9.3, 13.1 (Pod Security)
 // diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
 // whose non-adapter, non-agent container declares the lenny-cred-readers
-// GID in runAsGroup. §13.1 confines that group membership to the
-// adapter and agent containers. The test drives a pod with a compliant
+// GID in runAsGroup. §13.1 permits only the adapter and agent containers
+// to declare that GID in container-level runAsGroup. The test drives a pod with a compliant
 // adapter and runtime container plus a third container carrying the GID
 // and asserts lenny-pod-security rejects it with
 // POD_SPEC_CRED_GROUP_OVERBROAD. An admitted pod means an injected
