@@ -2303,13 +2303,14 @@ pinned-idle proposal, so each of those is converged once against the final set o
     the next one), are done on branch `worktree-agent-a14863c1e63bb8ccf` (`5794e6923` to `6b94bc6e5`).
     F-4.7.25 stays open for the manifest nonce and the nonce-only challenge, which the runtime-SDK proposal
     owns; until then `CH-MSGSOCK` has no authentication in nonce-only mode.
-  - After proposal 0088 is implemented, on the same hardening branch (owner decision, 2026-10-03): the
-    `SO_PEERCRED` peer check on the `CH-RUNTIMEOPS` listener (`pkg/adapter/runtimeops.go` binds a plain
+  - Done on the same hardening branch after proposal 0088 (`ede2b3a6d` to `1b5c4ea0f`; owner decision,
+    2026-10-03): BUILD-GAPS F-4.7.30, the `SO_PEERCRED` peer check on the `CH-RUNTIMEOPS` listener (`pkg/adapter/runtimeops.go` binds a plain
     listener with neither a peer check nor a nonce check), and the code-hygiene items 0088 recorded: the
     comments in `podspec.go` and `cmd/lenny-controller/flags.go` that claim `lenny-pod-security` rejects the
     egress-capture container in production, the line citation above the supplementalGroups check in
     `pkg/podsecurity/podsecurity.go`, and the `lenny-pod-security` chart template's header comment on
-    matching Pod UPDATE. The `CH-RUNTIMEOPS` nonce belongs to the runtime-SDK proposal.
+    matching Pod UPDATE. The `CH-RUNTIMEOPS` nonce belongs to the runtime-SDK proposal. The controller
+    does not yet render `--runtime-ops-socket`, so the check takes effect when R17 renders it.
   - Draft proposal 0089 (unconverged) covers the rest of 0088's unstaged defects: the embedded-model gap
     where an injected regular container named `adapter` passes the name-keyed reservation, together with
     whether embedded agent sockets admit only the runtime container's UID; the §13.1 `setgroups(0, NULL)`
