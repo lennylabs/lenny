@@ -2,7 +2,7 @@
 
 The implementor owns this file, and it stays empty until an implementation records a departure from what the proposal states.
 
-## Commit message of 7340bb8d7 carries proposal-internal deliverable labels
+## Accepted: Commit message of 7340bb8d7 carries proposal-internal deliverable labels
 
 The commit that landed the §13.1 (lenny-cred-readers membership boundary) residual for embedded-model adapter name-keying has the subject `spec: state the embedded-model adapter name-keying residual in the lenny-cred-readers boundary (proposal 0089 SPEC-C)` and a body stating `SPEC-A was already landed in 3897dfc7a and matches its staged text.` `SPEC-A` and `SPEC-C` are deliverable labels of this proposal rather than specification sections. The commit should have named the behavior and cited §13.1 (lenny-cred-readers membership boundary).
 
