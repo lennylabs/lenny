@@ -2283,7 +2283,9 @@ pinned-idle proposal, so each of those is converged once against the final set o
   10.3) for the properties the supervisor relies on: PID-namespace init
   signal immunity, `PR_SET_DUMPABLE` against same-UID inspection, `kill(-1)` scope, and `si_pid`. Its result
   gates whether the restart lifetime reaches `sandboxed` (gVisor) pools.
-- [ ] Pod identity hardening, landing together because each one alone leaves the agent-UID boundary open:
+- [x] Pod identity hardening, landing together because each one alone leaves the agent-UID boundary open.
+  Done 2026-10-03: proposal 0088 (merge `4e9ae3315`), the socket hardening branch (merge `2050f6be8`), and
+  proposal 0089 (merge `b98645aa3`).
   - BUILD-GAPS F-4.7.25, the `SO_PEERCRED` half: `CH-MSGSOCK` accepts only the agent UID. The specification
     already requires it, so it lands as a BUILD-GAPS fix with tier-1 and tier-9 tests.
   - BUILD-GAPS F-13.1.23: a validating webhook clause, evaluated after mutating admission, requires an
@@ -2309,7 +2311,8 @@ pinned-idle proposal, so each of those is converged once against the final set o
     `pkg/podsecurity/podsecurity.go`, and the `lenny-pod-security` chart template's header comment on
     matching Pod UPDATE. The `CH-RUNTIMEOPS` nonce belongs to the runtime-SDK proposal. The controller
     does not yet render `--runtime-ops-socket`, so the check takes effect when R17 renders it.
-  - Draft proposal 0089 (unconverged) covers the rest of 0088's unstaged defects: the embedded-model gap
+  - Proposal 0089 (implemented, merge `b98645aa3`; the owner's delegate chose to accept the embedded-model
+    residual, OD-1) covers the rest of 0088's unstaged defects: the embedded-model gap
     where an injected regular container named `adapter` passes the name-keyed reservation, together with
     whether embedded agent sockets admit only the runtime container's UID; the §13.1 `setgroups(0, NULL)`
     guidance that cannot succeed with every capability dropped; and the §13.1 rejection codes absent from
