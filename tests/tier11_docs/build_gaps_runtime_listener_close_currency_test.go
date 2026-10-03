@@ -139,7 +139,7 @@ func TestBuildGapsOpenFindingsMatchPodScopedRuntimeListener_spec_4_7_10(t *testi
 	root := repoRoot(t)
 	src := filepath.Join(root, "pkg", "adapter", "socketruntime.go")
 	if socketCloseClosesListener(t, src) {
-		t.Skip("SocketRuntimeProcess.Close closes the listener; a present-tense audit quote of it is accurate")
+		t.Skip("not-yet-applicable: SocketRuntimeProcess.Close closes the listener, so a present-tense audit quote of it is accurate")
 	}
 	for _, f := range openBuildGapsFindings(t, root) {
 		if m := presentTenseListenerCloseClaim.FindString(f.body); m != "" {
