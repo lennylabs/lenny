@@ -142,9 +142,11 @@ type Reconciler struct {
 // operator stamps on a SandboxTemplate (and the reconciler propagates
 // to the Sandbox) to enable the egress-capture sidecar on every pod
 // created from that template. The value is the upstream the sidecar
-// forwards to (e.g., `api.openai.com:443`). The sidecar is TEST-ONLY
-// and the lenny-pod-security webhook rejects pods carrying it in
-// production deployments.
+// forwards to (e.g., `api.openai.com:443`). The sidecar is TEST-ONLY.
+// The annotation takes effect only when the controller's
+// --egress-capture-image flag is set, which the chart leaves empty by
+// default. The lenny-pod-security webhook admits the sidecar, because it
+// runs at a non-reserved identity and mounts no credential path.
 const EgressCaptureUpstreamAnnotation = "lenny.dev/test-egress-capture-upstream"
 
 // Reconcile drives one Sandbox: it observes the backing Pod, runs the

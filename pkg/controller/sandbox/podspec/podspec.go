@@ -296,9 +296,13 @@ type Inputs struct {
 	// configuration. Non-nil injects an additional container running
 	// lenny-egress-capture into the pod, plus a shared emptyDir mounted
 	// on the runtime container so the TESTING.md §12.9.8 leakage probe can read
-	// the JSONL capture file. The sidecar is TEST-ONLY: the
-	// lenny-pod-security admission webhook rejects pods carrying it in
-	// production.
+	// the JSONL capture file. The sidecar is TEST-ONLY. The controller
+	// injects it only when its --egress-capture-image flag is set (the
+	// chart default controller.egressCaptureImage is empty) and the
+	// Sandbox carries the opt-in annotation. The lenny-pod-security
+	// webhook does not reject it: the container runs at its own
+	// non-reserved identity (egressCaptureUID) and mounts no credential
+	// path, so it passes the §13.1 checks like any other container.
 	EgressCapture *EgressCapture
 
 	// MaxTerminationGraceSeconds is the §4.6.1 / §5.2
@@ -472,9 +476,10 @@ func (in Inputs) credReadersGID() int64 {
 // via `kubectl exec` to assert no credential material appears in
 // egress.
 type EgressCapture struct {
-	// Image is the OCI image of the egress-capture container.
-	// Production rejects this image via the lenny-pod-security
-	// admission webhook.
+	// Image is the OCI image of the egress-capture container. The
+	// controller takes it from --egress-capture-image, which is empty
+	// unless a test overlay sets it; no admission webhook rejects the
+	// image itself.
 	Image string
 	// Upstream is the host:port the sidecar forwards every accepted
 	// connection to (e.g. `api.openai.com:443`). Required.
