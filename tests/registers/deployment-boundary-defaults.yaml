@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: MIT
+#
+# Deployment-boundary default dispositions.
+#
+# Each entry records an input the adapter binary reads that no rendered agent
+# pod sets and whose compiled default is the correct value in a deployed pod.
+# The deployment-boundary gate in tests/tier0_static/deployment_boundary_test.go
+# reads this file together with exceptions-deployment-boundary.yaml: an
+# unrendered input must appear in exactly one of the two.
+#
+# The gate re-reads each flag's default from the source and fails an entry
+# whose recorded default no longer matches, so a changed default reopens the
+# entry for review. It also fails an entry whose input is rendered or is no
+# longer read. A mount-path entry is checked against the mounts the pod builder
+# renders on the adapter container, and a superseded entry against the flag
+# that replaces it.
+kind: deployment-boundary-defaults
+version: 1
+entries:
+  - subject: lenny-adapter --sessions-root
+    default: /sessions
+    basis: mount-path
+    reason: Equals the sessions volume mount path on the adapter container (§6.4).
+  - subject: lenny-adapter --artifacts-root
+    default: /artifacts
+    basis: mount-path
+    reason: Equals the artifacts volume mount path on the adapter container (§6.4).
+  - subject: lenny-adapter --credentials-dir
+    default: /run/lenny
+    basis: mount-path
+    reason: Equals the credentials tmpfs mount path on the adapter container (§4.7.10, §13.1).
+  - subject: lenny-adapter --runtime-bin
+    default: ""
+    basis: dev-only
+    reason: >-
+      Selects the developer-loop stdin and stdout transport. The adapter refuses to start when it is set
+      together with --runtime-socket, which every sidecar pod renders, so it must stay empty in a pod.
+  - subject: lenny-adapter --keepalive-time-ms
+    default: "10000"
+    basis: spec-value
+    reason: >-
+      §11.3 fixes the gateway-to-pod keepalive interval at 10 s. §11.3 also lists grpc.keepaliveTimeMs as
+      a Helm value, and the chart offers none, so the value is not tunable in a deployed pod. The gateway
+      reads the same variable for its client keepalive, so the two sides agree only while neither is tuned.
+  - subject: lenny-adapter --keepalive-timeout-ms
+    default: "5000"
+    basis: spec-value
+    reason: >-
+      §11.3 fixes the keepalive timeout at 5 s and lists grpc.keepaliveTimeoutMs as a Helm value the chart
+      does not offer.
+  - subject: lenny-adapter --coordinator-hold-timeout-seconds
+    default: "120"
+    basis: spec-value
+    reason: >-
+      §11.3 and §10.1 fix the coordinator hold timeout at 120 s. §11.3 lists
+      adapter.coordinatorHoldTimeoutSeconds as a Helm value, and the chart's adapter block carries only
+      grpcPort.
+  - subject: lenny-adapter --heartbeat-interval-seconds
+    default: "30"
+    basis: no-spec-value
+    reason: §28.5.3 does not state the heartbeat interval; 30 s is the adapter's own cadence.
+  - subject: lenny-adapter --heartbeat-ack-timeout-seconds
+    default: "10"
+    basis: spec-value
+    reason: §28.5.3 fixes the 10-second heartbeat acknowledgement window.
+  - subject: lenny-adapter prestop --poll-interval
+    default: 200 * time.Millisecond
+    basis: no-spec-value
+    reason: The internal poll cadence of the preStop drain wait; the specification fixes no value.
+  - subject: lenny-adapter env LENNY_DEMOTE_TIMEOUT_SECONDS
+    default: unset
+    basis: spec-value
+    reason: >-
+      Unset selects the 5 s DemoteSDK timeout §6.1 states. The pod builder's preConnect grace floor assumes
+      the same 5 s, so rendering another value also requires moving the floor.
+  - subject: lenny-adapter env LENNY_LOG_LEVEL
+    default: unset
+    basis: no-spec-value
+    reason: Unset selects the Info level. §16.4 fixes the log fields and no default level.
+  - subject: lenny-adapter env LENNY_RUNTIME_UID
+    default: unset
+    basis: superseded
+    superseded_by: lenny-adapter --runtime-uid
+    reason: >-
+      The adapter consults the variable only when --runtime-uid is zero, and every sidecar pod renders
+      --runtime-uid with the runtime container's UID.

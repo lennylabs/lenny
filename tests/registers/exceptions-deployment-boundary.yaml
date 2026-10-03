@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: MIT
+#
+# Deployment-boundary exception register.
+#
+# The deployment-boundary gate in tests/tier0_static/deployment_boundary_test.go
+# fails every flag and every environment variable the adapter binary reads that
+# no rendered agent pod sets. An entry here accepts one such input while the
+# remediation step named as its blocker renders it. A subject is written in the
+# gate's vocabulary: `<binary> --<flag>` for a flag of the binary's main flag
+# set, `<binary> <flag set> --<flag>` for a subcommand flag, and
+# `<binary> env <NAME>` for an environment variable.
+#
+# The step that renders an input deletes its entry in the same change. The gate
+# fails an entry whose input is rendered or is no longer read, so an entry
+# cannot outlive its gap. An unrendered input whose compiled default is correct
+# is recorded in deployment-boundary-defaults.yaml, because it has no blocker
+# and no date on which it becomes wrong.
+kind: exception-register
+version: 1
+entries:
+  # 0087
+  # R23
+  # R17
+  - subject: lenny-adapter --runtime-ops-socket
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-03-31
+    blocker: R17
+    reason: >-
+      No rendered pod binds the CH-RUNTIMEOPS socket, so the runtime has no path for cooperative quiesce,
+      interrupt acknowledgement, or credential rotation (audit records 6a.3 and 6b.12). R17 renders the
+      flag after R16 arms the evicting flag. Compatibility note for audit record 8.2: R1b retired the
+      flag's previous spelling without an alias (§28.3 naming table), so an out-of-repository overlay that
+      sets the previous spelling fails flag parsing with exit status 2. An overlay that sets the current
+      spelling duplicates the rendered flag once R17 lands, and Go's flag package keeps the last value.
+      This repository cannot establish whether such an overlay exists.
+  # R12
+  - subject: lenny-adapter --post-mortem-dir
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-02-28
+    blocker: R12
+    reason: >-
+      The adapter skips the coordinator_lost post-mortem write while the directory is empty, which is the
+      post-mortem half of audit record 6a.2 (§10.1). R12 renders the flag together with hold-state arming.
+      The LENNY_POST_MORTEM_DIR fallback is bound to this flag and retires with it. Compatibility note for
+      audit record 8.2: once R12 lands, an out-of-repository overlay that sets the flag duplicates it, and
+      one that sets the variable is overridden by the rendered flag.
+  - subject: lenny-adapter env OTEL_EXPORTER_OTLP_ENDPOINT
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-02-28
+    blocker: R12
+    reason: >-
+      The adapter installs the stdout span exporter while the variable is unset, so adapter spans never
+      reach the collector (the OTLP row of audit record 6a.5, §16.3). R12 renders the variable on the
+      adapter container. Compatibility note for audit record 8.2: once R12 lands, an out-of-repository
+      injector of the variable adds a second env entry with the same name.
+  - subject: lenny-adapter --otlp-endpoint
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-02-28
+    blocker: R12
+    reason: >-
+      §4.7.6 requires the adapter manifest's observability.otlpEndpoint whenever the deployer sets
+      observability.otlpEndpoint in the Helm values. No controller flag or podspec Inputs field carries the
+      value, so a deployer who sets it opens agent-pod egress to the collector while the manifest never
+      names the endpoint. The empty default is correct only while the Helm value is empty.
+  - subject: lenny-adapter --otlp-tls-disabled
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-02-28
+    blocker: R12
+    reason: >-
+      Maps from observability.otlpTlsEnabled and is meaningful only with --otlp-endpoint, whose entry
+      states the gap. The false default is correct in every production profile (§13.2).
+  # R14
+  - subject: lenny-adapter --tls-cert-file
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-01-31
+    blocker: R14
+    reason: >-
+      No per-pod certificate producer exists and the pod mounts no certificate volume (audit record 6c.7,
+      §10.3). The three TLS flags configure both the adapter's gRPC server on LNK-POD-GRPC and its client
+      dial on LNK-GWCONTROL, so the adapter serves without TLS and dials the gateway without a client
+      certificate. R14 renders the three flags with the certificate volume.
+  - subject: lenny-adapter --tls-key-file
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-01-31
+    blocker: R14
+    reason: Rendered with --tls-cert-file by R14; that entry states the gap.
+  - subject: lenny-adapter --tls-client-ca-file
+    verdict: deferred
+    owner: Joan Fargas
+    opened_at: 2026-10-03
+    expiry: 2027-01-31
+    blocker: R14
+    reason: Rendered with --tls-cert-file by R14; that entry states the gap.
