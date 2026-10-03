@@ -1028,22 +1028,192 @@ tests:
       # + LENNY_CHECKPOINT_GRANT_WINDOW (§10.1.7 / §17.8.1 —
       #   checkpointGrantWindow defaults to 4 and renders)
       # + LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS (§13.2 / §17.8.1 —
-      #   checkpointCapabilityTTLSeconds defaults to 30 and renders) = 84.
-      - lengthEqual:
-          path: spec.template.spec.containers[0].env
-          count: 84
-      - equal:
-          path: spec.template.spec.containers[0].env[0].name
-          value: POD_NAME
+      #   checkpointCapabilityTTLSeconds defaults to 30 and renders).
+      #
+      # The stock env set is closed. The notExists allowlist fails when an
+      # entry outside the named set renders, which covers any data-store
+      # env. The presence block fails when a named entry is missing or
+      # renders more than once. Together they pin the exact set, so the
+      # list needs no separate length count. A change that adds or removes
+      # a stock-rendered entry edits one allowlist line and one presence
+      # line, both kept in byte order (LC_ALL=C sort), and leaves every
+      # other assertion in this test untouched.
+      - notExists:
+          path: >-
+            spec.template.spec.containers[0].env[?(
+            @.name != "LENNY_ADMIN_TOKEN_SECRET_NAME" &&
+            @.name != "LENNY_ADMIN_TOKEN_TENANT" &&
+            @.name != "LENNY_ALERTING_BUNDLE_FORMATS" &&
+            @.name != "LENNY_ALERTING_OVERRIDE_COUNT" &&
+            @.name != "LENNY_AUDIT_BATCHING_ENABLED" &&
+            @.name != "LENNY_AUDIT_FLUSH_BATCH_SIZE" &&
+            @.name != "LENNY_AUDIT_FLUSH_INTERVAL_MS" &&
+            @.name != "LENNY_AUDIT_GDPR_RETENTION_DAYS" &&
+            @.name != "LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS" &&
+            @.name != "LENNY_AUDIT_HARD_FAIL_ON_DRIFT" &&
+            @.name != "LENNY_AUDIT_OCSF_BATCH_SIZE" &&
+            @.name != "LENNY_AUDIT_OCSF_MAX_ATTEMPTS" &&
+            @.name != "LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS" &&
+            @.name != "LENNY_AUDIT_RETENTION_DAYS" &&
+            @.name != "LENNY_AUDIT_RETENTION_PRESET" &&
+            @.name != "LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED" &&
+            @.name != "LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT" &&
+            @.name != "LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS" &&
+            @.name != "LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES" &&
+            @.name != "LENNY_AUDIT_SYNC_WRITE_POOL_SIZE" &&
+            @.name != "LENNY_BILLING_CORRECTION_RATE_THRESHOLD" &&
+            @.name != "LENNY_BILLING_FLUSH_BATCH_SIZE" &&
+            @.name != "LENNY_BILLING_FLUSH_INTERVAL_MS" &&
+            @.name != "LENNY_BILLING_FLUSH_MAX_PENDING" &&
+            @.name != "LENNY_BILLING_REDIS_STREAM_MAX_LEN" &&
+            @.name != "LENNY_BILLING_RETENTION_DAYS" &&
+            @.name != "LENNY_CAPACITY_TIER" &&
+            @.name != "LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS" &&
+            @.name != "LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS" &&
+            @.name != "LENNY_CHECKPOINT_GRANT_WINDOW" &&
+            @.name != "LENNY_CLAIM_HOLD_TTL_SECONDS" &&
+            @.name != "LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS" &&
+            @.name != "LENNY_CREDENTIAL_POOL_LOW_THRESHOLD" &&
+            @.name != "LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS" &&
+            @.name != "LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS" &&
+            @.name != "LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT" &&
+            @.name != "LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS" &&
+            @.name != "LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES" &&
+            @.name != "LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS" &&
+            @.name != "LENNY_EVAL_AGGREGATION_REFRESH_SECONDS" &&
+            @.name != "LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN" &&
+            @.name != "LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN" &&
+            @.name != "LENNY_EVENTBUS_DROP_ALERT_THRESHOLD" &&
+            @.name != "LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR" &&
+            @.name != "LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS" &&
+            @.name != "LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_P99_TTFB_SECONDS" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_ACTIVE_DELEGATIONS" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_P99_ORCHESTRATION_LATENCY_SECONDS" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_P99_ATTACH_LATENCY_SECONDS" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_QUEUE_DEPTH" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_ACTIVE_CONCURRENT" &&
+            @.name != "LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_P99_LATENCY_SECONDS" &&
+            @.name != "LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS" &&
+            @.name != "LENNY_GATEWAY_LEADER_ELECTION" &&
+            @.name != "LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD" &&
+            @.name != "LENNY_GC_CYCLE_INTERVAL_SECONDS" &&
+            @.name != "LENNY_GC_TOMBSTONE_RETENTION_SECONDS" &&
+            @.name != "LENNY_HEALTH_TRACKER_USE_COMPILED_RULES" &&
+            @.name != "LENNY_LOG_LEVEL" &&
+            @.name != "LENNY_MAX_SESSIONS_PER_REPLICA" &&
+            @.name != "LENNY_MIN_REPLICAS" &&
+            @.name != "LENNY_POOLER_MODE" &&
+            @.name != "LENNY_POSTGRES_WRITE_CEILING_IOPS" &&
+            @.name != "LENNY_QUOTA_ENFORCEMENT_MODE" &&
+            @.name != "LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS" &&
+            @.name != "LENNY_QUOTA_PER_REPLICA_HARD_CAP" &&
+            @.name != "LENNY_QUOTA_SYNC_INTERVAL_SECONDS" &&
+            @.name != "LENNY_QUOTA_USER_FAILOPEN_FRACTION" &&
+            @.name != "LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS" &&
+            @.name != "LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS" &&
+            @.name != "LENNY_SCATTER_MAX_CONCURRENCY" &&
+            @.name != "LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS" &&
+            @.name != "LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS" &&
+            @.name != "LENNY_SLO_BURN_RATE_FAST_MULTIPLIER" &&
+            @.name != "LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER" &&
+            @.name != "LENNY_SLO_VALIDATED" &&
+            @.name != "LENNY_STREAM_CEILING" &&
+            @.name != "LENNY_T4_KMS_PROBE_INTERVAL_SECONDS" &&
+            @.name != "LENNY_T4_KMS_PROBE_RATE_LIMIT" &&
+            @.name != "LENNY_TERMINATION_GRACE_SECONDS" &&
+            @.name != "POD_NAME" &&
+            @.name != "POD_NAMESPACE" &&
+            true
+            )]
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_ADMIN_TOKEN_SECRET_NAME}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_ADMIN_TOKEN_TENANT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_ALERTING_BUNDLE_FORMATS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_ALERTING_OVERRIDE_COUNT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_BATCHING_ENABLED}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_FLUSH_BATCH_SIZE}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_FLUSH_INTERVAL_MS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_GDPR_RETENTION_DAYS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_GRANT_CHECK_INTERVAL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_HARD_FAIL_ON_DRIFT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_OCSF_BATCH_SIZE}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_OCSF_MAX_ATTEMPTS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_OCSF_RETRY_INTERVAL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_RETENTION_DAYS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_RETENTION_PRESET}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_SIEM_FAILURE_THRESHOLD_PERCENT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_SIEM_MAX_DELIVERY_LAG_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_AUDIT_SYNC_WRITE_POOL_SIZE}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_BILLING_CORRECTION_RATE_THRESHOLD}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_BILLING_FLUSH_BATCH_SIZE}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_BILLING_FLUSH_INTERVAL_MS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_BILLING_FLUSH_MAX_PENDING}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_BILLING_REDIS_STREAM_MAX_LEN}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_BILLING_RETENTION_DAYS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CAPACITY_TIER}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CHECKPOINT_GRANT_WINDOW}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CLAIM_HOLD_TTL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CREDENTIALS_EXPIRY_WARNING_LEAD_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_CREDENTIAL_POOL_LOW_THRESHOLD}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_CASCADE_TIMEOUT_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_LEVEL_RECOVERY_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_ORPHAN_TASKS_PER_TENANT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_MAX_TREE_RECOVERY_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DELEGATION_NODE_MEMORY_FOOTPRINT_BYTES}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVAL_AGGREGATION_REFRESH_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVENTBUS_DROP_ALERT_THRESHOLD}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVENTBUS_MAX_RETRY_ATTEMPTS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EVENTBUS_RETRY_INTERVAL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_ACTIVE_CONNECTIONS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_LLM_PROXY_P99_TTFB_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_ACTIVE_DELEGATIONS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_MCP_FABRIC_P99_ORCHESTRATION_LATENCY_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_P99_ATTACH_LATENCY_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_STREAM_PROXY_QUEUE_DEPTH}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_ACTIVE_CONCURRENT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_P99_LATENCY_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GATEWAY_LEADER_ELECTION}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GC_CYCLE_INTERVAL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_GC_TOMBSTONE_RETENTION_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_HEALTH_TRACKER_USE_COMPILED_RULES}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_LOG_LEVEL}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_MAX_SESSIONS_PER_REPLICA}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_MIN_REPLICAS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_POOLER_MODE}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_POSTGRES_WRITE_CEILING_IOPS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_QUOTA_ENFORCEMENT_MODE}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_QUOTA_FAILOPEN_CUMULATIVE_MAX_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_QUOTA_PER_REPLICA_HARD_CAP}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_QUOTA_SYNC_INTERVAL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_QUOTA_USER_FAILOPEN_FRACTION}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_RATE_LIMIT_FAILOPEN_MAX_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SCATTER_AGGREGATE_TIMEOUT_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SCATTER_MAX_CONCURRENCY}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SCATTER_PER_SHARD_TIMEOUT_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SLO_BURN_RATE_FAST_MULTIPLIER}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SLO_BURN_RATE_SLOW_MULTIPLIER}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_SLO_VALIDATED}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_STREAM_CEILING}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_T4_KMS_PROBE_INTERVAL_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_T4_KMS_PROBE_RATE_LIMIT}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LENNY_TERMINATION_GRACE_SECONDS}, any: true, count: 1}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: POD_NAME}, any: true, count: 1}
       # §10.4 PDB poller — POD_NAMESPACE via downward API.
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: POD_NAMESPACE}, any: true, count: 1}
       - equal:
-          path: spec.template.spec.containers[0].env[1].name
-          value: POD_NAMESPACE
-      - equal:
-          path: spec.template.spec.containers[0].env[2].name
-          value: LENNY_MAX_SESSIONS_PER_REPLICA
-      - equal:
-          path: spec.template.spec.containers[0].env[2].value
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_MAX_SESSIONS_PER_REPLICA")].value
           value: "50"
       # §4.1 / §16.5 GatewayNoHealthyReplicas alert denominator gauge.
       - contains:

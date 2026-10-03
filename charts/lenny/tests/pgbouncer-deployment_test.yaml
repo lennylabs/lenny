@@ -100,11 +100,14 @@ tests:
       path: kind
       value: Deployment
     asserts:
+      - contains:
+          path: spec.template.spec.containers
+          content:
+            name: pgbouncer-exporter
+          any: true
+          count: 1
       - equal:
-          path: spec.template.spec.containers[1].name
-          value: pgbouncer-exporter
-      - equal:
-          path: spec.template.spec.containers[1].ports[0].containerPort
+          path: spec.template.spec.containers[?(@.name == "pgbouncer-exporter")].ports[?(@.name == "metrics")].containerPort
           value: 9127
       - equal:
           path: spec.template.metadata.annotations["prometheus.io/scrape"]
@@ -121,9 +124,16 @@ tests:
       path: kind
       value: Deployment
     asserts:
-      - lengthEqual:
+      # Exactly one container: one container is named pgbouncer, and no
+      # container carries another name.
+      - contains:
           path: spec.template.spec.containers
+          content:
+            name: pgbouncer
+          any: true
           count: 1
+      - notExists:
+          path: spec.template.spec.containers[?(@.name != "pgbouncer")]
 
   # spec: §12.3 — PDB uses minAvailable: 1 at 2 replicas and
   # maxUnavailable: 1 at 3+ replicas.

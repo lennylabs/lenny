@@ -166,13 +166,10 @@ tests:
           enabled: true
     documentIndex: 5
     asserts:
-      - equal:
-          path: spec.jobTemplate.spec.template.spec.volumes[0].name
-          value: tmp
       - exists:
-          path: spec.jobTemplate.spec.template.spec.volumes[0].emptyDir
+          path: spec.jobTemplate.spec.template.spec.volumes[?(@.name == "tmp")].emptyDir
       - equal:
-          path: spec.jobTemplate.spec.template.spec.containers[0].volumeMounts[0].mountPath
+          path: spec.jobTemplate.spec.template.spec.containers[0].volumeMounts[?(@.name == "tmp")].mountPath
           value: /tmp
 
   - it: retains a bounded history of finished test-restore Jobs

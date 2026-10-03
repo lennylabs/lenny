@@ -134,10 +134,10 @@ tests:
     documentIndex: 5
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[3].valueFrom.secretKeyRef.name
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_POSTGRES_DSN")].valueFrom.secretKeyRef.name
           value: lenny-backup-postgres
       - equal:
-          path: spec.template.spec.containers[0].env[4].valueFrom.secretKeyRef.name
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_MINIO_ACCESS_KEY")].valueFrom.secretKeyRef.name
           value: lenny-backup-minio
 
   # SEC-BACKUP-1: a config-only backup runs the §25.11 step-2 config export,
@@ -174,9 +174,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --include-sensitive-tables
-      - equal:
-          path: spec.template.spec.containers[0].env[1].name
-          value: LENNY_BACKUP_MINIO_ENDPOINT
+      # No SSE-KMS key id env renders by default. The exists anchors the
+      # notExists so a path typo cannot pass vacuously.
+      - exists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_MINIO_ENDPOINT")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_KMS_KEY_ID")]
 
   - it: forwards --include-sensitive-tables when contentPolicy.includeSensitiveTables is set
     set:
@@ -224,10 +227,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --kms-key-id=$(LENNY_BACKUP_KMS_KEY_ID)
       - equal:
-          path: spec.template.spec.containers[0].env[1].name
-          value: LENNY_BACKUP_KMS_KEY_ID
-      - equal:
-          path: spec.template.spec.containers[0].env[1].value
+          path: spec.template.spec.containers[0].env[?(@.name == "LENNY_BACKUP_KMS_KEY_ID")].value
           value: arn:aws:kms:us-east-1:111:key/abc
 
   # spec: §12.5 "TLS: MinIO connections MUST use TLS (`https://` endpoint)

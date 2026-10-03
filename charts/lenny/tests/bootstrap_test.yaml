@@ -159,13 +159,10 @@ tests:
     template: bootstrap-job.yaml
     asserts:
       - equal:
-          path: spec.template.spec.volumes[0].name
-          value: bootstrap-values
-      - equal:
-          path: spec.template.spec.volumes[0].configMap.name
+          path: spec.template.spec.volumes[?(@.name == "bootstrap-values")].configMap.name
           value: lenny-bootstrap-values
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "bootstrap-values")].mountPath
           value: /etc/lenny
 
   - it: applies the restricted pod security posture
@@ -213,13 +210,10 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --bearer-file
       - equal:
-          path: spec.template.spec.volumes[1].name
-          value: operator-token
-      - equal:
-          path: spec.template.spec.volumes[1].secret.secretName
+          path: spec.template.spec.volumes[?(@.name == "operator-token")].secret.secretName
           value: lenny-operator-token
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[1].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "operator-token")].mountPath
           value: /var/run/lenny/operator-token
 
   # §26.2 / F-26.2.5: the v1 built-in `github` VCS credential
