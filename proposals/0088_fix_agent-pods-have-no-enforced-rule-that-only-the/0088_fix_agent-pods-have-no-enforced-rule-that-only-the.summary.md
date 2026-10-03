@@ -28,7 +28,7 @@
 Reasons for each decision follow.
 
 - D1. Admission cannot see an image's `USER`, so explicit values make the identity the webhook reads the identity that runs. Every injected container that passes today's baseline already writes a container `securityContext`, because `allowPrivilegeEscalation`, `readOnlyRootFilesystem`, and `capabilities.drop` have no pod-level form. Cred-guard condition (iii) already applies the same rule to ephemeral containers, so the pod gets one rule. A pod-level default needs a new operator-tunable UID and silently overrides an injected sidecar's image `USER`, which turns an admission rejection into a runtime crash.
-- D2. `translatePodSpec` fills the credential-container set from regular containers only, so an init or ephemeral container named `adapter` cannot own a reserved UID. A bidirectional binding (requiring `adapter` to run at the adapter UID) protects function rather than isolation, and only the builder writes those values. The embedded model meets the rule by construction.
+- D2. The apiserver keeps container names unique across the three lists, and `translatePodSpec` fills the credential set from regular containers only, so an init or ephemeral container named `adapter` cannot own a reserved UID. A bidirectional binding (requiring `adapter` to run at the adapter UID) protects function rather than isolation, and only the builder writes those values. The embedded model meets the rule by construction.
 - D3. For ephemeral containers the clause overlaps cred-guard (i) and (iii) and adds the nonzero condition. An init-container exemption would let a container create files owned by a reserved UID on shared volumes.
 - D4. GID equal to UID reuses the existing tunable UIDs and adds no value or flag.
 - D5. Under D4, an operator who sets `security.podUIDs.agent` equal to `credReadersGID` would give the runtime `lenny-cred-readers` as its primary GID. The check is one comparison against values the webhook already holds, and it fails closed.
@@ -57,11 +57,11 @@ Reasons for each decision follow.
 
 ## Non-goals
 
-- A mandatory pod-level `runAsUser` and `runAsGroup` default with the reservation stated on effective identity. It needs a fourth identity kept in lockstep (a constant, an `Inputs` field, a controller flag, and a chart value), and it silently overrides an injected sidecar's image `USER`.
+- A mandatory pod-level `runAsUser` and `runAsGroup` default with the reservation stated on effective identity (rejected under D1).
 - Carrying both explicit per-container identity and a pod-level default. The default would never take effect.
 - A new rejection code (such as `POD_SPEC_CONTAINER_IDENTITY_INVALID`), its §15.1 row, an `errorclassify` entry, or a docs error-catalog row. Reusing `POD_SPEC_CRED_GROUP_OVERBROAD` or `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` would misstate the cause.
 - A `lenny-preflight` live-pod identity audit with new `--adapter-uid` and `--agent-uid` preflight flags. The precedent clause `POD_SPEC_CRED_GROUP_OVERBROAD` has no preflight half.
-- Narrowing the `lenny-pod-security` Pod rule from CREATE and UPDATE to CREATE only. Pods built before the change are recycled on dev and e2e clusters, and the change exceeds the validated problem.
+- Narrowing the `lenny-pod-security` Pod rule from CREATE and UPDATE to CREATE only. Pods built before the change exist only on dev and e2e clusters, which the TEST-1 preflight item clears, and the change exceeds the validated problem.
 - A `ContainerKind` marker, or an exemption for non-restartable init containers.
 - Excluding ephemeral containers from the new clause.
 - A bidirectional binding that requires `adapter` to run at the adapter UID and `runtime` at the agent UID.
@@ -82,7 +82,6 @@ Reasons for each decision follow.
 ## Open decisions for human to make
 
 - **Should the rule that the `runtime` container's `runAsGroup` is not the `lenny-cred-readers` GID stay?** The rule is SPEC-1's `runtime` GID sentence, decision D5, CODE-1 clause (c), and the tests that exercise clause (c). The staging keeps it. The spec loop removed its original rationale, that the runtime drops the group with `setgroups(0, NULL)` in a pre-exec step, because `setgroups` needs `CAP_SETGID` and every agent-pod container drops all capabilities with `allowPrivilegeEscalation=false`. Without that rationale the rule has no stated security effect: `fsGroup` and `supplementalGroups` already make the runtime a `lenny-cred-readers` member, so the rule only pins that membership to the supplementary-group form at the cost of one comparison that fails closed. Dropping it removes the SPEC-1 sentence, D5, CODE-1 (c), and its tests together. The spec loop derived no recommendation between keeping and dropping; the open-decisions-and-impact-review phase supplies one.
-- **Should the existing §13.1 requirement that runtime authors invoke `setgroups(0, NULL)` be filed as a separate specification finding?** The **`lenny-cred-readers` membership boundary.** paragraph says runtime authors MUST "(b) invoke `setgroups(0, NULL)` in a pre-exec step", which cannot succeed under the §13.1 control-table row "Capabilities | All dropped". The text predates this proposal and SPEC-1 no longer relies on it, so this proposal does not edit it. The spec loop routed it to a separate finding and derived no further recommendation.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -91,6 +90,8 @@ Reasons for each decision follow.
 - The comments in `pkg/controller/sandbox/podspec/podspec.go` and `cmd/lenny-controller/flags.go` claiming that `lenny-pod-security` rejects the egress-capture container in production are inaccurate. They are a separate defect.
 - The comment above the supplementalGroups check in `pkg/podsecurity/podsecurity.go` cites the specification by line ("Line 25"), against `spec-citations.md`.
 - `POD_SPEC_HOST_SHARING_FORBIDDEN`, `POD_SPEC_CRED_FSGROUP_MISSING`, and `POD_SPEC_CRED_GROUP_OVERBROAD` appear in §13.1 prose but are not registered in the §15.1 error catalog. This proposal neither adds nor reuses them.
+- The §13.1 **`lenny-cred-readers` membership boundary.** paragraph requires runtime authors to "(b) invoke `setgroups(0, NULL)` in a pre-exec step", which cannot succeed under the §13.1 control-table row "Capabilities | All dropped" with `allowPrivilegeEscalation: false`, because `setgroups` needs `CAP_SETGID`. SPEC-1 does not rely on the sentence and this proposal does not edit it. Record it as a separate specification finding.
+- The `CH-MSGSOCK` listener performs no `SO_PEERCRED` peer check, which §4.7.11 item 1 requires. `NewSocketRuntimeProcess` binds a plain `net.Listen("unix", socket)` listener (`pkg/adapter/socketruntime.go:179`) and accepts the first connection without inspecting the peer (`pkg/adapter/socketruntime.go:326`). This proposal does not stage the fix because the specification already requires the check, so the fix needs no spec change, and BUILD-GAPS already tracks it as F-4.7.25 (`BUILD-GAPS.md:1983`). The UID rule this proposal stages supplies the premise that the check relies on.
 - The `lenny-pod-security` chart template's header comment justifies matching Pod UPDATE on inaccurate grounds. CODE-2 edits that comment only to describe the identity clause.
 
 ## Impacts on other proposals
