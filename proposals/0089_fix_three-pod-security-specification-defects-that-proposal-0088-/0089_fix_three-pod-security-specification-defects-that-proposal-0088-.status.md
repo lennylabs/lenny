@@ -2,13 +2,13 @@
 proposal: 0089_fix_three-pod-security-specification-defects-that-proposal-0088-
 title: Pod-security specification defects left unstaged by proposal 0088
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-03
 drafted-by: change-proposal
 reviewed-date: 2026-10-03
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-03
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
