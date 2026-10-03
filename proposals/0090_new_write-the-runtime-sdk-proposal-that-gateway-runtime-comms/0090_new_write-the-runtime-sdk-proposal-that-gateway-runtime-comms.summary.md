@@ -101,9 +101,12 @@
 
 ## Open decisions for human to make
 
-The drafting pass raised the questions below. Firing 1 of the open-decisions phase proposed a resolution for each, and the gate refuted both resolutions, so both questions remain open for the human. Neither entry yet carries a recommendation, alternatives, or a confidence.
-- Whether omitting the task ID and the workspace path from `session_start` matches the owner decision's intent.
-- The spec-lane ordering against 0084 and 0087.
+None. The owner answered on 2026-10-03:
+
+- Part B (SPEC-8, CODE-7) stays in this proposal.
+- `session_start` omits the task ID and the workspace path. Both are fixed derivations of `sessionId` (§15.7: the task ID equals the session ID; §6: the working directory derives from `sessionId`), so carrying them would create a second source that can disagree. A field can be added if either derivation ever changes.
+- Per-session platform and connector MCP connections, and with them the symptom that MCP tools stop working for a later session on a kept runtime, belong to proposal 0084 (decision 18). This proposal does not fix that symptom.
+- This proposal's spec steps land before those of proposals 0087 and 0084, which edit the same §4.7, §15.4, §15.7, and §4.7.6 text: it defines the lifetime contract both build on.
 
 ## Defects in the shipped tree that this proposal does not stage
 
