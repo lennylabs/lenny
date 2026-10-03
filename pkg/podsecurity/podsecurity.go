@@ -84,14 +84,19 @@ type PodSpec struct {
 
 	// CredentialContainerNames lists the containers that may mount the
 	// credential volume and declare the lenny-cred-readers GID in
-	// runAsGroup: the adapter container, which writes the credential
-	// file, and the agent container, which reads it. Under §13.1 the
-	// read boundary is the GID together with a mount of the credential
-	// volume, because the pod-level fsGroup gives the GID to every
-	// container, and any other container that declares the GID in
-	// runAsGroup or mounts the credential volume is rejected. The webhook
-	// populates this from the agent-pod container convention; when the
-	// list is empty every container is treated as non-credential.
+	// runAsGroup. In the sidecar deployment model the list holds the
+	// adapter container, which writes the credential file, and the agent
+	// runtime container, which reads it. In the embedded model no adapter
+	// container exists, and the list holds only the runtime container,
+	// which both writes and reads the file. Under §13.1 the read boundary
+	// is the GID together with a mount of the credential volume, because
+	// the pod-level fsGroup gives the GID to every container, and any
+	// other container that declares the GID in runAsGroup or mounts the
+	// credential volume is rejected. The webhook populates this from the
+	// agent-pod container convention; when the list is empty every
+	// container is treated as non-credential.
+	//
+	// spec: §13.1 (lenny-cred-readers membership boundary)
 	CredentialContainerNames []string
 
 	// CredVolumeName is the name of the pod-level credential tmpfs
