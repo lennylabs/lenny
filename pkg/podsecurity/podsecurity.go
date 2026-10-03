@@ -282,9 +282,13 @@ func ValidateAgentPod(spec PodSpec, lennyCredReadersGID int64, rcPolicy RuntimeC
 		violations = append(violations, "runAsNonRoot must be true (§13.1 User row)")
 	}
 
-	// §13.1 lenny-cred-readers membership boundary: only the adapter
-	// and agent containers may carry that GID. Build the allow-set the
-	// per-container cred-group check consults.
+	// §13.1 lenny-cred-readers membership boundary: the pod-level fsGroup
+	// gives the GID to every container, so the boundary is the GID
+	// together with a mount of the credential volume. Only the regular
+	// containers named adapter and runtime may mount the credential
+	// volume or a /run/lenny path, or declare the lenny-cred-readers GID
+	// in container-level runAsGroup. Build the allow-set that the
+	// credential-volume, /run/lenny mount, and runAsGroup checks consult.
 	credentialContainer := make(map[string]bool, len(spec.CredentialContainerNames))
 	for _, name := range spec.CredentialContainerNames {
 		credentialContainer[name] = true
