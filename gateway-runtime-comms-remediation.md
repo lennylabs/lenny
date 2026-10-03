@@ -2580,6 +2580,11 @@ on the base commit and none of which is yet filed in BUILD-GAPS:
 - Tier 1: `pkg/controller/warmpool` and `pkg/gateway/podlifecycle/podsession` exceed `go test`'s default
   10-minute timeout and need `-timeout 40m`.
 
+The validation of the withdrawn draft proposal 0090 (2026-10-03) found two spec-text inaccuracies in §4.6.1,
+neither yet owned: the paragraph says the `Sandbox` finalizer prevents deletion of "the pod", but the
+finalizer sits on the `Sandbox` custom resource and does not block pod eviction; and it says the warm PDB is
+created "per `SandboxTemplate`", while `pkg/controller/warmpool/pdb.go` creates one per `SandboxWarmPool`.
+
 The `implement-proposal` workflow changed on 2026-10-03: a re-verification after a fix runs only the tiers
 the fix's commit range can reach (`afd5aa200`), and a review finding about a commit message is recorded as a
 deviation instead of producing a new lint gate (`94b42f3bc`).
