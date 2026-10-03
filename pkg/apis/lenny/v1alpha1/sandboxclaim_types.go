@@ -14,8 +14,9 @@ import (
 // Postgres session row's `pod_assignment` column, so the claim carries no
 // session identifier. A SandboxClaim deliberately omits an ownerReference
 // so its deletion is an explicit step of the claim lifecycle (hold expiry,
-// orphan GC, or pod termination) rather than a cascade from pod deletion;
-// the WarmPoolController garbage-collects orphaned claims.
+// a hold the acquisition path ends, orphan GC, or pod termination) rather
+// than a cascade from pod deletion; the WarmPoolController garbage-collects
+// orphaned claims.
 // spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
 type SandboxClaimSpec struct {
 	// SandboxRef names the Sandbox this claim binds. The

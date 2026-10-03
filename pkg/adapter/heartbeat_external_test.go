@@ -18,7 +18,7 @@ import (
 // within the ack window is hung; the adapter calls the clean Interrupt,
 // which sends the sidecar runtime process no signal, and ends the Attach
 // stream with DeadlineExceeded.
-func TestAttachHeartbeatHungSendsSIGTERM_spec_15_4_1_1826(t *testing.T) {
+func TestAttachHeartbeatHungInterruptsAndEndsStream_spec_15_4_1_1826(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	// Unbuffered, never-closed output keeps the runtime "alive" with no
 	// frames, so only the heartbeat path drives the stream.
@@ -47,7 +47,7 @@ func TestAttachHeartbeatHungSendsSIGTERM_spec_15_4_1_1826(t *testing.T) {
 		t.Fatalf("Recv error = %v (code %v), want DeadlineExceeded", err, status.Code(err))
 	}
 
-	// A SIGTERM (clean Interrupt, hard=false) was issued, and at least one
+	// A clean Interrupt (hard=false) was issued, and at least one
 	// heartbeat frame reached the runtime.
 	var interrupts []bool
 	deadline := time.Now().Add(time.Second)
@@ -58,7 +58,7 @@ func TestAttachHeartbeatHungSendsSIGTERM_spec_15_4_1_1826(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if len(interrupts) == 0 || interrupts[0] != false {
-		t.Errorf("interrupts = %v, want a single clean (SIGTERM) interrupt", interrupts)
+		t.Errorf("interrupts = %v, want a single clean interrupt", interrupts)
 	}
 	if !containsHeartbeat(rt.envelopesSnapshot()) {
 		t.Errorf("no heartbeat frame was written to the runtime")
