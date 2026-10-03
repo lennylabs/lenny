@@ -82,11 +82,14 @@ type PodSpec struct {
 	// RuntimeClassPolicy passed to ValidateAgentPod.
 	RuntimeClassName string
 
-	// CredentialContainerNames lists the containers that legitimately
-	// carry the lenny-cred-readers GID: the adapter container, which
-	// writes the credential file, and the agent container, which reads
-	// it. §13.1 keeps that group membership deliberately narrow and
-	// rejects any other container that declares the GID. The webhook
+	// CredentialContainerNames lists the containers that may mount the
+	// credential volume and declare the lenny-cred-readers GID in
+	// runAsGroup: the adapter container, which writes the credential
+	// file, and the agent container, which reads it. Under §13.1 the
+	// read boundary is the GID together with a mount of the credential
+	// volume, because the pod-level fsGroup gives the GID to every
+	// container, and any other container that declares the GID in
+	// runAsGroup or mounts the credential volume is rejected. The webhook
 	// populates this from the agent-pod container convention; when the
 	// list is empty every container is treated as non-credential.
 	CredentialContainerNames []string
@@ -137,8 +140,9 @@ type ContainerSpec struct {
 
 	// RunAsGroup is the container-level securityContext.runAsGroup.
 	// §13.1 forbids a non-adapter, non-agent container from declaring
-	// the lenny-cred-readers GID here: that GID is the credential-file
-	// read boundary and its container membership is deliberately narrow.
+	// the lenny-cred-readers GID here. The read boundary is that GID
+	// together with a mount of the credential volume; the pod-level
+	// fsGroup gives the GID to every container regardless of this field.
 	// supplementalGroups has no container-level field in the Kubernetes
 	// API, so runAsGroup is the per-container vector for this control.
 	RunAsGroup *int64
