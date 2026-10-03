@@ -966,6 +966,8 @@
       "title": "Adapter-Agent Security Boundary",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "pkg/adapter/platformmcp_test.go::TestEmbeddedPostureAppliesNoPeerCheckAndKeepsTheNonce_spec_4_7_11",
+        "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerEmbeddedPostureAppliesNoPeerCheck_spec_4_7_11",
         "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerAdmitsOnlyTheAgentUID_spec_4_7_11",
         "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerFailsClosedWithoutAnAgentUID_spec_4_7_11",
         "pkg/adapter/connectormcp_peer_linux_test.go::TestIntraPodMCPListenerNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11",

@@ -91,10 +91,8 @@ func matchPeerUID(conn net.Conn, expectedUID uint32, lookup func(net.Conn) (uint
 type SocketPeerAuth struct {
 	// ExpectedUID is the agent UID the adapter accepts connections from: the
 	// runtime container's runAsUser, which is a UID within the pod's user
-	// namespace. The sidecar adapter receives it as --runtime-uid. An
-	// embedded runtime is the adapter process, so its expected UID is the
-	// process's own UID. A test that dials from its own process sets it to
-	// os.Getuid().
+	// namespace. The sidecar adapter receives it as --runtime-uid. A test
+	// that dials from its own process sets it to os.Getuid().
 	ExpectedUID uint32
 	// NonceOnly records that Runtime.spec.requireSoPeercred is false
 	// (--require-so-peercred=false), the mode for a confirmed gVisor
@@ -105,6 +103,21 @@ type SocketPeerAuth struct {
 	// challenge; CH-MSGSOCK has neither exchange, which leaves that socket
 	// unauthenticated in this mode (BUILD-GAPS F-4.7.25).
 	NonceOnly bool
+	// NoSocketBoundary records the embedded deployment model, which the
+	// specification describes as a single trusted process with no
+	// adapter-agent socket boundary. The listeners apply no peer check, and
+	// unlike NonceOnly it adds no challenge-response: the MCP servers keep
+	// the manifest-nonce authentication alone. EmbeddedPeerAuth is the only
+	// constructor that sets it; the zero value keeps the fail-closed check.
+	NoSocketBoundary bool
+}
+
+// EmbeddedPeerAuth returns the posture of the embedded deployment model: no
+// adapter-agent socket boundary, so no peer check, and no change to the MCP
+// servers' nonce authentication. spec: §4.7.11 (Separate UIDs and
+// connection authentication).
+func EmbeddedPeerAuth() SocketPeerAuth {
+	return SocketPeerAuth{NoSocketBoundary: true}
 }
 
 // check admits conn only when SO_PEERCRED reports the expected agent UID.
@@ -114,12 +127,13 @@ func (a SocketPeerAuth) check(conn net.Conn) error {
 
 // wrap returns l wrapped in peerCheckedListener with check and onReject, or
 // l itself in nonce-only mode, where the specification states that the
-// peer check is unavailable. Every adapter-agent listener takes its peer
+// peer check is unavailable, and in the embedded model, which has no
+// adapter-agent socket boundary. Every adapter-agent listener takes its peer
 // check through this one decision. spec: §4.7.11 (Separate UIDs and
 // connection authentication, Nonce-only fallback), §28.5.3 (CH-MSGSOCK,
 // Endpoint).
 func (a SocketPeerAuth) wrap(l net.Listener, check func(net.Conn) error, onReject func(error)) net.Listener {
-	if a.NonceOnly {
+	if a.NonceOnly || a.NoSocketBoundary {
 		return l
 	}
 	return &peerCheckedListener{Listener: l, check: check, onReject: onReject}

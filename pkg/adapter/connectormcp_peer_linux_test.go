@@ -77,6 +77,16 @@ func TestIntraPodMCPListenerFailsClosedWithoutAnAgentUID_spec_4_7_11(t *testing.
 	}
 }
 
+// spec: 4.7.11 (Separate UIDs and connection authentication)
+func TestIntraPodMCPListenerEmbeddedPostureAppliesNoPeerCheck_spec_4_7_11(t *testing.T) {
+	// The embedded posture carries no agent UID, so the check it would run
+	// is the zero-value UID 0 check. A non-root dial being admitted, and a
+	// root dial likewise, shows that no check runs.
+	if !mcpListenerAdmits(t, &Server{PeerAuth: EmbeddedPeerAuth()}) {
+		t.Error("the MCP listener applied a peer check under the embedded posture, which has no socket boundary")
+	}
+}
+
 // spec: 4.7.11 (Nonce-only fallback), 28.5.3 (CH-MSGSOCK)
 func TestIntraPodMCPListenerNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11(t *testing.T) {
 	s := &Server{PeerAuth: SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1, NonceOnly: true}}
