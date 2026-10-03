@@ -33,6 +33,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -73,6 +74,27 @@ func resolveRuntimeUID(flagUID uint) uint32 {
 		log.Printf("lenny-adapter: ignoring unparseable LENNY_RUNTIME_UID=%q", env)
 	}
 	return 0
+}
+
+// runtimeSocketPeerAuth returns the SO_PEERCRED posture of the CH-MSGSOCK
+// listener. Outside nonce-only mode the listener admits only runtimeUID, and
+// a zero runtimeUID (no --runtime-uid and no LENNY_RUNTIME_UID) is refused:
+// the adapter fails closed rather than binding a runtime socket any process
+// in the pod can become. The controller renders --runtime-uid on every
+// sidecar pod. In nonce-only mode (--require-so-peercred=false) the
+// specification states that the peer check is unavailable, so no UID is
+// required.
+// spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
+// (CH-MSGSOCK, Endpoint).
+func runtimeSocketPeerAuth(runtimeUID uint32, requireSoPeercred bool) (adapter.SocketPeerAuth, error) {
+	if !requireSoPeercred {
+		return adapter.SocketPeerAuth{ExpectedUID: runtimeUID, NonceOnly: true}, nil
+	}
+	if runtimeUID == 0 {
+		return adapter.SocketPeerAuth{}, errors.New("--runtime-socket requires the agent UID " +
+			"(--runtime-uid or LENNY_RUNTIME_UID) for the SO_PEERCRED runtime peer check")
+	}
+	return adapter.SocketPeerAuth{ExpectedUID: runtimeUID}, nil
 }
 
 // newScrubOps builds the §5.2 whole-pod scrub host operations the recycle-scrub
@@ -152,8 +174,10 @@ func main() {
 			"(sharedassets.Encode); empty leaves /workspace/shared empty")
 	runtimeUID := flag.Uint("runtime-uid", 0,
 		"UID the agent runtime process runs as (the pod spec runAsUser); "+
-			"the adapter applies the §4.7/§13 SO_PEERCRED MCP peer check against "+
-			"it. 0 falls back to LENNY_RUNTIME_UID; still 0 disables the check")
+			"the adapter applies the §4.7/§13 SO_PEERCRED peer check against it on "+
+			"the MCP sockets and the --runtime-socket listener. 0 falls back to "+
+			"LENNY_RUNTIME_UID; still 0 disables the MCP check and is refused with "+
+			"--runtime-socket unless --require-so-peercred=false")
 	requireSoPeercred := flag.Bool("require-so-peercred", true,
 		"run the mandatory §4.7 SO_PEERCRED startup self-test and crash-loop on "+
 			"failure; set false only when gVisor SO_PEERCRED divergence is "+
@@ -367,7 +391,11 @@ func main() {
 		// §4.7 sidecar model: bind the abstract socket the runtime
 		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
 		// the runtime container to this same name.
-		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket)
+		peerAuth, err := runtimeSocketPeerAuth(adapterSrv.RuntimeUID, *requireSoPeercred)
+		if err != nil {
+			log.Fatalf("lenny-adapter: %v", err)
+		}
+		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}

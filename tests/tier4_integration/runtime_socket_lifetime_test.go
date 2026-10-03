@@ -62,7 +62,7 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
 	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
 
-	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t))
+	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
@@ -203,12 +203,15 @@ func TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2(t *testing.T) {
 // adapterArgsOutsideAPod returns the lenny-adapter flags that let the binary
 // start on a developer host: every pod-mounted directory points under root,
 // the gRPC server binds grpcAddr, and the sidecar runtime transport binds
-// sockPath.
+// sockPath. The adapter refuses --runtime-socket without the agent UID its
+// SO_PEERCRED peer check admits, so the flags name one. No runtime dials the
+// socket in these tests, so any non-root UID serves.
 func adapterArgsOutsideAPod(root, grpcAddr, sockPath string) []string {
 	dir := func(name string) string { return filepath.Join(root, name) }
 	return []string{
 		"--addr", grpcAddr,
 		"--runtime-socket", sockPath,
+		"--runtime-uid", "1001",
 		"--workspace-base", dir("workspace"),
 		"--sessions-root", dir("sessions"),
 		"--artifacts-root", dir("artifacts"),

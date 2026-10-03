@@ -14,19 +14,12 @@ import (
 // checkPeerUID verifies via SO_PEERCRED that the process on the other
 // end of conn runs as expectedUID. It is the §4.7 / §13 defense-in-depth
 // peer-credential check the adapter applies to every intra-pod MCP
-// connection on top of the manifest-nonce handshake: a compromised
+// connection and to the CH-MSGSOCK runtime connection: a compromised
 // process running as a different UID is rejected even if it somehow
-// presents a valid nonce.
+// presents a valid nonce. A UID mismatch is a *PeerUIDMismatchError.
+// spec: §4.7.11 (Separate UIDs and connection authentication).
 func checkPeerUID(conn net.Conn, expectedUID uint32) error {
-	uid, err := peerCredUID(conn)
-	if err != nil {
-		return err
-	}
-	if uid != expectedUID {
-		return fmt.Errorf("adapter: MCP peer uid %d does not match the runtime uid %d",
-			uid, expectedUID)
-	}
-	return nil
+	return matchPeerUID(conn, expectedUID, peerCredUID)
 }
 
 // peerCredUID reads the peer's effective UID from conn via the

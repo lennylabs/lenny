@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 )
 
@@ -59,6 +60,42 @@ func TestResolveRuntimeUID_spec_4_7(t *testing.T) {
 			}
 			if got := resolveRuntimeUID(tc.flagUID); got != tc.want {
 				t.Fatalf("resolveRuntimeUID(%d) = %d, want %d", tc.flagUID, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRuntimeSocketPeerAuth_spec_4_7_11 covers the CH-MSGSOCK listener's
+// SO_PEERCRED posture: outside nonce-only mode the listener admits only the
+// agent UID and a missing UID is refused, and in nonce-only mode the peer
+// check is off.
+// spec: 4.7.11 (Separate UIDs and connection authentication), 28.5.3
+// (CH-MSGSOCK)
+func TestRuntimeSocketPeerAuth_spec_4_7_11(t *testing.T) {
+	tests := []struct {
+		name      string
+		uid       uint32
+		require   bool
+		want      adapter.SocketPeerAuth
+		wantError bool
+	}{
+		{name: "agent UID enforced", uid: 1001, require: true, want: adapter.SocketPeerAuth{ExpectedUID: 1001}},
+		{name: "missing agent UID refused", uid: 0, require: true, wantError: true},
+		{name: "nonce-only mode without UID", uid: 0, require: false, want: adapter.SocketPeerAuth{NonceOnly: true}},
+		{name: "nonce-only mode keeps UID", uid: 1001, require: false, want: adapter.SocketPeerAuth{ExpectedUID: 1001, NonceOnly: true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := runtimeSocketPeerAuth(tc.uid, tc.require)
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("runtimeSocketPeerAuth(%d, %v) = %+v, want an error", tc.uid, tc.require, got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("runtimeSocketPeerAuth(%d, %v) = (%+v, %v), want (%+v, nil)",
+					tc.uid, tc.require, got, err, tc.want)
 			}
 		})
 	}

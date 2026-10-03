@@ -329,7 +329,7 @@ func keptRuntimePod(t *testing.T, fwd *recordingForwarder) (*adapter.Server, net
 		t.Fatalf("temp runtime socket dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	sp, err := adapter.NewSocketRuntimeProcess(filepath.Join(dir, "r.sock"))
+	sp, err := adapter.NewSocketRuntimeProcess(filepath.Join(dir, "r.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}

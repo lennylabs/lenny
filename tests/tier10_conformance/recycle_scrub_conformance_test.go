@@ -265,7 +265,7 @@ type socketRecycleFixture struct {
 // would run far past the bounds the cases assert.
 func newSocketRecycleFixture(t *testing.T) *socketRecycleFixture {
 	t.Helper()
-	sp, err := adapter.NewSocketRuntimeProcess(conformanceRuntimeSocket(t))
+	sp, err := adapter.NewSocketRuntimeProcess(conformanceRuntimeSocket(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}

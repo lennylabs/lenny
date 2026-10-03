@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -72,10 +73,31 @@ var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 // transport can serve the next session, which the whole-pod scrub report
 // carries to the gateway. The listener is bound once at construction,
 // before the pod is claimable, and accepts one connection.
-// spec: §4.7.9, §4.7.10 (Runtime process lifetime), §5.2 (Runtime not
-// live), §28.5.3.
+//
+// The listener admits only the expected agent UID, which SO_PEERCRED
+// reports for each connecting process (see SocketPeerAuth). A refused
+// connection is logged and closed inside the listener's Accept, which then
+// waits for the next connection, so a foreign process neither becomes the
+// runtime connection nor consumes the accept the runtime's own dial is
+// owed. The manifest-nonce handshake the CH-MSGSOCK card also states is not
+// performed.
+// spec: §4.7.9, §4.7.10 (Runtime process lifetime), §4.7.11 (Separate UIDs
+// and connection authentication), §5.2 (Runtime not live), §28.5.3
+// (CH-MSGSOCK).
 type SocketRuntimeProcess struct {
 	listener net.Listener
+
+	// auth is the peer-authentication posture the listener enforces, fixed
+	// at construction.
+	auth SocketPeerAuth
+	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
+	// peer's UID. It is a test seam: a test process cannot dial from a
+	// second UID without root, so a tier-1 case stands in the UID the
+	// lookup reports. It is written only before the first Start.
+	peerUID func(net.Conn) (uint32, error)
+	// logger receives the refusal record for each refused peer. Nil logs
+	// to slog.Default.
+	logger *slog.Logger
 
 	// SpawnPath, when non-empty, is a runtime binary Start execs with
 	// LENNY_ADAPTER_SOCKET set. Empty means the runtime connects on its
@@ -170,17 +192,92 @@ func (s *subscriber) close() {
 	s.closeOnce.Do(func() { close(s.done) })
 }
 
+// SocketPeerAuth is the connection-authentication posture of the
+// CH-MSGSOCK listener. The zero value requires the peer to run as UID 0,
+// so a caller that omits the agent UID admits no unprivileged process
+// rather than every process.
+// spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
+// (CH-MSGSOCK, Endpoint).
+type SocketPeerAuth struct {
+	// ExpectedUID is the agent UID the adapter accepts the runtime's
+	// connection from: the runtime container's runAsUser, which is a UID
+	// within the pod's user namespace. The adapter process receives it as
+	// --runtime-uid. A test that dials from its own process sets it to
+	// os.Getuid().
+	ExpectedUID uint32
+	// NonceOnly records that Runtime.spec.requireSoPeercred is false
+	// (--require-so-peercred=false), the mode for a confirmed gVisor
+	// SO_PEERCRED divergence. The specification states that the peer check
+	// is unavailable in this mode and that the manifest nonce and the
+	// per-connection HMAC-SHA256 challenge authenticate the connection
+	// instead, so the listener applies no peer check. Neither exchange
+	// exists on CH-MSGSOCK, which leaves the socket unauthenticated in this
+	// mode (BUILD-GAPS F-4.7.25).
+	NonceOnly bool
+}
+
 // NewSocketRuntimeProcess binds the adapter's runtime socket and returns
 // a RuntimeProcess that bridges the runtime over it. socket is a
 // filesystem path or, on Linux, an abstract address beginning with "@".
 // The socket is bound immediately so it is ready before the §4.7
-// startup sequence spawns or schedules the runtime.
-func NewSocketRuntimeProcess(socket string) (*SocketRuntimeProcess, error) {
+// startup sequence spawns or schedules the runtime. auth sets the
+// SO_PEERCRED check the listener applies to each connecting process.
+// spec: §4.7.11 (Separate UIDs and connection authentication).
+func NewSocketRuntimeProcess(socket string, auth SocketPeerAuth) (*SocketRuntimeProcess, error) {
 	l, err := net.Listen("unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("adapter: bind runtime socket %s: %w", socket, err)
 	}
-	return &SocketRuntimeProcess{listener: l}, nil
+	p := &SocketRuntimeProcess{auth: auth}
+	p.listener = p.authenticatedListener(l)
+	return p, nil
+}
+
+// authenticatedListener wraps l in the SO_PEERCRED peer check unless the
+// pod runs in nonce-only mode, where the specification states that the
+// check is unavailable. spec: §4.7.11 (Nonce-only fallback), §28.5.3
+// (CH-MSGSOCK, Endpoint).
+func (p *SocketRuntimeProcess) authenticatedListener(l net.Listener) net.Listener {
+	if p.auth.NonceOnly {
+		return l
+	}
+	return &peerCheckedListener{
+		Listener: l,
+		check:    p.checkRuntimePeer,
+		onReject: p.logRefusedPeer,
+	}
+}
+
+// checkRuntimePeer admits conn only when its peer runs as the expected agent
+// UID. It reads the UID through SO_PEERCRED unless a test installed the
+// peerUID seam.
+func (p *SocketRuntimeProcess) checkRuntimePeer(conn net.Conn) error {
+	if p.peerUID != nil {
+		return matchPeerUID(conn, p.auth.ExpectedUID, p.peerUID)
+	}
+	return checkPeerUID(conn, p.auth.ExpectedUID)
+}
+
+// logRefusedPeer records a refused CH-MSGSOCK connection with the peer UID
+// SO_PEERCRED reported, or with the lookup error when the UID could not be
+// read. The record carries identifiers only; the socket carries no secret
+// at this point because the refused connection never received a frame.
+func (p *SocketRuntimeProcess) logRefusedPeer(err error) {
+	logger := p.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	attrs := []any{
+		"socket", p.listener.Addr().String(),
+		"expected_uid", p.auth.ExpectedUID,
+	}
+	var mismatch *PeerUIDMismatchError
+	if errors.As(err, &mismatch) {
+		attrs = append(attrs, "peer_uid", mismatch.Peer)
+	} else {
+		attrs = append(attrs, "err", err)
+	}
+	logger.Warn("runtime_peer_refused", attrs...)
 }
 
 // SocketPath is the address the runtime dials to reach the adapter. It

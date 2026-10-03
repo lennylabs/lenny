@@ -65,7 +65,7 @@ func dialRuntimeSocket(t *testing.T, socket string) net.Conn {
 
 func TestSocketRuntimeProcessBridgesJSONLFrames(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSocketRuntimeProcessBridgesJSONLFrames(t *testing.T) {
 
 func TestSocketRuntimeProcessStartTimesOutWithoutAConnection(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestSocketRuntimeProcessStartTimesOutWithoutAConnection(t *testing.T) {
 
 func TestSocketRuntimeProcessOutputClosesOnRuntimeDisconnect(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSocketRuntimeProcessOutputClosesOnRuntimeDisconnect(t *testing.T) {
 // a new one, and WriteEnvelope writes any slot's session over it.
 func TestSocketRuntimeProcessStartIsIdempotentAcrossSlots_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestSocketRuntimeProcessStartIsIdempotentAcrossSlots_spec_5_2(t *testing.T)
 // subscribes.
 func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestSocketRuntimeProcessFansOutToConcurrentSubscribers_spec_15_4(t *testing
 // teardown.
 func TestSocketRuntimeProcessCloseScopedToSlot_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -343,7 +343,7 @@ func requireRuntimeReadsFrame(t *testing.T, sp *adapter.SocketRuntimeProcess, ru
 // slot independence over the single connection.
 func TestSocketRuntimeProcessInterruptScopedToSlot_spec_5_2(t *testing.T) {
 	socket := runtimeSocketAddr(t)
-	sp, err := adapter.NewSocketRuntimeProcess(socket)
+	sp, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -474,7 +474,7 @@ func roundTrip(t *testing.T, sp *adapter.SocketRuntimeProcess, sessionID string,
 // credentials), left the address accepting dials, or failed on a second
 // call.
 func TestSocketRuntimeCloseListenerEndsTheConnectionAndIsIdempotent_spec_4_7_10(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -549,7 +549,7 @@ func assertDialable(t *testing.T, addr, when string) {
 // diagnosis: a failure here means the last-slot Interrupt path unbinds the
 // pod's runtime socket, which only the pod-scope teardown may do.
 func TestSocketRuntimeInterruptLeavesTheListenerBound_spec_5_2(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestSocketRuntimeInterruptLeavesTheListenerBound_spec_5_2(t *testing.T) {
 // error or unbinds the address, so the session scrub reports a spurious leak
 // and the pod loses its runtime ingress.
 func TestSocketRuntimeCloseReportsNoListenerErrorAcrossGenerations_spec_5_2(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestSocketRuntimeCloseReportsNoListenerErrorAcrossGenerations_spec_5_2(t *t
 		}
 	}
 
-	idle, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t) + "-idle")
+	idle, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t)+"-idle", adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess(idle): %v", err)
 	}
@@ -622,7 +622,7 @@ func TestSocketRuntimeCloseReportsNoListenerErrorAcrossGenerations_spec_5_2(t *t
 // address the runtime was told to dial.
 func TestSocketRuntimeCloseListenerUnbindsTheAddress_spec_4_7(t *testing.T) {
 	path := filesystemSocketPath(t)
-	sp, err := adapter.NewSocketRuntimeProcess(path)
+	sp, err := adapter.NewSocketRuntimeProcess(path, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -690,7 +690,7 @@ func TestSocketRuntimeCloseListenerUnbindsTheAddress_spec_4_7(t *testing.T) {
 // diagnosis: the adapter ended the runtime at occupancy zero, and the
 // recycled pod cannot serve its next session.
 func TestSocketRuntimeProcessKeepsTheConnectionAcrossOccupancyZero_spec_4_7_10(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -733,7 +733,7 @@ func TestSocketRuntimeProcessKeepsTheConnectionAcrossOccupancyZero_spec_4_7_10(t
 // diagnosis: a later session's start waits out the accept bound on a pod
 // whose runtime has exited, or starts over a dead connection.
 func TestSocketRuntimeProcessStartFailsFastAfterTheRuntimeExits_spec_4_7_10(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -778,7 +778,7 @@ func TestSocketRuntimeProcessStartFailsFastAfterTheRuntimeExits_spec_4_7_10(t *t
 // serve the next session, so the gateway reuses a pod whose runtime is gone
 // or retires one whose runtime is live.
 func TestSocketRuntimeProcessServesNextSession_spec_5_2(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t))
+	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
