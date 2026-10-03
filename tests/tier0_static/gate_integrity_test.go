@@ -55,11 +55,11 @@ type tierZeroGate struct {
 // migration is added here in the same change.
 //
 // The list covers the gates the migration lands itself, the running tier-0 gates
-// whose predicate it rewrites or widens, and the pre-existing tooling gates it
-// makes green by seeding a baseline register. A tooling gate the migration
-// neither lands, rewrites, nor seeds a baseline for is outside the list: the
-// proto no-drift check is the one such gate, and it holds no population this
-// migration closed.
+// whose predicate it rewrites or widens, the pre-existing tooling gates it
+// makes green by seeding a baseline register, and the remediation plan's tier-0
+// gates. A tooling gate the migration neither lands, rewrites, nor seeds a
+// baseline for is outside the list: the proto no-drift check is the one such
+// gate, and it holds no population this migration closed.
 var tierZeroGates = []tierZeroGate{
 	{"TestNamingLintReportsNoBareReservedNounPhraseInTheTree", "naming_lint_test.go", "the naming law over channel identifiers"},
 	{"TestIdentifierResolutionCertifiesTheTree", "identifier_resolution_test.go", "one live spelling per canonical identifier"},
@@ -73,6 +73,7 @@ var tierZeroGates = []tierZeroGate{
 	{"TestSpecCitationResolutionCertifiesTheTree", "spec_citation_resolution_test.go", "a line citation resolves inside the section it names"},
 	{"TestLineCitationRatchetCertifiesTheTree", "line_citation_ratchet_test.go", "the line-citation population does not grow"},
 	{"TestCoordinatorHoldAllowlistNamesMethodsTheAdapterServes", "coordinator_hold_allowlist_test.go", "every coordinator-hold allowlist entry names a method the adapter serves"},
+	{"TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered", "deployment_boundary_test.go", "every input the adapter reads is rendered or registered"},
 	{"TestSpec254DegradationWarningLineCitationsAreFresh", "degradation_lock_line_citation_test.go", "each §25.4 citation names a heading whose body still carries the cited sentence"},
 	{"TestSkipReasonClassifierCertifiesTheTree", "skip_reason_classifier_test.go", "every skipped test names a classified skip reason"},
 	// The two checks below run on the second hard-gated channel, inside

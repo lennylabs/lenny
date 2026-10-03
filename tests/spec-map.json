@@ -500,7 +500,9 @@
         "tests/tier9_security/tenant_isolation_test.go::TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime",
         "tests/tier9_security/tenant_isolation_test.go::TestKeptRuntimePodNeverBindsSecondTenant",
         "pkg/gateway/podlifecycle/podclaim/kept_runtime_rule_test.go::TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1",
-        "pkg/agentpodstate/memstore/memstore_test.go::TestClaimIdleNilCallbackAdmitsEveryRow_spec_4_6_1"
+        "pkg/agentpodstate/memstore/memstore_test.go::TestClaimIdleNilCallbackAdmitsEveryRow_spec_4_6_1",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryRenderedArgvParsesAgainstItsBinary",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryInputsFieldHasAProductionProducer"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -949,7 +951,23 @@
         "pkg/adapter/podscrub_liveness_test.go::TestInProcessRuntimeServesNextSessionAfterClose_spec_5_2",
         "tests/tier10_conformance/recycle_scrub_conformance_test.go::TestRecycleScrubShutdownConformance",
         "tests/tier10_conformance/recycle_scrub_conformance_test.go::TestRecycleScrubRuntimeNotLiveConformance",
-        "tests/tier5_e2e_kind/execution_modes_test.go::TestTaskModeRecycleScrubsWorkspaceBetweenSessions"
+        "tests/tier5_e2e_kind/execution_modes_test.go::TestTaskModeRecycleScrubsWorkspaceBetweenSessions",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryRegisterRowNamesAnUnrenderedInput",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryRenderedArgvParsesAgainstItsBinary",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryRenderedVariableIsReadByItsContainer",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryRenderCasesSetEveryInputsField",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryInputsFieldHasAProductionProducer",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAFlagAddedWithoutARender",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAStaleRow",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAChangedDefault",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUndeclaredRenderedFlag",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnreadRenderedVariable",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateFailsClosedOnAnUnresolvableDeclaration",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateRejectsAMalformedRegister",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUncoveredInputsField",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryGateReportsAnUnproducedInputsField"
       ],
       "packages": [
         "pkg/adapter",
@@ -1650,7 +1668,8 @@
         "tests/tier0_static/claim_register_proto_agreement_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "pkg/adapter/slotlayout/slotlayout_test.go",
-        "pkg/adapter/slotsession_test.go"
+        "pkg/adapter/slotsession_test.go",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults"
       ],
       "packages": [
         "pkg/workspace"
@@ -2561,7 +2580,8 @@
         "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationEmitsRetirePreviousAuditRow",
         "tests/tier4_integration/jwt_rotation_audit_test.go::TestJWTRotationAuditChainStaysVerified",
         "tests/tier5_e2e_kind/mtls_test.go",
-        "tests/tier9_security/tls_test.go"
+        "tests/tier9_security/tls_test.go",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered"
       ],
       "packages": [
         "pkg/mtls",
@@ -2837,7 +2857,8 @@
         "pkg/gateway/session/inputwait/...",
         "pkg/session/state/...",
         "tests/tier2_component/watchdog/idle_pause_table_test.go::TestWatchdogIdleSweepPauseTable_spec_6_2",
-        "pkg/gateway/runtime/adapterclient/client_test.go"
+        "pkg/gateway/runtime/adapterclient/client_test.go",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults"
       ],
       "packages": [
         "pkg/policy/timeout"
@@ -6004,7 +6025,9 @@
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "tests/tier11_docs/test_gaps_tracing_context_quote_reconciliation_test.go",
         "pkg/adapter/session_test.go",
-        "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3"
+        "tests/tier3_contract/adapter_session_address/send_message_stamp_test.go::TestSendMessageStampsTheSessionAddressOnTheRuntimeFrame_spec_28_5_3",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered",
+        "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults"
       ],
       "packages": [
         "pkg/adapter",

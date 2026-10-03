@@ -19,11 +19,18 @@ passes over it and imposes no key on it.
 | A residual register | A member, a class, an `in-class` or `excluded` disposition, and a reason. | The residual gate for that class. |
 | A baseline | Keyed for the rewrite it drives, and rewritten downward as that rewrite proceeds. | The gate that reads it. |
 | A sense map | Keyed by file and occurrence, recording the identifier a pass writes at each site. | The pass that reads it, and the gate over its output. |
+| A default-disposition register | A subject, the compiled default, a basis, and a reason, declared with `kind: deployment-boundary-defaults`. | The deployment-boundary gate, which also checks each default against the source. |
 
 The filename convention is `exceptions-<gate>.yaml` for an exception
 register and `residual-<class>.yaml` for a residual register. The name
 is a convention for readers, and the `kind: exception-register`
 declaration is what puts a file under the shared contract.
+
+The deployment-boundary gate reads
+`exceptions-deployment-boundary.yaml`, which holds the inputs a
+remediation step will render, and `deployment-boundary-defaults.yaml`,
+which holds the inputs whose compiled default is correct and carries no
+blocker and no expiry.
 
 ## Entry schema
 
