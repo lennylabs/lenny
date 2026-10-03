@@ -2217,7 +2217,7 @@ optional, and it does not make the frozen content correct.
 
 ## 10. Execution status and checklist
 
-Status as of 2026-10-01, verified against the working tree. Check an item off in the same change that lands
+Status as of 2026-10-03, verified against the working tree. Check an item off in the same change that lands
 it, and name the commit or merge.
 
 ### 10.1 Remediation steps
@@ -2235,8 +2235,9 @@ it, and name the commit or merge.
   and 0066).
 - [ ] **R4.** Not started. `srv.GracefulStop()` in `cmd/lenny-adapter/main.go` still has no bound or
   `Stop()` fallback, and `TestAdapterExitsWithinGraceBudget` does not exist. It is overdue against its wave
-  0 placement. Proposal 0078 adds `CloseListener` at the same signal-handler site, so whichever lands second
-  calls `CloseListener` on both the graceful path and the fallback path.
+  0 placement. Proposal 0078 landed `CloseListener` as a deferred call in `cmd/lenny-adapter/main.go`
+  (`closeRuntimeListener`), and proposal 0079 extended it to the pod-scope teardown, so R4 keeps that call
+  on both the graceful path and the fallback path.
 - [x] **R5.** Landed 2026-09-29, merge `6325283df`, with the scope extension recorded in the R5 section.
 - [ ] **R6.** Not started (`podspec.go` is still one file). Landing it before proposal 0087's code avoids
   serializing the pod-builder edits under rule S-4.
@@ -2393,7 +2394,9 @@ other while their code proceeds in parallel.
   0079, and the runtime side of per-generation nonce rotation on `CH-MSGSOCK`, the intra-pod MCP servers,
   and `CH-RUNTIMEOPS` (security review finding 4). The supervisor in proposal 0087 now fixes the
   first-session manifest-ordering defect for sidecar pods, so this proposal no longer owns it. It lands before any release, which is the condition under which
-  proposal 0079's S20 no longer waits for it.
+  proposal 0079's S20 no longer waited for it. Proposal 0079 is implemented, so until this proposal lands the
+  tree reuses a runtime process across sessions on acknowledged recycling pools while the SDKs still serve
+  one session per process; the tree is not releasable in that state.
 
 **Phase 3: after proposal 0087 part 1**
 
@@ -2536,6 +2539,23 @@ Answered on 2026-10-01 for the later phases:
 These items are independent of the order above and can run whenever capacity allows: BUILD-GAPS F-10.3.26
 (admission webhooks never reload a renewed serving certificate), draft proposals 0085 and 0086, draft
 proposal 0072 split into its separate items, and draft proposal 0080 split into per-concern proposals.
+
+The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
+on the base commit and none of which is yet filed in BUILD-GAPS:
+
+- Tier 4: `TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E` fails because `lenny-ops` panics with a nil
+  pointer in `buildWebhookDelivery` (`cmd/lenny-ops/deps.go`) when it has no kube config.
+- Tier 8: `TestOrphanGCReclaimsReservedClaimAfterHolderCrash` and
+  `TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash` fail on the long-lived Kind cluster, whose
+  `lenny-controller` runs without `--postgres-dsn` and `--agent-namespaces`, so `ClaimGarbageCollector` is
+  never registered. This is an environment defect in the Kind install.
+- Tier 1: `TestRotationAckTimeoutFallsThrough_spec_4_7` in `pkg/adapter` is flaky (8 failures in 60 runs).
+- Tier 1: `pkg/controller/warmpool` and `pkg/gateway/podlifecycle/podsession` exceed `go test`'s default
+  10-minute timeout and need `-timeout 40m`.
+
+The `implement-proposal` workflow changed on 2026-10-03: a re-verification after a fix runs only the tiers
+the fix's commit range can reach (`afd5aa200`), and a review finding about a commit message is recorded as a
+deviation instead of producing a new lint gate (`94b42f3bc`).
 
 ### 10.5 Decisions still open
 
