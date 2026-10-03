@@ -35,13 +35,12 @@ import (
 	"strings"
 )
 
-// RejectCode labels every denial this webhook returns. A Kubernetes
-// admission denial carries a free-text status message; this constant
-// is the webhook's machine-readable label for log and alert matching.
-// Mirroring the §13.1 admission-rejection convention (the cosign-verify
-// webhook uses IMAGE_SIGNATURE_INVALID; the host-sharing prohibition
-// uses POD_SPEC_HOST_SHARING_FORBIDDEN), this gate emits
-// POD_IMAGE_DIGEST_REQUIRED.
+// RejectCode is the rejection label at the start of every denial this
+// webhook returns. It is a reason inside the Kubernetes admission denial
+// message rather than a §15.1 API error code. The cosign-verify webhook
+// (IMAGE_SIGNATURE_INVALID) and lenny-pod-security
+// (POD_SPEC_HOST_SHARING_FORBIDDEN) follow the same convention.
+// spec: §17.2 (Rejection labels)
 const RejectCode = "POD_IMAGE_DIGEST_REQUIRED"
 
 // digestMarker is the substring an OCI image reference must contain to

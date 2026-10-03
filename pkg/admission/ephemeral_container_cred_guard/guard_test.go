@@ -156,6 +156,6 @@ func TestDecideRejectionCarriesTheSpecCode(t *testing.T) {
 	c.RunAsUser = ptr(agentUID)
 	d := decide(c)
 	if !strings.Contains(d.Reason, guard.RejectionCode) {
-		t.Errorf("rejection reason %q does not carry the §15.1 code %s", d.Reason, guard.RejectionCode)
+		t.Errorf("rejection reason %q does not carry the rejection label %s", d.Reason, guard.RejectionCode)
 	}
 }
