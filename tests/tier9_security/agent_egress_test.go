@@ -142,8 +142,10 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 // lenny-agents and waits for it to become Ready, registering a
 // t.Cleanup to remove it. The pod carries the same lenny.dev/managed:
 // "true" label and §13.1 hardened SecurityContext (fsGroup,
-// supplementalGroups, seccompProfile, dropped capabilities,
-// non-root) a real Sandbox reconciler-created pod carries, so the
+// supplementalGroups, seccompProfile, dropped capabilities, non-root,
+// and the container-level non-reserved runAsUser and runAsGroup §13.1
+// Container identity requires) a real Sandbox reconciler-created pod
+// carries, so the
 // lenny-pod-security and lenny-label-immutability webhooks admit it on
 // CREATE the same way they admit a real agent pod. It carries no
 // lenny.dev/egress-profile label, matching the restricted default every
@@ -186,9 +188,10 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, name, agentEgressProbeNamespace, podspec.CredReadersGID, podspec.CredReadersGID, probeImage, probeRunAsUser)
+`, name, agentEgressProbeNamespace, podspec.CredReadersGID, podspec.CredReadersGID, probeImage, probeRunAsUser, probeRunAsUser)
 
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
 	if out, err := c.ApplyStdin(t, manifest); err != nil {

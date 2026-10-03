@@ -2294,19 +2294,27 @@ pinned-idle proposal, so each of those is converged once against the final set o
     adapter UID; the test-only egress-capture container moved off the agent UID.
   - BUILD-GAPS F-13.1.24: an explicit `runAsGroup` on every agent-pod container, checked by the webhook.
   Where existing specification text does not already state a rule, the rule lands through a small proposal
-  rather than as a BUILD-GAPS fix: proposal 0088 stages F-13.1.23 and F-13.1.24.
+  rather than as a BUILD-GAPS fix: proposal 0088 stages F-13.1.23 and F-13.1.24. Proposal 0088 is
+  implemented (merge `4e9ae3315`, 2026-10-03) and closes both. Draft proposal 0087 lands after it.
   - The `SO_PEERCRED` half of F-4.7.25 and two defects its implementation found, F-4.7.28 (the intra-pod MCP
     listeners now take the same peer-check decision as `CH-MSGSOCK`: no check in nonce-only mode, fail
     closed with no UID configured, and an explicit no-check posture for the embedded model per §4.7.11) and
     F-4.7.29 (one accept loop per runtime listener, so a runtime that dials after a timed-out `Start` serves
-    the next one), are done on branch `worktree-agent-a14863c1e63bb8ccf` (`5794e6923` to `6b94bc6e5`). The
-    branch merges together with proposal 0088's implementation. F-4.7.25 stays open for the manifest nonce
-    and the nonce-only challenge, which the runtime-SDK proposal owns; until then `CH-MSGSOCK` has no
-    authentication in nonce-only mode.
-  - Candidate for proposal 0088, not yet staged: whether an embedded-model pod restricts its agent sockets
-    to the runtime container's UID. Today §4.7.11 states the embedded model has no adapter-agent socket
-    boundary, and the platform MCP socket there is authenticated by the manifest nonce alone, so a container
-    that can read the credential volume can reach it.
+    the next one), are done on branch `worktree-agent-a14863c1e63bb8ccf` (`5794e6923` to `6b94bc6e5`).
+    F-4.7.25 stays open for the manifest nonce and the nonce-only challenge, which the runtime-SDK proposal
+    owns; until then `CH-MSGSOCK` has no authentication in nonce-only mode.
+  - After proposal 0088 is implemented, on the same hardening branch (owner decision, 2026-10-03): the
+    `SO_PEERCRED` peer check on the `CH-RUNTIMEOPS` listener (`pkg/adapter/runtimeops.go` binds a plain
+    listener with neither a peer check nor a nonce check), and the code-hygiene items 0088 recorded: the
+    comments in `podspec.go` and `cmd/lenny-controller/flags.go` that claim `lenny-pod-security` rejects the
+    egress-capture container in production, the line citation above the supplementalGroups check in
+    `pkg/podsecurity/podsecurity.go`, and the `lenny-pod-security` chart template's header comment on
+    matching Pod UPDATE. The `CH-RUNTIMEOPS` nonce belongs to the runtime-SDK proposal.
+  - Draft proposal 0089 (unconverged) covers the rest of 0088's unstaged defects: the embedded-model gap
+    where an injected regular container named `adapter` passes the name-keyed reservation, together with
+    whether embedded agent sockets admit only the runtime container's UID; the §13.1 `setgroups(0, NULL)`
+    guidance that cannot succeed with every capability dropped; and the §13.1 rejection codes absent from
+    the §15.1 catalog. It assumes proposal 0088 is implemented.
 - [ ] R6, after the pod identity hardening and before proposal 0087's code. The hardening moves the
   egress-capture container off the agent UID, which edits the pod builder, so R6 moves settled code.
 

@@ -142,7 +142,7 @@ func podField(t *testing.T, c *kind.Cluster, ns, pod, jsonpath string) string {
 	return strings.TrimSpace(out)
 }
 
-// spec: 4.7
+// spec: 4.7, 13.1 (Pod Security)
 // diagnosis: TestAdapterPeercredSelftestFaultCrashLoops asserts the §4.7
 // fail-closed contract in a real pod: when the adapter's SO_PEERCRED
 // self-test cannot pass, the adapter logs FATAL, exits non-zero, and the
@@ -289,7 +289,12 @@ func buildAndLoadHogImage(t *testing.T, c *kind.Cluster, arch string) {
 // self-test bind fails deterministically. The namespace carries no
 // lenny.dev/agent-namespace label, so the agent-pod admission webhooks do
 // not scope it. The container securityContext mirrors the §13.1 warm-pod
-// posture so the pod is admissible.
+// posture so the pod is admissible, including the §13.1 container
+// identity: each container sets its own runAsUser and runAsGroup, the
+// adapter at the default adapter UID it owns and the sidecar at a
+// non-reserved UID. An abstract socket name carries no file permissions,
+// so the sidecar holds it at any UID and the fault does not depend on
+// sharing the adapter's UID.
 func faultPodManifest(ns, pod, node string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Namespace
@@ -323,7 +328,8 @@ spec:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
         runAsNonRoot: true
-        runAsUser: 65532
+        runAsUser: 1000
+        runAsGroup: 1000
         capabilities:
           drop: ["ALL"]
   containers:
@@ -336,6 +342,7 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: 65532
+        runAsGroup: 65532
         capabilities:
           drop: ["ALL"]
 `, ns, pod, node, hogImage)

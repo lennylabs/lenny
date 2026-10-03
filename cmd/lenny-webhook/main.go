@@ -184,10 +184,12 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	mux.Handle("/t4-node-isolation", webhook.Handler(webhook.T4NodeIsolation()))
 	// §13.1 pod-security: validates the agent-pod securityContext
 	// posture — host-sharing flags, credential fsGroup, non-root,
-	// per-container hardening, and the RuntimeDefault seccomp profile.
+	// per-container hardening, the RuntimeDefault seccomp profile, and
+	// the §13.1 container identity clause, which reserves adapterUID for
+	// the adapter container and agentUID for the runtime container.
 	// rcPolicy applies the §17.2 RuntimeClass-aware split: gVisor pods
 	// skip the seccomp check, Kata pods may allow privilege escalation.
-	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(credReadersGID, podspec.CredVolumeName, rcPolicy)))
+	mux.Handle("/pod-security", webhook.Handler(webhook.PodSecurity(adapterUID, agentUID, credReadersGID, podspec.CredVolumeName, rcPolicy)))
 	// §5.2 cosign-verify: rejects agent pods whose in-scope container
 	// images carry no valid cosign signature. The route is registered
 	// only when the chart enables cosign verification and supplies a

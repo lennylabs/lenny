@@ -9,13 +9,18 @@
 //
 // Where tier-5 covers the basic unhardened-pod rejection and the
 // webhook inventory, this file asserts a distinct security property:
-// each individual §13.1 escape vector — a privileged container, each of
-// the four host-sharing / process-sharing flags, an added Linux
-// capability, and a writable root filesystem — is rejected on its own,
-// with the §13.1 reason code, by the lenny-pod-security webhook. A
-// webhook that catches the composed unhardened pod but admits a pod
-// that trips only one of these flags would leave a single-vector
-// bypass open.
+// each individual §13.1 escape vector (a privileged container, each
+// host-sharing or process-sharing flag, an added Linux capability, a
+// writable root filesystem, a container that omits its container-level
+// identity, and a container that is not the owner but runs at the
+// reserved adapter or agent UID) is rejected on its own, with the §13.1
+// reason, by the lenny-pod-security webhook. A webhook that catches the
+// composed unhardened pod but admits a pod that trips only one of these
+// controls would leave a single-vector bypass open.
+//
+// The reserved-UID cases are what the §4.7.11 SO_PEERCRED check relies
+// on: the adapter identifies the agent by UID, so a second container at
+// the agent UID would pass that check as the agent.
 //
 // Every manifest is applied with `kubectl apply --dry-run=server`, so
 // the full admission chain runs (the webhook executes) but nothing is
@@ -28,6 +33,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -50,17 +56,23 @@ type bypassCase struct {
 	manifest string
 	// wantReason is a substring the rejection body must contain. §13.1
 	// host-sharing flags reject with POD_SPEC_HOST_SHARING_FORBIDDEN;
-	// the other controls reject with a §13.1-tagged message.
+	// the other controls, including the container identity clause,
+	// reject with a §13.1-tagged message and no code.
 	wantReason string
 }
 
-// spec: 13.1
+// spec: 13.1 (Pod Security)
 // diagnosis: the §13.1 pod-security webhook admits a single-vector
-// escape. The test drives one adversarial pod per §13.1 control —
-// privileged, hostNetwork, hostPID, hostIPC, shareProcessNamespace, an
-// added capability, and a writable rootfs — through the live admission
-// chain and asserts lenny-pod-security rejects each with the §13.1
-// reason code. An admitted pod means that vector is unguarded.
+// escape. The test drives one adversarial pod per §13.1 control
+// (privileged, hostNetwork, hostPID, hostIPC, shareProcessNamespace, an
+// added capability, a writable rootfs, a container without runAsGroup,
+// an injected container at the agent or adapter UID, and an init
+// container at the adapter UID) through the live admission chain and
+// asserts lenny-pod-security rejects each with the §13.1 reason. An
+// admitted pod means that vector is unguarded; for the reserved-UID
+// cases it means a non-owner container can pass the adapter's
+// SO_PEERCRED UID check, or a webhook image older than the container
+// identity clause is loaded.
 func TestAdmissionSecurityBypassAttempts(t *testing.T) {
 	c := kind.InstallLenny(t)
 
@@ -86,13 +98,14 @@ func TestAdmissionSecurityBypassAttempts(t *testing.T) {
 	}
 }
 
-// spec: 13.1
+// spec: 13.1 (Pod Security)
 // diagnosis: the §13.1 pod-security webhook is over-broad and rejects a
 // pod that sets every §13.1 control correctly. The test applies a pod
 // with runAsNonRoot, the lenny-cred-readers fsGroup and
 // supplementalGroups membership, RuntimeDefault seccomp, a dropped-ALL
-// capability set, and a read-only rootfs, and
-// expects the webhook to admit it. This is the positive control for
+// capability set, a read-only rootfs, and an explicit non-reserved
+// container-level runAsUser and runAsGroup, and expects the webhook to
+// admit it. This is the positive control for
 // TestAdmissionSecurityBypassAttempts: a rejection here means the
 // bypass-rejection results above could be false positives.
 func TestAdmissionSecurityAdmitsHardenedPod(t *testing.T) {
@@ -104,6 +117,26 @@ func TestAdmissionSecurityAdmitsHardenedPod(t *testing.T) {
 			"satisfies every §13.1 control.\noutput:\n%s", out)
 	}
 	t.Logf("%s admitted the §13.1-compliant pod: %s", podSecurityWebhook, rejectionLine(out))
+}
+
+// spec: 13.1 (Pod Security)
+// diagnosis: the §13.1 container identity clause is over-broad and
+// rejects the owners of the reserved UIDs. The test applies a
+// sidecar-model pod whose adapter container runs at the adapter UID and
+// whose runtime container runs at the agent UID, beside an injected
+// sidecar at a non-reserved identity, and expects the webhook to admit
+// it. This is the positive control for the reserved-UID bypass cases: a
+// rejection here means those rejections could be false positives, and
+// every warm pod the controller builds would fail admission.
+func TestAdmissionSecurityAdmitsReservedUIDOwners(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	out, err := c.DryRunApplyStdin(t, sidecarModelPodManifest("t9-reserved-owners", "", injectedSidecarUID))
+	if err != nil {
+		t.Fatalf("§13.1 over-broad rejection: the lenny-pod-security webhook rejected a pod whose adapter "+
+			"and runtime containers run at their own reserved UIDs.\noutput:\n%s", out)
+	}
+	t.Logf("%s admitted the reserved-UID owners: %s", podSecurityWebhook, rejectionLine(out))
 }
 
 // bypassCases builds the adversarial pod set. Each pod is otherwise
@@ -126,6 +159,7 @@ func bypassCases() []bypassCase {
 				containerSecurityContext: "" +
 					"        privileged: true\n" +
 					"        readOnlyRootFilesystem: true\n" +
+					testContainerIdentity +
 					"        capabilities:\n" +
 					"          drop: [\"ALL\"]\n",
 			}),
@@ -169,6 +203,7 @@ func bypassCases() []bypassCase {
 				containerSecurityContext: "" +
 					"        allowPrivilegeEscalation: false\n" +
 					"        readOnlyRootFilesystem: true\n" +
+					testContainerIdentity +
 					"        capabilities:\n" +
 					"          drop: [\"ALL\"]\n" +
 					"          add: [\"NET_ADMIN\"]\n",
@@ -182,20 +217,119 @@ func bypassCases() []bypassCase {
 				// rootfs writable.
 				containerSecurityContext: "" +
 					"        allowPrivilegeEscalation: false\n" +
+					testContainerIdentity +
 					"        capabilities:\n" +
 					"          drop: [\"ALL\"]\n",
 			}),
 		},
+		{
+			name:       "container-omits-runAsGroup",
+			wantReason: "must set non-zero runAsUser and runAsGroup",
+			// runAsUser is set and runAsGroup is omitted, so the image
+			// would choose the primary GID.
+			manifest: agentPodManifest("t9-bypass-norunasgroup", podBody{
+				containerSecurityContext: "" +
+					"        allowPrivilegeEscalation: false\n" +
+					"        readOnlyRootFilesystem: true\n" +
+					fmt.Sprintf("        runAsUser: %d\n", injectedSidecarUID) +
+					"        capabilities:\n" +
+					"          drop: [\"ALL\"]\n",
+			}),
+		},
+		{
+			name:       "injected-regular-container-at-agent-uid",
+			wantReason: reservedUIDReason(podspec.AgentUID),
+			manifest:   sidecarModelPodManifest("t9-bypass-injected-agentuid", "", podspec.AgentUID),
+		},
+		{
+			name:       "injected-regular-container-at-adapter-uid",
+			wantReason: reservedUIDReason(podspec.AdapterUID),
+			manifest:   sidecarModelPodManifest("t9-bypass-injected-adapteruid", "", podspec.AdapterUID),
+		},
+		{
+			name:       "init-container-at-adapter-uid",
+			wantReason: reservedUIDReason(podspec.AdapterUID),
+			manifest: sidecarModelPodManifest("t9-bypass-init-adapteruid",
+				"  initContainers:\n"+containerYAML("init-injected", podspec.AdapterUID),
+				injectedSidecarUID),
+		},
 	}
 }
 
+// injectedSidecarUID is the UID and primary GID the test pods give a
+// container that is not a platform container. It lies outside the
+// default adapter and agent UIDs, the default lenny-cred-readers GID,
+// and 0, so §13.1 (Container identity) admits it.
+const injectedSidecarUID int64 = 1000
+
+// testContainerIdentity is the container-level identity block every
+// otherwise-compliant test container carries, so a rejection is
+// attributable to the one control the case violates.
+var testContainerIdentity = fmt.Sprintf(""+
+	"        runAsUser: %d\n"+
+	"        runAsGroup: %d\n", injectedSidecarUID, injectedSidecarUID)
+
+// reservedUIDReason is the §13.1 (Container identity) rejection
+// substring for a container that runs at the reserved uid without owning
+// it. The substring stops before the quoted owner name so it does not
+// depend on how kubectl escapes the quotes in the webhook message.
+func reservedUIDReason(uid int64) string {
+	return fmt.Sprintf("runAsUser %d is reserved for the", uid)
+}
+
+// containerYAML renders one §13.1-hardened list entry for a container
+// running at uid, with runAsGroup equal to uid as the pod builder sets
+// it. The entry is indented for the containers or initContainers list of
+// a pod spec.
+func containerYAML(name string, uid int64) string {
+	return fmt.Sprintf(`    - name: %s
+      image: busybox:1.36
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
+        capabilities:
+          drop: ["ALL"]
+`, name, uid, uid)
+}
+
+// sidecarModelPodManifest renders a sidecar-model agent pod: an adapter
+// container at the adapter UID, a runtime container at the agent UID,
+// and an injected regular container at injectedUID, standing in for a
+// container a deployer's mutating webhook adds. initContainers is an
+// optional complete initContainers block. The adapter and runtime own
+// their reserved UIDs, so the pod is rejected only when injectedUID or
+// an init container claims one of them.
+func sidecarModelPodManifest(name, initContainers string, injectedUID int64) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  securityContext:
+    runAsNonRoot: true
+    fsGroup: %d
+    supplementalGroups: [%d]
+    seccompProfile:
+      type: RuntimeDefault
+%s  containers:
+%s%s%s`, name, agentNamespace, podspec.CredReadersGID, podspec.CredReadersGID, initContainers,
+		containerYAML("adapter", podspec.AdapterUID),
+		containerYAML("runtime", podspec.AgentUID),
+		containerYAML("injected", injectedUID))
+}
+
 // hardenedContainerSC is the §13.1-compliant container securityContext
-// block, used by bypass cases whose defect is a pod-level field so the
-// container itself stays compliant and the rejection is attributable to
-// the pod-level flag alone.
-const hardenedContainerSC = "" +
+// block, including the explicit container-level identity §13.1
+// (Container identity) requires, used by bypass cases whose defect is a
+// pod-level field so the container itself stays compliant and the
+// rejection is attributable to the pod-level flag alone.
+var hardenedContainerSC = "" +
 	"        allowPrivilegeEscalation: false\n" +
 	"        readOnlyRootFilesystem: true\n" +
+	testContainerIdentity +
 	"        capabilities:\n" +
 	"          drop: [\"ALL\"]\n"
 

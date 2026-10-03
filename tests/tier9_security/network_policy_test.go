@@ -317,9 +317,10 @@ metadata:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, name, lennySystemNS, labelLines.String(), probeNode, probeImage, probeRunAsUser)
+`, name, lennySystemNS, labelLines.String(), probeNode, probeImage, probeRunAsUser, probeRunAsUser)
 }
 
 // createProbePod applies a probe-pod manifest, registers a t.Cleanup to

@@ -9,12 +9,23 @@ import (
 
 const lennyCredReadersGID int64 = 65532
 
+// Reserved UIDs the fixtures pass as PodSpec.AdapterUID and
+// PodSpec.AgentUID: the chart defaults for security.podUIDs.adapter and
+// security.podUIDs.agent. The fixture containers run at UIDs outside
+// both, so the existing cases keep testing the controls they target.
+const (
+	testAdapterUID int64 = 65532
+	testAgentUID   int64 = 65533
+)
+
 func wellFormedSpec() PodSpec {
 	return PodSpec{
 		FSGroup:            Ptr[int64](lennyCredReadersGID),
 		SupplementalGroups: []int64{lennyCredReadersGID},
 		RunAsNonRoot:       Ptr(true),
 		SeccompProfileType: SeccompRuntimeDefault,
+		AdapterUID:         testAdapterUID,
+		AgentUID:           testAgentUID,
 		Containers: []ContainerSpec{
 			{
 				Name:                     "adapter",
@@ -22,6 +33,8 @@ func wellFormedSpec() PodSpec {
 				Privileged:               Ptr(false),
 				ReadOnlyRootFilesystem:   Ptr(true),
 				CapabilitiesDrop:         []string{"ALL"},
+				RunAsUser:                Ptr[int64](1001),
+				RunAsGroup:               Ptr[int64](1001),
 			},
 			{
 				Name:                     "agent",
@@ -29,6 +42,8 @@ func wellFormedSpec() PodSpec {
 				Privileged:               Ptr(false),
 				ReadOnlyRootFilesystem:   Ptr(true),
 				CapabilitiesDrop:         []string{"ALL"},
+				RunAsUser:                Ptr[int64](1002),
+				RunAsGroup:               Ptr[int64](1002),
 			},
 		},
 	}
@@ -53,6 +68,7 @@ func TestValidateRejectsCredGroupOverbroad(t *testing.T) {
 		ReadOnlyRootFilesystem:   Ptr(true),
 		CapabilitiesDrop:         []string{"ALL"},
 		RunAsGroup:               Ptr[int64](lennyCredReadersGID),
+		RunAsUser:                Ptr[int64](1003),
 	})
 	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
 	var pe *PodSecurityError
@@ -129,6 +145,8 @@ func TestValidateRejectsNonCredContainerMountingCredVolume_spec_13_1(t *testing.
 		Privileged:               Ptr(false),
 		ReadOnlyRootFilesystem:   Ptr(true),
 		CapabilitiesDrop:         []string{"ALL"},
+		RunAsUser:                Ptr[int64](1004),
+		RunAsGroup:               Ptr[int64](1004),
 		VolumeMounts:             []VolumeMount{{Name: "credentials", MountPath: "/somewhere"}},
 	})
 	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
@@ -156,6 +174,8 @@ func TestValidateRejectsNonCredContainerMountingCredPath_spec_13_1(t *testing.T)
 		Privileged:               Ptr(false),
 		ReadOnlyRootFilesystem:   Ptr(true),
 		CapabilitiesDrop:         []string{"ALL"},
+		RunAsUser:                Ptr[int64](1005),
+		RunAsGroup:               Ptr[int64](1005),
 		VolumeMounts:             []VolumeMount{{Name: "shadow", MountPath: "/run/lenny/sub"}},
 	})
 	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
@@ -181,6 +201,8 @@ func TestValidateAcceptsSiblingPathMount_spec_13_1(t *testing.T) {
 		Privileged:               Ptr(false),
 		ReadOnlyRootFilesystem:   Ptr(true),
 		CapabilitiesDrop:         []string{"ALL"},
+		RunAsUser:                Ptr[int64](1006),
+		RunAsGroup:               Ptr[int64](1006),
 		VolumeMounts:             []VolumeMount{{Name: "egress-capture", MountPath: "/run/lenny-capture"}},
 	})
 	if err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{}); err != nil {
@@ -474,5 +496,215 @@ func TestCapabilitiesDropped_spec_13_1(t *testing.T) {
 				t.Errorf("CapabilitiesDropped(%v) = %v, want %v", tc.drops, got, tc.want)
 			}
 		})
+	}
+}
+
+// identityContainer returns a container that satisfies every §13.1
+// per-container baseline control, with the given container-level
+// runAsUser and runAsGroup (nil leaves the field unset).
+func identityContainer(name string, uid, gid *int64) ContainerSpec {
+	return ContainerSpec{
+		Name:                     name,
+		AllowPrivilegeEscalation: Ptr(false),
+		Privileged:               Ptr(false),
+		ReadOnlyRootFilesystem:   Ptr(true),
+		CapabilitiesDrop:         []string{"ALL"},
+		RunAsUser:                uid,
+		RunAsGroup:               gid,
+	}
+}
+
+// sidecarIdentitySpec returns a sidecar-model agent pod: an adapter
+// container at the adapter UID and a runtime container at the agent UID,
+// each with its primary GID equal to its UID, and both in the credential
+// set, as the pod builder renders it.
+func sidecarIdentitySpec() PodSpec {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"adapter", "runtime"}
+	spec.Containers = []ContainerSpec{
+		identityContainer("adapter", Ptr(testAdapterUID), Ptr(testAdapterUID)),
+		identityContainer("runtime", Ptr(testAgentUID), Ptr(testAgentUID)),
+	}
+	return spec
+}
+
+// embeddedIdentitySpec returns an embedded-model agent pod: only the
+// runtime container, which is the only credential container.
+func embeddedIdentitySpec() PodSpec {
+	spec := wellFormedSpec()
+	spec.CredentialContainerNames = []string{"runtime"}
+	spec.Containers = []ContainerSpec{
+		identityContainer("runtime", Ptr(testAgentUID), Ptr(testAgentUID)),
+	}
+	return spec
+}
+
+// identityMsgUnset and identityMsgReserved are the stable substrings of
+// the two §13.1 (Container identity) violations: an unset or zero
+// identity, and a container running at a UID reserved for another.
+const (
+	identityMsgUnset    = "must set non-zero runAsUser and runAsGroup (§13.1 Container identity)"
+	identityMsgReserved = "is reserved for the"
+)
+
+// identityCase is one §13.1 (Container identity) table case: a pod and
+// the violation substring it must produce, or "" when it is admitted.
+type identityCase struct {
+	name string
+	spec func() PodSpec
+	want string
+}
+
+// withContainer returns base with c appended to its container list.
+// Init, regular, and ephemeral containers are flattened into one list by
+// the webhook, so an init container is modelled as an appended container
+// that is not in the credential set.
+func withContainer(base PodSpec, c ContainerSpec) PodSpec {
+	base.Containers = append(base.Containers, c)
+	return base
+}
+
+func identityCases() []identityCase {
+	const free int64 = 1000
+	return []identityCase{
+		// An unset or zero identity.
+		{"runAsUser absent", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", nil, Ptr(free)))
+		}, `container "injected" ` + identityMsgUnset},
+		{"runAsGroup absent", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr(free), nil))
+		}, `container "injected" ` + identityMsgUnset},
+		{"runAsUser zero", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr[int64](0), Ptr(free)))
+		}, `container "injected" ` + identityMsgUnset},
+		{"runAsGroup zero", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr(free), Ptr[int64](0)))
+		}, `container "injected" ` + identityMsgUnset},
+		{"pod-level runAsUser only", func() PodSpec {
+			// A pod-level runAsUser is never translated into the
+			// container's RunAsUser, so the container reads as unset.
+			spec := sidecarIdentitySpec()
+			spec.Containers[1].RunAsUser = nil
+			return spec
+		}, `container "runtime" ` + identityMsgUnset},
+		// A reserved UID on a container that does not own it.
+		{"injected regular container at the agent UID", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr(testAgentUID), Ptr(free)))
+		}, `container "injected" runAsUser 65533 is reserved for the "runtime" container (§13.1 Container identity)`},
+		{"injected regular container at the adapter UID", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr(testAdapterUID), Ptr(free)))
+		}, `container "injected" runAsUser 65532 is reserved for the "adapter" container (§13.1 Container identity)`},
+		{"init container at the adapter UID", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("init-setup", Ptr(testAdapterUID), Ptr(free)))
+		}, `container "init-setup" runAsUser 65532 is reserved for the "adapter" container`},
+		{"native sidecar init container at the agent UID", func() PodSpec {
+			// An init container with restartPolicy: Always carries no
+			// exemption; restartPolicy is not part of the projection.
+			return withContainer(sidecarIdentitySpec(), identityContainer("mesh-proxy", Ptr(testAgentUID), Ptr(free)))
+		}, `container "mesh-proxy" runAsUser 65533 is reserved for the "runtime" container`},
+		{"embedded pod init container named adapter at the adapter UID", func() PodSpec {
+			// The name matches the reservation owner but the container is
+			// not in the credential set (only runtime is, in the embedded
+			// model), so a name-only check would wrongly admit it.
+			return withContainer(embeddedIdentitySpec(), identityContainer("adapter", Ptr(testAdapterUID), Ptr(testAdapterUID)))
+		}, `container "adapter" runAsUser 65532 is reserved for the "adapter" container`},
+		// Admitted.
+		{"adapter runAsGroup equal to the cred-readers GID", func() PodSpec {
+			spec := sidecarIdentitySpec()
+			spec.Containers[0].RunAsGroup = Ptr(lennyCredReadersGID)
+			return spec
+		}, ""},
+		{"sidecar pod at the default UIDs with GID equal to UID", sidecarIdentitySpec, ""},
+		{"embedded pod with runtime only", embeddedIdentitySpec, ""},
+		{"non-reserved injected sidecar with explicit identity", func() PodSpec {
+			return withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr(free), Ptr(free)))
+		}, ""},
+	}
+}
+
+// TestValidateContainerIdentity_spec_13_1 pins the §13.1 container
+// identity clause: every container sets a nonzero container-level
+// runAsUser and runAsGroup, and a reserved UID belongs only to the
+// regular container of the matching name.
+//
+// spec: 13.1 (Pod Security)
+func TestValidateContainerIdentity_spec_13_1(t *testing.T) {
+	for _, tc := range identityCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			assertIdentityOutcome(t, tc.spec(), RuntimeClassPolicy{}, tc.want)
+		})
+	}
+}
+
+// assertIdentityOutcome validates spec and checks the outcome: no error
+// when want is empty, otherwise a *PodSecurityError carrying want.
+func assertIdentityOutcome(t *testing.T, spec PodSpec, rc RuntimeClassPolicy, want string) {
+	t.Helper()
+	err := ValidateAgentPod(spec, lennyCredReadersGID, rc)
+	if want == "" {
+		if err != nil {
+			t.Fatalf("expected admission, got %v", err)
+		}
+		return
+	}
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *PodSecurityError carrying %q, got %v", want, err)
+	}
+	if !pe.HasViolation(want) {
+		t.Errorf("expected violation %q, got %v", want, pe.Violations)
+	}
+}
+
+// TestValidateContainerIdentityOverriddenUIDs_spec_13_1 pins the
+// reservation to the configured UIDs rather than the chart defaults: with
+// security.podUIDs overridden, a container at the old default UIDs is
+// admitted and one at the new values is rejected.
+//
+// spec: 13.1 (Pod Security)
+func TestValidateContainerIdentityOverriddenUIDs_spec_13_1(t *testing.T) {
+	const adapterUID, agentUID int64 = 70000, 70001
+	base := func() PodSpec {
+		spec := wellFormedSpec()
+		spec.AdapterUID, spec.AgentUID = adapterUID, agentUID
+		spec.CredentialContainerNames = []string{"adapter", "runtime"}
+		spec.Containers = []ContainerSpec{
+			identityContainer("adapter", Ptr(adapterUID), Ptr(adapterUID)),
+			identityContainer("runtime", Ptr(agentUID), Ptr(agentUID)),
+		}
+		return spec
+	}
+	cases := []struct {
+		name string
+		uid  int64
+		want string
+	}{
+		{"old default adapter UID admitted", testAdapterUID, ""},
+		{"old default agent UID admitted", testAgentUID, ""},
+		{"overridden adapter UID rejected", adapterUID, `runAsUser 70000 is reserved for the "adapter" container`},
+		{"overridden agent UID rejected", agentUID, `runAsUser 70001 is reserved for the "runtime" container`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := withContainer(base(), identityContainer("injected", Ptr(tc.uid), Ptr[int64](1000)))
+			assertIdentityOutcome(t, spec, RuntimeClassPolicy{}, tc.want)
+		})
+	}
+}
+
+// TestValidateContainerIdentityViolationsPerContainer_spec_13_1 pins
+// that a container breaching both halves of the clause reports both
+// violations, so an operator sees every cause in one rejection.
+//
+// spec: 13.1 (Pod Security)
+func TestValidateContainerIdentityViolationsPerContainer_spec_13_1(t *testing.T) {
+	spec := withContainer(sidecarIdentitySpec(), identityContainer("injected", Ptr(testAgentUID), nil))
+	err := ValidateAgentPod(spec, lennyCredReadersGID, RuntimeClassPolicy{})
+	var pe *PodSecurityError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected a *PodSecurityError, got %v", err)
+	}
+	if len(pe.Violations) != 2 || !pe.HasViolation(identityMsgUnset) || !pe.HasViolation(identityMsgReserved) {
+		t.Errorf("expected exactly the unset and reserved violations, got %v", pe.Violations)
 	}
 }

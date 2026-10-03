@@ -77,9 +77,10 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, name, lennySystemNS, gatewayProbeNode, gatewayProbeImage, gatewayProbeRunAsUser)
+`, name, lennySystemNS, gatewayProbeNode, gatewayProbeImage, gatewayProbeRunAsUser, gatewayProbeRunAsUser)
 }
 
 // startGatewayProbe creates a probe pod, registers a t.Cleanup to

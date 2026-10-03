@@ -365,6 +365,10 @@ const probeNode = "lenny-e2e-worker"
 
 // probeRunAsUser is the numeric UID curlimages/curl runs as; the image
 // declares a non-numeric user, so runAsNonRoot needs an explicit UID.
+// The probe also uses it as its runAsGroup, so the container states its
+// whole identity at container level and stays outside the reserved
+// adapter and agent UIDs. That keeps the manifest admissible under
+// §13.1 (Container identity) if it is ever pointed at an agent namespace.
 const probeRunAsUser = 100
 
 // probeManifest renders a long-sleeping probe-pod manifest. The pod
@@ -395,9 +399,10 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, name, lennySystemNamespace, probeNode, probeImage, probeRunAsUser)
+`, name, lennySystemNamespace, probeNode, probeImage, probeRunAsUser, probeRunAsUser)
 }
 
 // startGatewayProbePod creates a probe pod, registers a t.Cleanup to
