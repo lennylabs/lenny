@@ -2294,7 +2294,19 @@ pinned-idle proposal, so each of those is converged once against the final set o
     adapter UID; the test-only egress-capture container moved off the agent UID.
   - BUILD-GAPS F-13.1.24: an explicit `runAsGroup` on every agent-pod container, checked by the webhook.
   Where existing specification text does not already state a rule, the rule lands through a small proposal
-  rather than as a BUILD-GAPS fix.
+  rather than as a BUILD-GAPS fix: proposal 0088 stages F-13.1.23 and F-13.1.24.
+  - The `SO_PEERCRED` half of F-4.7.25 and two defects its implementation found, F-4.7.28 (the intra-pod MCP
+    listeners now take the same peer-check decision as `CH-MSGSOCK`: no check in nonce-only mode, fail
+    closed with no UID configured, and an explicit no-check posture for the embedded model per §4.7.11) and
+    F-4.7.29 (one accept loop per runtime listener, so a runtime that dials after a timed-out `Start` serves
+    the next one), are done on branch `worktree-agent-a14863c1e63bb8ccf` (`5794e6923` to `6b94bc6e5`). The
+    branch merges together with proposal 0088's implementation. F-4.7.25 stays open for the manifest nonce
+    and the nonce-only challenge, which the runtime-SDK proposal owns; until then `CH-MSGSOCK` has no
+    authentication in nonce-only mode.
+  - Candidate for proposal 0088, not yet staged: whether an embedded-model pod restricts its agent sockets
+    to the runtime container's UID. Today §4.7.11 states the embedded model has no adapter-agent socket
+    boundary, and the platform MCP socket there is authenticated by the manifest nonce alone, so a container
+    that can read the credential volume can reach it.
 - [ ] R6, after the pod identity hardening and before proposal 0087's code. The hardening moves the
   egress-capture container off the agent UID, which edits the pod builder, so R6 moves settled code.
 
