@@ -24,8 +24,7 @@ Groups A and C change specification text only. Group B removes the one place the
    ```go
    // RejectCode is the rejection label at the start of every denial this
    // webhook returns. It is a reason inside the Kubernetes admission denial
-   // message rather than a §15.1 API error code, and logs, events, and
-   // preflight findings match on it. The cosign-verify webhook
+   // message rather than a §15.1 API error code. The cosign-verify webhook
    // (IMAGE_SIGNATURE_INVALID) and lenny-pod-security
    // (POD_SPEC_HOST_SHARING_FORBIDDEN) follow the same convention.
    // spec: §17.2 (Rejection labels)
@@ -59,9 +58,5 @@ CODE-B changes no behavior: it removes a table entry no gateway path reaches and
 
 ## Files touched on application (non-spec)
 
-- pkg/gateway/externalapi/errorclassify/errorclassify.go
-- pkg/admission/ephemeral_container_cred_guard/guard.go
-- pkg/admission/ephemeral_container_cred_guard/guard_test.go
-- pkg/admission/registry_digest/guard.go
-- tests/tier9_security/admission_ephemeral_test.go
-- docs/reference/error-catalog.md
+- `pkg/gateway/externalapi/errorclassify/errorclassify.go`, `pkg/admission/ephemeral_container_cred_guard/guard.go`, `pkg/admission/ephemeral_container_cred_guard/guard_test.go`, `pkg/admission/registry_digest/guard.go`, `tests/tier9_security/admission_ephemeral_test.go` (CODE-B)
+- `docs/reference/error-catalog.md` (DOCS-B)

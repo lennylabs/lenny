@@ -43,7 +43,7 @@
 
 ## Non-goals
 
-- A structural rule that makes a regular `adapter` credential-exempt only when the `runtime` container's credential mounts are read-only. It guards only against an actor that controls pod CREATE, and it adds a `VolumeMount.ReadOnly` field, a classification rule, a builder mount-flag security contract, fixture changes, and tier 1 and tier 9 tests. It remains the owner's fallback.
+- A structural rule that makes a regular `adapter` credential-exempt only when the `runtime` container's credential mounts are read-only. It guards only against the actor Decision 5 names, and it adds a `VolumeMount.ReadOnly` field, a classification rule, a builder mount-flag security contract, fixture changes, and tier 1 and tier 9 tests. It remains the owner's fallback.
 - A controller-stamped deployment-model label read by `lenny-pod-security`. The actor that controls CREATE writes the label too, and the label-immutability webhook guards UPDATE only, so pods created before the stamp would either be stranded or admitted fail-open.
 - The rule "a regular `adapter` is exempt only at the adapter UID beside `runtime` at the agent UID". It does not discriminate, because the embedded builder runs `runtime` at the agent UID.
 - Other structural discriminators (gRPC port, args, or the runtime-socket environment variable). They are not specification-normative, so a builder refactor would change classification silently.
@@ -64,7 +64,7 @@
 
 ## Open decisions for human to make
 
-None. OD-1 (accept or close the embedded-model `adapter` name-keying residual) was answered by the owner on 2026-10-03: option 1, accept the residual and state it in §13.1 (Decision 5). The actor that could inject a regular `adapter` container already controls pod CREATE and the `runtime` container's command and environment, so enforcing the boundary closes no escalation path.
+None. OD-1 (accept or close the embedded-model `adapter` name-keying residual) was answered by the owner on 2026-10-03: option 1, accept the residual and state it in §13.1 (Decision 5).
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -84,9 +84,9 @@ None. OD-1 (accept or close the embedded-model `adapter` name-keying residual) w
 
 ## Deliverable index
 
-- SPEC-A — spec/13_security-model.md — restate the membership boundary as the credential-volume mount plus the group and delete the `setgroups` option.
-- SPEC-C — spec/13_security-model.md — state the embedded-model name-keying residual.
-- SPEC-B1 — spec/17_deployment-topology.md — add **Rejection labels.** and align admission-policies items 3 and 13.
-- SPEC-B2 — spec/13_security-model.md, spec/15_external-api-surface.md — apply the convention to the §13.1 carriers and delete the §15.1 catalog row.
-- CODE-B — pkg/gateway/externalapi/errorclassify, pkg/admission, tests/tier9_security — delete the classification entry and correct the comments that contradict the convention.
-- DOCS-B — docs/reference/error-catalog.md — delete the `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` row.
+- SPEC-A — `spec/13_security-model.md` — restate the membership boundary as the credential-volume mount plus the group and delete the `setgroups` option.
+- SPEC-C — `spec/13_security-model.md` — state the embedded-model name-keying residual.
+- SPEC-B1 — `spec/17_deployment-topology.md` — add **Rejection labels.** and align admission-policies items 3 and 13.
+- SPEC-B2 — `spec/13_security-model.md`, `spec/15_external-api-surface.md` — apply the convention to the §13.1 carriers and delete the §15.1 catalog row.
+- CODE-B — `pkg/gateway/externalapi/errorclassify/errorclassify.go`, `pkg/admission/ephemeral_container_cred_guard/guard.go`, `pkg/admission/ephemeral_container_cred_guard/guard_test.go`, `pkg/admission/registry_digest/guard.go`, `tests/tier9_security/admission_ephemeral_test.go` — delete the classification entry and correct the comments that contradict the convention.
+- DOCS-B — `docs/reference/error-catalog.md` — delete the `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` row.
