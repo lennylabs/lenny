@@ -27,10 +27,14 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 
 | Type | Purpose |
 |------|---------|
-| `message` | A user or agent message with input content |
-| `heartbeat` | Liveness check; reply with `heartbeat_ack` |
-| `shutdown` | Graceful shutdown signal; exit within `deadline_ms` |
+| `session_start` | Opens a session and carries that session's own context, such as its credential file path. It precedes every other frame addressed to the session. A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS (the Full-level operations channel, listed under [Integration level quick reference](#integration-level-quick-reference)) may ignore it. The echo and calculator runtimes in this tutorial ignore it through their `default` case. |
+| `message` | A user or agent message with input content, addressed to a session by its `sessionId` |
 | `tool_result` | Result of a tool call you previously requested |
+| `heartbeat` | Liveness check; reply with `heartbeat_ack` |
+| `session_end` | Ends a session. The runtime releases the session's context and keeps running to serve the pod's other sessions. A runtime that keeps no per-session context may ignore it, as the runtimes in this tutorial do. |
+| `shutdown` | Process-scoped graceful shutdown signal, written when the pod drains rather than at a session boundary; exit within `deadline_ms` |
+
+The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines the fields of each frame and the rules for `session_start` and `session_end`.
 
 ### Messages You Send (stdout)
 
@@ -40,16 +44,19 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 | `tool_call` | Request the adapter to execute a tool (e.g., `read_file`) |
 | `heartbeat_ack` | Reply to a heartbeat |
 | `status` | Optional progress update |
+| `session_started` | Acknowledges a `session_start`. A runtime that keeps per-session context, or that has opened the CH-RUNTIMEOPS, writes it; the runtimes in this tutorial do neither and writes no `session_started`. |
 
 ### Protocol Trace
 
-Here is a minimal session exchange:
+Here is a minimal session exchange. The session opens with its `session_start` frame and ends with its `session_end` frame, and the process-scoped `shutdown` follows only when the pod drains:
 
 ```
+STDIN  -> {"type":"session_start","sessionId":"sess_abc","startId":"st_1"}
 STDIN  -> {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}
 STDOUT <- {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Echo: Hello"}]}
 STDIN  -> {"type":"heartbeat","ts":1717430410}
 STDOUT <- {"type":"heartbeat_ack"}
+STDIN  -> {"type":"session_end","sessionId":"sess_abc"}
 STDIN  -> {"type":"shutdown","reason":"drain","deadline_ms":10000}
          (process exits with code 0)
 ```

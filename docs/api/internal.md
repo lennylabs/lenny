@@ -510,10 +510,12 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 
 | Type | Description |
 |:-----|:------------|
+| `session_start` | Opens a session and carries the session's own context; precedes every other frame addressed to the session |
 | `message` | All content delivery (initial task, injection, replies) |
 | `tool_result` | Result of a tool call requested by the agent |
 | `heartbeat` | Liveness ping; agent must respond with `heartbeat_ack` |
-| `shutdown` | Graceful shutdown signal |
+| `session_end` | Ends a session; the runtime releases the session's context and keeps serving the pod's other sessions |
+| `shutdown` | Process-scoped graceful shutdown signal, written when the pod drains |
 
 ### Outbound messages (binary to adapter via stdout)
 
@@ -522,6 +524,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `response` | Complete or streamed response with `MessagePart[]` |
 | `tool_call` | Agent requests tool execution |
 | `heartbeat_ack` | Acknowledges heartbeat |
+| `session_started` | Acknowledges a `session_start`; written by a runtime that keeps per-session context or has opened the CH-RUNTIMEOPS |
 | `status` | Optional status/trace update |
 
 ### Exit codes
