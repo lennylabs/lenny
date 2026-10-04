@@ -154,7 +154,7 @@ Everything in Basic, plus a local connection to a tool server that the platform 
 Everything in Standard, plus a CH-RUNTIMEOPS: a second local connection that carries operational signals:
 
 - Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-runtime-ops`), sending the manifest's nonce as the connection's first line.
-- Answers each `session_start` with `session_started`; the platform writes a session's operational signals only after that acknowledgement, except for a session whose start did not wait for that answer (see the [CH-RUNTIMEOPS ordering](../reference/adapter-contract.md#ch-runtimeops-full-level-only)), and each signal names its session by `sessionId`.
+- Answers each `session_start` with `session_started`. Each operational signal names its session by `sessionId`, and the [Adapter Contract](../reference/adapter-contract.md#ch-runtimeops-full-level-only) states how the signals are ordered against the acknowledgement.
 - Supports cooperative checkpoints: the platform asks the runtime to quiesce, the runtime replies when it's at a safe point, the snapshot is captured, and the platform signals completion.
 - Survives pod failures with consistent checkpoints.
 - Handles interrupts cleanly via `interrupt_request` / `interrupt_acknowledged`.

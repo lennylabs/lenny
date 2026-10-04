@@ -326,7 +326,7 @@ Runtimes that implement the Full integration level open a **CH-RUNTIMEOPS** -- a
 2. The runtime sends the connection handshake: its first line is `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce`, and in nonce-only mode it answers the adapter's `_lennyChallenge` (see the [Adapter Contract](../reference/adapter-contract.md#connection-handshake)).
 3. The adapter sends `lifecycle_capabilities` listing available signals.
 4. The runtime responds with `lifecycle_support` listing capabilities it supports.
-5. The channel stays open for the life of the runtime process and serves every session on the pod. Each session-scoped message carries the `sessionId` of the session it concerns, and the adapter writes a session's messages only after the runtime has answered that session's `session_start` with `session_started`, except for a session whose start did not wait for that answer (see the [Adapter Contract](../reference/adapter-contract.md#ch-runtimeops-full-level-only)).
+5. The channel stays open for the life of the runtime process and serves every session on the pod. Each session-scoped message carries the `sessionId` of the session it concerns. The [Adapter Contract](../reference/adapter-contract.md#ch-runtimeops-full-level-only) states how these messages are ordered against the runtime's `session_started` answer to the session's `session_start`.
 
 ### Messages
 

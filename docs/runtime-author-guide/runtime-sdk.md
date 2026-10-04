@@ -45,7 +45,7 @@ func main() {
 }
 ```
 
-`Run` reads the inbound frames from stdin, answers heartbeats, and honors the shutdown deadline. A handler returns a `Reply` built with `runtime.TextReply` or from `runtime.MessagePart` values; `runtime.Text` constructs a text part.
+`Run` reads the inbound frames from stdin, answers heartbeats, and honors the shutdown deadline. It returns after a `shutdown` frame or the end of stdin, once it has ended every session the process holds, as the `OnTerminate` entry under [Sessions](#sessions) describes. A handler returns a `Reply` built with `runtime.TextReply` or from `runtime.MessagePart` values; `runtime.Text` constructs a text part.
 
 ## Sessions
 
@@ -53,7 +53,7 @@ One runtime process serves any number of sessions, one after another and at once
 
 - **`OnCreate`** runs when a session's `session_start` frame opens it. Its `CreateRequest` carries the session's own context from that frame: `SessionID`, `Credentials` loaded from the path the frame names, `ExperimentContext`, `TracingContext`, and `LLM`. Once `OnCreate` returns, the SDK writes the session's `session_started` acknowledgement; when `OnCreate` returns an error, the SDK writes `session_started` with `error` and answers each later message for that session with an errored `response`, and the process keeps serving its other sessions.
 - **`OnMessage`** runs for each of the session's messages. `Message.SessionID` names the session the message belongs to.
-- **`OnTerminate`** runs when the session ends, on its `session_end` frame or at the end of the connection, and receives the session's identifier as `sessionID`.
+- **`OnTerminate`** runs when the session ends and receives the session's identifier as `sessionID`. A session ends on its `session_end` frame, on a `shutdown` frame, or at the end of stdin. On a `shutdown` frame or the end of stdin, the SDK finishes each live session's queued messages and then calls `OnTerminate` for every session the process holds, passing the `shutdown` frame's reason, or `stdin_closed` when stdin ended without one. Only `session_end` discards the session's queued messages before `OnTerminate` runs.
 
 Calls for different sessions run concurrently, so keep per-session state keyed by session identifier and make the handler safe for concurrent use. Work done in `OnCreate` delays the session's `session_started`. When the adapter waits for that frame, its wait is bounded, and a start whose wait ends before the frame arrives fails. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines `session_start`, `session_started`, and `session_end`.
 

@@ -55,32 +55,52 @@ func TestSessionStartedWaitBoundIsConditionalOnARequestDeadline(t *testing.T) {
 	}
 }
 
+// orderingReferencePage is the one page that states the CH-RUNTIMEOPS
+// ordering against `session_started`. Every other page links to its
+// CH-RUNTIMEOPS section rather than restating the rule, so the rule and its
+// exception cannot drift apart across copies.
+var orderingReferencePage = filepath.Join("docs", "reference", "adapter-contract.md")
+
 // spec: 28.5.3 (CH-RUNTIMEOPS Messages), 28.5.3 (CH-MSGSOCK Outbound:
 // session_started)
-// diagnosis: a docs/ page states that a session's CH-RUNTIMEOPS frames follow
+// diagnosis: docs/reference/adapter-contract.md no longer states that a
 //
-//	its `session_started` acknowledgement without the exception for a session
-//	whose start did not wait for it. A Full-level author who reads the absolute
-//	statement does not expect session-scoped frames before the acknowledgement.
+//	session's CH-RUNTIMEOPS frames follow its `session_started`, or states it
+//	without the exception for a session whose start did not wait for it. A
+//	Full-level author who reads the absolute statement does not expect
+//	session-scoped frames before the acknowledgement.
 func TestRuntimeOpsOrderingAgainstSessionStartedStatesItsException(t *testing.T) {
-	root := repoRoot(t)
-	pages := []string{
-		filepath.Join("docs", "reference", "adapter-contract.md"),
-		filepath.Join("docs", "runtime-author-guide", "integration-levels.md"),
-		filepath.Join("docs", "getting-started", "concepts.md"),
-		filepath.Join("docs", "api", "internal.md"),
+	body := readDocPage(t, filepath.Join(repoRoot(t), orderingReferencePage))
+	statements := orderingStatementLines(body)
+	if len(statements) == 0 {
+		t.Fatalf("%s: no longer states the CH-RUNTIMEOPS ordering against session_started", orderingReferencePage)
 	}
-	for _, rel := range pages {
-		body := readDocPage(t, filepath.Join(root, rel))
-		found := false
-		for i, line := range orderingStatementLines(body) {
-			found = true
-			if !containsAnyTerm(line, orderingExceptionPhrases) {
-				t.Errorf("%s: ordering statement %d omits the exception for a start that did not wait: %q", rel, i+1, line)
-			}
+	for i, line := range statements {
+		if !containsAnyTerm(line, orderingExceptionPhrases) {
+			t.Errorf("%s: ordering statement %d omits the exception for a start that did not wait: %q", orderingReferencePage, i+1, line)
 		}
-		if !found {
-			t.Errorf("%s: no longer states the CH-RUNTIMEOPS ordering against session_started", rel)
+	}
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS Messages)
+// diagnosis: a docs/ page other than the adapter-contract reference restates
+//
+//	the CH-RUNTIMEOPS ordering against `session_started` instead of linking to
+//	the reference's CH-RUNTIMEOPS section. Each copy of the rule and its
+//	exception drifts from the reference independently; replace the restatement
+//	with a link to adapter-contract.md#ch-runtimeops-full-level-only.
+func TestRuntimeOpsOrderingAgainstSessionStartedIsStatedOnlyInTheReference(t *testing.T) {
+	root := repoRoot(t)
+	for _, path := range markdownUnder(t, root, "docs") {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			t.Fatalf("relative path of %s: %v", path, err)
+		}
+		if rel == orderingReferencePage {
+			continue
+		}
+		for _, line := range orderingStatementLines(readDocPage(t, path)) {
+			t.Errorf("%s: restates the CH-RUNTIMEOPS ordering against session_started; link to the reference instead: %q", rel, line)
 		}
 	}
 }
