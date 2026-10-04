@@ -6,7 +6,7 @@
 
 **Session frames (SPEC-3).** The §28.5.3 `CH-MSGSOCK` card owns the `session_start` and `session_end` schemas, their write rules, the **Session frame writes.** table of every path that writes either frame, and the session-error rule. The table's open sequence rests on two edits SPEC-3 also stages: the §5.2 slot serialization, under which a reclaim hold cannot end while a start's open sequence runs, and the §4.7.1 rule-8 confirmation restated as a comparison of entry identity. Each `session_start` member is a former §4.7.6 manifest row, which SPEC-2 deletes from the manifest so that each field has one carrier. `shutdown` stays process-scoped.
 
-**Session addressing on `CH-RUNTIMEOPS` (SPEC-4).** The session-scoped `CH-RUNTIMEOPS` frames carry a required `sessionId`. The `terminate` frame is deleted.
+**Session addressing on `CH-RUNTIMEOPS` (SPEC-4).** The session-scoped `CH-RUNTIMEOPS` frames carry a required `sessionId`. The `CH-RUNTIMEOPS` card also states how a runtime treats such a frame when it arrives before the session's `session_start`, because the `session_start` write order holds only on `CH-MSGSOCK`. The `terminate` frame is deleted.
 
 **SDK contract (SPEC-5) and conformance (SPEC-6).** §15.7 states per-session handler invocation and links to the card for the frames. §15.4.6 gains a Basic **session lifetime** category, retargets the Full **deadline signal handling** category onto `deadline_approaching`, and points the Full **credential rotation handling** category at the credential file that `credentials_rotated` names.
 
@@ -22,6 +22,7 @@
 - `deadline_approaching` can arrive with `trigger: idle` while no message is in flight. SPEC-4's `deadline_approaching` row governs the answer.
 - A `type: mcp` runtime speaks no `CH-MSGSOCK` frame and is outside the contract (SPEC-1).
 - A runtime can dial with a nonce that a later manifest write replaced, or a hostile peer can dial with none. SPEC-8 **Runtime connection handshake.** governs both.
+- A session-scoped `CH-RUNTIMEOPS` frame can reach a runtime before its session's `session_start`, because the two channels are separate connections that the runtime reads independently and no acknowledgement orders them. SPEC-4 Edit 2 states the hold. The residual is a frame whose wait ends unmatched, which the runtime drops without a reply, so the adapter's own bound for that frame applies: a `checkpoint_request` times out at its `deadlineMs`, an `interrupt_request` ends in `INTERRUPT_TIMEOUT` with the session `suspended`, a `credentials_rotated` falls back after 60 seconds to the Standard-level rotation path, and a `deadline_approaching` or `files_updated` is not delivered. A frame the adapter sent shortly before a session ended can also wait for, and reach, a later start of the same session on the same pod when that start's `session_start` arrives within the wait.
 
 ## Staged edits
 
@@ -188,7 +189,7 @@ The bullet's second sentence (the adapter is the protocol initiator) stays uncha
 **Edit 3 (card **Timing.** bullet).** Replace `A \`shutdown\` carries a \`deadline_ms\` by which the runtime must finish its current work and exit` with:
 
 ```markdown
-`session_start` and `session_end` are not acknowledged and carry no deadline; each travels in order ahead of or behind the session's other frames. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit
+`session_start` and `session_end` are not acknowledged and carry no deadline; each travels in order ahead of or behind the session's other frames on the same connection or loop. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit
 ```
 
 **Edit 4 (**Message schemas** preamble).** In the paragraph that begins `All **content** messages on stdin`, replace `Lifecycle messages (\`heartbeat\`, \`shutdown\`) use their own minimal schemas defined below and are not \`MessageEnvelope\` instances. Runtimes MUST ignore unrecognized fields.` with:
@@ -215,7 +216,7 @@ Lifecycle messages (`session_start`, `session_end`, `heartbeat`, and `shutdown`)
 
 `session_start` opens a session on the runtime and carries the session's own context ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). The following rules govern it:
 
-1. The adapter writes a session's `session_start` once for each start and each resume of the session, on the paths **Session frame writes.** below states, before any other frame addressed to the session.
+1. The adapter writes a session's `session_start` once for each start and each resume of the session, on the paths **Session frame writes.** below states. On the `CH-MSGSOCK` connection or loop that carries the session, the frame precedes any other frame addressed to the session. This order holds on that connection or loop only. It does not extend to `CH-RUNTIMEOPS`, which is a separate connection.
 2. A runtime that keeps per-session context creates the session's context from this frame. A runtime that keeps none may ignore the frame under the unknown-type rule in the preamble above.
 3. A runtime ignores a `session_start` for a session it already holds.
 
@@ -343,7 +344,7 @@ Adapter to runtime: `lifecycle_capabilities`, `checkpoint_request`, `checkpoint_
 **Edit 2 (card **Messages.** bullet, addressing sentence).** Insert after the sentence that ends `the field set of each is the message-schema table below.`:
 
 ```markdown
-`checkpoint_request`, `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, `files_updated`, and `llm_request_completed` are session-scoped and carry the `sessionId` of the session they concern ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"); the runtime's replies stay correlated by `checkpointId`, `interruptId`, and `leaseId`. `lifecycle_capabilities`, `lifecycle_support`, and `llm_request_started` are process-scoped and carry no `sessionId`.
+`checkpoint_request`, `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, `files_updated`, and `llm_request_completed` are session-scoped and carry the `sessionId` of the session they concern ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"); the runtime's replies stay correlated by `checkpointId`, `interruptId`, and `leaseId`. `lifecycle_capabilities`, `lifecycle_support`, and `llm_request_started` are process-scoped and carry no `sessionId`. Because this channel is a connection separate from `CH-MSGSOCK`, an adapter-to-runtime session-scoped frame can reach the runtime before the session's `session_start` (`CH-MSGSOCK` **Inbound: `session_start`** rule 1). A runtime that keeps per-session context and reads such a frame naming a session it does not hold keeps the frame until it reads that session's `session_start`, and then handles it, or until a bounded wait of the runtime's choosing ends, and then drops it without a reply. The wait ends before the `deadlineMs` of a frame that carries one.
 ```
 
 **Edit 3 (message-schema table).** Replace the five rows below, delete the `terminate` row, and insert the `files_updated` row after the `deadline_approaching` row. Each row stays one physical line with the table's two-space indent:

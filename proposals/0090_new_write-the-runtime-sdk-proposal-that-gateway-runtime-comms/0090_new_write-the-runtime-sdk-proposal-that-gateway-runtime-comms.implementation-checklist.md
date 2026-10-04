@@ -6,8 +6,8 @@
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands the `CH-MSGSOCK` session frames and every edit SPEC-3 stages with them.
       Tiers 0, 11. Depends on: S1, S2
-- [ ] **S4 · spec** — SPEC-4. Lands the `CH-RUNTIMEOPS` session addressing and the `terminate` deletion.
-      Tiers 0, 11. Depends on: S1
+- [ ] **S4 · spec** — SPEC-4. Lands the `CH-RUNTIMEOPS` session addressing, the hold for a frame that arrives before its session's `session_start`, and the `terminate` deletion.
+      Tiers 0, 11. Depends on: S1, S3
 - [ ] **S5 · spec** — SPEC-5. Lands the §15.7 SDK contract.
       Tiers 0, 11. Depends on: S3
 - [ ] **S6 · spec** — SPEC-6. Lands the §15.4.6 conformance categories.
