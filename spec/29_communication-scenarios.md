@@ -339,8 +339,8 @@ state that the READY signal is one of them.
 
 27. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `adapter` →
     `runtime`, `CH-RUNTIMEOPS`,
-    `intra-pod`. The adapter sends `lifecycle_capabilities` as the first message on channel open
-    ([§4.7](04_system-components.md#47-runtime-adapter)).
+    `intra-pod`. The adapter sends `lifecycle_capabilities` as the first frame after the connection
+    handshake ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1).
 
 28. On the first session of a pod-warm pod with a Full-level `type: agent` runtime: `runtime` →
     `adapter`, `CH-RUNTIMEOPS`,

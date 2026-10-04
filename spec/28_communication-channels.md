@@ -531,9 +531,9 @@ the connection it runs on. The runtime is the dialling participant on every chan
   communicates with the agent binary over abstract Unix sockets in the Linux abstract namespace, which
   carry no filesystem path. The specification states no socket name for this channel. The transport
   protections it states for the adapter-agent boundary are the `SO_PEERCRED` peer-UID check against the
-  expected agent UID and the manifest-nonce handshake presented as the first message on the socket. When
-  `Runtime.spec.requireSoPeercred` is `false` the peer check is unavailable and the adapter supplements
-  the static nonce with a per-connection 128-bit challenge whose `HMAC-SHA256` response it validates
+  expected agent UID and the connection handshake that
+  [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1 **Runtime connection
+  handshake.** states, which in nonce-only mode includes the per-connection challenge
   ([§4.7](04_system-components.md#47-runtime-adapter),
   [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - **Axes.** Content plane, dialled by the runtime, message authority on both sides, Unix socket JSON
@@ -558,8 +558,10 @@ the connection it runs on. The runtime is the dialling participant on every chan
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not
   state the heartbeat interval. A runtime that keeps per-session context or has opened `CH-RUNTIMEOPS` answers `session_start` with `session_started` (**Outbound: `session_started`** rule 1), and the adapter's wait for that answer is bounded as **Outbound: `session_started`** states. `session_end` is not acknowledged and carries no deadline. `session_start` and `session_end` each travel in order ahead of or behind the session's other frames on the same connection or loop. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit, with no acknowledgement required; a runtime that has not exited by the deadline
   is sent SIGTERM and then SIGKILL 10 seconds later
-  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). In nonce-only mode the
-  challenge response is due within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter)).
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The connection handshake's
+  nonce line, and in nonce-only mode its challenge response, are each due within 500 ms
+  ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1, **Runtime connection
+  handshake.**).
 - **Exclusivity.** The specification states no exclusivity constraint on this channel and names no
   enforcing guard. A pod multiplexes every session's stream over the one channel, keyed by `sessionId`,
   whatever its pool's `sessionPolicy.maxConcurrentSessions`. A runtime implements a dispatch loop keyed on
@@ -1144,10 +1146,9 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 - **Endpoint.** The abstract Unix socket `@lenny-runtime-ops`, advertised in the adapter manifest as
   `runtimeOps.socket` ([§4.7](04_system-components.md#47-runtime-adapter)). The runtime connects as a
   client and the adapter listens. The protections stated for the socket are the
-  `SO_PEERCRED` peer-UID check against the expected agent UID and the manifest-nonce handshake, which the
-  runtime presents as the first message on the socket. When `Runtime.spec.requireSoPeercred` is `false`
-  the peer check is unavailable and the adapter supplements the static nonce with a per-connection
-  128-bit challenge whose `HMAC-SHA256` response it validates
+  `SO_PEERCRED` peer-UID check against the expected agent UID and the connection handshake that
+  [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1 **Runtime connection
+  handshake.** states, which in nonce-only mode includes the per-connection challenge
   ([§4.7](04_system-components.md#47-runtime-adapter),
   [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - **Axes.** Control plane, dialled by the runtime, message authority on both sides, Unix socket JSON
@@ -1179,7 +1180,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 
   | `type`                      | Direction          | Fields                                                                                                                                                              | Notes                                                                       |
   | --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-  | `lifecycle_capabilities`    | Adapter → Runtime  | `type`, `protocolVersion` (string, e.g., `"1.0"`), `capabilities` (array of strings: `"checkpoint"`, `"interrupt"`, `"credential_rotation"`, `"deadline_signal"`) | First message sent on channel open. Runtime must reply with `lifecycle_support`. |
+  | `lifecycle_capabilities`    | Adapter → Runtime  | `type`, `protocolVersion` (string, e.g., `"1.0"`), `capabilities` (array of strings: `"checkpoint"`, `"interrupt"`, `"credential_rotation"`, `"deadline_signal"`) | First frame after the connection handshake. Runtime must reply with `lifecycle_support`. |
   | `lifecycle_support`         | Runtime → Adapter  | `type`, `capabilities` (array of strings — subset of offered capabilities the runtime supports)                                                                    | Runtime's capability handshake reply.                                       |
   | `checkpoint_request`        | Adapter → Runtime  | `type`, `sessionId` (string), `checkpointId` (string), `deadlineMs` (integer — ms until adapter times out waiting)                                                 | Adapter requests the named session's runtime work quiesce and signal readiness. Runtime must reply with `checkpoint_ready` within `deadlineMs`. |
   | `checkpoint_complete`       | Adapter → Runtime  | `type`, `sessionId` (string), `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                        | Confirms snapshot upload result; the named session's work may resume.       |
@@ -1196,8 +1197,10 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   not open it operates in fallback-only mode ([§4.7](04_system-components.md#47-runtime-adapter),
   [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The runtime reads
   `runtimeOps.socket` from the manifest the adapter writes before it spawns the runtime binary
-  ([§4.7](04_system-components.md#47-runtime-adapter)). `lifecycle_capabilities` is the first message
-  sent on channel open and the runtime replies with `lifecycle_support`, which is the handshake the
+  ([§4.7](04_system-components.md#47-runtime-adapter)). After the connection handshake
+  ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1),
+  `lifecycle_capabilities` is the first frame sent on the channel and the runtime replies with
+  `lifecycle_support`, which is the handshake the
   gateway reads to select the credential-rotation strategy for the session (the message-schema table
   above, [§4.7](04_system-components.md#47-runtime-adapter)). Before it sends `credentials_rotated` the adapter
   rewrites the addressed session's own `/run/lenny/slots/{sessionId}/credentials.json` and waits for the
@@ -1214,8 +1217,10 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   `credentials_rotated` is unbounded for `rotationTrigger: proactive_renewal` and capped at 300 seconds
   for every other trigger, and a wait beyond 60 seconds emits a
   `credential_rotation_inflight_wait_long` warning event
-  ([§4.7](04_system-components.md#47-runtime-adapter)). In nonce-only mode the challenge response is due
-  within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter)).
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The connection handshake's nonce line, and in
+  nonce-only mode its challenge response, are each due within 500 ms
+  ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1, **Runtime connection
+  handshake.**).
 - **Exclusivity.** The specification states no exclusivity constraint on this channel and names no
   enforcing guard. It bounds the operations the frames carry rather than the channel: the adapter's
   pod-level operation lock serializes `Checkpoint` and `Interrupt` across the pod's slots, so a
