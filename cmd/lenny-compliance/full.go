@@ -74,10 +74,6 @@ func (r *Report) recordCheck(name, spec string, detail string, err error) {
 	r.Checks = append(r.Checks, entry)
 }
 
-// fullSessionID is the session the Full-level battery's fake adapter
-// binds its manifest and its per-session credential file to.
-const fullSessionID = "sess_compliance_full"
-
 // fakeAdapter spins up a Unix-socket listener that plays the adapter
 // side of the CH-RUNTIMEOPS and writes a manifest pointing the
 // runtime at it. The returned cleanup MUST be called.
@@ -133,14 +129,14 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	// spec: §6.1 — the credential file is written per session under
 	// slots/{sessionId}/, so the harness names that path on the manifest
 	// and on every credentials_rotated frame it sends.
-	credentialsPath := filepath.Join(dir, "run", "lenny", "slots", fullSessionID, "credentials.json")
+	credentialsPath := filepath.Join(dir, "run", "lenny", "slots", complianceSessionID, "credentials.json")
 	if err := writeCredentialFile(credentialsPath, "anthropic"); err != nil {
 		os.RemoveAll(dir)
 		return nil, nil, err
 	}
 	body, _ := json.Marshal(map[string]any{
-		"sessionId":       fullSessionID,
-		"taskId":          fullSessionID,
+		"sessionId":       complianceSessionID,
+		"taskId":          complianceSessionID,
 		"credentialsPath": credentialsPath,
 		"runtimeOps":      map[string]any{"socket": socketPath},
 		"mcpNonce":        "nonce_compliance_harness",
@@ -324,7 +320,7 @@ func checkCheckpointQuiesce(binary string, _ time.Duration, _ bool) (string, err
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd, stdin, _, _, err := fa.spawn(ctx, binary)
+	cmd, stdin, outScan, _, err := fa.spawn(ctx, binary)
 	if err != nil {
 		return "", err
 	}
@@ -336,9 +332,13 @@ func checkCheckpointQuiesce(binary string, _ time.Duration, _ bool) (string, err
 	if err := handshake(fa); err != nil {
 		return "", err
 	}
+	if err := openComplianceSession(stdin, outScan, 3*time.Second); err != nil {
+		return "", err
+	}
 	cpID := "ckpt_" + randomID()
 	if err := fa.send(map[string]any{
 		"type":         "checkpoint_request",
+		"sessionId":    complianceSessionID,
 		"checkpointId": cpID,
 		"deadlineMs":   5000,
 	}); err != nil {
@@ -352,7 +352,7 @@ func checkCheckpointQuiesce(binary string, _ time.Duration, _ bool) (string, err
 		return "", fmt.Errorf("expected checkpoint_ready with id %q, got %v", cpID, reply)
 	}
 	// Complete the checkpoint so the runtime can resume.
-	_ = fa.send(map[string]any{"type": "checkpoint_complete", "checkpointId": cpID, "status": "ok"})
+	_ = fa.send(map[string]any{"type": "checkpoint_complete", "sessionId": complianceSessionID, "checkpointId": cpID, "status": "ok"})
 	return "checkpoint_request → checkpoint_ready round-trip", nil
 }
 
@@ -364,7 +364,7 @@ func checkInterruptAck(binary string, _ time.Duration, _ bool) (string, error) {
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd, stdin, _, _, err := fa.spawn(ctx, binary)
+	cmd, stdin, outScan, _, err := fa.spawn(ctx, binary)
 	if err != nil {
 		return "", err
 	}
@@ -376,9 +376,13 @@ func checkInterruptAck(binary string, _ time.Duration, _ bool) (string, error) {
 	if err := handshake(fa); err != nil {
 		return "", err
 	}
+	if err := openComplianceSession(stdin, outScan, 3*time.Second); err != nil {
+		return "", err
+	}
 	intID := "int_" + randomID()
 	if err := fa.send(map[string]any{
 		"type":        "interrupt_request",
+		"sessionId":   complianceSessionID,
 		"interruptId": intID,
 		"deadlineMs":  2000,
 	}); err != nil {
@@ -402,7 +406,7 @@ func checkCredentialRotation(binary string, _ time.Duration, _ bool) (string, er
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd, stdin, _, _, err := fa.spawn(ctx, binary)
+	cmd, stdin, outScan, _, err := fa.spawn(ctx, binary)
 	if err != nil {
 		return "", err
 	}
@@ -414,6 +418,9 @@ func checkCredentialRotation(binary string, _ time.Duration, _ bool) (string, er
 	if err := handshake(fa); err != nil {
 		return "", err
 	}
+	if err := openComplianceSession(stdin, outScan, 3*time.Second); err != nil {
+		return "", err
+	}
 	// The adapter rewrites the session's own credential file before it
 	// names that file on the frame, so the runtime's re-read lands on a
 	// bundle that exists. spec: §4.7; §6.1.
@@ -423,6 +430,7 @@ func checkCredentialRotation(binary string, _ time.Duration, _ bool) (string, er
 	leaseID := "lease_" + randomID()
 	if err := fa.send(map[string]any{
 		"type":            "credentials_rotated",
+		"sessionId":       complianceSessionID,
 		"provider":        "anthropic",
 		"credentialsPath": fa.credentialsPath,
 		"leaseId":         leaseID,
@@ -478,8 +486,8 @@ func checkDeadlineSignal(binary string, _ time.Duration, _ bool) (string, error)
 	}
 	ch := make(chan outResult, 1)
 	go func() {
-		if outScan.Scan() {
-			ch <- outResult{line: outScan.Text()}
+		if line, ok := scanFrame(outScan); ok {
+			ch <- outResult{line: line}
 			return
 		}
 		ch <- outResult{err: outScan.Err()}
@@ -499,6 +507,49 @@ func checkDeadlineSignal(binary string, _ time.Duration, _ bool) (string, error)
 		return "deadline_signal → final response emitted", nil
 	case <-time.After(3 * time.Second):
 		return "", errors.New("runtime did not emit a final response within 3s of terminate")
+	}
+}
+
+// openComplianceSession opens complianceSessionID on the runtime's stdin
+// with its session_start frame and one message, and returns once the
+// runtime's response to that message arrives on stdout, skipping
+// session_started frames. A Full check calls it before it writes a
+// session-scoped CH-RUNTIMEOPS frame, so the runtime holds the session the
+// frame names: CH-RUNTIMEOPS is a separate connection, so the stdin order
+// does not reach it, and the response shows the runtime read the
+// session_start that precedes the message.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §15.4.6.
+func openComplianceSession(stdin io.Writer, outScan *bufio.Scanner, wait time.Duration) error {
+	msg := `{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5F1","from":{"kind":"client","id":"client_alice"},"sessionId":"` +
+		complianceSessionID + `","input":[{"type":"text","inline":"ping"}]}`
+	for _, line := range withSessionStart(msg) {
+		if _, err := io.WriteString(stdin, line+"\n"); err != nil {
+			return fmt.Errorf("write session input: %w", err)
+		}
+	}
+	type result struct {
+		line string
+		ok   bool
+	}
+	ch := make(chan result, 1)
+	go func() {
+		line, ok := scanFrame(outScan)
+		ch <- result{line: line, ok: ok}
+	}()
+	select {
+	case r := <-ch:
+		if !r.ok {
+			return errors.New("runtime closed stdout before answering the session's message")
+		}
+		var resp struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(r.line), &resp); err != nil || resp.Type != "response" {
+			return fmt.Errorf("expected a response to the session's message, got %q", r.line)
+		}
+		return nil
+	case <-time.After(wait):
+		return fmt.Errorf("runtime did not answer the session's message within %s", wait)
 	}
 }
 

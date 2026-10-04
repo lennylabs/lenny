@@ -11,10 +11,11 @@
 // the sessions the process has been given rather than the entries the slot
 // registry holds, and it is empty whenever another session's code may
 // still be resident. The pod-global surfaces that read it are the
-// intra-pod MCP providers, the direct-mode token fold, and the
-// control-event session stamp, so a session named wrongly here dispatches
-// one user's tool call under another user's principal and folds one
-// session's tokens into another's budget.
+// intra-pod MCP providers and the control-event session stamp, so a
+// session named wrongly here dispatches one user's tool call under another
+// user's principal and stamps a control event with a session that did not
+// raise it. The direct-mode token fold does not read it: each
+// llm_request_completed frame names its own session.
 //
 // The window this case drives is the one only concurrency reaches: two
 // co-tenants ending at once, one release returned from Runtime.Close and
@@ -40,9 +41,8 @@ import (
 // diagnosis: the accessor named a session while another session's code was
 // still resident in the pod's shared runtime process. Every pod-global
 // surface reads it, so a wrong answer here dispatches an intra-pod
-// tools/call under a principal that is not the caller's, charges a
-// departing session's token fold to a co-tenant's §11.2 budget, and stamps
-// a control event with a session that did not raise it. A predicate keyed
+// tools/call under a principal that is not the caller's and stamps a
+// control event with a session that did not raise it. A predicate keyed
 // on the slot registry produces exactly this failure, because the registry
 // is down to the incoming session's single entry at the moment it is
 // admitted.

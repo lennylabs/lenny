@@ -81,7 +81,7 @@ func TestRotationInflightGateBlocksUntilDrained_spec_4_7(t *testing.T) {
 	expectNoFrame(t, fr, 200*time.Millisecond)
 
 	// Draining the in-flight request releases the gate.
-	fr.write(lifecycleFrame{Type: "llm_request_completed", RequestID: "r1", Provider: "anthropic", Status: "ok"})
+	fr.write(lifecycleFrame{Type: "llm_request_completed", SessionID: "sess-1", RequestID: "r1", Provider: "anthropic", Status: "ok"})
 	if got := fr.read(); got.Type != "credentials_rotated" || got.LeaseID != "l-2" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated lease l-2", got)
 	}

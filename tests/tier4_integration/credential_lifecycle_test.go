@@ -396,7 +396,7 @@ func TestRuntimeOpsManifestKeyResolvesTheOperationsSocket(t *testing.T) {
 		// unacknowledged rotation the caller reads as success. spec: §4.7.
 		rotateCtx, rotateCancel := context.WithTimeout(ctx, 2*time.Second)
 		defer rotateCancel()
-		err := channel.RotateCredentials(rotateCtx, clProvider,
+		err := channel.RotateCredentials(rotateCtx, "sess-no-operations-socket", clProvider,
 			filepath.Join(t.TempDir(), credfile.FileName), "lease-no-operations-socket")
 		if err == nil {
 			t.Fatalf("manifest key %q: the Full-level rotation handshake reported success with no runtime connected", retiredRuntimeOpsManifestKey)

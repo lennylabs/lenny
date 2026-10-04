@@ -311,10 +311,12 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	// the signal is safe to emit now. It is best-effort: a not-connected
 	// channel (no Full-level runtime, or the pre-start path) is benign,
 	// and the promoted files are already on disk regardless. F-7.4.6.
+	// The frame names the session whose workspace was promoted.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	if midSession && s.Lifecycle != nil {
-		if sigErr := s.Lifecycle.SignalFilesUpdated(); sigErr != nil {
+		if sigErr := s.Lifecycle.SignalFilesUpdated(sessionID); sigErr != nil {
 			log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v",
-				req.GetSessionId().GetValue(), sigErr)
+				sessionID, sigErr)
 		}
 	}
 	// F-7.4.15 / F-14.1.18: transcribe the §14 advisory warnings onto

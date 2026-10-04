@@ -30,6 +30,21 @@ func startedSession(t *testing.T, sessionID string) (*adapter.Server, *fakeRunti
 	return s, rt
 }
 
+// twoStartedSessions builds a concurrent-pool adapter Server with two
+// sessions bound to the pod's one shared runtime, so a test can assert
+// that a session-scoped CH-RUNTIMEOPS frame names the session its RPC
+// addressed rather than its co-tenant.
+func twoStartedSessions(t *testing.T, first, second string) (*adapter.Server, *fakeRuntime) {
+	t.Helper()
+	s, rt := concurrentServer(t)
+	for _, id := range []string{first, second} {
+		if _, err := s.StartSession(context.Background(), slotStartReq(id)); err != nil {
+			t.Fatalf("StartSession(%s): %v", id, err)
+		}
+	}
+	return s, rt
+}
+
 func TestInterruptCleanSignalsTheRuntime(t *testing.T) {
 	s, rt := startedSession(t, "sess-1")
 
@@ -196,8 +211,12 @@ func (lr *lifecycleRuntime) send(m map[string]any) {
 	}
 }
 
+// spec: §4.7, §28.5.3 (CH-RUNTIMEOPS, Messages)
+// A clean interrupt of a Full-level runtime goes over CH-RUNTIMEOPS, and
+// with two sessions bound to the pod the interrupt_request names the
+// session the RPC addressed.
 func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
-	s, rt := startedSession(t, "sess-1")
+	s, rt := twoStartedSessions(t, "sess-1", "sess-2")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
 	lr := dialLifecycle(t, lc)
@@ -205,7 +224,7 @@ func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
 	respc := make(chan *adapterv1.InterruptResponse, 1)
 	go func() {
 		resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
-			SessionId:  &adapterv1.SessionId{Value: "sess-1"},
+			SessionId:  &adapterv1.SessionId{Value: "sess-2"},
 			Mode:       adapterv1.InterruptRequest_MODE_CLEAN,
 			DeadlineMs: 2000,
 		})
@@ -220,6 +239,9 @@ func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
 	req := lr.recv()
 	if req["type"] != "interrupt_request" {
 		t.Fatalf("runtime saw %v, want interrupt_request", req["type"])
+	}
+	if req["sessionId"] != "sess-2" {
+		t.Errorf("interrupt_request sessionId = %v, want sess-2", req["sessionId"])
 	}
 	lr.send(map[string]any{"type": "interrupt_acknowledged", "interruptId": req["interruptId"]})
 
@@ -236,16 +258,17 @@ func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
 	}
 }
 
-// spec: §11.3 — DEADLINE_APPROACHING is delivered over the
-// CH-RUNTIMEOPS. F-11.3.5.
+// spec: §11.3, §28.5.3 (CH-RUNTIMEOPS, Messages) — DEADLINE_APPROACHING
+// is delivered over the CH-RUNTIMEOPS, and with two sessions bound to the
+// pod the frame names the session the RPC addressed. F-11.3.5.
 func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
-	s, _ := startedSession(t, "sess-1")
+	s, _ := twoStartedSessions(t, "sess-1", "sess-2")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
 	lr := dialLifecycle(t, lc)
 
 	resp, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
-		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		SessionId:   &adapterv1.SessionId{Value: "sess-2"},
 		RemainingMs: 300000,
 		Trigger:     "session_age",
 	})
@@ -258,6 +281,9 @@ func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
 	frame := lr.recv()
 	if frame["type"] != "deadline_approaching" {
 		t.Fatalf("runtime saw %v, want deadline_approaching", frame["type"])
+	}
+	if frame["sessionId"] != "sess-2" {
+		t.Errorf("deadline_approaching sessionId = %v, want sess-2", frame["sessionId"])
 	}
 	if frame["trigger"] != "session_age" {
 		t.Errorf("trigger = %v, want session_age", frame["trigger"])

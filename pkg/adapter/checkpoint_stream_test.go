@@ -144,6 +144,7 @@ func driveCheckpoint(t *testing.T, stream adapterv1.Adapter_CheckpointClient, si
 // checkpoint_complete carrying the checkpoint disposition.
 type lcFrame struct {
 	Type         string   `json:"type"`
+	SessionID    string   `json:"sessionId,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	CheckpointID string   `json:"checkpointId,omitempty"`
 	Status       string   `json:"status,omitempty"`
@@ -614,6 +615,58 @@ func TestCheckpointStreamFullLevelReportsOkComplete_spec_4_4_241(t *testing.T) {
 	}
 	if done.Status != "ok" {
 		t.Fatalf("checkpoint_complete status = %q, want ok", done.Status)
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §4.4
+// With two sessions bound to the pod, a checkpoint of the second session
+// sends checkpoint_request and checkpoint_complete naming that session,
+// so a runtime holding both quiesces and resumes only the one being
+// checkpointed.
+func TestCheckpointStreamQuiesceFramesNameTheSession_spec_28_5_3(t *testing.T) {
+	transport := &recordingTransport{}
+	s := slotCheckpointServer(t, transport)
+	ctx := context.Background()
+	for _, slot := range []string{"sess-alice", "sess-bob"} {
+		if _, err := s.StartSession(ctx, slotStartReq(slot)); err != nil {
+			t.Fatalf("StartSession(%s): %v", slot, err)
+		}
+		seedFile(t, filepath.Join(s.WorkspaceBase, "slots", slot, "current", slot+".txt"), "content-"+slot)
+	}
+	fr := wireLifecycle(t, s)
+	client, _ := adapterClient(t, s)
+
+	frames := make(chan lcFrame, 2)
+	go func() {
+		req := fr.read()
+		frames <- req
+		fr.write(lcFrame{Type: "checkpoint_ready", CheckpointID: req.CheckpointID})
+		frames <- fr.read()
+	}()
+
+	stream, err := client.Checkpoint(ctx)
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-bob",
+			SessionId:      &adapterv1.SessionId{Value: "sess-bob"},
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	if _, failed, _ := driveCheckpoint(t, stream, nil); failed != nil {
+		t.Fatalf("checkpoint failed unexpectedly: %+v", failed)
+	}
+
+	for _, want := range []string{"checkpoint_request", "checkpoint_complete"} {
+		got := <-frames
+		if got.Type != want || got.SessionID != "sess-bob" {
+			t.Fatalf("lifecycle frame = %+v, want %s naming sess-bob", got, want)
+		}
 	}
 }
 

@@ -28,7 +28,7 @@ func TestFakeAdapterWritesTheCredentialFileItNames(t *testing.T) {
 	}
 	defer cleanup()
 
-	want := filepath.Join(fa.dir, "run", "lenny", "slots", fullSessionID, "credentials.json")
+	want := filepath.Join(fa.dir, "run", "lenny", "slots", complianceSessionID, "credentials.json")
 	if fa.credentialsPath != want {
 		t.Fatalf("credential path = %q, want the per-session slot path %q", fa.credentialsPath, want)
 	}

@@ -40,17 +40,24 @@ func credLease(id, provider, payload string) *adapterv1.CredentialLease {
 	}
 }
 
+// spec: §4.7, §28.5.3 (CH-RUNTIMEOPS, Messages)
+// A Full-level rotation sends credentials_rotated over CH-RUNTIMEOPS, and
+// with two sessions holding credentials on the pod the frame names the
+// session whose lease rotated, so the runtime routes the rotation without
+// parsing credentialsPath.
 func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	s := credServer(t)
 	ctx := context.Background()
-	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		BindAttempt: "attempt-a",
-		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
-		Leases: map[string]*adapterv1.CredentialLease{
-			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
-		},
-	}); err != nil {
-		t.Fatalf("AssignCredentials: %v", err)
+	for _, id := range []string{"sess-1", "sess-2"} {
+		if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+			BindAttempt: "attempt-" + id,
+			SessionId:   &adapterv1.SessionId{Value: id},
+			Leases: map[string]*adapterv1.CredentialLease{
+				"anthropic": credLease("l-anth-1-"+id, "anthropic", `{}`),
+			},
+		}); err != nil {
+			t.Fatalf("AssignCredentials(%s): %v", id, err)
+		}
 	}
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
@@ -59,7 +66,7 @@ func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	errc := make(chan error, 1)
 	go func() {
 		_, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			SessionId: &adapterv1.SessionId{Value: "sess-2"},
 			Leases: map[string]*adapterv1.CredentialLease{
 				"anthropic": credLease("l-anth-2", "anthropic", `{}`),
 			},
@@ -73,6 +80,12 @@ func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	}
 	if req["provider"] != "anthropic" || req["leaseId"] != "l-anth-2" {
 		t.Errorf("credentials_rotated = %v, want provider anthropic leaseId l-anth-2", req)
+	}
+	if req["sessionId"] != "sess-2" {
+		t.Errorf("credentials_rotated sessionId = %v, want sess-2", req["sessionId"])
+	}
+	if want := filepath.Join(sessionCredsDir(s, "sess-2"), credfile.FileName); req["credentialsPath"] != want {
+		t.Errorf("credentials_rotated credentialsPath = %v, want %s", req["credentialsPath"], want)
 	}
 	lr.send(map[string]any{
 		"type":     "credentials_acknowledged",

@@ -124,7 +124,8 @@ var tenancies = []struct {
 // a Resume ran inside it. A recorded start puts a session the registry no
 // longer holds into the shared runtime's generation for the life of the pod,
 // which empties SoleSessionID on a co-tenanted pod and keeps the pod-wide
-// MCP surface and the direct-mode token fold from ever naming the incumbent.
+// MCP surface and the control-event session stamp from ever naming the
+// incumbent.
 func TestAStartParkedInsideRuntimeStartRacesTheReclaim_spec_4_7_1(t *testing.T) {
 	arms := []struct {
 		name string

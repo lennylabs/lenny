@@ -198,30 +198,36 @@ func (m *SessionUsageMeter) readLocked(sessionID string, cumulative bool) Usage 
 	return out
 }
 
-// sessionTokenSink bridges the CH-RUNTIMEOPS's session-less
-// tokenSink to a per-session SessionUsageMeter. The lifecycle frame
-// carries no session id, so the sink resolves the session at fold time
-// and keys the meter by it. It resolves through soleSession, which is
-// empty whenever another session's code may still be resident in the
-// pod's shared runtime process, and the meter drops a fold under an empty
-// identifier, so a token count is never charged to a co-tenant's §11.2
-// budget.
+// sessionTokenSink bridges the CH-RUNTIMEOPS tokenSink to a per-session
+// SessionUsageMeter. Each llm_request_completed frame names its session,
+// so the sink keys the meter by that name. It folds only for a session
+// the pod holds a binding for: bound is the same bound-session check the
+// session-scoped RPCs apply (Server.checkSessionBound), and a frame that
+// names no session or an unbound one is dropped, so a runtime cannot
+// charge tokens to a session the pod does not serve. Dropping is safe for
+// the credential-rotation gate because RuntimeOps.readLoop decrements the
+// in-flight counter before it calls the sink.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2.
 type sessionTokenSink struct {
-	meter       *SessionUsageMeter
-	soleSession func() string
+	meter *SessionUsageMeter
+	bound func(sessionID string) error
 }
 
-// AddTokens folds the counts into the resolved session's total.
-func (s sessionTokenSink) AddTokens(inputTokens, outputTokens int64) {
-	s.meter.Add(s.soleSession(), inputTokens, outputTokens)
+// AddTokens folds the counts into sessionID's total when sessionID names
+// a session bound to the pod, and drops them otherwise.
+func (s sessionTokenSink) AddTokens(sessionID string, inputTokens, outputTokens int64) {
+	if sessionID == "" || s.bound(sessionID) != nil {
+		return
+	}
+	s.meter.Add(sessionID, inputTokens, outputTokens)
 }
 
-// NewSessionTokenSink returns the CH-RUNTIMEOPS token sink that
-// folds llm_request_completed token counts into meter under the session
-// soleSession resolves. cmd/lenny-adapter wires it via
-// RuntimeOps.SetUsageSink.
-func NewSessionTokenSink(meter *SessionUsageMeter, soleSession func() string) tokenSink {
-	return sessionTokenSink{meter: meter, soleSession: soleSession}
+// NewSessionTokenSink returns the CH-RUNTIMEOPS token sink that folds
+// llm_request_completed token counts into meter under the session each
+// frame names. bound reports a nil error only for a session bound to the
+// pod; WireDirectModeUsage passes Server.checkSessionBound.
+func NewSessionTokenSink(meter *SessionUsageMeter, bound func(sessionID string) error) tokenSink {
+	return sessionTokenSink{meter: meter, bound: bound}
 }
 
 // WireDirectModeUsage installs the §4.7 direct-mode usage path on the
@@ -229,8 +235,8 @@ func NewSessionTokenSink(meter *SessionUsageMeter, soleSession func() string) to
 // it to s.Usage so ReportUsage stops returning codes.Unimplemented in
 // production (F-15.3.7), and, when a CH-RUNTIMEOPS is present, wires
 // the token sink that folds each llm_request_completed frame's
-// direct-mode token counts (§4.7, §11.2) into the meter under the pod's
-// current session. It returns the meter so a caller that needs the
+// direct-mode token counts (§4.7, §11.2) into the meter under the
+// session each frame names. It returns the meter so a caller that needs the
 // concrete type (a test asserting the wired path, or a future
 // gateway-pull integration) can reach it.
 //
@@ -246,7 +252,7 @@ func WireDirectModeUsage(s *Server, lc *RuntimeOps) *SessionUsageMeter {
 	meter := NewSessionUsageMeter(nil)
 	s.Usage = meter
 	if lc != nil {
-		lc.SetUsageSink(NewSessionTokenSink(meter, s.SoleSessionID))
+		lc.SetUsageSink(NewSessionTokenSink(meter, s.checkSessionBound))
 	}
 	return meter
 }

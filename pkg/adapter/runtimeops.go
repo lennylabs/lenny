@@ -58,7 +58,16 @@ var (
 // not set for a given type are omitted on the wire. The field names
 // match the §4.7 message-schema table (camelCase).
 type lifecycleFrame struct {
-	Type            string   `json:"type"`
+	Type string `json:"type"`
+	// SessionID names the session a session-scoped frame concerns. The
+	// adapter sets it on checkpoint_request, checkpoint_complete,
+	// interrupt_request, credentials_rotated, deadline_approaching, and
+	// files_updated, and the runtime sets it on llm_request_completed so
+	// the adapter can attribute direct-mode tokens. The process-scoped
+	// frames (lifecycle_capabilities, lifecycle_support,
+	// llm_request_started) leave it empty, so it is omitted on the wire.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	SessionID       string   `json:"sessionId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	CheckpointID    string   `json:"checkpointId,omitempty"`
@@ -85,8 +94,10 @@ type lifecycleFrame struct {
 
 // RuntimeOps is the adapter side of the §4.7 CH-RUNTIMEOPS:
 // a Unix-socket server the Full-level agent runtime dials to receive
-// checkpoint, interrupt, credential-rotation, deadline, and terminate
-// signals and to acknowledge them. The adapter listens; the runtime
+// checkpoint, interrupt, credential-rotation, deadline, and files-updated
+// signals and to acknowledge them. Every session-scoped frame names the
+// session it concerns, so one connection serves every session the pod's
+// shared runtime process holds. The adapter listens; the runtime
 // connects once per pod. The socket address (a file path or, on Linux,
 // an abstract `@`-prefixed name) is published to the runtime through
 // the adapter manifest's runtimeOps.socket field.
@@ -129,15 +140,15 @@ type RuntimeOps struct {
 }
 
 // tokenSink folds one llm_request_completed frame's direct-mode token
-// counts into the session's cumulative usage total. The adapter wires it
-// to the concrete SessionUsageMeter, resolving the pod's current session
-// id; the lifecycle frame itself carries no session id (§6.1 one session
-// per pod). Defined at the consumer (the CH-RUNTIMEOPS) per the
-// accept-interfaces convention.
+// counts into the cumulative usage total of the session the frame names.
+// The adapter wires it to the concrete SessionUsageMeter. Defined at the
+// consumer (the CH-RUNTIMEOPS) per the accept-interfaces convention.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2.
 type tokenSink interface {
 	// AddTokens folds the counts from one completed direct-mode LLM call
-	// into the current session's cumulative total.
-	AddTokens(inputTokens, outputTokens int64)
+	// into sessionID's cumulative total. An implementation drops the
+	// counts when sessionID is empty or names no session bound to the pod.
+	AddTokens(sessionID string, inputTokens, outputTokens int64)
 }
 
 // NewRuntimeOps listens on socketPath for the runtime's lifecycle
@@ -403,16 +414,21 @@ func (lc *RuntimeOps) readLoop(r *bufio.Reader) error {
 		case "llm_request_started":
 			lc.adjustInflight(frame.Provider, 1)
 		case "llm_request_completed":
+			// The in-flight decrement runs first and whatever session the
+			// frame names, so a frame whose tokens are dropped below still
+			// releases the §4.7 credential-rotation gate.
 			lc.adjustInflight(frame.Provider, -1)
-			// spec: §4.7 (llm_request_completed token fields), §11.2
-			// (direct-mode usage) — a direct-mode runtime carries the
-			// prompt and completion token counts extracted from the
-			// completed provider response; fold them into the session's
-			// cumulative total for the gateway ReportUsage pull. A runtime
-			// that cannot extract counts omits both fields (a zero delta),
-			// which the §11.2 anomaly detector observes.
+			// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2 (direct-mode
+			// usage) — a direct-mode runtime carries the prompt and
+			// completion token counts extracted from the completed
+			// provider response; fold them into the cumulative total of
+			// the session the frame names, for the gateway ReportUsage
+			// pull. The sink drops the counts for an empty or unbound
+			// session. A runtime that cannot extract counts omits both
+			// fields (a zero delta), which the §11.2 anomaly detector
+			// observes.
 			if lc.usage != nil && (frame.InputTokens != 0 || frame.OutputTokens != 0) {
-				lc.usage.AddTokens(frame.InputTokens, frame.OutputTokens)
+				lc.usage.AddTokens(frame.SessionID, frame.InputTokens, frame.OutputTokens)
 			}
 		}
 	}
@@ -458,13 +474,15 @@ func (lc *RuntimeOps) deliver(key string) {
 	lc.mu.Unlock()
 }
 
-// RequestCheckpoint sends a checkpoint_request and blocks until the
-// runtime replies checkpoint_ready for the same id, ctx is cancelled,
-// or the channel closes. deadlineMs is the runtime's quiesce budget
-// (§4.4); the caller bounds the wait with ctx.
-func (lc *RuntimeOps) RequestCheckpoint(ctx context.Context, checkpointID string, deadlineMs int32) error {
+// RequestCheckpoint sends a checkpoint_request for sessionID and blocks
+// until the runtime replies checkpoint_ready for the same id, ctx is
+// cancelled, or the channel closes. deadlineMs is the runtime's quiesce
+// budget (§4.4); the caller bounds the wait with ctx.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) RequestCheckpoint(ctx context.Context, sessionID, checkpointID string, deadlineMs int32) error {
 	return lc.request(ctx, "ckpt:"+checkpointID, lifecycleFrame{
 		Type:         "checkpoint_request",
+		SessionID:    sessionID,
 		CheckpointID: checkpointID,
 		DeadlineMs:   deadlineMs,
 	})
@@ -473,74 +491,72 @@ func (lc *RuntimeOps) RequestCheckpoint(ctx context.Context, checkpointID string
 // CompleteCheckpoint tells the runtime the checkpoint the adapter
 // requested has been stored, so the runtime resumes. status is "ok" or
 // "failed"; reason carries the failure detail when status is "failed".
-func (lc *RuntimeOps) CompleteCheckpoint(checkpointID, status, reason string) error {
+// The frame names sessionID, the session whose work resumes.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) CompleteCheckpoint(sessionID, checkpointID, status, reason string) error {
 	return lc.writeFrame(lifecycleFrame{
 		Type:         "checkpoint_complete",
+		SessionID:    sessionID,
 		CheckpointID: checkpointID,
 		Status:       status,
 		Reason:       reason,
 	})
 }
 
-// RequestInterrupt sends an interrupt_request and blocks until the
-// runtime replies interrupt_acknowledged for the same id, ctx is
-// cancelled, or the channel closes.
-func (lc *RuntimeOps) RequestInterrupt(ctx context.Context, interruptID string, deadlineMs int32) error {
+// RequestInterrupt sends an interrupt_request for sessionID and blocks
+// until the runtime replies interrupt_acknowledged for the same id, ctx
+// is cancelled, or the channel closes.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) RequestInterrupt(ctx context.Context, sessionID, interruptID string, deadlineMs int32) error {
 	return lc.request(ctx, "int:"+interruptID, lifecycleFrame{
 		Type:        "interrupt_request",
+		SessionID:   sessionID,
 		InterruptID: interruptID,
 		DeadlineMs:  deadlineMs,
 	})
 }
 
-// RotateCredentials sends a credentials_rotated frame naming the
-// rewritten credential file and blocks until the runtime replies
+// RotateCredentials sends a credentials_rotated frame naming sessionID
+// and the rewritten credential file, and blocks until the runtime replies
 // credentials_acknowledged for the same lease, ctx is cancelled, or the
-// channel closes (§4.7 credential rotation).
-func (lc *RuntimeOps) RotateCredentials(ctx context.Context, provider, credentialsPath, leaseID string) error {
+// channel closes (§4.7 credential rotation). The runtime routes the
+// rotation by sessionID rather than by parsing credentialsPath, whose
+// root is operator-configurable.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) RotateCredentials(ctx context.Context, sessionID, provider, credentialsPath, leaseID string) error {
 	return lc.request(ctx, "cred:"+leaseID, lifecycleFrame{
 		Type:            "credentials_rotated",
+		SessionID:       sessionID,
 		Provider:        provider,
 		CredentialsPath: credentialsPath,
 		LeaseID:         leaseID,
 	})
 }
 
-// SignalDeadlineApproaching warns the runtime that the session is
-// nearing expiry or budget exhaustion so it wraps up work. remainingMs
-// is the time left; trigger is one of "session_age", "budget", "idle".
-func (lc *RuntimeOps) SignalDeadlineApproaching(remainingMs int32, trigger string) error {
+// SignalDeadlineApproaching warns the runtime that sessionID is nearing
+// expiry or budget exhaustion so it wraps up that session's work.
+// remainingMs is the time left; trigger is one of "session_age",
+// "budget", or "idle".
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) SignalDeadlineApproaching(sessionID string, remainingMs int32, trigger string) error {
 	return lc.writeFrame(lifecycleFrame{
 		Type:        "deadline_approaching",
+		SessionID:   sessionID,
 		RemainingMs: remainingMs,
 		Trigger:     trigger,
 	})
 }
 
-// Terminate writes the CH-RUNTIMEOPS terminate frame, which asks the
-// runtime to exit cleanly within deadlineMs. reason is one of
-// "session_complete", "budget_exhausted", "eviction", "operator". It sends
-// no signal after the frame. No production code calls it: the runtime
-// process lives as long as the pod, and the pod-scope teardown ends it.
-// spec: §4.7.10 (Runtime process lifetime).
-func (lc *RuntimeOps) Terminate(deadlineMs int32, reason string) error {
-	return lc.writeFrame(lifecycleFrame{
-		Type:       "terminate",
-		DeadlineMs: deadlineMs,
-		Reason:     reason,
-	})
-}
-
 // SignalFilesUpdated tells the runtime that a §7.4 mid-session upload
-// promoted new files into the session's workspace root, so the agent re-reads the
-// workspace. The adapter sends it only after the atomic overlay completes,
+// promoted new files into sessionID's workspace root, so the agent
+// re-reads that session's workspace. The adapter sends it only after the atomic overlay completes,
 // so the runtime never observes partially written files. One-way: the
 // runtime is not required to acknowledge. When no runtime is connected
 // (the pre-start path, before the agent dials the channel) writeFrame
 // returns errLifecycleNotConnected, which the caller treats as a no-op.
-// spec: §7.4 — F-7.4.6.
-func (lc *RuntimeOps) SignalFilesUpdated() error {
-	return lc.writeFrame(lifecycleFrame{Type: "files_updated"})
+// spec: §7.4 — F-7.4.6; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) SignalFilesUpdated(sessionID string) error {
+	return lc.writeFrame(lifecycleFrame{Type: "files_updated", SessionID: sessionID})
 }
 
 // Supports reports whether the runtime declared a capability in the

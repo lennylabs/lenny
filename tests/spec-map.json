@@ -1856,7 +1856,8 @@
         "tests/tier5_e2e_kind/eager_claim_e2e_test.go",
         "pkg/adapter/staging_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
-        "pkg/adapter/bindattempt_orderings_test.go"
+        "pkg/adapter/bindattempt_orderings_test.go",
+        "pkg/adapter/files_updated_test.go"
       ],
       "packages": [
         "pkg/upload"
@@ -6032,7 +6033,14 @@
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryDefaultRowsMatchTheCompiledDefaults",
         "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
         "tests/tier11_docs/adapter_manifest_rewrite_trigger_doc_test.go",
-        "tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go"
+        "tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
+        "tests/tier3_contract/runtimeops_emitted/emitted_frames_test.go",
+        "tests/tier7a_load_local/direct_usage_per_session_fold_test.go",
+        "pkg/adapter/checkpoint_stream_test.go",
+        "pkg/adapter/credentials_test.go",
+        "pkg/adapter/files_updated_test.go",
+        "pkg/adapter/usage_test.go",
+        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go"
       ],
       "packages": [
         "pkg/adapter",

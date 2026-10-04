@@ -158,13 +158,16 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// runtime stays quiesced for the whole chunked archive, and the completion
 	// frame carries status ok only when Summary is reached; a terminal Failed
 	// frame or a gateway Abort completes with status failed and the reason.
+	// Both frames name the session the stream checkpoints, so a runtime
+	// holding several sessions quiesces only this one.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	completeStatus, completeReason := "ok", ""
 	if s.Lifecycle != nil {
-		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
+		if rerr := s.Lifecycle.RequestCheckpoint(ctx, sessionID, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
 			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
 		}
 		defer func() {
-			_ = s.Lifecycle.CompleteCheckpoint(start.GetCheckpointId(), completeStatus, completeReason)
+			_ = s.Lifecycle.CompleteCheckpoint(sessionID, start.GetCheckpointId(), completeStatus, completeReason)
 		}()
 	}
 

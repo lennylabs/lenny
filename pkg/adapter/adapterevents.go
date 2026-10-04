@@ -168,13 +168,13 @@ func (s *Server) emitControlEvent(ev controlEvent) {
 }
 
 // SoleSessionID returns the session the pod's one shared runtime process
-// has been given, and nothing else, since it was last serving none. It is
-// the exported accessor cmd/lenny-adapter hands to NewSessionTokenSink so
-// a session-less §4.7 lifecycle frame's direct-mode token counts fold
-// into that session's cumulative total, and it is empty whenever another
-// session's code may still be resident in the process, in which case the
-// counts are dropped rather than charged to a co-tenant's budget.
-// spec: §4.7 (direct-mode usage), §11.2.
+// has been given, and nothing else, since it was last serving none, and
+// is empty whenever another session's code may still be resident in the
+// process. It exports the resolver emitControlEvent applies to a control
+// event that names no session, so a test outside the package can observe
+// the fail-closed attribution rule. The direct-mode token sink does not
+// use it: each llm_request_completed frame names its own session.
+// spec: §4.7, §28.5.3 (CH-RUNTIMEOPS, Messages).
 func (s *Server) SoleSessionID() string {
 	return s.soleSession()
 }

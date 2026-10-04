@@ -35,7 +35,11 @@ import (
 // subset these suites need to speak from an external runtime peer. Field
 // names match the §4.7 message-schema table (camelCase).
 type Frame struct {
-	Type            string   `json:"type"`
+	Type string `json:"type"`
+	// SessionID names the session a session-scoped frame concerns:
+	// credentials_rotated from the adapter, and llm_request_completed
+	// from the runtime. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	SessionID       string   `json:"sessionId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	Provider        string   `json:"provider,omitempty"`

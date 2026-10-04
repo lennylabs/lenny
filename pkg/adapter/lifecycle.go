@@ -55,7 +55,7 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 	// hard interrupt, or any runtime without CH-RUNTIMEOPS, calls
 	// Runtime.Interrupt, and the sidecar transport sends no signal.
 	if mode == adapterv1.InterruptRequest_MODE_CLEAN && s.Lifecycle != nil && s.Lifecycle.Supports("interrupt") {
-		return s.interruptViaLifecycle(ctx, req)
+		return s.interruptViaLifecycle(ctx, sessionID, req)
 	}
 	if err := s.Runtime.Interrupt(ctx, sessionID, mode == adapterv1.InterruptRequest_MODE_HARD); err != nil {
 		return nil, status.Errorf(codes.Internal, "interrupt runtime: %v", err)
@@ -92,7 +92,9 @@ func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadline
 	if trigger == "" {
 		trigger = "session_age"
 	}
-	if err := s.Lifecycle.SignalDeadlineApproaching(req.GetRemainingMs(), trigger); err != nil {
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
+	// session the warning concerns.
+	if err := s.Lifecycle.SignalDeadlineApproaching(sessionID, req.GetRemainingMs(), trigger); err != nil {
 		return nil, status.Errorf(codes.Internal, "signal deadline: %v", err)
 	}
 	return &adapterv1.SignalDeadlineResponse{Delivered: true}, nil
@@ -103,7 +105,9 @@ func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadline
 // bounded by the request's deadline. A deadline elapsing with no
 // acknowledgement is reported as INTERRUPT_TIMEOUT rather than an
 // error: §4.7 has the gateway move the session to suspended regardless.
-func (s *Server) interruptViaLifecycle(ctx context.Context, req *adapterv1.InterruptRequest) (*adapterv1.InterruptResponse, error) {
+// The interrupt_request names sessionID, the session to stop.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) interruptViaLifecycle(ctx context.Context, sessionID string, req *adapterv1.InterruptRequest) (*adapterv1.InterruptResponse, error) {
 	deadlineMs := req.GetDeadlineMs()
 	ictx := ctx
 	if deadlineMs > 0 {
@@ -111,7 +115,7 @@ func (s *Server) interruptViaLifecycle(ctx context.Context, req *adapterv1.Inter
 		ictx, cancel = context.WithTimeout(ctx, time.Duration(deadlineMs)*time.Millisecond)
 		defer cancel()
 	}
-	err := s.Lifecycle.RequestInterrupt(ictx, newLifecycleID(), deadlineMs)
+	err := s.Lifecycle.RequestInterrupt(ictx, sessionID, newLifecycleID(), deadlineMs)
 	if err == nil {
 		return &adapterv1.InterruptResponse{
 			Acknowledged: true,

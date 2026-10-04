@@ -204,7 +204,9 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 	ackCtx, cancel := context.WithTimeout(ctx, ackTimeout)
 	defer cancel()
 	sentAt := time.Now()
-	err = s.Lifecycle.RotateCredentials(ackCtx, r.provider, credentialsPath, r.leaseID)
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
+	// session whose credential file was rewritten.
+	err = s.Lifecycle.RotateCredentials(ackCtx, sessionID, r.provider, credentialsPath, r.leaseID)
 	observeRotationGracePeriod(pool, r.provider, time.Since(sentAt).Seconds())
 	switch {
 	case err == nil:

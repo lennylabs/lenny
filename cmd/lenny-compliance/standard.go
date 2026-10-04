@@ -487,8 +487,21 @@ func (fa *fakePlatformAdapter) spawn(ctx context.Context, binary string) (*exec.
 // drive the runtime with.
 const canonicalMessage = `{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"schemaVersion":1,"type":"text","inline":"delegate this"}]}`
 
-// readResponseLine drives the runtime with one message, reads the first
-// stdout line, and returns it parsed. It reaps the child afterwards.
+// writeSessionInput opens complianceSessionID with its session_start frame
+// and then writes the session's message line, the order the adapter
+// writes them in. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
+func writeSessionInput(stdin io.Writer, message string) error {
+	for _, line := range withSessionStart(message) {
+		if _, err := io.WriteString(stdin, line+"\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// driveOneMessage drives the runtime with one message for the session,
+// reads the first stdout frame other than session_started, and returns it
+// parsed. It reaps the child afterwards.
 func driveOneMessage(fa *fakePlatformAdapter, binary string, in string) (map[string]any, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -498,7 +511,7 @@ func driveOneMessage(fa *fakePlatformAdapter, binary string, in string) (map[str
 	}
 	defer reap(cmd, stdin, 2*time.Second)
 
-	if _, err := io.WriteString(stdin, in+"\n"); err != nil {
+	if err := writeSessionInput(stdin, in); err != nil {
 		return nil, "", fmt.Errorf("write message: %w", err)
 	}
 
@@ -508,11 +521,8 @@ func driveOneMessage(fa *fakePlatformAdapter, binary string, in string) (map[str
 	}
 	ch := make(chan outResult, 1)
 	go func() {
-		if outScan.Scan() {
-			ch <- outResult{line: outScan.Text(), ok: true}
-			return
-		}
-		ch <- outResult{}
+		line, ok := scanFrame(outScan)
+		ch <- outResult{line: line, ok: ok}
 	}()
 
 	var line string
@@ -715,7 +725,7 @@ func checkToolResultCorrelation(binary string, _ time.Duration, _ bool) (string,
 	}
 	defer reap(cmd, stdin, 2*time.Second)
 
-	if _, err := io.WriteString(stdin, canonicalMessage+"\n"); err != nil {
+	if err := writeSessionInput(stdin, canonicalMessage); err != nil {
 		return "", fmt.Errorf("write message: %w", err)
 	}
 
@@ -731,11 +741,8 @@ func checkToolResultCorrelation(binary string, _ time.Duration, _ bool) (string,
 	frames := make(chan frame, 1)
 	readNext := func() {
 		go func() {
-			if outScan.Scan() {
-				frames <- frame{line: outScan.Text(), ok: true}
-				return
-			}
-			frames <- frame{}
+			line, ok := scanFrame(outScan)
+			frames <- frame{line: line, ok: ok}
 		}()
 	}
 	readNext()

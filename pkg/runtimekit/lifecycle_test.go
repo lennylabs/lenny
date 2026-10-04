@@ -25,7 +25,7 @@ func TestHandleCheckpointRequestEmitsReady(t *testing.T) {
 	})
 	defer client.Close()
 
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-1", 1000, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-1", 1000, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("HandleCheckpointRequest: %v", err)
@@ -57,7 +57,7 @@ func TestAutonomousResumeFiresWhenCompleteNeverArrives(t *testing.T) {
 	})
 	defer client.Close()
 
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-stuck", 100, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-stuck", 100, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("HandleCheckpointRequest: %v", err)
@@ -93,7 +93,7 @@ func TestHandleCheckpointCompleteCancelsTimer(t *testing.T) {
 	})
 	defer client.Close()
 
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-ok", 100, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-ok", 100, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("HandleCheckpointRequest: %v", err)
@@ -120,7 +120,7 @@ func TestHandleCheckpointRequestHandlerErrorEmitsFailed(t *testing.T) {
 	defer client.Close()
 
 	wantErr := errors.New("workspace too large")
-	err := client.HandleCheckpointRequest(context.Background(), "ckpt-fail", 100, func(_ context.Context, _ int32) error {
+	err := client.HandleCheckpointRequest(context.Background(), "sess-bob", "ckpt-fail", 100, func(_ context.Context, _ int32) error {
 		return wantErr
 	})
 	if err != nil {
@@ -128,6 +128,11 @@ func TestHandleCheckpointRequestHandlerErrorEmitsFailed(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"type":"checkpoint_complete"`) {
 		t.Errorf("output = %q, want checkpoint_complete on handler error", out.String())
+	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — checkpoint_complete is
+	// session-scoped and names the session the request named.
+	if !strings.Contains(out.String(), `"sessionId":"sess-bob"`) {
+		t.Errorf("output = %q, want sessionId sess-bob on the failure frame", out.String())
 	}
 	if !strings.Contains(out.String(), `"status":"failed"`) {
 		t.Errorf("output = %q, want status:failed", out.String())
@@ -164,7 +169,7 @@ func TestCloseStopsPendingTimers(t *testing.T) {
 		Stderr:            &stderr,
 		AutoResumeTimeout: 30 * time.Millisecond,
 	})
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-shutdown", 100, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-shutdown", 100, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("HandleCheckpointRequest: %v", err)
@@ -181,8 +186,23 @@ func TestCloseStopsPendingTimers(t *testing.T) {
 func TestHandleCheckpointRequestRejectsEmptyID(t *testing.T) {
 	client := NewLifecycleClient(LifecycleClientOptions{Writer: &bytes.Buffer{}})
 	defer client.Close()
-	if err := client.HandleCheckpointRequest(context.Background(), "", 100, nil); err == nil {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "", 100, nil); err == nil {
 		t.Errorf("empty checkpointId must be rejected")
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
+// An empty sessionId is rejected: a session-scoped checkpoint_request
+// always names its session, so a missing one is a caller bug.
+func TestHandleCheckpointRequestRejectsEmptySessionID(t *testing.T) {
+	var out bytes.Buffer
+	client := NewLifecycleClient(LifecycleClientOptions{Writer: &out})
+	defer client.Close()
+	if err := client.HandleCheckpointRequest(context.Background(), "", "ckpt-1", 100, nil); err == nil {
+		t.Errorf("empty sessionId must be rejected")
+	}
+	if out.Len() != 0 {
+		t.Errorf("output = %q, want no frame for a rejected request", out.String())
 	}
 }
 
@@ -196,12 +216,12 @@ func TestDuplicateCheckpointRequestReplacesTimer(t *testing.T) {
 	})
 	defer client.Close()
 
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-dup", 100, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-dup", 100, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("first HandleCheckpointRequest: %v", err)
 	}
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-dup", 100, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-dup", 100, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("second HandleCheckpointRequest: %v", err)
@@ -216,7 +236,7 @@ func TestCheckpointReadyFrameIsValidJSON(t *testing.T) {
 	var out bytes.Buffer
 	client := NewLifecycleClient(LifecycleClientOptions{Writer: &out})
 	defer client.Close()
-	if err := client.HandleCheckpointRequest(context.Background(), "ckpt-json", 100, func(_ context.Context, _ int32) error {
+	if err := client.HandleCheckpointRequest(context.Background(), "sess-a", "ckpt-json", 100, func(_ context.Context, _ int32) error {
 		return nil
 	}); err != nil {
 		t.Fatalf("HandleCheckpointRequest: %v", err)
@@ -251,7 +271,7 @@ func TestConcurrentRequestAndComplete(t *testing.T) {
 		id := fmt.Sprintf("ckpt-%d", i)
 		go func(id string) {
 			defer wg.Done()
-			_ = client.HandleCheckpointRequest(context.Background(), id, 100, func(_ context.Context, _ int32) error {
+			_ = client.HandleCheckpointRequest(context.Background(), "sess-a", id, 100, func(_ context.Context, _ int32) error {
 				return nil
 			})
 		}(id)

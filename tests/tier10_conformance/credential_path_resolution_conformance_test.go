@@ -429,6 +429,7 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 
 	fa.send(t, map[string]any{
 		"type":            "credentials_rotated",
+		"sessionId":       credProbeSessionID,
 		"provider":        "openai",
 		"credentialsPath": rotatedPath,
 		"leaseId":         "lease_openai",
@@ -457,6 +458,7 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 	absentPath := filepath.Join(credRoot, "slots", "sess_absent", "credentials.json")
 	fa.send(t, map[string]any{
 		"type":            "credentials_rotated",
+		"sessionId":       credProbeSessionID,
 		"provider":        "openai",
 		"credentialsPath": absentPath,
 		"leaseId":         "lease_absent",
@@ -486,9 +488,10 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 	// instead of the bundle it already held.
 	writeCredentialBundle(t, startPath, "unexpected")
 	fa.send(t, map[string]any{
-		"type":     "credentials_rotated",
-		"provider": "unexpected",
-		"leaseId":  "lease_pathless",
+		"type":      "credentials_rotated",
+		"sessionId": credProbeSessionID,
+		"provider":  "unexpected",
+		"leaseId":   "lease_pathless",
 	})
 	ack = fa.recv(t, 5*time.Second)
 	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_pathless" {

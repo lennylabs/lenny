@@ -157,6 +157,11 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	if got.CredentialsPath != credFile {
 		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
 	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
+	// rotating session, so the runtime routes it without parsing the path.
+	if got.SessionID != session {
+		t.Errorf("credentials_rotated sessionId = %q, want %q", got.SessionID, session)
+	}
 	peer.Send(rotationgate.Frame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
 	if err := <-errc; err != nil {
 		t.Fatalf("RotateCredentials at ceiling: %v", err)
@@ -235,13 +240,18 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 	peer.ExpectSilence(10 * s.RotationInflightCeiling)
 
 	// Completing the in-flight request drains the gate the natural way.
-	peer.Send(rotationgate.Frame{Type: "llm_request_completed", Provider: "anthropic", RequestID: "r1", Status: "ok"})
+	peer.Send(rotationgate.Frame{Type: "llm_request_completed", SessionID: session, Provider: "anthropic", RequestID: "r1", Status: "ok"})
 	got := peer.Read()
 	if got.Type != "credentials_rotated" || got.LeaseID != "l-new" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated after natural drain", got)
 	}
 	if got.CredentialsPath != credFile {
 		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
+	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
+	// rotating session, so the runtime routes it without parsing the path.
+	if got.SessionID != session {
+		t.Errorf("credentials_rotated sessionId = %q, want %q", got.SessionID, session)
 	}
 	peer.Send(rotationgate.Frame{Type: "credentials_acknowledged", LeaseID: "l-new", Provider: "anthropic"})
 	if err := <-errc; err != nil {
@@ -300,6 +310,11 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 	}
 	if got.CredentialsPath != credFile {
 		t.Errorf("credentials_rotated credentialsPath = %q, want the session's slot file %q", got.CredentialsPath, credFile)
+	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
+	// rotating session, so the runtime routes it without parsing the path.
+	if got.SessionID != session {
+		t.Errorf("credentials_rotated sessionId = %q, want %q", got.SessionID, session)
 	}
 	err := <-errc
 	if status.Code(err) != codes.DeadlineExceeded {
