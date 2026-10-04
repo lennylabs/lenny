@@ -2,7 +2,7 @@
 
 - [ ] **S1 · spec** — SPEC-1. Lands the runtime lifetime contract and its alignments.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the manifest-row deletions, the repointed readers, and the nonce-gate retarget staged with them.
+- [ ] **S2 · spec** — SPEC-2. Lands the manifest-row deletions and the repointed readers.
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands the `CH-MSGSOCK` session frames and every edit SPEC-3 stages with them.
       Tiers 0, 11. Depends on: S1, S2
@@ -23,7 +23,7 @@
 - [ ] **S11 · code** — CODE-3. Lands the adapter `CH-RUNTIMEOPS` sender changes, the `sessionId`-keyed direct-mode token sink, the deletion of `Terminate`, and their peer and test updates.
       Tiers 0, 1, 3, 4, 7a, 8, 9, 10. Depends on: S4, S10
 - [ ] **S12 · code** — CODE-1. Lands the adapter open sequence and `session_end` writes on the rows of the SPEC-3 **Session frame writes.** table.
-      Tiers 0, 1, 3, 4, 7a. Depends on: S1, S2, S3, S10
+      Tiers 0, 1, 3, 4, 5, 7a. Depends on: S1, S2, S3, S10
 - [ ] **S13 · code** — CODE-2. Lands the developer-loop `session_start`.
       Tiers 0, 1, 3. Depends on: S3, S10
 - [ ] **S14 · code** — CODE-4. Lands the multi-session Go SDK.
@@ -31,12 +31,12 @@
 - [ ] **S15 · code** — CODE-5. Lands the multi-session Python and TypeScript SDKs.
       Tiers 0, 1, 3, 10. Depends on: S2, S3, S4, S5, S11, S12
 - [ ] **S16 · code** — CODE-6. Lands the harness, reference-runtime, and `terminate`-handler changes.
-      Tiers 0, 1, 3, 10. Depends on: S3, S4, S6, S14, S15
+      Tiers 0, 1, 3, 4, 5, 10. Depends on: S3, S4, S6, S14, S15
 - [ ] **S17 · code** — CODE-8. Lands the removal of the per-session manifest fields.
       Tiers 0, 1, 2, 7a, 8, 9, 10. Depends on: S2, S14, S15, S16
 - [ ] **S18 · test** — TEST-1. Lands the new cross-component tests.
       Tiers 0, 1, 3, 4, 7a, 10. Depends on: S12, S13, S14, S15, S16, S17
-- [ ] **S19 · code** — CODE-7. Lands the Part B handshake in the adapter and every in-tree client.
-      Tiers 0, 1, 3, 4, 7a, 9, 10. Depends on: S8, S14, S15, S16, S18
+- [ ] **S19 · code** — CODE-7. Lands the Part B handshake.
+      Tiers 0, 1, 3, 4, 5, 7a, 8, 9, 10. Depends on: S8, S14, S15, S16, S18
 - [ ] **S20 · docs** — RECORDS-1. Lands the `BUILD-GAPS.md` notes and new findings.
       Tiers 0, 11. Depends on: S17, S19

@@ -21,7 +21,7 @@
 - A Basic-level runtime that keeps no per-session context ignores both frames under the unknown-type rule that SPEC-3 adds to the card preamble, and it still passes SPEC-6 **session lifetime**.
 - `deadline_approaching` can arrive with `trigger: idle` while no message is in flight. SPEC-4's `deadline_approaching` row governs the answer.
 - A `type: mcp` runtime speaks no `CH-MSGSOCK` frame and is outside the contract (SPEC-1).
-- A connection that fails the SPEC-8 handshake is closed with no protocol response, and the adapter keeps accepting, so a failed or hostile dial cannot hold the single accept; a runtime holding a nonce that a later manifest write replaced (the §4.7.9 step-3 placeholder manifest, or a concurrent start's write) is closed the same way and redials under SPEC-8 **Runtime connection handshake.**
+- A runtime can dial with a nonce that a later manifest write replaced, or a hostile peer can dial with none. SPEC-8 **Runtime connection handshake.** governs both.
 
 ## Staged edits
 
@@ -169,8 +169,6 @@ Child runtimes receive the parent's `tracingContext` in the child session's `ses
 **Edit 14 (§15.7 **What the SDKs provide.**, **Credential delivery.** bullet).** Replace `(present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest \`llm\` fields)` with `(present under both proxy and direct delivery modes per the \`llm\` fields of the session's \`session_start\` frame, [§28.5.3](28_communication-channels.md#2853-intra-pod))`, and replace `the env-var export (\`llm.apiKeyEnv\`) for proxy mode` with `the per-session API key that \`llm.apiKeyEnv\` names for proxy mode`.
 
 **Edit 15 (§15.7 **Credential access.** bullet).** Replace `Direct mode env-var refresh` with `Direct mode per-session API-key refresh`.
-
-In the commit that lands Edits 1 and 8, `intraPodNonceSites` in `tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go` pins `carries only pod-scoped fields` in place of `authoritative for the session whose start last wrote it` at its §4.7.5 adapter-manifest-lead site, and drops its §6.1 credential-lease site.
 
 ### SPEC-3 · spec/28_communication-channels.md § 28.5.3 `CH-MSGSOCK`; spec/15_external-api-surface.md § 15.4, § 15.4.1, § 15.4.3; spec/05_runtime-registry-and-pool-model.md § 5.1, § 5.2; spec/04_system-components.md § 4.7.1
 
@@ -505,7 +503,7 @@ The shared §15 `TerminationReason` struct stays unchanged.
 **Edit 1 (new Basic row).** Insert after the row whose test category is `**per-session identifier echo**`:
 
 ```markdown
-| **Basic** | **session lifetime** | On one connection the harness writes `session_start`, a `message`, and `session_end` for session A; then the same three frames for session B; then `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
+| **Basic** | **session lifetime** | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
 ```
 
 **Edit 2 (Full row **deadline signal handling**).** Replace the row with:
