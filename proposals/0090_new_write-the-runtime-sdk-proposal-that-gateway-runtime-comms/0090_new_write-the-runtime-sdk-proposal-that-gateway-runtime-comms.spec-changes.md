@@ -174,7 +174,7 @@ Child runtimes receive the parent's `tracingContext` in the child session's `ses
 
 **Edit 15 (§15.7 **Credential access.** bullet).** Replace `Direct mode env-var refresh` with `Direct mode per-session API-key refresh`.
 
-### SPEC-3 · spec/28_communication-channels.md § 28.5.3 `CH-MSGSOCK`; spec/15_external-api-surface.md § 15.4, § 15.4.1, § 15.4.3; spec/05_runtime-registry-and-pool-model.md § 5.1, § 5.2; spec/04_system-components.md § 4.7.1
+### SPEC-3 · spec/28_communication-channels.md § 28.5.3 `CH-MSGSOCK`; spec/15_external-api-surface.md § 15.4, § 15.4.1, § 15.4.3; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/04_system-components.md § 4.7.1; spec/06_warm-pod-model.md § 6.3
 
 **Edit 1 (card **Messages.** bullet).** Make four replacements inside the bullet. The bullet is hard-wrapped, so match with line breaks ignored:
 - `Adapter to runtime: \`message\`, \`tool_result\`, \`heartbeat\`, and \`shutdown\`.` becomes `Adapter to runtime: \`session_start\`, \`message\`, \`tool_result\`, \`heartbeat\`, \`session_end\`, and \`shutdown\`.`
@@ -221,9 +221,9 @@ Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbea
 
 `session_start` opens a session on the runtime and carries the session's own context ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). The following rules govern it:
 
-1. The adapter writes a session's `session_start` once for each start and each resume of the session, on the paths **Session frame writes.** below states. On the `CH-MSGSOCK` connection or loop that carries the session, the frame precedes any other frame addressed to the session. This order holds on that connection or loop only. It does not extend to `CH-RUNTIMEOPS`, which is a separate connection. A session-scoped `CH-RUNTIMEOPS` frame for the session follows the adapter's read of the session's `session_started` instead (**Outbound: `session_started`**).
+1. The adapter writes a session's `session_start` once for each start and each resume of the session, on the paths **Session frame writes.** below states. On the `CH-MSGSOCK` connection or loop that carries the session, the frame precedes any other frame addressed to the session. This order holds on that connection or loop only.
 2. A runtime that keeps per-session context creates the session's context from this frame and then answers the frame with `session_started` (**Outbound: `session_started`**). A runtime that keeps none and opens no `CH-RUNTIMEOPS` connection may ignore the frame under the unknown-type rule in the preamble above.
-3. A runtime ignores a `session_start` for a session it already holds, except that it answers the frame with `session_started` again.
+3. A runtime holds a session from its read of the session's `session_start`, including while it creates the session's context, until its read of the session's `session_end`. A runtime ignores a `session_start` for a session it already holds, except that it answers the frame with `session_started` again.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -248,7 +248,7 @@ Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbea
 `session_end` releases a session on the runtime. The following rules govern it:
 
 1. The adapter writes it on the paths **Session frame writes.** below states. A session's frames travel on the pod's one connection in the sidecar model and on the session's own runtime loop in the embedded model. When that connection or loop ends, every session it carries ends, and no `session_end` follows.
-2. On `session_end` the runtime releases the session's context, writes no further frame addressed to the session other than the `llm_request_completed` of a request whose `llm_request_started` preceded the `session_end`, and keeps serving the pod's other sessions.
+2. On `session_end` the runtime releases the session's context, once its creation ends when the runtime is still creating it, writes no further frame addressed to the session other than the `session_started` that **Outbound: `session_started`** obliges for a `session_start` read before the `session_end`, and the `llm_request_completed` of a request whose `llm_request_started` preceded the `session_end`, and keeps serving the pod's other sessions.
 3. A runtime ignores a `session_end` for a session it does not hold.
 
 **Session frame writes.** The adapter writes `session_start` and `session_end` on the paths in the table below and on no other path. The adapter's record of a session whose `session_start` it wrote is the [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule-8 record, at which the slot reaches `running`, and every `session_end` a teardown writes is decided on that record. A start writes its frames inside an **open sequence**: the adapter makes the rule-8 confirmation that the registry still holds the entry the start's claim was admitted against, writes `session_start`, waits for the runtime's `session_started` when **Outbound: `session_started`** rule 3 requires the wait, makes the rule-8 confirmation again and takes the record, and writes `session_end` when the wait ends without `session_started`, when `session_started` carries `error`, or when that second confirmation is refused. An open sequence runs under the slot serialization that the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Slot-identifier reclaim hold.** paragraph defines, so by that paragraph's completion rule a reclaim hold opened during an open sequence does not end before the sequence ends. Under these rules no attempt's `session_end` reaches the runtime after a later attempt's `session_start` for the same session, and, unless the adapter's write of a `session_end` fails, every `session_start` the runtime receives is followed by that session's `session_end` or by the end of the connection or loop that carries it.
@@ -339,9 +339,7 @@ Replace `When the adapter holds no entry for the identifier, or holds one carryi
 
 **Edit 14 (card **Addressing.** paragraph).** In the paragraph that begins `**Addressing.** The adapter resolves the frame`, append `It does not reach \`session_start\`, \`session_end\`, or \`session_started\`, which the adapter writes or consumes itself and no Attach stream delivers.` after the sentence ending `which carry no per-session identifier.`, and in condition 1 **Address equality.** replace `This condition governs all six session-scoped frame types` with `This condition governs all six of these frame types`. The paragraph is hard-wrapped, so match with line breaks ignored and rewrap the result.
 
-**Edit 15 (§5.1 **Setup Commands and Policy** and §5.2 **Recycle lifecycle**).** In `spec/05_runtime-registry-and-pool-model.md`, under the §5.1 heading `Setup Commands and Policy`, replace `Per-task setup belongs in the runtime's handling of the session's first message` with `Per-session setup belongs in the runtime's handling of the session's \`session_start\``; the trailing Section 5.2 link stays. In the §5.2 **Recycle lifecycle (`recycle.enabled: true`).** paragraph, replace `per-session setup belongs in the runtime's handling of the session's first message, because` with `per-session setup belongs in the runtime's handling of the session's \`session_start\` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), \`CH-MSGSOCK\` **Inbound: \`session_start\`** rule 2), because`.
-
-**Edit 16 (new **Outbound: `session_started`** section).** Insert the following after the **Outbound: `heartbeat_ack`** section (after its fenced block `{ "type": "heartbeat_ack" }`) and before **Outbound: `status` (optional)**:
+**Edit 15 (new **Outbound: `session_started`** section).** Insert the following after the **Outbound: `heartbeat_ack`** section (after its fenced block `{ "type": "heartbeat_ack" }`) and before **Outbound: `status` (optional)**:
 
 ````markdown
 **Outbound: `session_started`**
@@ -350,7 +348,7 @@ Replace `When the adapter holds no entry for the identifier, or holds one carryi
 { "type": "session_started", "sessionId": "sess_abc123", "startId": "st_1" }
 ```
 
-`session_started` answers a `session_start` once the runtime holds the session. The following rules govern it:
+`session_started` answers a `session_start`. The following rules govern it:
 
 1. A runtime that keeps per-session context writes `session_started` for a session after it reads that session's `session_start` and has created the session's context. A runtime that has opened `CH-RUNTIMEOPS` writes it for every `session_start` it reads, whether or not it keeps per-session context. Either runtime writes it again for a `session_start` that names a session it already holds (**Inbound: `session_start`** rule 3).
 2. A runtime that fails to create the session's context writes the frame with `error`, as **Session errors.** above states.
@@ -366,6 +364,8 @@ Replace `When the adapter holds no entry for the identifier, or holds one carryi
 | `error` | `object` | No | `{"code": string, "message": string}`, the object a `response` error carries. Present when the runtime failed to create the session's context, and absent otherwise. |
 ````
 
+**Edit 16 (§6.3 SDK-warm hot path and demotion-rate paragraph).** In `spec/06_warm-pod-model.md` §6.3, in the **Still on hot path (SDK-warm):** list, replace `(session start is already done)` with `(the SDK process is already connected; the session's \`session_start\`, and the \`session_started\` wait where [§28.5.3](28_communication-channels.md#2853-intra-pod) \`CH-MSGSOCK\` **Outbound: \`session_started\`** rule 3 applies, run inside \`ConfigureWorkspace\`)`. In the paragraph **SDK-warm savings depend on demotion rate.**, replace `(elimination of agent session start time)` with `(elimination of SDK process start time)`.
+
 ### SPEC-4 · spec/28_communication-channels.md § 28.5.3 `CH-RUNTIMEOPS`; spec/15_external-api-surface.md § 15.4.4, § 15.7
 
 **Edit 1 (card **Messages.** bullet, frame list).** Replace `Adapter to runtime: \`lifecycle_capabilities\`, \`checkpoint_request\`, \`checkpoint_complete\`, \`interrupt_request\`, \`credentials_rotated\`, \`terminate\`, and \`deadline_approaching\`.` with:
@@ -377,7 +377,7 @@ Adapter to runtime: `lifecycle_capabilities`, `checkpoint_request`, `checkpoint_
 **Edit 2 (card **Messages.** bullet, addressing sentence).** Insert after the sentence that ends `the field set of each is the message-schema table below.`:
 
 ```markdown
-`checkpoint_request`, `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, `files_updated`, and `llm_request_completed` are session-scoped and carry the `sessionId` of the session they concern ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"); the runtime's replies stay correlated by `checkpointId`, `interruptId`, and `leaseId`. `lifecycle_capabilities`, `lifecycle_support`, and `llm_request_started` are process-scoped and carry no `sessionId`. Because this channel is a connection separate from `CH-MSGSOCK`, the `session_start` write order does not reach it (`CH-MSGSOCK` **Inbound: `session_start`** rule 1). The adapter writes an adapter-to-runtime session-scoped frame for a session only after it has read the `session_started` that answers the session's `session_start` (`CH-MSGSOCK` **Outbound: `session_started`**), except for a session whose start did not wait for one (`CH-MSGSOCK` **Outbound: `session_started`** rule 3). A path that has such a frame to write before that read defers the frame until the read, and drops it when the session's start fails or the session ends first; the path then ends as it ends for a frame the runtime does not answer. A runtime that keeps per-session context drops, without a reply, a session-scoped frame that names a session it does not hold.
+`checkpoint_request`, `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, `files_updated`, and `llm_request_completed` are session-scoped and carry the `sessionId` of the session they concern ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"); the runtime's replies stay correlated by `checkpointId`, `interruptId`, and `leaseId`. `lifecycle_capabilities`, `lifecycle_support`, and `llm_request_started` are process-scoped and carry no `sessionId`. Because this channel is a connection separate from `CH-MSGSOCK`, the `session_start` write order does not reach it (`CH-MSGSOCK` **Inbound: `session_start`** rule 1). The adapter writes an adapter-to-runtime session-scoped frame for a session only after it has read the `session_started` that answers the session's `session_start` (`CH-MSGSOCK` **Outbound: `session_started`**), except for a session whose start did not wait for one (`CH-MSGSOCK` **Outbound: `session_started`** rule 3). A path that has such a frame to write before that read defers the frame until the read, and drops it when the session's start fails, the session ends, or a bound the adapter places on the deferral elapses first; the path then ends as it ends for a frame the runtime does not answer. A runtime that keeps per-session context drops, without a reply, a session-scoped frame that names a session it does not hold.
 ```
 
 **Edit 3 (message-schema table).** Replace the five rows below, delete the `terminate` row, and insert the `files_updated` row after the `deadline_approaching` row. Each row stays one physical line with the table's two-space indent:
@@ -697,7 +697,7 @@ For core operation the runtime reads only `mcpNonce`, and only when it dials `CH
 
 - `spec/04_system-components.md` (SPEC-1, SPEC-2, SPEC-3, SPEC-8)
 - `spec/05_runtime-registry-and-pool-model.md` (SPEC-3)
-- `spec/06_warm-pod-model.md` (SPEC-2)
+- `spec/06_warm-pod-model.md` (SPEC-2, SPEC-3)
 - `spec/08_recursive-delegation.md` (SPEC-2)
 - `spec/10_gateway-internals.md` (SPEC-2)
 - `spec/15_external-api-surface.md` (SPEC-1, SPEC-2, SPEC-3, SPEC-4, SPEC-5, SPEC-6, SPEC-8)
