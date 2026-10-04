@@ -109,10 +109,7 @@
 
 ## Open decisions for human to make
 
-None. The owner answered the open questions on 2026-10-04:
-
-1. **Cross-channel session ordering.** `session_start` is acknowledged by `session_started` on `CH-MSGSOCK`, and the adapter writes no session-scoped `CH-RUNTIMEOPS` frame for a session before it reads that acknowledgement. The acknowledgement replaces the runtime-side hold-and-drop rule (decision 28).
-2. **`DemoteSDK` past its request deadline.** When the `DemoteSDK` handler's wait for the slot serialization outlasts its request's deadline, `DemoteSDK` fails without writing `session_end`, and under the existing spec the pod fails and a replacement is claimed (decision 29). This answers the question that review-log entry `[non-spec.1.review-single-source.1]` raised.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -134,6 +131,7 @@ None. The owner answered the open questions on 2026-10-04:
 | 0087 | Draft | Edits §4.7, §15.4, and §15.7 sections that 0087 also edits, and leaves the `restart` sentence of §4.7.10 **Runtime process lifetime.**, the `shutdown` semantics (F-4.7.27), launch-ordering wording, and the first-session manifest ordering (F-4.7.26) to 0087. | Serialize its spec steps after this proposal's, add the `restart` sentence to **Runtime process lifetime.** when it defines the selector, and re-baseline its D-STALE and nonce text against SPEC-8. |
 | 0079 | Implemented (approved 2026-10-02) | Discharges the follow-up 0079 handed over: the SDK multi-session change, the `Handler` and `types.go` comment corrections, the §15.7 `CreateRequest` comments, and the §15.4.6 deadline category. It also discharges 0079's pre-release condition. Nothing 0079 landed is contradicted. | Nothing. Implemented proposals are not edited. |
 | 0080 | Draft (marked "EARLY DRAFT, NOT CONVERGED"; last commit 2026-09-06, a commit date rather than a review date) | Discharges §1.9 ("The runtime SDKs model no status frame") with no change, because no SDK emits a `status` frame and CODE-5 adds no `status` helper (decision 26). Its other §1 entries are unaffected. | Record §1.9 as discharged by this proposal. |
+| 0085 | Draft (drafted 2026-09-27; last commit 2026-09-27, a commit date rather than a review date) | SPEC-3's **Session frame writes.** row for a `DemoteSDK` that outlasts its request's deadline (decision 29) states that a gateway caller fails the pod and claims a replacement, and cites the §4.7.1 `ConfigureWorkspace` row for it. 0085 SPEC-3 edit (a) deletes "and a replacement is claimed" from that row and defers the recovery to the §6.2 policy inside the §7.1 creation unit and to §7.2 and §7.3 at `POST /v1/sessions/{id}/start`. Its `grep -n "a replacement is claimed" spec/` check does not match this proposal's spelling, "claims a replacement". Its other deliverables (the SPEC-1 §6.2 **Scope:** rule, SPEC-2, SPEC-3 edit (b) to §29.2 step 23, and RECORDS-1) are unaffected. | Whichever proposal lands second re-bases the row. If 0085 lands first, this proposal rewords the row's recovery clause so that the pod transitions to `failed` and the policy governing the request applies, with no replacement claim. If this proposal lands first, 0085 extends its SPEC-3 edit and its `grep` check to the §28.5.3 **Session frame writes.** row, which spells the claim as "claims a replacement". |
 
 ## Deliverable index
 
