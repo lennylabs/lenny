@@ -285,7 +285,7 @@ state that the READY signal is one of them.
     path. On failure the gateway calls `DemoteSDK` with a 5s timeout and falls back to pod-warm
     materialization, and when `DemoteSDK` also fails the pod transitions to `failed` and a replacement is
     claimed ([§7.1](07_session-lifecycle.md#71-normal-flow),
-    [§4.7](04_system-components.md#47-runtime-adapter)). Steps 24 through 29 are the pod-warm startup
+    [§4.7](04_system-components.md#47-runtime-adapter)). Steps 24 through 31 are the pod-warm startup
     sequence for `type: agent` runtimes and are stated for that path
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
@@ -354,27 +354,41 @@ state that the READY signal is one of them.
     runtime loop in its own process
     ([§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) step 7).
 
-30. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
+30. On a pod-warm pod with a `type: agent` runtime: `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The
+    adapter writes the session's `session_start`, carrying its `sessionId`, credential path, and
+    experiment, tracing, and LLM context. It does so on every session, including each later session on
+    the pod (§28.5.3 `CH-MSGSOCK`,
+    [§4.7.10](04_system-components.md#4710-deployment-model)).
+
+31. On a pod-warm pod whose `type: agent` runtime keeps per-session context or has opened
+    `CH-RUNTIMEOPS`: `runtime` → `adapter`, `CH-MSGSOCK`, `intra-pod`. The runtime answers the
+    session's `session_start` with `session_started` once it has created the session's context. The
+    adapter waits for this frame before it takes the session to `running` when §28.5.3 `CH-MSGSOCK`
+    **Outbound: `session_started`** rule 3 requires the wait, and it orders the session's
+    session-scoped `CH-RUNTIMEOPS` frames as the §28.5.3 `CH-RUNTIMEOPS` card's **Messages.** bullet
+    states.
+
+32. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
     `AttachSession` with the session identifier
     ([§7.1](07_session-lifecycle.md#71-normal-flow), [§15.1](15_external-api-surface.md#151-rest-api)).
     §7.1 places this call after session start and states no ordering between it and the adapter's own
-    startup sequence of steps 24 through 29.
+    startup sequence of steps 24 through 31.
 
-31. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The `Attach` RPC connects the client stream to
+33. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The `Attach` RPC connects the client stream to
     the running session over the `LNK-POD-GRPC` connection, and the gateway proxies the bidirectional
     stream between the client and the pod (§28.5.1 `CH-ATTACH`,
     [§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-32. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
+34. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
     the last step of the startup sequence and the point at which the agent is running and able to receive
     a message. The preconditions the §28.5.3 `CH-MSGSOCK` card states for that delivery are met at this
-    point on a pod-warm pod with a `type: agent` runtime: the adapter has written the final manifest and
-    spawned the runtime binary, with the runtime's connection to the MCP servers and the
-    `CH-RUNTIMEOPS` capability handshake in between. A Basic-level runtime connects to no MCP server and
-    a runtime below Full level opens no `CH-RUNTIMEOPS` channel. On an SDK-warm pod that startup
-    sequence does not occur, because the session is already
-    connected and the gateway has pointed it at the finalized `cwd` (§28.5.3,
+    point on a pod-warm pod with a `type: agent` runtime: steps 24 through 31 have run. A Basic-level
+    runtime connects to no MCP server and a runtime below Full level opens no `CH-RUNTIMEOPS` channel. On
+    an SDK-warm pod that startup sequence does not occur, because the session is already connected and
+    the gateway has pointed it at the finalized `cwd`; the adapter writes the session's `session_start`,
+    and reads the runtime's `session_started` as step 31 states, while it handles that
+    `ConfigureWorkspace` call (§28.5.3 `CH-MSGSOCK`, **Inbound: `session_start`** rule 1) (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
 
@@ -711,18 +725,21 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
 
-13. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
-    by an expiry timer: `adapter`, `internal`. The adapter writes no `CH-RUNTIMEOPS` frame and sends the
-    runtime process no signal ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row,
-    [§4.7.10](04_system-components.md#4710-deployment-model)).
-
-14. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
+13. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
     `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
     `pod-to-gateway`. The child's adapter pushes `FINAL_USAGE_REPORT` once every in-flight `ReportUsage`
     pull has settled, as the final message before the stream closes, and the gateway waits for it or for
     the stream close, whichever comes first, before it returns the child's delegation budget (§28.5.2
     `CH-ADAPTEREVENTS`, [§4.7](04_system-components.md#47-runtime-adapter),
     [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
+
+14. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
+    by an expiry timer, for a session whose start the adapter admitted: `adapter` → `runtime`,
+    `CH-MSGSOCK`, `intra-pod`. The adapter writes the session's `session_end` when the session reached
+    `running` (§28.5.3 `CH-MSGSOCK`, **Session frame writes.**), writes no `CH-RUNTIMEOPS` frame, and
+    sends the runtime process no signal. The runtime process stays alive for the pod's life
+    ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row,
+    [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).
 
 15. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
     an expiry timer: `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
@@ -1112,7 +1129,12 @@ stamp on every gateway-to-pod RPC and rejects a stale one
    [§10.1](10_gateway-internals.md#101-horizontal-scaling),
    [§13.2](13_security-model.md#132-network-isolation)).
 
-10. `agent pod`, `internal`. The restored runtime resumes its conversation as of the checkpoint, which
+10. For a `type: agent` runtime: `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter writes the
+    resumed session's `session_start` on the replacement pod before any `message` for the session, and
+    reads the runtime's `session_started` as it does for a first start (§28.5.3 `CH-MSGSOCK`,
+    **Outbound: `session_started`**, [§4.7.10](04_system-components.md#4710-deployment-model)).
+
+11. `agent pod`, `internal`. The restored runtime resumes its conversation as of the checkpoint, which
     bundles the native-SDK session file, so the replay window spans from that checkpoint to the moment of
     the failure that ended the previous pod. The platform guarantees at-least-once semantics for external
     side effects across the restore: an effect performed within the replay window may be issued again, the
@@ -1125,14 +1147,14 @@ stamp on every gateway-to-pod RPC and rejects a stale one
     which it suppresses a duplicate, incrementing `lenny_inbox_duplicate_suppressed_total`
     ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
 
-11. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+12. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
     ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway writes the session to `running`.
     The recovery mints a new `recovery_generation` of the same logical session and the client continues to
     see one session identifier, and the row's `last_seq` counter advances without rewinds or duplicates
     across the recovery ([§7.3](07_session-lifecycle.md#73-retry-and-resume),
     [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
 
-12. `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway emits
+13. `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway emits
     `session.resumed` on the session's event stream, carrying `resumeMode` and `workspaceLost`. The mode is
     `full` when the workspace was restored whole from the checkpoint, and `partial_workspace` when it was
     reconstructed from a partial manifest, in which case the event also carries
