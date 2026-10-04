@@ -2,9 +2,9 @@
 
 ## Design (as the spec must state it)
 
-**Runtime lifetime contract (SPEC-1).** The §4.7.10 bold label **Runtime process lifetime.** is the single normative home of the contract. A `type: agent` runtime process serves any number of sessions, every session-scoped frame carries `sessionId`, a session's context arrives in its `session_start` frame on `CH-MSGSOCK`, and its `session_end` frame releases it. No runtime relies on process exit and no runtime declares a capability for this. Every other site links to §4.7.10.
+**Runtime lifetime contract (SPEC-1).** The §4.7.10 bold label **Runtime process lifetime.** is the single normative home of the contract. A `type: agent` runtime process serves any number of sessions, every session-scoped frame carries `sessionId`, a session's context arrives in its `session_start` frame on `CH-MSGSOCK`, and its `session_end` frame, or the end of the connection or loop that carries it, releases it. No runtime relies on process exit and no runtime declares a capability for this. Every other site links to §4.7.10.
 
-**Session frames (SPEC-3).** The §28.5.3 `CH-MSGSOCK` card owns the `session_start` and `session_end` schemas, their write rules, and the session-error rule. Each `session_start` member is a former §4.7.6 manifest row, which SPEC-2 deletes from the manifest so that each field has one carrier. `shutdown` stays process-scoped.
+**Session frames (SPEC-3).** The §28.5.3 `CH-MSGSOCK` card owns the `session_start` and `session_end` schemas, their write rules, the **Session frame writes.** table of every path that writes either frame, and the session-error rule. The table's open sequence rests on two edits SPEC-3 also stages: the §5.2 slot serialization, under which a reclaim hold cannot end while a start's open sequence runs, and the §4.7.1 rule-8 confirmation restated as a comparison of entry identity. Each `session_start` member is a former §4.7.6 manifest row, which SPEC-2 deletes from the manifest so that each field has one carrier. `shutdown` stays process-scoped.
 
 **Session addressing on `CH-RUNTIMEOPS` (SPEC-4).** The session-scoped `CH-RUNTIMEOPS` frames carry a required `sessionId`. The `terminate` frame is deleted.
 
@@ -16,14 +16,12 @@
 
 ## Edge cases and accepted failure modes
 
-- A reclaim teardown can race ahead of a start's `session_start`. The runtime ignores the teardown's `session_end` (SPEC-3 **Inbound: `session_end`** rule 3), and SPEC-3 **Inbound: `session_start`** rule 1 and **Inbound: `session_end`** rule 1 govern the rule-8 rollback that follows.
-- On a sidecar pod the coordinator hold timeout ends the `CH-MSGSOCK` connection before the per-session teardown runs, so no `session_end` is written there. SPEC-3 **Inbound: `session_end`** rule 1 covers this case, and the end of the connection ends every session.
+- A reclaim racing a start, a retry of the same session on the same pod, the coordinator hold timeout in either deployment model, an interrupt, and pod exit are each a row of SPEC-3 **Session frame writes.**, which is the only statement of when the frames are written.
 - A message can arrive for a session whose `session_start` the runtime has not received, or whose context it failed to create. SPEC-3 **Session errors.** governs the answer.
 - A Basic-level runtime that keeps no per-session context ignores both frames under the unknown-type rule that SPEC-3 adds to the card preamble, and it still passes SPEC-6 **session lifetime**.
 - `deadline_approaching` can arrive with `trigger: idle` while no message is in flight. SPEC-4's `deadline_approaching` row governs the answer.
-- An interrupt leaves the session suspended and resumable, so it writes no `session_end`.
 - A `type: mcp` runtime speaks no `CH-MSGSOCK` frame and is outside the contract (SPEC-1).
-- A connection that fails the SPEC-8 handshake is closed with no protocol response, and the adapter keeps accepting, so a failed or hostile dial cannot hold the single accept; a runtime holding a nonce that a later manifest write replaced (the INIT placeholder, or a concurrent start's write) is closed the same way and redials under SPEC-8 **Runtime connection handshake.**
+- A connection that fails the SPEC-8 handshake is closed with no protocol response, and the adapter keeps accepting, so a failed or hostile dial cannot hold the single accept; a runtime holding a nonce that a later manifest write replaced (the §4.7.9 step-3 placeholder manifest, or a concurrent start's write) is closed the same way and redials under SPEC-8 **Runtime connection handshake.**
 
 ## Staged edits
 
@@ -40,12 +38,12 @@ than one, at once. Every session-scoped frame on `CH-MSGSOCK` and
 `CH-RUNTIMEOPS` carries the `sessionId` of the session it concerns
 ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). A session's
 own context reaches the runtime in that session's `session_start` frame on
-`CH-MSGSOCK`, and the session's `session_end` frame releases it. No runtime
-relies on its process exiting at a session's end, and a runtime declares no
-capability to serve more than one session. The contract covers `type: agent`
-runtimes in both deployment models. A `type: mcp` runtime is driven over MCP
-by the adapter and exchanges no `CH-MSGSOCK` frame, so the contract does not
-apply to it.
+`CH-MSGSOCK`, and the session's `session_end`, or the end of the connection or
+loop that carries it, releases it. No runtime relies on its process exiting at a session's end, and
+a runtime declares no capability to serve more than one session. The contract
+covers `type: agent` runtimes in both deployment models. A `type: mcp` runtime
+is driven over MCP by the adapter and exchanges no `CH-MSGSOCK` frame, so the
+contract does not apply to it.
 ```
 
 Proposal 0087 adds its `restart` sentence to this paragraph when it defines the `restart` selector; this proposal does not write it.
@@ -53,7 +51,7 @@ Proposal 0087 adds its `restart` sentence to this paragraph when it defines the 
 **Edit 2 (§4.7.10 trade-off table).** Replace the row whose first cell is `Runtime process lifetime` with:
 
 ```markdown
-| Runtime process lifetime | The pod's lifetime; one connection serves every session, each opened by `session_start` and released by `session_end` | The pod's lifetime (the adapter process); one loop per session, opened by `session_start` and released by `session_end` |
+| Runtime process lifetime | The pod's lifetime; one connection serves every session, each opened by `session_start` and released by `session_end` or by the end of the connection | The pod's lifetime (the adapter process); one loop per session, opened by `session_start` and released by `session_end` or by the end of the loop |
 ```
 
 **Edit 3 (§4.7.9 step 7).** In step 7, replace `A later session on the same pod skips this step and steps 8 and 9, and uses the connections the runtime opened on the pod's first session.` with:
@@ -77,7 +75,7 @@ A later session on the same pod skips this step and steps 8 and 9, uses the `CH-
 **Edit 6 (§4.7.1 gateway RPC table, `Shutdown` row).** Inside the row, replace `It flushes the session's final usage report and then ends the session's use of the pod's runtime process` with:
 
 ```markdown
-It flushes the session's final usage report, writes the session's `session_start`-paired `session_end` on `CH-MSGSOCK` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), and then ends the session's use of the pod's runtime process
+It flushes the session's final usage report, writes the session's `session_end` on `CH-MSGSOCK` when the session reached `running` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), **Session frame writes.**), and then ends the session's use of the pod's runtime process
 ```
 
 The edit sits inside the runtime-teardown clause. In the following sentence, `The teardown writes no \`CH-RUNTIMEOPS\` frame`, replace the citation `([Section 15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine))` with `([Section 28.5.3](28_communication-channels.md#2853-intra-pod))`, and nothing attaches `session_end` to the slot release.
@@ -101,7 +99,7 @@ The adapter rewrites it before each session's runtime start, including each sess
 **Edit 3 (§4.7.6 field table).** Delete the rows whose first cell is `` `sessionId` ``, `` `taskId` ``, `` `credentialsPath` ``, `` `experimentContext` ``, `` `tracingContext` ``, `` `llm` ``, `` `llm.deliveryMode` ``, `` `llm.dialect` ``, `` `llm.baseUrl` ``, and `` `llm.apiKeyEnv` ``. Insert this paragraph immediately after the table and before **Level reading requirements:**:
 
 ```markdown
-**Per-session fields.** The per-session fields `sessionId`, `credentialsPath`, `experimentContext`, `tracingContext`, and `llm`, with its members `llm.deliveryMode`, `llm.dialect`, `llm.apiKeyEnv`, and `llm.headers`, are carried by each session's `session_start` frame on `CH-MSGSOCK` rather than by the manifest; the `CH-MSGSOCK` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) defines them. `taskId` has no successor field, because a session's task identifier equals its `sessionId` ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)).
+**Per-session fields.** The per-session fields `sessionId`, `credentialsPath`, `experimentContext`, `tracingContext`, and `llm`, with its members `llm.deliveryMode`, `llm.dialect`, `llm.apiKeyEnv`, and `llm.headers`, are carried by each session's `session_start` frame on `CH-MSGSOCK` rather than by the manifest; the `CH-MSGSOCK` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) defines them. `taskId` has no successor field, because a session's task identifier equals its `sessionId` (`CreateRequest.TaskID` in [Section 15.7](15_external-api-surface.md#157-runtime-author-sdks)).
 ```
 
 **Edit 4 (§4.7.6 **Level reading requirements:**, Basic bullet).** Replace the bullet's last sentence, `A Basic-level runtime that reads a credential file reads the manifest for its path: the file is written per session at the location the \`credentialsPath\` field names, so a runtime that assumes a fixed location does not find it.`, with:
@@ -174,11 +172,11 @@ Child runtimes receive the parent's `tracingContext` in the child session's `ses
 
 In the commit that lands Edits 1 and 8, `intraPodNonceSites` in `tests/tier11_docs/intra_pod_mcp_nonce_doc_reconciliation_test.go` pins `carries only pod-scoped fields` in place of `authoritative for the session whose start last wrote it` at its §4.7.5 adapter-manifest-lead site, and drops its §6.1 credential-lease site.
 
-### SPEC-3 · spec/28_communication-channels.md § 28.5.3 `CH-MSGSOCK`; spec/15_external-api-surface.md § 15.4, § 15.4.1, § 15.4.3
+### SPEC-3 · spec/28_communication-channels.md § 28.5.3 `CH-MSGSOCK`; spec/15_external-api-surface.md § 15.4, § 15.4.1, § 15.4.3; spec/05_runtime-registry-and-pool-model.md § 5.1, § 5.2; spec/04_system-components.md § 4.7.1
 
 **Edit 1 (card **Messages.** bullet).** Make three replacements inside the bullet:
 - `Adapter to runtime: \`message\`, \`tool_result\`, \`heartbeat\`, and \`shutdown\`.` becomes `Adapter to runtime: \`session_start\`, \`message\`, \`tool_result\`, \`heartbeat\`, \`session_end\`, and \`shutdown\`.`
-- `` `heartbeat` and `shutdown` use their own minimal schemas `` becomes `` `session_start`, `session_end`, `heartbeat`, and `shutdown` use their own minimal schemas ``.
+- `` `heartbeat` and `shutdown` use their own minimal schemas `` becomes `lifecycle messages use their own minimal schemas`.
 - `` `message`, `tool_result`, `response`, `tool_call`, `set_tracing_context`, and `status` carry a `sessionId` `` becomes `` `session_start`, `session_end`, `message`, `tool_result`, `response`, `tool_call`, `set_tracing_context`, and `status` carry a `sessionId` ``.
 
 **Edit 2 (card **Preconditions.** bullet).** Replace the bullet's first sentence, `The adapter writes the final adapter manifest and spawns the runtime binary before it delivers the first \`message\`, with the runtime's connection to the MCP servers and the \`CH-RUNTIMEOPS\` capability handshake in between ([§4.7](04_system-components.md#47-runtime-adapter)).`, with:
@@ -192,7 +190,7 @@ The bullet's second sentence (the adapter is the protocol initiator) stays uncha
 **Edit 3 (card **Timing.** bullet).** Replace `A \`shutdown\` carries a \`deadline_ms\` by which the runtime must finish its current work and exit` with:
 
 ```markdown
-`session_start` and `session_end` are not acknowledged and carry no deadline; each travels in order on the one stream ahead of or behind the session's other frames. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit
+`session_start` and `session_end` are not acknowledged and carry no deadline; each travels in order ahead of or behind the session's other frames. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit
 ```
 
 **Edit 4 (**Message schemas** preamble).** In the paragraph that begins `All **content** messages on stdin`, replace `Lifecycle messages (\`heartbeat\`, \`shutdown\`) use their own minimal schemas defined below and are not \`MessageEnvelope\` instances. Runtimes MUST ignore unrecognized fields.` with:
@@ -219,14 +217,14 @@ Lifecycle messages (`session_start`, `session_end`, `heartbeat`, and `shutdown`)
 
 `session_start` opens a session on the runtime and carries the session's own context ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). The following rules govern it:
 
-1. The adapter writes a session's `session_start` once for each start and each resume of the session, before any other frame addressed to the session and before the [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule-8 confirmation, on every `type: agent` start path: pod-warm, SDK-warm, and resume, in both deployment models.
+1. The adapter writes a session's `session_start` once for each start and each resume of the session, on the paths **Session frame writes.** below states, before any other frame addressed to the session.
 2. A runtime that keeps per-session context creates the session's context from this frame. A runtime that keeps none may ignore the frame under the unknown-type rule in the preamble above.
 3. A runtime ignores a `session_start` for a session it already holds.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"session_start"`. |
-| `sessionId` | `string` | Yes | The session the frame opens. The adapter populates it on every pod. A session's task identifier equals its `sessionId` ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). |
+| `sessionId` | `string` | Yes | The session the frame opens. The adapter populates it on every pod. |
 | `credentialsPath` | `string` | No | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json` (see item 4 of [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary)). The adapter writes the file before it writes this frame and rewrites it in place on a rotation for this session. A runtime that reads credential material reads its path from this field rather than assuming a fixed location. Present whenever the adapter provisioned a credential file for the session and absent otherwise; a runtime given no path loads no credential bundle for the session. |
 | `experimentContext` | `object` or `null` | No | Experiment enrollment context for this session. Contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via delegation). Absent or `null` when the session is not enrolled in any experiment. When present, runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. See [§10.7](10_gateway-internals.md#107-experiment-primitives). |
 | `tracingContext` | `object` or `null` | No | Tracing identifiers propagated from the parent runtime via delegation; absent or `null` for top-level sessions. An opaque key-value map of strings (e.g., `{"langsmith_run_id": "run_abc123", "otel_trace_id": "0af7651916cd43dd"}`). Child runtimes use this to stitch their native traces into the parent's trace tree. Contains only non-sensitive identifiers — never endpoint URLs or credentials (see [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) for validation rules). See [§16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. |
@@ -244,9 +242,31 @@ Lifecycle messages (`session_start`, `session_end`, `heartbeat`, and `shutdown`)
 
 `session_end` releases a session on the runtime. The following rules govern it:
 
-1. The adapter writes it on every path that ends a session's use of the runtime while the runtime's connection stays open: session teardown, a start rolled back under [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule 8 when the adapter then holds no entry for the session's slot identifier, and, where the coordinator hold timeout leaves the connection open, that timeout. When the connection ends, every session the runtime holds ends, and no `session_end` follows. A rule-8 rollback that finds an entry for the identifier writes no `session_end`, because the attempt holding that entry owns the session on the runtime. An interrupt does not end a session and writes no `session_end`.
+1. The adapter writes it on the paths **Session frame writes.** below states. A session's frames travel on the pod's one connection in the sidecar model and on the session's own runtime loop in the embedded model. When that connection or loop ends, every session it carries ends, and no `session_end` follows.
 2. On `session_end` the runtime releases the session's context, writes no further frame addressed to the session other than the `llm_request_completed` of a request whose `llm_request_started` preceded the `session_end`, and keeps serving the pod's other sessions.
 3. A runtime ignores a `session_end` for a session it does not hold.
+
+**Session frame writes.** The adapter writes `session_start` and `session_end` on the paths in the table below and on no other path. The adapter's record of a session whose `session_start` it wrote is the [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule-8 record, at which the slot reaches `running`, and every `session_end` a teardown writes is decided on that record. A start writes its frames inside an **open sequence**: the adapter makes the rule-8 confirmation that the registry still holds the entry the start's claim was admitted against, writes `session_start`, makes the rule-8 confirmation again and takes the record, and writes `session_end` when that second confirmation is refused. An open sequence runs under the slot serialization that the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Slot-identifier reclaim hold.** paragraph defines, so by that paragraph's completion rule a reclaim hold opened during an open sequence does not end before the sequence ends. Under these rules no attempt's `session_end` reaches the runtime after a later attempt's `session_start` for the same session, and, unless the adapter's write of a `session_end` fails, every `session_start` the runtime receives is followed by that session's `session_end` or by the end of the connection or loop that carries it.
+
+| Adapter path | Frame | Point relative to the rule-8 record | What makes the decision and the write one step |
+| --- | --- | --- | --- |
+| Pod-warm start (`StartSession`) | `session_start` | After the runtime is made live for the session and the first confirmation, and before the record | The open sequence |
+| SDK-warm start (a `ConfigureWorkspace` that claims the slot) | `session_start` | After the pre-connected session is pointed at the `cwd` and the first confirmation, and before the record | The open sequence |
+| Repeat of an SDK-warm start for a session already started (`ConfigureWorkspace` repeat) | None | No confirmation is made and no record is taken | Not applicable |
+| Resume (`Resume`) | `session_start` | After the runtime is made live for the restored session and the first confirmation, and before the record | The open sequence |
+| A start whose open sequence finds that the registry no longer holds the entry its claim was admitted against, because no entry stands or because a later attempt's entry stands | None | Before the record, which is not taken; rule 8 refuses the start at the open sequence's first confirmation | The open sequence |
+| A start whose second confirmation is refused after its `session_start` was written; the registry then holds no entry for the identifier | `session_end` | After the refused confirmation, with no record taken, and before the start takes the session back off the runtime, which on an SDK-warm start includes `DemoteSDK`, because `DemoteSDK` does not end the runtime process ([§4.7.10](04_system-components.md#4710-deployment-model)) | The open sequence |
+| A start that fails after the runtime is made live and before the confirmation, because its `session_start` write fails or its open sequence cannot begin before the request's deadline | None | Before the record, which is not taken | The open sequence; the adapter treats the failed write as undelivered |
+| `Shutdown` that removes an entry whose session reached `running` | `session_end` | After the rule-8 record and before the teardown ends the session's use of the runtime | The removal's decision under the registry critical section, with the write made before the cleanup completes |
+| `Shutdown` that removes an entry whose session did not reach `running`, or that removes no entry | None | Before the record, or with no record | The removal's decision under the registry critical section |
+| `DemoteSDK` while the session of the registry's entry is `running` | `session_end` | After the rule-8 record and before the pre-connected SDK is torn down and the entry is removed | The decision, made under the slot serialization while the entry stands |
+| `DemoteSDK` while no session is `running` | None | Not applicable | The decision the row above makes |
+| Coordinator hold timeout, sidecar model ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | None | Not applicable | The pod-scope teardown ends the connection before the termination removes any entry |
+| Coordinator hold timeout, embedded model | None | Not applicable | The termination's close of the session ends the session's loop |
+| Interrupt, clean or hard | None | Not applicable | The session does not end |
+| Heartbeat escalation | None | Not applicable | The escalation ends the session's stream and writes no frame; a later teardown writes what its own row states |
+| Pod exit | None | Not applicable | The connection, or in the embedded model the adapter process, ends with the pod; a teardown that runs before the adapter exits writes what its own row states |
+| Any path of a `type: mcp` runtime | None | Not applicable | The runtime exchanges no `CH-MSGSOCK` frame ([§4.7.10](04_system-components.md#4710-deployment-model)) |
 
 **Session errors.** A runtime that keeps per-session context and receives a `message` for a session whose `session_start` it has not received, or whose context it failed to create, answers with a `response` carrying `error` for that `sessionId` and keeps running.
 ````
@@ -257,11 +277,7 @@ Lifecycle messages (`session_start`, `session_end`, `heartbeat`, and `shutdown`)
 Process-scoped: the adapter never writes `shutdown` at a session boundary. Agent must finish current work and exit within `deadline_ms`. No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
 ```
 
-**Edit 7 (**Error reporting via `response`.**).** Replace `When \`error\` is absent and the process exits zero, the task completes successfully.` with:
-
-```markdown
-When `error` is absent, the `response` completes the session's task successfully.
-```
+**Edit 7 (**Error reporting via `response`.**).** Delete the sentence `When \`error\` is absent and the process exits zero, the task completes successfully.`
 
 **Edit 8 (§15.4 artifact bullet for `schemas/lenny-adapter-jsonl.schema.json`).** Delete the parenthetical frame list `` (`message`, `tool_result`, `heartbeat`, `shutdown`, `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`)``, so that the bullet names no frame and points to the card through its existing Section 28.5.3 reference.
 
@@ -291,6 +307,32 @@ When `error` is absent, the `response` completes the session's task successfully
 
 - In the step that carries the `shutdown` frame, replace `Gateway initiates shutdown. Adapter writes:` with `The pod drains. Adapter writes:`.
 - Renumber the steps so that they run from 1 through 12 in order. Step 1 and every frame line other than the inserted ones are unchanged.
+
+**Edit 12 (§5.2 **Slot-identifier reclaim hold.**).** In `spec/05_runtime-registry-and-pool-model.md`, in the **Slot-identifier reclaim hold.** paragraph, replace `until the cleanup that reclaims the slot has **completed**, which is when every act that cleanup owes the slot has returned without error.` with:
+
+```markdown
+until the cleanup that reclaims the slot has **completed**, which is when every act that cleanup owes the slot has returned without error. The adapter keeps one **slot serialization** per slot identifier, which admits one holder at a time. A cleanup that reclaims the slot holds it while it performs its acts, a start holds it for the open sequence in which it writes its session frames, and `DemoteSDK` holds it from its `session_end` decision until it answers ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), `CH-MSGSOCK` **Session frame writes.**). A wait for the slot serialization lasts no longer than the deadline that bounds the holder's own work, which for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, running under no request, is the graceful window this paragraph states for its close, and a cleanup whose wait outlasts that bound performs its acts without it. An act performed without the slot serialization is an act that did not return without error, whatever the act itself returns, because it may have run while a start's open sequence held the slot; the table above applies the rows keyed on a failed act to it. A hold that a deregistration opens while a start's open sequence holds the slot serialization therefore lasts at least until that open sequence ends.
+```
+
+**Edit 13 (§4.7.1 rule 8, **The start-confirmation rule.**).** In `spec/04_system-components.md`, make three replacements inside rule 8.
+
+Replace `and confirms that it still holds an entry for that identifier carrying the same bind attempt token the entry carried when the request that starts the session was admitted.` with:
+
+```markdown
+and confirms that it still holds the entry the request that starts the session was admitted against. The comparison is of entry identity, and because the stamp-once rule never changes an entry's token, that entry also carries the token it carried at admission.
+```
+
+Replace `The confirmation is required of every request that starts a session, including one that carries no token of its own, for which the token compared is the one the entry carried at admission, so an entry no later attempt replaced compares equal to itself.` with:
+
+```markdown
+The confirmation is required of every request that starts a session, including one that carries no token of its own. A comparison of tokens alone does not conform, because two entries that requests carrying no token created for one identifier carry the same empty token, so an entry a later attempt created after a reclaim would compare equal to the one it replaced. A start whose session frames the adapter writes also makes this confirmation before it writes the session's `session_start`, inside the open sequence that [Section 28.5.3](28_communication-channels.md#2853-intra-pod) `CH-MSGSOCK` **Session frame writes.** states, and a start that fails the confirmation there is refused under this rule as one that fails it at the record.
+```
+
+Replace `When the adapter holds no entry for the identifier, or holds one carrying a different token,` with `When the adapter holds no entry for the identifier, or holds an entry other than the one the request was admitted against,`.
+
+**Edit 14 (card **Addressing.** paragraph).** In the paragraph that begins `**Addressing.** The adapter resolves the frame`, append `It does not reach \`session_start\` or \`session_end\`, which the adapter writes itself and no Attach stream delivers.` after the sentence ending `which carry no per-session identifier.`, and in condition 1 **Address equality.** replace `This condition governs all six session-scoped frame types` with `This condition governs all six of these frame types`. The paragraph is hard-wrapped, so match with line breaks ignored and rewrap the result.
+
+**Edit 15 (§5.1 **Setup Commands and Policy** and §5.2 **Recycle lifecycle**).** In `spec/05_runtime-registry-and-pool-model.md`, under the §5.1 heading `Setup Commands and Policy`, replace `Per-task setup belongs in the runtime's handling of the session's first message` with `Per-session setup belongs in the runtime's handling of the session's \`session_start\``; the trailing Section 5.2 link stays. In the §5.2 **Recycle lifecycle (`recycle.enabled: true`).** paragraph, replace `per-session setup belongs in the runtime's handling of the session's first message, because` with `per-session setup belongs in the runtime's handling of the session's \`session_start\` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), \`CH-MSGSOCK\` **Inbound: \`session_start\`** rule 2), because`.
 
 ### SPEC-4 · spec/28_communication-channels.md § 28.5.3 `CH-RUNTIMEOPS`; spec/15_external-api-surface.md § 15.4.4, § 15.7
 
@@ -343,10 +385,12 @@ In the `llm_request_completed` row, insert `` `sessionId` (string), `` after `` 
 // Handler is the single interface runtime authors implement. One runtime
 // process serves any number of sessions
 // ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime
-// process lifetime"). The SDK invokes OnCreate once per session, when the
-// session's `session_start` arrives; OnMessage for each of the session's
-// messages; and OnTerminate once when the session ends, on its
-// `session_end` or at the end of the connection. Calls for different
+// process lifetime"). The SDK invokes OnCreate when a `session_start`
+// opens a session, under the `CH-MSGSOCK` card's **Inbound:
+// `session_start`** rules in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod); OnMessage for
+// each of the session's messages; and OnTerminate when that session ends,
+// on its `session_end` or at the end of the connection. Calls for different
 // sessions run concurrently, so an implementation keeps per-session state
 // keyed by session and is safe for concurrent use. A session whose OnCreate
 // fails is answered as the `CH-MSGSOCK` card's **Session errors.** rule in
@@ -400,7 +444,6 @@ func Run(h Handler, opts ...Option) error
     // session has exactly one execution, and external protocols surface that
     // execution as a Task ([§8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)),
     // so TaskID equals the session id; the SDK derives it from `sessionId`.
-    // OnCreate is invoked once per session with this value.
     TaskID string `json:"taskId"`
 ```
 
@@ -495,13 +538,22 @@ The Basic **shutdown within `deadline_ms`** row stays unchanged.
 On an SDK-warm pod that startup sequence does not occur, because the session is already connected and the gateway has pointed it at the finalized `cwd`; the adapter writes the session's `session_start` while it handles that `ConfigureWorkspace` call (§28.5.3 `CH-MSGSOCK`, **Inbound: `session_start`** rule 1)
 ```
 
-**Edit 4 (§29.4 step 13).** Replace step 13 with:
+**Edit 4 (§29.4 steps 13 and 14).** Replace steps 13 and 14 with:
 
 ```markdown
-13. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
+13. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
+    `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
+    `pod-to-gateway`. The child's adapter pushes `FINAL_USAGE_REPORT` once every in-flight `ReportUsage`
+    pull has settled, as the final message before the stream closes, and the gateway waits for it or for
+    the stream close, whichever comes first, before it returns the child's delegation budget (§28.5.2
+    `CH-ADAPTEREVENTS`, [§4.7](04_system-components.md#47-runtime-adapter),
+    [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
+
+14. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or
     by an expiry timer, for a session whose start the adapter admitted: `adapter` → `runtime`,
-    `CH-MSGSOCK`, `intra-pod`. The adapter writes the session's `session_end`, writes no `CH-RUNTIMEOPS`
-    frame, and sends the runtime process no signal. The runtime process stays alive for the pod's life
+    `CH-MSGSOCK`, `intra-pod`. The adapter writes the session's `session_end` when the session reached
+    `running` (§28.5.3 `CH-MSGSOCK`, **Session frame writes.**), writes no `CH-RUNTIMEOPS` frame, and
+    sends the runtime process no signal. The runtime process stays alive for the pod's life
     ([§4.7](04_system-components.md#47-runtime-adapter) `Shutdown` row,
     [§4.7.10](04_system-components.md#4710-deployment-model), §28.5.3 `CH-MSGSOCK`).
 ```
@@ -530,17 +582,21 @@ It also authenticates the `CH-MSGSOCK` and `CH-RUNTIMEOPS` connections, checked 
 
 In the same row replace the Level relevance cell `Standard, Full` with ``All (socket `CH-MSGSOCK`); Standard, Full (MCP)``. The row stays one physical line, and its existing sentences stay byte-identical; proposal 0084 rewrites them and its tier-11 gate pins their phrases.
 
-**Edit 3 (§28.5.3 `CH-MSGSOCK` **Endpoint.** bullet).** Replace `and the manifest-nonce handshake presented as the first message on the socket. When \`Runtime.spec.requireSoPeercred\` is \`false\` the peer check is unavailable and the adapter supplements the static nonce with a per-connection 128-bit challenge whose \`HMAC-SHA256\` response it validates` with:
+**Edit 3 (§28.5.3 `CH-MSGSOCK` **Endpoint.** and **Timing.** bullets).** Replace `and the manifest-nonce handshake presented as the first message on the socket. When \`Runtime.spec.requireSoPeercred\` is \`false\` the peer check is unavailable and the adapter supplements the static nonce with a per-connection 128-bit challenge whose \`HMAC-SHA256\` response it validates` with:
 
 ```markdown
 and the connection handshake that [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1 **Runtime connection handshake.** states, which in nonce-only mode includes the per-connection challenge
 ```
 
-**Edit 4 (§28.5.3 `CH-RUNTIMEOPS` **Endpoint.** bullet).** Replace `and the manifest-nonce handshake, which the runtime presents as the first message on the socket. When \`Runtime.spec.requireSoPeercred\` is \`false\` the peer check is unavailable and the adapter supplements the static nonce with a per-connection 128-bit challenge whose \`HMAC-SHA256\` response it validates` with:
+In the same card's **Timing.** bullet replace `In nonce-only mode the challenge response is due within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter))`, which wraps across lines in the source, with `The connection handshake's nonce line, and in nonce-only mode its challenge response, are each due within 500 ms ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1, **Runtime connection handshake.**)`.
+
+**Edit 4 (§28.5.3 `CH-RUNTIMEOPS` **Endpoint.** and **Timing.** bullets).** Replace `and the manifest-nonce handshake, which the runtime presents as the first message on the socket. When \`Runtime.spec.requireSoPeercred\` is \`false\` the peer check is unavailable and the adapter supplements the static nonce with a per-connection 128-bit challenge whose \`HMAC-SHA256\` response it validates` with:
 
 ```markdown
 and the connection handshake that [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1 **Runtime connection handshake.** states, which in nonce-only mode includes the per-connection challenge
 ```
+
+In the same card's **Timing.** bullet replace `In nonce-only mode the challenge response is due within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter))`, which wraps across lines in the source, with `The connection handshake's nonce line, and in nonce-only mode its challenge response, are each due within 500 ms ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1, **Runtime connection handshake.**)`.
 
 **Edit 5 (§28.5.3 `CH-RUNTIMEOPS` **Preconditions.** and table).** In the **Preconditions.** bullet replace `\`lifecycle_capabilities\` is the first message sent on channel open` with `After the connection handshake ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1), \`lifecycle_capabilities\` is the first frame sent on the channel`. In the `lifecycle_capabilities` table row replace the Notes text `First message sent on channel open.` with `First frame after the connection handshake.`
 
@@ -572,9 +628,12 @@ For core operation the runtime reads only `mcpNonce`, and only when it dials `CH
 
 **Edit 13 (§29.2 step 27).** Replace `as the first message on channel open ([§4.7](04_system-components.md#47-runtime-adapter))` with `as the first frame after the connection handshake ([§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1)`, keeping the hard wrap.
 
+**Edit 14 (§15.7 **Binary protocol (all levels).** bullet).** Delete the sentence `This is the entire Basic-level wire surface.`
+
 ## Spec files touched
 
-- `spec/04_system-components.md` (SPEC-1, SPEC-2, SPEC-8)
+- `spec/04_system-components.md` (SPEC-1, SPEC-2, SPEC-3, SPEC-8)
+- `spec/05_runtime-registry-and-pool-model.md` (SPEC-3)
 - `spec/06_warm-pod-model.md` (SPEC-2)
 - `spec/08_recursive-delegation.md` (SPEC-2)
 - `spec/10_gateway-internals.md` (SPEC-2)
