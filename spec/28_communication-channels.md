@@ -1331,8 +1331,8 @@ each of these two channels is permitted by a supplemental policy rather than by 
   provider's model ID. The `anthropic` dialect exposes `POST {proxyUrl}/v1/messages` and its streaming
   variant, and accepts the Anthropic Messages API request body; the proxy accepts the `anthropic-version`
   header from the runtime and injects the configured default when the header is absent, advertising that
-  default to runtimes through the adapter manifest's `llm.headers` field
-  ([§4.9](04_system-components.md#49-credential-leasing-service)). Responses are the upstream provider's
+  default to runtimes in the `llm.headers` member of each session's `session_start` frame
+  (§28.5.3 `CH-MSGSOCK`) ([§4.9](04_system-components.md#49-credential-leasing-service)). Responses are the upstream provider's
   responses translated back into the dialect the pod speaks, streamed to the pod
   ([§4.9](04_system-components.md#49-credential-leasing-service)).
 - **Preconditions.** The pod's pool runs `deliveryMode: proxy`, so the pod receives a lease token, a
