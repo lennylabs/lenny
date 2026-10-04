@@ -7321,6 +7321,25 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 
 ---
 
+### - [ ] F-7.3.27 — The gateway does not react when an adapter `Attach` stream ends with an error, so the session holds its slot and pod until terminate or the watchdog [High] — OPEN
+
+**Spec:** §28.6 `CH-ATTACH` failure row (a gRPC error on the stream while the session is `running` moves it to `resume_pending` or `awaiting_client_action`), §7.2 and §7.3 (the `running → resume_pending` edge and the retry policy), §6.2 **Pod crash during an active session** (a pod with an unrecoverable gRPC error is retired through the drain path, whatever the recycle setting), and §5.2 slot failure and cleanup on concurrent pools.
+**Evidence:**
+- `PodExecutor` is the only `Attach` consumer (`pkg/gateway/session/executor/pod.go`). On a receive error, `readAttachResponse` returns an error that `Send` passes up, but the dead stream stays cached in `e.streams`, so every later `Send` for the session reuses it and fails. `EvictStream` runs only from `Release` and the coordination dead-connection seam.
+- REST direct delivery (`pkg/gateway/sessionserver/messages_delivery.go`) answers 500 `EXECUTOR_FAILURE` and leaves the row `running`. The resume-and-deliver path buffers the message and leaves the session running. MCP `send_message` and the `delegate_task` first task input (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`) return an error and release nothing.
+- `ReportSessionFailure` (`pkg/gateway/sessionserver/failure.go`) has no production caller, so the `resume_pending` edge is never taken on a stream error. When taken, `transitionToResumePending` does not release the old binding, and the client-driven resume overwrites the registry entry with `podRegistry.Put` (`resume_rebind.go`) without a `Shutdown` or `EvictStream`.
+- Only the single-shot OpenAI Chat and Open Responses translators release on a `Send` error (disposition `failed`, retire path).
+- Found by the 2026-10-05 investigation for proposal 0090, filed 2026-10-05.
+**Gap:** After any `Attach` stream error, including the adapter's heartbeat-escalation `DeadlineExceeded`, the session keeps its slot, runtime context, workspace, and SandboxClaim until a client or parent terminate, or the watchdog's idle or max-age sweep (up to `maxSessionAgeSeconds`, 7200 s by default). The orphan claim GC does not reclaim it because the row stays `running`. On recycling pools the eventual release has disposition `expired`, so a pod whose runtime hung is scrubbed and reused rather than retired. A watchdog release on a replica that does not hold the binding is a no-op. With proposal 0090's kept runtime, no `session_end` is written until that late release.
+**Suggested resolution:** A gateway stream-failure proposal, scheduled in `gateway-runtime-comms-remediation.md` §10.2 after proposal 0090. Evict the dead stream and return a typed stream-ended error; call `ReportSessionFailure` from the message paths; release the old binding with `Shutdown` (disposition `failed`) on the `resume_pending` and `awaiting_client_action` edges; release any prior binding before a resume rebinds. Settle in the spec whether a heartbeat-escalation stream end is `runtime_crash`, and whether a hung runtime on a concurrent pod fails only its slot or retires the pod (§5.2 slots fail independently; §4.7.10 keeps one runtime process for the pod).
+
+### - [ ] F-7.3.28 — The gateway may open the cached `Attach` stream with the first request's context, so the stream would end when that request returns [High, UNVERIFIED] — OPEN
+
+**Spec:** §28.6 `CH-ATTACH` (one long-lived stream per session) and §7.2.
+**Evidence:** `PodExecutor.streamFor` opens the stream with the first `Send`'s context (`pkg/gateway/session/executor/pod.go`), which is `r.Context()` on the REST path, and `adapterclient.Attach` documents that the stream is closed by cancelling that context (`pkg/gateway/runtime/adapterclient/client.go`). Not reproduced; existing tests pass, so a later context may keep it alive. Found by the same 2026-10-05 investigation, filed 2026-10-05.
+**Gap:** If confirmed, every session's cached stream dies when its first request returns, and every later message takes the F-7.3.27 failure path.
+**Suggested resolution:** Verify first, with a tier-4 test that sends two messages in separate requests on one session. If confirmed, open the stream on a session-scoped context. Owned by the same gateway stream-failure proposal, which checks this first.
+
 ## §7.4 Upload Safety <a id="7.4"></a>
 Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload handler, archive extraction, mid-session uploads, uploadToken auth, storage-quota integration, audit/observability hooks.
 
