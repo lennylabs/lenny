@@ -21,7 +21,7 @@
 //
 // The predicate covers the runtime-author documentation and, in the second
 // case below, every specification statement of the handshake together with the
-// adapter manifest's currency statement.
+// adapter manifest's statement that it carries only pod-scoped fields.
 //
 // This test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
@@ -228,8 +228,8 @@ func nonceBlockStart(line string) bool {
 
 // intraPodNonceSites returns every specification statement of the intra-pod
 // MCP nonce handshake the pod-wide rule reaches, together with the adapter
-// manifest's statement that it carries only pod-scoped fields. A site left behind states a handshake that
-// contradicts the ones beside it.
+// manifest's statement that it carries only pod-scoped fields. A site left
+// behind states a handshake that contradicts the ones beside it.
 func intraPodNonceSites() []nonceStatementSite {
 	spec15 := []string{"spec", "15_external-api-surface.md"}
 	spec28 := []string{"spec", "28_communication-channels.md"}
@@ -348,10 +348,10 @@ var retiredManifestStabilityPhrasings = []string{
 	"does not change while the runtime is processing",
 }
 
-// spec: 4.7, 4.7.5, 15.4.3, 28.5.3, 28.6, 29.4
+// spec: 4.7, 4.7.5 (Adapter manifest), 15.4.3, 28.5.3, 28.6, 29.4
 // diagnosis: one statement of the intra-pod MCP nonce handshake, or of the
 //
-//	adapter manifest's currency, disagrees with the others. The intra-pod MCP
+//	adapter manifest's pod-scoped contents, disagrees with the others. The intra-pod MCP
 //	servers are pod-wide and started at most once per pod, a server validates
 //	against the nonce the manifest carried at the start that bound it, and a
 //	later session's manifest write does not re-arm a running server. A site
