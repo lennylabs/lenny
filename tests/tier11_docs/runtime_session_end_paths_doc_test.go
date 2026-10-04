@@ -63,16 +63,41 @@ func TestSessionEndReferenceListsTheHoldTimeoutTerminationAsWritingNone(t *testi
 //
 //	docs/runtime-author-guide/lifecycle.md no longer states that the adapter
 //	closes the connection when the coordinator hold times out with no new
-//	coordinator, or that a closed connection is not re-established and the pod
-//	is retired. A runtime author then has no account of a connection that ends
-//	with every session on it and no `session_end`.
+//	coordinator, or that a runtime process that stops, or whose connection the
+//	hold timeout closed, is not reconnected and the pod is retired. A runtime
+//	author then has no account of a connection that ends with every session on
+//	it and no `session_end`.
 func TestRuntimeProcessLifetimeNamesTheAdapterClosesOfTheConnection(t *testing.T) {
 	page := readDocPage(t, filepath.Join(repoRoot(t), "docs", "runtime-author-guide", "lifecycle.md"))
 	requirePhrases(t, "lifecycle.md Runtime Process Lifetime", section(page, "Runtime Process Lifetime"), []string{
 		"The adapter closes the connection when the pod terminates",
 		"when the coordinator hold times out with no new coordinator",
-		"is not re-established inside the pod",
+		"A runtime process that stops, or whose connection the hold timeout closed, is not re-created or reconnected inside the pod",
 		"the pod is retired",
+	})
+}
+
+// spec: 4.7.10 (Runtime process lifetime), 4.7.11 (Runtime connection
+// handshake)
+// diagnosis: the Runtime Process Lifetime section of
+//
+//	docs/runtime-author-guide/lifecycle.md states the no-reconnect rule for
+//	every connection the adapter closes, or no longer says that a connection
+//	closed before the first protocol frame is redialed. The specification
+//	limits the no-reconnect rule to a stopped runtime process and a
+//	hold-timeout close, and requires a runtime to re-read the manifest and dial
+//	again after a handshake refusal. A runtime author who reads the page treats
+//	a handshake refusal as final and loses the pod's connection.
+func TestRuntimeProcessLifetimeScopesNoReconnectAndKeepsHandshakeRedial(t *testing.T) {
+	page := readDocPage(t, filepath.Join(repoRoot(t), "docs", "runtime-author-guide", "lifecycle.md"))
+	body := section(page, "Runtime Process Lifetime")
+	if strings.Contains(body, "A connection the adapter closed is not re-established") {
+		t.Errorf("lifecycle.md Runtime Process Lifetime: applies the no-reconnect rule to every connection the adapter closes")
+	}
+	requirePhrases(t, "lifecycle.md Runtime Process Lifetime", body, []string{
+		"A connection the adapter closes before the first protocol frame",
+		"read the manifest again and dial again",
+		"(../reference/adapter-contract.md#connection-handshake)",
 	})
 }
 
