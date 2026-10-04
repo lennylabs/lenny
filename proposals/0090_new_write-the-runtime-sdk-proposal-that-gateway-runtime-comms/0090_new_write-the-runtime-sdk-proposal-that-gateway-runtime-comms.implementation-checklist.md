@@ -24,7 +24,7 @@
       Tiers 0, 1, 3, 4, 7a, 8, 9, 10. Depends on: S3, S4, S6, S10
 - [ ] **S12 · code** — CODE-1. Lands the adapter open sequence and `session_end` writes on the rows of the SPEC-3 **Session frame writes.** table, the Attach loop's drop of `session_started`, and the fail-closed `DemoteSDK`.
       Tiers 0, 1, 3, 4, 5, 7a. Depends on: S1, S2, S3, S10
-- [ ] **S13 · code** — CODE-2. Lands the developer-loop `session_start` and the executor's drop of `session_started`.
+- [ ] **S13 · code** — CODE-2. Lands the developer-loop `session_start`.
       Tiers 0, 1, 3. Depends on: S3, S10
 - [ ] **S14 · code** — CODE-4. Lands the multi-session Go SDK, which writes `session_started`.
       Tiers 0, 1, 3, 7a, 10. Depends on: S1, S2, S3, S4, S5, S11, S12
