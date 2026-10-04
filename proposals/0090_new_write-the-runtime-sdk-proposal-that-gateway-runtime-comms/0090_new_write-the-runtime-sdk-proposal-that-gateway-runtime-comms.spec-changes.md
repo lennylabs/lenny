@@ -8,7 +8,7 @@
 
 **Session addressing on `CH-RUNTIMEOPS` (SPEC-4).** The session-scoped `CH-RUNTIMEOPS` frames carry a required `sessionId`. The `CH-RUNTIMEOPS` card also states how a runtime treats such a frame when it arrives before the session's `session_start`, because the `session_start` write order holds only on `CH-MSGSOCK`. The `terminate` frame is deleted.
 
-**SDK contract (SPEC-5) and conformance (SPEC-6).** §15.7 states per-session handler invocation and links to the card for the frames. §15.4.6 gains a Basic **session lifetime** category, retargets the Full **deadline signal handling** category onto `deadline_approaching`, and points the Full **credential rotation handling** category at the credential file that `credentials_rotated` names.
+**SDK contract (SPEC-5) and conformance (SPEC-6).** §15.7 states per-session handler invocation and links to the card for the frames. §15.4.6 gains a Basic **session lifetime** category, retargets the Full **deadline signal handling** category onto `deadline_approaching`, and points the Full **credential rotation handling** category at the credential file that `credentials_rotated` names, and states the battery's session precondition (Edit 4).
 
 **Scenario traces (SPEC-7).** §29.2, §29.4, and §29.6 trace the frame writes the card states.
 
@@ -510,10 +510,16 @@ The shared §15 `TerminationReason` struct stays unchanged.
 **Edit 2 (Full row **deadline signal handling**).** Replace the row with:
 
 ```markdown
-| **Full** | **deadline signal handling** | If the runtime declares the `deadline_signal` capability in `lifecycle_support`, the harness writes `session_start` and a `message` for a session, then `deadline_approaching` with that session's `sessionId` before reading the response. The runtime writes the response to that `message` (possibly with `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session, and still answers a later `heartbeat` with `heartbeat_ack`. |
+| **Full** | **deadline signal handling** | If the runtime declares the `deadline_signal` capability in `lifecycle_support`, after the exchange the **Test categories by integration level.** paragraph requires, the harness writes a second `message` for the session, then `deadline_approaching` with that session's `sessionId` before reading the response. The runtime writes the response to that `message` (possibly with `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session after `deadline_approaching`, and still answers a later `heartbeat` with `heartbeat_ack`. |
 ```
 
 **Edit 3 (Full row **credential rotation handling**).** In the row, replace `` re-reads refreshed credentials from the manifest or env on `credential_rotated` `` with `` re-reads the credential file at the `credentialsPath` that `credentials_rotated` carries for the named session ``.
+
+**Edit 4 (**Test categories by integration level.** paragraph).** After `Each higher level inherits every test category from the levels below it.`, append:
+
+```markdown
+A category that sends a session-scoped frame first writes `session_start` for the session that frame names, and before a session-scoped `CH-RUNTIMEOPS` frame it reads the `response` to a `message` for that session ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)).
+```
 
 The Basic **shutdown within `deadline_ms`** row stays unchanged.
 
