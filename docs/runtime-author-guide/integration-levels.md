@@ -142,7 +142,7 @@ Somewhere around 150-200 lines, plus an MCP client library.
 
 1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.runtimeOps.socket` (usually `@lenny-runtime-ops`), and open the connection with the [connection handshake](../reference/adapter-contract.md#connection-handshake): wait for the manifest, send the `_lennyNonce` line first, answer a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection before that frame.
 2. **Do the capability handshake:** you'll receive `lifecycle_capabilities` from the sidecar; reply with `lifecycle_support` naming which of them you actually implement.
-3. **Answer each `session_start` with `session_started`** on stdout, for every session, once the session's context exists. The sidecar writes a session's CH-RUNTIMEOPS frames only after it reads that acknowledgement (see [`session_started`](../reference/adapter-contract.md#outbound-messages-your-runtime-writes-to-stdout)).
+3. **Answer each `session_start` with `session_started`** on stdout, for every session, once the session's context exists. The sidecar writes a session's CH-RUNTIMEOPS frames only after it reads that acknowledgement, except for a session whose start did not wait for that answer (see [`session_started`](../reference/adapter-contract.md#outbound-messages-your-runtime-writes-to-stdout) and the [CH-RUNTIMEOPS ordering](../reference/adapter-contract.md#ch-runtimeops-full-level-only)).
 4. **Handle lifecycle signals** in a background thread or task, running alongside the main stdin loop. Each session-scoped signal names its session by `sessionId`.
 
 ### The lifecycle capabilities
