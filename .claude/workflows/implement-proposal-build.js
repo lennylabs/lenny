@@ -1468,6 +1468,11 @@ async function runSpecStep(step) {
         "forced a deviation; text the edit replaces or removes is gone; the diff contains nothing beyond " +
         "the staged edits; every cross-reference the applied text adds resolves; and no added line cites a " +
         "source path or a line number.\n\n" +
+        "FORWARD REFERENCES ARE NOT DISCREPANCIES. A cross-reference that does not resolve yet, because it " +
+        "names a heading, anchor, or bold label that a LATER step of this same proposal adds, is expected: " +
+        "the proposal lands in steps. Before reporting an unresolved reference, search " + P.spec + " for " +
+        "the staged edit that adds the target. If one exists, do not report it. Report it only when no " +
+        "staged edit anywhere in the proposal adds the target.\n\n" +
         // PARENTHESISED. `+` binds tighter than `?:`, so without these the
         // condition was the whole concatenated prompt -- always a truthy
         // non-empty string -- and the ternary returned only the deviations
