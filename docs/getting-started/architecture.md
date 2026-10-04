@@ -267,14 +267,14 @@ Each agent pod contains two processes:
 
 **Runtime adapter (sidecar container).** The standardized bridge between the Lenny platform and the agent binary. It:
 - Exposes the gRPC/HTTP+mTLS interface that the gateway uses for lifecycle control.
-- Writes the adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, credential file paths, and configuration.
+- Writes the pod-scoped adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, the connection nonce, and configuration, and opens each session with a `session_start` frame that carries the session's credential file path and other per-session context.
 - Hosts the intra-pod MCP servers (platform tools, per-connector tools) as abstract Unix socket listeners.
 - Manages the CH-RUNTIMEOPS (`@lenny-runtime-ops`) for runtimes that implement the Full integration level.
 - Handles workspace staging, setup command execution, and checkpoint orchestration.
 
 **Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:
 - Reads messages from stdin (Basic integration level) or connects to MCP servers and the CH-RUNTIMEOPS (Standard or Full integration level).
-- Reads the adapter manifest to discover available tools and credentials.
+- Reads the adapter manifest to discover available tools, and reads each session's `session_start` frame for that session's credential file path.
 - Operates on files in `/workspace/slots/{sessionId}/current`.
 - Writes responses to stdout.
 

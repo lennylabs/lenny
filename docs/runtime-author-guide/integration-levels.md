@@ -17,6 +17,7 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 |-----------|---------|----------|------|
 | **stdin/stdout JSON-lines protocol** | Yes | Yes | Yes |
 | **Heartbeat / shutdown handling** | Yes | Yes | Yes |
+| **Session frames** (`session_start` and `session_end` bracket each session on one long-lived process) | Yes; a runtime that keeps per-session context answers `session_start` with `session_started` | Yes; same as Basic | Yes; the runtime answers every `session_start` with `session_started` |
 | **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) | Yes | Yes | Yes |
 | **Simple response shorthand** (`{"type":"response","sessionId":"...","text":"..."}`) | Yes | Yes | Yes |
 | **Minimal output part fields** (only `type` + `inline` required) | Yes | Yes | Yes |
@@ -27,7 +28,7 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **Checkpoint and restore** | None -- pod failure loses context | Best-effort -- minor inconsistencies possible | Cooperative handshake -- consistent snapshots |
 | **Interrupt** | No clean interrupt; the runtime process receives no signal | No clean interrupt; same as Basic | Clean `interrupt_request` / `interrupt_acknowledged` |
 | **Credential rotation** | Pod restart, in-flight context lost (no checkpoint) | Pod restart, brief pause (best-effort checkpoint) | Rotated in place, no interruption |
-| **Advance deadline warning** | No advance notice of a session's expiry | No advance notice; same as Basic | `deadline_approaching` signal before expiry |
+| **Advance deadline warning** | No advance notice of a session's expiry | No advance notice; same as Basic | `deadline_approaching`, addressed to the session by `sessionId`, before that session's expiry; the runtime keeps running |
 | **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | No drain coordination at pod exit |
 | **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no CH-RUNTIMEOPS exchange; reuse requires a runtime that serves sequential sessions | Yes | Yes |
 
@@ -41,14 +42,17 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 2. **Handle `message`** by writing a `response` back on stdout.
 3. **Handle `heartbeat`** by writing `{"type":"heartbeat_ack"}` right away.
 4. **Handle `shutdown`** by wrapping up and exiting within `deadline_ms`.
-5. **Ignore unknown types** so the platform can add things later without breaking you.
-6. **Flush stdout** after every write.
+5. **Handle `session_start` and `session_end`**, which open and release each session on your one long-lived process. A runtime that keeps per-session context creates it from `session_start`, answers with `session_started`, and releases it on `session_end`. A runtime that keeps none may ignore both frames under the unknown-type rule.
+6. **Ignore unknown types** so the platform can add things later without breaking you.
+7. **Flush stdout** after every write.
+
+When your binary dials the message channel as a socket rather than reading stdin, it also performs the [connection handshake](../reference/adapter-contract.md#connection-handshake): it waits for the manifest, sends `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as its first line, answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the adapter closes the connection before that frame. That nonce is the only manifest field a Basic-level runtime reads for core operation.
 
 ### What the platform gives you
 
 - **Workspace files** at `/workspace/slots/{sessionId}/current/` -- the session's working directory, derived from its own session identifier.
 - **Built-in file tools** (`read_file`, `write_file`, `list_dir`, `delete_file`) through the `tool_call` / `tool_result` stdin/stdout exchange.
-- **Process lifecycle management** -- the sidecar delivers messages and coordinates shutdown.
+- **Process lifecycle management** -- the sidecar delivers messages, opens and releases each session with the session frames, and coordinates shutdown. A session's own context, such as the path of its credential file, arrives in its `session_start` frame.
 
 ### What's off the table at this level
 
@@ -136,9 +140,10 @@ Somewhere around 150-200 lines, plus an MCP client library.
 
 ### What you add on top of Standard
 
-1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.runtimeOps.socket` (usually `@lenny-runtime-ops`).
+1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.runtimeOps.socket` (usually `@lenny-runtime-ops`), and open the connection with the [connection handshake](../reference/adapter-contract.md#connection-handshake): wait for the manifest, send the `_lennyNonce` line first, answer a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection before that frame.
 2. **Do the capability handshake:** you'll receive `lifecycle_capabilities` from the sidecar; reply with `lifecycle_support` naming which of them you actually implement.
-3. **Handle lifecycle signals** in a background goroutine or thread, running alongside the main stdin loop.
+3. **Answer each `session_start` with `session_started`** on stdout, for every session, once the session's context exists. The sidecar writes a session's CH-RUNTIMEOPS frames only after it reads that acknowledgement (see [`session_started`](../reference/adapter-contract.md#outbound-messages-your-runtime-writes-to-stdout)).
+4. **Handle lifecycle signals** in a background thread or task, running alongside the main stdin loop. Each session-scoped signal names its session by `sessionId`.
 
 ### The lifecycle capabilities
 
@@ -147,7 +152,7 @@ Somewhere around 150-200 lines, plus an MCP client library.
 | `checkpoint` | Cooperative `checkpoint_request` / `checkpoint_ready` / `checkpoint_complete` handshake |
 | `interrupt` | Clean `interrupt_request` / `interrupt_acknowledged` so the runtime stops at a safe point |
 | `credential_rotation` | In-place `credentials_rotated` / `credentials_acknowledged` -- the session keeps going |
-| `deadline_signal` | `deadline_approaching` so the runtime can wrap up before it's terminated |
+| `deadline_signal` | `deadline_approaching`, addressed to a session by `sessionId`, so the runtime can wrap up that session's work before the session is terminated. The runtime keeps running and serving its other sessions. |
 
 Declare only the capabilities you implement. Anything you don't declare falls back to Standard-level behavior -- an unimplemented checkpoint becomes best-effort, and an unimplemented interrupt is not clean and sends the runtime process no signal.
 
@@ -155,7 +160,7 @@ Declare only the capabilities you implement. Anything you don't declare falls ba
 
 ```
 1. Sidecar sends:
-   {"type":"checkpoint_request","checkpointId":"chk_42","deadlineMs":60000}
+   {"type":"checkpoint_request","sessionId":"sess_abc","checkpointId":"chk_42","deadlineMs":60000}
 
 2. Your runtime:
    - Finishes the current output write
@@ -169,7 +174,7 @@ Declare only the capabilities you implement. Anything you don't declare falls ba
 4. Sidecar snapshots the workspace filesystem.
 
 5. Sidecar sends:
-   {"type":"checkpoint_complete","checkpointId":"chk_42","status":"ok"}
+   {"type":"checkpoint_complete","sessionId":"sess_abc","checkpointId":"chk_42","status":"ok"}
 
 6. Your runtime resumes normal operation.
 ```
@@ -201,14 +206,15 @@ The stdin/stdout contract doesn't change. `message` / `response` / `heartbeat` /
 
 ### From Standard to Full
 
-1. Connect to the CH-RUNTIMEOPS (`@lenny-runtime-ops`) at startup.
+1. Connect to the CH-RUNTIMEOPS (`@lenny-runtime-ops`) at startup, sending the `_lennyNonce` line first as the [connection handshake](../reference/adapter-contract.md#connection-handshake) states.
 2. Do the capability handshake (`lifecycle_capabilities` / `lifecycle_support`), declaring only what you implement.
-3. Read lifecycle messages in a background goroutine or thread, alongside the stdin loop.
-4. Implement the handlers you need:
-   - `checkpoint`: quiesce, reply `checkpoint_ready`, wait for `checkpoint_complete`, resume.
-   - `interrupt`: reach a safe stop point, reply `interrupt_acknowledged`.
-   - `credential_rotation`: reload credentials from the new path, reply `credentials_acknowledged`.
-   - `deadline_signal`: start wrapping up long-running work.
+3. Answer each `session_start` with `session_started` (see [`session_started`](../reference/adapter-contract.md#outbound-messages-your-runtime-writes-to-stdout)).
+4. Read lifecycle messages in a background thread or task, alongside the stdin loop, and route each session-scoped message by its `sessionId`.
+5. Implement the handlers you need:
+   - `checkpoint`: quiesce the named session, reply `checkpoint_ready`, wait for `checkpoint_complete`, resume.
+   - `interrupt`: bring the named session to a safe stop point, reply `interrupt_acknowledged`.
+   - `credential_rotation`: reload the named session's credentials from the new path, reply `credentials_acknowledged`.
+   - `deadline_signal`: start wrapping up the named session's long-running work, and keep running.
 
 MCP doesn't change between Standard and Full -- the platform tool server behaves the same way.
 

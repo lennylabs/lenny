@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 documentation check for the event that triggers a manifest rewrite.
+// Tier-11 documentation check for what a manifest rewrite changes.
 //
 // The adapter writes the one pod-global manifest before each session's runtime
 // start. On a pod holding more than one bound session the shared runtime
 // process is started at most once, so a co-tenant session's start rewrites the
-// file without spawning anything. A page that keys the rewrite to a per-session
-// binary spawn states the co-tenant collision with a trigger that is false in
-// exactly the case the collision arises, and a runtime author concludes that
-// the file an already-running process reads is stable for its own session.
+// file without spawning anything. The manifest carries only pod-scoped fields,
+// and each session's own context reaches the runtime in that session's
+// `session_start` frame, so the rewrite replaces only the pod-scoped
+// `mcpNonce` while an earlier session's runtime is still processing.
+//
+// Two readings are retired. One keys the rewrite to a per-session binary
+// spawn, a trigger that is false in exactly the case the collision arises. The
+// other names the session's identifier and credential path among the members a
+// later start replaces, which sends a runtime author to the manifest for
+// context the manifest no longer carries.
 //
 // This test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
 //
-// spec: 4.7 (adapter manifest currency), 6.4 (concurrent session slots)
+// spec: 4.7.5 (adapter manifest), 28.5.3 (CH-MSGSOCK session_start frame),
+// 6.4 (concurrent session slots)
 
 package tier11_docs_test
 
@@ -21,14 +28,16 @@ import (
 	"testing"
 )
 
-// spec: 4.7, 6.4
+// spec: 4.7.5, 28.5.3, 6.4
 // diagnosis: the reader-facing manifest lead in
 //
-//	docs/reference/adapter-contract.md keys the per-session rewrite to a binary
-//	spawn. One runtime process serves every slot on the pod, so a co-tenant
-//	session's start rewrites the manifest with no spawn, and the page tells a
-//	co-tenanted runtime author that the file its running process read is still
-//	its own session's.
+//	docs/reference/adapter-contract.md keys the rewrite to a binary spawn, or
+//	names per-session context among the members a later start replaces. One
+//	runtime process serves every slot on the pod, so a co-tenant session's
+//	start rewrites the manifest with no spawn, and a session's identifier and
+//	credential path travel in its own `session_start` frame. A page that says
+//	otherwise tells a co-tenanted runtime author to read its session's context
+//	from a file that names no session.
 func TestAdapterManifestLeadKeysTheRewriteToTheRuntimeStart(t *testing.T) {
 	root := repoRoot(t)
 
@@ -39,11 +48,15 @@ func TestAdapterManifestLeadKeysTheRewriteToTheRuntimeStart(t *testing.T) {
 	}
 
 	requireAllContain(t, "adapter-contract.md Adapter Manifest lead", manifest, []string{
-		"the adapter rewrites it before each session's runtime start, including each session on a recycling pod",
-		"a later session's start replaces the `sessionId`, `mcpNonce`, and `credentialsPath` members while an earlier session's runtime is still processing",
+		"The adapter rewrites it before each session's runtime start, including each session on a recycling pod",
+		"reach your runtime in that session's `session_start` frame, so a later start's rewrite changes none of them for an earlier session",
+		"a later session's start replaces the `mcpNonce` member while an earlier session's runtime is still processing",
 	})
-	requireNoneContain(t, "adapter-contract.md Adapter Manifest lead", manifest, []string{
+	requireNoneContainFold(t, "adapter-contract.md Adapter Manifest lead", manifest, []string{
 		"before each session's binary is spawned",
 		"while an earlier session's binary is still running",
+		"replaces the `sessionId`",
+		"`credentialsPath` members",
+		"authoritative for the session whose start last wrote it",
 	})
 }

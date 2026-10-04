@@ -719,7 +719,7 @@ connectors:
 
 ## Experiment Configuration
 
-Experiments are managed via the admin API or `lenny-ctl admin experiments`. They configure variant pools and deterministic routing for runtime version rollouts. Lenny provides the infrastructure primitives (variant pools, routing, manifest delivery) and a basic built-in assigner; most teams plug in an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature for assignment decisions.
+Experiments are managed via the admin API or `lenny-ctl admin experiments`. They configure variant pools and deterministic routing for runtime version rollouts. Lenny provides the infrastructure primitives (variant pools, routing, and variant delivery in each session's `session_start` frame) and a basic built-in assigner; most teams plug in an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature for assignment decisions.
 
 ### Experiment Lifecycle
 

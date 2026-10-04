@@ -640,7 +640,7 @@ The calculator runtime so far is at the Basic level: it uses only stdin/stdout. 
 
 ### Reading the Adapter Manifest
 
-Standard-level runtimes read `/run/lenny/adapter-manifest.json` on startup to discover MCP server socket paths:
+Standard-level runtimes read `/run/lenny/adapter-manifest.json` on startup to discover MCP server socket paths. The manifest carries only pod-scoped fields. A session's own context, such as its identifier and credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)); the calculator keeps no per-session context, so its `default` case ignores `session_start` and `session_end` and it reads the session identifier from each `message`:
 
 ```go
 // file: internal/manifest/manifest.go
@@ -657,8 +657,6 @@ type AdapterManifest struct {
 	RuntimeOps        MCPServerConfig   `json:"runtimeOps"`
 	ConnectorServers  []ConnectorServer `json:"connectorServers"`
 	AdapterLocalTools []ToolDef         `json:"adapterLocalTools"`
-	SessionID         string            `json:"sessionId"`
-	TaskID            string            `json:"taskId"`
 	McpNonce          string            `json:"mcpNonce"`
 }
 

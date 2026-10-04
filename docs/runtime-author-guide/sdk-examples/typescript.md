@@ -458,12 +458,12 @@ curl -X POST http://localhost:8080/v1/sessions \
 
 ### 2. Read the Adapter Manifest
 
+The manifest carries only pod-scoped fields. A session's own context, such as its credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). This example keeps no per-session context, so it takes the session identifier from each `message`'s `sessionId` and ignores `session_start` and `session_end` under the unknown-type rule.
+
 ```typescript
 import * as fs from "fs";
 
 interface AdapterManifest {
-  sessionId: string;
-  taskId: string;
   platformMcpServer: {
     socket: string;
   };

@@ -125,13 +125,15 @@ Lenny defines three integration levels for `type: agent` runtimes. You can ship 
 
 #### Basic
 
-The floor: enough to get a custom runtime working without knowing anything Lenny-specific:
+The floor: enough to get a custom runtime working with a small Lenny-specific protocol surface:
 
 - **Protocol:** stdin/stdout, one JSON object per line.
 - **Input:** reads `{type: "message"}` objects from stdin.
+- **Sessions:** one long-lived process serves every session on the pod. A `{type: "session_start"}` frame opens each session and carries its own context, such as its credential file path, and a `{type: "session_end"}` frame releases it. A runtime that keeps no per-session context may ignore both.
 - **Output:** writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
 - **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds. A missed acknowledgment ends the session, and the runtime process receives no signal.
 - **Shutdown:** must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
+- **Connection handshake:** when the runtime dials the message channel as a socket rather than reading stdin, it waits for the adapter manifest and sends the manifest's `mcpNonce` as its first line, `{"_lennyNonce": "..."}`. It answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the adapter closes the connection before that frame. See the [Adapter Contract](../reference/adapter-contract.md#connection-handshake).
 - **No MCP, no checkpointing, no lifecycle signals.**
 - **Credential rotation:** if the credential needs to change mid-session, Lenny checkpoints the session and restarts it on a new pod. Basic-level runtimes that do not checkpoint lose the in-flight context.
 
@@ -151,7 +153,8 @@ Everything in Basic, plus a local connection to a tool server that the platform 
 
 Everything in Standard, plus a CH-RUNTIMEOPS: a second local connection that carries operational signals:
 
-- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-runtime-ops`).
+- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-runtime-ops`), sending the manifest's nonce as the connection's first line.
+- Answers each `session_start` with `session_started`; the platform writes a session's operational signals only after that acknowledgement, and each signal names its session by `sessionId`.
 - Supports cooperative checkpoints: the platform asks the runtime to quiesce, the runtime replies when it's at a safe point, the snapshot is captured, and the platform signals completion.
 - Survives pod failures with consistent checkpoints.
 - Handles interrupts cleanly via `interrupt_request` / `interrupt_acknowledged`.
@@ -629,13 +632,13 @@ Platform operators can partition a tenant's resources into logical project bound
 
 ## Experimentation
 
-Lenny provides **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and propagation of the chosen variant into the adapter manifest. These are the parts every experimentation flow needs and that are awkward to build anywhere else.
+Lenny provides **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and delivery of the chosen variant to the runtime in each session's `session_start` frame. These are the parts every experimentation flow needs and that are awkward to build anywhere else.
 
 Lenny also ships a **basic built-in variant assigner**. `ExperimentDefinition` is an admin API resource with three lifecycle states (`active`, `paused`, `concluded`), and the `ExperimentRouter` uses deterministic HMAC-SHA256 bucketing with sticky assignment (per-user, per-session, or none) to route sessions to variant pools. Variant pools are sized automatically by the `PoolScalingController` proportional to traffic weight. This built-in path is intentionally limited — enough for simple runtime-version rollouts, not a replacement for a real experimentation platform.
 
 For anything beyond simple rollouts, most teams plug in an **external experimentation platform** (LaunchDarkly, Statsig, Unleash, or any OpenFeature-compatible provider). Lenny integrates via OpenFeature and generic webhook targeting, so assignment decisions, targeting rules, rollout curves, and statistical analysis live where your team already runs them. See [OpenFeature integration](../operator-guide/openfeature-integration.md).
 
-**Variant context delivery.** When a session is routed to a variant — by the built-in assigner or by an external platform — the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the adapter manifest. Runtimes use this to tag traces with variant metadata for filtering and grouping in their eval platform.
+**Variant context delivery.** When a session is routed to a variant — by the built-in assigner or by an external platform — the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the session's `session_start` frame (see the [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). Runtimes use this to tag traces with variant metadata for filtering and grouping in their eval platform.
 
 Delegation propagation modes (`inherit`, `control`, `independent`) control whether child sessions inherit, are forced to control, or are independently assigned variant groups. All variant-pool lifecycle transitions are operator-initiated or driven by the external platform; Lenny does not implement automatic winner declaration, statistical significance testing, or multi-armed bandits. See SPEC Section 10.7.
 
@@ -643,7 +646,7 @@ Delegation propagation modes (`inherit`, `control`, `independent`) control wheth
 
 ## Evaluation
 
-**Lenny is not an eval platform.** Runtime builders choose whichever eval framework fits their workflow — LangSmith, Braintrust, Weights & Biases, Arize, Langfuse, or a home-grown pipeline — and Lenny stays out of the way. The gateway propagates `tracingContext` through delegation for cross-runtime trace stitching in those external platforms. When a session is routed to a variant, `experimentContext` is also available in the adapter manifest; runtimes can use it to tag traces with variant metadata for filtering and grouping.
+**Lenny is not an eval platform.** Runtime builders choose whichever eval framework fits their workflow — LangSmith, Braintrust, Weights & Biases, Arize, Langfuse, or a home-grown pipeline — and Lenny stays out of the way. The gateway propagates `tracingContext` through delegation for cross-runtime trace stitching in those external platforms. When a session is routed to a variant, `experimentContext` is also available in the session's `session_start` frame; runtimes can use it to tag traces with variant metadata for filtering and grouping.
 
 **Basic score storage (`/eval` endpoint).** For teams that want to persist scores alongside session state without standing up another system, Lenny exposes a basic mechanism to store and retrieve scores. It is a database table with an API in front of it — not an eval runner, not a judge, not a scoring model. Scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). When a session is routed to a variant, the gateway auto-populates `experiment_id` and `variant_id` on the stored record. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation over stored scores with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) supports regression testing across runtime versions.
 

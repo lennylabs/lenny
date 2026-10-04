@@ -322,10 +322,11 @@ Runtimes that implement the Full integration level open a **CH-RUNTIMEOPS** -- a
 
 ### Channel setup
 
-1. The adapter opens the CH-RUNTIMEOPS socket.
-2. The adapter sends `lifecycle_capabilities` listing available signals.
-3. The runtime responds with `lifecycle_support` listing capabilities it supports.
-4. The channel remains open for the session duration.
+1. The adapter listens on the CH-RUNTIMEOPS socket, and the runtime dials it.
+2. The runtime sends the connection handshake: its first line is `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce`, and in nonce-only mode it answers the adapter's `_lennyChallenge` (see the [Adapter Contract](../reference/adapter-contract.md#connection-handshake)).
+3. The adapter sends `lifecycle_capabilities` listing available signals.
+4. The runtime responds with `lifecycle_support` listing capabilities it supports.
+5. The channel stays open for the life of the runtime process and serves every session on the pod. Each session-scoped message carries the `sessionId` of the session it concerns, and the adapter writes a session's messages only after the runtime has answered that session's `session_start` with `session_started`, except for a session whose start did not wait for that answer (see the [Adapter Contract](../reference/adapter-contract.md#ch-runtimeops-full-level-only)).
 
 ### Messages
 
@@ -336,6 +337,7 @@ Requests the runtime to quiesce for a consistent checkpoint.
 ```json
 {
   "type": "checkpoint_request",
+  "sessionId": "sess_01J5K9...",
   "checkpointId": "ckpt_01J5K9..."
 }
 ```
@@ -358,6 +360,7 @@ Signals that the snapshot is complete and the runtime may resume.
 ```json
 {
   "type": "checkpoint_complete",
+  "sessionId": "sess_01J5K9...",
   "checkpointId": "ckpt_01J5K9..."
 }
 ```
@@ -369,6 +372,7 @@ Requests the runtime to reach a safe stop point.
 ```json
 {
   "type": "interrupt_request",
+  "sessionId": "sess_01J5K9...",
   "interruptId": "int_01J5K9..."
 }
 ```
@@ -389,9 +393,10 @@ Notifies the runtime that credentials have been rotated in place.
 ```json
 {
   "type": "credentials_rotated",
+  "sessionId": "sess_01J5K9...",
   "leaseId": "lease_01J5K9...",
   "provider": "anthropic",
-  "credentialsPath": "/run/lenny/credentials/anthropic.json"
+  "credentialsPath": "/run/lenny/slots/sess_01J5K9.../credentials.json"
 }
 ```
 
@@ -412,27 +417,13 @@ Warning signal before forced session termination.
 ```json
 {
   "type": "deadline_approaching",
-  "remainingMs": 60000
+  "sessionId": "sess_01J5K9...",
+  "remainingMs": 60000,
+  "trigger": "session_age"
 }
 ```
 
-The runtime should begin wrapping up long-running work.
-
-#### terminate (gateway to runtime)
-
-Ordered shutdown signal.
-
-```json
-{
-  "type": "terminate",
-  "reason": "session_complete",
-  "deadlineMs": 10000
-}
-```
-
-Valid `reason` values: `session_complete`, `budget_exhausted`, `eviction`, `operator`. The runtime must exit within `deadlineMs`; the adapter sends SIGTERM on timeout.
-
-The runtime must exit within `deadlineMs`.
+The runtime should begin wrapping up the named session's long-running work, and keeps running.
 
 ---
 
@@ -477,7 +468,7 @@ ASCII fallback for the diagram above (rpc-lifecycle):
 | `INIT` | Adapter starts, opens gRPC connection, sends `AdapterInit` with protocol version |
 | `READY` | Adapter signals readiness. Pod enters warm pool. Gateway may assign sessions. |
 | `ACTIVE` | Session in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, stdin/stdout. |
-| `DRAINING` | Graceful shutdown requested. Finishes current exchange. No drain coordination exists at pod exit: the adapter writes no CH-RUNTIMEOPS `terminate` frame, and the runtime process ends with the pod. |
+| `DRAINING` | Graceful shutdown requested. Finishes current exchange. No drain coordination exists at pod exit at any integration level: the runtime process ends with the pod. |
 | `TERMINATED` | Adapter has exited. Gateway marks pod as unavailable. |
 
 Transitions are initiated by the gateway (session assignment, drain request) or the adapter (readiness signal).
