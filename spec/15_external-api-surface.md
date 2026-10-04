@@ -2188,49 +2188,63 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
 ```go
 package runtime
 
-// Handler is the single interface runtime authors implement.
+// Handler is the single interface runtime authors implement. One runtime
+// process serves any number of sessions
+// ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime
+// process lifetime"). The SDK invokes OnCreate when a `session_start`
+// opens a session, under the `CH-MSGSOCK` card's **Inbound:
+// `session_start`** rules in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod), and writes the
+// session's `session_started` once OnCreate returns; OnMessage for
+// each of the session's messages; and OnTerminate when that session ends,
+// on its `session_end` or at the end of the connection. Calls for different
+// sessions run concurrently, so an implementation keeps per-session state
+// keyed by session and is safe for concurrent use. A session whose OnCreate
+// fails is answered as the `CH-MSGSOCK` card's **Session errors.** rule in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod) states.
 type Handler interface {
     OnCreate(ctx context.Context, req CreateRequest) error
     OnMessage(ctx context.Context, msg Message) (Reply, error)
-    OnTerminate(ctx context.Context, reason TerminationReason) error
+    OnTerminate(ctx context.Context, sessionID string, reason TerminationReason) error
 }
 
 // Run wires up stdin/stdout framing, dials the manifest-advertised
-// abstract Unix sockets (platform MCP, connector MCP, CH-RUNTIMEOPS)
-// with the manifest-nonce handshake, refreshes credentials from
-// /run/lenny/slots/{sessionId}/credentials.json, and drives the lenny.runtime.* dispatch
-// loop. Blocks until the adapter closes stdin or sends `terminate`.
+// platform MCP, connector MCP, and CH-RUNTIMEOPS sockets once per process
+// with the manifest-nonce handshake, loads each session's credentials from
+// the path its `session_start` names, and drives the lenny.runtime.*
+// dispatch loop.
+// Blocks until the adapter closes the connection or sends `shutdown`, then
+// ends every session the process holds.
 func Run(h Handler, opts ...Option) error
 ```
 
-**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the manifest, stdin framing, and credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
+**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the `session_start` frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), the pod-scoped adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the `session_start` frame, the pod-scoped manifest, stdin framing, and the credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
 
 ```go
-// CreateRequest is the snapshot of task-scoped context handed to
-// Handler.OnCreate before the first Message is delivered on stdin. The SDK
-// assembles this value from (a) the adapter manifest written to
-// /run/lenny/adapter-manifest.json before the runtime binary is spawned
-// ([§4.7](04_system-components.md#47-runtime-adapter)), (b) the credential
-// file written by AssignCredentials at /run/lenny/slots/{sessionId}/credentials.json
-// ([§4.7](04_system-components.md#47-runtime-adapter) item 4), and (c) the
+// CreateRequest is the snapshot of session-scoped context handed to
+// Handler.OnCreate when the session's `session_start` arrives and before the
+// session's first Message is delivered. The SDK assembles this value from
+// (a) the session's `session_start` frame on CH-MSGSOCK
+// ([§28.5.3](28_communication-channels.md#2853-intra-pod)), (b) the
+// credential file at the path that frame names
+// ([§4.7](04_system-components.md#47-runtime-adapter) item 4), (c) the
+// pod-scoped adapter manifest at /run/lenny/adapter-manifest.json
+// ([§4.7](04_system-components.md#47-runtime-adapter)), and (d) the
 // StartSession RPC parameters the gateway forwarded to the adapter (see the
 // Startup Sequence in [§4.7](04_system-components.md#47-runtime-adapter)).
 // Handler implementations MUST treat CreateRequest as read-only — the wire
 // sources are authoritative and the SDK will refresh derived fields (notably
 // Credentials) in place on rotation events without re-invoking OnCreate.
 type CreateRequest struct {
-    // SessionID is the session this runtime instance is bound to. Matches
-    // `sessionId` in the adapter manifest and `SessionMetadata.SessionID`
+    // SessionID is the session this request opens. Matches `sessionId` in
+    // the session's `session_start` and `SessionMetadata.SessionID`
     // ([§15 Shared Adapter Types](#shared-adapter-types)).
     SessionID string `json:"sessionId"`
 
-    // TaskID is the session's external-protocol task identifier. Matches
-    // `taskId` in the adapter manifest. Each session has exactly one
-    // execution, and external protocols surface that execution as a Task
-    // ([§7.1](07_session-lifecycle.md#71-normal-flow)), so TaskID equals the
-    // session id; the adapter derives it from `sessionId`. TaskID is frozen
-    // for the session's lifetime and OnCreate is invoked once with this
-    // value.
+    // TaskID is the session's external-protocol task identifier. Each
+    // session has exactly one execution, and external protocols surface that
+    // execution as a Task ([§8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)),
+    // so TaskID equals the session id; the SDK derives it from `sessionId`.
     TaskID string `json:"taskId"`
 
     // RuntimeOptions is the effective options map passed by the caller in
@@ -2256,27 +2270,41 @@ type CreateRequest struct {
     // credential file contract). The SDK parses the file into this value;
     // on `credentials_rotated` lifecycle messages the SDK re-reads the file
     // and updates this pointer in place (Full-level runtimes) rather than
-    // calling OnCreate again. Nil only when the runtime's provider pool has
-    // no active lease (matches `llm: null` in the manifest).
+    // calling OnCreate again. Nil when the session's provider pool has no
+    // active lease (matches `llm: null` in the session's `session_start`) or
+    // when the session's `session_start` names no `credentialsPath`.
     Credentials *CredentialBundle `json:"credentials,omitempty"`
 
-    // ManifestSnapshot is the parsed adapter manifest
+    // ExperimentContext is the session's experiment enrollment from the
+    // session's `session_start` (`experimentContext`); nil when the session
+    // is not enrolled.
+    ExperimentContext *ExperimentContext `json:"experimentContext,omitempty"`
+
+    // TracingContext is the session's inherited tracing identifiers from the
+    // session's `session_start` (`tracingContext`); nil for a top-level
+    // session.
+    TracingContext map[string]string `json:"tracingContext,omitempty"`
+
+    // LLM is the session's LLM provider configuration from the session's
+    // `session_start` (`llm`); nil when the session has no active LLM lease.
+    LLM *LLMConfig `json:"llm,omitempty"`
+
+    // ManifestSnapshot is the parsed pod-scoped adapter manifest
     // ([§4.7](04_system-components.md#47-runtime-adapter) "Adapter manifest
-    // field reference"). Authors MAY consult it for platform MCP socket,
-    // CH-RUNTIMEOPS socket, connector servers, experiment context, and
-    // tracing context. The SDK has already dialed the advertised sockets
-    // and attached the `mcpNonce` before OnCreate is invoked; authors who
-    // only use SDK-provided MCP helpers do not need to read this field
-    // directly.
+    // field reference"). It carries only pod-scoped fields; the session's
+    // own context is in the fields above. Authors MAY consult it for the
+    // platform MCP socket, CH-RUNTIMEOPS socket, and connector servers. The
+    // SDK has dialed the advertised sockets and attached the `mcpNonce`
+    // before OnCreate is invoked; authors who only use
+    // SDK-provided MCP helpers do not need to read this field directly.
     ManifestSnapshot *AdapterManifest `json:"manifestSnapshot,omitempty"`
 }
 
 // Message is the per-turn envelope handed to Handler.OnMessage for every
 // `{type: "message"}` frame the adapter writes to stdin
 // ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Inbound: `message`"). It wraps
-// the canonical MessageEnvelope with the session/task IDs the SDK resolved
-// from the adapter manifest, so Handler implementations do not have to
-// correlate against the manifest on every turn. Fields other than Envelope
+// the canonical MessageEnvelope with the session and task IDs the SDK
+// resolved from the frame's `sessionId`. Fields other than Envelope
 // are SDK-derived conveniences — the wire contract is in §28.5.3.
 type Message struct {
     // Envelope is the canonical MessageEnvelope as defined in
@@ -2287,15 +2315,13 @@ type Message struct {
     Envelope *MessageEnvelope `json:"envelope"`
 
     // SessionID is the session the message was delivered to. Populated
-    // from `sessionId` in the adapter manifest; equals
-    // CreateRequest.SessionID.
+    // from the inbound frame's `sessionId`; equals the CreateRequest.SessionID
+    // of that session's OnCreate.
     SessionID string `json:"sessionId"`
 
     // TaskID is the external-protocol task identifier of the session the
-    // message belongs to. Populated from `taskId` in the adapter manifest;
-    // it equals the session id (the adapter derives it from `sessionId`) and
-    // always equals CreateRequest.TaskID, which is frozen for the session's
-    // lifetime.
+    // message belongs to. It equals SessionID and the CreateRequest.TaskID
+    // of that session's OnCreate.
     TaskID string `json:"taskId"`
 
     // Sequence is a monotonically increasing, SDK-assigned, per-task
@@ -2303,7 +2329,7 @@ type Message struct {
     // Distinct from `MessageEnvelope.id` (which is globally unique) and
     // from the coordinator-local sequence number persisted server-side
     // ([§15.4](#messageenvelope--unified-message-format) "Ordering guarantee"):
-    // Sequence is a local per-process counter suitable for logging and
+    // Sequence is a local per-session counter suitable for logging and
     // in-handler ordering only.
     Sequence uint64 `json:"sequence"`
 
