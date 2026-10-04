@@ -185,7 +185,7 @@ Create a new session pre-populated with this session's workspace snapshot.
 
 ### POST /v1/sessions/{id}/replay
 
-Re-run a session against a different runtime version using the same workspace and prompt history. Used for regression testing and controlled A/B comparison. Replayed sessions receive experiment context in their `session_start` frame so runtime-native eval platforms can attribute the replay to the correct experiment.
+Re-run a session against a different runtime version using the same workspace and prompt history. Used for regression testing and controlled A/B comparison. Replayed sessions receive experiment context in their [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) so runtime-native eval platforms can attribute the replay to the correct experiment.
 
 **Request body:**
 

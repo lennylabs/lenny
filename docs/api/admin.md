@@ -619,9 +619,9 @@ Live connectivity test. Rate-limited to 10 requests per connector per minute.
 
 ## Experiments
 
-Experiments configure variant pools for runtime version rollouts. Lenny provides infrastructure primitives (pods organised into variant pools, deterministic sticky routing, variant context in each session's `session_start` frame) and a basic built-in assigner for simple splits. For anything beyond simple rollouts, integrate an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature — assignment decisions then live in the external platform.
+Experiments configure variant pools for runtime version rollouts. Lenny provides infrastructure primitives (pods organised into variant pools, deterministic sticky routing, variant context in each session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)) and a basic built-in assigner for simple splits. For anything beyond simple rollouts, integrate an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature — assignment decisions then live in the external platform.
 
-Regardless of who decides the assignment, the gateway delivers `experimentContext` (`experimentId`, `variantId`, `inherited`) in the session's `session_start` frame so runtimes can tag traces with variant metadata for filtering and grouping in their chosen eval platform. When scores are also stored via the `/eval` endpoint, the gateway auto-populates variant attribution on those stored records.
+Regardless of who decides the assignment, the gateway delivers `experimentContext` (`experimentId`, `variantId`, `inherited`) in the session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) so runtimes can tag traces with variant metadata for filtering and grouping in their chosen eval platform. When scores are also stored via the `/eval` endpoint, the gateway auto-populates variant attribution on those stored records.
 
 ### CRUD endpoints
 
