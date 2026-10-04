@@ -1971,10 +1971,6 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
                     // Wrap up long-running work before forced termination
                     begin_graceful_wrap_up(lc_msg.remainingMs)
 
-                case "terminate":
-                    // Ordered shutdown — exit within deadlineMs
-                    cleanup_and_exit(0)
-
                 default:
                     // ignore unknown lifecycle messages for forward compatibility
 
@@ -1983,6 +1979,10 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
     while line = read_line(stdin):
         msg = json_parse(line)
         switch msg.type:
+            case "session_start":
+                // acknowledge the session (Section 28.5.3, CH-MSGSOCK Outbound: session_started)
+                write_line(stdout, json({"type": "session_started", "sessionId": msg.sessionId, "startId": msg.startId}))
+                flush(stdout)
             case "message":
                 seq += 1
                 result = platform_mcp.call("lenny/output", {
@@ -1995,8 +1995,7 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
                 write_line(stdout, json({"type": "heartbeat_ack"}))
                 flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
-                // shutdown arrives on stdin even for Full-level; lifecycle terminate
-                // may arrive first — handle whichever comes first
+                // shutdown arrives on stdin even for Full-level
                 platform_mcp.close()
                 lc.close()
                 exit(0)
@@ -2176,7 +2175,7 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
     - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-runtime-ops` (Full: agent-side CH-RUNTIMEOPS). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
     - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request and on the CH-RUNTIMEOPS), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest and attach it automatically.
     - **Credential delivery.** Read-only access patterns for `/run/lenny/slots/{sessionId}/credentials.json` (present under both proxy and direct delivery modes per the `llm` fields of the session's `session_start` frame, [§28.5.3](28_communication-channels.md#2853-intra-pod)), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the per-session API key that `llm.apiKeyEnv` names for proxy mode.
-    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) and [§28.5.3](28_communication-channels.md#2853-intra-pod).
+    - **Graceful shutdown.** SIGTERM handling and the `shutdown` deadline contract from the `CH-MSGSOCK` card in [§28.5.3](28_communication-channels.md#2853-intra-pod), and per-session routing of `CH-RUNTIMEOPS` events by `sessionId` ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").
     - **RPC vocabulary.** The `lenny.runtime.*` request/response vocabulary carried over the transports above.
 - **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined by the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. The `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) is authoritative for the platform MCP tool set and [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the adapter manifest; this list tracks the tool set. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
 - **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode per-session API-key refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).

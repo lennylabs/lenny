@@ -1153,32 +1153,45 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 - **Axes.** Control plane, dialled by the runtime, message authority on both sides, Unix socket JSON
   Lines transport (§28.3).
 - **Messages.** Adapter to runtime: `lifecycle_capabilities`, `checkpoint_request`,
-  `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `terminate`, and
-  `deadline_approaching`. Runtime to adapter: `lifecycle_support`, `checkpoint_ready`,
-  `interrupt_acknowledged`, `credentials_acknowledged`, `llm_request_started`, and
-  `llm_request_completed`. Each message is a single JSON object terminated by `\n` with `type` as its
-  discriminator, and the field set of each is the message-schema table below. The channel is versioned by
-  the capability negotiation at its top, where `lifecycle_capabilities` carries the `protocolVersion` the
-  adapter offers. An unknown message is silently ignored on both sides. In direct mode
-  `llm_request_completed` optionally carries the per-call `inputTokens` and `outputTokens` counts that
-  supply the direct-mode usage source
-  ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas)).
+  `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, and
+  `files_updated`. Runtime to adapter: `lifecycle_support`, `checkpoint_ready`, `interrupt_acknowledged`,
+  `credentials_acknowledged`, `llm_request_started`, and `llm_request_completed`. Each message is a
+  single JSON object terminated by `\n` with `type` as its discriminator, and the field set of each is
+  the message-schema table below. `checkpoint_request`, `checkpoint_complete`, `interrupt_request`,
+  `credentials_rotated`, `deadline_approaching`, `files_updated`, and `llm_request_completed` are
+  session-scoped and carry the `sessionId` of the session they concern
+  ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"); the runtime's
+  replies stay correlated by `checkpointId`, `interruptId`, and `leaseId`. `lifecycle_capabilities`,
+  `lifecycle_support`, and `llm_request_started` are process-scoped and carry no `sessionId`. Because
+  this channel is a connection separate from `CH-MSGSOCK`, the `session_start` write order does not reach
+  it (`CH-MSGSOCK` **Inbound: `session_start`** rule 1). The adapter writes an adapter-to-runtime
+  session-scoped frame for a session only after it has read the `session_started` that answers the
+  session's `session_start` (`CH-MSGSOCK` **Outbound: `session_started`**), except for a session whose
+  start did not wait for one (`CH-MSGSOCK` **Outbound: `session_started`** rule 3). A path that has such
+  a frame to write before that read defers the frame until the read, and drops it when the session's
+  start fails, the session ends, or a bound the adapter places on the deferral elapses first; the path
+  then ends as it ends for a frame the runtime does not answer. A runtime that keeps per-session context
+  drops, without a reply, a session-scoped frame that names a session it does not hold. The channel is
+  versioned by the capability negotiation at its top, where `lifecycle_capabilities` carries the
+  `protocolVersion` the adapter offers. An unknown message is silently ignored on both sides. In direct
+  mode `llm_request_completed` optionally carries the per-call `inputTokens` and `outputTokens` counts
+  that supply the direct-mode usage source ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas)).
 
   | `type`                      | Direction          | Fields                                                                                                                                                              | Notes                                                                       |
   | --------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
   | `lifecycle_capabilities`    | Adapter → Runtime  | `type`, `protocolVersion` (string, e.g., `"1.0"`), `capabilities` (array of strings: `"checkpoint"`, `"interrupt"`, `"credential_rotation"`, `"deadline_signal"`) | First message sent on channel open. Runtime must reply with `lifecycle_support`. |
   | `lifecycle_support`         | Runtime → Adapter  | `type`, `capabilities` (array of strings — subset of offered capabilities the runtime supports)                                                                    | Runtime's capability handshake reply.                                       |
-  | `checkpoint_request`        | Adapter → Runtime  | `type`, `checkpointId` (string), `deadlineMs` (integer — ms until adapter times out waiting)                                                                       | Adapter requests runtime quiesce and signal readiness. Runtime must reply with `checkpoint_ready` within `deadlineMs`. |
-  | `checkpoint_complete`       | Adapter → Runtime  | `type`, `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                                              | Confirms snapshot upload result; runtime may resume.                        |
-  | `interrupt_request`         | Adapter → Runtime  | `type`, `interruptId` (string), `deadlineMs` (integer)                                                                                                             | Requests the runtime reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
-  | `credentials_rotated`       | Adapter → Runtime  | `type`, `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/slots/{sessionId}/credentials.json`), `leaseId` (string)                                        | New credentials written; runtime must rebind and reply with `credentials_acknowledged`. |
-  | `terminate`                 | Adapter → Runtime  | `type`, `deadlineMs` (integer), `reason` (string: `"session_complete"` \| `"budget_exhausted"` \| `"eviction"` \| `"operator"`)                                    | Graceful shutdown signal. Runtime must exit within `deadlineMs`; adapter sends SIGTERM on timeout. Receipt always means process exit. |
-  | `deadline_approaching`      | Adapter → Runtime  | `type`, `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)                              | Advance warning before forced termination. Runtime should wrap up work.     |
+  | `checkpoint_request`        | Adapter → Runtime  | `type`, `sessionId` (string), `checkpointId` (string), `deadlineMs` (integer — ms until adapter times out waiting)                                                 | Adapter requests the named session's runtime work quiesce and signal readiness. Runtime must reply with `checkpoint_ready` within `deadlineMs`. |
+  | `checkpoint_complete`       | Adapter → Runtime  | `type`, `sessionId` (string), `checkpointId` (string), `status` (`"ok"` \| `"failed"`), `reason` (string, present when `status: "failed"`)                        | Confirms snapshot upload result; the named session's work may resume.       |
+  | `interrupt_request`         | Adapter → Runtime  | `type`, `sessionId` (string), `interruptId` (string), `deadlineMs` (integer)                                                                                       | Requests the named session's work reach a safe stop point within `deadlineMs`. **Timeout behavior:** if `interrupt_acknowledged` is not received within `deadlineMs`, the adapter transitions the session to `suspended` anyway (best-effort — the deadline has elapsed so the runtime is assumed to have stopped making progress) and returns an `INTERRUPT_TIMEOUT` status in the `Interrupt` RPC response to the gateway. The gateway logs the timeout and proceeds with the `suspended` state normally. The session is NOT left in `running` on timeout. |
+  | `credentials_rotated`       | Adapter → Runtime  | `type`, `sessionId` (string), `provider` (string), `credentialsPath` (string — path to updated `/run/lenny/slots/{sessionId}/credentials.json`), `leaseId` (string) | New credentials written for the named session; runtime must rebind that session and reply with `credentials_acknowledged`. |
+  | `deadline_approaching`      | Adapter → Runtime  | `type`, `sessionId` (string), `remainingMs` (integer — ms until session expiry or budget exhaustion), `trigger` (`"session_age"` \| `"budget"` \| `"idle"`)        | Advance warning before the named session's forced termination. Runtime should wrap up that session's work. A runtime writes no `response` for the session in reply to this frame when no `message` for the session is in flight. |
+  | `files_updated`             | Adapter → Runtime  | `type`, `sessionId` (string)                                                                                                                                       | A mid-session upload has promoted new files into the named session's workspace ([§7.4](07_session-lifecycle.md#74-upload-safety)). Sent after the atomic overlay completes; one-way, with no acknowledgement. |
   | `checkpoint_ready`          | Runtime → Adapter  | `type`, `checkpointId` (string)                                                                                                                                    | Runtime has quiesced and is ready for snapshot.                             |
   | `interrupt_acknowledged`    | Runtime → Adapter  | `type`, `interruptId` (string)                                                                                                                                     | Runtime has reached a safe stop point.                                      |
   | `credentials_acknowledged`  | Runtime → Adapter  | `type`, `leaseId` (string), `provider` (string)                                                                                                                    | Runtime has rebound to the new credential. Adapter releases queued LLM requests with new credential. |
   | `llm_request_started`       | Runtime → Adapter  | `type`, `requestId` (string — opaque, runtime-generated), `provider` (string)                                                                                      | Runtime is about to send an outbound LLM request directly to the provider (direct mode only). Adapter increments the in-flight counter for this provider. Only required when the runtime calls the LLM API directly (not via the adapter proxy). |
-  | `llm_request_completed`     | Runtime → Adapter  | `type`, `requestId` (string — matches the corresponding `llm_request_started`), `provider` (string), `status` (`"ok"` \| `"error"`), `inputTokens` (integer, optional), `outputTokens` (integer, optional)                               | Runtime's outbound LLM request has completed or errored. Adapter decrements the in-flight counter. When the counter reaches zero and a credential rotation is pending, the adapter proceeds to send `credentials_rotated`. In direct mode the runtime SHOULD populate `inputTokens` and `outputTokens` from the completed provider response when it can extract them; the adapter accumulates them into a per-session cumulative total internally and reports the incremental delta since the last read over the [§4.7](04_system-components.md#47-runtime-adapter) `ReportUsage` RPC (see [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). A runtime that cannot extract counts omits both fields, and the session has no direct-mode token source. |
+  | `llm_request_completed`     | Runtime → Adapter  | `type`, `sessionId` (string), `requestId` (string — matches the corresponding `llm_request_started`), `provider` (string), `status` (`"ok"` \| `"error"`), `inputTokens` (integer, optional), `outputTokens` (integer, optional)                               | Runtime's outbound LLM request has completed or errored. Adapter decrements the in-flight counter. When the counter reaches zero and a credential rotation is pending, the adapter proceeds to send `credentials_rotated`. In direct mode the runtime SHOULD populate `inputTokens` and `outputTokens` from the completed provider response when it can extract them; the adapter accumulates them into the cumulative total of the session `sessionId` names, drops them when the pod holds no binding for that session, and reports the incremental delta since the last read over the [§4.7](04_system-components.md#47-runtime-adapter) `ReportUsage` RPC (see [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). A runtime that cannot extract counts omits both fields, and the session has no direct-mode token source. |
 - **Preconditions.** The channel is optional and is opened by Full-level runtimes; a runtime that does
   not open it operates in fallback-only mode ([§4.7](04_system-components.md#47-runtime-adapter),
   [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The runtime reads
@@ -1190,8 +1203,8 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   rewrites the addressed session's own `/run/lenny/slots/{sessionId}/credentials.json` and waits for the
   in-flight LLM request gate to clear
   ([§4.7](04_system-components.md#47-runtime-adapter)).
-- **Timing.** `checkpoint_request`, `interrupt_request`, `terminate`, and `deadline_approaching` each
-  carry a millisecond field that bounds the runtime's reply, its exit, or the remaining session time, as
+- **Timing.** `checkpoint_request`, `interrupt_request`, and `deadline_approaching` each
+  carry a millisecond field that bounds the runtime's reply or the remaining session time, as
   the message-schema table above states. Every checkpoint path is bounded by a 60-second
   timeout measured from the initial quiescence request to completion
   ([§4.4](04_system-components.md#44-event--checkpoint-store)). The adapter enforces a 60-second timeout
@@ -1215,9 +1228,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
   within 60 seconds, the adapter emits a `credential_rotation_timeout` warning event, increments
   `lenny_credential_rotation_timeout_total`, and falls back to the Standard-level rotation path of
   checkpoint, pod termination, replacement pod, `AssignCredentials`, and `Resume`
-  ([§4.7](04_system-components.md#47-runtime-adapter)). When the runtime has not exited by the
-  `terminate` frame's `deadlineMs` the adapter sends SIGTERM, as the message-schema table above
-  states. When the peer is absent, because the runtime
+  ([§4.7](04_system-components.md#47-runtime-adapter)). When the peer is absent, because the runtime
   never opened the channel, interrupt degrades as the [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels) `Interrupt` row states, and the deadline warning is not delivered, at both Basic level and Standard level. At Standard
   level a checkpoint degrades to a best-effort snapshot without a runtime pause and credential rotation
   degrades to the checkpoint and restart path. At Basic level there is no checkpoint support: pod failure
