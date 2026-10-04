@@ -2419,7 +2419,7 @@ other while their code proceeds in parallel.
   - Review finding 12: a node-level process-limit note, the supervisor's own log channel kept separate from
     the runtime's stdout, no secrets in the supervisor's argv, exit (never re-dial) when its connection
     closes, and the gVisor and Kata checks re-run on runtime version changes.
-- [ ] Runtime-SDK proposal (not yet written): the single runtime lifetime contract in section 10.3, with
+- [ ] Runtime-SDK proposal (proposal 0090): the single runtime lifetime contract in section 10.3, with
   session-start and session-end frames on `CH-MSGSOCK`, per-session context delivered by frame, the Go,
   Python, and TypeScript SDKs serving sessions keyed by `sessionId`, the runtime side of the per-generation
   nonce, the tier-10 conformance case, and the Go `Handler` doc-comment correction moved out of proposal
@@ -2429,6 +2429,34 @@ other while their code proceeds in parallel.
   proposal 0079's S20 no longer waited for it. Proposal 0079 is implemented, so until this proposal lands the
   tree reuses a runtime process across sessions on acknowledged recycling pools while the SDKs still serve
   one session per process; the tree is not releasable in that state.
+  Written as proposal 0090 (`proposals/0090_new_write-the-runtime-sdk-proposal-that-gateway-runtime-comms`),
+  converging since 2026-10-03. Owner decisions recorded in it:
+  - **Scope.** Part B (the nonce handshake and the per-generation rotation) stays in it.
+  - **`session_start` contents.** `session_start` omits the task ID and the workspace path, which derive from
+    `sessionId`.
+  - **Acknowledgement.** `session_start` is acknowledged by `session_started`, and the adapter sends no
+    session-scoped `CH-RUNTIMEOPS` frame before it, which replaces a hold-and-drop rule.
+  - **`DemoteSDK`.** It fails closed past its slot-lock deadline.
+  - **Slot-lock deadline.** A cleanup's slot-lock wait is bounded by the waiting request's own deadline.
+  - **Compliance harness wait.** It uses the adapter's default acknowledgement timeout.
+  - **Spec order.** Its spec steps land before proposal 0087's and proposal 0084's.
+  Per-session platform and connector MCP connections belong to proposal 0084. Until 0084 lands, MCP tools
+  are refused for a later session on a kept runtime, so proposal 0084 is also a release prerequisite.
+- [ ] Gateway stream-failure proposal (not yet written), implemented after proposal 0090 (owner decision,
+  2026-10-05). It closes BUILD-GAPS F-7.3.27 and F-7.3.28.
+  - **The defect.** The gateway does not react when an adapter `Attach` stream ends with an error, including
+    the adapter's heartbeat-escalation `DeadlineExceeded`: the dead stream stays cached,
+    `ReportSessionFailure` has no production caller, and the session holds its slot, runtime context, and
+    claim until a terminate or the watchdog. On recycling pools the late release reuses a pod whose
+    runtime hung.
+  - **Fix.** Evict the dead stream with a typed error, report the failure from the message paths, release
+    the old binding with `Shutdown` on the `resume_pending` and `awaiting_client_action` edges, and release
+    any prior binding before a resume rebinds.
+  - **Spec decisions.** Whether a heartbeat-escalation stream end is `runtime_crash`, and whether a hung
+    runtime on a concurrent pod fails only its slot or retires the pod.
+  - **First task.** Verify F-7.3.28 (the cached stream may be opened with the first request's context).
+  - **Dependency.** Proposal 0090's `session_end` after a stream failure depends on it. It is a release
+    prerequisite.
 
 **Phase 3: after proposal 0087 part 1**
 
