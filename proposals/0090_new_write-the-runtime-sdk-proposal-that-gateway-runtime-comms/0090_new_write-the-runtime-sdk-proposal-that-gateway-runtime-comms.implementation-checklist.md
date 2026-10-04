@@ -1,8 +1,8 @@
 ## Implementation checklist
 
-- [ ] **S1 · spec** — SPEC-1. Lands the runtime lifetime contract and its alignments.
+- [x] **S1 · spec** — SPEC-1. Lands the runtime lifetime contract and its alignments.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the manifest-row deletions and the repointed readers.
+- [x] **S2 · spec** — SPEC-2. Lands the manifest-row deletions and the repointed readers.
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands the `CH-MSGSOCK` session frames and every edit SPEC-3 stages with them, including the §4.7.1 statement of rule 8's application points (Edit 17).
       Tiers 0, 11. Depends on: S1, S2

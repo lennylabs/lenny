@@ -330,12 +330,14 @@ func intraPodNonceSites() []nonceStatementSite {
 	}
 }
 
-// retiredManifestStabilityPhrasings are the readings the currency rule
-// replaces. Each one tells a runtime author that the file it reads stays the
-// file its own session's start wrote, which is false on a pod holding a second
-// bound session: that session's start replaces the `sessionId`, `mcpNonce`, and
-// `credentialsPath` members while the earlier session's runtime is still
-// processing.
+// retiredManifestStabilityPhrasings are retired readings of the adapter
+// manifest. Each one tells a runtime author that the manifest holds per-session
+// state for its own session. The manifest is one pod-global file that carries
+// only pod-scoped fields, and each session's identifier, credential path, and
+// related per-session context arrive in that session's session_start frame
+// rather than in the manifest, so a site that describes the manifest as written
+// or kept current per session points the runtime author at the wrong source.
+// spec: 4.7.5 (Adapter manifest)
 // The sweep is case-insensitive, because the retired sentence opened a
 // paragraph and so spelled its first word with a capital, and it carries both
 // the definite and the possessive spelling of the currency clause.
