@@ -6,11 +6,11 @@
       Tiers 0, 11. Depends on: —
 - [ ] **S3 · spec** — SPEC-3. Lands the `CH-MSGSOCK` session frames and every edit SPEC-3 stages with them.
       Tiers 0, 11. Depends on: S1, S2
-- [ ] **S4 · spec** — SPEC-4. Lands the `CH-RUNTIMEOPS` session addressing, the hold for a frame that arrives before its session's `session_start`, and the `terminate` deletion.
+- [ ] **S4 · spec** — SPEC-4. Lands the `CH-RUNTIMEOPS` session addressing, the ordering of session-scoped frames after the session's `session_started`, and the `terminate` deletion.
       Tiers 0, 11. Depends on: S1, S3
 - [ ] **S5 · spec** — SPEC-5. Lands the §15.7 SDK contract.
       Tiers 0, 11. Depends on: S2, S3
-- [ ] **S6 · spec** — SPEC-6. Lands the §15.4.6 conformance categories.
+- [ ] **S6 · spec** — SPEC-6. Lands the §15.4.6 conformance categories, including the `session_started` precondition and check.
       Tiers 0, 11. Depends on: S3, S4
 - [ ] **S7 · spec** — SPEC-7. Lands the §29 scenario traces.
       Tiers 0, 11. Depends on: S1, S3, S4
@@ -22,21 +22,23 @@
       Tiers 0, 3, 11. Depends on: S2, S3, S4, S8, S9
 - [ ] **S11 · code** — CODE-3. Lands the adapter `CH-RUNTIMEOPS` sender changes, the `sessionId`-keyed direct-mode token sink, the deletion of `Terminate`, and their peer and test updates.
       Tiers 0, 1, 3, 4, 7a, 8, 9, 10. Depends on: S3, S4, S6, S10
-- [ ] **S12 · code** — CODE-1. Lands the adapter open sequence and `session_end` writes on the rows of the SPEC-3 **Session frame writes.** table.
+- [ ] **S12 · code** — CODE-1. Lands the adapter open sequence and `session_end` writes on the rows of the SPEC-3 **Session frame writes.** table, the Attach loop's drop of `session_started`, and the fail-closed `DemoteSDK`.
       Tiers 0, 1, 3, 4, 5, 7a. Depends on: S1, S2, S3, S10
-- [ ] **S13 · code** — CODE-2. Lands the developer-loop `session_start`.
+- [ ] **S13 · code** — CODE-2. Lands the developer-loop `session_start` and the executor's drop of `session_started`.
       Tiers 0, 1, 3. Depends on: S3, S10
-- [ ] **S14 · code** — CODE-4. Lands the multi-session Go SDK.
+- [ ] **S14 · code** — CODE-4. Lands the multi-session Go SDK, which writes `session_started`.
       Tiers 0, 1, 3, 7a, 10. Depends on: S1, S2, S3, S4, S5, S11, S12
-- [ ] **S15 · code** — CODE-5. Lands the multi-session Python and TypeScript SDKs.
+- [ ] **S15 · code** — CODE-5. Lands the multi-session Python and TypeScript SDKs, which write `session_started`.
       Tiers 0, 1, 3, 10. Depends on: S1, S2, S3, S4, S5, S11, S12
-- [ ] **S16 · code** — CODE-6. Lands the harness, reference-runtime, and `terminate`-handler changes.
+- [ ] **S16 · code** — CODE-6. Lands the harness, reference-runtime, and `terminate`-handler changes, the harness's `session_started` read, and the `streaming-echo` and `echo-concurrent` acknowledgements.
       Tiers 0, 1, 3, 4, 5, 10. Depends on: S3, S4, S6, S14, S15
 - [ ] **S17 · code** — CODE-8. Lands the removal of the per-session manifest fields.
       Tiers 0, 1, 2, 7a, 8, 9, 10. Depends on: S2, S14, S15, S16
-- [ ] **S18 · test** — TEST-1. Lands the new cross-component tests.
-      Tiers 0, 1, 3, 4, 7a, 10. Depends on: S12, S13, S14, S15, S16, S17
-- [ ] **S19 · code** — CODE-7. Lands the Part B handshake.
-      Tiers 0, 1, 3, 4, 5, 7a, 8, 9, 10. Depends on: S8, S14, S15, S16, S18
-- [ ] **S20 · docs** — RECORDS-1. Lands the `BUILD-GAPS.md` notes and new findings.
-      Tiers 0, 11. Depends on: S17, S19
+- [ ] **S18 · code** — CODE-9. Lands the adapter's `session_started` wait, its flag, and the gate that writes session-scoped `CH-RUNTIMEOPS` frames only after the read, with the fakes that must answer `session_start`.
+      Tiers 0, 1, 3, 4, 5, 7a, 8, 9, 10. Depends on: S3, S4, S11, S12, S14, S15, S16
+- [ ] **S19 · test** — TEST-1. Lands the new cross-component tests.
+      Tiers 0, 1, 3, 4, 7a, 10. Depends on: S12, S13, S14, S15, S16, S17, S18
+- [ ] **S20 · code** — CODE-7. Lands the Part B handshake.
+      Tiers 0, 1, 3, 4, 5, 7a, 8, 9, 10. Depends on: S8, S14, S15, S16, S19
+- [ ] **S21 · docs** — RECORDS-1. Lands the `BUILD-GAPS.md` notes and new findings.
+      Tiers 0, 11. Depends on: S17, S20
