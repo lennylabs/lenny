@@ -683,7 +683,7 @@ The webhook runs in `Fail` mode with a 5s timeout; if the webhook is unavailable
 | `ExtendCredentialLease`        | Re-arm a still-valid direct-mode credential lease's expiry timer to a later deadline without delivering credential material (§4.9 Token Service unavailability guard) |
 | `Resume`             | Restore from checkpoint on a replacement pod                                                                                                           |
 | `ReportUsage`        | Report LLM token counts extracted from provider responses; gateway increments quota counters and persists to Postgres on the next sync interval (see [Section 11.2](11_policy-and-controls.md#112-budgets-and-quotas)) |
-| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. The **slot release** is the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot cleanup for that slot, and it runs whenever the request removes an entry for the named session, whether or not `AssignCredentials` has bound that entry. The **runtime teardown** runs only for a session whose start the adapter has admitted. Which RPC in this table starts a session depends on the pod's session mode and on whether the session is new or resumed; the precondition is the adapter's admission of that RPC, taken at the moment of admission rather than when the slot reaches `running` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)), so a start still in flight is torn down rather than skipped. It flushes the session's final usage report and then ends the session's use of the pod's runtime process, which stays alive for the pod's life ([Section 4.7.10](#4710-deployment-model)). The teardown writes no `CH-RUNTIMEOPS` frame ([Section 15.4.2](15_external-api-surface.md#1542-rpc-lifecycle-state-machine)). Every request states which teardown it asks for, by carrying either a non-empty `bind_attempt` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)) or `unconditional_teardown`, and the response reports which entry the request was addressed to and what became of it. [Section 4.7.1](#471-role-and-gateway-rpc-contract) states the named rules that decide both, and states what each of `reclaimed`, `superseded`, and `absent` means; this row restates neither. The request carries the recycle disposition beside that teardown rather than selecting a scope. On the default disposition the pod is replaced. On the **recycle disposition** (occupancy zero on a recycling pod, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) the request also carries the pod identity (`podId`) and the whole-pod scrub parameters (`cleanupCommands`, `cleanupTimeoutSeconds`); the adapter keeps its own process and the runtime process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously, and reports its binary outcome for `podId` on the GatewayControl link via `ReportPodScrub`. The gateway does not block the response on the scrub; a missing report is bounded by the gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period). |
+| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. The **slot release** is the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) slot cleanup for that slot, and it runs whenever the request removes an entry for the named session, whether or not `AssignCredentials` has bound that entry. The **runtime teardown** runs only for a session whose start the adapter has admitted. Which RPC in this table starts a session depends on the pod's session mode and on whether the session is new or resumed; the precondition is the adapter's admission of that RPC, taken at the moment of admission rather than when the slot reaches `running` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)), so a start still in flight is torn down rather than skipped. It flushes the session's final usage report, writes the session's `session_end` on `CH-MSGSOCK` when the session reached `running` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), **Session frame writes.**), and then ends the session's use of the pod's runtime process, which stays alive for the pod's life ([Section 4.7.10](#4710-deployment-model)). The teardown writes no `CH-RUNTIMEOPS` frame ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). Every request states which teardown it asks for, by carrying either a non-empty `bind_attempt` ([Section 4.7.1](#471-role-and-gateway-rpc-contract)) or `unconditional_teardown`, and the response reports which entry the request was addressed to and what became of it. [Section 4.7.1](#471-role-and-gateway-rpc-contract) states the named rules that decide both, and states what each of `reclaimed`, `superseded`, and `absent` means; this row restates neither. The request carries the recycle disposition beside that teardown rather than selecting a scope. On the default disposition the pod is replaced. On the **recycle disposition** (occupancy zero on a recycling pod, [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) the request also carries the pod identity (`podId`) and the whole-pod scrub parameters (`cleanupCommands`, `cleanupTimeoutSeconds`); the adapter keeps its own process and the runtime process alive across the recycle boundary, runs the §5.2 whole-pod scrub asynchronously, and reports its binary outcome for `podId` on the GatewayControl link via `ReportPodScrub`. The gateway does not block the response on the scrub; a missing report is bounded by the gateway-side timeout (`cleanupTimeoutSeconds` plus a grace period). |
 
 *Adapter → Gateway RPCs:*
 
@@ -913,12 +913,14 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
    process in the runtime container: the two containers share no process namespace
    ([§13.1](13_security-model.md#131-pod-security)) and the runtime binary exists
    only in the runtime container's image. A later session on the same pod skips
-   this step and steps 8 and 9, and uses the connections the runtime opened on
-   the pod's first session. In the embedded deployment model the adapter runs
+   this step and steps 8 and 9, uses the `CH-MSGSOCK` and `CH-RUNTIMEOPS`
+   connections the runtime opened on the pod's first session, and takes step 10.
+   In the embedded deployment model the adapter runs
    the runtime loop in its own process for each session.
 8. Runtime reads manifest, connects to MCP servers (Standard/Full), opens CH-RUNTIMEOPS (Full)
 9. Adapter sends `lifecycle_capabilities` (Full); receives `lifecycle_support`
-10. Adapter delivers first `{type: "message"}` on stdin
+10. The adapter writes the session's `session_start` on `CH-MSGSOCK` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), and then waits for the runtime's `session_started` for the session before it treats the session as started when `CH-MSGSOCK` **Outbound: `session_started`** rule 3 requires the wait. This step runs for every session on the pod.
+11. Adapter delivers first `{type: "message"}` on `CH-MSGSOCK`
 
 #### 4.7.10 Deployment Model
 
@@ -935,7 +937,7 @@ The Full-level rotation via the CH-RUNTIMEOPS follows a strict protocol with tim
 | Language support       | Any language (stdin/stdout)                              | Go only (or language with gRPC support)    |
 | Isolation              | Process isolation; abstract sockets + read-only manifest | Single process, shared memory              |
 | Recommended for        | Third-party runtimes, community adapters                 | First-party runtimes where latency matters |
-| Runtime process lifetime | The pod's lifetime; one connection serves every session | The pod's lifetime (the adapter process); one loop per session |
+| Runtime process lifetime | The pod's lifetime; one connection serves every session, each opened by `session_start` and released by `session_end` or by the end of the connection | The pod's lifetime (the adapter process); one loop per session, opened by `session_start` and released by `session_end` or by the end of the loop |
 
 > **Note:** Third-party authors should always use the sidecar model. The embedded model is for first-party runtimes where the adapter and agent binary are developed together.
 
@@ -963,6 +965,18 @@ A recycling pool whose pods serve more than one session in the kept process
 requires a deployer acknowledgment
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
 "Deployer acknowledgment (runtime process kept across sessions)").
+A runtime process serves any number of sessions over its life, one after
+another and, on a pool whose `sessionPolicy.maxConcurrentSessions` is greater
+than one, at once. Every session-scoped frame on `CH-MSGSOCK` and
+`CH-RUNTIMEOPS` carries the `sessionId` of the session it concerns
+([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). A session's
+own context reaches the runtime in that session's `session_start` frame on
+`CH-MSGSOCK`, and the session's `session_end`, or the end of the connection or
+loop that carries it, releases it. No runtime relies on its process exiting at a session's end, and
+a runtime declares no capability to serve more than one session. The contract
+covers `type: agent` runtimes in both deployment models. A `type: mcp` runtime
+is driven over MCP by the adapter and exchanges no `CH-MSGSOCK` frame, so the
+contract does not apply to it.
 
 **Health check:** gRPC Health Checking Protocol. The warm pool controller marks a pod as `idle` only after the health check passes.
 

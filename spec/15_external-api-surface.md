@@ -1702,7 +1702,7 @@ INIT ──→ READY ──→ ACTIVE ──→ DRAINING ──→ TERMINATED
 | `INIT`       | Adapter process starts, opens gRPC connection to gateway (mTLS), writes placeholder manifest. The adapter sends an `AdapterInit` message on the control stream with `adapterProtocolVersion` (semver string, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` (the highest compatible version the gateway supports) or closes the stream with `PROTOCOL_VERSION_INCOMPATIBLE` if no compatible version exists. Major version changes are breaking; minor/patch are backwards compatible. Current protocol version: `"1.0.0"`. |
 | `READY`      | Adapter signals readiness. Pod enters warm pool. Gateway may now assign sessions.                     |
 | `ACTIVE`     | A session is in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, and stdin/stdout relay.     |
-| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange. No drain coordination exists at pod exit at any integration level: the adapter writes no `CH-RUNTIMEOPS` `terminate` frame, and the runtime process ends with the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). |
+| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange. No drain coordination exists at pod exit at any integration level: the runtime process ends with the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). |
 | `TERMINATED` | The adapter has exited. The gateway marks the pod as no longer available.                             |
 
 Transitions are initiated by either the gateway (e.g., session assignment, drain request) or the adapter itself (e.g., readiness signal).
