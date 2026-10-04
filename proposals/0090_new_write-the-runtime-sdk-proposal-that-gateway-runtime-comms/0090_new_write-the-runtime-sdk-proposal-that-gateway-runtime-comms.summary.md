@@ -15,7 +15,7 @@
 **Decisions.**
 1. Minimal design: two `CH-MSGSOCK` frames written through a Server-level helper pair over `RuntimeProcess.WriteEnvelope`, with no `RuntimeProcess` interface change.
 2. The contract covers `type: agent` runtimes in both deployment models. `type: mcp` runtimes are excluded, and the embedded loop receives the same frames.
-3. `session_start` carries `sessionId`, `credentialsPath`, `experimentContext`, `tracingContext`, and `llm` (including `llm.headers`). Every member is a former manifest member, and only `llm.apiKeyEnv` is reworded.
+3. `session_start` carries `sessionId`, `startId`, `credentialsPath`, `experimentContext`, `tracingContext`, and `llm` (including `llm.headers`).
 4. `taskId` and the workspace path are not carried, because both are fixed functions of `sessionId`.
 5. `credentialsPath` is carried rather than derived, because `--credentials-dir` makes the credential root operator-configurable.
 6. `credentialsPath` is optional: present whenever a credential file was provisioned and absent otherwise. The empty string is never written.
@@ -29,7 +29,7 @@
 14. `CH-RUNTIMEOPS` `terminate` is deleted. It has no production sender, and it would be a second end-of-session signal with undefined addressing.
 15. The session-scoped `CH-RUNTIMEOPS` frames, `files_updated` and `llm_request_completed` included, carry a required `sessionId`. Without it a multi-session runtime cannot tell which session a checkpoint quiesces, and the adapter cannot attribute direct-mode tokens. `llm_request_started` feeds only the pod-wide in-flight counter and takes none. `files_updated` gains its first spec row.
 16. The Full **deadline signal handling** category is retargeted onto `deadline_approaching` addressed by `sessionId`. It is conditional on the declared capability and requires no unsolicited `response`.
-17. The developer-loop `SubprocessExecutor` writes a `sessionId`-only `session_start` for a child that `Send` spawned. Without it every SDK runtime under `make run` would answer with errors.
+17. The developer-loop `SubprocessExecutor` writes a minimal `session_start` for a child that `Send` spawned. Without it every SDK runtime under `make run` would answer with errors.
 18. The SDKs dial the platform and connector MCP sockets once per process. A running pod MCP surface validates the nonce of the start that armed it, and every later start's manifest write carries a fresh nonce (§4.7.6 `mcpNonce` row), so a per-session redial with the re-read nonce is refused while that surface runs. Per-session MCP connections belong to 0084.
 19. The session reaches `OnTerminate` as a parameter, `OnTerminate(ctx, sessionID, reason)`, which mirrors `OnSessionTerminated`. The shared §15 `TerminationReason` struct does not change.
 20. `CreateRequest` gains `ExperimentContext`, `TracingContext`, and `LLM`, taken from `session_start`.
@@ -41,7 +41,7 @@
 26. No SDK gains a `status` helper, because no SDK emits a `status` frame. The effect on 0080 is under **Impacts on other proposals**.
 27. The term "runtime generation" is not used, because 0087 defines it.
 28. `session_start` is acknowledged. A runtime that keeps per-session context, or that has opened `CH-RUNTIMEOPS`, answers it with `session_started` on `CH-MSGSOCK` once the session's context exists, with `error` when creating the context failed (SPEC-3 **Outbound: `session_started`** and **Session errors.**). The `session_start` write order (SPEC-3 **Inbound: `session_start`** rule 1) holds only on the `CH-MSGSOCK` connection or loop that carries the session, so the adapter orders `CH-RUNTIMEOPS` through the acknowledgement: it writes no session-scoped frame for a session on that channel before it reads the session's `session_started` (SPEC-4 Edit 2). When the runtime's `CH-RUNTIMEOPS` handshake has completed, the adapter waits for the acknowledgement inside the start's open sequence, and a missing or errored acknowledgement fails the start on the existing start-failure path after a `session_end`. The adapter does not wait for the acknowledgement before the session's first `message`, because per-connection write order on `CH-MSGSOCK` already places that `message` after `session_start`. The session frames stay on `CH-MSGSOCK`. The compliance harness reads the acknowledgement before a session-scoped `CH-RUNTIMEOPS` frame, as SPEC-6 Edit 4 states. The owner chose the acknowledgement on 2026-10-04 in place of a runtime-side hold of early frames, whose runtime-chosen wait left the cross-channel order nondeterministic.
-29. `DemoteSDK` fails closed. When its wait for the slot serialization outlasts its request's deadline, it writes no `session_end`, tears nothing down, and answers with an error; a gateway caller then fails the pod and claims a replacement (SPEC-3 Edit 12 and **Session frame writes.**, owner decision of 2026-10-04).
+29. `DemoteSDK` fails closed. When its wait for the slot serialization outlasts its request's deadline, it writes no `session_end`, tears nothing down, and answers with an error; a gateway caller then fails the pod and claims a replacement (SPEC-3 **Session frame writes.**, owner decision of 2026-10-04).
 30. The adapter's bound on the `session_started` wait is an adapter flag whose default is IMPLEMENTOR'S CHOICE (CODE-9 item 2). The spec states its other intra-pod adapter timeouts as fixed values rather than operator settings, so its convention does not require operator tuning; the code rules require a flag because the spec fixes no value.
 
 **Watch out for.**
@@ -146,7 +146,7 @@ None. The owner answered the open questions on 2026-10-04:
 - SPEC-7 — `spec/29_communication-scenarios.md` — trace the session frame writes in §29.2, §29.4, and §29.6.
 - SPEC-8 — `spec/04_system-components.md`, `spec/15_external-api-surface.md`, `spec/28_communication-channels.md`, `spec/29_communication-scenarios.md` — Part B: state the runtime connection handshake on `CH-MSGSOCK` and `CH-RUNTIMEOPS`.
 - CODE-1 — `pkg/adapter/sessionframes.go`, `pkg/adapter/session.go`, `pkg/adapter/resume.go`, `pkg/adapter/sdkwarm.go`, `pkg/adapter/attach.go`, `pkg/adapter/manifest.go` — write `session_start` and `session_end` through one helper pair on the rows of the SPEC-3 **Session frame writes.** table, drop `session_started` in the Attach loop, and fail `DemoteSDK` closed.
-- CODE-2 — `pkg/gateway/session/executor/subprocess.go` — write a `sessionId`-only `session_start` for a `Send`-spawned child.
+- CODE-2 — `pkg/gateway/session/executor/subprocess.go` — write a minimal `session_start` for a `Send`-spawned child.
 - CODE-3 — `pkg/adapter/runtimeops.go`, `pkg/adapter/usage.go`, the other adapter, `pkg/runtimekit`, and `cmd/lenny-compliance` files its Targets list, and their peers and tests — key session-scoped `CH-RUNTIMEOPS` frames and the direct-mode token sink by `sessionId`, and delete `Terminate`.
 - CODE-4 — `sdks/runtime/go/` and the Go scaffold templates — serve sessions keyed by `sessionId` in the Go SDK.
 - CODE-5 — `sdks/runtime/python/`, `sdks/runtime/typescript/`, and their scaffold templates — port CODE-4 to the Python and TypeScript SDKs.

@@ -4,7 +4,7 @@
 
 **Runtime lifetime contract (SPEC-1).** The §4.7.10 bold label **Runtime process lifetime.** is the single normative home of the contract. A `type: agent` runtime process serves any number of sessions, every session-scoped frame carries `sessionId`, a session's context arrives in its `session_start` frame on `CH-MSGSOCK`, and its `session_end` frame, or the end of the connection or loop that carries it, releases it. No runtime relies on process exit and no runtime declares a capability for this. Every other site links to §4.7.10.
 
-**Session frames (SPEC-3).** The §28.5.3 `CH-MSGSOCK` card owns the `session_start`, `session_started`, and `session_end` schemas, their write rules, the **Session frame writes.** table of every path that writes `session_start` or `session_end`, and the session-error rule. A runtime that keeps per-session context, or that has opened `CH-RUNTIMEOPS`, answers each `session_start` with `session_started` once the session's context exists. When the runtime's `CH-RUNTIMEOPS` capability handshake has completed, the adapter waits for that acknowledgement inside the start's open sequence, and a start whose acknowledgement does not arrive within the bounded wait, or arrives carrying `error`, fails on the existing start-failure path. The table's open sequence rests on two edits SPEC-3 also stages: the §5.2 slot serialization, under which a reclaim hold cannot end while a start's open sequence runs, and the §4.7.1 rule-8 confirmation restated as a comparison of entry identity. Each `session_start` member is a former §4.7.6 manifest row, which SPEC-2 deletes from the manifest so that each field has one carrier. `shutdown` stays process-scoped.
+**Session frames (SPEC-3).** The §28.5.3 `CH-MSGSOCK` card owns the `session_start`, `session_started`, and `session_end` schemas, their write rules, the **Session frame writes.** table of every path that writes `session_start` or `session_end`, and the session-error rule. A runtime that keeps per-session context, or that has opened `CH-RUNTIMEOPS`, answers each `session_start` with `session_started` once the session's context exists. When the runtime's `CH-RUNTIMEOPS` capability handshake has completed, the adapter waits for that acknowledgement inside the start's open sequence, and a start whose acknowledgement does not arrive within the bounded wait, or arrives carrying `error`, fails on the existing start-failure path. The table's open sequence rests on two edits SPEC-3 also stages: the §5.2 slot serialization, under which a reclaim hold cannot end while a start's open sequence runs, and the §4.7.1 rule-8 confirmation restated as a comparison of entry identity. `shutdown` stays process-scoped.
 
 **Session addressing on `CH-RUNTIMEOPS` (SPEC-4).** The session-scoped `CH-RUNTIMEOPS` frames carry a required `sessionId`. Because the `session_start` write order holds only on `CH-MSGSOCK`, the `CH-RUNTIMEOPS` card orders these frames through the acknowledgement: the adapter writes one for a session only after it reads that session's `session_started`, and a runtime drops one that names a session it does not hold. The `terminate` frame is deleted.
 
@@ -25,7 +25,7 @@
 - A session-scoped `CH-RUNTIMEOPS` frame travels on a connection separate from `CH-MSGSOCK`, so neither connection's write order orders the runtime's reads across the two. The `session_started` acknowledgement orders them: the adapter writes such a frame for a session only after it reads that session's `session_started` (SPEC-4 Edit 2). The residual is a frame the adapter wrote before a session's `session_end` that the runtime reads after it. The runtime drops that frame without a reply when it no longer holds the session, and the adapter's own bound for the frame applies: a `checkpoint_request` times out at its `deadlineMs`, an `interrupt_request` ends in `INTERRUPT_TIMEOUT` with the session `suspended`, a `credentials_rotated` falls back after 60 seconds to the Standard-level rotation path, and a `deadline_approaching` or `files_updated` is not delivered. When a later start of the same session on the same pod has been acknowledged before the runtime reads such a frame, the runtime applies the frame to that start.
 - A start whose runtime does not answer `session_start` within the adapter's bounded wait, or answers it with `error`, fails and writes `session_end` (SPEC-3 **Session frame writes.**). A Full-level runtime that never writes `session_started` therefore starts no session, and the Full **CH-RUNTIMEOPS opening** conformance category (SPEC-6 Edit 5) detects it before deployment.
 - A `session_started` that arrives after its start's wait ended is dropped, because that start already failed and wrote `session_end` (SPEC-3 **Outbound: `session_started`** rule 5).
-- A `DemoteSDK` that cannot take the slot serialization before its request's deadline fails without writing `session_end` (SPEC-3 Edit 12 and **Session frame writes.**). The runtime keeps the session's context until the pod fails, or until the SIGTERM path force-terminates the SDK process, and either outcome ends the connection that carries the session.
+- A `DemoteSDK` that cannot take the slot serialization before its request's deadline fails without writing `session_end` (SPEC-3 **Session frame writes.**). The runtime keeps the session's context until the pod fails, or until the SIGTERM path force-terminates the SDK process, and either outcome ends the connection that carries the session.
 
 ## Staged edits
 
@@ -211,6 +211,7 @@ Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbea
 {
   "type": "session_start",
   "sessionId": "sess_abc123",
+  "startId": "st_1",
   "credentialsPath": "/run/lenny/slots/sess_abc123/credentials.json",
   "experimentContext": { "experimentId": "claude-v2-rollout", "variantId": "treatment", "inherited": false },
   "tracingContext": null,
@@ -228,6 +229,7 @@ Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbea
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"session_start"`. |
 | `sessionId` | `string` | Yes | The session the frame opens. The adapter populates it on every pod. |
+| `startId` | `string` | Yes | Identifies this write of the frame. The adapter gives each `session_start` it writes on the pod a value distinct from every other it has written there, so that the acknowledgement of an earlier start of the same session is not read as this start's (**Outbound: `session_started`** rule 5). |
 | `credentialsPath` | `string` | No | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json` (see item 4 of [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary)). The adapter writes the file before it writes this frame and rewrites it in place on a rotation for this session. A runtime that reads credential material reads its path from this field rather than assuming a fixed location. Present whenever the adapter provisioned a credential file for the session and absent otherwise; a runtime given no path loads no credential bundle for the session. |
 | `experimentContext` | `object` or `null` | No | Experiment enrollment context for this session. Contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via delegation). Absent or `null` when the session is not enrolled in any experiment. When present, runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. See [§10.7](10_gateway-internals.md#107-experiment-primitives). |
 | `tracingContext` | `object` or `null` | No | Tracing identifiers propagated from the parent runtime via delegation; absent or `null` for top-level sessions. An opaque key-value map of strings (e.g., `{"langsmith_run_id": "run_abc123", "otel_trace_id": "0af7651916cd43dd"}`). Child runtimes use this to stitch their native traces into the parent's trace tree. Contains only non-sensitive identifiers — never endpoint URLs or credentials (see [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) for validation rules). See [§16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. |
@@ -300,7 +302,7 @@ Process-scoped: the adapter never writes `shutdown` at a session boundary. Agent
 
   ```
   2. Adapter writes to stdin (a runtime that keeps no per-session context ignores it, **Inbound: `session_start`** rule 2):
-     {"type": "session_start", "sessionId": "sess_abc123"}
+     {"type": "session_start", "sessionId": "sess_abc123", "startId": "st_1"}
   ```
 
 - Insert before the step `8. Gateway initiates shutdown. Adapter writes:`:
@@ -316,7 +318,7 @@ Process-scoped: the adapter never writes `shutdown` at a session boundary. Agent
 **Edit 12 (§5.2 **Slot-identifier reclaim hold.**).** In `spec/05_runtime-registry-and-pool-model.md`, in the **Slot-identifier reclaim hold.** paragraph, replace `until the cleanup that reclaims the slot has **completed**, which is when every act that cleanup owes the slot has returned without error.` with:
 
 ```markdown
-until the cleanup that reclaims the slot has **completed**, which is when every act that cleanup owes the slot has returned without error. The adapter keeps one **slot serialization** per slot identifier, which admits one holder at a time. A cleanup that reclaims the slot holds it while it performs its acts, a start holds it for the open sequence in which it writes its session frames, including that sequence's wait for `session_started`, and `DemoteSDK` holds it from its `session_end` decision until it answers ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), `CH-MSGSOCK` **Session frame writes.**). A wait for the slot serialization lasts no longer than the deadline that bounds the holder's own work, which for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, running under no request, is the graceful window this paragraph states for its close, and a cleanup whose wait outlasts that bound performs its acts without it. `DemoteSDK` is the exception: when its wait outlasts its request's deadline, it fails without writing `session_end` and without tearing down the pre-connected runtime, and a failed `DemoteSDK` fails the pod and a replacement is claimed ([Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract), `ConfigureWorkspace` row). An act performed without the slot serialization is an act that did not return without error, whatever the act itself returns, because it may have run while a start's open sequence held the slot; the table above applies the rows keyed on a failed act to it. A hold that a deregistration opens while a start's open sequence holds the slot serialization therefore lasts at least until that open sequence ends.
+until the cleanup that reclaims the slot has **completed**, which is when every act that cleanup owes the slot has returned without error. The adapter keeps one **slot serialization** per slot identifier, which admits one holder at a time. A cleanup that reclaims the slot holds it while it performs its acts, a start holds it for the open sequence in which it writes its session frames, including that sequence's wait for `session_started`, and `DemoteSDK` holds it from its `session_end` decision until it answers ([Section 28.5.3](28_communication-channels.md#2853-intra-pod), `CH-MSGSOCK` **Session frame writes.**). A wait for the slot serialization lasts no longer than the deadline that bounds the holder's own work, which for the [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) hold-timeout termination, running under no request, is the graceful window this paragraph states for its close, and a cleanup whose wait outlasts that bound performs its acts without it. `DemoteSDK` is the exception, and its outcome is the `CH-MSGSOCK` **Session frame writes.** row for a `DemoteSDK` whose wait outlasts its request's deadline ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). An act performed without the slot serialization is an act that did not return without error, whatever the act itself returns, because it may have run while a start's open sequence held the slot; the table above applies the rows keyed on a failed act to it. A hold that a deregistration opens while a start's open sequence holds the slot serialization therefore lasts at least until that open sequence ends.
 ```
 
 **Edit 13 (§4.7.1 rule 8, **The start-confirmation rule.**).** In `spec/04_system-components.md`, make three replacements inside rule 8.
@@ -345,7 +347,7 @@ Replace `When the adapter holds no entry for the identifier, or holds one carryi
 **Outbound: `session_started`**
 
 ```json
-{ "type": "session_started", "sessionId": "sess_abc123" }
+{ "type": "session_started", "sessionId": "sess_abc123", "startId": "st_1" }
 ```
 
 `session_started` answers a `session_start` once the runtime holds the session. The following rules govern it:
@@ -354,12 +356,13 @@ Replace `When the adapter holds no entry for the identifier, or holds one carryi
 2. A runtime that fails to create the session's context writes the frame with `error`, as **Session errors.** above states.
 3. The adapter waits for `session_started` inside the start's open sequence (**Session frame writes.** above) when the runtime's `CH-RUNTIMEOPS` connection completed its capability handshake before that open sequence began. When that handshake had not completed, the adapter does not wait, records the session as not awaiting an acknowledgement, and writes the session's session-scoped `CH-RUNTIMEOPS` frames without the ordering the `CH-RUNTIMEOPS` card's **Messages.** bullet states; a runtime that opens `CH-RUNTIMEOPS` during a session is ordered only from its next `session_start`. The adapter bounds the wait, and the wait ends no later than the deadline of the request that starts the session when that request carries one. A start whose wait ends without the frame, or whose frame carries `error`, fails as **Session frame writes.** states.
 4. The adapter does not wait for `session_started` before it writes the session's other `CH-MSGSOCK` frames, because **Inbound: `session_start`** rule 1 already orders them after `session_start` on the same connection or loop.
-5. The adapter consumes the frame and relays it to no Attach stream. It drops a `session_started` that names a session for which no open sequence is waiting and that has no [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule-8 record. The `CH-RUNTIMEOPS` card's **Messages.** bullet below states how the adapter's read of the frame orders that channel's session-scoped frames.
+5. The adapter consumes the frame and relays it to no Attach stream. It drops a `session_started` whose `startId` is not that of the open sequence waiting for the session. The `CH-RUNTIMEOPS` card's **Messages.** bullet below states how the adapter's read of the frame orders that channel's session-scoped frames.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"session_started"`. |
 | `sessionId` | `string` | Yes | The session whose `session_start` the frame answers. The runtime echoes the identifier that `session_start` carried. |
+| `startId` | `string` | Yes | The `startId` of the `session_start` the frame answers, including a repeated one (**Inbound: `session_start`** rule 3). |
 | `error` | `object` | No | `{"code": string, "message": string}`, the object a `response` error carries. Present when the runtime failed to create the session's context, and absent otherwise. |
 ````
 
@@ -409,7 +412,7 @@ In the `llm_request_completed` row, insert `` `sessionId` (string), `` after `` 
 ```
             case "session_start":
                 // acknowledge the session (Section 28.5.3, CH-MSGSOCK Outbound: session_started)
-                write_line(stdout, json({"type": "session_started", "sessionId": msg.sessionId}))
+                write_line(stdout, json({"type": "session_started", "sessionId": msg.sessionId, "startId": msg.startId}))
                 flush(stdout)
 ```
 
@@ -562,7 +565,7 @@ A category that sends a session-scoped frame first writes `session_start` for th
 **Edit 5 (Full row **CH-RUNTIMEOPS opening**).** Replace the row with:
 
 ```markdown
-| **Full** | **CH-RUNTIMEOPS opening** | The runtime connects to the CH-RUNTIMEOPS advertised in the manifest (`@lenny-runtime-ops` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and no `error` ([§28.5.3](28_communication-channels.md#2853-intra-pod)). |
+| **Full** | **CH-RUNTIMEOPS opening** | The runtime connects to the CH-RUNTIMEOPS advertised in the manifest (`@lenny-runtime-ops` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and `startId` and no `error` ([§28.5.3](28_communication-channels.md#2853-intra-pod)). |
 ```
 
 The category stays one row, so the count of Full checks that `lenny-compliance --level full` runs does not change.
