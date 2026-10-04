@@ -1,5 +1,6 @@
 {
   "type": "deadline_approaching",
+  "sessionId": "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0",
   "remainingMs": 30000,
   "trigger": "session_age"
 }

@@ -167,7 +167,7 @@ var runtimeOpsEventExamples = []string{
 	"schemas/examples/runtime-ops.interrupt_acknowledged.json",
 	"schemas/examples/runtime-ops.credentials_rotated.json",
 	"schemas/examples/runtime-ops.deadline_approaching.json",
-	"schemas/examples/runtime-ops.terminate.json",
+	"schemas/examples/runtime-ops.files_updated.json",
 	// spec: §4.7 — llm_request_completed without token counts (a
 	// runtime that cannot extract them omits both fields) and with
 	// the optional direct-mode inputTokens/outputTokens source.
@@ -177,7 +177,8 @@ var runtimeOpsEventExamples = []string{
 
 // spec: 15.4.3, 15.4.6, 4.7 (llm_request_completed direct-mode token
 //
-//	fields), 11.2 (direct-mode usage source)
+//	fields), 11.2 (direct-mode usage source), 28.5.3 (CH-RUNTIMEOPS
+//	Messages: the session-scoped frames carry sessionId)
 //
 // diagnosis: a runtime-ops-events example failed to validate against
 //
@@ -268,7 +269,7 @@ func TestRuntimeOpsEventExamplesBijection(t *testing.T) {
 	}
 }
 
-// spec: 15.4
+// spec: 15.4, 28.5.3 (CH-MSGSOCK session_start, session_started, and session_end)
 // diagnosis: an adapter JSONL example failed to validate against
 //
 //	schemas/lenny-adapter-jsonl.schema.json. Verify the
@@ -288,6 +289,13 @@ func TestAdapterJSONLExamplesValidate(t *testing.T) {
 		"schemas/examples/jsonl.tool_call.json",
 		"schemas/examples/jsonl.response.json",
 		"schemas/examples/jsonl.set_tracing_context.json",
+		// spec: §28.5.3 — the CH-MSGSOCK session frames: session_start
+		// with the session's own context, its acknowledgement in both
+		// the created and the failed-create form, and session_end.
+		"schemas/examples/jsonl.session_start.json",
+		"schemas/examples/jsonl.session_started.json",
+		"schemas/examples/jsonl.session_started.error.json",
+		"schemas/examples/jsonl.session_end.json",
 	} {
 		name := name
 		t.Run(filepath.Base(name), func(t *testing.T) {
@@ -360,7 +368,7 @@ func TestAdapterJSONLDescriptionScopesRuntimeOpsFramesOut(t *testing.T) {
 		"credentials_rotated",
 		"credentials_acknowledged",
 		"deadline_approaching",
-		"terminate",
+		"files_updated",
 	} {
 		if _, defined := parsed.Defs[frame]; defined {
 			t.Errorf("%s must not schematize the CH-RUNTIMEOPS frame %q; it belongs to schemas/runtime-ops-events.schema.json",

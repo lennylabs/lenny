@@ -2760,12 +2760,13 @@ type StartSessionRequest struct {
 	Runtime   string                 `protobuf:"bytes,2,opt,name=runtime,proto3" json:"runtime,omitempty"`
 	Labels    map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// experiment_context is the §8.3 / §10.7 experiment enrollment
-	// delivered to the runtime in the adapter manifest. Absent for an
-	// unenrolled session.
+	// delivered to the runtime in the session's session_start frame on
+	// CH-MSGSOCK (§28.5.3). Absent for an unenrolled session.
 	ExperimentContext *ExperimentContext `protobuf:"bytes,5,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
 	// tracing_context is the §8.3 opaque tracing-identifier map the
-	// runtime receives in the adapter manifest to stitch its native
-	// traces into the parent's trace tree. Empty when none is set.
+	// runtime receives in the session's session_start frame on CH-MSGSOCK
+	// (§28.5.3) to stitch its native traces into the parent's trace tree.
+	// Empty when none is set.
 	TracingContext map[string]string `protobuf:"bytes,6,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// agent_interface is the runtime's §5.1 agentInterface descriptor,
 	// JSON-encoded, written verbatim into the adapter manifest's
@@ -4742,9 +4743,9 @@ type ResumeRequest struct {
 	Runtime      string                 `protobuf:"bytes,2,opt,name=runtime,proto3" json:"runtime,omitempty"`                               // runtime name, as in StartSessionRequest
 	CheckpointId string                 `protobuf:"bytes,3,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"` // checkpoint to restore the workspace from
 	// experiment_context and tracing_context are re-delivered to the
-	// restored runtime in the adapter manifest — the session's §8.3
-	// enrollment and tracing identifiers survive a resume onto a fresh
-	// pod. Absent when unset.
+	// restored runtime in the session's session_start frame on CH-MSGSOCK
+	// (§28.5.3), so the session's §8.3 enrollment and tracing identifiers
+	// survive a resume onto a fresh pod. Absent when unset.
 	ExperimentContext *ExperimentContext `protobuf:"bytes,4,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
 	TracingContext    map[string]string  `protobuf:"bytes,5,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// agent_interface and min_platform_version are re-delivered to the
@@ -6028,9 +6029,10 @@ type ConfigureWorkspaceRequest struct {
 	// is pointed at — /workspace/slots/{sessionId}/current in production.
 	// Idempotent: sending the same cwd twice is safe.
 	Cwd string `protobuf:"bytes,2,opt,name=cwd,proto3" json:"cwd,omitempty"`
-	// experiment_context and tracing_context are written into the adapter
-	// manifest the runtime re-reads when the workspace is configured, the
-	// same as StartSession.
+	// experiment_context and tracing_context are delivered to the runtime
+	// in the session's session_start frame on CH-MSGSOCK (§28.5.3), which
+	// the adapter writes when the workspace is configured, the same as
+	// StartSession.
 	ExperimentContext *ExperimentContext `protobuf:"bytes,3,opt,name=experiment_context,json=experimentContext,proto3" json:"experiment_context,omitempty"`
 	TracingContext    map[string]string  `protobuf:"bytes,4,rep,name=tracing_context,json=tracingContext,proto3" json:"tracing_context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields     protoimpl.UnknownFields

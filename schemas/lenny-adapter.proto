@@ -942,19 +942,20 @@ message StartSessionRequest {
   // the FinalizeWorkspace and RunSetup staging RPCs (§4.7). Field 8
   // (task_id) was removed when the dead gateway-supplied task identifier
   // was dropped: a session has exactly one execution, so the adapter
-  // derives the manifest taskId from the session id (§4.7).
+  // derives the taskId from the session id (§4.7).
   reserved 3, 7, 8;
   reserved "workspace_plan", "setup_policy", "task_id";
   SessionId session_id = 1;
   string runtime = 2;
   map<string, string> labels = 4;
   // experiment_context is the §8.3 / §10.7 experiment enrollment
-  // delivered to the runtime in the adapter manifest. Absent for an
-  // unenrolled session.
+  // delivered to the runtime in the session's session_start frame on
+  // CH-MSGSOCK (§28.5.3). Absent for an unenrolled session.
   ExperimentContext experiment_context = 5;
   // tracing_context is the §8.3 opaque tracing-identifier map the
-  // runtime receives in the adapter manifest to stitch its native
-  // traces into the parent's trace tree. Empty when none is set.
+  // runtime receives in the session's session_start frame on CH-MSGSOCK
+  // (§28.5.3) to stitch its native traces into the parent's trace tree.
+  // Empty when none is set.
   map<string, string> tracing_context = 6;
   // agent_interface is the runtime's §5.1 agentInterface descriptor,
   // JSON-encoded, written verbatim into the adapter manifest's
@@ -1374,17 +1375,17 @@ message SignalDeadlineResponse {
 
 message ResumeRequest {
   // Field 6 (task_id) was removed when the dead gateway-supplied task
-  // identifier was dropped: the adapter derives the manifest taskId from
-  // the session id (§4.7), the same as StartSessionRequest.
+  // identifier was dropped: the adapter derives the taskId from the
+  // session id (§4.7), the same as StartSessionRequest.
   reserved 6;
   reserved "task_id";
   SessionId session_id = 1;
   string runtime = 2;        // runtime name, as in StartSessionRequest
   string checkpoint_id = 3;  // checkpoint to restore the workspace from
   // experiment_context and tracing_context are re-delivered to the
-  // restored runtime in the adapter manifest — the session's §8.3
-  // enrollment and tracing identifiers survive a resume onto a fresh
-  // pod. Absent when unset.
+  // restored runtime in the session's session_start frame on CH-MSGSOCK
+  // (§28.5.3), so the session's §8.3 enrollment and tracing identifiers
+  // survive a resume onto a fresh pod. Absent when unset.
   ExperimentContext experiment_context = 4;
   map<string, string> tracing_context = 5;
   // agent_interface and min_platform_version are re-delivered to the
@@ -1731,9 +1732,10 @@ message ConfigureWorkspaceRequest {
   // is pointed at — /workspace/slots/{sessionId}/current in production.
   // Idempotent: sending the same cwd twice is safe.
   string cwd = 2;
-  // experiment_context and tracing_context are written into the adapter
-  // manifest the runtime re-reads when the workspace is configured, the
-  // same as StartSession.
+  // experiment_context and tracing_context are delivered to the runtime
+  // in the session's session_start frame on CH-MSGSOCK (§28.5.3), which
+  // the adapter writes when the workspace is configured, the same as
+  // StartSession.
   ExperimentContext experiment_context = 3;
   map<string, string> tracing_context = 4;
 }

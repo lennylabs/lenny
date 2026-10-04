@@ -46,6 +46,7 @@ func TestLLMRequestCompletedAcceptsTokenCounts(t *testing.T) {
 
 	frame := map[string]any{
 		"type":         "llm_request_completed",
+		"sessionId":    "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		"requestId":    "req_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		"provider":     "anthropic",
 		"status":       "ok",
@@ -69,6 +70,7 @@ func TestLLMRequestCompletedTokenCountsAreOptional(t *testing.T) {
 
 	frame := map[string]any{
 		"type":      "llm_request_completed",
+		"sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		"requestId": "req_01HX9F0YWXKK0V7QZ7G6P3R5JM",
 		"provider":  "anthropic",
 		"status":    "ok",
@@ -98,7 +100,7 @@ func TestLLMRequestCompletedRejectsNegativeTokenCounts(t *testing.T) {
 		{
 			name: "negative inputTokens",
 			frame: map[string]any{
-				"type": "llm_request_completed", "requestId": "req_neg_in",
+				"type": "llm_request_completed", "sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN", "requestId": "req_neg_in",
 				"provider": "anthropic", "status": "ok",
 				"inputTokens": -1, "outputTokens": 10,
 			},
@@ -106,7 +108,7 @@ func TestLLMRequestCompletedRejectsNegativeTokenCounts(t *testing.T) {
 		{
 			name: "negative outputTokens",
 			frame: map[string]any{
-				"type": "llm_request_completed", "requestId": "req_neg_out",
+				"type": "llm_request_completed", "sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN", "requestId": "req_neg_out",
 				"provider": "anthropic", "status": "ok",
 				"inputTokens": 10, "outputTokens": -5,
 			},
@@ -131,7 +133,7 @@ func TestLLMRequestCompletedRejectsFractionalTokenCounts(t *testing.T) {
 	t.Parallel()
 
 	frame := map[string]any{
-		"type": "llm_request_completed", "requestId": "req_frac",
+		"type": "llm_request_completed", "sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN", "requestId": "req_frac",
 		"provider": "anthropic", "status": "ok",
 		"inputTokens": 1.5, "outputTokens": 10,
 	}
