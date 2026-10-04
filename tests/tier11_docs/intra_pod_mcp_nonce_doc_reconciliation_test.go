@@ -228,14 +228,13 @@ func nonceBlockStart(line string) bool {
 
 // intraPodNonceSites returns every specification statement of the intra-pod
 // MCP nonce handshake the pod-wide rule reaches, together with the adapter
-// manifest's currency statement. A site left behind states a handshake that
+// manifest's statement that it carries only pod-scoped fields. A site left behind states a handshake that
 // contradicts the ones beside it.
 func intraPodNonceSites() []nonceStatementSite {
 	spec15 := []string{"spec", "15_external-api-surface.md"}
 	spec28 := []string{"spec", "28_communication-channels.md"}
 	spec04 := []string{"spec", "04_system-components.md"}
 	spec29 := []string{"spec", "29_communication-scenarios.md"}
-	spec06 := []string{"spec", "06_warm-pod-model.md"}
 	return []nonceStatementSite{
 		{
 			label:  "spec/15 §15.4.3 Authentication lead",
@@ -309,20 +308,7 @@ func intraPodNonceSites() []nonceStatementSite {
 			anchor: "**Adapter manifest:** One pod-global file written to",
 			want: []string{
 				"One pod-global file",
-				"authoritative for the session whose start last wrote it",
-			},
-		},
-		{
-			// The credential-lease paragraph restates the manifest write that
-			// precedes each session's runtime start. It stated the currency
-			// rule in its retired form while §4.7.5 carried the replacement,
-			// so it is swept with the sites that cite it.
-			label:  "spec/06 §6.1 per-session credential lease paragraph",
-			path:   spec06,
-			anchor: "**Per-session credential lease lifecycle.**",
-			want: []string{
-				"rewrites the pod-global adapter manifest before each session's runtime start",
-				"before that session's binary is spawned",
+				"carries only pod-scoped fields",
 			},
 		},
 		{
