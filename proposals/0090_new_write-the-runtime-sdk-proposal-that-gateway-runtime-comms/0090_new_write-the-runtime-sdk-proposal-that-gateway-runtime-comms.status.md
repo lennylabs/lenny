@@ -2,13 +2,13 @@
 proposal: 0090_new_write-the-runtime-sdk-proposal-that-gateway-runtime-comms
 title: Runtime SDKs assume one session per process
 kind: new
-status: Draft
+status: Approved
 drafted-date: 2026-10-03
 drafted-by: change-proposal
-reviewed-date: 
-reviewed-by: 
-approved-date: 
-approved-by: 
+reviewed-date: 2026-10-05
+reviewed-by: jaf
+approved-date: 2026-10-05
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
