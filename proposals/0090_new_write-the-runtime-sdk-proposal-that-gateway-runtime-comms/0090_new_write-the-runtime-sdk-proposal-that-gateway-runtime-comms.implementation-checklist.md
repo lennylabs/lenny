@@ -4,7 +4,7 @@
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-2. Lands the manifest-row deletions and the repointed readers.
       Tiers 0, 11. Depends on: —
-- [ ] **S3 · spec** — SPEC-3. Lands the `CH-MSGSOCK` session frames and every edit SPEC-3 stages with them.
+- [ ] **S3 · spec** — SPEC-3. Lands the `CH-MSGSOCK` session frames and every edit SPEC-3 stages with them, including the §4.7.1 statement of rule 8's application points (Edit 17).
       Tiers 0, 11. Depends on: S1, S2
 - [ ] **S4 · spec** — SPEC-4. Lands the `CH-RUNTIMEOPS` session addressing, the ordering of session-scoped frames after the session's `session_started`, and the `terminate` deletion.
       Tiers 0, 11. Depends on: S1, S3
@@ -26,15 +26,15 @@
       Tiers 0, 1, 3, 4, 5, 7a. Depends on: S1, S2, S3, S10
 - [ ] **S13 · code** — CODE-2. Lands the developer-loop `session_start`.
       Tiers 0, 1, 3, 7a. Depends on: S3, S10
-- [ ] **S14 · code** — CODE-4. Lands the multi-session Go SDK, which writes `session_started`.
+- [ ] **S14 · code** — CODE-4. Lands the multi-session Go SDK, which writes `session_started`, keys each session's context by `sessionId` and `startId`, and defines the `ExperimentContext` and `LLMConfig` types.
       Tiers 0, 1, 3, 7a, 10. Depends on: S1, S2, S3, S4, S5, S11, S12
-- [ ] **S15 · code** — CODE-5. Lands the multi-session Python and TypeScript SDKs, which write `session_started`.
+- [ ] **S15 · code** — CODE-5. Lands the multi-session Python and TypeScript SDKs, which write `session_started` and key each session's context by `sessionId` and `startId`.
       Tiers 0, 1, 3, 10. Depends on: S1, S2, S3, S4, S5, S11, S12
-- [ ] **S16 · code** — CODE-6. Lands the harness, reference-runtime, and `terminate`-handler changes, the harness's `session_started` read, and the `streaming-echo` and `echo-concurrent` acknowledgements.
+- [ ] **S16 · code** — CODE-6. Lands the harness, reference-runtime, and `terminate`-handler changes, the harness's `session_started` read bounded by the adapter's default acknowledgement timeout (whose constant it declares in `pkg/runtimekit`) plus a fixed margin, the credential re-read assertion, and the `streaming-echo` and `echo-concurrent` acknowledgements.
       Tiers 0, 1, 3, 4, 5, 10. Depends on: S3, S4, S6, S14, S15
 - [ ] **S17 · code** — CODE-8. Lands the removal of the per-session manifest fields.
       Tiers 0, 1, 2, 7a, 8, 9, 10. Depends on: S2, S14, S15, S16
-- [ ] **S18 · code** — CODE-9. Lands the adapter's `session_started` wait, its flag, and the gate that writes session-scoped `CH-RUNTIMEOPS` frames only after the read, with the fakes that must answer `session_start`.
+- [ ] **S18 · code** — CODE-9. Lands the adapter's `session_started` wait, its flag wired to the `pkg/runtimekit` default constant, and the gate that writes session-scoped `CH-RUNTIMEOPS` frames only after the read, with the fakes that must answer `session_start`.
       Tiers 0, 1, 3, 4, 5, 7a, 8, 9, 10. Depends on: S3, S4, S11, S12, S14, S15, S16
 - [ ] **S19 · test** — TEST-1. Lands the new cross-component tests.
       Tiers 0, 1, 3, 4, 7a, 10. Depends on: S12, S13, S14, S15, S16, S17, S18
