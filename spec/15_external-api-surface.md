@@ -1459,7 +1459,7 @@ Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-comp
 The runtime adapter contract is published as the machine-readable artifacts listed below, committed to the repository and released alongside each Lenny release:
 
 - **`schemas/lenny-adapter.proto`** — Protobuf service and message definitions for the gateway ↔ adapter gRPC surface ([Section 4.7](04_system-components.md#47-runtime-adapter) RPC table). Includes the structured error code enum with categories (transient, permanent, policy), the `Attach` bidirectional streaming messages, the version negotiation protocol (adapter advertises capabilities at startup; gateway selects a compatible protocol version), and the gRPC Health Checking Protocol binding.
-- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) (`message`, `tool_result`, `heartbeat`, `shutdown`, `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`). The CH-RUNTIMEOPS frames are schematized in `schemas/runtime-ops-events.schema.json` rather than in this artifact. Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
+- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 28.5.3](28_communication-channels.md#2853-intra-pod). The CH-RUNTIMEOPS frames are schematized in `schemas/runtime-ops-events.schema.json` rather than in this artifact. Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
 - **`schemas/messagepart.schema.json`** — JSON Schema for the `MessagePart` envelope, including the canonical type registry tables, `schemaVersion` per-type field contract, and the namespace convention for third-party `x-<vendor>/<typeName>` types.
 - **`schemas/runtime-ops-events.schema.json`** — JSON Schema for the `CH-RUNTIMEOPS` frames the adapter and the runtime exchange on the intra-pod runtime-operations channel ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), which `schemas/lenny-adapter-jsonl.schema.json` deliberately does not schematize.
 
@@ -1554,7 +1554,7 @@ Adapters ignore hint keys they do not recognize. Runtimes that do not set `proto
 
 #### `MessageEnvelope` — Unified Message Format
 
-All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages (`heartbeat`, `shutdown`, `heartbeat_ack`) use their own minimal schemas and are not `MessageEnvelope` instances — see the `CH-MSGSOCK` message schemas in [Section 28.5.3](28_communication-channels.md#2853-intra-pod).
+All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages use their own minimal schemas and are not `MessageEnvelope` instances — see the `CH-MSGSOCK` message schemas in [Section 28.5.3](28_communication-channels.md#2853-intra-pod).
 
 ```json
 {
@@ -1680,10 +1680,8 @@ The event is persisted to the sender session's event store and replayable within
 
 **Future-proof:** `MessageEnvelope` with `id`, `from`, `inReplyTo`, `threadId`, `delivery`, and `delegationDepth` accommodates all future conversational patterns without schema changes: threaded messages, multiple participants, non-linear context retrieval, broadcast, external agent participation.
 
-The message schemas of the adapter↔binary stdin and stdout messages, which are `message`,
-`heartbeat`, `shutdown`, `tool_result`, `response`, `tool_call`, `heartbeat_ack`, `status`, and
-`set_tracing_context`, are stated by the `CH-MSGSOCK` card in
-[Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
+The message schemas of the adapter↔binary stdin and stdout messages are stated by the `CH-MSGSOCK` card
+in [Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
 contract.
 
 #### 15.4.2 RPC Lifecycle State Machine
@@ -1717,6 +1715,7 @@ To lower the barrier for third-party runtime authors, the spec defines three int
 - Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout
 - Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds ends the session ([Section 28.5.3](28_communication-channels.md#2853-intra-pod))
 - Must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`
+- Handles `{type: "session_start"}` and `{type: "session_end"}`, and writes `{type: "session_started"}`, as the `CH-MSGSOCK` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states; a runtime that keeps no per-session context and opens no `CH-RUNTIMEOPS` connection ignores both and writes no `session_started`
 - Zero Lenny knowledge required beyond the above message types
 - No checkpoint/restore support, no detailed health reporting
 

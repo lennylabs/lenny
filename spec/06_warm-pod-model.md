@@ -331,7 +331,7 @@ This avoids the 8-10 label mutations per session that would stress the API serve
 - Pod claim and routing (~ms)
 - File upload and workspace materialization (depends on payload size)
 - Setup commands (depends on commands)
-- First prompt / first token (session start is already done)
+- First prompt / first token (the SDK process is already connected; the session's `session_start`, and the `session_started` wait where [§28.5.3](28_communication-channels.md#2853-intra-pod) `CH-MSGSOCK` **Outbound: `session_started`** rule 3 applies, run inside `ConfigureWorkspace`)
 
 **Estimated latency savings (targets, not benchmarks — to be validated by startup benchmark harness, see Phase 2):**
 
@@ -344,7 +344,7 @@ This avoids the 8-10 label mutations per session that would stress the API serve
 
 > **Note — `claim-to-ready` SLO vs. `pod_warmup_seconds`.** The 2s / 5s P95 pod-warm SLO measures **claim-to-ready latency** against a pod that is already in the warm pool and already fully initialized (container running, runtime booted, and — for SDK-warm pools — SDK pre-connected). It does **not** measure pod creation-to-ready time, which is `pod_warmup_seconds` in the capacity-sizing formulas ([Section 4.6.2](04_system-components.md#462-poolscalingcontroller-pool-configuration): 10s pod-warm baseline, 30–90s for SDK-warm). These two numbers describe different phases and are not comparable: `pod_warmup_seconds` is a sizing input for `minWarm` (how much headroom the pool needs so that fresh replacement pods arrive before the pool empties); the 2s / 5s SLO is the observed claim-time latency after a client's request hits an already-warm pod. A deployment can simultaneously honor the 2s SLO **and** have a 30s `pod_warmup_seconds` — the former is serving latency, the latter is pool replenishment latency.
 
-**SDK-warm savings depend on demotion rate.** The SDK-warm latency savings above (elimination of agent session start time) are only realized for sessions that are **not** demoted. A session that triggers demotion (workspace includes a `sdkWarmBlockingPaths` match) incurs pod-warm latency plus an additional SDK teardown penalty (typically 1–3s). Deployers must track `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` per pool to verify that SDK-warm is delivering net benefit. See the "Demotion rate threshold and circuit-breaker" guidance in [Section 6.1](#61-what-a-pre-warmed-pod-looks-like) for operator actions when demotion rates are high.
+**SDK-warm savings depend on demotion rate.** The SDK-warm latency savings above (elimination of SDK process start time) are only realized for sessions that are **not** demoted. A session that triggers demotion (workspace includes a `sdkWarmBlockingPaths` match) incurs pod-warm latency plus an additional SDK teardown penalty (typically 1–3s). Deployers must track `lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total` per pool to verify that SDK-warm is delivering net benefit. See the "Demotion rate threshold and circuit-breaker" guidance in [Section 6.1](#61-what-a-pre-warmed-pod-looks-like) for operator actions when demotion rates are high.
 
 **Per-phase latency budget (indicative targets, to be validated by Phase 2 benchmark harness):**
 

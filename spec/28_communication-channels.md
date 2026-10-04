@@ -538,31 +538,25 @@ the connection it runs on. The runtime is the dialling participant on every chan
   [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
 - **Axes.** Content plane, dialled by the runtime, message authority on both sides, Unix socket JSON
   Lines transport (§28.3).
-- **Messages.** Adapter to runtime: `message`, `tool_result`, `heartbeat`, and `shutdown`. Runtime to
-  adapter: `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`. Each message
+- **Messages.** Adapter to runtime: `session_start`, `message`, `tool_result`, `heartbeat`, `session_end`, and `shutdown`. Runtime to adapter: `session_started`, `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`. Each message
   is a single JSON object terminated by `\n`. A `message` carries an `input` field holding a
   `MessagePart` array, and a `response` carries its parts in an `output` array;
-  `heartbeat` and `shutdown` use their own minimal schemas and are not `MessageEnvelope` instances
+  lifecycle messages use their own minimal schemas and are not `MessageEnvelope` instances
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). Every `tool_result.id` matches
   the `id` of a previously emitted `tool_call`, results may arrive in any order, and a `tool_result`
   whose `id` is unknown is dropped and logged as a protocol error
-  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). `message`, `tool_result`,
-  `response`, `tool_call`, `set_tracing_context`, and `status` carry a `sessionId` naming the session the
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). `session_start`, `session_started`, `session_end`, `message`, `tool_result`, `response`, `tool_call`, `set_tracing_context`, and `status` carry a `sessionId` naming the session the
   frame is addressed to, on every pod whatever its pool's `sessionPolicy.maxConcurrentSessions`. The gateway mints
   that identifier at claim time, the adapter populates it on the frames it emits, and a pod multiplexes
   every session's stream over the one channel keyed on it
   ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
-- **Preconditions.** The adapter writes the final adapter manifest and spawns the runtime binary before
-  it delivers the first `message`, with the runtime's connection to the MCP servers and the
-  `CH-RUNTIMEOPS` capability handshake in between
-  ([§4.7](04_system-components.md#47-runtime-adapter)). The adapter is the protocol initiator: it sends
+- **Preconditions.** The adapter delivers a session's first `message` after the [§4.7.9](04_system-components.md#479-startup-sequence-for-type-agent-runtimes) startup steps that precede that delivery and after the session's `session_start` (**Inbound: `session_start`** rule 1). The adapter is the protocol initiator: it sends
   messages and tool-call instructions and receives responses, and the agent cannot initiate an arbitrary
   request to the adapter ([§4.7](04_system-components.md#47-runtime-adapter)).
 - **Timing.** The adapter sends a periodic `heartbeat`, and a runtime that does not answer with
   `heartbeat_ack` within 10 seconds is treated as hung: the adapter ends that session's stream, and the runtime process receives no signal ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime")
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not
-  state the heartbeat interval. A `shutdown` carries a `deadline_ms` by which the runtime must finish its
-  current work and exit, with no acknowledgement required; a runtime that has not exited by the deadline
+  state the heartbeat interval. A runtime that keeps per-session context or has opened `CH-RUNTIMEOPS` answers `session_start` with `session_started` (**Outbound: `session_started`** rule 1), and the adapter's wait for that answer is bounded as **Outbound: `session_started`** states. `session_end` is not acknowledged and carries no deadline. `session_start` and `session_end` each travel in order ahead of or behind the session's other frames on the same connection or loop. A `shutdown` carries a `deadline_ms` by which the runtime must finish its current work and exit, with no acknowledgement required; a runtime that has not exited by the deadline
   is sent SIGTERM and then SIGKILL 10 seconds later
   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). In nonce-only mode the
   challenge response is due within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter)).
@@ -589,7 +583,7 @@ envelope those messages carry. Both are stated below.
 
 **Message schemas**
 
-All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod.
+All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)). Lifecycle messages (`session_start`, `session_started`, `session_end`, `heartbeat`, and `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Runtimes ignore a frame whose type they do not recognize. Basic-level runtimes need only read `type`, `id`, `input`, and `sessionId` — the other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`) can be safely ignored. `sessionId` is excepted from that permission: a Basic-level runtime echoes the `sessionId` it was handed on the frames it emits in response, on every pod.
 
 **Inbound: `message`**
 
@@ -615,13 +609,85 @@ Basic-level: read `type`, `id`, `input`, and `sessionId`. Ignore all other field
 
 Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and escalates as the `CH-MSGSOCK` **Timing.** bullet states.
 
+**Inbound: `session_start`**
+
+```json
+{
+  "type": "session_start",
+  "sessionId": "sess_abc123",
+  "startId": "st_1",
+  "credentialsPath": "/run/lenny/slots/sess_abc123/credentials.json",
+  "experimentContext": { "experimentId": "claude-v2-rollout", "variantId": "treatment", "inherited": false },
+  "tracingContext": null,
+  "llm": { "deliveryMode": "proxy", "dialect": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY" }
+}
+```
+
+`session_start` opens a session on the runtime and carries the session's own context ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). The following rules govern it:
+
+1. The adapter writes a session's `session_start` once for each start and each resume of the session, on the paths **Session frame writes.** below states. On the `CH-MSGSOCK` connection or loop that carries the session, the frame precedes any other frame addressed to the session. This order holds on that connection or loop only.
+2. A runtime that keeps per-session context creates the session's context from this frame and then answers the frame with `session_started` (**Outbound: `session_started`**). A runtime that keeps none and opens no `CH-RUNTIMEOPS` connection may ignore the frame under the unknown-type rule in the preamble above.
+3. A runtime holds a session from its read of the session's `session_start`, including while it creates the session's context, until its read of the session's `session_end`. A runtime ignores a `session_start` for a session it already holds, except that it answers the frame with `session_started` again.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"session_start"`. |
+| `sessionId` | `string` | Yes | The session the frame opens. The adapter populates it on every pod. |
+| `startId` | `string` | Yes | Identifies this write of the frame. The adapter gives each `session_start` it writes on the pod a value distinct from every other it has written there, so that the acknowledgement of an earlier start of the same session is not read as this start's (**Outbound: `session_started`** rule 5). |
+| `credentialsPath` | `string` | No | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json` (see item 4 of [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary)). The adapter writes the file before it writes this frame and rewrites it in place on a rotation for this session. A runtime that reads credential material reads its path from this field rather than assuming a fixed location. Present whenever the adapter provisioned a credential file for the session and absent otherwise; a runtime given no path loads no credential bundle for the session. |
+| `experimentContext` | `object` or `null` | No | Experiment enrollment context for this session. Contains `experimentId` (string), `variantId` (string), and `inherited` (boolean — `true` when propagated from a parent via delegation). Absent or `null` when the session is not enrolled in any experiment. When present, runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. See [§10.7](10_gateway-internals.md#107-experiment-primitives). |
+| `tracingContext` | `object` or `null` | No | Tracing identifiers propagated from the parent runtime via delegation; absent or `null` for top-level sessions. An opaque key-value map of strings (e.g., `{"langsmith_run_id": "run_abc123", "otel_trace_id": "0af7651916cd43dd"}`). Child runtimes use this to stitch their native traces into the parent's trace tree. Contains only non-sensitive identifiers — never endpoint URLs or credentials (see [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) for validation rules). See [§16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. |
+| `llm` | `object` or `null` | No | LLM provider configuration for the session. Absent or `null` if the session does not have an active LLM credential lease. |
+| `llm.deliveryMode` | `string` | Yes | `direct` \| `proxy`. Tells the runtime which credential delivery mode is active for this session's LLM provider pool ([§4.9](04_system-components.md#49-credential-leasing-service)). |
+| `llm.dialect` | `string` | No (direct) / Yes (proxy) | `openai` \| `anthropic`. In proxy mode, the runtime's LLM SDK must speak this dialect to the `materializedConfig.proxyUrl` in this session's credential file (item 4 of [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary)). Omitted in direct mode where the runtime uses the upstream provider's native SDK. |
+| `llm.apiKeyEnv` | `string` | No | Canonical env var name the runtime's LLM SDK reads for its API key. Convention: `"ANTHROPIC_API_KEY"` for `dialect: anthropic`; `"OPENAI_API_KEY"` for `dialect: openai`. The runtime supplies the lease token from this session's credential file as this session's API key: it passes the token to the LLM client it builds for the session, or sets this variable only in the environment of a subprocess it starts for this session. It does not set the variable in its own process environment, which every session the process serves shares. The pod-level env (§14 `env` field) is NOT used for credential material; blocklisted sensitive names still cannot appear in pod-level env. |
+| `llm.headers` | `object` | No | Map of header names to string values the runtime's LLM SDK sends to the LLM Proxy in proxy mode, such as the `anthropic-version` default the LLM Proxy injects when the runtime sends none ([§4.9](04_system-components.md#49-credential-leasing-service)). Omitted when no header is advertised. |
+
+**Inbound: `session_end`**
+
+```json
+{ "type": "session_end", "sessionId": "sess_abc123" }
+```
+
+`session_end` releases a session on the runtime. The following rules govern it:
+
+1. The adapter writes it on the paths **Session frame writes.** below states. A session's frames travel on the pod's one connection in the sidecar model and on the session's own runtime loop in the embedded model. When that connection or loop ends, every session it carries ends, and no `session_end` follows.
+2. A `session_end` ends the start of the latest `session_start` the runtime read for the session before it, other than one it ignored under **Inbound: `session_start`** rule 3. On `session_end` the runtime releases the context that start creates, identified by that `session_start`'s `startId`, and when it is still creating that context it releases the context once the creation ends. Any other creation of a context for the same session that is still in flight, which belongs to an earlier start that an earlier `session_end` ended, is released when that creation ends, and that context serves no frame of the session. After `session_end` the runtime writes no further frame addressed to the session other than the `session_started` that **Outbound: `session_started`** obliges for a `session_start` read before the `session_end`, and the `llm_request_completed` of a request whose `llm_request_started` preceded the `session_end`, and it keeps serving the pod's other sessions.
+3. A runtime ignores a `session_end` for a session it does not hold.
+
+**Session frame writes.** The adapter writes `session_start` and `session_end` on the paths in the table below and on no other path. The adapter's record of a session whose `session_start` it wrote is the [§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) rule-8 record, at which the slot reaches `running`, and every `session_end` a teardown writes is decided on that record. A start writes its frames inside an **open sequence**: the adapter makes the rule-8 confirmation that the registry still holds the entry the start's claim was admitted against, writes `session_start`, waits for the runtime's `session_started` when **Outbound: `session_started`** rule 3 requires the wait, makes the rule-8 confirmation again and takes the record, and writes `session_end` when the wait ends without `session_started`, when `session_started` carries `error`, or when that second confirmation is refused. An open sequence runs under the slot serialization that the [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Slot-identifier reclaim hold.** paragraph defines, so by that paragraph's completion rule a reclaim hold opened during an open sequence does not end before the sequence ends. Under these rules no attempt's `session_end` reaches the runtime after a later attempt's `session_start` for the same session, and, unless the adapter's write of a `session_end` fails, every `session_start` the runtime receives is followed by that session's `session_end` or by the end of the connection or loop that carries it.
+
+| Adapter path | Frame | Point relative to the rule-8 record | What makes the decision and the write one step |
+| --- | --- | --- | --- |
+| Pod-warm start (`StartSession`) | `session_start` | After the runtime is made live for the session and the first confirmation, and before the `session_started` wait and the record | The open sequence |
+| SDK-warm start (a `ConfigureWorkspace` that claims the slot) | `session_start` | After the pre-connected session is pointed at the `cwd` and the first confirmation, and before the `session_started` wait and the record | The open sequence |
+| Repeat of an SDK-warm start for a session already started (`ConfigureWorkspace` repeat) | None | No confirmation is made and no record is taken | Not applicable |
+| Resume (`Resume`) | `session_start` | After the runtime is made live for the restored session and the first confirmation, and before the `session_started` wait and the record | The open sequence |
+| A start whose open sequence finds that the registry no longer holds the entry its claim was admitted against, because no entry stands or because a later attempt's entry stands | None | Before the record, which is not taken; rule 8 refuses the start at the open sequence's first confirmation | The open sequence |
+| A start whose second confirmation is refused after its `session_start` was written; the registry then holds no entry for the identifier | `session_end` | After the refused confirmation, with no record taken, and before the start takes the session back off the runtime, which on an SDK-warm start includes `DemoteSDK`, because `DemoteSDK` does not end the runtime process ([§4.7.10](04_system-components.md#4710-deployment-model)) | The open sequence |
+| A start whose `session_started` wait ends without the frame, or whose `session_started` carries `error` | `session_end` | After the wait ends, with no record taken, and before the start takes the session back off the runtime, which on an SDK-warm start includes `DemoteSDK` | The open sequence; the start then fails on the same path as a start whose `session_start` write fails |
+| A start that fails after the runtime is made live and before the confirmation, because its `session_start` write fails or its open sequence cannot begin before the request's deadline | None | Before the record, which is not taken | The open sequence; the adapter treats the failed write as undelivered |
+| `Shutdown` that removes an entry whose session reached `running` | `session_end` | After the rule-8 record and before the teardown ends the session's use of the runtime | The removal's decision under the registry critical section, with the write made before the cleanup completes |
+| `Shutdown` that removes an entry whose session did not reach `running`, or that removes no entry | None | Before the record, or with no record | The removal's decision under the registry critical section |
+| `DemoteSDK` while the session of the registry's entry is `running` | `session_end` | After the rule-8 record and before the pre-connected SDK is torn down and the entry is removed | The decision, made under the slot serialization while the entry stands |
+| `DemoteSDK` while no session is `running` | None | Not applicable | The decision the row above makes |
+| `DemoteSDK` whose wait for the slot serialization outlasts its request's deadline | None | Not applicable | The request fails before the decision and tears nothing down. A gateway caller then fails the pod and claims a replacement ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract), `ConfigureWorkspace` row), and the SIGTERM path force-terminates the SDK process ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like), **Adapter SIGTERM behavior during `sdk_connecting`.**); either outcome ends the connection that carries the session |
+| Coordinator hold timeout, sidecar model ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | None | Not applicable | The pod-scope teardown ends the connection before the termination removes any entry |
+| Coordinator hold timeout, embedded model | None | Not applicable | The termination's close of the session ends the session's loop |
+| Interrupt, clean or hard | None | Not applicable | The session does not end |
+| Heartbeat escalation | None | Not applicable | The escalation ends the session's stream and writes no frame; a later teardown writes what its own row states |
+| Pod exit | None | Not applicable | The connection, or in the embedded model the adapter process, ends with the pod; a teardown that runs before the adapter exits writes what its own row states |
+| Any path of a `type: mcp` runtime | None | Not applicable | The runtime exchanges no `CH-MSGSOCK` frame ([§4.7.10](04_system-components.md#4710-deployment-model)) |
+
+**Session errors.** A runtime that keeps per-session context and fails to create a session's context answers the session's `session_start` with a `session_started` carrying `error` (**Outbound: `session_started`**), and keeps running. It answers a `message` for a session whose `session_start` it has not received, or whose context it failed to create, with a `response` carrying `error` for that `sessionId`, and keeps running.
+
 **Inbound: `shutdown`**
 
 ```json
 { "type": "shutdown", "reason": "drain", "deadline_ms": 10000 }
 ```
 
-Agent must finish current work and exit within `deadline_ms`. No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
+Process-scoped: the adapter never writes `shutdown` at a session boundary. Agent must finish current work and exit within `deadline_ms`. No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
 
 **Inbound: `tool_result`**
 
@@ -677,7 +743,7 @@ Basic-level shorthand (adapter normalizes to canonical form above). A Basic-leve
 { "type": "response", "sessionId": "sess_abc123", "text": "The answer is 4." }
 ```
 
-**Error reporting via `response`.** The `response` message supports an optional `error` field for structured error reporting: `{"code": string, "message": string}`, matching the `TaskResult.error` shape. When `error` is present, the adapter maps the task to `failed` state and populates `TaskResult.error` from the response error. This allows runtimes to report failure details while still delivering partial output in the `output` array, without relying solely on non-zero exit codes (which lose error context). When `error` is absent and the process exits zero, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
+**Error reporting via `response`.** The `response` message supports an optional `error` field for structured error reporting: `{"code": string, "message": string}`, matching the `TaskResult.error` shape. When `error` is present, the adapter maps the task to `failed` state and populates `TaskResult.error` from the response error. This allows runtimes to report failure details while still delivering partial output in the `output` array, without relying solely on non-zero exit codes (which lose error context). When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
 
 **Relationship between `lenny/output` and stdout `response`:** At Standard and Full levels, runtimes may emit output parts incrementally via the `lenny/output` platform MCP tool. The stdout `{type: "response"}` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`; runtimes that have already emitted all output parts via `lenny/output` send an empty `output` array (`[])`. The adapter concatenates `lenny/output` parts (in call order) with the final `response.output` parts to form the complete task output. Basic-level runtimes, which have no access to `lenny/output`, must include all output in the stdout `response.output` array. Standard-level runtimes may use either delivery path or both.
 
@@ -782,6 +848,27 @@ All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined t
 { "type": "heartbeat_ack" }
 ```
 
+**Outbound: `session_started`**
+
+```json
+{ "type": "session_started", "sessionId": "sess_abc123", "startId": "st_1" }
+```
+
+`session_started` answers a `session_start`. The following rules govern it:
+
+1. A runtime that keeps per-session context writes `session_started` for a session after it reads that session's `session_start` and has created the session's context. A runtime that has opened `CH-RUNTIMEOPS` writes it for every `session_start` it reads, whether or not it keeps per-session context. Either runtime writes it again for a `session_start` that names a session it already holds (**Inbound: `session_start`** rule 3).
+2. A runtime that fails to create the session's context writes the frame with `error`, as **Session errors.** above states.
+3. The adapter waits for `session_started` inside the start's open sequence (**Session frame writes.** above) when the runtime's `CH-RUNTIMEOPS` connection completed its capability handshake before that open sequence began. When that handshake had not completed, the adapter does not wait, records the session as not awaiting an acknowledgement, and writes the session's session-scoped `CH-RUNTIMEOPS` frames without the ordering the `CH-RUNTIMEOPS` card's **Messages.** bullet states; a runtime that opens `CH-RUNTIMEOPS` during a session is ordered only from its next `session_start`. The adapter bounds the wait, and the wait ends no later than the deadline of the request that starts the session when that request carries one. A start whose wait ends without the frame, or whose frame carries `error`, fails as **Session frame writes.** states.
+4. The adapter does not wait for `session_started` before it writes the session's other `CH-MSGSOCK` frames, because **Inbound: `session_start`** rule 1 already orders them after `session_start` on the same connection or loop.
+5. The adapter consumes the frame and relays it to no Attach stream. It drops a `session_started` whose `startId` is not that of the open sequence waiting for the session. The `CH-RUNTIMEOPS` card's **Messages.** bullet below states how the adapter's read of the frame orders that channel's session-scoped frames.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"session_started"`. |
+| `sessionId` | `string` | Yes | The session whose `session_start` the frame answers. The runtime echoes the identifier that `session_start` carried. |
+| `startId` | `string` | Yes | The `startId` of the `session_start` the frame answers, including a repeated one (**Inbound: `session_start`** rule 3). |
+| `error` | `object` | No | `{"code": string, "message": string}`, the object a `response` error carries. Present when the runtime failed to create the session's context, and absent otherwise. |
+
 **Outbound: `status` (optional)**
 
 Schema:
@@ -834,13 +921,15 @@ The frame is available at all integration levels.
 **Addressing.** The adapter resolves the frame against the Attach stream that delivered it. This rule
 governs the session-scoped frame types alone, `message`, `tool_result`, `response`, `tool_call`,
 `set_tracing_context`, and `status`. It does not reach `heartbeat` or `heartbeat_ack`, which carry no
-per-session identifier. A stream is bound to a session and to that session's slot, on every pod. The
-adapter handles a session-scoped frame if and only if both of the following hold.
+per-session identifier. It does not reach `session_start`, `session_end`, or `session_started`, which the
+adapter writes or consumes itself and no Attach stream delivers. A stream is bound to a session and to
+that session's slot, on every pod. The adapter handles a session-scoped frame if and only if both of the
+following hold.
 
 1. **Address equality.** The frame's `sessionId` equals the stream's session, compared as exact string
    equality. A frame that carries no `sessionId` resolves to the receiving stream's own binding on a pod
    holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no
-   stream. This condition governs all six session-scoped frame types, because each Attach stream's
+   stream. This condition governs all six of these frame types, because each Attach stream's
    demultiplexer resolves and compares the address on every session-scoped frame before relaying it.
 2. **Live-binding confirmation.** The adapter's registry still holds that address, and the entry it holds
    carries a bound session. Both reasons this condition may fail are stated: the registry holds no entry
@@ -888,22 +977,26 @@ Any non-zero exit during an active session causes the gateway to report a sessio
 
 ```
 1. The runtime's connection to the adapter is open; the runtime dialled it on the pod's first session.
-2. Adapter writes to stdin:
+2. Adapter writes to stdin (a runtime that keeps no per-session context ignores it, **Inbound: `session_start`** rule 2):
+   {"type": "session_start", "sessionId": "sess_abc123", "startId": "st_1"}
+3. Adapter writes to stdin:
    {"type": "message", "id": "msg_001", "sessionId": "sess_abc123", "input": [{"type": "text", "inline": "Hello"}], "from": {"kind": "client", "id": "client_8f3a2b"}, "threadId": "t_01"}
-3. Agent reads line from stdin, parses JSON, reads type/id/sessionId/input (ignores other fields; sessionId is echoed on the frames the agent emits in response).
-4. Agent writes to stdout (either form is valid):
+4. Agent reads line from stdin, parses JSON, reads type/id/sessionId/input (ignores other fields; sessionId is echoed on the frames the agent emits in response).
+5. Agent writes to stdout (either form is valid):
    {"type": "response", "sessionId": "sess_abc123", "text": "Echo: Hello"}
    — or equivalently —
    {"type": "response", "sessionId": "sess_abc123", "output": [{"type": "text", "inline": "Echo: Hello"}]}
-5. Adapter reads line from stdout, delivers response to gateway.
-6. [Heartbeat interval] Adapter writes:
+6. Adapter reads line from stdout, delivers response to gateway.
+7. [Heartbeat interval] Adapter writes:
    {"type": "heartbeat", "ts": 1717430410}
-7. Agent writes:
+8. Agent writes:
    {"type": "heartbeat_ack"}
-8. Gateway initiates shutdown. Adapter writes:
+9. The session ends. Adapter writes:
+   {"type": "session_end", "sessionId": "sess_abc123"}
+10. The pod drains. Adapter writes:
    {"type": "shutdown", "reason": "drain", "deadline_ms": 10000}
-9. Agent finishes, exits with code 0.
-10. Adapter reports clean termination to gateway.
+11. Agent finishes, exits with code 0.
+12. Adapter reports clean termination to gateway.
 ```
 
 **Internal `MessagePart` format**
