@@ -45,6 +45,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -82,22 +83,24 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 	// The transport outlives every session Close, so the pod-scope teardown
 	// runs separately. Registered first, this cleanup runs last.
 	t.Cleanup(func() { _ = rt.CloseListener() })
+	addr := rt.SocketPath()
+	// SpawnPath is the test-only spawn hook: the pod's first session start
+	// execs the echo runtime once, and the second session rides the same
+	// connection. The spawned echo dials the recording peer's proxy socket
+	// rather than the adapter's, and the peer dials the adapter's runtime
+	// socket on echo's behalf and relays both directions. Echo's own
+	// connection setup therefore runs end to end through the recorded path,
+	// and the peer logs every frame in the order the runtime receives it
+	// and observes the connection's end.
+	peer := startRecordingPeer(t, addr)
+	rt.SpawnPath = spawnDialing(t, echoBin, peer.proxyAddr)
 	rt.AcceptTimeout = 15 * time.Second
 	srv.Runtime = rt
-	addr := rt.SocketPath()
-	// The recording peer is the pod's runtime connection: it logs every
-	// frame the adapter writes and relays it to the echo runtime, which
-	// answers the messages. The second session rides the same connection.
-	// The echo runtime is not spawned through the adapter's SpawnPath,
-	// because a spawned child dials the socket itself and the frames it
-	// reads are then visible to no one but the child. A peer between the
-	// socket and the child is what observes the frames in the order the
-	// runtime receives them, and what observes the connection's end.
-	peer := startRecordingPeer(t, addr, echoBin)
 
 	client := concurrentAdapterClient(t, srv)
 	for _, sessionID := range []string{"sess-alice", "sess-bob"} {
 		runOneSession(t, client, sessionID)
+		peer.requireDialer(t, echoBin)
 		if got := rt.SocketPath(); got != addr {
 			t.Fatalf("runtime socket address after %s = %q, want the boot-time address %q", sessionID, got, addr)
 		}
@@ -160,47 +163,75 @@ func runHoldTimeoutTermination(t *testing.T, client adapterv1.AdapterClient, ses
 	}
 }
 
-// recordingPeer is the pod's runtime connection in the sequential-sessions
-// flow. It dials the adapter's runtime socket, logs the type and sessionId
-// of every frame the adapter writes, and relays each frame to a child echo
-// runtime over the child's stdin, copying the child's stdout back to the
-// adapter. The log is the order the runtime received the frames in.
+// recordingPeer sits between the spawned echo runtime and the adapter's
+// runtime socket. It listens on a proxy socket that echo dials, dials the
+// adapter's socket once echo has connected, logs the type and sessionId of
+// every frame the adapter writes, and relays frames in both directions. The
+// log is the order the runtime received the frames in.
 type recordingPeer struct {
+	proxyAddr string
+
 	mu     sync.Mutex
 	frames []string
+	// dialer is the executable of the process that dialed the proxy socket,
+	// read from its peer credentials, or "" when it could not be read.
+	dialer string
 	ended  chan struct{}
 }
 
-// startRecordingPeer dials addr and starts echoBin over stdio behind it.
-func startRecordingPeer(t *testing.T, addr, echoBin string) *recordingPeer {
+// startRecordingPeer listens on a fresh proxy socket and, for the one
+// runtime connection it accepts, relays to adapterAddr.
+func startRecordingPeer(t *testing.T, adapterAddr string) *recordingPeer {
 	t.Helper()
-	conn, err := net.Dial("unix", addr)
+	// The Unix sun_path field holds about 104 bytes, and t.TempDir() can
+	// exceed that, so the proxy socket lives under a short temp directory.
+	dir, err := os.MkdirTemp("", "lrp")
 	if err != nil {
-		t.Fatalf("dial pod runtime socket: %v", err)
+		t.Fatalf("proxy socket temp dir: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	cmd := exec.Command(echoBin)
-	cmd.Env = withoutEnv(os.Environ(), "LENNY_ADAPTER_SOCKET")
-	cmd.Stderr = os.Stderr
-	stdin, err := cmd.StdinPipe()
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "rt.sock"))
 	if err != nil {
-		t.Fatalf("echo stdin: %v", err)
+		t.Fatalf("listen on the recording peer's proxy socket: %v", err)
 	}
-	cmd.Stdout = conn
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start echo: %v", err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	p := &recordingPeer{ended: make(chan struct{})}
-	go p.relay(conn, stdin)
+	t.Cleanup(func() { _ = ln.Close() })
+	p := &recordingPeer{proxyAddr: ln.Addr().String(), ended: make(chan struct{})}
+	go p.serve(t, ln, adapterAddr)
 	return p
 }
 
-// relay logs and forwards each adapter frame until the connection ends.
-func (p *recordingPeer) relay(conn net.Conn, stdin io.WriteCloser) {
+// serve accepts the runtime's connection on the proxy socket, dials the
+// adapter's runtime socket for it, and relays until the adapter ends the
+// connection.
+func (p *recordingPeer) serve(t *testing.T, ln net.Listener, adapterAddr string) {
 	defer close(p.ended)
-	defer stdin.Close()
-	sc := bufio.NewScanner(conn)
+	runtimeConn, err := ln.Accept()
+	if err != nil {
+		// The cleanup closes the listener when no runtime ever dialed; the
+		// failed StartSession has already reported that.
+		if !errors.Is(err, net.ErrClosed) {
+			t.Errorf("accept the spawned runtime on the proxy socket: %v", err)
+		}
+		return
+	}
+	defer runtimeConn.Close()
+	p.mu.Lock()
+	p.dialer = peerExecutable(runtimeConn)
+	p.mu.Unlock()
+	adapterConn, err := net.Dial("unix", dialableUnixAddr(adapterAddr))
+	if err != nil {
+		t.Errorf("dial the adapter's runtime socket for the spawned runtime: %v", err)
+		return
+	}
+	defer adapterConn.Close()
+	go func() { _, _ = io.Copy(adapterConn, runtimeConn) }()
+	p.record(adapterConn, runtimeConn)
+}
+
+// record logs and forwards each adapter frame to the runtime until the
+// adapter ends the connection.
+func (p *recordingPeer) record(adapterConn io.Reader, runtimeConn io.Writer) {
+	sc := bufio.NewScanner(adapterConn)
 	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		var f struct {
@@ -211,7 +242,7 @@ func (p *recordingPeer) relay(conn net.Conn, stdin io.WriteCloser) {
 		p.mu.Lock()
 		p.frames = append(p.frames, f.Type+":"+f.SessionID)
 		p.mu.Unlock()
-		if _, err := stdin.Write(append(sc.Bytes(), '\n')); err != nil {
+		if _, err := runtimeConn.Write(append(sc.Bytes(), '\n')); err != nil {
 			return
 		}
 	}
@@ -227,21 +258,57 @@ func (p *recordingPeer) awaitEnd(t *testing.T) {
 	}
 }
 
+// requireDialer requires that the runtime connection the peer relays was
+// dialed by want, the binary the adapter spawned, so the frames the peer
+// records are the ones that binary read.
+func (p *recordingPeer) requireDialer(t *testing.T, want string) {
+	t.Helper()
+	if !peerExecutableReadable {
+		return
+	}
+	p.mu.Lock()
+	got := p.dialer
+	p.mu.Unlock()
+	if got != want {
+		t.Fatalf("the runtime connection was dialed by %q, want the spawned runtime %q", got, want)
+	}
+}
+
 func (p *recordingPeer) log() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.frames...)
 }
 
-// withoutEnv returns env with every assignment of name removed.
-func withoutEnv(env []string, name string) []string {
-	out := env[:0:0]
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, name+"=") {
-			out = append(out, kv)
-		}
+// spawnDialing returns a SpawnPath that execs runtimeBin in place with its
+// socket variable naming dialAddr. The adapter's spawn sets that variable to
+// its own socket, and a child's environment keeps the last assignment of a
+// name, so the override has to happen inside the spawned process. The exec
+// replaces the shell, so the process the adapter spawned, signals, and
+// reaps is the runtime itself.
+func spawnDialing(t *testing.T, runtimeBin, dialAddr string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "spawn-runtime.sh")
+	script := "#!/bin/sh\n" + runtimekit.SocketEnvVar + "=" + shellQuote(dialAddr) + " exec " + shellQuote(runtimeBin) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write the runtime spawn wrapper: %v", err)
 	}
-	return out
+	return path
+}
+
+// shellQuote quotes s as one POSIX shell word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// dialableUnixAddr maps a runtime socket address to the form net.Dial takes:
+// a Linux abstract address written with a leading "@" is dialed with a
+// leading NUL, and a filesystem path is dialed as-is.
+func dialableUnixAddr(addr string) string {
+	if strings.HasPrefix(addr, "@") {
+		return "\x00" + addr[1:]
+	}
+	return addr
 }
 
 // runOneSession drives one complete session on the shared adapter:

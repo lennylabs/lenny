@@ -11,10 +11,12 @@
 // slot serialization or, when the open sequence holds it, after a guard
 // acquisition that expired. A retry binds a fresh entry under the same
 // identifier and starts it while a deadline signal for the session is in
-// flight, beside an Attach stream bound to the session. Across those
-// interleavings the runtime must read the session's frames as alternating
-// session_start and session_end, and the adapter's running record must match
-// the last frame. No deadline_approaching may reach the runtime before it
+// flight, beside an Attach stream bound to the session. After a Shutdown
+// whose guard acquisition expired, the retry runs across the stale open
+// sequence's session_end and is refused for the life of the pod, because
+// that cleanup did not complete. Across those interleavings the runtime
+// must read the session's frames as alternating session_start and
+// session_end, and the adapter's running record must match the last frame. No deadline_approaching may reach the runtime before it
 // has written the session_started that answers the retry's session_start,
 // and no session_started may reach the Attach stream.
 //
@@ -26,7 +28,9 @@ package tier7a_load_local_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"strings"
 	"sync"
@@ -217,7 +221,10 @@ func signalDeadlineRace(s *adapter.Server, peer *rotationgate.Peer, seq *atomic.
 //	deadline_approaching reached the runtime before the session_started
 //	answering the retry's session_start, or a SignalDeadline outlived its
 //	remainingMs bound; or the Attach stream bound to the session relayed a
-//	session_started or ended during the iteration. A stale attempt's
+//	session_started or ended during the iteration; or, after a Shutdown
+//	whose guard acquisition expired, a retry's bind, StartSession, or Attach
+//	was admitted, or the reclaim hold cleared when the stale open sequence
+//	ended. A stale attempt's
 //	session_end then releases the retry's context on a runtime that lives
 //	as long as the pod, a multi-session runtime receives a CH-RUNTIMEOPS
 //	frame for a session it has not opened, or a client receives the
@@ -236,11 +243,13 @@ func TestSessionFramesStayPairedAcrossReclaimAndRetry_spec_28_5_3(t *testing.T) 
 // the slot serialization. Odd iterations let attempt 1 write its
 // session_start, withhold the answer so its open sequence keeps the slot
 // serialization, and reclaim it with a Shutdown whose guard acquisition
-// expires. An even iteration's retry must be admitted and runs the
-// deadline-ordering and Attach checks; an odd iteration's retry must be
-// refused by the reclaim hold its incomplete cleanup leaves. Every third
-// iteration withholds the answer to the retry's session_start past the
-// wait.
+// expires. Both arms then drive attempt 2's bind and StartSession
+// concurrently with a SignalDeadline and an Attach for the session. An even
+// iteration's retry is admitted, and every third one withholds the answer
+// to the retry's session_start past the wait. An odd iteration's retry runs
+// while attempt 1's open sequence is still waiting and keeps retrying
+// across that sequence's stale session_end, and §5.2 refuses every one of
+// its requests, because the expired-guard cleanup did not complete.
 func runPairingIteration(t *testing.T, i int) {
 	const sessionID = "sess-pairing"
 	expiredGuard := i%2 == 1
@@ -269,13 +278,21 @@ func runPairingIteration(t *testing.T, i int) {
 	}()
 	compensate(t, s, rt, sessionID, expiredGuard)
 
-	probe := retryWithDeadlineSignal(t, s, rt, client, peer, seq, sessionID, expiredGuard, i%3 == 2)
-	close(rt.unpark)
-	<-first
+	var probe retryOutcome
+	if expiredGuard {
+		probe = retryAgainstHeldIdentifier(t, s, client, peer, seq, sessionID, first)
+	} else {
+		probe = retryWithDeadlineSignal(t, s, rt, client, peer, seq, sessionID, i%3 == 2)
+		close(rt.unpark)
+		<-first
+	}
 	if err := waitStarted(probe); err != nil {
 		t.Fatal(err)
 	}
 	assertFramesPaired(t, s, rt, sessionID, probe.signal)
+	if expiredGuard {
+		assertOnlyFirstAttemptFrames(t, rt)
+	}
 	if probe.attach != nil {
 		probe.attach.assertNoSessionStarted(t)
 	}
@@ -310,37 +327,28 @@ func compensate(t *testing.T, s *adapter.Server, rt *pairingRuntime, sessionID s
 	}
 }
 
-// retryOutcome is attempt 2's start and its deadline signal. Both are nil
-// in a guard-expired iteration, whose retry the reclaim hold refuses.
+// retryOutcome is attempt 2's start, its deadline signal, and, in an
+// iteration whose retry is admitted, the Attach stream bound to the
+// session. attach is nil in a guard-expired iteration, whose Attach the
+// adapter refuses because the identifier has no bound entry.
 type retryOutcome struct {
 	started chan error
 	signal  <-chan deadlineProbe
 	attach  *attachWatch
 }
 
-// retryWithDeadlineSignal binds attempt 2 and asserts the bind's outcome
-// rather than accepting either one, so the deadline-ordering, the
-// SignalDeadline bound, and the Attach checks cannot be skipped silently.
-//
-// After a guarded compensating Shutdown the cleanup completed and released
-// the identifier's reclaim hold, so the bind must be admitted; the case then
-// opens an Attach stream bound to the session and runs attempt 2's
-// StartSession and a SignalDeadline for the session concurrently beside it.
-// After a Shutdown whose guard acquisition expired the cleanup did not
-// complete, so the §5.2 reclaim hold stays on the identifier and the bind
-// must be refused with slot_reclaim_in_progress; the retry is unreachable
-// and the case asserts only the frames attempt 1 left.
+// retryWithDeadlineSignal binds attempt 2 after a guarded compensating
+// Shutdown. That cleanup completed and released the identifier's reclaim
+// hold, so the bind must be admitted; asserting it rather than accepting
+// either outcome keeps the deadline-ordering, the SignalDeadline bound, and
+// the Attach checks from being skipped silently. The case then opens an
+// Attach stream bound to the session and runs attempt 2's StartSession and
+// a SignalDeadline for the session concurrently beside it.
 // spec: §5.2 (slot-identifier reclaim hold), §15.4 (gRPC status codes).
-func retryWithDeadlineSignal(t *testing.T, s *adapter.Server, rt *pairingRuntime, client adapterv1.AdapterClient, peer *rotationgate.Peer, seq *atomic.Int64, sessionID string, expiredGuard, withhold bool) retryOutcome {
+func retryWithDeadlineSignal(t *testing.T, s *adapter.Server, rt *pairingRuntime, client adapterv1.AdapterClient, peer *rotationgate.Peer, seq *atomic.Int64, sessionID string, withhold bool) retryOutcome {
 	t.Helper()
 	out := retryOutcome{started: make(chan error, 1)}
-	err := assignAttempt(s, sessionID, "attempt-2")
-	if expiredGuard {
-		requireReclaimHoldRefusal(t, err)
-		out.started <- nil
-		return out
-	}
-	if err != nil {
+	if err := assignAttempt(s, sessionID, "attempt-2"); err != nil {
 		t.Fatalf("attempt 2's bind after a guarded compensating Shutdown: %v; want admitted, since the completed cleanup released the reclaim hold", err)
 	}
 	out.attach = watchAttach(t, client, rt, sessionID)
@@ -359,19 +367,137 @@ func retryWithDeadlineSignal(t *testing.T, s *adapter.Server, rt *pairingRuntime
 	return out
 }
 
-// requireReclaimHoldRefusal requires err to be the §5.2 reclaim-hold
+// heldRetryWindow is how long an expired-guard iteration keeps retrying
+// attempt 2's bind after attempt 1's open sequence has returned, so a hold
+// released by that sequence's end, or by any cleanup after it, is observed.
+const heldRetryWindow = 500 * time.Millisecond
+
+// retryAgainstHeldIdentifier drives attempt 2 after a compensating Shutdown
+// whose guard acquisition expired while attempt 1's open sequence held the
+// slot serialization and waited for a session_started the runtime
+// withholds. The Shutdown's acts ran without the slot serialization, so its
+// cleanup did not complete and §5.2 holds the identifier for the life of
+// the pod. The case binds attempt 2 at once, then, while the open sequence
+// is still waiting, runs attempt 2's StartSession, a SignalDeadline, and an
+// Attach for the session concurrently, and keeps retrying attempt 2's bind
+// across the open sequence's stale session_end and for heldRetryWindow
+// after attempt 1's StartSession returns. Every bind and the StartSession
+// must be refused with slot_reclaim_in_progress, and the Attach must be
+// refused before relaying any frame, because no entry is bound under the
+// identifier. A hold that cleared once the open sequence ended would admit
+// a retry whose session_start could follow the stale session_end's
+// decision, which the open sequence alone does not fence.
+// spec: §5.2 (slot-identifier reclaim hold), §15.4 (gRPC status codes),
+// §28.5.3 (CH-MSGSOCK, Session frame writes).
+func retryAgainstHeldIdentifier(t *testing.T, s *adapter.Server, client adapterv1.AdapterClient, peer *rotationgate.Peer, seq *atomic.Int64, sessionID string, first <-chan error) retryOutcome {
+	t.Helper()
+	requireReclaimHoldRefusal(t, "attempt 2's immediate bind", assignAttempt(s, sessionID, "attempt-2"))
+	out := retryOutcome{started: make(chan error, 1)}
+	out.signal = signalDeadlineRace(s, peer, seq, sessionID, 1000)
+	startErr := make(chan error, 1)
+	go func() {
+		_, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+			SessionId: &adapterv1.SessionId{Value: sessionID},
+		})
+		startErr <- err
+	}()
+	attachErr := make(chan error, 1)
+	go func() { attachErr <- attachRefusal(client, sessionID) }()
+	firstDone := make(chan struct{})
+	pollErr := make(chan error, 1)
+	go func() { pollErr <- pollHeldBinds(s, sessionID, firstDone, heldRetryWindow) }()
+
+	select {
+	case <-first:
+	case <-time.After(10 * time.Second):
+		t.Fatal("attempt 1's StartSession did not return after its acknowledgement wait")
+	}
+	close(firstDone)
+	if err := <-pollErr; err != nil {
+		t.Fatal(err)
+	}
+	requireReclaimHoldRefusal(t, "attempt 2's StartSession", <-startErr)
+	if err := <-attachErr; err != nil {
+		t.Fatal(err)
+	}
+	out.started <- nil
+	return out
+}
+
+// pollHeldBinds retries attempt 2's bind until stop is closed and for
+// window after, and returns an error naming the first bind that was not
+// the reclaim-hold refusal.
+func pollHeldBinds(s *adapter.Server, sessionID string, stop <-chan struct{}, window time.Duration) error {
+	var until time.Time
+	for n := 0; ; n++ {
+		if err := assignAttempt(s, sessionID, "attempt-2"); !isReclaimHoldRefusal(err) {
+			return fmt.Errorf("attempt 2's bind retry %d after an expired-guard Shutdown = %v; want ABORTED slot_reclaim_in_progress for the life of the pod", n, err)
+		}
+		if until.IsZero() {
+			select {
+			case <-stop:
+				until = time.Now().Add(window)
+			default:
+			}
+		} else if time.Now().After(until) {
+			return nil
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// attachRefusal opens an Attach stream for sessionID and returns nil when
+// the adapter ends it with FAILED_PRECONDITION before relaying any frame,
+// which is its answer to a session with no bound entry.
+// spec: §5.2; §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+func attachRefusal(client adapterv1.AdapterClient, sessionID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream, err := client.Attach(ctx)
+	if err != nil {
+		return fmt.Errorf("open Attach(%s): %w", sessionID, err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("Attach bind(%s): %w", sessionID, err)
+	}
+	got, err := stream.Recv()
+	if err == nil {
+		return fmt.Errorf("Attach(%s) relayed %s while the identifier is held; want the stream refused", sessionID, got.GetEnvelopeJson())
+	}
+	if status.Code(err) != codes.FailedPrecondition {
+		return fmt.Errorf("Attach(%s) ended with %v; want FAILED_PRECONDITION, since no entry is bound under the held identifier", sessionID, err)
+	}
+	return nil
+}
+
+// assertOnlyFirstAttemptFrames requires that an expired-guard iteration's
+// runtime read exactly attempt 1's session_start and the session_end its
+// open sequence wrote when its acknowledgement wait ended, and no frame for
+// the refused retry.
+func assertOnlyFirstAttemptFrames(t *testing.T, rt *pairingRuntime) {
+	t.Helper()
+	frames, _ := rt.snapshot()
+	if len(frames) != 2 || frames[0].typ != "session_start" || frames[1].typ != "session_end" {
+		t.Fatalf("expired-guard iteration's runtime read %+v; want attempt 1's session_start and session_end only", frames)
+	}
+}
+
+// requireReclaimHoldRefusal requires err, the outcome of the request what
+// names, to be the §5.2 reclaim-hold refusal.
+// spec: §5.2 (slot-identifier reclaim hold), §15.4 (gRPC status codes).
+func requireReclaimHoldRefusal(t *testing.T, what string, err error) {
+	t.Helper()
+	if !isReclaimHoldRefusal(err) {
+		t.Fatalf("%s after a compensating Shutdown whose guard acquisition expired = %v; want ABORTED slot_reclaim_in_progress, since the incomplete cleanup holds the identifier", what, err)
+	}
+}
+
+// isReclaimHoldRefusal reports whether err is the §5.2 reclaim-hold
 // refusal, which §15.4 answers with ABORTED and the
 // slot_reclaim_in_progress reason.
-// spec: §5.2 (slot-identifier reclaim hold), §15.4 (gRPC status codes).
-func requireReclaimHoldRefusal(t *testing.T, err error) {
-	t.Helper()
-	if err == nil {
-		t.Fatal("attempt 2's bind was admitted after a compensating Shutdown whose guard acquisition expired; want the reclaim hold of the incomplete cleanup to refuse it")
-	}
-	st, _ := status.FromError(err)
-	if st.Code() != codes.Aborted || !strings.Contains(st.Message(), "slot_reclaim_in_progress") {
-		t.Fatalf("attempt 2's bind after an expired-guard Shutdown = %v; want ABORTED slot_reclaim_in_progress", err)
-	}
+func isReclaimHoldRefusal(err error) bool {
+	st, ok := status.FromError(err)
+	return err != nil && ok && st.Code() == codes.Aborted && strings.Contains(st.Message(), "slot_reclaim_in_progress")
 }
 
 // attachWatch is an Attach stream bound to the session, read for the rest
