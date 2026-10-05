@@ -3,7 +3,6 @@
 package adapter
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 )
 
 // maxJSONLFrameBytes is the largest single §28.5.3 JSONL frame the
@@ -108,11 +109,13 @@ type SocketRuntimeProcess struct {
 	// connect. Zero defaults to 30s.
 	AcceptTimeout time.Duration
 
-	mu          sync.Mutex
-	connected   bool
-	conn        net.Conn
-	cmd         *exec.Cmd
-	subscribers map[*subscriber]struct{}
+	mu        sync.Mutex
+	connected bool
+	conn      net.Conn
+	cmd       *exec.Cmd
+	// hub is the installed connection's subscriber set, which its single
+	// reader broadcasts to. spec: §28.5.3.
+	hub *linefanout.Hub
 	// ended records that the runtime's connection has ended: the fan-out
 	// reader sets it when its scan ends, before it closes the subscribers,
 	// and CloseListener sets it before it closes the connection. It is
@@ -140,74 +143,6 @@ type SocketRuntimeProcess struct {
 	// pod-scope teardown ran while the accepted connection was in flight.
 	acceptDone chan struct{}
 	acceptErr  error
-}
-
-// subscriber is one Output consumer of the shared runtime connection. The
-// fan-out reader hands each frame to feed; a dedicated pump goroutine
-// drains feed into out, so one slow per-slot Attach stream never blocks the
-// reader from delivering a sibling slot's frames. done closes the pump and
-// out when the consumer's Output context is cancelled or the runtime
-// connection closes. spec: §28.5.3.
-type subscriber struct {
-	feed chan []byte
-	out  chan []byte
-	done chan struct{}
-	// closeOnce guards done so the two concurrent closers — closeSubscribers
-	// when the fan-out reader hits EOF (the runtime closed its end, or the
-	// pod-scope teardown closed the connection), and unsubscribe on the
-	// Output context's cancellation — resolve to a single close(done) rather
-	// than racing into a double close. spec: §28.5.3.
-	closeOnce sync.Once
-}
-
-// newSubscriber starts a subscriber and its pump. The pump forwards each
-// fed frame to out and closes out when done is closed, so the Attach demux
-// observes the runtime's connection close.
-func newSubscriber() *subscriber {
-	s := &subscriber{
-		feed: make(chan []byte, 64),
-		out:  make(chan []byte),
-		done: make(chan struct{}),
-	}
-	go s.pump()
-	return s
-}
-
-// pump drains the buffered feed into out until done is closed, then closes
-// out so the consumer observes the stream end.
-func (s *subscriber) pump() {
-	defer close(s.out)
-	for {
-		select {
-		case line := <-s.feed:
-			select {
-			case s.out <- line:
-			case <-s.done:
-				return
-			}
-		case <-s.done:
-			return
-		}
-	}
-}
-
-// send hands one frame to the subscriber's buffered feed, abandoning it if
-// the subscriber is done so the shared reader never blocks on a dead
-// consumer. A full buffer blocks only this subscriber's pump, never the
-// reader's delivery to siblings, since each send targets a distinct feed.
-func (s *subscriber) send(line []byte) {
-	select {
-	case s.feed <- line:
-	case <-s.done:
-	}
-}
-
-// close stops the pump and closes out exactly once. closeOnce makes it
-// safe under the concurrent closers: closeSubscribers on the runtime EOF
-// and unsubscribe on the Output context cancellation can both call it, and
-// only the first closes done.
-func (s *subscriber) close() {
-	s.closeOnce.Do(func() { close(s.done) })
 }
 
 // NewSocketRuntimeProcess binds the adapter's runtime socket and returns
@@ -344,7 +279,7 @@ func (p *SocketRuntimeProcess) acceptLoop() {
 	p.conn = conn
 	p.connected = true
 	// The connection gets its own subscriber set, which its reader acts on.
-	p.subscribers = map[*subscriber]struct{}{}
+	p.hub = linefanout.New()
 	p.mu.Unlock()
 	close(p.connReady)
 }
@@ -360,76 +295,31 @@ func (p *SocketRuntimeProcess) endAccept(err error) {
 // once. One reader goroutine over the single connection fans every frame out
 // to all subscribers, so concurrent per-slot Attach streams each see the
 // runtime's full output and demultiplex by sessionId. The caller holds mu.
-// spec: §28.5.3.
+//
+// When the scan ends, the connection has ended. The reader records the
+// sticky ended state under p.mu before the hub closes its subscribers, so an
+// Output call either registered before the record and is closed by the end,
+// or runs after it and fails; no subscriber is left open on an ended
+// connection. spec: §4.7.10, §5.2 (Runtime not live), §28.5.3.
 func (p *SocketRuntimeProcess) startReaderLocked() {
 	if p.reading {
 		return
 	}
 	p.reading = true
-	scanner := bufio.NewScanner(p.conn)
 	// spec: §28.5.3 — a single MessagePart may be up to 50 MB.
 	// The sidecar scanner must admit a frame at that ceiling; a 16 MB cap
 	// would fail framing on a legal 17–50 MB part before it reached the
 	// gateway's §28.5.3 ingress validation. Matches echocore and the
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
-	scanner.Buffer(make([]byte, 0, 64*1024), maxJSONLFrameBytes)
-	go p.fanOut(scanner, p.subscribers)
+	p.hub.Serve(p.conn, maxJSONLFrameBytes, p.markEnded)
 }
 
-// fanOut reads every §28.5.3 JSONL frame the runtime writes and broadcasts
-// it to all registered Output subscribers. Each subscriber owns its own
-// buffered intake (subscriber.feed), so a slow or dead consumer on one
-// slot's Attach stream never head-of-line-blocks the reader from delivering
-// a sibling slot's frames.
-//
-// When the scan ends, the connection has ended. The reader records the
-// sticky ended state under p.mu before it closes the subscribers, so an
-// Output call either registered before the record and is closed here, or
-// runs after it and fails; no subscriber is left open on an ended
-// connection. spec: §4.7.10, §5.2 (Runtime not live), §28.5.3.
-func (p *SocketRuntimeProcess) fanOut(scanner *bufio.Scanner, subs map[*subscriber]struct{}) {
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		p.broadcast(subs, line)
-	}
+// markEnded records the sticky ended state. The fan-out reader runs it when
+// its scan ends, before the hub closes the subscribers.
+func (p *SocketRuntimeProcess) markEnded() {
 	p.mu.Lock()
 	p.ended = true
 	p.mu.Unlock()
-	p.closeSubscribers(subs)
-}
-
-// broadcast hands one frame to every subscriber currently in set. Each
-// subscriber has a dedicated pump goroutine draining its buffered feed into
-// its Output channel, so the send to one subscriber never blocks delivery to
-// another.
-func (p *SocketRuntimeProcess) broadcast(set map[*subscriber]struct{}, line []byte) {
-	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(set))
-	for s := range set {
-		subs = append(subs, s)
-	}
-	p.mu.Unlock()
-	for _, s := range subs {
-		s.send(line)
-	}
-}
-
-// closeSubscribers shuts every subscriber still registered in set down so
-// its Output channel closes and the per-slot Attach stream observes the
-// runtime's connection close. A subscriber the consumer already
-// unsubscribed is absent from the set, so each closes exactly once.
-// spec: §5.2, §28.5.3.
-func (p *SocketRuntimeProcess) closeSubscribers(set map[*subscriber]struct{}) {
-	p.mu.Lock()
-	subs := make([]*subscriber, 0, len(set))
-	for s := range set {
-		subs = append(subs, s)
-		delete(set, s)
-	}
-	p.mu.Unlock()
-	for _, s := range subs {
-		s.close()
-	}
 }
 
 // spawn execs the runtime binary for the developer loop, pointing it at
@@ -482,27 +372,16 @@ func (p *SocketRuntimeProcess) Output(ctx context.Context, _ string) (<-chan []b
 		p.mu.Unlock()
 		return nil, fmt.Errorf("adapter: socket runtime is not connected")
 	}
-	sub := newSubscriber()
-	p.subscribers[sub] = struct{}{}
+	hub := p.hub
 	p.mu.Unlock()
-
-	// Unsubscribe and stop the pump on ctx cancellation so a closed Attach
-	// stream stops the fan-out from delivering to a dead consumer.
-	go func() {
-		<-ctx.Done()
-		p.unsubscribe(sub)
-	}()
-	return sub.out, nil
-}
-
-// unsubscribe removes a subscriber and stops its pump. close() is
-// idempotent, so a concurrent closeSubscribers (on EOF) and a ctx-cancel
-// unsubscribe both resolve to a single out-channel close. spec: §28.5.3.
-func (p *SocketRuntimeProcess) unsubscribe(sub *subscriber) {
-	p.mu.Lock()
-	delete(p.subscribers, sub)
-	p.mu.Unlock()
-	sub.close()
+	// ctx cancellation unsubscribes, so a closed Attach stream or an ended
+	// session_started wait stops the fan-out from delivering to a dead
+	// consumer.
+	out, err := hub.Subscribe(ctx)
+	if errors.Is(err, linefanout.ErrEnded) {
+		return nil, errRuntimeConnectionEnded
+	}
+	return out, err
 }
 
 // ServesNextSession reports whether the runtime can serve the pod's next

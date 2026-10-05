@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"time"
@@ -106,14 +107,18 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 	// §4.7: a Full-level runtime rebinds the rotated credential in place.
 	// The adapter runs the strict in-flight-gate / ceiling / ack-timeout
 	// rotation protocol per provider against that session's own file.
+	//
+	// The request resolves the session's entry once, with its credential
+	// path, and every provider's credentials_rotated waits on that entry's
+	// acknowledgement gate. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	if s.Lifecycle != nil && s.Lifecycle.Supports("credential_rotation") {
-		path, perr := s.sessionCredentialFile(sessionID)
+		path, st, perr := s.sessionCredentialFile(sessionID)
 		if perr != nil {
 			return nil, perr
 		}
 		trigger := req.GetRotationTrigger()
 		for _, r := range rotated {
-			if err := s.rotateProviderFull(ctx, sessionID, r, path, trigger); err != nil {
+			if err := s.rotateProviderFull(ctx, st, sessionID, r, path, trigger); err != nil {
 				return nil, err
 			}
 		}
@@ -122,16 +127,18 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 }
 
 // sessionCredentialFile returns the absolute path of the session's own
-// §6.1 credential file. spec: §6.1.
-func (s *Server) sessionCredentialFile(sessionID string) (string, error) {
+// §6.1 credential file, with the registry entry it resolved. The entry is
+// the one whose acknowledgement gate the rotation's credentials_rotated
+// frames wait on. spec: §6.1; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) sessionCredentialFile(sessionID string) (string, *slotState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.slotStateLocked(sessionID)
 	if !ok || st.paths.CredentialsDir == "" {
-		return "", status.Errorf(codes.FailedPrecondition,
+		return "", nil, status.Errorf(codes.FailedPrecondition,
 			"session %s has no credential directory on this pod", sessionID)
 	}
-	return filepath.Join(st.paths.CredentialsDir, credfile.FileName), nil
+	return filepath.Join(st.paths.CredentialsDir, credfile.FileName), st, nil
 }
 
 // ExtendCredentialLease re-arms a still-valid direct-mode credential
@@ -161,7 +168,7 @@ func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendC
 // to the standard rotation path (line 824). It records the four §4.7 metrics and the grace-period interval.
 //
 // spec: §4.7
-func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rotatedLease, credentialsPath, trigger string) error {
+func (s *Server) rotateProviderFull(ctx context.Context, st *slotState, sessionID string, r rotatedLease, credentialsPath, trigger string) error {
 	pool := s.CheckpointPoolLabel
 
 	// §4.7: wait for in-flight LLM requests to drain before
@@ -205,8 +212,12 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 	defer cancel()
 	sentAt := time.Now()
 	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
-	// session whose credential file was rewritten.
-	err = s.Lifecycle.RotateCredentials(ackCtx, sessionID, r.provider, credentialsPath, r.leaseID)
+	// session whose credential file was rewritten, and it is written only
+	// after the adapter has read the session's session_started. The wait
+	// shares the acknowledgement bound, and a gate that does not admit the
+	// frame takes the timeout fallback a runtime that never acknowledges
+	// takes.
+	err = s.sendCredentialsRotated(ackCtx, st, sessionID, r, credentialsPath)
 	observeRotationGracePeriod(pool, r.provider, time.Since(sentAt).Seconds())
 	switch {
 	case err == nil:
@@ -228,6 +239,19 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 		s.EmitLeaseRejected(r.provider, r.leaseID, err.Error())
 		return status.Errorf(codes.Internal, "lifecycle credential rotation: %v", err)
 	}
+}
+
+// sendCredentialsRotated writes one provider's credentials_rotated once the
+// entry's acknowledgement gate admits it and waits for the runtime's
+// acknowledgement, all within ackCtx. A gate that does not admit the frame
+// is reported as context.DeadlineExceeded, so rotateProviderFull answers it
+// on the timeout branch, which hands the rotation back to the gateway's
+// standard path. spec: §4.7; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) sendCredentialsRotated(ackCtx context.Context, st *slotState, sessionID string, r rotatedLease, credentialsPath string) error {
+	if err := s.awaitSessionStarted(ackCtx, st); err != nil {
+		return fmt.Errorf("%w: %w", context.DeadlineExceeded, err)
+	}
+	return s.Lifecycle.RotateCredentials(ackCtx, sessionID, r.provider, credentialsPath, r.leaseID)
 }
 
 // awaitInflightGate blocks until the per-provider in-flight LLM-request

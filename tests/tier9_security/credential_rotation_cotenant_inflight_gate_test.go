@@ -105,6 +105,8 @@ func TestCoTenantInflightRequestGatesASiblingSessionRotation_spec_6_1(t *testing
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
+	rotationgate.StartSession(t, s, alice)
+	rotationgate.StartSession(t, s, bob)
 	// The pod's one runtime holds an outstanding request for the provider.
 	// The frame carries no session: the gate counts per provider across the
 	// whole pod, which is what couples the two sessions.

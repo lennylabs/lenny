@@ -134,6 +134,7 @@ func TestRotationInflightCeilingForcesRotatedFrameOnWithholdingRuntime_spec_4_7(
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
+	rotationgate.StartSession(t, s, session)
 	peer.StartWithheldInflight(s, "anthropic", "r1")
 
 	before := rotationgate.CounterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
@@ -224,6 +225,7 @@ func TestProactiveRenewalRotationWaitsUnboundedForWithheldRequest_spec_4_7(t *te
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
+	rotationgate.StartSession(t, s, session)
 	peer.StartWithheldInflight(s, "anthropic", "r1")
 
 	before := rotationgate.CounterValue(t, "lenny_credential_rotation_inflight_ceiling_hit_total",
@@ -292,6 +294,7 @@ func TestRotationAckTimeoutFallsThroughToStandardPath_spec_4_7(t *testing.T) {
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
+	rotationgate.StartSession(t, s, session)
 
 	beforeGrace := rotationgate.HistogramCount(t, "lenny_credential_rotation_grace_period_seconds",
 		map[string]string{"pool": pool, "provider": "anthropic"})

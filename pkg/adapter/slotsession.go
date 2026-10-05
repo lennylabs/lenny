@@ -190,8 +190,16 @@ func runCancels(cancels []context.CancelFunc) {
 
 // deregisterSlotLocked is the first of the two release steps: under s.mu
 // it cancels every direct-mode lease-expiry timer armed on the session's
-// entry and deletes the entry. It returns the deregistered state so the
-// caller can run the second step after the lock is released.
+// entry, releases the entry's session_started acknowledgement gate, and
+// deletes the entry. It returns the deregistered state so the caller can
+// run the second step after the lock is released.
+//
+// Every removal of an entry takes this step, so releasing the gate here
+// covers Shutdown's removing arm, the start rollbacks, DemoteSDK's release,
+// and the hold-timeout termination's first pass. A session-scoped
+// CH-RUNTIMEOPS sender waiting on the gate then returns without writing,
+// and a successor attempt's entry under the same key carries a new gate.
+// The gate's lock is a leaf taken after s.mu.
 //
 // The cancellation belongs here because an armed timer left behind fires
 // AUTH_EXPIRED against a session that has already ended, and both teardown
@@ -200,13 +208,14 @@ func runCancels(cancels []context.CancelFunc) {
 // unstarted entry relies on that as much as the bound teardown does.
 // Callers hold s.mu.
 //
-// spec: §4.9.
+// spec: §4.9; §28.5.3 (CH-RUNTIMEOPS, Messages).
 func (s *Server) deregisterSlotLocked(sessionID string) (st *slotState, removed bool) {
 	st, removed = s.slots[sessionID]
 	if removed {
 		for provider := range st.timers {
 			s.cancelSlotExpiryTimerLocked(st, provider)
 		}
+		st.ack.release()
 		delete(s.slots, sessionID)
 	}
 	return st, removed

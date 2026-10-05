@@ -257,6 +257,16 @@ type Server struct {
 	// CredentialsAckTimeout overrides the §4.7 60s
 	// credentials_acknowledged timeout. Zero selects the spec default.
 	CredentialsAckTimeout time.Duration
+	// SessionStartAckTimeout bounds a start's wait for the runtime's
+	// session_started answer to its session_start, which the wait also
+	// ends at the starting request's deadline when that is earlier. It also
+	// bounds a session-scoped CH-RUNTIMEOPS sender's wait for the gate when
+	// the sender has no bound of its own. The specification bounds the wait
+	// without fixing a value, so the value is operator-tunable through
+	// lenny-adapter --session-start-ack-timeout. Zero selects
+	// runtimekit.DefaultSessionStartAckTimeout. spec: §28.5.3 (CH-MSGSOCK,
+	// Outbound: session_started).
+	SessionStartAckTimeout time.Duration
 	// RotationAudit emits the §4.7 / §4.9.2
 	// credential.rotation_ceiling_hit audit event when the in-flight gate
 	// hits the ceiling. Nil makes the emission a no-op (the dev-mode

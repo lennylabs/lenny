@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/ackruntime"
 )
 
 func credServer(t *testing.T) *adapter.Server {
@@ -62,6 +63,16 @@ func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
 	lr := dialLifecycle(t, lc)
+	// The runtime completed the CH-RUNTIMEOPS handshake, so the rotated
+	// session is started on a runtime that answers its session_start:
+	// credentials_rotated is written only after the adapter has read the
+	// session's session_started. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	s.Runtime = ackruntime.New(t)
+	if _, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-2"},
+	}); err != nil {
+		t.Fatalf("StartSession(sess-2): %v", err)
+	}
 
 	errc := make(chan error, 1)
 	go func() {

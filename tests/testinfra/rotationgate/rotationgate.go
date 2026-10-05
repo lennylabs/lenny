@@ -29,6 +29,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/ackruntime"
 )
 
 // Frame is one §4.7 runtime<->adapter lifecycle JSONL frame, in the
@@ -155,9 +157,11 @@ func (r *CeilingAudit) EmitRotationCeilingHit(_ context.Context, e adapter.Rotat
 // NewPodAdapter brings up a real adapter.Server bound to a real
 // CH-RUNTIMEOPS on a Unix socket, with the pod roots the per-slot trees
 // nest under (§6.4). It returns the server, the socket path, and the
-// recording audit emitter wired to the §4.9.2 EventStore hook. No session
-// is bound yet: the caller assigns credentials for each session it needs,
-// and every session it binds shares this one runtime connection.
+// recording audit emitter wired to the §4.9.2 EventStore hook. The Server's
+// runtime answers each session_start with session_started. No session is
+// bound yet: the caller assigns credentials for each session it needs and
+// starts it with StartSession, and every session it binds shares this one
+// runtime connection.
 //
 // spec: §6.1; §6.4
 func NewPodAdapter(t *testing.T, pool string) (*adapter.Server, string, *CeilingAudit) {
@@ -190,7 +194,26 @@ func NewPodAdapter(t *testing.T, pool string) (*adapter.Server, string, *Ceiling
 	s.RuntimeName = "claude-code"
 	s.Lifecycle = lc
 	s.RotationAudit = audit
+	// The pod's runtime answers each session_start with session_started,
+	// which a start waits for once the peer completed its capability
+	// handshake, and which every credentials_rotated waits for.
+	// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+	s.Runtime = ackruntime.New(t)
 	return s, socketPath, audit
+}
+
+// StartSession starts sessionID through the adapter on the pod's runtime,
+// which answers its session_start. A suite calls it after the peer's
+// handshake and before it drives a rotation for the session, because the
+// adapter writes credentials_rotated only after it has read the session's
+// session_started. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func StartSession(t *testing.T, s *adapter.Server, sessionID string) {
+	t.Helper()
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	}); err != nil {
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
 }
 
 // CounterValue reads the current value of the named counter with the

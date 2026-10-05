@@ -15,12 +15,15 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// rotationGateServer wires a Server to a freshly handshaken CH-RUNTIMEOPS with one assigned credential, ready to exercise the §4.7
-// Full-level rotation protocol.
+// rotationGateServer wires a Server to a freshly handshaken CH-RUNTIMEOPS
+// with one assigned credential and the session started on a runtime that
+// answers its session_start, ready to exercise the §4.7 Full-level rotation
+// protocol.
 func rotationGateServer(t *testing.T) (*Server, *fakeRuntime) {
 	t.Helper()
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
+	awaitHandshake(t, lc)
 	s := New("rotation-test")
 	s.CredentialsDir = t.TempDir()
 	s.CheckpointPoolLabel = "test-pool"
@@ -34,6 +37,7 @@ func rotationGateServer(t *testing.T) (*Server, *fakeRuntime) {
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
+	startAckedSession(t, s, "sess-1")
 	return s, fr
 }
 

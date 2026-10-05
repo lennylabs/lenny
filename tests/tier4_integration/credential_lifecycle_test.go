@@ -48,11 +48,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
@@ -205,6 +207,16 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	}
 	if !credFileCarriesUpstream(t, credDir, clUpstreamV1) {
 		t.Fatalf("after assignment: credential file does not carry the materialized direct-mode key")
+	}
+	// The session is started through the adapter on the live runtime's
+	// stdin, after the CH-RUNTIMEOPS handshake, so the start waits for the
+	// runtime's session_started; credentials_rotated below is written only
+	// after the adapter has read it. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	adapterSrv.Runtime = rt.process
+	if _, err := adapterSrv.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: clSession},
+	}); err != nil {
+		t.Fatalf("StartSession on the live runtime: %v", err)
 	}
 
 	// ---- stage 2: rotation + runtime re-bind via credentials_rotated ----
@@ -372,7 +384,7 @@ func TestRuntimeOpsManifestKeyResolvesTheOperationsSocket(t *testing.T) {
 	bin := buildStreamingEchoBinary(t)
 
 	t.Run("canonical_key_opens_the_operations_socket", func(t *testing.T) {
-		channel, handshaken := startEchoRuntime(t, ctx, bin, runtimeOpsManifestKey, 15*time.Second)
+		channel, _, handshaken := startEchoRuntime(t, ctx, bin, runtimeOpsManifestKey, 15*time.Second)
 		if !handshaken {
 			t.Fatalf("manifest key %q: streaming-echo did not open CH-RUNTIMEOPS", runtimeOpsManifestKey)
 		}
@@ -382,7 +394,7 @@ func TestRuntimeOpsManifestKeyResolvesTheOperationsSocket(t *testing.T) {
 	})
 
 	t.Run("retired_key_alone_resolves_no_operations_socket", func(t *testing.T) {
-		channel, handshaken := startEchoRuntime(t, ctx, bin, retiredRuntimeOpsManifestKey, 5*time.Second)
+		channel, _, handshaken := startEchoRuntime(t, ctx, bin, retiredRuntimeOpsManifestKey, 5*time.Second)
 		if handshaken {
 			t.Fatalf("manifest key %q: streaming-echo opened CH-RUNTIMEOPS from the retired key, so the retired spelling is still live in the runtime", retiredRuntimeOpsManifestKey)
 		}
@@ -408,7 +420,49 @@ func TestRuntimeOpsManifestKeyResolvesTheOperationsSocket(t *testing.T) {
 // adapter CH-RUNTIMEOPS.
 type lifecycleRuntime struct {
 	channel *adapter.RuntimeOps
+	// process is the runtime's CH-MSGSOCK side, its stdin and stdout, as
+	// the adapter's RuntimeProcess.
+	process *stdioRuntime
 }
+
+// stdioRuntime is the streaming-echo process's stdin and stdout as an
+// adapter RuntimeProcess, so the adapter writes the session's
+// session_start to the live runtime and reads its session_started answer.
+// The runtime process is the test's own child, so Start, Interrupt, and
+// Close end nothing. spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+type stdioRuntime struct {
+	mu     sync.Mutex
+	stdin  io.Writer
+	stdout io.Reader
+	hub    *linefanout.Hub
+}
+
+// Start does nothing: the test started the runtime process.
+func (r *stdioRuntime) Start(context.Context, string) error { return nil }
+
+// WriteEnvelope writes one frame to the runtime's stdin.
+func (r *stdioRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.stdin.Write(append(append([]byte(nil), envelope...), '\n'))
+	return err
+}
+
+// Output subscribes to the runtime's stdout.
+func (r *stdioRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
+	ch, err := r.hub.Subscribe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.hub.Serve(r.stdout, 16*1024*1024, nil)
+	return ch, nil
+}
+
+// Interrupt does nothing: the runtime process lives as long as the test.
+func (r *stdioRuntime) Interrupt(context.Context, string, bool) error { return nil }
+
+// Close does nothing: the runtime process lives as long as the test.
+func (r *stdioRuntime) Close(context.Context, string) error { return nil }
 
 // startLifecycleRuntime builds and starts cmd/runtimes/streaming-echo
 // connected to a fresh adapter RuntimeOps over a live Unix socket,
@@ -416,11 +470,11 @@ type lifecycleRuntime struct {
 // runtime process and channel are torn down on test cleanup.
 func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime {
 	t.Helper()
-	channel, handshaken := startEchoRuntime(t, ctx, buildStreamingEchoBinary(t), runtimeOpsManifestKey, 15*time.Second)
+	channel, process, handshaken := startEchoRuntime(t, ctx, buildStreamingEchoBinary(t), runtimeOpsManifestKey, 15*time.Second)
 	if !handshaken {
 		t.Fatalf("streaming-echo did not complete the CH-RUNTIMEOPS handshake")
 	}
-	return &lifecycleRuntime{channel: channel}
+	return &lifecycleRuntime{channel: channel, process: process}
 }
 
 // startEchoRuntime starts the streaming-echo binary at bin against a fresh
@@ -429,7 +483,7 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 // the runtime dialled and completed the CH-RUNTIMEOPS handshake within
 // handshakeWait. The runtime process and the channel are torn down on test
 // cleanup. spec: §4.7, §28.3.
-func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string, handshakeWait time.Duration) (*adapter.RuntimeOps, bool) {
+func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string, handshakeWait time.Duration) (*adapter.RuntimeOps, *stdioRuntime, bool) {
 	t.Helper()
 
 	// A short socket path: macOS caps unix socket paths near 104 bytes, so a
@@ -474,8 +528,13 @@ func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string
 	if err != nil {
 		t.Fatalf("streaming-echo stdin pipe: %v", err)
 	}
+	// The runtime's stdout carries its CH-MSGSOCK answers, which the
+	// adapter reads through the returned stdioRuntime.
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("streaming-echo stdout pipe: %v", err)
+	}
 	var stderr bytes.Buffer
-	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start streaming-echo: %v", err)
@@ -493,13 +552,14 @@ func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string
 	// so a single call made before the subprocess has dialled waits on the
 	// pre-connection channel forever. Retry in short slices until the
 	// runtime has connected and handshaked (or the deadline lapses).
+	process := &stdioRuntime{stdin: stdin, stdout: stdout, hub: linefanout.New()}
 	deadline := time.Now().Add(handshakeWait)
 	for !channel.WaitHandshake(ctx, 200*time.Millisecond) {
 		if time.Now().After(deadline) {
-			return channel, false
+			return channel, process, false
 		}
 	}
-	return channel, true
+	return channel, process, true
 }
 
 // credProviderEntry reads the materialized credential file and returns the

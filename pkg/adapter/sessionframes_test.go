@@ -780,7 +780,7 @@ func TestSessionStartFrameCredentialsPathIsPerSession_spec_28_5_3(t *testing.T) 
 	if bob == "" || bob == alice {
 		t.Errorf("sess-bob credentialsPath = %q, want a path distinct from sess-alice's %q", bob, alice)
 	}
-	handlerPath, err := s.sessionCredentialFile("sess-alice")
+	handlerPath, _, err := s.sessionCredentialFile("sess-alice")
 	if err != nil {
 		t.Fatalf("sessionCredentialFile: %v", err)
 	}

@@ -107,7 +107,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 			// session_start. The adapter consumes it and relays it to no
 			// Attach stream, whether or not a start is waiting for it, so
 			// a runtime that acknowledges every start reaches no client.
-			if jsonlFrameType(line) == "session_started" {
+			if jsonlFrameType(line) == sessionStartedFrameType {
 				continue
 			}
 			// spec: §28.5.3 — set_tracing_context is an outbound

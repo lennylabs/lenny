@@ -365,7 +365,16 @@ func (s *Server) DemoteSDK(ctx context.Context, _ *adapterv1.DemoteSDKRequest) (
 		return nil, status.Errorf(codes.DeadlineExceeded,
 			"demote SDK: slot serialization for session %s not acquired before the request deadline", sessionID)
 	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the demotion releases the
+	// entry's acknowledgement gate under the slot serialization and before
+	// its session_end decision, because it writes that session_end before
+	// the release below deregisters the entry. A session-scoped sender
+	// waiting on the gate returns without writing a frame for a session the
+	// runtime is about to release.
 	s.mu.Lock()
+	if st, ok := s.slots[sessionID]; ok {
+		st.ack.release()
+	}
 	running := s.runtimeHoldsLocked(sessionID)
 	s.mu.Unlock()
 	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — DemoteSDK while

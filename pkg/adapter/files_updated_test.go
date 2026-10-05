@@ -77,11 +77,10 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 	fr.handshake()
 	srv := &Server{WorkspaceBase: root, Lifecycle: lc}
 	// §4.7.1 rule 3: a mid-session request resolves an entry the session
-	// already holds and never creates one, so the running session's entry is
-	// seeded first.
-	if _, err := srv.ensureSlotPaths("sess-mid", slotResolve{allowCreate: true}); err != nil {
-		t.Fatalf("seed sess-mid entry: %v", err)
-	}
+	// already holds and never creates one, so the running session is started
+	// first, on a runtime that answers its session_start: files_updated is
+	// written only after the adapter has read the session's session_started.
+	startAckedSession(t, srv, "sess-mid")
 	if _, err := srv.ensureSlotPaths("sess-cotenant", slotResolve{allowCreate: true}); err != nil {
 		t.Fatalf("seed sess-cotenant entry: %v", err)
 	}

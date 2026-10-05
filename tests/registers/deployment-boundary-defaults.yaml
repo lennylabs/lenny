@@ -63,6 +63,13 @@ entries:
     default: "10"
     basis: spec-value
     reason: §28.5.3 fixes the 10-second heartbeat acknowledgement window.
+  - subject: lenny-adapter --session-start-ack-timeout
+    default: runtimekit.DefaultSessionStartAckTimeout
+    basis: no-spec-value
+    reason: >-
+      §28.5.3 Outbound session_started rule 3 bounds the adapter's wait for session_started and fixes no
+      value. The compiled default stays below the 10 s ConfigureWorkspace timeout and the 10 s graceful
+      window of the hold-timeout termination.
   - subject: lenny-adapter prestop --poll-interval
     default: 200 * time.Millisecond
     basis: no-spec-value
@@ -73,6 +80,13 @@ entries:
     reason: >-
       Unset selects the 5 s DemoteSDK timeout §6.1 states. The pod builder's preConnect grace floor assumes
       the same 5 s, so rendering another value also requires moving the floor.
+  - subject: lenny-adapter env LENNY_ADAPTER_SOCKET
+    default: unset
+    basis: no-spec-value
+    reason: >-
+      The read is the runtime-side socket dial in pkg/runtimekit, which the adapter binary links for the
+      session_started acknowledgement default and never calls. The adapter binds its runtime socket from
+      --runtime-socket, so the variable is unset on the adapter container and stays unset.
   - subject: lenny-adapter env LENNY_LOG_LEVEL
     default: unset
     basis: no-spec-value

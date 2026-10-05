@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // version is the adapter build version, reported during gateway
@@ -227,6 +228,9 @@ func main() {
 	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
 		"§28.5.3 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and ends the session's stream; the runtime process receives no signal. Default 10s.")
+	sessionStartAckTimeout := flag.Duration("session-start-ack-timeout",
+		runtimekit.DefaultSessionStartAckTimeout,
+		"§28.5.3 bound on a session start's wait for the runtime's session_started answer to its session_start, used when the runtime's CH-RUNTIMEOPS connection completed its capability handshake; the wait also ends at the starting request's deadline. It also bounds a session-scoped CH-RUNTIMEOPS frame's wait for that answer when the frame has no bound of its own.")
 	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
 		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
 		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
@@ -342,6 +346,7 @@ func main() {
 	// A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
 	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
+	adapterSrv.SessionStartAckTimeout = *sessionStartAckTimeout
 	// §6.4: decode the inline shared-asset set the controller
 	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
 	// materialize it into the read-only /workspace/shared tree.

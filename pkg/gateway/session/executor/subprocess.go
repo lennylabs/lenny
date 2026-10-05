@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -73,12 +74,23 @@ func NewSubprocessExecutor(opts SubprocessOptions) *SubprocessExecutor {
 	}
 }
 
+// maxStdoutFrameBytes is the largest JSONL frame the executor reads from a
+// child's stdout.
+const maxStdoutFrameBytes = 16 * 1024 * 1024
+
 // subprocessSession holds the child-process state for one session.
 type subprocessSession struct {
 	mu     sync.Mutex
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
+	// stdoutPipe is the child's raw stdout and output is its fan-out. A
+	// child serves one reader of its stdout: the Send path reads it
+	// through the stdout scanner, and the §4.7 adapter path, which spawns
+	// through Start and never calls Send, reads it through output, whose
+	// single reader starts at the first Output.
+	stdoutPipe io.Reader
+	output     *linefanout.Hub
 	// stderr captures the runtime's stderr tail so a non-zero exit can be
 	// folded into a §28.5.3 RUNTIME_CRASH error.
 	stderr *capBuffer
@@ -253,12 +265,16 @@ func (e *SubprocessExecutor) Interrupt(_ context.Context, sessionID string, hard
 	return nil
 }
 
-// Output streams every line the session's runtime writes to stdout as
-// a channel of §28.5.3 JSONL frames. The channel closes when the
-// runtime's stdout reaches EOF; ctx cancellation stops the reader so a
-// consumer that stops draining does not leak the goroutine. Output
-// must be consumed by a single caller — the adapter's Attach stream —
-// because it drains the shared stdout scanner.
+// Output subscribes to every line the session's runtime writes to stdout,
+// as a channel of §28.5.3 JSONL frames. One reader per child, started at
+// the first Output, broadcasts each line to the live subscribers, as the
+// adapter's socket transport does: the adapter's Attach stream and a
+// start's session_started wait each subscribe, and a subscriber whose ctx
+// ends is removed and consumes nothing afterwards. The channel closes when
+// the runtime's stdout reaches EOF or ctx ends. Output serves a child that
+// the §4.7 adapter started through Start; a child Send spawned is read by
+// Send alone.
+// spec: §28.5.3 (CH-MSGSOCK; Outbound: session_started).
 func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
 	e.mu.Lock()
 	sess, ok := e.procs[sessionID]
@@ -266,19 +282,12 @@ func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-ch
 	if !ok {
 		return nil, fmt.Errorf("executor: session %s has no running runtime", sessionID)
 	}
-	ch := make(chan []byte)
-	go func() {
-		defer close(ch)
-		for sess.stdout.Scan() {
-			line := append([]byte(nil), sess.stdout.Bytes()...)
-			select {
-			case ch <- line:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
+	out, err := sess.output.Subscribe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("executor: runtime output for session %s: %w", sessionID, err)
+	}
+	sess.output.Serve(sess.stdoutPipe, maxStdoutFrameBytes, nil)
+	return out, nil
 }
 
 // readResponse scans stdout for the next `response` envelope. The
@@ -421,8 +430,11 @@ func (e *SubprocessExecutor) session(sessionID string, origin spawnOrigin) (*sub
 		return nil, fmt.Errorf("executor: start runtime %q: %w", e.binPath, err)
 	}
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	s := &subprocessSession{cmd: cmd, stdin: stdin, stdout: scanner, stderr: stderr}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxStdoutFrameBytes)
+	s := &subprocessSession{
+		cmd: cmd, stdin: stdin, stdout: scanner, stderr: stderr,
+		stdoutPipe: stdout, output: linefanout.New(),
+	}
 	if origin == spawnedBySend {
 		if err := e.writeSessionStart(stdin, sessionID); err != nil {
 			s.abandon()
