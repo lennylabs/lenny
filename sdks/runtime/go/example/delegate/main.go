@@ -26,7 +26,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync/atomic"
 
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
@@ -37,10 +36,10 @@ const (
 	exitProtocolError = 2
 )
 
-// delegateHandler is a Standard-level runtime.Handler.
-type delegateHandler struct {
-	seq atomic.Uint64
-}
+// delegateHandler is a Standard-level runtime.Handler. It holds no
+// per-session state, so one value serves every session the process
+// holds.
+type delegateHandler struct{}
 
 // OnCreate has no task-scoped setup. The SDK has already dialed the
 // platform MCP server and connector MCP servers by the time OnCreate
@@ -52,7 +51,7 @@ func (h *delegateHandler) OnCreate(context.Context, runtime.CreateRequest) error
 // OnMessage runs the §8.5 delegation flow through the SDK platform
 // tool helpers. Without a platform MCP server it echoes the input.
 func (h *delegateHandler) OnMessage(ctx context.Context, msg runtime.Message) (runtime.Reply, error) {
-	n := h.seq.Add(1)
+	n := msg.Sequence
 	tools := runtime.ToolsFrom(ctx)
 	if tools == nil {
 		// Basic-level fallback: no platform MCP server in the manifest.
@@ -92,7 +91,7 @@ func (h *delegateHandler) OnMessage(ctx context.Context, msg runtime.Message) (r
 }
 
 // OnTerminate has no teardown.
-func (h *delegateHandler) OnTerminate(context.Context, runtime.TerminationReason) error {
+func (h *delegateHandler) OnTerminate(context.Context, string, runtime.TerminationReason) error {
 	return nil
 }
 

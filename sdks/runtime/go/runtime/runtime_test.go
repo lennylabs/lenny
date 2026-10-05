@@ -7,9 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -54,7 +51,7 @@ func (h *echoHandler) OnMessage(ctx context.Context, m Message) (Reply, error) {
 	return Reply{Parts: parts, Final: true}, nil
 }
 
-func (h *echoHandler) OnTerminate(_ context.Context, r TerminationReason) error {
+func (h *echoHandler) OnTerminate(_ context.Context, _ string, r TerminationReason) error {
 	h.mu.Lock()
 	h.terminated++
 	h.lastTermin = r
@@ -127,20 +124,29 @@ func TestRunNilHandler(t *testing.T) {
 	}
 }
 
-// TestMessageRoundTrip confirms a message frame produces a response
-// frame carrying the echoed parts (§28.5.3 message/response).
+// spec: 28.5.3 (CH-MSGSOCK, Inbound: session_start, Outbound:
+// session_started), 15.7 (Runtime Author SDKs)
+//
+// A message frame for an open session produces a response frame
+// carrying the echoed parts, after the session_started that answers the
+// session's session_start. OnCreate and OnTerminate each run once for the
+// session.
 func TestMessageRoundTrip(t *testing.T) {
 	h := &echoHandler{}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"msg_1","input":[{"type":"text","inline":"ping"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "msg_1", "ping"),
 	})
-	if len(frames) != 1 {
-		t.Fatalf("got %d frames, want 1", len(frames))
+	if len(frames) != 2 {
+		t.Fatalf("got %d frames, want session_started and response: %v", len(frames), frames)
 	}
-	if frames[0]["type"] != "response" {
-		t.Fatalf("frame type = %v, want response", frames[0]["type"])
+	if frames[0]["type"] != "session_started" || frames[0]["sessionId"] != "sess_a" || frames[0]["startId"] != "st_1" {
+		t.Fatalf("first frame = %v, want session_started for sess_a / st_1", frames[0])
 	}
-	out, _ := frames[0]["output"].([]any)
+	if frames[1]["type"] != "response" || frames[1]["sessionId"] != "sess_a" {
+		t.Fatalf("second frame = %v, want the session's response", frames[1])
+	}
+	out, _ := frames[1]["output"].([]any)
 	if len(out) != 1 {
 		t.Fatalf("output has %d parts, want 1", len(out))
 	}
@@ -181,48 +187,50 @@ func TestUnknownTypeIgnored(t *testing.T) {
 	}
 }
 
-// TestShutdownInvokesTerminate confirms a shutdown frame ends the loop
-// and OnTerminate sees the shutdown reason (§28.5.3 shutdown).
+// spec: 28.5.3 (CH-MSGSOCK, shutdown), 15.7 (Runtime Author SDKs)
+//
+// A shutdown frame ends the loop and every open session's OnTerminate
+// sees the shutdown reason. A process that holds no session runs no
+// OnTerminate.
 func TestShutdownInvokesTerminate(t *testing.T) {
 	h := &echoHandler{}
-	runSDK(t, h, []string{`{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
+	runSDK(t, h, []string{startFrame("sess_a", "st_1"), `{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
 	if h.terminated != 1 {
 		t.Fatalf("OnTerminate called %d times, want 1", h.terminated)
 	}
 	if h.lastTermin.Reason != "drain" || h.lastTermin.DeadlineMS != 5000 {
 		t.Fatalf("termination reason = %+v, want {drain 5000}", h.lastTermin)
 	}
+
+	idle := &echoHandler{}
+	runSDK(t, idle, []string{`{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
+	if idle.terminated != 0 || idle.created != 0 {
+		t.Fatalf("a process holding no session ran OnCreate %d and OnTerminate %d times, want 0 and 0", idle.created, idle.terminated)
+	}
 }
 
-// TestSequentialMessages confirms multiple messages each produce a
-// response, the SDK assigns increasing sequence numbers, and OnCreate is
-// invoked once for the whole session regardless of message count. The
-// session has exactly one execution, so the SDK does not re-invoke
-// OnCreate between messages.
-// spec: §15.7 (single OnCreate per session), §7.2 (one execution per session)
+// spec: 15.7 (Runtime Author SDKs), 28.5.3 (CH-MSGSOCK)
+//
+// Multiple messages for one session each produce a response, the SDK
+// assigns the session increasing sequence numbers starting at 1, and
+// OnCreate runs once for the session regardless of message count.
 func TestSequentialMessages(t *testing.T) {
 	var seqs []uint64
 	h := &echoHandler{onMessageFn: func(_ context.Context, m Message) {
 		seqs = append(seqs, m.Sequence)
 	}}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"m2","input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"m3","input":[{"type":"text","inline":"three"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "m1", "one"),
+		msgFrame("sess_a", "m2", "two"),
+		msgFrame("sess_a", "m3", "three"),
 	})
-	if len(frames) != 3 {
-		t.Fatalf("got %d response frames, want 3", len(frames))
+	if len(frames) != 4 {
+		t.Fatalf("got %d frames, want session_started and three responses", len(frames))
 	}
-	if len(seqs) != 3 || seqs[0] == 0 {
-		t.Fatalf("sequence numbers = %v, want three increasing non-zero values", seqs)
+	if len(seqs) != 3 || seqs[0] != 1 || seqs[1] != 2 || seqs[2] != 3 {
+		t.Fatalf("sequence numbers = %v, want [1 2 3]", seqs)
 	}
-	for i := 1; i < len(seqs); i++ {
-		if seqs[i] <= seqs[i-1] {
-			t.Fatalf("sequence not increasing: %v", seqs)
-		}
-	}
-	// §7.2: the session has one execution, so OnCreate fires once for
-	// the whole session regardless of how many messages arrive.
 	if h.created != 1 {
 		t.Fatalf("OnCreate called %d times across three messages, want 1", h.created)
 	}
@@ -233,17 +241,17 @@ func TestSequentialMessages(t *testing.T) {
 func TestHandlerErrorReportedAsResponseError(t *testing.T) {
 	h := &echoHandler{replyErr: errors.New("boom")}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"x"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "m1", "x"),
 	})
-	if len(frames) != 1 {
-		t.Fatalf("got %d frames, want 1", len(frames))
+	if len(frames) != 2 {
+		t.Fatalf("got %d frames, want 2", len(frames))
 	}
-	errObj, ok := frames[0]["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("response carries no error object: %v", frames[0])
+	if code := errorCode(frames[1]); code != "RUNTIME_ERROR" {
+		t.Fatalf("error code = %q, want RUNTIME_ERROR (frame %v)", code, frames[1])
 	}
-	if errObj["code"] != "RUNTIME_ERROR" {
-		t.Fatalf("error code = %v, want RUNTIME_ERROR", errObj["code"])
+	if frames[1]["sessionId"] != "sess_a" {
+		t.Fatalf("error response sessionId = %v, want sess_a", frames[1]["sessionId"])
 	}
 }
 
@@ -281,9 +289,10 @@ func TestShorthandPartsAreCanonical(t *testing.T) {
 		return []MessagePart{Text("hello")}
 	}}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"x"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "m1", "x"),
 	})
-	out := frames[0]["output"].([]any)
+	out := frames[1]["output"].([]any)
 	part := out[0].(map[string]any)
 	if part["type"] != "text" || part["inline"] != "hello" {
 		t.Fatalf("text part = %v, want {text hello}", part)
@@ -351,157 +360,5 @@ func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_5(t *testing.T) {
 	}
 	if strings.Contains(string(out), "annotations") {
 		t.Errorf("annotations rendered when empty: %s", out)
-	}
-}
-
-// spec: 4.7 (manifest credentialsPath), 6.1 (per-session credential file)
-//
-// A credentials_rotated event names the file the adapter reports having
-// rewritten, so a read failure on that file is an error the runtime
-// reports rather than the no-active-lease silence the startup read
-// takes. The runtime keeps the bundle it holds and stays pointed at the
-// path it last resolved.
-func TestRotationOnAnUnreadablePathIsReportedAndDoesNotRepointTheRuntime(t *testing.T) {
-	dir := t.TempDir()
-	good := filepath.Join(dir, "good.json")
-	if err := os.WriteFile(good, []byte(`{"mode":"direct","provider":"anthropic"}`), 0o600); err != nil {
-		t.Fatalf("write credential file: %v", err)
-	}
-	absent := filepath.Join(dir, "absent", "credentials.json")
-
-	var mu sync.Mutex
-	var logs []string
-	cfg := defaultConfig()
-	cfg.logger = func(format string, args ...any) {
-		mu.Lock()
-		defer mu.Unlock()
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
-	s := newSession(nil, cfg)
-	s.setCredentialsPath(good)
-	s.loadCredentials()
-
-	got := s.reloadCredentials(absent)
-	if got == nil || got.Provider != "anthropic" {
-		t.Fatalf("bundle after an unreadable rotation path = %+v, want the bundle already held", got)
-	}
-	mu.Lock()
-	reported := strings.Join(logs, "\n")
-	mu.Unlock()
-	if !strings.Contains(reported, absent) {
-		t.Errorf("no diagnostic named the unreadable rotation path %s; logged: %q", absent, reported)
-	}
-	if p := s.credentialsPath(); p != good {
-		t.Errorf("credential path after a failed rotation = %q, want the path last resolved (%q)", p, good)
-	}
-
-	// The startup read stays silent on a missing file: no active lease
-	// means no credential file.
-	mu.Lock()
-	logs = nil
-	mu.Unlock()
-	s.setCredentialsPath(absent)
-	s.loadCredentials()
-	mu.Lock()
-	quiet := len(logs)
-	mu.Unlock()
-	if quiet != 0 {
-		t.Errorf("the startup read reported %d line(s) for a missing credential file, want silence", quiet)
-	}
-}
-
-// spec: 4.7 (manifest credentialsPath, Full-level rotation protocol),
-// 6.1 (per-session credential file)
-//
-// The manifest-resolved credential path stays authoritative for every
-// read the runtime takes. A credentials_rotated event naming another
-// file is read from that file for the rotation alone; one SDK session
-// serves the whole runtime process, so installing the event's path would
-// re-point every later read at a co-tenant session's credential file.
-func TestRotationOnAnotherPathDoesNotRepointTheResolvedCredentialPath(t *testing.T) {
-	dir := t.TempDir()
-	mine := filepath.Join(dir, "mine.json")
-	if err := os.WriteFile(mine, []byte(`{"mode":"direct","provider":"anthropic"}`), 0o600); err != nil {
-		t.Fatalf("write credential file: %v", err)
-	}
-	other := filepath.Join(dir, "other.json")
-	if err := os.WriteFile(other, []byte(`{"mode":"direct","provider":"openai"}`), 0o600); err != nil {
-		t.Fatalf("write credential file: %v", err)
-	}
-
-	cfg := defaultConfig()
-	cfg.logger = func(string, ...any) {}
-	s := newSession(nil, cfg)
-	s.setCredentialsPath(mine)
-	s.loadCredentials()
-
-	got := s.reloadCredentials(other)
-	if got == nil || got.Provider != "openai" {
-		t.Fatalf("bundle after a rotation naming %s = %+v, want the file the event named", other, got)
-	}
-	if p := s.credentialsPath(); p != mine {
-		t.Fatalf("credential path after a rotation naming another session's file = %q, want the manifest-resolved path %q", p, mine)
-	}
-
-	// The next ordinary read lands on the resolved path rather than on
-	// the file the previous event named.
-	if err := os.WriteFile(mine, []byte(`{"mode":"direct","provider":"rotated"}`), 0o600); err != nil {
-		t.Fatalf("rewrite credential file: %v", err)
-	}
-	s.loadCredentials()
-	got = s.Credentials()
-	if got == nil || got.Provider != "rotated" {
-		t.Fatalf("bundle after re-reading the resolved path = %+v, want its contents (provider %q)", got, "rotated")
-	}
-}
-
-// spec: 4.7 (Full-level rotation protocol), 6.1 (per-session credential
-// file)
-//
-// The runtime-ops credentials_rotated frame is required to carry a
-// credentialsPath. A frame without one breaks that contract, so the
-// runtime reports it, keeps the bundle it holds, and does not read any
-// other file in its place: the event delivered no path, so there is
-// nothing it can be said to have delivered. A runtime that fell back to
-// its startup path would replace the held bundle with whatever that
-// file happens to contain.
-func TestPathlessRotationIsReportedAndKeepsTheHeldBundle(t *testing.T) {
-	dir := t.TempDir()
-	resolved := filepath.Join(dir, "credentials.json")
-	if err := os.WriteFile(resolved, []byte(`{"mode":"direct","provider":"unexpected"}`), 0o600); err != nil {
-		t.Fatalf("write credential file: %v", err)
-	}
-
-	var mu sync.Mutex
-	var logs []string
-	cfg := defaultConfig()
-	cfg.logger = func(format string, args ...any) {
-		mu.Lock()
-		defer mu.Unlock()
-		logs = append(logs, fmt.Sprintf(format, args...))
-	}
-	s := newSession(nil, cfg)
-	s.credentials = &CredentialBundle{Mode: "direct", Provider: "anthropic"}
-	s.setCredentialsPath(resolved)
-
-	got := s.reloadCredentials("")
-	if got == nil || got.Provider != "anthropic" {
-		t.Fatalf("bundle after a pathless rotation = %+v, want the bundle already held (provider %q)", got, "anthropic")
-	}
-	if held := s.Credentials(); held == nil || held.Provider != "anthropic" {
-		t.Fatalf("bundle held after a pathless rotation = %+v, want the bundle already held (provider %q)", held, "anthropic")
-	}
-	mu.Lock()
-	reported := strings.Join(logs, "\n")
-	mu.Unlock()
-	if !strings.Contains(reported, "no credentialsPath") {
-		t.Errorf("no diagnostic reported the frame carrying no credentialsPath; logged: %q", reported)
-	}
-
-	// The resolved path stays authoritative for the reads the runtime
-	// does take, so the pathless frame costs it nothing but the rotation.
-	s.loadCredentials()
-	if held := s.Credentials(); held == nil || held.Provider != "unexpected" {
-		t.Fatalf("bundle after re-reading the resolved path = %+v, want its contents (provider %q)", held, "unexpected")
 	}
 }

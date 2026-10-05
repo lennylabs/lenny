@@ -927,6 +927,9 @@
       "title": "Deployment Model",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "sdks/runtime/go/runtime/session_test.go",
+        "tests/tier7a_load_local/runtime_sdk_session_cycles_race_test.go",
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
         "pkg/adapter/socketruntime_accept_test.go::TestSocketRuntimeLateDialAfterTimedOutStartServesTheNextStart_spec_4_7_10",
         "pkg/adapter/socketruntime_accept_test.go::TestSocketRuntimeLateDialAfterCancelledStartServesTheNextStart_spec_4_7_10",
         "pkg/adapter/socketruntime_accept_test.go::TestSocketRuntimeTeardownClosesAnUnclaimedLateConnection_spec_4_7_10",
@@ -987,6 +990,7 @@
       "title": "Adapter-Agent Security Boundary",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
         "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsRefusesForeignUIDAndServesTheRuntimeNext_spec_4_7_11",
         "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsServesTheAgentUIDThroughSOPeercred_spec_4_7_11",
         "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsNonceOnlyAndEmbeddedPosturesApplyNoPeerCheck_spec_4_7_11",
@@ -4098,6 +4102,9 @@
       "title": "Runtime Author SDKs",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "sdks/runtime/go/runtime/session_test.go",
+        "sdks/runtime/go/runtime/lifecycle_test.go",
+        "tests/tier7a_load_local/runtime_sdk_session_cycles_race_test.go",
         "tests/tier3_contract/sdks/runtime_sdk_test.go",
         "sdks/runtime/go/runtime/runtime_test.go"
       ],
@@ -5967,6 +5974,10 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "sdks/runtime/go/runtime/session_test.go",
+        "sdks/runtime/go/runtime/lifecycle_test.go",
+        "tests/tier7a_load_local/runtime_sdk_session_cycles_race_test.go",
+        "tests/tier10_conformance/credential_path_resolution_conformance_test.go",
         "pkg/gateway/session/executor/subprocess_session_start_test.go",
         "pkg/gateway/session/executor/subprocess_session_start_internal_test.go",
         "tests/tier3_contract/adapter_jsonl/subprocess_session_start_test.go",

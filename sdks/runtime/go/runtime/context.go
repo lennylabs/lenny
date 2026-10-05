@@ -37,19 +37,22 @@ func LifecycleFrom(ctx context.Context) *Lifecycle {
 	return lc
 }
 
-// CredentialsFrom returns the current §4.7 credential bundle carried on
-// ctx, or nil when the runtime's pool has no active lease. The bundle
-// reflects the most recent rotation the CH-RUNTIMEOPS processed.
+// CredentialsFrom returns the session's credential bundle carried on ctx,
+// or nil when the session's session_start named no credential file. The
+// bundle is the one the session held when the SDK invoked the Handler
+// method; a credentials_rotated event naming the session replaces it for
+// later calls.
 func CredentialsFrom(ctx context.Context) *CredentialBundle {
 	c, _ := ctx.Value(ctxKeyCredentials).(*CredentialBundle)
 	return c
 }
 
-// withSessionContext attaches the session-scoped Tools, Lifecycle, and
-// credentials to ctx before the SDK invokes a Handler method.
-func (s *session) withSessionContext(ctx context.Context) context.Context {
-	ctx = context.WithValue(ctx, ctxKeyTools, s.tools)
-	ctx = context.WithValue(ctx, ctxKeyLifecycle, s.lifecycle)
-	ctx = context.WithValue(ctx, ctxKeyCredentials, s.Credentials())
+// withSessionContext returns the context the SDK passes to a Handler
+// method for st: the session's own context, carrying the process-scoped
+// Tools and Lifecycle and the session's credentials.
+func (p *process) withSessionContext(st *sessionState) context.Context {
+	ctx := context.WithValue(st.ctx, ctxKeyTools, p.tools)
+	ctx = context.WithValue(ctx, ctxKeyLifecycle, p.lifecycle)
+	ctx = context.WithValue(ctx, ctxKeyCredentials, st.Credentials())
 	return ctx
 }

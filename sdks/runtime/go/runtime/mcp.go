@@ -59,21 +59,26 @@ func (t *Tools) close() {
 
 // dialTools dials the §15.4.3 platform MCP server and every connector
 // MCP server advertised in the manifest, completing the manifest-nonce
-// handshake on each.
-func (s *session) dialTools(ctx context.Context) (*Tools, error) {
-	if s.manifest == nil {
+// handshake on each. It runs once per process, so every session the
+// process serves shares the connections: a running pod MCP surface
+// validates the nonce of the start that armed it, so a per-session redial
+// with a later start's nonce would be refused.
+//
+// spec: §15.7 (Run dials the sockets once per process), §4.7.6 (mcpNonce).
+func (p *process) dialTools(ctx context.Context) (*Tools, error) {
+	if p.manifest == nil {
 		return nil, errors.New("no adapter manifest; Standard level requires the manifest")
 	}
-	if s.manifest.PlatformMCPServer == nil || s.manifest.PlatformMCPServer.Socket == "" {
+	if p.manifest.PlatformMCPServer == nil || p.manifest.PlatformMCPServer.Socket == "" {
 		return nil, errors.New("adapter manifest has no platform MCP server socket")
 	}
-	platform, err := connectMCP(ctx, s.manifest.PlatformMCPServer.Socket, s.manifest.MCPNonce, "lenny-runtime-sdk-go", s.cfg.dialTimeout)
+	platform, err := connectMCP(ctx, p.manifest.PlatformMCPServer.Socket, p.manifest.MCPNonce, "lenny-runtime-sdk-go", p.cfg.dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("connect platform MCP server: %w", err)
 	}
 	tools := &Tools{platform: platform, connectors: map[string]*mcpClient{}}
-	for _, conn := range s.manifest.ConnectorServers {
-		cc, err := connectMCP(ctx, conn.Socket, s.manifest.MCPNonce, "lenny-runtime-sdk-go", s.cfg.dialTimeout)
+	for _, conn := range p.manifest.ConnectorServers {
+		cc, err := connectMCP(ctx, conn.Socket, p.manifest.MCPNonce, "lenny-runtime-sdk-go", p.cfg.dialTimeout)
 		if err != nil {
 			tools.close()
 			return nil, fmt.Errorf("connect connector MCP server %q: %w", conn.ID, err)

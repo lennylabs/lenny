@@ -17,9 +17,10 @@
 // The SDK covers the §15.4.3 integration levels:
 //
 //   - Basic: the stdin/stdout JSON Lines protocol. Run with no
-//     options exercises Basic level fully — message/response round
-//     trip, heartbeat acknowledgement, shutdown within the deadline,
-//     and forward-compatible handling of unknown frame types.
+//     options exercises Basic level fully: session_start and
+//     session_end per session, message/response round trip, heartbeat
+//     acknowledgement, shutdown within the deadline, and
+//     forward-compatible handling of unknown frame types.
 //   - Standard: the SDK additionally dials the manifest-advertised
 //     platform MCP server and connector MCP servers with the §15.4.3
 //     manifest-nonce handshake, and exposes typed §8.5 platform tool
@@ -27,7 +28,16 @@
 //   - Full: the SDK additionally opens the §15.4.3 CH-RUNTIMEOPS,
 //     completes the lifecycle_capabilities / lifecycle_support
 //     handshake, and surfaces checkpoint, interrupt, credential
-//     rotation, and deadline events on the CH-RUNTIMEOPS.
+//     rotation, and deadline events on the CH-RUNTIMEOPS, each routed
+//     to the session the event names.
+//
+// # Sessions
+//
+// One runtime process serves every session the pod holds. Each
+// session_start opens a session with its own context, goroutine, and
+// message queue, and each session_end releases it, so OnCreate,
+// OnMessage, and OnTerminate run once per session and concurrently across
+// sessions (§4.7.10, §15.7).
 //
 // # Minimal runtime
 //
@@ -37,7 +47,7 @@
 //	type echo struct{}
 //
 //	func (echo) OnCreate(context.Context, runtime.CreateRequest) error { return nil }
-//	func (echo) OnTerminate(context.Context, runtime.TerminationReason) error { return nil }
+//	func (echo) OnTerminate(context.Context, string, runtime.TerminationReason) error { return nil }
 //	func (echo) OnMessage(_ context.Context, m runtime.Message) (runtime.Reply, error) {
 //	    return runtime.Reply{Parts: m.Envelope.Input, Final: true}, nil
 //	}
@@ -64,7 +74,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -72,27 +81,35 @@ import (
 	"time"
 )
 
-// Handler is the single interface a runtime author implements. The SDK
-// invokes OnCreate once before the first message, OnMessage for every
-// inbound §28.5.3 message frame, and OnTerminate once when the adapter
-// closes stdin or sends a shutdown frame.
+// Handler is the single interface a runtime author implements. One
+// runtime process serves any number of sessions, one after another and
+// side by side. The SDK invokes OnCreate when a session_start opens a
+// session, and writes the session's session_started once OnCreate
+// returns; OnMessage for each of the session's messages; and OnTerminate
+// once when that session ends, on its session_end or at the end of the
+// connection. Calls for different sessions run concurrently on different
+// goroutines, so an implementation keeps per-session state keyed by
+// session and is safe for concurrent use. Calls for one session never
+// overlap. A session whose OnCreate fails is answered as the CH-MSGSOCK
+// Session errors rule states, and the process keeps serving its other
+// sessions.
 //
-// Each session has exactly one execution (§5.2, §7.2), so OnCreate is
-// invoked once per pod occupancy with the session's frozen TaskID and is
-// not re-invoked mid-session. A recycling pool serves the next session
-// in a fresh OnCreate invocation after the runtime exits.
-// spec: §15.7 (single OnCreate per session), §7.2 (one execution per session)
+// spec: §15.7 (API surface, Handler), §4.7.10 (runtime process lifetime),
+// §28.5.3 (CH-MSGSOCK, Inbound: session_start, Session errors).
 type Handler interface {
-	// OnCreate receives the session-scoped context snapshot before the
-	// first Message is delivered. A non-nil error aborts the runtime.
+	// OnCreate receives the session's context snapshot before the
+	// session's first Message is delivered. A non-nil error fails the
+	// session's creation: the SDK writes session_started with error and
+	// answers the session's messages with a RUNTIME_ERROR response.
 	OnCreate(ctx context.Context, req CreateRequest) error
 	// OnMessage handles one inbound message and returns the turn's
 	// Reply. A non-nil error is reported to the adapter as a structured
-	// response error and the runtime continues with the next frame.
+	// response error and the session continues with its next message.
 	OnMessage(ctx context.Context, msg Message) (Reply, error)
-	// OnTerminate runs once when the session ends. It SHOULD return
-	// before the shutdown deadline elapses.
-	OnTerminate(ctx context.Context, reason TerminationReason) error
+	// OnTerminate runs once when the session ends, after the session's
+	// last handler call returned. It SHOULD return before the shutdown
+	// deadline elapses.
+	OnTerminate(ctx context.Context, sessionID string, reason TerminationReason) error
 }
 
 // ProtocolError signals a non-recoverable inbound-format violation. Run
@@ -126,16 +143,20 @@ const manifestEnvVar = "LENNY_ADAPTER_MANIFEST"
 // defaultManifestPath is the §4.7 adapter manifest path.
 const defaultManifestPath = "/run/lenny/adapter-manifest.json"
 
-// Run wires up the §28.5.3 stdin/stdout framing, optionally dials the
+// Run wires up the §28.5.3 stdin/stdout framing, dials the
 // manifest-advertised abstract Unix sockets (platform MCP server,
-// connector MCP servers, CH-RUNTIMEOPS) with the §15.4.3
-// manifest-nonce handshake, parses the §4.7 credential file, and drives
-// the §15.4.2 dispatch loop. It blocks until the adapter closes the
-// inbound stream or sends a shutdown frame and returns nil on a clean
-// exit.
+// connector MCP servers, CH-RUNTIMEOPS) once per process with the
+// §15.4.3 manifest-nonce handshake, and drives the frame loop. Each
+// session_start opens a session with its own context and goroutine, and
+// each session loads its credentials from the path its session_start
+// names. Run blocks until the adapter closes the inbound stream or sends
+// a shutdown frame, then ends every session the process holds and
+// returns nil on a clean exit.
 //
 // Run with no options covers the Basic level. WithStandardLevel and
 // WithFullLevel opt into the higher integration levels.
+//
+// spec: §15.7 (API surface, Run), §4.7.10 (runtime process lifetime).
 func Run(h Handler, opts ...Option) error {
 	if h == nil {
 		return errors.New("runtime: Run requires a non-nil Handler")
@@ -144,46 +165,40 @@ func Run(h Handler, opts ...Option) error {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	return newSession(h, cfg).run(context.Background())
+	return newProcess(h, cfg).run(context.Background())
 }
 
-// session holds the per-process SDK state for one Run call.
-type session struct {
+// process holds the SDK state of one Run call. The manifest, the MCP
+// connections, and CH-RUNTIMEOPS are process-scoped and shared by every
+// session; each session's own context lives in its sessionState.
+type process struct {
 	handler Handler
 	cfg     config
 	w       *frameWriter
 
-	manifest    *AdapterManifest
-	credentials *CredentialBundle
-	// credPath is the §4.7 credential file this runtime reads. The
-	// adapter writes one file per session at
-	// /run/lenny/slots/{sessionId}/credentials.json and names it on the
-	// manifest, so the path is resolved at startup rather than fixed at
-	// construction and stays authoritative for every later read. A
-	// credentials_rotated frame naming a path is read from that path
-	// without replacing this one. credMu guards it along with the parsed
-	// bundle, because the CH-RUNTIMEOPS reader writes both.
-	// spec: §4.7; §6.1.
-	credPath string
-	credMu   sync.RWMutex
+	// ctx is the process context every session context derives from.
+	ctx context.Context
 
+	manifest  *AdapterManifest
 	tools     *Tools
 	lifecycle *Lifecycle
 
-	state      atomic.Int32 // adapterState
-	seq        atomic.Uint64
-	terminated atomic.Bool
+	sessions *sessionTable
+	// wg counts the session goroutines, including a state a session_end
+	// removed whose context is still being released.
+	wg sync.WaitGroup
+
+	state atomic.Int32 // adapterState
 
 	// exitReason holds the TerminationReason resolved by the shutdown
-	// frame, if any. run reads it after the dispatch worker drains.
+	// frame, if any. run reads it after the frame loop ends.
 	exitReasonMu sync.Mutex
 	exitReason   *TerminationReason
 }
 
 // adapterState enumerates the §15.4.2 RPC lifecycle states the SDK
 // tracks on behalf of the runtime. The adapter owns the authoritative
-// state machine; the SDK mirrors it so handlers can observe progress
-// and so internal invariants (no dispatch before READY) hold.
+// state machine; the SDK mirrors it so handlers can observe progress.
 type adapterState int32
 
 const (
@@ -211,40 +226,38 @@ func (s adapterState) String() string {
 	}
 }
 
-// newSession assembles a session from the handler and resolved config.
-func newSession(h Handler, cfg config) *session {
-	return &session{handler: h, cfg: cfg}
+// newProcess assembles a process from the handler and resolved config.
+func newProcess(h Handler, cfg config) *process {
+	return &process{handler: h, cfg: cfg, sessions: newSessionTable(), ctx: context.Background()}
 }
 
-// run drives one runtime lifecycle: resolve the transport, load the
-// manifest and credentials, dial the higher-level channels for the
-// configured level, then run the §28.5.3 frame loop.
-func (s *session) run(ctx context.Context) error {
-	s.state.Store(int32(stateInit))
+// run drives one runtime process: resolve the transport, load the
+// manifest, dial the higher-level channels for the configured level, run
+// the §28.5.3 frame loop, and end every session once the loop ends.
+func (p *process) run(ctx context.Context) error {
+	p.state.Store(int32(stateInit))
 
-	transport, err := s.cfg.openTransport(ctx)
+	transport, err := p.cfg.openTransport(ctx)
 	if err != nil {
 		return fmt.Errorf("runtime: resolve transport: %w", err)
 	}
 	defer transport.Close()
 
-	s.w = newFrameWriter(transport.Writer)
+	p.w = newFrameWriter(transport.Writer)
 
-	// §4.7 manifest and credential file. Both are optional: a Basic-level
-	// runtime is exercised without a manifest, and a runtime whose pool
-	// has no active lease has no credential file. A malformed manifest is
-	// a hard error only when a higher integration level needs it.
-	s.loadManifest()
-	s.setCredentialsPath(s.resolvedCredentialsPath())
-	s.loadCredentials()
+	// §4.7 manifest. It is optional: a Basic-level runtime is exercised
+	// without one. A malformed manifest is a hard error only when a
+	// higher integration level needs it.
+	p.loadManifest()
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	p.ctx = ctx
 
-	if err := s.startChannels(ctx, cancel); err != nil {
+	if err := p.startChannels(ctx, cancel); err != nil {
 		return err
 	}
-	defer s.closeChannels()
+	defer p.closeChannels()
 
 	// A CH-RUNTIMEOPS terminate event cancels ctx while the frame
 	// loop may be blocked on a stdin read. Closing the transport on
@@ -262,54 +275,43 @@ func (s *session) run(ctx context.Context) error {
 		<-closerDone
 	}()
 
-	s.state.Store(int32(stateReady))
+	p.state.Store(int32(stateReady))
 
-	// OnCreate runs once before the first message with the session-scoped
-	// snapshot the SDK assembled from the manifest and credential file.
-	if err := s.invokeCreate(ctx); err != nil {
-		return fmt.Errorf("runtime: OnCreate: %w", err)
-	}
+	loopErr := p.loop(ctx, transport.Reader, cancel)
 
-	// The dispatch worker processes message frames one at a time, in the
-	// order the loop reads them: this is the §15.4 coordinator-local
-	// FIFO contract for the session's stdin. The loop
-	// itself keeps reading while a handler is in flight, so a
-	// tool_result correlated to a tool_call the handler emits, and
-	// heartbeats, are still serviced (§28.5.3 interleaved delivery).
-	messages := make(chan *MessageEnvelope, 64)
-	workerDone := make(chan struct{})
-	go func() {
-		defer close(workerDone)
-		for env := range messages {
-			s.handleMessage(ctx, env)
-		}
-	}()
-
-	loopErr := s.loop(ctx, transport.Reader, cancel, messages)
-
-	// Close the message channel and wait for the worker to drain every
-	// queued message and write its response frame before OnTerminate.
-	close(messages)
-	<-workerDone
-
-	// OnTerminate runs once on the way out. The reason is the shutdown
-	// frame's reason when the loop exited on a shutdown; otherwise the
-	// adapter closed the transport without one. A lifecycle terminate,
-	// if it fired, already invoked OnTerminate and this call is a no-op.
-	reason := TerminationReason{Reason: "stdin_closed"}
-	s.exitReasonMu.Lock()
-	if s.exitReason != nil {
-		reason = *s.exitReason
-	}
-	s.exitReasonMu.Unlock()
-	s.invokeTerminate(ctx, reason)
-	s.state.Store(int32(stateTerminated))
+	// Every live session drains the messages it queued and then runs
+	// OnTerminate with the shutdown frame's reason, or stdin_closed when
+	// the adapter closed the transport without one. Run returns after
+	// every session goroutine returned, including one a session_end
+	// removed whose release is still running.
+	p.closeSessions(p.terminationReason())
+	p.wg.Wait()
+	p.state.Store(int32(stateTerminated))
 	return loopErr
 }
 
+// terminationReason is the reason EOF or shutdown ends the live sessions
+// with.
+func (p *process) terminationReason() TerminationReason {
+	p.exitReasonMu.Lock()
+	defer p.exitReasonMu.Unlock()
+	if p.exitReason != nil {
+		return *p.exitReason
+	}
+	return TerminationReason{Reason: "stdin_closed"}
+}
+
+// setExitReason records the reason the process is ending with.
+func (p *process) setExitReason(r TerminationReason) {
+	p.exitReasonMu.Lock()
+	p.exitReason = &r
+	p.exitReasonMu.Unlock()
+}
+
 // startChannels dials the §15.4.3 platform MCP server, connector MCP
-// servers, and CH-RUNTIMEOPS for the configured integration level.
-// cancel lets a CH-RUNTIMEOPS terminate event stop the frame loop.
+// servers, and CH-RUNTIMEOPS for the configured integration level, once
+// per process. cancel lets a CH-RUNTIMEOPS terminate event stop the
+// frame loop.
 //
 // When a higher-level channel is configured but the adapter manifest
 // does not advertise it (no manifest, or a manifest without the socket
@@ -319,29 +321,31 @@ func (s *session) run(ctx context.Context) error {
 // the Basic checks against such a binary without a manifest. A dial
 // that fails after the socket is advertised is a hard error, since the
 // adapter promised a channel the runtime could not reach.
-func (s *session) startChannels(ctx context.Context, cancel context.CancelFunc) error {
-	if s.cfg.level >= levelStandard {
+//
+// spec: §15.7 (Run dials the sockets once per process).
+func (p *process) startChannels(ctx context.Context, cancel context.CancelFunc) error {
+	if p.cfg.level >= levelStandard {
 		switch {
-		case !s.manifestHasPlatformMCP():
-			s.cfg.logf("runtime: no platform MCP server in the manifest; degrading to Basic level")
+		case !p.manifestHasPlatformMCP():
+			p.cfg.logf("runtime: no platform MCP server in the manifest; degrading to Basic level")
 		default:
-			tools, err := s.dialTools(ctx)
+			tools, err := p.dialTools(ctx)
 			if err != nil {
 				return fmt.Errorf("runtime: Standard-level MCP setup: %w", err)
 			}
-			s.tools = tools
+			p.tools = tools
 		}
 	}
-	if s.cfg.level >= levelFull {
+	if p.cfg.level >= levelFull {
 		switch {
-		case !s.manifestHasLifecycle():
-			s.cfg.logf("runtime: the manifest advertises no CH-RUNTIMEOPS socket; lifecycle features disabled")
+		case !p.manifestHasLifecycle():
+			p.cfg.logf("runtime: the manifest advertises no CH-RUNTIMEOPS socket; lifecycle features disabled")
 		default:
-			lc, err := s.dialLifecycle(ctx, cancel)
+			lc, err := p.dialLifecycle(ctx, cancel)
 			if err != nil {
 				return fmt.Errorf("runtime: Full-level lifecycle setup: %w", err)
 			}
-			s.lifecycle = lc
+			p.lifecycle = lc
 		}
 	}
 	return nil
@@ -349,39 +353,41 @@ func (s *session) startChannels(ctx context.Context, cancel context.CancelFunc) 
 
 // manifestHasPlatformMCP reports whether the manifest advertises a
 // platform MCP server socket.
-func (s *session) manifestHasPlatformMCP() bool {
-	return s.manifest != nil &&
-		s.manifest.PlatformMCPServer != nil &&
-		s.manifest.PlatformMCPServer.Socket != ""
+func (p *process) manifestHasPlatformMCP() bool {
+	return p.manifest != nil &&
+		p.manifest.PlatformMCPServer != nil &&
+		p.manifest.PlatformMCPServer.Socket != ""
 }
 
 // manifestHasLifecycle reports whether the manifest advertises a
 // CH-RUNTIMEOPS socket.
-func (s *session) manifestHasLifecycle() bool {
-	return s.manifest != nil &&
-		s.manifest.RuntimeOps != nil &&
-		s.manifest.RuntimeOps.Socket != ""
+func (p *process) manifestHasLifecycle() bool {
+	return p.manifest != nil &&
+		p.manifest.RuntimeOps != nil &&
+		p.manifest.RuntimeOps.Socket != ""
 }
 
 // closeChannels releases the higher-level channels opened by
 // startChannels.
-func (s *session) closeChannels() {
-	if s.tools != nil {
-		s.tools.close()
+func (p *process) closeChannels() {
+	if p.tools != nil {
+		p.tools.close()
 	}
-	if s.lifecycle != nil {
-		s.lifecycle.close()
+	if p.lifecycle != nil {
+		p.lifecycle.close()
 	}
 }
 
 // loop is the §28.5.3 frame loop. It reads newline-delimited JSON from
-// in and routes each frame by type: message frames go to the dispatch
-// worker through messages (preserving FIFO), heartbeat and tool_result
-// frames are serviced inline so an in-flight handler is not blocked,
-// and a shutdown frame ends the loop. Unknown frame types are ignored
-// for forward compatibility (§28.5.3). It returns when in reaches EOF,
-// a shutdown frame arrives, or an unrecoverable error occurs.
-func (s *session) loop(ctx context.Context, in io.Reader, cancel context.CancelFunc, messages chan<- *MessageEnvelope) error {
+// in and routes each frame by type without blocking on any session's
+// work: session_start, message, and session_end go to the addressed
+// session's state, heartbeat and tool_result are serviced inline, and a
+// shutdown frame ends the loop. Unknown frame types are ignored for
+// forward compatibility. It returns when in reaches EOF, a shutdown
+// frame arrives, or an unrecoverable error occurs.
+//
+// spec: §28.5.3 (CH-MSGSOCK).
+func (p *process) loop(ctx context.Context, in io.Reader, cancel context.CancelFunc) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), maxFrameBytes)
 
@@ -395,38 +401,48 @@ func (s *session) loop(ctx context.Context, in io.Reader, cancel context.CancelF
 		if len(line) == 0 {
 			continue
 		}
-		var ft frameType
-		if err := json.Unmarshal(line, &ft); err != nil {
-			return ProtocolError{Msg: fmt.Sprintf("malformed JSON Lines on input: %v", err)}
-		}
-		switch ft.Type {
-		case "message":
-			s.state.Store(int32(stateActive))
-			env, perr := decodeMessage(line)
-			if perr != nil {
-				return perr
-			}
-			select {
-			case messages <- env:
-			case <-ctx.Done():
-				return nil
-			}
-		case "heartbeat":
-			if err := s.w.write(outboundHeartbeatAck{Type: "heartbeat_ack"}); err != nil {
-				return fmt.Errorf("runtime: write heartbeat_ack: %w", err)
-			}
-		case "tool_result":
-			s.handleToolResult(line)
-		case "shutdown":
-			return s.handleShutdown(ctx, line, cancel)
-		default:
-			s.cfg.logf("runtime: ignoring unknown frame type %q", ft.Type)
+		done, err := p.routeFrame(line)
+		if err != nil || done {
+			return err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return ProtocolError{Msg: fmt.Sprintf("input read error: %v", err)}
 	}
 	return nil
+}
+
+// routeFrame handles one inbound frame. done reports a shutdown frame,
+// which ends the loop.
+func (p *process) routeFrame(line []byte) (done bool, err error) {
+	var ft frameType
+	if err := json.Unmarshal(line, &ft); err != nil {
+		return false, ProtocolError{Msg: fmt.Sprintf("malformed JSON Lines on input: %v", err)}
+	}
+	switch ft.Type {
+	case "session_start":
+		return false, p.handleSessionStart(line)
+	case "session_end":
+		p.handleSessionEnd(line)
+	case "message":
+		p.state.Store(int32(stateActive))
+		env, perr := decodeMessage(line)
+		if perr != nil {
+			return false, perr
+		}
+		p.routeMessage(env)
+	case "heartbeat":
+		if err := p.w.write(outboundHeartbeatAck{Type: "heartbeat_ack"}); err != nil {
+			return false, fmt.Errorf("runtime: write heartbeat_ack: %w", err)
+		}
+	case "tool_result":
+		p.handleToolResult(line)
+	case "shutdown":
+		return true, p.handleShutdown(line)
+	default:
+		p.cfg.logf("runtime: ignoring unknown frame type %q", ft.Type)
+	}
+	return false, nil
 }
 
 // decodeMessage decodes one §28.5.3 message frame. A malformed frame is
@@ -439,42 +455,38 @@ func decodeMessage(line []byte) (*MessageEnvelope, error) {
 	return &env, nil
 }
 
-// handleMessage invokes OnMessage for one decoded §28.5.3 message and
-// writes the resulting response frame. It runs on the dispatch worker
+// handleMessage invokes OnMessage for one of the session's messages and
+// writes the resulting response frame. It runs on the session's
 // goroutine, one message at a time. A handler error is reported as a
 // structured response error so the adapter records the failure without
-// losing context (§28.5.3 error reporting via response). A write error
-// is logged; the SDK continues since the adapter has likely closed the
-// transport.
-func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
+// losing context (§28.5.3 error reporting via response). A response for
+// a session that already ended is dropped.
+func (p *process) handleMessage(st *sessionState, env *MessageEnvelope) {
 	msg := Message{
 		Envelope:  env,
-		SessionID: s.manifestSessionID(),
-		TaskID:    s.manifestTaskID(),
-		Sequence:  s.seq.Add(1),
+		SessionID: st.id,
+		TaskID:    st.id,
+		Sequence:  st.seq.Add(1),
 	}
 
 	// §28.5.3 adapter-local tools are reachable for the duration of the
-	// turn. The session identifier from the inbound envelope is threaded
-	// onto every tool_call so the frame the runtime emits addresses the
-	// session it was handed, on every pod.
+	// turn. Every tool_call carries the session's identifier and is
+	// dropped once the session ended.
 	// spec: §28.5.3 (sessionId on every session-scoped frame)
-	mctx := context.WithValue(s.withSessionContext(ctx), ctxKeyAdapterTools, &AdapterTools{
-		w:         s.w,
-		timeout:   s.cfg.dialTimeout,
-		sessionID: env.SessionID,
+	mctx := context.WithValue(p.withSessionContext(st), ctxKeyAdapterTools, &AdapterTools{
+		w:       p.w,
+		timeout: p.cfg.dialTimeout,
+		owner:   st,
 	})
-	reply, err := s.handler.OnMessage(mctx, msg)
+	reply, err := p.handler.OnMessage(mctx, msg)
 	if err != nil {
-		s.cfg.logf("runtime: OnMessage error: %v", err)
-		if werr := s.w.write(outboundResponse{
+		p.cfg.logf("runtime: session %s: OnMessage error: %v", st.id, err)
+		p.writeFor(st, outboundResponse{
 			Type:      "response",
 			Output:    []MessagePart{},
 			Error:     &ResponseError{Code: "RUNTIME_ERROR", Message: err.Error()},
-			SessionID: env.SessionID,
-		}); werr != nil {
-			s.cfg.logf("runtime: write error response: %v", werr)
-		}
+			SessionID: st.id,
+		})
 		return
 	}
 
@@ -486,223 +498,65 @@ func (s *session) handleMessage(ctx context.Context, env *MessageEnvelope) {
 	if reply.Streaming && !reply.Final {
 		return
 	}
-	if werr := s.w.write(outboundResponse{
+	p.writeFor(st, outboundResponse{
 		Type:      "response",
 		Output:    stampParts(reply.Parts),
 		Error:     reply.Error,
-		SessionID: env.SessionID,
-	}); werr != nil {
-		s.cfg.logf("runtime: write response: %v", werr)
-	}
+		SessionID: st.id,
+	})
 }
 
 // handleToolResult routes an inbound §28.5.3 tool_result frame to the
 // pending stdout tool_call that emitted the matching id. A result with
 // no pending call is dropped and logged (§28.5.3 correlation rule).
-func (s *session) handleToolResult(line []byte) {
+func (p *process) handleToolResult(line []byte) {
 	var tr inboundToolResult
 	if err := json.Unmarshal(line, &tr); err != nil {
-		s.cfg.logf("runtime: malformed tool_result frame: %v", err)
+		p.cfg.logf("runtime: malformed tool_result frame: %v", err)
 		return
 	}
-	if !s.w.deliverToolResult(tr) {
-		s.cfg.logf("runtime: tool_result %q has no pending tool_call", tr.ID)
+	if !p.w.deliverToolResult(tr) {
+		p.cfg.logf("runtime: tool_result %q has no pending tool_call", tr.ID)
 	}
 }
 
-// handleShutdown decodes the §28.5.3 shutdown frame, records the
-// termination reason for run to apply after draining in-flight
-// handlers, and returns nil to end the frame loop for a clean exit.
-func (s *session) handleShutdown(_ context.Context, line []byte, cancel context.CancelFunc) error {
-	s.state.Store(int32(stateDraining))
+// handleShutdown decodes the §28.5.3 shutdown frame and records the
+// termination reason that run hands every live session after the loop
+// ends. Shutdown is process-scoped: every session drains its queued
+// messages before its OnTerminate.
+func (p *process) handleShutdown(line []byte) error {
+	p.state.Store(int32(stateDraining))
 	var sd inboundShutdown
 	if err := json.Unmarshal(line, &sd); err != nil {
 		return ProtocolError{Msg: fmt.Sprintf("malformed shutdown envelope: %v", err)}
 	}
-	s.exitReasonMu.Lock()
-	s.exitReason = &TerminationReason{Reason: sd.Reason, DeadlineMS: sd.DeadlineMS}
-	s.exitReasonMu.Unlock()
-	cancel()
+	p.setExitReason(TerminationReason{Reason: sd.Reason, DeadlineMS: sd.DeadlineMS})
 	return nil
-}
-
-// invokeCreate calls Handler.OnCreate once with the session-scoped snapshot.
-func (s *session) invokeCreate(ctx context.Context) error {
-	s.credMu.RLock()
-	creds := s.credentials
-	s.credMu.RUnlock()
-	req := CreateRequest{
-		SessionID:        s.manifestSessionID(),
-		TaskID:           s.manifestTaskID(),
-		Credentials:      creds,
-		ManifestSnapshot: s.manifest,
-	}
-	if s.manifest != nil {
-		req.RuntimeOptions = s.manifest.RuntimeOptions
-	}
-	return s.handler.OnCreate(s.withSessionContext(ctx), req)
-}
-
-// invokeTerminate calls Handler.OnTerminate at most once. The terminated
-// guard makes a CH-RUNTIMEOPS terminate and the stdin shutdown path
-// idempotent.
-func (s *session) invokeTerminate(ctx context.Context, reason TerminationReason) {
-	if !s.terminated.CompareAndSwap(false, true) {
-		return
-	}
-	if err := s.handler.OnTerminate(s.withSessionContext(ctx), reason); err != nil {
-		s.cfg.logf("runtime: OnTerminate error: %v", err)
-	}
 }
 
 // loadManifest parses the §4.7 adapter manifest. A missing file leaves
 // the manifest nil; a malformed file is logged and ignored at Basic
 // level and surfaces as a hard error from startChannels at the higher
 // levels, which need the socket fields.
-func (s *session) loadManifest() {
-	path := s.cfg.manifestPath
+func (p *process) loadManifest() {
+	path := p.cfg.manifestPath
 	data, err := os.ReadFile(path)
 	if err != nil {
-		s.cfg.logf("runtime: no adapter manifest at %s (%v)", path, err)
+		p.cfg.logf("runtime: no adapter manifest at %s (%v)", path, err)
 		return
 	}
 	var m AdapterManifest
 	if err := json.Unmarshal(data, &m); err != nil {
-		s.cfg.logf("runtime: malformed adapter manifest %s: %v", path, err)
+		p.cfg.logf("runtime: malformed adapter manifest %s: %v", path, err)
 		return
 	}
 	// §4.7 forward-compatibility rule: a manifest version newer than the
 	// SDK understands is rejected. Every increment is breaking.
 	if m.Version > 1 {
-		s.cfg.logf("runtime: adapter manifest %s version %d is newer than supported (1)", path, m.Version)
+		p.cfg.logf("runtime: adapter manifest %s version %d is newer than supported (1)", path, m.Version)
 		return
 	}
-	s.manifest = &m
-}
-
-// resolvedCredentialsPath is the §4.7 credential file this runtime
-// reads: the manifest's credentialsPath, which names this session's own
-// /run/lenny/slots/{sessionId}/credentials.json, falling back to the
-// construction-time WithCredentialsPath option when the manifest carries
-// none. There is no fixed default, because the file's location depends
-// on the session identifier.
-//
-// spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential file).
-func (s *session) resolvedCredentialsPath() string {
-	if s.manifest != nil && s.manifest.CredentialsPath != "" {
-		return s.manifest.CredentialsPath
-	}
-	return s.cfg.credentialsPath
-}
-
-// setCredentialsPath points subsequent credential reads at path.
-func (s *session) setCredentialsPath(path string) {
-	s.credMu.Lock()
-	s.credPath = path
-	s.credMu.Unlock()
-}
-
-// credentialsPath returns the credential file reads resolve against.
-func (s *session) credentialsPath() string {
-	s.credMu.RLock()
-	defer s.credMu.RUnlock()
-	return s.credPath
-}
-
-// loadCredentialsFrom reads and parses the §4.7 credential file at path
-// and, on success, installs the bundle. It reports the read or parse
-// failure to the caller rather than deciding whether the failure is
-// worth reporting, because the startup read and the rotation read draw
-// opposite conclusions from the same error.
-//
-// spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential file).
-func (s *session) loadCredentialsFrom(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read credential file %s: %w", path, err)
-	}
-	var c CredentialBundle
-	if err := json.Unmarshal(data, &c); err != nil {
-		return fmt.Errorf("malformed credential file %s: %w", path, err)
-	}
-	s.credMu.Lock()
-	s.credentials = &c
-	s.credMu.Unlock()
-	return nil
-}
-
-// loadCredentials parses the §4.7 runtime credential file at startup. A
-// missing or unreadable file is normal when the runtime's pool has no
-// active lease, and an unresolved path is normal when neither the
-// manifest nor the caller named one, so a read failure is silent here.
-// A file that exists but does not parse is reported.
-func (s *session) loadCredentials() {
-	path := s.credentialsPath()
-	if path == "" {
-		return
-	}
-	if err := s.loadCredentialsFrom(path); err != nil {
-		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
-			return
-		}
-		s.cfg.logf("runtime: %v", err)
-	}
-}
-
-// reloadCredentials re-reads the §4.7 credential file on a
-// CH-RUNTIMEOPS credentials_rotated event so a Full-level runtime
-// continues without restart. The event names the file the adapter
-// reports having just rewritten, which is the rotating session's own
-// credential file, so the read failing is an error rather than the
-// no-active-lease case the startup read tolerates: the runtime reports
-// it, keeps the bundle in hand, and still acknowledges the event.
-//
-// The frame is required to carry the path, so a frame without one is a
-// contract violation. The runtime reports it and keeps the bundle it
-// holds; it does not substitute another file's contents for the ones
-// the event claimed to deliver.
-//
-// The path the runtime reads from is not installed as the session's
-// credential path. That path is resolved once, from the §4.7 manifest
-// member or the construction-time option, and stays authoritative for
-// every later read; one runtime process can serve a session while the
-// event names another session's file.
-//
-// spec: §4.7 (manifest credentialsPath, Full-level rotation protocol);
-// §6.1 (per-session credential file).
-func (s *session) reloadCredentials(path string) *CredentialBundle {
-	if path == "" {
-		s.cfg.logf("runtime: credential rotation: event carries no credentialsPath; keeping the bundle already held")
-	} else if err := s.loadCredentialsFrom(path); err != nil {
-		s.cfg.logf("runtime: credential rotation: %v", err)
-	}
-	s.credMu.RLock()
-	defer s.credMu.RUnlock()
-	return s.credentials
-}
-
-// Credentials returns the current §4.7 credential bundle, refreshed in
-// place by the CH-RUNTIMEOPS on rotation. It is safe to call from
-// any goroutine.
-func (s *session) Credentials() *CredentialBundle {
-	s.credMu.RLock()
-	defer s.credMu.RUnlock()
-	return s.credentials
-}
-
-func (s *session) manifestSessionID() string {
-	if s.manifest != nil {
-		return s.manifest.SessionID
-	}
-	return ""
-}
-
-func (s *session) manifestTaskID() string {
-	if s.manifest != nil {
-		return s.manifest.TaskID
-	}
-	return ""
+	p.manifest = &m
 }
 
 // stampParts sets SchemaVersion on every part that left it zero,
@@ -724,19 +578,33 @@ func stampParts(parts []MessagePart) []MessagePart {
 // frameWriter serializes §28.5.3 outbound frames. Every write is
 // followed by a flush before the next inbound read, honoring the
 // §28.5.3 stdout-flushing requirement. It also correlates outbound
-// tool_call frames with inbound tool_result frames.
+// tool_call frames with inbound tool_result frames, and holds the drop
+// mark of every ended session under its lock (sessionState.ended).
 type frameWriter struct {
 	mu  sync.Mutex
 	enc *json.Encoder
 	out io.Writer
 
-	pending map[string]chan inboundToolResult
+	pending map[string]pendingToolCall
 }
+
+// pendingToolCall is a tool_call awaiting its tool_result. owner is the
+// session whose turn issued it.
+type pendingToolCall struct {
+	ch    chan inboundToolResult
+	owner *sessionState
+}
+
+// errSessionEnded is returned for a frame addressed to a session whose
+// session_end the runtime already read. The frame is not written.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+var errSessionEnded = errors.New("session ended; frame dropped")
 
 func newFrameWriter(w io.Writer) *frameWriter {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	return &frameWriter{enc: enc, out: w, pending: map[string]chan inboundToolResult{}}
+	return &frameWriter{enc: enc, out: w, pending: map[string]pendingToolCall{}}
 }
 
 // write serializes one frame and flushes it. json.Encoder.Encode writes
@@ -744,6 +612,23 @@ func newFrameWriter(w io.Writer) *frameWriter {
 func (w *frameWriter) write(v any) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.encodeLocked(v)
+}
+
+// writeFor writes a frame addressed to owner, or drops it and returns
+// errSessionEnded when the owner's session already ended. The check and
+// the write happen under one lock, so no frame for the session follows
+// the frame loop's read of its session_end.
+func (w *frameWriter) writeFor(owner *sessionState, v any) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if owner != nil && owner.ended {
+		return errSessionEnded
+	}
+	return w.encodeLocked(v)
+}
+
+func (w *frameWriter) encodeLocked(v any) error {
 	if err := w.enc.Encode(v); err != nil {
 		return err
 	}
@@ -753,12 +638,27 @@ func (w *frameWriter) write(v any) error {
 	return nil
 }
 
-// registerToolCall records a pending §28.5.3 tool_call id and returns
-// the channel its tool_result will arrive on.
-func (w *frameWriter) registerToolCall(id string) chan inboundToolResult {
+// endOwner marks owner ended and cancels its pending tool_call waiters,
+// whose calls then return an error at once.
+func (w *frameWriter) endOwner(owner *sessionState) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	owner.ended = true
+	for id, pc := range w.pending {
+		if pc.owner == owner {
+			delete(w.pending, id)
+			close(pc.ch)
+		}
+	}
+}
+
+// registerToolCall records a pending §28.5.3 tool_call id for owner and
+// returns the channel its tool_result arrives on. The channel is closed
+// without a value when the owner's session ends first.
+func (w *frameWriter) registerToolCall(id string, owner *sessionState) chan inboundToolResult {
 	ch := make(chan inboundToolResult, 1)
 	w.mu.Lock()
-	w.pending[id] = ch
+	w.pending[id] = pendingToolCall{ch: ch, owner: owner}
 	w.mu.Unlock()
 	return ch
 }
@@ -767,7 +667,7 @@ func (w *frameWriter) registerToolCall(id string) chan inboundToolResult {
 // matching tool_call. It reports whether a pending call was found.
 func (w *frameWriter) deliverToolResult(tr inboundToolResult) bool {
 	w.mu.Lock()
-	ch, ok := w.pending[tr.ID]
+	pc, ok := w.pending[tr.ID]
 	if ok {
 		delete(w.pending, tr.ID)
 	}
@@ -775,7 +675,7 @@ func (w *frameWriter) deliverToolResult(tr inboundToolResult) bool {
 	if !ok {
 		return false
 	}
-	ch <- tr
+	pc.ch <- tr
 	return true
 }
 

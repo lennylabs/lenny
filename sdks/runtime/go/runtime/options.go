@@ -28,8 +28,7 @@ type config struct {
 	socketTransport bool
 	dialTimeout     time.Duration
 
-	manifestPath    string
-	credentialsPath string
+	manifestPath string
 
 	reader io.Reader
 	writer io.Writer
@@ -40,8 +39,8 @@ type config struct {
 }
 
 // defaultConfig is the Basic-level configuration: stdin/stdout with
-// socket-transport fallback, the standard §4.7 manifest and credential
-// paths, and stderr diagnostics.
+// socket-transport fallback, the standard §4.7 manifest path, and stderr
+// diagnostics.
 func defaultConfig() config {
 	return config{
 		level:           levelBasic,
@@ -97,15 +96,6 @@ func WithSocketTransport(enabled bool) Option {
 // /run/lenny/adapter-manifest.json.
 func WithManifestPath(path string) Option {
 	return func(c *config) { c.manifestPath = path }
-}
-
-// WithCredentialsPath sets the §4.7 runtime credential file path used
-// when the adapter manifest carries no credentialsPath. The manifest's
-// value wins, because the adapter writes one file per session at
-// /run/lenny/slots/{sessionId}/credentials.json and no fixed location
-// names it. spec: §4.7; §6.1.
-func WithCredentialsPath(path string) Option {
-	return func(c *config) { c.credentialsPath = path }
 }
 
 // WithLogger sets the diagnostic sink for SDK-internal messages

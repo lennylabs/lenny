@@ -26,8 +26,10 @@
 package sdks_test
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +37,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v5"
+
 	"github.com/lennylabs/lenny/cmd/lenny-ctl/runtimescaffold"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // runtimeRepoRoot walks up from the working directory to the module
@@ -489,4 +494,146 @@ func TestRuntimeSDKQuickStartTTHW(t *testing.T) {
 		t.Errorf("the scaffolded main.go does not import the runtime-author SDK")
 	}
 	t.Logf("§24.18 quick-start scaffolded a Go minimal runtime in %s", elapsed)
+}
+
+// sdkProcess is a runtime binary driven frame by frame over its stdin and
+// stdout.
+type sdkProcess struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	frames chan []byte
+}
+
+// startSDKProcess starts bin with stdin and stdout piped, reading stdout
+// one JSON Lines frame at a time.
+func startSDKProcess(t *testing.T, bin string) *sdkProcess {
+	t.Helper()
+	cmd := exec.Command(bin)
+	cmd.Env = append(os.Environ(), "LENNY_ADAPTER_MANIFEST="+filepath.Join(t.TempDir(), "absent.json"))
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start %s: %v", bin, err)
+	}
+	p := &sdkProcess{cmd: cmd, stdin: stdin, frames: make(chan []byte, 64)}
+	go func() {
+		defer close(p.frames)
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			p.frames <- append([]byte(nil), sc.Bytes()...)
+		}
+	}()
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return p
+}
+
+// send writes one frame line.
+func (p *sdkProcess) send(t *testing.T, line string) {
+	t.Helper()
+	if _, err := io.WriteString(p.stdin, line+"\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+}
+
+// next reads the next stdout frame, validates it against schema, and
+// returns it decoded.
+func (p *sdkProcess) next(t *testing.T, schema *jsonschema.Schema) map[string]any {
+	t.Helper()
+	select {
+	case raw, ok := <-p.frames:
+		if !ok {
+			t.Fatal("the runtime closed stdout")
+		}
+		var doc map[string]any
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if err := dec.Decode(&doc); err != nil {
+			t.Fatalf("stdout frame is not JSON: %v (%s)", err, raw)
+		}
+		if err := schema.Validate(doc); err != nil {
+			t.Errorf("stdout frame does not validate against the published schema: %v\n%s", err, raw)
+		}
+		return doc
+	case <-time.After(10 * time.Second):
+		t.Fatal("no stdout frame within 10s")
+		return nil
+	}
+}
+
+// replyText returns output[0].inline of a response frame.
+func replyText(doc map[string]any) string {
+	out, _ := doc["output"].([]any)
+	if len(out) == 0 {
+		return ""
+	}
+	part, _ := out[0].(map[string]any)
+	s, _ := part["inline"].(string)
+	return s
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Outbound: session_started), 28.5.3 (CH-MSGSOCK
+// Session errors), 4.7.10 (Runtime process lifetime), 15.7 (Runtime
+// Author SDKs)
+// diagnosis: the Go SDK wrote a session_started or response frame that
+// does not validate against the published JSON Lines schema, or one
+// runtime process did not serve two sequential sessions each under its
+// own context. The adapter reads session_started by its sessionId and
+// startId, and a runtime that answers the second session with the first
+// session's context, or with the context it loaded at process start,
+// serves session B under session A's experiment enrollment. The frames
+// come from Go structs whose JSON tags no compiler checks against the
+// schema, so the check reads the wire of the built echo example.
+func TestGoRuntimeSDKSessionFramesValidateAgainstSchema_spec_28_5_3(t *testing.T) {
+	c := schematest.NewCompiler(t)
+	schematest.MustAddLocalSchema(t, c, "https://schemas.lenny.dev/messagepart/v1.json", "schemas/messagepart.schema.json")
+	schema := schematest.MustCompile(t, c, "schemas/lenny-adapter-jsonl.schema.json")
+	p := startSDKProcess(t, buildRuntimeBinary(t, "./sdks/runtime/go/example/echo"))
+
+	sessions := []struct{ id, startID, variant string }{
+		{"sess_a", "st_1", "control"},
+		{"sess_b", "st_2", "treatment"},
+	}
+	for _, s := range sessions {
+		p.send(t, `{"type":"session_start","sessionId":"`+s.id+`","startId":"`+s.startID+`",`+
+			`"experimentContext":{"experimentId":"exp_1","variantId":"`+s.variant+`","inherited":false},`+
+			`"tracingContext":{"otel_trace_id":"0af7651916cd43dd"},`+
+			`"llm":{"deliveryMode":"proxy","dialect":"anthropic","apiKeyEnv":"ANTHROPIC_API_KEY","headers":{"anthropic-version":"2023-06-01"}}}`)
+		started := p.next(t, schema)
+		if started["type"] != "session_started" || started["sessionId"] != s.id || started["startId"] != s.startID || started["error"] != nil {
+			t.Fatalf("frame after session_start(%s) = %v, want session_started for %s without error", s.id, started, s.startID)
+		}
+		p.send(t, `{"type":"message","id":"msg_`+s.id+`","sessionId":"`+s.id+`","input":[{"type":"text","inline":"ping"}]}`)
+		resp := p.next(t, schema)
+		want := "session=" + s.id + " variant=" + s.variant
+		if resp["type"] != "response" || resp["sessionId"] != s.id || !strings.Contains(replyText(resp), want) {
+			t.Fatalf("response for %s = %v, want its sessionId and %q in the reply", s.id, resp, want)
+		}
+		p.send(t, `{"type":"session_end","sessionId":"`+s.id+`"}`)
+	}
+
+	// Session errors: a message for a session the runtime does not hold,
+	// and a session_start whose credential file cannot be read.
+	p.send(t, `{"type":"message","id":"msg_x","sessionId":"sess_a","input":[{"type":"text","inline":"late"}]}`)
+	if resp := p.next(t, schema); resp["type"] != "response" || resp["sessionId"] != "sess_a" || resp["error"] == nil {
+		t.Fatalf("response for an ended session = %v, want an error response for sess_a", resp)
+	}
+	missing := filepath.Join(t.TempDir(), "slots", "sess_c", "credentials.json")
+	p.send(t, `{"type":"session_start","sessionId":"sess_c","startId":"st_3","credentialsPath":"`+missing+`"}`)
+	if started := p.next(t, schema); started["type"] != "session_started" || started["startId"] != "st_3" || started["error"] == nil {
+		t.Fatalf("frame = %v, want session_started for st_3 carrying error", started)
+	}
+	p.send(t, `{"type":"heartbeat","ts":1}`)
+	if ack := p.next(t, schema); ack["type"] != "heartbeat_ack" {
+		t.Fatalf("frame = %v, want heartbeat_ack from the still-running process", ack)
+	}
+	_ = p.stdin.Close()
+	if err := p.cmd.Wait(); err != nil {
+		t.Fatalf("runtime exit after stdin closed: %v", err)
+	}
 }
