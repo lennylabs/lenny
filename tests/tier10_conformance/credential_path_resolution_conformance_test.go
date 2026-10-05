@@ -633,7 +633,8 @@ func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) 
 		t.Fatalf("no diagnostic reported the event carrying no credentialsPath; the logged lines were %v", logs.lines())
 	}
 
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
+	// The runtime ends on stdin EOF: no CH-RUNTIMEOPS frame ends the
+	// process (spec: §4.7.10, Runtime process lifetime).
 	if err := rt.close(t); err != nil {
 		t.Fatalf("Run returned %v, want a clean exit", err)
 	}
@@ -665,7 +666,8 @@ func TestGoRuntimeSDKRotationReloadsOnlyTheNamedSession_spec_4_7_10(t *testing.T
 	if p := rt.ask(t, "sess_b"); p != "openai" {
 		t.Fatalf("sess_b provider after sess_a's rotation = %q, want openai (unchanged)", p)
 	}
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
+	// The runtime ends on stdin EOF: no CH-RUNTIMEOPS frame ends the
+	// process (spec: §4.7.10, Runtime process lifetime).
 	if err := rt.close(t); err != nil {
 		t.Fatalf("Run returned %v, want a clean exit", err)
 	}

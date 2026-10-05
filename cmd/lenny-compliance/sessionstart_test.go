@@ -11,10 +11,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // spec: 28.5.3 (CH-MSGSOCK, Inbound: session_start)
@@ -75,53 +78,73 @@ func TestBasicCheckSkipsSessionStartedBeforeResponse_spec_28_5_3(t *testing.T) {
 	}
 }
 
-// spec: 28.5.3 (CH-RUNTIMEOPS, Messages), 15.4.6
+// spec: 15.4.6 (Test categories by integration level), 28.5.3 (CH-MSGSOCK,
+// Outbound: session_started)
 //
-// openComplianceSession writes the session_start prefix and one message
-// for the session, and returns once the response arrives past any
-// session_started. It fails when stdout ends first and when the first
-// non-acknowledgement frame is not a response.
-func TestOpenComplianceSessionWaitsForTheResponse_spec_28_5_3(t *testing.T) {
+// awaitSessionStarted skips every frame other than the session_started
+// that carries the session and the start, including an acknowledgement
+// for another start; it fails when the matching frame carries error, when
+// stdout ends first, and, distinguishably under errors.Is, when the wait
+// elapses first.
+func TestAwaitSessionStartedReadsTheMatchingAcknowledgement_spec_15_4_6(t *testing.T) {
+	ack := func(session, start, extra string) string {
+		return `{"type":"session_started","sessionId":"` + session + `","startId":"` + start + `"` + extra + `}` + "\n"
+	}
 	cases := []struct {
-		name    string
-		stdout  string
-		wantErr string
+		name     string
+		stdout   string
+		wantErr  string
+		wantWait bool
 	}{
 		{
-			name:   "an acknowledgement then a response",
-			stdout: `{"type":"session_started","sessionId":"` + complianceSessionID + `","startId":"compliance-1"}` + "\n" + `{"type":"response","text":"pong"}` + "\n",
+			name:   "the matching acknowledgement after other frames",
+			stdout: `{"type":"response","text":"x"}` + "\n" + ack("sess_other", complianceStartID, "") + ack(complianceSessionID, "compliance-0", "") + ack(complianceSessionID, complianceStartID, ""),
 		},
-		{name: "stdout ends first", stdout: "", wantErr: "closed stdout"},
-		{name: "a frame other than a response", stdout: `{"type":"heartbeat_ack"}` + "\n", wantErr: "expected a response"},
+		{
+			name:    "an acknowledgement carrying error",
+			stdout:  ack(complianceSessionID, complianceStartID, `,"error":{"code":"RUNTIME_ERROR","message":"no context"}`),
+			wantErr: "carries error RUNTIME_ERROR",
+		},
+		{name: "stdout ends first", stdout: ack(complianceSessionID, "compliance-0", ""), wantErr: "closed stdout"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var stdin strings.Builder
-			err := openComplianceSession(&stdin, bufio.NewScanner(strings.NewReader(tc.stdout)), time.Second)
-			if tc.wantErr == "" && err != nil {
-				t.Fatalf("openComplianceSession: %v", err)
+			r := newFrameReader(bufio.NewScanner(strings.NewReader(tc.stdout)))
+			defer r.close()
+			err := awaitSessionStarted(r, complianceSessionID, complianceStartID, time.Second)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("awaitSessionStarted: %v", err)
+				}
+				return
 			}
-			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Fatalf("openComplianceSession err = %v, want one naming %q", err, tc.wantErr)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("awaitSessionStarted err = %v, want one naming %q", err, tc.wantErr)
 			}
-			written := strings.Split(strings.TrimSpace(stdin.String()), "\n")
-			if len(written) != 2 || written[0] != complianceSessionStart || !strings.Contains(written[1], `"type":"message"`) {
-				t.Fatalf("stdin = %q, want the session_start prefix followed by one message", written)
+			if errors.Is(err, errSessionStartedWait) {
+				t.Fatalf("awaitSessionStarted err = %v, which reads as an expired wait", err)
 			}
 		})
 	}
 }
 
-// spec: 28.5.3 (CH-RUNTIMEOPS, Messages), 15.4.6
+// spec: 15.4.6 (Test categories by integration level), 28.5.3 (CH-MSGSOCK,
+// Outbound: session_started rule 3)
 //
-// openComplianceSession gives up when no response arrives within its
-// wait, so a runtime that never answers fails the check rather than
-// stalling it.
-func TestOpenComplianceSessionTimesOut_spec_28_5_3(t *testing.T) {
+// A read that outlasts its wait fails with an error that wraps
+// errSessionStartedWait, so a caller tells an expired wait apart from the
+// end of stdout; and the battery's wait is the adapter's default
+// acknowledgement timeout plus the fixed margin.
+func TestAwaitSessionStartedExpires_spec_15_4_6(t *testing.T) {
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
-	err := openComplianceSession(io.Discard, bufio.NewScanner(pr), 50*time.Millisecond)
-	if err == nil || !strings.Contains(err.Error(), "did not answer") {
-		t.Fatalf("openComplianceSession err = %v, want a timeout", err)
+	r := newFrameReader(bufio.NewScanner(pr))
+	defer r.close()
+	err := awaitSessionStarted(r, complianceSessionID, complianceStartID, 50*time.Millisecond)
+	if !errors.Is(err, errSessionStartedWait) {
+		t.Fatalf("awaitSessionStarted err = %v, want one wrapping errSessionStartedWait", err)
+	}
+	if got, want := sessionStartedWait(), runtimekit.DefaultSessionStartAckTimeout+time.Second; got != want {
+		t.Fatalf("sessionStartedWait = %s, want the adapter default plus one second (%s)", got, want)
 	}
 }

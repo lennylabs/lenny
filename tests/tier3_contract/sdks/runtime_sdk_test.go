@@ -268,12 +268,29 @@ func requireSessionEcho(t *testing.T, sdk string, report complianceReport) {
 	}
 }
 
-// spec: 28.5.3, 15.7 (Go runtime SDK, Basic level)
+// sessionLifetimeCheck is the Basic-level lenny-compliance check that opens
+// two sequential sessions and two concurrent ones on one runtime process,
+// ending the sequential ones with session_end, and requires every message
+// answered and the process alive until stdin closes.
+const sessionLifetimeCheck = "session_lifetime"
+
+// requireSessionLifetime fails when the named SDK's runtime did not serve
+// the sessions of the session lifetime check on one process.
+func requireSessionLifetime(t *testing.T, sdk string, report complianceReport) {
+	t.Helper()
+	if !checkPassed(report, sessionLifetimeCheck) {
+		t.Errorf("%s SDK runtime failed %s: %s", sdk, sessionLifetimeCheck, checkDetail(report, sessionLifetimeCheck))
+	}
+}
+
+// spec: 28.5.3, 15.7 (Go runtime SDK, Basic level), 15.4.6 (session
+// lifetime)
 // diagnosis: the SDK-based echo runtime (sdks/runtime/go/example/echo)
 // must clear every Basic-level lenny-compliance check: stdin/stdout
 // JSON Lines framing, message/response round trip, heartbeat ack,
-// shutdown within the deadline, unknown-type tolerance, and sequential
-// messages. A failed check means the SDK protocol loop does not honor
+// shutdown within the deadline, unknown-type tolerance, and the session
+// lifetime of sequential and concurrent sessions on one process. A failed
+// check means the SDK protocol loop does not honor
 // the §28.5.3 contract.
 func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
@@ -281,9 +298,11 @@ func TestRuntimeSDKAdapterBinaryProtocolGo(t *testing.T) {
 	report := runCompliance(t, compliance, runtimeBin, "basic")
 	assertAllPassed(t, report)
 	requireSessionEcho(t, "Go", report)
+	requireSessionLifetime(t, "Go", report)
 }
 
-// spec: 28.5.3, 15.7 (Python runtime SDK, Basic level)
+// spec: 28.5.3, 15.7 (Python runtime SDK, Basic level), 15.4.6 (session
+// lifetime)
 // diagnosis: the Python SDK echo runtime
 // (sdks/runtime/python, lenny_runtime.examples.echo) must clear every
 // Basic-level lenny-compliance check. A failed check means the Python
@@ -296,9 +315,11 @@ func TestRuntimeSDKAdapterBinaryProtocolPython(t *testing.T) {
 	report := runCompliance(t, compliance, runtimeBin, "basic")
 	assertAllPassed(t, report)
 	requireSessionEcho(t, "Python", report)
+	requireSessionLifetime(t, "Python", report)
 }
 
-// spec: 28.5.3, 15.7 (TypeScript runtime SDK, Basic level)
+// spec: 28.5.3, 15.7 (TypeScript runtime SDK, Basic level), 15.4.6
+// (session lifetime)
 // diagnosis: the TypeScript SDK echo runtime
 // (sdks/runtime/typescript, examples/echo) must clear every Basic-level
 // lenny-compliance check. A failed check means the TypeScript SDK
@@ -312,6 +333,7 @@ func TestRuntimeSDKAdapterBinaryProtocolTypeScript(t *testing.T) {
 	report := runCompliance(t, compliance, runtimeBin, "basic")
 	assertAllPassed(t, report)
 	requireSessionEcho(t, "TypeScript", report)
+	requireSessionLifetime(t, "TypeScript", report)
 }
 
 // spec: 15.4.3, 15.7 (Go runtime SDK, Standard level)

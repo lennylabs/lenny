@@ -23,6 +23,7 @@ import (
 type outFrame struct {
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
+	StartID   string `json:"startId"`
 	Output    []struct {
 		Inline string `json:"inline"`
 	} `json:"output"`
@@ -399,4 +400,108 @@ func inline(f outFrame) string {
 		b.WriteString(p.Inline)
 	}
 	return b.String()
+}
+
+// sessionStart builds a session_start frame for sessionID with startID.
+func sessionStart(sessionID, startID string) string {
+	b, _ := json.Marshal(map[string]any{"type": "session_start", "sessionId": sessionID, "startId": startID})
+	return string(b) + "\n"
+}
+
+// sessionEnd builds a session_end frame for sessionID.
+func sessionEnd(sessionID string) string {
+	b, _ := json.Marshal(map[string]any{"type": "session_end", "sessionId": sessionID})
+	return string(b) + "\n"
+}
+
+// acks returns the session_started frames among frames, in order.
+func acks(frames []outFrame) []outFrame {
+	var out []outFrame
+	for _, f := range frames {
+		if f.Type == "session_started" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start, Outbound: session_started)
+//
+// Each session_start is answered with a session_started echoing its
+// sessionId and startId, including a repeated start for a session the
+// runtime already holds. The repeated start keeps the session's worker,
+// so the session's sequence counter continues across it.
+func TestSessionStartIsAcknowledgedAndKeepsTheWorker_spec_28_5_3(t *testing.T) {
+	frames := drive(t, sessionStart("sess-01", "st_1")+
+		message("sess-01", "a1")+
+		sessionStart("sess-01", "st_2")+
+		message("sess-01", "a2")+
+		sessionStart("sess-02", "st_3"))
+
+	got := acks(frames)
+	want := []outFrame{{Type: "session_started", SessionID: "sess-01", StartID: "st_1"}, {Type: "session_started", SessionID: "sess-01", StartID: "st_2"}, {Type: "session_started", SessionID: "sess-02", StartID: "st_3"}}
+	if len(got) != len(want) {
+		t.Fatalf("session_started frames = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i].SessionID != want[i].SessionID || got[i].StartID != want[i].StartID {
+			t.Fatalf("session_started[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	responses := responsesOnly(frames)
+	if len(responses) != 2 || !strings.Contains(inline(responses[1]), "[echo seq=2]") {
+		t.Fatalf("responses = %+v, want the repeated start to keep sess-01's worker (second response seq=2)", responses)
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_end), 4.7.10 (Runtime process
+// lifetime)
+//
+// session_end releases the session's worker, so a later session_start for
+// the same session builds a fresh one whose sequence restarts at 1, and a
+// session_end for a session the runtime does not hold is ignored. The
+// process keeps serving: a later heartbeat is still answered.
+func TestSessionEndReleasesTheWorker_spec_28_5_3(t *testing.T) {
+	frames := drive(t, sessionStart("sess-01", "st_1")+
+		message("sess-01", "a1")+
+		sessionEnd("sess-01")+
+		sessionEnd("sess-unknown")+
+		sessionStart("sess-01", "st_2")+
+		message("sess-01", "a2")+
+		`{"type":"heartbeat","ts":1}`+"\n")
+
+	responses := responsesOnly(frames)
+	if len(responses) != 2 {
+		t.Fatalf("responses = %+v, want one per message", responses)
+	}
+	if got := inline(responses[1]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a2") {
+		t.Fatalf("response after session_end and a new session_start = %q, want a fresh worker's seq=1 echo of a2", got)
+	}
+	var sawAck bool
+	for _, f := range frames {
+		sawAck = sawAck || f.Type == "heartbeat_ack"
+	}
+	if !sawAck {
+		t.Fatal("no heartbeat_ack after session_end: the process stopped serving")
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start)
+//
+// A session boundary frame carrying no sessionId names no session, so it
+// is a protocol error like any other unaddressed session-scoped frame, and
+// a malformed session_start body is one too.
+func TestUnaddressedOrMalformedSessionFrameIsAProtocolError_spec_28_5_3(t *testing.T) {
+	for _, in := range []string{
+		`{"type":"session_start","startId":"st_1"}` + "\n",
+		`{"type":"session_end"}` + "\n",
+		`{"type":"session_start","sessionId":"sess-01","startId":7}` + "\n",
+	} {
+		var out bytes.Buffer
+		err := run(context.Background(), strings.NewReader(in), &out, io.Discard)
+		var pe protocolError
+		if !errors.As(err, &pe) {
+			t.Fatalf("run(%q) err = %v, want a protocol error", in, err)
+		}
+	}
 }

@@ -76,17 +76,15 @@ export interface LifecycleHooks {
 // names, or undefined when the runtime does not hold it or failed to
 // create its context. reloadCredentials re-reads the file an event names
 // into that session's bundle and resolves to the bundle the session holds
-// afterwards. endProcess handles the terminate event: it records the
-// termination reason every live session's onTerminate receives and stops
-// the frame loop.
+// afterwards. No CH-RUNTIMEOPS frame ends the process: a session ends on
+// the CH-MSGSOCK session_end and the process on shutdown or stdin EOF
+// (spec: §4.7.10, Runtime process lifetime).
 export interface LifecycleHost {
-  stdoutWriter: FrameWriter;
   heldSession(sessionId: string): unknown;
   reloadCredentials(
     session: unknown,
     path: string,
   ): Promise<CredentialBundle | undefined>;
-  endProcess(reason: string, deadlineMs: number): void;
   log(msg: string): void;
 }
 
@@ -158,7 +156,7 @@ export class Lifecycle {
   }
 
   // loop processes inbound CH-RUNTIMEOPS frames until the
-  // connection closes or the adapter sends terminate.
+  // connection closes.
   private async loop(): Promise<void> {
     for (;;) {
       let line: string | null;
@@ -181,10 +179,6 @@ export class Lifecycle {
         continue;
       }
       const kind = typeof frame.type === "string" ? frame.type : "";
-      if (kind === "terminate") {
-        await this.handleTerminate(frame);
-        return;
-      }
       if (!SESSION_SCOPED_EVENTS.has(kind)) {
         this.host.log(`ignoring unknown lifecycle event "${kind}"`);
         continue;
@@ -310,30 +304,6 @@ export class Lifecycle {
     } else {
       this.host.log(`lifecycle ${event.type}`);
     }
-  }
-
-  // handleTerminate answers a CH-RUNTIMEOPS terminate event: it emits a
-  // final §28.5.3 response frame on stdout carrying a DEADLINE_EXCEEDED
-  // error, records the termination reason every live session's onTerminate
-  // receives, and stops the frame loop so the runtime exits.
-  private async handleTerminate(
-    frame: Record<string, unknown>,
-  ): Promise<void> {
-    const reasonRaw = typeof frame.reason === "string" ? frame.reason : "";
-    const reason = reasonRaw === "" ? "lifecycle_terminate" : reasonRaw;
-    const deadlineMs =
-      typeof frame.deadlineMs === "number" ? frame.deadlineMs : 0;
-    try {
-      await this.host.stdoutWriter.write({
-        type: "response",
-        output: [],
-        error: { code: "DEADLINE_EXCEEDED", message: reason },
-        sessionId: typeof frame.sessionId === "string" ? frame.sessionId : "",
-      });
-    } catch (err) {
-      this.host.log(`write terminate response: ${(err as Error).message}`);
-    }
-    this.host.endProcess(reason, deadlineMs);
   }
 
   // send writes an arbitrary frame on the CH-RUNTIMEOPS. It is the escape

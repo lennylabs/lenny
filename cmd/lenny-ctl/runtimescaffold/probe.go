@@ -52,7 +52,7 @@ var checkLevel = map[string]compliance.Level{
 	"heartbeat_emits_ack":            compliance.LevelBasic,
 	"unknown_type_ignored":           compliance.LevelBasic,
 	"shutdown_exits_within_deadline": compliance.LevelBasic,
-	"sequential_messages_handled":    compliance.LevelBasic,
+	"session_lifetime":               compliance.LevelBasic,
 	// Standard categories (§15.4.6).
 	"mcp_nonce_handshake":               compliance.LevelStandard,
 	"platform_mcp_tool_invocation":      compliance.LevelStandard,

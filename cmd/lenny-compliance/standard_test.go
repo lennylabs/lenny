@@ -24,6 +24,11 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// A test that sets complianceStubEnv runs this test binary as the
+	// runtime under test; the child plays the stub instead of the tests.
+	if mode := os.Getenv(complianceStubEnv); mode != "" {
+		os.Exit(runComplianceStub(mode))
+	}
 	tmp, err := os.MkdirTemp("", "compliance-standard-test-*")
 	if err != nil {
 		panic("standard battery TestMain: mkdtemp: " + err.Error())
@@ -113,7 +118,7 @@ func TestStandardBatteryReusesBasicChecks(t *testing.T) {
 		"binary_exists_and_executes", "empty_stdin_exits_cleanly",
 		"message_emits_response", "heartbeat_emits_ack",
 		"unknown_type_ignored", "shutdown_exits_within_deadline",
-		"sequential_messages_handled", "response_matches_jsonl_schema",
+		"session_lifetime", "response_matches_jsonl_schema",
 		"messagepart_schema_compliance",
 	}
 	got := map[string]Check{}

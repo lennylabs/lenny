@@ -235,7 +235,6 @@ class _Process:
         self._workers: list[threading.Thread] = []
         self._workers_lock = threading.Lock()
         self._exit_reason: TerminationReason | None = None
-        self._loop_stopped = False
         self._socket_stream: SocketStream | None = None
 
     def run(self) -> None:
@@ -288,7 +287,7 @@ class _Process:
         spec: §28.5.3 (CH-MSGSOCK).
         """
         reader = LineReader(in_source)
-        while not self._loop_stopped:
+        while True:
             try:
                 line = reader.next()
             except (OSError, ValueError) as err:
@@ -727,20 +726,11 @@ class _Process:
                     self._opts.dial_timeout_s,
                     self._opts.lifecycle or LifecycleHooks(),
                     LifecycleHost(
-                        write_stdout_frame=self._safe_write,
                         held_session=self._held_session,
                         reload_credentials=self._reload_credentials,
-                        end_process=self._end_process,
                         log=lambda msg: _logf(self._opts, f"runtime: {msg}"),
                     ),
                 )
-
-    def _end_process(self, reason: str, deadline_ms: int) -> None:
-        """Record the reason every live session's on_terminate receives
-        and signal the §28.5.3 frame loop to exit. The CH-RUNTIMEOPS
-        calls it on a terminate event."""
-        self._exit_reason = TerminationReason(reason=reason, deadline_ms=deadline_ms)
-        self._loop_stopped = True
 
     def _close_channels(self) -> None:
         """Release the higher-level channels."""

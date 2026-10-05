@@ -170,7 +170,6 @@ class RuntimeProcess {
   // including one a session_end removed, so run waits for each.
   private readonly unreleased = new Set<SessionRecord>();
   private exitReason?: TerminationReason;
-  private loopStopped = false;
 
   constructor(
     private readonly handler: Handler,
@@ -226,7 +225,7 @@ class RuntimeProcess {
   // spec: §28.5.3 (CH-MSGSOCK).
   private async loop(input: Readable): Promise<void> {
     const reader = new LineReader(input);
-    while (!this.loopStopped) {
+    for (;;) {
       let line: string | null;
       try {
         line = await reader.next();
@@ -624,14 +623,9 @@ class RuntimeProcess {
           this.cfg.dialTimeoutMs,
           this.cfg.lifecycle,
           {
-            stdoutWriter: this.writer,
             heldSession: (sessionId) => this.heldSession(sessionId),
             reloadCredentials: (session, path) =>
               this.reloadCredentials(session as SessionRecord, path),
-            endProcess: (reason, deadlineMs) => {
-              this.exitReason = { reason, deadlineMs };
-              this.loopStopped = true;
-            },
             log: (msg) => this.cfg.logger(`runtime: ${msg}`),
           },
         );

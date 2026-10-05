@@ -33,9 +33,8 @@ var lifecycleCapabilities = []string{
 // The channel is non-nil only when Run was configured with
 // WithFullLevel and the manifest advertised a lifecycle socket.
 type Lifecycle struct {
-	conn   net.Conn
-	w      *frameWriter
-	cancel context.CancelFunc
+	conn net.Conn
+	w    *frameWriter
 
 	mu     sync.Mutex
 	closed bool
@@ -109,9 +108,11 @@ func WithLifecycleHandlers(opts ...LifecycleOption) Option {
 // manifest-advertised socket, completes the lifecycle_capabilities /
 // lifecycle_support handshake, and starts the event loop. It runs once
 // per process; the loop routes each session-scoped event to the session
-// it names. cancel stops the frame loop when the adapter sends a
-// terminate event.
-func (p *process) dialLifecycle(ctx context.Context, cancel context.CancelFunc) (*Lifecycle, error) {
+// it names. No CH-RUNTIMEOPS frame ends the process: a session ends on
+// CH-MSGSOCK session_end, and the process on shutdown or stdin EOF.
+//
+// spec: §4.7.10 (Runtime process lifetime), §28.5.3 (CH-RUNTIMEOPS).
+func (p *process) dialLifecycle(ctx context.Context) (*Lifecycle, error) {
 	if p.manifest == nil || p.manifest.RuntimeOps == nil || p.manifest.RuntimeOps.Socket == "" {
 		return nil, errors.New("adapter manifest has no CH-RUNTIMEOPS socket")
 	}
@@ -120,10 +121,9 @@ func (p *process) dialLifecycle(ctx context.Context, cancel context.CancelFunc) 
 		return nil, fmt.Errorf("dial lifecycle socket: %w", err)
 	}
 	lc := &Lifecycle{
-		conn:   conn,
-		w:      newFrameWriter(conn),
-		cancel: cancel,
-		hooks:  p.cfg.lifecycleHooks,
+		conn:  conn,
+		w:     newFrameWriter(conn),
+		hooks: p.cfg.lifecycleHooks,
 	}
 	reader := bufio.NewReader(conn)
 
@@ -179,7 +179,7 @@ var sessionScopedEvents = map[string]bool{
 }
 
 // loop processes inbound CH-RUNTIMEOPS frames until the connection
-// closes or the adapter sends terminate.
+// closes or ctx ends.
 func (lc *Lifecycle) loop(ctx context.Context, reader *bufio.Reader, p *process) {
 	for {
 		select {
@@ -199,10 +199,6 @@ func (lc *Lifecycle) loop(ctx context.Context, reader *bufio.Reader, p *process)
 		if err := json.Unmarshal(line, &ft); err != nil {
 			p.cfg.logf("runtime: malformed lifecycle frame: %v", err)
 			continue
-		}
-		if ft.Type == "terminate" {
-			lc.handleTerminate(line, p)
-			return
 		}
 		if !sessionScopedEvents[ft.Type] {
 			p.cfg.logf("runtime: ignoring unknown lifecycle event %q", ft.Type)
@@ -319,35 +315,6 @@ func (lc *Lifecycle) handleDeadline(ev LifecycleEvent, p *process) {
 		lc.hooks.onDeadline(ev)
 	} else {
 		p.cfg.logf("runtime: lifecycle %s: %s", ev.Type, strip(ev.Raw))
-	}
-}
-
-// handleTerminate answers a CH-RUNTIMEOPS terminate event: it emits a
-// final §28.5.3 response frame on stdout carrying a DEADLINE_EXCEEDED
-// error, records the termination reason every live session's OnTerminate
-// receives, and cancels the frame loop so the runtime exits.
-func (lc *Lifecycle) handleTerminate(line []byte, p *process) {
-	var req struct {
-		Reason     string `json:"reason"`
-		DeadlineMS int    `json:"deadlineMs"`
-		SessionID  string `json:"sessionId"`
-	}
-	_ = json.Unmarshal(line, &req)
-	reason := req.Reason
-	if reason == "" {
-		reason = "lifecycle_terminate"
-	}
-	if err := p.w.write(outboundResponse{
-		Type:      "response",
-		Output:    []MessagePart{},
-		Error:     &ResponseError{Code: "DEADLINE_EXCEEDED", Message: reason},
-		SessionID: req.SessionID,
-	}); err != nil {
-		p.cfg.logf("runtime: write terminate response: %v", err)
-	}
-	p.setExitReason(TerminationReason{Reason: reason, DeadlineMS: req.DeadlineMS})
-	if lc.cancel != nil {
-		lc.cancel()
 	}
 }
 

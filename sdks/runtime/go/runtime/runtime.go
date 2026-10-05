@@ -256,15 +256,14 @@ func (p *process) run(ctx context.Context) error {
 	defer cancel()
 	p.ctx = ctx
 
-	if err := p.startChannels(ctx, cancel); err != nil {
+	if err := p.startChannels(ctx); err != nil {
 		return err
 	}
 	defer p.closeChannels()
 
-	// A CH-RUNTIMEOPS terminate event cancels ctx while the frame
-	// loop may be blocked on a stdin read. Closing the transport on
-	// cancellation unblocks that read so the loop observes EOF and the
-	// runtime exits. For the stdin/stdout transport Close is a no-op and
+	// The caller's ctx may end while the frame loop is blocked on a stdin
+	// read. Closing the transport on cancellation unblocks that read so
+	// the loop observes EOF and the runtime exits. For the stdin/stdout transport Close is a no-op and
 	// the adapter's stdin close drives the exit instead.
 	closerDone := make(chan struct{})
 	go func() {
@@ -279,7 +278,7 @@ func (p *process) run(ctx context.Context) error {
 
 	p.state.Store(int32(stateReady))
 
-	loopErr := p.loop(ctx, transport.Reader, cancel)
+	loopErr := p.loop(ctx, transport.Reader)
 
 	// Every live session drains the messages it queued and then runs
 	// OnTerminate with the shutdown frame's reason, or stdin_closed when
@@ -312,8 +311,7 @@ func (p *process) setExitReason(r TerminationReason) {
 
 // startChannels dials the §15.4.3 platform MCP server, connector MCP
 // servers, and CH-RUNTIMEOPS for the configured integration level, once
-// per process. cancel lets a CH-RUNTIMEOPS terminate event stop the
-// frame loop.
+// per process.
 //
 // When a higher-level channel is configured but the adapter manifest
 // does not advertise it (no manifest, or a manifest without the socket
@@ -325,7 +323,7 @@ func (p *process) setExitReason(r TerminationReason) {
 // adapter promised a channel the runtime could not reach.
 //
 // spec: §15.7 (Run dials the sockets once per process).
-func (p *process) startChannels(ctx context.Context, cancel context.CancelFunc) error {
+func (p *process) startChannels(ctx context.Context) error {
 	if p.cfg.level >= levelStandard {
 		switch {
 		case !p.manifestHasPlatformMCP():
@@ -343,7 +341,7 @@ func (p *process) startChannels(ctx context.Context, cancel context.CancelFunc) 
 		case !p.manifestHasLifecycle():
 			p.cfg.logf("runtime: the manifest advertises no CH-RUNTIMEOPS socket; lifecycle features disabled")
 		default:
-			lc, err := p.dialLifecycle(ctx, cancel)
+			lc, err := p.dialLifecycle(ctx)
 			if err != nil {
 				return fmt.Errorf("runtime: Full-level lifecycle setup: %w", err)
 			}
@@ -389,7 +387,7 @@ func (p *process) closeChannels() {
 // frame arrives, or an unrecoverable error occurs.
 //
 // spec: §28.5.3 (CH-MSGSOCK).
-func (p *process) loop(ctx context.Context, in io.Reader, cancel context.CancelFunc) error {
+func (p *process) loop(ctx context.Context, in io.Reader) error {
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), maxFrameBytes)
 

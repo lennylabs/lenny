@@ -225,7 +225,7 @@ func basicCases() []checkCase {
 		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
 		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
 		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
-		{"sequential_messages_handled", "15.4", checkSequentialMessages},
+		{"session_lifetime", "15.4.6", checkSessionLifetime},
 		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
 		{"messagepart_schema_compliance", "15.4.6", checkMessagePartSchemaCompliance},
 		{"response_error_code_in_proto_catalog", "24.8", checkResponseErrorCodeCatalog},
@@ -436,7 +436,11 @@ const complianceSessionID = "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1"
 // when a credential file was provisioned and never as an empty string.
 // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
 const complianceSessionStart = `{"type":"session_start","sessionId":"` + complianceSessionID +
-	`","startId":"compliance-1","experimentContext":null,"tracingContext":null,"llm":null}`
+	`","startId":"` + complianceStartID + `","experimentContext":null,"tracingContext":null,"llm":null}`
+
+// complianceStartID is the startId of complianceSessionStart, which the
+// session_started that answers it echoes.
+const complianceStartID = "compliance-1"
 
 // withSessionStart prefixes a check's stdin lines with the session_start
 // frame that opens complianceSessionID. Every check that writes a
@@ -724,23 +728,4 @@ func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
 		return "", fmt.Errorf("exit took %v, exceeds the %s deadline_ms", elapsed.Round(time.Millisecond), deadline)
 	}
 	return fmt.Sprintf("clean exit in %s (deadline %s)", elapsed.Round(time.Millisecond), deadline), nil
-}
-
-func checkSequentialMessages(binary string, timeout time.Duration, _ bool) (string, error) {
-	in := withSessionStart(
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"sessionId":"`+complianceSessionID+`","input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"sessionId":"`+complianceSessionID+`","input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"sessionId":"`+complianceSessionID+`","input":[{"type":"text","inline":"three"}]}`,
-	)
-	stdout, _, code, err := driveAdapter(binary, in, 3, timeout)
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("exit %d", code)
-	}
-	if len(stdout) < 3 {
-		return "", fmt.Errorf("got %d response(s), want 3", len(stdout))
-	}
-	return fmt.Sprintf("3 messages → 3 responses (%d total stdout lines)", len(stdout)), nil
 }

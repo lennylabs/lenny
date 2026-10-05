@@ -102,7 +102,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 			return protocolError{msg: fmt.Sprintf("session-scoped %q frame carries no sessionId", env.Type)}
 		}
 
-		if err := d.route(env.SessionID, line); err != nil {
+		if err := d.dispatch(env.Type, env.SessionID, line); err != nil {
 			return err
 		}
 	}
@@ -122,8 +122,80 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 // under §15.4's unknown-type tolerance rather than under the addressing
 // rule. spec: §15.4; §28.5.3.
 var sessionScopedInboundTypes = map[string]bool{
-	"message":     true,
-	"tool_result": true,
+	"session_start": true,
+	"session_end":   true,
+	"message":       true,
+	"tool_result":   true,
+}
+
+// dispatch hands one addressed frame to the session it names. The session
+// boundary frames act on the worker map itself: session_start creates or
+// keeps the session's worker and acknowledges it, and session_end closes
+// and drains the worker and forgets it. Every other addressed frame goes
+// to the session's echocore loop.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start, Inbound: session_end,
+// Outbound: session_started).
+func (d *demux) dispatch(frameType, sessionID string, line []byte) error {
+	switch frameType {
+	case "session_start":
+		return d.startSession(sessionID, line)
+	case "session_end":
+		d.endSession(sessionID)
+		return nil
+	default:
+		return d.route(sessionID, line)
+	}
+}
+
+// startSession creates the session's worker, or keeps the one a repeated
+// session_start finds, and then writes session_started echoing the frame's
+// sessionId and startId. The worker is the session's context, so the
+// acknowledgement follows its creation, and a repeated start is answered
+// again with its own startId.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start rule 3, Outbound:
+// session_started rule 1).
+func (d *demux) startSession(sessionID string, line []byte) error {
+	var start struct {
+		StartID string `json:"startId"`
+	}
+	if err := json.Unmarshal(line, &start); err != nil {
+		return protocolError{msg: fmt.Sprintf("malformed session_start: %v", err)}
+	}
+	d.worker(sessionID)
+	ack, err := json.Marshal(map[string]string{
+		"type":      "session_started",
+		"sessionId": sessionID,
+		"startId":   start.StartID,
+	})
+	if err != nil {
+		return fmt.Errorf("encode session_started: %w", err)
+	}
+	if err := d.writeFrame(ack); err != nil {
+		return fmt.Errorf("write session_started: %w", err)
+	}
+	return nil
+}
+
+// endSession releases the session's worker: it removes the worker from the
+// map, ends its inbound stream, and waits for its echocore loop to drain,
+// so the session's context is gone before the front loop reads the next
+// frame. A session_end for a session the runtime does not hold is ignored.
+// A per-session echocore error was already recorded by the worker and
+// surfaces from closeAll.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end).
+func (d *demux) endSession(sessionID string) {
+	d.mu.Lock()
+	w, ok := d.slots[sessionID]
+	delete(d.slots, sessionID)
+	d.mu.Unlock()
+	if !ok {
+		return
+	}
+	w.close()
+	w.wait()
 }
 
 // demux owns the per-session worker map and the single shared output

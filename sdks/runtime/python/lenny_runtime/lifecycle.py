@@ -102,15 +102,13 @@ class LifecycleHost:
     names, or None when the runtime does not hold it or failed to create
     its context. ``reload_credentials`` re-reads the file an event names
     into that session's bundle and returns the bundle the session holds
-    afterwards. ``end_process`` handles the terminate event: it records
-    the termination reason every live session's on_terminate receives
-    and stops the frame loop.
+    afterwards. No CH-RUNTIMEOPS frame ends the process: a session ends
+    on the CH-MSGSOCK ``session_end`` and the process on ``shutdown`` or
+    stdin EOF (spec: §4.7.10, Runtime process lifetime).
     """
 
-    write_stdout_frame: Callable[[dict[str, Any]], None]
     held_session: Callable[[str], Any]
     reload_credentials: Callable[[Any, str], CredentialBundle | None]
-    end_process: Callable[[str, int], None]
     log: Callable[[str], None] = field(default=lambda _msg: None)
 
 
@@ -192,7 +190,7 @@ class Lifecycle:
 
     def _loop(self) -> None:
         """Process inbound CH-RUNTIMEOPS frames until the connection
-        closes or the adapter sends ``terminate``."""
+        closes."""
         while True:
             try:
                 line = self._reader.next()
@@ -208,9 +206,6 @@ class Lifecycle:
                 self._host.log(f"malformed lifecycle frame: {err}")
                 continue
             kind = frame.get("type", "") if isinstance(frame, dict) else ""
-            if kind == "terminate":
-                self._handle_terminate(frame)
-                return
             if kind not in SESSION_SCOPED_EVENTS:
                 self._host.log(f"ignoring unknown lifecycle event {kind!r}")
                 continue
@@ -308,29 +303,6 @@ class Lifecycle:
             self._hooks.on_deadline(event)
         else:
             self._host.log(f"lifecycle {event.type}")
-
-    def _handle_terminate(self, frame: dict[str, Any]) -> None:
-        """Answer a CH-RUNTIMEOPS terminate event: emit a final §28.5.3
-        response frame on stdout carrying a DEADLINE_EXCEEDED error,
-        record the termination reason every live session's on_terminate
-        receives, and stop the frame loop so the runtime exits."""
-        reason = str(frame.get("reason", "")) or "lifecycle_terminate"
-        deadline_ms = int(frame.get("deadlineMs", 0))
-        try:
-            self._host.write_stdout_frame(
-                {
-                    "type": "response",
-                    "output": [],
-                    "error": {
-                        "code": "DEADLINE_EXCEEDED",
-                        "message": reason,
-                    },
-                    "sessionId": str(frame.get("sessionId", "")),
-                }
-            )
-        except Exception as err:
-            self._host.log(f"write terminate response: {err}")
-        self._host.end_process(reason, deadline_ms)
 
     def send(self, frame: dict[str, Any]) -> None:
         """Write an arbitrary frame on the CH-RUNTIMEOPS.

@@ -176,17 +176,36 @@ func TestFullLevelHandshake(t *testing.T) {
 		t.Fatal("lifecycle_support carries no capabilities")
 	}
 
-	// Drive a terminate event, then close stdin as the adapter would.
-	// The runtime exits cleanly.
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done", "deadlineMs": 1000})
+	// Close stdin as the adapter would. The runtime ends on stdin EOF,
+	// because no CH-RUNTIMEOPS frame ends the process.
 	stdin.Close()
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("Run returned %v after terminate", err)
+			t.Fatalf("Run returned %v after stdin EOF", err)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not return after lifecycle terminate")
+		t.Fatal("Run did not return after stdin EOF")
+	}
+}
+
+// spec: 4.7.10 (Runtime process lifetime), 28.5.3 (CH-RUNTIMEOPS Messages)
+//
+// A frame typed terminate on CH-RUNTIMEOPS is an unknown frame: the SDK
+// writes no response for it, keeps serving the held session, and still
+// answers a heartbeat. Only shutdown or stdin EOF ends the process, so a
+// runtime that ended on terminate would leave every other session on the
+// pod without a process.
+func TestRuntimeOpsTerminateFrameDoesNotEndTheProcess_spec_4_7_10(t *testing.T) {
+	l, fa := openFullSession(t, &recorder{}, nil, "sess_a")
+	fa.send(t, map[string]any{"type": "terminate", "sessionId": "sess_a", "reason": "done", "deadlineMs": 1000})
+	l.send(`{"type":"heartbeat","ts":1}`)
+	if f := l.next(3 * time.Second); f["type"] != "heartbeat_ack" {
+		t.Fatalf("frame after a CH-RUNTIMEOPS terminate = %v, want heartbeat_ack: the SDK answered the frame or stopped serving", f)
+	}
+	l.send(msgFrame("sess_a", "m_after", "x"))
+	if f := l.next(3 * time.Second); f["type"] != "response" || f["sessionId"] != "sess_a" || f["error"] != nil {
+		t.Fatalf("reply to sess_a's message after a CH-RUNTIMEOPS terminate = %v, want its response", f)
 	}
 }
 
@@ -239,7 +258,6 @@ func TestFullLevelCheckpoint(t *testing.T) {
 	if gotSession != "sess_a" || gotCheckpoint != "ckpt_1" {
 		t.Fatalf("OnCheckpoint callback got (%q, %q), want (sess_a, ckpt_1)", gotSession, gotCheckpoint)
 	}
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
 }
 
 // spec: 28.5.3 (CH-RUNTIMEOPS Messages), 15.7 (Runtime Author SDKs)
@@ -267,7 +285,6 @@ func TestFullLevelInterrupt(t *testing.T) {
 	if gotSession != "sess_a" {
 		t.Fatalf("OnInterrupt callback got session %q, want sess_a", gotSession)
 	}
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
 }
 
 // spec: 28.5.3 (CH-RUNTIMEOPS Messages)
@@ -304,7 +321,6 @@ func TestLifecycleEventsForUnheldSessionsAreDroppedWithoutReply(t *testing.T) {
 	if reply["type"] != "checkpoint_ready" || reply["checkpointId"] != "ckpt_kept" {
 		t.Fatalf("first CH-RUNTIMEOPS reply = %v, want checkpoint_ready for ckpt_kept: an event for an unheld session was answered", reply)
 	}
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
 }
 
 // spec: 28.5.3 (CH-RUNTIMEOPS Messages, credentials_rotated), 4.7.11
@@ -359,7 +375,6 @@ func TestCredentialsRotatedReloadsOnlyTheNamedSession(t *testing.T) {
 	if got["sess_a"] != "rotated" || got["sess_b"] != "openai" {
 		t.Fatalf("providers after rotating sess_a = %v, want sess_a=rotated and sess_b=openai", got)
 	}
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
 }
 
 // spec: 28.5.3 (CH-RUNTIMEOPS Messages)
@@ -378,7 +393,6 @@ func TestDeadlineEventCarriesTheNamedSession(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("OnDeadline did not run")
 	}
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
 }
 
 // credentialEcho answers each message with the provider of the session's
