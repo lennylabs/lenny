@@ -578,8 +578,8 @@ func replyText(doc map[string]any) string {
 }
 
 // spec: 28.5.3 (CH-MSGSOCK Outbound: session_started), 28.5.3 (CH-MSGSOCK
-// Session errors), 4.7.10 (Runtime process lifetime), 15.7 (Runtime
-// Author SDKs)
+// Session errors, Inbound: session_end rule 2), 4.7.10 (Runtime process
+// lifetime), 15.7 (Runtime Author SDKs)
 // diagnosis: the Go SDK wrote a session_started or response frame that
 // does not validate against the published JSON Lines schema, or one
 // runtime process did not serve two sequential sessions each under its
@@ -617,11 +617,15 @@ func TestGoRuntimeSDKSessionFramesValidateAgainstSchema_spec_28_5_3(t *testing.T
 		p.send(t, `{"type":"session_end","sessionId":"`+s.id+`"}`)
 	}
 
-	// Session errors: a message for a session the runtime does not hold,
-	// and a session_start whose credential file cannot be read.
-	p.send(t, `{"type":"message","id":"msg_x","sessionId":"sess_a","input":[{"type":"text","inline":"late"}]}`)
-	if resp := p.next(t, schema); resp["type"] != "response" || resp["sessionId"] != "sess_a" || resp["error"] == nil {
-		t.Fatalf("response for an ended session = %v, want an error response for sess_a", resp)
+	// A message for an ended session is dropped without a response, so
+	// the next frame answers the message for sess_x, a session the runtime
+	// never read a session_start for, with an error response. A
+	// session_start whose credential file cannot be read fails its
+	// creation.
+	p.send(t, `{"type":"message","id":"msg_late","sessionId":"sess_a","input":[{"type":"text","inline":"late"}]}`)
+	p.send(t, `{"type":"message","id":"msg_x","sessionId":"sess_x","input":[{"type":"text","inline":"unknown"}]}`)
+	if resp := p.next(t, schema); resp["type"] != "response" || resp["sessionId"] != "sess_x" || resp["error"] == nil {
+		t.Fatalf("frame after a message for ended sess_a and unknown sess_x = %v, want only an error response for sess_x", resp)
 	}
 	missing := filepath.Join(t.TempDir(), "slots", "sess_c", "credentials.json")
 	p.send(t, `{"type":"session_start","sessionId":"sess_c","startId":"st_3","credentialsPath":"`+missing+`"}`)

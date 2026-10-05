@@ -293,6 +293,44 @@ func TestMessageForUnknownSessionIsAnsweredWithRuntimeError(t *testing.T) {
 	}
 }
 
+// spec: 28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2, Session errors)
+//
+// A message read after its session's session_end is dropped without a
+// response, both while the ended state is still being released and after
+// the release finished. A RUNTIME_ERROR response addressed to the ended
+// session could otherwise be read by the adapter as the answer to a later
+// start of the same session, since a response carries no startId.
+func TestMessageAfterSessionEndWritesNoResponse(t *testing.T) {
+	g := newGate()
+	h := &recorder{messageGate: func(_ context.Context, m Message) {
+		if m.Envelope.ID == "m1" {
+			g.wait("m1")
+		}
+	}}
+	l := startLiveSDK(t, h)
+	l.send(startFrame("sess_a", "st_1"))
+	_ = l.next(3 * time.Second)
+	l.send(msgFrame("sess_a", "m1", "one"))
+	g.awaitEntry(t)
+	l.send(endFrame("sess_a"))
+	l.send(msgFrame("sess_a", "m2", "during release"))
+	if extra := l.heartbeatBarrier(); len(extra) != 0 {
+		t.Fatalf("frames while the ended state was releasing = %v, want none", extra)
+	}
+	close(g.release)
+	if !waitUntil(3*time.Second, func() bool { return len(h.terminations("sess_a")) == 1 }) {
+		t.Fatal("OnTerminate did not run for the ended session")
+	}
+	l.send(msgFrame("sess_a", "m3", "after release"))
+	if extra := l.heartbeatBarrier(); len(extra) != 0 {
+		t.Fatalf("frames after the ended state was released = %v, want none", extra)
+	}
+	ev := h.eventLog()
+	if indexOf(ev, "message:sess_a:m2") >= 0 || indexOf(ev, "message:sess_a:m3") >= 0 {
+		t.Fatalf("messages read after session_end were dispatched: %v", ev)
+	}
+}
+
 // spec: 28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2), 15.7 (Runtime
 // Author SDKs)
 //

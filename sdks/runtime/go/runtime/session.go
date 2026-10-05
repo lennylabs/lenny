@@ -126,6 +126,15 @@ type sessionTable struct {
 	// removed maps a startId to a state a session_end removed from live
 	// until the state's context is released.
 	removed map[string]*sessionState
+	// ended holds each sessionId whose latest start a session_end ended
+	// and that no later session_start reopened. It outlives the release of
+	// the state, so a message the adapter had in flight when it wrote the
+	// session_end is dropped rather than answered with a RUNTIME_ERROR
+	// response a later start of the same session could read as its own,
+	// since a response carries no startId. An entry is one sessionId, and
+	// the number of sessions a runtime process serves is bounded by its
+	// pool's per-pod session limit.
+	ended map[string]struct{}
 }
 
 func newSessionTable() *sessionTable {
@@ -133,6 +142,7 @@ func newSessionTable() *sessionTable {
 		live:    map[string]*sessionState{},
 		tail:    map[string]*sessionState{},
 		removed: map[string]*sessionState{},
+		ended:   map[string]struct{}{},
 	}
 }
 
@@ -141,6 +151,15 @@ func (t *sessionTable) lookup(sessionID string) *sessionState {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.live[sessionID]
+}
+
+// endedSince reports whether a session_end ended sessionID's latest
+// start and no session_start has reopened the session since.
+func (t *sessionTable) endedSince(sessionID string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.ended[sessionID]
+	return ok
 }
 
 // open installs a new state for start unless the session is already
@@ -165,6 +184,7 @@ func (t *sessionTable) open(parent context.Context, start inboundSessionStart) (
 	}
 	t.live[st.id] = st
 	t.tail[st.id] = st
+	delete(t.ended, st.id)
 	return st, false
 }
 
@@ -180,6 +200,7 @@ func (t *sessionTable) remove(sessionID string) *sessionState {
 	}
 	delete(t.live, sessionID)
 	t.removed[st.startID] = st
+	t.ended[sessionID] = struct{}{}
 	return st
 }
 
@@ -283,14 +304,21 @@ func (p *process) handleSessionEnd(line []byte) {
 }
 
 // routeMessage hands a message frame to its session's queue. A message
-// for a session the runtime does not hold is answered at once with a
-// RUNTIME_ERROR response; a message for a session whose creation failed
-// is answered the same way by the session's goroutine, in order.
+// for a session whose session_start the runtime never read is answered at
+// once with a RUNTIME_ERROR response; a message for a session whose
+// creation failed is answered the same way by the session's goroutine, in
+// order. A message for a session the runtime read a session_end for, and
+// that no later session_start reopened, is logged and dropped: after the
+// session_end the runtime writes no response addressed to the session.
 //
-// spec: §28.5.3 (CH-MSGSOCK, Session errors).
+// spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end rule 2).
 func (p *process) routeMessage(env *MessageEnvelope) {
 	st := p.sessions.lookup(env.SessionID)
 	if st != nil && st.queue.push(env) {
+		return
+	}
+	if st == nil && p.sessions.endedSince(env.SessionID) {
+		p.cfg.logf("runtime: dropping message %q for session %q, which already ended", env.ID, env.SessionID)
 		return
 	}
 	p.cfg.logf("runtime: message %q for session %q, which this runtime does not hold", env.ID, env.SessionID)
