@@ -83,6 +83,50 @@ func TestStartWithoutGuardLeavesTheGuardHoldersGate_spec_28_5_3(t *testing.T) {
 	}
 }
 
+// spec: 28.5.3 (CH-MSGSOCK Outbound: session_started), 5.2 (slot serialization)
+// The open sequence begins when it holds the slot serialization, so a start
+// that queues on the slot guard while the runtime completes its
+// CH-RUNTIMEOPS capability handshake waits for its session_started and
+// leaves the gate read. Before the fix, the wait decision was taken ahead
+// of the guard acquisition, so such a start wrote session_start without
+// waiting and left the gate not awaiting for the whole session.
+func TestStartQueuedOnTheGuardWaitsWhenTheHandshakeCompletesMeanwhile_spec_28_5_3(t *testing.T) {
+	lc, peer := startRuntimeOps(t)
+	s := New("ack-test")
+	s.Lifecycle = lc
+	s.Runtime = ackruntime.New(t)
+	claim, err := s.claimSessionSlot("sess-a", slotResolve{allowCreate: true}, false, false)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	unlock, ok := s.lockSlotGuard(context.Background(), "sess-a")
+	if !ok {
+		t.Fatal("the test could not take the slot guard")
+	}
+	type result struct {
+		confirmed bool
+		err       error
+	}
+	done := make(chan result, 1)
+	go func() {
+		confirmed, err := s.openRuntimeSession(context.Background(), "sess-a", claim, manifestInputs{}, false)
+		done <- result{confirmed, err}
+	}()
+	// Give the start time to reach the guard before the handshake completes.
+	time.Sleep(50 * time.Millisecond)
+	peer.handshake()
+	awaitHandshake(t, lc)
+	unlock()
+
+	got := <-done
+	if !got.confirmed || got.err != nil {
+		t.Fatalf("openRuntimeSession = (%v, %v), want a confirmed start", got.confirmed, got.err)
+	}
+	if st := claim.entry.ack.current(); st != ackRead {
+		t.Fatalf("gate = %s, want read: the start did not wait for session_started", st)
+	}
+}
+
 // spec: 28.5.3 (CH-MSGSOCK Session frame writes), 5.2 (slot serialization)
 // A failed start moves its gate to failed before it releases the slot
 // guard, so the next start on the entry, which takes the guard and resets

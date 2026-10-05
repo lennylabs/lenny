@@ -165,8 +165,9 @@ func (s *Server) nextStartID() string {
 // acquisition that outlives ctx fails the start with nothing written.
 //
 // Whether the start waits for session_started is decided as the sequence
-// begins: it waits when the runtime's CH-RUNTIMEOPS connection has already
-// completed its capability handshake. Under the guard the sequence:
+// begins, after the guard is held on every path: it waits when the
+// runtime's CH-RUNTIMEOPS connection has already completed its capability
+// handshake by then. Under the guard the sequence:
 //
 //  1. Confirms, under s.mu, that the registry still holds the entry the
 //     start's claim was admitted against, by pointer identity as
@@ -211,7 +212,6 @@ func (s *Server) nextStartID() string {
 // Outbound: session_started); §4.7.1 (role and gateway RPC contract), rule
 // 8; §5.2 (slot-identifier reclaim hold)
 func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim slotClaim, in manifestInputs, guardHeld bool) (confirmed bool, err error) {
-	awaiting := s.startAwaitsSessionStarted(ctx)
 	if !guardHeld {
 		unlock, guarded := s.lockSlotGuard(ctx, sessionID)
 		defer unlock()
@@ -231,6 +231,10 @@ func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim
 			failStartGate(claim, startID)
 		}
 	}()
+	// Decided only once the slot serialization is held, because that is
+	// where the open sequence begins: a handshake that completes while the
+	// start queues on the guard counts as completed before the sequence.
+	awaiting := s.startAwaitsSessionStarted(ctx)
 	if !s.registryHoldsClaimEntry(sessionID, claim) {
 		return false, nil
 	}
