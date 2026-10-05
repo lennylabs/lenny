@@ -357,6 +357,20 @@
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
     },
+    "tests/testinfra/runtimenonce": {
+      "unit": ["pkg/adapter/...", "pkg/runtimekit/...", "sdks/runtime/go/..."],
+      "contract": [
+        "tests/tier3_contract/sdks/...",
+        "tests/tier3_contract/adapter_jsonl/...",
+        "tests/tier3_contract/adapter_usage_wired/...",
+        "tests/tier3_contract/runtimeops_emitted/..."
+      ],
+      "integration": [
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "tests/tier4_integration/credential_lifecycle_test.go"
+      ],
+      "conformance": ["tests/tier10_conformance/..."]
+    },
     "pkg/adapter/linefanout": {
       "unit": [
         "pkg/adapter/...",

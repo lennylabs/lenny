@@ -87,6 +87,14 @@ entries:
       The read is the runtime-side socket dial in pkg/runtimekit, which the adapter binary links for the
       session_started acknowledgement default and never calls. The adapter binds its runtime socket from
       --runtime-socket, so the variable is unset on the adapter container and stays unset.
+  - subject: lenny-adapter env LENNY_ADAPTER_MANIFEST
+    default: unset
+    basis: no-spec-value
+    reason: >-
+      The read is the runtime-side manifest path resolution in pkg/runtimekit that the runtime connection
+      handshake dial uses to find the mcpNonce (§4.7.11). The adapter binary links the package for the
+      session_started acknowledgement default and never calls the dial. The adapter writes the manifest
+      rather than reading it, so the variable is unset on the adapter container and stays unset.
   - subject: lenny-adapter env LENNY_LOG_LEVEL
     default: unset
     basis: no-spec-value

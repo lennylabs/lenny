@@ -858,7 +858,8 @@
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "pkg/adapter/manifest_fields_test.go",
         "tests/tier11_docs/adapter_manifest_credentials_path_doc_reconciliation_test.go",
-        "tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go"
+        "tests/tier11_docs/adapter_manifest_session_identifier_currency_doc_test.go",
+        "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11"
       ],
       "packages": [
         "pkg/adapter"
@@ -1038,7 +1039,12 @@
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPRejectsNonceLessAdversary_spec_4_7",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestConnectorMCPRejectsNonceLessAdversary_spec_4_7",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7",
-        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract"
+        "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
+        "cmd/lenny-ctl/runtimescaffold/scaffold_test.go",
+        "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
+        "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
+        "tests/tier4_integration/concurrent_workspace_test.go",
+        "tests/tier3_contract/sdks/runtime_sdk_test.go::TestRuntimeSDKConnectionHandshake_spec_4_7_11"
       ],
       "packages": [
         "pkg/adapter"
