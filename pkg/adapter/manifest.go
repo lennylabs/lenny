@@ -25,14 +25,15 @@ const MCPNonceBytes = 32
 const ManifestVersion = 1
 
 // ManifestFilename is the §15.4 adapter-manifest file name. The adapter
-// writes it into the pod's /run/lenny directory before spawning the
-// runtime; the runtime reads it at startup to discover session
-// metadata.
+// writes it into the pod's /run/lenny directory before each runtime start;
+// the runtime reads it to discover the pod-scoped sockets, the MCP nonce,
+// and the adapter-local tools.
 const ManifestFilename = "adapter-manifest.json"
 
-// ManifestExperimentContext is the §8.3 / §10.7 experiment enrollment
-// recorded in the adapter manifest so the runtime can tag traces with
-// variant metadata.
+// ManifestExperimentContext is the §8.3 / §10.7 experiment enrollment a
+// session's session_start frame carries, so the runtime can tag the
+// session's traces with variant metadata. The manifest does not carry it.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
 type ManifestExperimentContext struct {
 	ExperimentID string `json:"experimentId"`
 	VariantID    string `json:"variantId"`
@@ -80,9 +81,11 @@ type ManifestObservability struct {
 	OTLPTLSEnabled *bool `json:"otlpTlsEnabled,omitempty"`
 }
 
-// ManifestLLM is the §4.7 llm manifest object: the LLM provider
-// configuration the runtime uses to set up its SDK. The adapter derives it
-// from the session's assigned §4.9 credential lease(s).
+// ManifestLLM is the llm object of a session's session_start frame: the
+// LLM provider configuration the runtime uses to set up its SDK for that
+// session. The adapter derives it from the session's assigned §4.9
+// credential lease(s). The manifest does not carry it.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
 type ManifestLLM struct {
 	// DeliveryMode is the §4.9 credential delivery mode: "direct" or
 	// "proxy". It tells the runtime whether to use the upstream provider's
@@ -97,39 +100,28 @@ type ManifestLLM struct {
 	APIKeyEnv string `json:"apiKeyEnv,omitempty"`
 }
 
-// Manifest is the §15.4 adapter manifest the runtime reads at startup.
-// v1 carries the session metadata a Basic-level runtime needs, the
-// §15.4.3 intra-pod MCP nonce, and the §15 adapter-local tool
-// descriptors; the platformMcpServer and connectorServers socket
-// fields are added with the MCP socket layer.
+// Manifest is the §15.4 adapter manifest: one pod-global document the
+// adapter rewrites before each runtime start and the runtime reads to find
+// the pod's intra-pod sockets, the §15.4.3 MCP nonce, the §15 adapter-local
+// tool descriptors, and the runtime-definition descriptors. It carries
+// only pod-scoped fields. A session's own identifier, credential path,
+// experiment and tracing context, and LLM configuration reach the runtime
+// in that session's session_start frame on CH-MSGSOCK, so a later start's
+// rewrite of this file changes none of them for an earlier session that
+// the same runtime process still serves. The schema version stays 1.
+// spec: §4.7.6 (Adapter Manifest Field Reference); §28.5.3 (CH-MSGSOCK,
+// Inbound: session_start).
 type Manifest struct {
-	Version   int    `json:"version"`
-	SessionID string `json:"sessionId"`
-	// TaskID is the §4.7 manifest taskId, the session's external-protocol
-	// task identifier. A session has exactly one execution, so this equals
-	// the session id; the adapter derives it from sessionId.
-	// spec: §7.2 (session/task 1:1), §4.7 (per-session manifest)
-	TaskID            string                     `json:"taskId"`
-	ExperimentContext *ManifestExperimentContext `json:"experimentContext,omitempty"`
-	// TracingContext is the §8.3 opaque tracing-identifier map the
-	// runtime uses to stitch its native traces into the parent's trace
-	// tree. Omitted when no tracing context is set.
-	TracingContext map[string]string `json:"tracingContext,omitempty"`
-	// CredentialsPath is the §4.7 absolute path of this session's own
-	// credential file, /run/lenny/slots/{sessionId}/credentials.json.
-	// The adapter writes the file on AssignCredentials for this session and
-	// rewrites it in place on a rotation for this session, so a runtime
-	// that reads credential material reads its path from here rather
-	// than assuming a fixed location. Empty only on an adapter wired
-	// with no credentials root. spec: §4.7; §6.1.
-	CredentialsPath string `json:"credentialsPath"`
+	Version int `json:"version"`
 	// MCPNonce is the §15.4.3 intra-pod MCP authentication nonce: a
 	// random 256-bit hex string the runtime presents on the MCP
 	// initialize handshake to every adapter-local MCP server. The
 	// adapter rejects an intra-pod MCP connection that does not present
-	// it. A fresh nonce is generated per session alongside the rest of
-	// the manifest. Required at the Standard and Full levels (§4.7).
-	// spec: §15.4.3 (nonce regenerated per session)
+	// it. The current writer mints a fresh nonce on each manifest write,
+	// which happens once per runtime start. A running pod-wide MCP server
+	// keeps validating the nonce of the start that armed it.
+	// spec: §4.7.6 (Adapter Manifest Field Reference, mcpNonce row);
+	// §15.4.3.
 	MCPNonce string `json:"mcpNonce"`
 	// AgentInterface is the runtime's §5.1 agentInterface descriptor,
 	// carried verbatim from the Runtime definition. Null (JSON null) when
@@ -141,10 +133,6 @@ type Manifest struct {
 	// Observability carries the §4.7 OTLP collector endpoint. Omitted when
 	// the deployment configures no collector.
 	Observability *ManifestObservability `json:"observability,omitempty"`
-	// LLM is the §4.7 LLM provider configuration derived from the session's
-	// credential lease. Null (JSON null) when the session has no active LLM
-	// lease. The field is always present per §4.7.
-	LLM *ManifestLLM `json:"llm"`
 	// AdapterLocalTools advertises the §15 adapter-local tools the
 	// runtime may call over the tool_call binary protocol. The runtime
 	// discovers the tool set by reading this array.
@@ -249,11 +237,12 @@ func publishManifestBytes(dir string, b []byte) (err error) {
 	return nil
 }
 
-// manifestInputs bundles the per-session §15.4 manifest data the gateway
-// delivers through StartSession / Resume (or that the adapter derives) for
-// writeSessionManifest to assemble.
+// manifestInputs bundles the data a start receives through StartSession,
+// Resume, or ConfigureWorkspace (or that the adapter derives) for the two
+// writes the start makes: writeSessionManifest reads the runtime-definition
+// descriptors and the connectors, and buildSessionStartFrame reads the
+// session's experiment and tracing context.
 type manifestInputs struct {
-	sessionID          string
 	experimentContext  *adapterv1.ExperimentContext
 	tracingContext     map[string]string
 	agentInterface     []byte // opaque JSON; nil writes a null manifest field
@@ -265,15 +254,17 @@ type manifestInputs struct {
 	connectors []sessionConnector
 }
 
-// writeSessionManifest writes the §15.4 adapter manifest for a session —
-// carrying the §4.7 taskId / agentInterface / minPlatformVersion / llm /
-// observability fields, the §8.3 experimentContext and tracingContext, the
-// §15 adapter-local tools, and the §15.4.3 MCP nonce — when a ManifestDir
-// is configured. StartSession, ConfigureWorkspace, and Resume call it so a
+// writeSessionManifest writes the §15.4 pod-scoped adapter manifest
+// before a runtime start — the §4.7 agentInterface / minPlatformVersion /
+// observability fields, the intra-pod socket fields, the §15 adapter-local
+// tools, and a freshly minted §15.4.3 MCP nonce — when a ManifestDir is
+// configured. StartSession, ConfigureWorkspace, and Resume call it so a
 // runtime started on a fresh, SDK-warm, or resumed pod reads the same
-// manifest. It returns the generated MCP nonce so the caller can start the
+// manifest; the session's own context goes in its session_start frame
+// instead. It returns the generated MCP nonce so the caller can start the
 // platform MCP server with the same nonce; when no ManifestDir is
 // configured it is a no-op and returns an empty nonce.
+// spec: §4.7.6 (Adapter Manifest Field Reference).
 func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if s.ManifestDir == "" {
 		return "", nil
@@ -282,24 +273,12 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// spec: §7.2 — a session has exactly one execution, so the manifest
-	// taskId equals the session id; the adapter derives it from sessionId.
-	credentialsPath, err := s.sessionCredentialsPath(in.sessionID)
-	if err != nil {
-		return "", err
-	}
 	m := Manifest{
 		Version:            ManifestVersion,
-		SessionID:          in.sessionID,
-		TaskID:             in.sessionID,
-		CredentialsPath:    credentialsPath,
-		ExperimentContext:  manifestExperimentContext(in.experimentContext),
-		TracingContext:     in.tracingContext,
 		MCPNonce:           nonce,
 		AgentInterface:     manifestAgentInterface(in.agentInterface),
 		MinPlatformVersion: in.minPlatformVersion,
 		Observability:      s.manifestObservability(),
-		LLM:                s.manifestLLM(in.sessionID),
 		AdapterLocalTools:  manifestLocalTools(),
 	}
 	if s.MCPSocket != "" {
@@ -320,16 +299,16 @@ func (s *Server) writeSessionManifest(in manifestInputs) (string, error) {
 	return nonce, nil
 }
 
-// sessionCredentialsPath derives the manifest's §4.7 credentialsPath for
-// the named session: the same /run/lenny/slots/{sessionId}/credentials.json
-// the credential handlers write, resolved from the session identifier
-// through the one slot layout. An adapter wired with no credentials root
-// resolves to the empty string, which is the manifest's statement that
-// this deployment delivers no credential file. A session identifier that
-// is not a safe path segment is an error rather than a path outside the
-// slot tree.
+// sessionCredentialsPath derives the credentialsPath member of the named
+// session's session_start frame: the same
+// /run/lenny/slots/{sessionId}/credentials.json the credential handlers
+// write, resolved from the session identifier through the one slot layout.
+// An adapter wired with no credentials root resolves to the empty string,
+// and the frame then omits the member. A session identifier that is not a
+// safe path segment is an error rather than a path outside the slot tree.
 //
-// spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential file).
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §6.1 (per-session
+// credential file).
 func (s *Server) sessionCredentialsPath(sessionID string) (string, error) {
 	paths, err := s.resolveSlotPaths(sessionID)
 	if err != nil {
@@ -365,12 +344,13 @@ func (s *Server) manifestObservability() *ManifestObservability {
 	return o
 }
 
-// manifestLLM derives the §4.7 llm manifest object from the named
-// session's own §6.1 lease set, which is where every assignment lands. It
+// manifestLLM derives the llm object of the named session's session_start
+// frame from the session's own §6.1 lease set, which is where every assignment lands. It
 // returns nil (a JSON null field) when no lease is assigned. When more
 // than one provider lease is present the lease is selected
 // deterministically by provider name; the full per-provider set is always
-// in that session's own credential file. spec: §6.1; §4.7.
+// in that session's own credential file. spec: §6.1; §28.5.3 (CH-MSGSOCK,
+// Inbound: session_start).
 func (s *Server) manifestLLM(sessionID string) *ManifestLLM {
 	s.mu.Lock()
 	var leases map[string]*adapterv1.CredentialLease
@@ -389,8 +369,8 @@ func (s *Server) manifestLLM(sessionID string) *ManifestLLM {
 	return manifestLLMFromPayload(leases[providers[0]].GetPayload())
 }
 
-// llmPayload is the subset of the §4.7 credential-file entry the manifest
-// llm field is derived from.
+// llmPayload is the subset of the §4.7 credential-file entry the
+// session_start llm object is derived from.
 type llmPayload struct {
 	DeliveryMode       string `json:"deliveryMode"`
 	MaterializedConfig struct {
@@ -398,7 +378,7 @@ type llmPayload struct {
 	} `json:"materializedConfig"`
 }
 
-// manifestLLMFromPayload builds the §4.7 llm object from one credential
+// manifestLLMFromPayload builds the session_start llm object from one credential
 // lease's payload. Proxy-mode leases carry the dialect and API-key variable
 // the runtime configures its SDK with; direct-mode leases omit them because
 // the runtime uses the upstream provider's native SDK. The proxy URL is
@@ -484,8 +464,8 @@ func ReadManifest(dir string) (Manifest, error) {
 }
 
 // manifestExperimentContext converts the StartSession proto experiment
-// context into its manifest form. It returns nil for an unenrolled
-// session.
+// context into the session_start experimentContext member. It returns nil
+// for an unenrolled session, which the frame writes as JSON null.
 func manifestExperimentContext(ec *adapterv1.ExperimentContext) *ManifestExperimentContext {
 	if ec == nil {
 		return nil

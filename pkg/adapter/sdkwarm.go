@@ -237,7 +237,6 @@ func (s *Server) ConfigureWorkspace(ctx context.Context, req *adapterv1.Configur
 		// re-reads when pointed at the workspace, and start the platform
 		// MCP server keyed on the freshly written nonce.
 		in = manifestInputs{
-			sessionID:         sessionID,
 			experimentContext: req.GetExperimentContext(),
 			tracingContext:    req.GetTracingContext(),
 			connectors:        connectors,

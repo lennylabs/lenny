@@ -133,10 +133,9 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	// restored runtime gets the same per-connector MCP servers it had
 	// before the resume. Best-effort.
 	connectors := s.sessionConnectors(ctx, sessionID)
-	// §15.4: re-deliver the manifest so the restored runtime reads the
-	// same §4.7 / §8.3 fields as before the resume.
+	// §15.4: re-deliver the pod-scoped manifest, and keep the session's
+	// §8.3 context for the session_start frame the open sequence writes.
 	in := manifestInputs{
-		sessionID:          sessionID,
 		experimentContext:  req.GetExperimentContext(),
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),

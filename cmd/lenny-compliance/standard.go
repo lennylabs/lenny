@@ -154,8 +154,6 @@ func newFakePlatformAdapter() (*fakePlatformAdapter, func(), error) {
 	}
 	body, _ := json.MarshalIndent(map[string]any{
 		"version":           1,
-		"sessionId":         "sess_compliance_standard",
-		"taskId":            "task_compliance_standard",
 		"platformMcpServer": map[string]any{"socket": fa.platform.socket},
 		"connectorServers":  connectorEntries,
 		"runtimeMcpServers": []any{},

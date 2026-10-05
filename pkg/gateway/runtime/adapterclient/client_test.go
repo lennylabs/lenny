@@ -122,14 +122,18 @@ func TestNegotiateVersionReportsIncompatibleWhenNoVersionShared(t *testing.T) {
 	}
 }
 
+// spec: §4.7.6 (Adapter Manifest Field Reference); §28.5.3 (CH-MSGSOCK,
+// Inbound: session_start) — StartSession carries the session's
+// experimentContext and tracingContext end to end in the session's own
+// session_start frame, and writes a pod-scoped manifest carrying the
+// runtime-definition descriptors and no per-session member.
 func TestStartSessionWritesManifest(t *testing.T) {
-	// §15.4 / §8.3: StartSession writes the adapter manifest carrying
-	// the session's experimentContext and tracingContext end to end.
 	manifestDir := t.TempDir()
 	srv := adapter.New("adapter-test-build")
 	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = manifestDir
-	srv.Runtime = &fakeRuntime{}
+	rt := &fakeRuntime{}
+	srv.Runtime = rt
 	cl := dialAdapter(t, srv)
 
 	err := cl.StartSession(context.Background(), adapterclient.StartSessionParams{
@@ -144,27 +148,49 @@ func TestStartSessionWritesManifest(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 
+	if len(rt.envelopes) != 1 {
+		t.Fatalf("runtime received %d frames, want the one session_start", len(rt.envelopes))
+	}
+	var start struct {
+		Type              string            `json:"type"`
+		SessionID         string            `json:"sessionId"`
+		TracingContext    map[string]string `json:"tracingContext"`
+		ExperimentContext *struct {
+			ExperimentID string `json:"experimentId"`
+			VariantID    string `json:"variantId"`
+			Inherited    bool   `json:"inherited"`
+		} `json:"experimentContext"`
+	}
+	if err := json.Unmarshal(rt.envelopes[0], &start); err != nil {
+		t.Fatalf("decode session_start: %v", err)
+	}
+	if start.Type != "session_start" || start.SessionID != "sess-m" {
+		t.Errorf("first frame = %s, want session_start for sess-m", rt.envelopes[0])
+	}
+	if start.ExperimentContext == nil || start.ExperimentContext.ExperimentID != "exp_1" ||
+		start.ExperimentContext.VariantID != "treatment" || !start.ExperimentContext.Inherited {
+		t.Errorf("session_start experimentContext = %+v, want exp_1/treatment inherited", start.ExperimentContext)
+	}
+	if start.TracingContext["langsmith_run_id"] != "run_9" {
+		t.Errorf("session_start tracingContext = %v, want the langsmith run id", start.TracingContext)
+	}
+
 	b, err := os.ReadFile(filepath.Join(manifestDir, adapter.ManifestFilename))
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(b, &members); err != nil {
+		t.Fatalf("decode manifest members: %v", err)
+	}
+	for _, member := range []string{"sessionId", "taskId", "experimentContext", "tracingContext"} {
+		if _, present := members[member]; present {
+			t.Errorf("manifest carries the per-session member %q", member)
+		}
+	}
 	var m adapter.Manifest
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("decode manifest: %v", err)
-	}
-	if m.SessionID != "sess-m" {
-		t.Errorf("manifest sessionId = %q, want sess-m", m.SessionID)
-	}
-	// §4.7: in session mode the manifest taskId defaults to the session id.
-	if m.TaskID != "sess-m" {
-		t.Errorf("manifest taskId = %q, want sess-m (session-mode default)", m.TaskID)
-	}
-	if m.ExperimentContext == nil || m.ExperimentContext.ExperimentID != "exp_1" ||
-		m.ExperimentContext.VariantID != "treatment" || !m.ExperimentContext.Inherited {
-		t.Errorf("manifest experimentContext = %+v, want exp_1/treatment inherited", m.ExperimentContext)
-	}
-	if m.TracingContext["langsmith_run_id"] != "run_9" {
-		t.Errorf("manifest tracingContext = %v, want the langsmith run id", m.TracingContext)
 	}
 	// §4.7: agentInterface is carried through (the manifest is pretty-printed,
 	// so compare the decoded value rather than the bytes).

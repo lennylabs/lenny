@@ -39,7 +39,7 @@ func TestNewMCPNonce(t *testing.T) {
 // but never world-readable, since it carries the §15.4.3 mcpNonce.
 func TestWriteManifestModeIsGroupReadableNotWorldReadable(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "sess-mode"}); err != nil {
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, MCPNonce: "aa"}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(dir, ManifestFilename))
@@ -60,7 +60,7 @@ func TestWriteManifestModeIsGroupReadableNotWorldReadable(t *testing.T) {
 func TestWriteSessionManifestAdvertisesLocalTools(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
-	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-t"}); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -93,7 +93,7 @@ func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
 
 	readNonce := func() string {
-		if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-n"}); err != nil {
+		if _, err := srv.writeSessionManifest(manifestInputs{}); err != nil {
 			t.Fatalf("writeSessionManifest: %v", err)
 		}
 		b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -124,7 +124,7 @@ func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 
 	// A Basic-level adapter has no CH-RUNTIMEOPS; the manifest omits
 	// the runtimeOps object entirely.
-	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-basic"}); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -144,7 +144,7 @@ func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 	defer lc.Close()
 	srv.Lifecycle = lc
 
-	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-full"}); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -163,31 +163,30 @@ func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 	}
 }
 
+// spec: §4.7.6 (Adapter Manifest Field Reference) — WriteManifest
+// round-trips the pod-scoped fields at the current schema version.
 func TestWriteManifest(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteManifest(dir, Manifest{
-		Version:   ManifestVersion,
-		SessionID: "sess-1",
-		TaskID:    "task_root",
+		Version:            ManifestVersion,
+		MCPNonce:           "aa",
+		AgentInterface:     json.RawMessage(`{"description":"echo"}`),
+		MinPlatformVersion: "1.4.0",
 	}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
-	if err != nil {
-		t.Fatalf("read manifest: %v", err)
+	m := readManifestForTest(t, dir)
+	if m.Version != 1 || ManifestVersion != 1 {
+		t.Errorf("manifest version = %d (ManifestVersion %d), want 1", m.Version, ManifestVersion)
 	}
-	var m Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("decode manifest: %v", err)
+	var ai struct {
+		Description string `json:"description"`
 	}
-	if m.Version != ManifestVersion || m.SessionID != "sess-1" || m.TaskID != "task_root" {
-		t.Errorf("manifest = %+v", m)
+	if err := json.Unmarshal(m.AgentInterface, &ai); err != nil || ai.Description != "echo" {
+		t.Errorf("manifest agentInterface = %s (err %v), want the echo descriptor", m.AgentInterface, err)
 	}
-	if m.ExperimentContext != nil {
-		t.Errorf("experimentContext = %+v, want nil for an unenrolled session", m.ExperimentContext)
-	}
-	if len(m.TracingContext) != 0 {
-		t.Errorf("tracingContext = %v, want empty when none is set", m.TracingContext)
+	if m.MCPNonce != "aa" || m.MinPlatformVersion != "1.4.0" {
+		t.Errorf("manifest mcpNonce / minPlatformVersion = %q / %q, want aa / 1.4.0", m.MCPNonce, m.MinPlatformVersion)
 	}
 }
 
@@ -195,7 +194,7 @@ func TestWriteManifestNeverAbsentArrays(t *testing.T) {
 	// §4.7 / §15: connectorServers, runtimeMcpServers, and
 	// adapterLocalTools serialize as [], never null, never absent.
 	dir := t.TempDir()
-	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "s"}); err != nil {
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
@@ -217,114 +216,50 @@ func TestWriteManifestNeverAbsentArrays(t *testing.T) {
 	}
 }
 
-func TestWriteManifestWithTracingContext(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteManifest(dir, Manifest{
-		Version:        ManifestVersion,
-		SessionID:      "sess-3",
-		TracingContext: map[string]string{"langsmith_run_id": "run_abc"},
-	}); err != nil {
-		t.Fatalf("WriteManifest: %v", err)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, ManifestFilename))
-	var m Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if m.TracingContext["langsmith_run_id"] != "run_abc" {
-		t.Errorf("tracingContext = %v, want the langsmith run id", m.TracingContext)
-	}
-}
-
-func TestWriteManifestWithExperimentContext(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteManifest(dir, Manifest{
-		Version:   ManifestVersion,
-		SessionID: "sess-2",
-		ExperimentContext: &ManifestExperimentContext{
-			ExperimentID: "exp_1", VariantID: "treatment", Inherited: true,
-		},
-	}); err != nil {
-		t.Fatalf("WriteManifest: %v", err)
-	}
-	b, _ := os.ReadFile(filepath.Join(dir, ManifestFilename))
-	var m Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if m.ExperimentContext == nil || m.ExperimentContext.ExperimentID != "exp_1" ||
-		m.ExperimentContext.VariantID != "treatment" || !m.ExperimentContext.Inherited {
-		t.Errorf("experimentContext = %+v, want exp_1/treatment inherited", m.ExperimentContext)
-	}
-}
-
 func TestWriteSessionManifestSkipsWithoutDir(t *testing.T) {
 	// An adapter with no ManifestDir writes nothing.
 	srv := &Server{WorkspaceBase: "/workspace"}
-	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-x"}); err != nil {
+	if _, err := srv.writeSessionManifest(manifestInputs{}); err != nil {
 		t.Errorf("writeSessionManifest with no ManifestDir = %v, want nil", err)
 	}
 }
 
-func TestWriteSessionManifestWrites(t *testing.T) {
+// spec: §4.7.6 (Adapter Manifest Field Reference, Per-session fields);
+// §28.5.3 (CH-MSGSOCK, Inbound: session_start) — the manifest carries only
+// pod-scoped fields. A start with experiment and tracing context, an
+// assigned LLM lease, and a provisioned credential file still writes a
+// manifest with no sessionId, taskId, credentialsPath, experimentContext,
+// tracingContext, or llm member, because each of them reaches the runtime
+// in the session's own session_start frame and a pod-global copy would be
+// wrong for every other session the runtime process serves.
+func TestWriteSessionManifestCarriesNoPerSessionMembers_spec_4_7_6(t *testing.T) {
 	dir := t.TempDir()
-	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
+	srv := &Server{WorkspaceBase: t.TempDir(), ManifestDir: dir, CredentialsDir: t.TempDir()}
+	setSessionLeasesForTest(t, srv, "sess-y", true, map[string]*adapterv1.CredentialLease{
+		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
+	})
 	if _, err := srv.writeSessionManifest(manifestInputs{
-		sessionID: "sess-y",
-		experimentContext: &adapterv1.ExperimentContext{
-			ExperimentId: "exp_1", VariantId: "treatment",
-		},
-		tracingContext: map[string]string{"run": "r1"},
+		experimentContext: &adapterv1.ExperimentContext{ExperimentId: "exp_1", VariantId: "treatment"},
+		tracingContext:    map[string]string{"run": "r1"},
 	}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
+	raw, err := os.ReadFile(filepath.Join(dir, ManifestFilename))
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	var m Manifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if m.SessionID != "sess-y" || m.ExperimentContext == nil ||
-		m.ExperimentContext.ExperimentID != "exp_1" || m.TracingContext["run"] != "r1" {
-		t.Errorf("manifest = %+v", m)
-	}
-}
-
-// TestWriteSessionManifestTaskIDFrozenToSessionID pins the §7.2 session/task
-// 1:1 invariant: the per-session manifest taskId equals the session id because
-// a session has exactly one execution, and the adapter derives it from
-// sessionId.
-// spec: §7.2 (session/task 1:1), §4.7 (per-session manifest)
-func TestWriteSessionManifestTaskIDFrozenToSessionID(t *testing.T) {
-	dir := t.TempDir()
-	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
-	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-frozen"}); err != nil {
-		t.Fatalf("writeSessionManifest: %v", err)
-	}
-	m := readManifestForTest(t, dir)
-	if m.TaskID != "sess-frozen" {
-		t.Errorf("manifest taskId = %q, want the session id sess-frozen", m.TaskID)
-	}
-}
-
-// TestWriteSessionManifestTaskIDStableAcrossRegeneration pins the §4.7
-// per-session manifest contract: regenerating the manifest for the same
-// session keeps taskId equal to the session id. A session has exactly one
-// execution, so the adapter derives taskId from sessionId on every write.
-// spec: §7.2 (session/task 1:1), §4.7 (per-session manifest regen)
-func TestWriteSessionManifestTaskIDStableAcrossRegeneration(t *testing.T) {
-	dir := t.TempDir()
-	srv := &Server{WorkspaceBase: "/workspace", ManifestDir: dir}
-	in := manifestInputs{sessionID: "sess-r"}
-	for i := 0; i < 3; i++ {
-		if _, err := srv.writeSessionManifest(in); err != nil {
-			t.Fatalf("writeSessionManifest #%d: %v", i, err)
+	for _, member := range []string{"sessionId", "taskId", "credentialsPath", "experimentContext", "tracingContext", "llm"} {
+		if fieldPresent(t, raw, member) {
+			t.Errorf("manifest carries the per-session member %q: %s", member, raw)
 		}
-		if m := readManifestForTest(t, dir); m.TaskID != "sess-r" {
-			t.Errorf("regen #%d: manifest taskId = %q, want the session id sess-r", i, m.TaskID)
+	}
+	for _, member := range []string{"version", "mcpNonce", "agentInterface", "adapterLocalTools", "connectorServers", "runtimeMcpServers"} {
+		if !fieldPresent(t, raw, member) {
+			t.Errorf("manifest omits the pod-scoped member %q", member)
 		}
+	}
+	if m := readManifestForTest(t, dir); m.Version != 1 {
+		t.Errorf("manifest version = %d, want 1", m.Version)
 	}
 }
 
@@ -341,37 +276,18 @@ func readManifestForTest(t *testing.T, dir string) Manifest {
 	return m
 }
 
-func TestManifestExperimentContextNil(t *testing.T) {
-	if got := manifestExperimentContext(nil); got != nil {
-		t.Errorf("manifestExperimentContext(nil) = %v, want nil", got)
-	}
-}
-
-func TestManifestExperimentContextMapsProtoFields(t *testing.T) {
-	got := manifestExperimentContext(&adapterv1.ExperimentContext{
-		ExperimentId: "exp_9", VariantId: "control", Inherited: false,
-	})
-	if got == nil {
-		t.Fatal("manifestExperimentContext returned nil for a populated proto")
-	}
-	if got.ExperimentID != "exp_9" || got.VariantID != "control" || got.Inherited {
-		t.Errorf("manifest experimentContext = %+v", got)
-	}
-}
-
 // spec: §4.7 — the manifest is one pod-global file at a fixed path, and a
-// later session's start replaces its sessionId, mcpNonce, and
-// credentialsPath. The replacement is published as one whole document, so
+// later session's start replaces its mcpNonce. The replacement is published as one whole document, so
 // the file a reader on the pod opens decodes as exactly the start that
 // wrote it last, and the staging the publication uses leaves nothing
 // beside the manifest.
 func TestWriteManifestPublishesOneWholeDocument(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ManifestFilename)
-	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "alice", MCPNonce: "aa"}); err != nil {
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, MCPNonce: "aa"}); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
-	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "bob", MCPNonce: "bb"}); err != nil {
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, MCPNonce: "bb"}); err != nil {
 		t.Fatalf("WriteManifest rewrite: %v", err)
 	}
 	b, err := os.ReadFile(path)
@@ -382,8 +298,8 @@ func TestWriteManifestPublishesOneWholeDocument(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("decode the published manifest: %v", err)
 	}
-	if m.SessionID != "bob" || m.MCPNonce != "bb" {
-		t.Errorf("published manifest = sessionId %q / mcpNonce %q, want the rewriting session's %q / %q", m.SessionID, m.MCPNonce, "bob", "bb")
+	if m.MCPNonce != "bb" {
+		t.Errorf("published manifest mcpNonce = %q, want the rewriting start's %q", m.MCPNonce, "bb")
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -414,19 +330,19 @@ func TestWriteManifestPublishesOneWholeDocument(t *testing.T) {
 func TestConcurrentWriteManifestNeverPublishesATornDocument(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ManifestFilename)
-	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, SessionID: "carol"}); err != nil {
+	if err := WriteManifest(dir, Manifest{Version: ManifestVersion, MCPNonce: "cc"}); err != nil {
 		t.Fatalf("seed manifest: %v", err)
 	}
 	// The two documents differ in length so a torn write leaves a
-	// residue that is neither: alice's tools array pads its encoding well
+	// residue that is neither: the first writer's tools array pads its encoding well
 	// past bob's.
 	tools := make([]ManifestTool, 64)
 	for i := range tools {
 		tools[i] = ManifestTool{Name: fmt.Sprintf("lenny_tool_%03d", i), Description: strings.Repeat("d", 128)}
 	}
 	writers := []Manifest{
-		{Version: ManifestVersion, SessionID: "alice", MCPNonce: "aa", AdapterLocalTools: tools},
-		{Version: ManifestVersion, SessionID: "bob", MCPNonce: "bb"},
+		{Version: ManifestVersion, MCPNonce: "aa", AdapterLocalTools: tools},
+		{Version: ManifestVersion, MCPNonce: "bb"},
 	}
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -441,7 +357,7 @@ func TestConcurrentWriteManifestNeverPublishesATornDocument(t *testing.T) {
 				default:
 				}
 				if err := WriteManifest(dir, m); err != nil {
-					t.Errorf("WriteManifest(%s): %v", m.SessionID, err)
+					t.Errorf("WriteManifest(%s): %v", m.MCPNonce, err)
 					return
 				}
 			}
@@ -462,10 +378,10 @@ func TestConcurrentWriteManifestNeverPublishesATornDocument(t *testing.T) {
 			wg.Wait()
 			t.Fatalf("the manifest read during two concurrent rewrites does not decode as one document: %v", err)
 		}
-		if m.SessionID != "alice" && m.SessionID != "bob" && m.SessionID != "carol" {
+		if m.MCPNonce != "aa" && m.MCPNonce != "bb" && m.MCPNonce != "cc" {
 			close(stop)
 			wg.Wait()
-			t.Fatalf("the manifest read during two concurrent rewrites names session %q, want one writer's whole document", m.SessionID)
+			t.Fatalf("the manifest read during two concurrent rewrites carries mcpNonce %q, want one writer's whole document", m.MCPNonce)
 		}
 		reads++
 	}

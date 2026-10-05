@@ -239,3 +239,43 @@ func TestFullBatteryRunsEveryFullCategory_spec_15_4_6(t *testing.T) {
 		t.Fatalf("Full categories = %s, want %s", got, want)
 	}
 }
+
+// spec: 4.7.6 (Adapter Manifest Field Reference, Per-session fields),
+// 28.5.3 (CH-MSGSOCK, Inbound: session_start)
+//
+// The harness plays the adapter, so the manifests it writes are pod-scoped
+// as the adapter's are: a runtime that still reads its session identity,
+// task identifier, or credential path from the manifest finds none there
+// and fails certification rather than passing on a carrier the adapter no
+// longer writes.
+func TestFakeAdapterManifestsCarryNoPerSessionMembers(t *testing.T) {
+	full, cleanupFull, err := newFakeAdapter()
+	if err != nil {
+		t.Fatalf("newFakeAdapter: %v", err)
+	}
+	defer cleanupFull()
+	standard, cleanupStandard, err := newFakePlatformAdapter()
+	if err != nil {
+		t.Fatalf("newFakePlatformAdapter: %v", err)
+	}
+	defer cleanupStandard()
+
+	for name, path := range map[string]string{"full": full.manifest, "standard": standard.manifestPath} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read the %s manifest: %v", name, err)
+		}
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(body, &members); err != nil {
+			t.Fatalf("decode the %s manifest: %v", name, err)
+		}
+		for _, member := range []string{"sessionId", "taskId", "credentialsPath", "experimentContext", "tracingContext", "llm"} {
+			if _, present := members[member]; present {
+				t.Errorf("the %s manifest carries the per-session member %q", name, member)
+			}
+		}
+		if string(members["version"]) != "1" {
+			t.Errorf("the %s manifest version = %s, want 1", name, members["version"])
+		}
+	}
+}

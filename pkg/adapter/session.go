@@ -137,7 +137,6 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	connectors := s.sessionConnectors(ctx, sessionID)
 	// §15.4: write the adapter manifest the runtime reads at startup.
 	in := manifestInputs{
-		sessionID:          sessionID,
 		experimentContext:  req.GetExperimentContext(),
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),

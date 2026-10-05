@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -282,7 +283,7 @@ func TestOpenRuntimeSessionRefusesReplacedEntryWithoutFrames_spec_4_7_1(t *testi
 	s.mu.Lock()
 	s.slots["sess-1"] = &slotState{sessionID: "sess-1", started: true, bindAttempt: claim.attempt}
 	s.mu.Unlock()
-	confirmed, err := s.openRuntimeSession(context.Background(), "sess-1", claim, manifestInputs{sessionID: "sess-1"}, false)
+	confirmed, err := s.openRuntimeSession(context.Background(), "sess-1", claim, manifestInputs{}, false)
 	if err != nil || confirmed {
 		t.Fatalf("openRuntimeSession = (%v, %v), want (false, nil)", confirmed, err)
 	}
@@ -522,7 +523,7 @@ func TestSessionFramesNotWrittenForMCPRuntime_spec_28_5_3(t *testing.T) {
 	rt := &frameRuntime{}
 	s := frameServer(t, rt)
 	s.RuntimeKind = RuntimeKindMCP
-	if err := s.writeSessionStart("sess-1", s.nextStartID(), manifestInputs{sessionID: "sess-1"}); err != nil {
+	if err := s.writeSessionStart("sess-1", s.nextStartID(), manifestInputs{}); err != nil {
 		t.Fatalf("writeSessionStart: %v", err)
 	}
 	s.writeSessionEnd("sess-1")
@@ -613,4 +614,227 @@ func TestResumeAndSDKWarmStartFailOnSessionStartWriteError_spec_28_5_3(t *testin
 			t.Error("a start whose session_start was not delivered took the rule-8 record")
 		}
 	})
+}
+
+const proxyLeasePayload = `{"deliveryMode":"proxy","materializedConfig":` +
+	`{"proxyUrl":"https://proxy.lenny-system/v1","proxyDialect":"anthropic","leaseToken":"lease-tok"}}`
+
+const directLeasePayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-x"}}`
+
+// setSessionLeasesForTest puts the named session's own §6.1 lease set in
+// place, which is where the session_start llm object is derived from.
+// assigned records that AssignCredentials ran for the session, which is
+// what makes the frame carry credentialsPath. spec: §6.1.
+func setSessionLeasesForTest(t *testing.T, srv *Server, sessionID string, assigned bool, leases map[string]*adapterv1.CredentialLease) {
+	t.Helper()
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	st, err := srv.ensureSlotStateLocked(sessionID, slotResolve{allowCreate: true})
+	if err != nil {
+		t.Fatalf("ensure slot state for %s: %v", sessionID, err)
+	}
+	st.sessionID = sessionID
+	st.assigned = assigned
+	st.creds = leases
+}
+
+// buildFrameMembers builds one start's session_start for sessionID and
+// returns it decoded into its JSON members, so a case asserts the wire
+// form a runtime reads rather than the Go struct.
+func buildFrameMembers(t *testing.T, s *Server, sessionID string, in manifestInputs) map[string]any {
+	t.Helper()
+	f, err := s.buildSessionStartFrame(sessionID, "1", in)
+	if err != nil {
+		t.Fatalf("buildSessionStartFrame(%s): %v", sessionID, err)
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("encode session_start: %v", err)
+	}
+	return decodeFrame(t, b)
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §4.7.11 (item 4) —
+// a proxy-mode lease yields an llm object with the dialect and canonical
+// API-key env var the runtime configures its SDK with, and no proxy URL,
+// which stays in the session's credential file alone.
+func TestSessionStartLLMFromProxyLease_spec_28_5_3(t *testing.T) {
+	llm := manifestLLMFromPayload([]byte(proxyLeasePayload))
+	if llm == nil {
+		t.Fatal("manifestLLMFromPayload(proxy) = nil, want an llm object")
+	}
+	if llm.DeliveryMode != "proxy" || llm.Dialect != "anthropic" || llm.APIKeyEnv != "ANTHROPIC_API_KEY" {
+		t.Errorf("llm = %+v, want proxy / anthropic / ANTHROPIC_API_KEY", llm)
+	}
+	raw, err := json.Marshal(llm)
+	if err != nil {
+		t.Fatalf("encode llm: %v", err)
+	}
+	if fieldPresent(t, raw, "baseUrl") {
+		t.Errorf("proxy-mode llm carries baseUrl: %s; the proxy URL belongs to the credential file alone", raw)
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — a direct-mode
+// lease omits the dialect and the API-key variable, because the runtime
+// uses the upstream provider's native SDK.
+func TestSessionStartLLMFromDirectLease_spec_28_5_3(t *testing.T) {
+	llm := manifestLLMFromPayload([]byte(directLeasePayload))
+	if llm == nil {
+		t.Fatal("manifestLLMFromPayload(direct) = nil, want an llm object")
+	}
+	if llm.DeliveryMode != "direct" || llm.Dialect != "" || llm.APIKeyEnv != "" {
+		t.Errorf("direct-mode llm = %+v, want deliveryMode direct and no dialect or apiKeyEnv", llm)
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — a lease payload
+// with no delivery mode yields no llm object.
+func TestSessionStartLLMFromEmptyPayload_spec_28_5_3(t *testing.T) {
+	if llm := manifestLLMFromPayload(nil); llm != nil {
+		t.Errorf("manifestLLMFromPayload(nil) = %+v, want nil", llm)
+	}
+	if llm := manifestLLMFromPayload([]byte(`{}`)); llm != nil {
+		t.Errorf("manifestLLMFromPayload(no deliveryMode) = %+v, want nil", llm)
+	}
+}
+
+// spec: §4.9 (anthropic and openai dialects); §26.5 (google); §26.6
+// (cursor) — each proxy dialect maps to the canonical API-key variable its
+// SDK reads, and an unrecognized dialect maps to none.
+func TestAPIKeyEnvForDialect_spec_4_9(t *testing.T) {
+	cases := map[string]string{
+		"anthropic": "ANTHROPIC_API_KEY",
+		"openai":    "OPENAI_API_KEY",
+		"google":    "GOOGLE_API_KEY",
+		"cursor":    "CURSOR_API_KEY",
+		"mystery":   "",
+	}
+	for dialect, want := range cases {
+		if got := apiKeyEnvForDialect(dialect); got != want {
+			t.Errorf("apiKeyEnvForDialect(%q) = %q, want %q", dialect, got, want)
+		}
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — the frame's llm
+// member is derived from the session's own assigned lease, is JSON null
+// while no lease is assigned, and in proxy mode carries no baseUrl.
+func TestSessionStartFrameLLMFollowsSessionLease_spec_28_5_3(t *testing.T) {
+	s := frameServer(t, &frameRuntime{})
+	m := buildFrameMembers(t, s, "sess-1", manifestInputs{})
+	if v, present := m["llm"]; !present || v != nil {
+		t.Errorf("llm = %v (present %v), want JSON null with no lease assigned", v, present)
+	}
+
+	setSessionLeasesForTest(t, s, "sess-1", true, map[string]*adapterv1.CredentialLease{
+		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
+	})
+	llm, _ := buildFrameMembers(t, s, "sess-1", manifestInputs{})["llm"].(map[string]any)
+	if llm["deliveryMode"] != "proxy" || llm["dialect"] != "anthropic" {
+		t.Errorf("llm = %v, want the proxy lease's configuration", llm)
+	}
+	if _, present := llm["baseUrl"]; present {
+		t.Errorf("proxy-mode llm carries baseUrl: %v", llm)
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §6.1 — when more
+// than one provider lease is assigned, the llm member is derived from a
+// deterministic, provider-sorted lease.
+func TestSessionStartFrameLLMMultiProviderDeterministic_spec_28_5_3(t *testing.T) {
+	s := frameServer(t, &frameRuntime{})
+	setSessionLeasesForTest(t, s, "sess-1", true, map[string]*adapterv1.CredentialLease{
+		"openai":    {LeaseId: "l2", Provider: "openai", Payload: []byte(directLeasePayload)},
+		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
+	})
+	for i := 0; i < 5; i++ {
+		llm, _ := buildFrameMembers(t, s, "sess-1", manifestInputs{})["llm"].(map[string]any)
+		// "anthropic" sorts before "openai", so its proxy lease drives llm.
+		if llm["dialect"] != "anthropic" {
+			t.Fatalf("build #%d: llm = %v, want the provider-sorted (anthropic) lease", i, llm)
+		}
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §6.1 (per-session
+// credential file) — each session's frame names that session's own
+// credential file, which is the file the credential handlers write. Two
+// sessions on one pod resolve to two paths.
+func TestSessionStartFrameCredentialsPathIsPerSession_spec_28_5_3(t *testing.T) {
+	s := frameServer(t, &frameRuntime{})
+	credRoot := t.TempDir()
+	s.CredentialsDir = credRoot
+	lease := map[string]*adapterv1.CredentialLease{
+		"anthropic": {LeaseId: "l1", Provider: "anthropic", Payload: []byte(proxyLeasePayload)},
+	}
+	setSessionLeasesForTest(t, s, "sess-alice", true, lease)
+	setSessionLeasesForTest(t, s, "sess-bob", true, lease)
+
+	alice, _ := buildFrameMembers(t, s, "sess-alice", manifestInputs{})["credentialsPath"].(string)
+	want := filepath.Join(credRoot, "slots", "sess-alice", "credentials.json")
+	if alice != want {
+		t.Errorf("credentialsPath = %q, want %q", alice, want)
+	}
+	bob, _ := buildFrameMembers(t, s, "sess-bob", manifestInputs{})["credentialsPath"].(string)
+	if bob == "" || bob == alice {
+		t.Errorf("sess-bob credentialsPath = %q, want a path distinct from sess-alice's %q", bob, alice)
+	}
+	handlerPath, err := s.sessionCredentialFile("sess-alice")
+	if err != nil {
+		t.Fatalf("sessionCredentialFile: %v", err)
+	}
+	if handlerPath != alice {
+		t.Errorf("credential handlers write %q but the frame names %q", handlerPath, alice)
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — the frame carries
+// the start's tracing and experiment context as given, and writes the
+// three nullable members as JSON null when the start has none, an empty
+// tracing map included.
+func TestSessionStartFrameTracingAndExperimentContext_spec_28_5_3(t *testing.T) {
+	s := frameServer(t, &frameRuntime{})
+	m := buildFrameMembers(t, s, "sess-y", manifestInputs{
+		experimentContext: &adapterv1.ExperimentContext{ExperimentId: "exp_1", VariantId: "treatment", Inherited: true},
+		tracingContext:    map[string]string{"langsmith_run_id": "run_abc"},
+	})
+	ec, _ := m["experimentContext"].(map[string]any)
+	if ec["experimentId"] != "exp_1" || ec["variantId"] != "treatment" || ec["inherited"] != true {
+		t.Errorf("experimentContext = %v, want exp_1/treatment inherited", m["experimentContext"])
+	}
+	tc, _ := m["tracingContext"].(map[string]any)
+	if tc["langsmith_run_id"] != "run_abc" {
+		t.Errorf("tracingContext = %v, want the langsmith run id", m["tracingContext"])
+	}
+
+	empty := buildFrameMembers(t, s, "sess-z", manifestInputs{tracingContext: map[string]string{}})
+	for _, member := range []string{"experimentContext", "tracingContext", "llm"} {
+		if v, present := empty[member]; !present || v != nil {
+			t.Errorf("%s = %v (present %v), want JSON null for a start with no context", member, v, present)
+		}
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — an unenrolled
+// session has no experimentContext, which the frame writes as JSON null.
+func TestSessionStartExperimentContextNil_spec_28_5_3(t *testing.T) {
+	if got := manifestExperimentContext(nil); got != nil {
+		t.Errorf("manifestExperimentContext(nil) = %v, want nil", got)
+	}
+}
+
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — the frame's
+// experimentContext carries the StartSession proto's enrollment member for
+// member.
+func TestSessionStartExperimentContextMapsProtoFields_spec_28_5_3(t *testing.T) {
+	got := manifestExperimentContext(&adapterv1.ExperimentContext{
+		ExperimentId: "exp_9", VariantId: "control", Inherited: false,
+	})
+	if got == nil {
+		t.Fatal("manifestExperimentContext returned nil for a populated proto")
+	}
+	if got.ExperimentID != "exp_9" || got.VariantID != "control" || got.Inherited {
+		t.Errorf("session_start experimentContext = %+v", got)
+	}
 }

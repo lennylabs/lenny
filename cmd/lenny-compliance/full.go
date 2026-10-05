@@ -159,19 +159,19 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	socketPath := filepath.Join(dir, "lifecycle.sock")
 	manifest := filepath.Join(dir, "adapter-manifest.json")
 	// spec: §6.1 — the credential file is written per session under
-	// slots/{sessionId}/, so the harness names that path on the manifest
-	// and on every credentials_rotated frame it sends.
+	// slots/{sessionId}/, so the harness names that path on the session's
+	// session_start and on every credentials_rotated frame it sends. The
+	// manifest is pod-scoped and names no session or credential path, as
+	// the adapter's own manifest does (§4.7.6).
 	credentialsPath := filepath.Join(dir, "run", "lenny", "slots", complianceSessionID, "credentials.json")
 	if err := writeCredentialFile(credentialsPath, "anthropic"); err != nil {
 		os.RemoveAll(dir)
 		return nil, nil, err
 	}
 	body, _ := json.Marshal(map[string]any{
-		"sessionId":       complianceSessionID,
-		"taskId":          complianceSessionID,
-		"credentialsPath": credentialsPath,
-		"runtimeOps":      map[string]any{"socket": socketPath},
-		"mcpNonce":        "nonce_compliance_harness",
+		"version":    1,
+		"runtimeOps": map[string]any{"socket": socketPath},
+		"mcpNonce":   "nonce_compliance_harness",
 	})
 	if err := os.WriteFile(manifest, body, 0o600); err != nil {
 		os.RemoveAll(dir)
