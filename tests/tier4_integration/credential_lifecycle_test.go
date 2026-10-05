@@ -66,6 +66,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 const (
@@ -495,7 +496,10 @@ func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lifecycle.sock")
 
-	channel, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares the runtime's nonce line with the mcpNonce of
+	// the manifest written below, which streaming-echo reads before it
+	// dials. spec: 4.7.11 (Runtime connection handshake).
+	channel, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(dir))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -508,8 +512,10 @@ func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string
 
 	// The adapter manifest streaming-echo reads to find the operations
 	// socket, written under the caller's key.
-	manifest := filepath.Join(dir, "adapter-manifest.json")
+	manifest := filepath.Join(dir, adapter.ManifestFilename)
 	manifestJSON, err := json.Marshal(map[string]any{
+		"version":   1,
+		"mcpNonce":  runtimenonce.NewNonce(t),
 		manifestKey: map[string]any{"socket": sock},
 	})
 	if err != nil {

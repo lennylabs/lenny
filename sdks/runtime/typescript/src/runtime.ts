@@ -23,7 +23,7 @@ import {
 } from "./session.js";
 import { AdapterToolset, ToolCallRegistry } from "./tool.js";
 import type { InboundToolResult } from "./tool.js";
-import { FrameWriter, LineReader, dialUnixSocket } from "./transport.js";
+import { FrameWriter, LineReader, dialAuthenticated } from "./transport.js";
 import type {
   AdapterManifest,
   CredentialBundle,
@@ -620,6 +620,7 @@ class RuntimeProcess {
       } else {
         this.lifecycle = await Lifecycle.dial(
           this.manifest,
+          this.cfg.manifestPath,
           this.cfg.dialTimeoutMs,
           this.cfg.lifecycle,
           {
@@ -700,8 +701,9 @@ class RuntimeProcess {
 
   // openTransport resolves the §28.5.3 transport. When explicit streams
   // were supplied it uses them; when socket transport is enabled and
-  // LENNY_ADAPTER_SOCKET names a socket it dials that socket; otherwise
-  // it returns process.stdin / process.stdout.
+  // LENNY_ADAPTER_SOCKET names a socket it dials that socket through the
+  // runtime connection handshake; otherwise it returns process.stdin /
+  // process.stdout.
   private async openTransport(): Promise<{
     input: Readable;
     output: Writable;
@@ -717,7 +719,14 @@ class RuntimeProcess {
     if (this.cfg.socketTransport) {
       const name = (process.env[SOCKET_ENV_VAR] ?? "").trim();
       if (name !== "") {
-        const conn = await dialUnixSocket(name, this.cfg.dialTimeoutMs);
+        // The runtime connection handshake reads the nonce from the
+        // resolved manifest path before each dial and redial.
+        // spec: §4.7.11 (Runtime connection handshake).
+        const conn = await dialAuthenticated(
+          name,
+          this.cfg.manifestPath,
+          this.cfg.dialTimeoutMs,
+        );
         return {
           input: conn,
           output: conn,

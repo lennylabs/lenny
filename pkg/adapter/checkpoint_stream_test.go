@@ -188,7 +188,7 @@ func wireLifecycle(t *testing.T, s *adapter.Server) *fakeLifecycleRuntime {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lc.sock")
 
-	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	lc, err := newRuntimeOps(t, sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -207,6 +207,9 @@ func wireLifecycle(t *testing.T, s *adapter.Server) *fakeLifecycleRuntime {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := writeListenerNonce(conn, sock); err != nil {
+		t.Fatalf("nonce line: %v", err)
+	}
 	fr := &fakeLifecycleRuntime{t: t, conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn)}
 	fr.enc.SetEscapeHTML(false)
 

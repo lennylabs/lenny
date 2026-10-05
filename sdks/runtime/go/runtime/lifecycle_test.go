@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,14 +43,31 @@ func startFakeLifecycle(t *testing.T, dir string) *fakeLifecycleAdapter {
 
 func (fa *fakeLifecycleAdapter) socket() string { return fa.ln.Addr().String() }
 
+// fullManifestNonce is the mcpNonce writeFullManifest publishes, which the
+// fake adapter requires as the connection's first line.
+const fullManifestNonce = "nonce_full"
+
+// accept accepts the runtime's connection, requires the nonce line carrying
+// fullManifestNonce, and opens the capability handshake. A connection whose
+// first line is anything else is closed and never becomes the channel, so
+// the test waiting on connected fails. spec: 4.7.11 (Runtime connection
+// handshake).
 func (fa *fakeLifecycleAdapter) accept() {
 	conn, err := fa.ln.Accept()
 	if err != nil {
 		return
 	}
+	r := bufio.NewReader(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	line, err := r.ReadBytes('\n')
+	_ = conn.SetReadDeadline(time.Time{})
+	if err != nil || string(bytes.TrimSpace(line)) != `{"_lennyNonce":"`+fullManifestNonce+`"}` {
+		_ = conn.Close()
+		return
+	}
 	fa.mu.Lock()
 	fa.conn = conn
-	fa.r = bufio.NewReader(conn)
+	fa.r = r
 	fa.mu.Unlock()
 	// §15.4.3 handshake: the adapter opens with lifecycle_capabilities.
 	enc := json.NewEncoder(conn)
@@ -107,7 +125,7 @@ func writeFullManifest(t *testing.T, dir, lifecycleSock string) string {
 	path := filepath.Join(dir, "adapter-manifest.json")
 	body, _ := json.Marshal(map[string]any{
 		"version":    1,
-		"mcpNonce":   "nonce_full",
+		"mcpNonce":   fullManifestNonce,
 		"runtimeOps": map[string]any{"socket": lifecycleSock},
 	})
 	if err := os.WriteFile(path, body, 0o600); err != nil {

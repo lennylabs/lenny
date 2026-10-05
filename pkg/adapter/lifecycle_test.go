@@ -144,7 +144,7 @@ func startLifecycle(t *testing.T) *adapter.RuntimeOps {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	lc, err := adapter.NewRuntimeOps(filepath.Join(dir, "lifecycle.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	lc, err := newRuntimeOps(t, filepath.Join(dir, "lifecycle.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -176,6 +176,9 @@ func dialLifecycle(t *testing.T, lc *adapter.RuntimeOps) *lifecycleRuntime {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
+	if err := writeListenerNonce(conn, lc.SocketPath()); err != nil {
+		t.Fatalf("nonce line: %v", err)
+	}
 	lr := &lifecycleRuntime{t: t, conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn)}
 
 	caps := lr.recv()

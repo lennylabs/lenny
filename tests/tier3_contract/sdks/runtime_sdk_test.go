@@ -28,19 +28,25 @@ package sdks_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
 	"github.com/lennylabs/lenny/cmd/lenny-ctl/runtimescaffold"
+	"github.com/lennylabs/lenny/pkg/adapter/mcp"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -878,5 +884,233 @@ func TestInterpretedRuntimeSDKToolCallsAreSessionScoped_spec_28_5_3(t *testing.T
 		node := requireTool(t, "node")
 		npm := requireTool(t, "npm")
 		assertToolCallsAreSessionScoped(t, buildTypeScriptProbe(t, node, npm, typeScriptToolProbe))
+	})
+}
+
+// handshakeFakeListener is a test-owned CH-MSGSOCK or CH-RUNTIMEOPS
+// listener for the runtime connection handshake cases. It hands each
+// accepted connection to the case.
+type handshakeFakeListener struct {
+	ln    net.Listener
+	conns chan net.Conn
+}
+
+// startHandshakeFakeListener listens on path and accepts until the test
+// ends.
+func startHandshakeFakeListener(t *testing.T, path string) *handshakeFakeListener {
+	t.Helper()
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen %s: %v", path, err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	l := &handshakeFakeListener{ln: ln, conns: make(chan net.Conn, 4)}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			l.conns <- c
+		}
+	}()
+	return l
+}
+
+// next waits for the listener's next connection and checks its nonce line.
+func (l *handshakeFakeListener) next(t *testing.T, which, nonce string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	select {
+	case c := <-l.conns:
+		r := bufio.NewReader(c)
+		if err := runtimenonce.Check(c, r, nonce); err != nil {
+			t.Fatalf("%s: %v", which, err)
+		}
+		return c, r
+	case <-time.After(30 * time.Second):
+		t.Fatalf("%s: the runtime did not dial", which)
+		return nil, nil
+	}
+}
+
+// challenge writes a nonce-only challenge and requires the runtime's
+// HMAC answer keyed by nonce.
+func handshakeChallenge(t *testing.T, conn net.Conn, r *bufio.Reader, nonce, which string) {
+	t.Helper()
+	challenge, err := mcp.NewChallenge()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte(`{"_lennyChallenge":"` + challenge + `"}` + "\n")); err != nil {
+		t.Fatalf("%s: write challenge: %v", which, err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	answer, err := r.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("%s: read challenge answer: %v", which, err)
+	}
+	if err := mcp.ValidateChallengeResponse(answer, nonce, challenge); err != nil {
+		t.Fatalf("%s: challenge answer %s: %v", which, bytes.TrimSpace(answer), err)
+	}
+}
+
+// handshakeFrame reads frames from r until one of type want arrives.
+func handshakeFrame(t *testing.T, conn net.Conn, r *bufio.Reader, want, which string) map[string]any {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	for {
+		line, err := r.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("%s: read waiting for %s: %v", which, want, err)
+		}
+		var f map[string]any
+		if json.Unmarshal(line, &f) == nil && f["type"] == want {
+			return f
+		}
+	}
+}
+
+// listRecorder is a platform MCP tool provider that records tools/list.
+type listRecorder struct {
+	handshook chan struct{}
+	listed    chan bool
+}
+
+func (l *listRecorder) List(context.Context) ([]mcp.Tool, error) {
+	select {
+	case <-l.handshook:
+		l.listed <- true
+	default:
+		l.listed <- false
+	}
+	return nil, nil
+}
+
+func (l *listRecorder) Call(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errors.New("no tools")
+}
+
+// runtimeHandshakeCase runs one SDK's lifecycle example against test-owned
+// CH-MSGSOCK and CH-RUNTIMEOPS listeners and a platform MCP server that
+// requires the nonce-only challenge. The first connection on each runtime
+// listener carries the manifest's first nonce; the test then rewrites the
+// manifest with a second nonce and closes both connections. The runtime
+// must read the manifest again, redial each socket with the second nonce,
+// answer the challenge each listener then issues, and serve the protocol
+// on the redialed connections.
+func runtimeHandshakeCase(t *testing.T, argv ...string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-hs-")
+	if err != nil {
+		t.Fatalf("socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	msgSock, opsSock, mcpSock := filepath.Join(dir, "m.sock"), filepath.Join(dir, "o.sock"), filepath.Join(dir, "p.sock")
+	msg := startHandshakeFakeListener(t, msgSock)
+	ops := startHandshakeFakeListener(t, opsSock)
+
+	first := runtimenonce.NewNonce(t)
+	fields := map[string]any{
+		"platformMcpServer": map[string]any{"socket": mcpSock},
+		"runtimeOps":        map[string]any{"socket": opsSock},
+		"connectorServers":  []any{},
+		"adapterLocalTools": []any{},
+	}
+	manifest := filepath.Join(dir, runtimenonce.ManifestFilename)
+	runtimenonce.Rewrite(t, manifest, first, fields)
+
+	// The platform MCP surface validates the nonce of the start that armed
+	// it, the first one, and issues the nonce-only challenge.
+	recorder := &listRecorder{handshook: make(chan struct{}), listed: make(chan bool, 4)}
+	srv := mcp.NewServer()
+	srv.RequireChallenge = true
+	srv.Provider = recorder
+	var once sync.Once
+	srv.OnHandshake = func() { once.Do(func() { close(recorder.handshook) }) }
+	mcpLn, err := net.Listen("unix", mcpSock)
+	if err != nil {
+		t.Fatalf("listen platform MCP: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = srv.Serve(ctx, mcpLn, first) }()
+
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "LENNY_ADAPTER_SOCKET="+msgSock, "LENNY_ADAPTER_MANIFEST="+manifest)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		if t.Failed() {
+			t.Logf("runtime stderr:\n%s", stderr.String())
+		}
+	})
+
+	msg1, _ := msg.next(t, "first CH-MSGSOCK connection", first)
+	select {
+	case afterChallenge := <-recorder.listed:
+		if !afterChallenge {
+			t.Fatal("MCP tools/list arrived before the challenge answer")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("MCP tools/list never arrived after the challenge answer")
+	}
+	ops1, _ := ops.next(t, "first CH-RUNTIMEOPS connection", first)
+
+	second := runtimenonce.NewNonce(t)
+	runtimenonce.Rewrite(t, manifest, second, fields)
+	_ = msg1.Close()
+	_ = ops1.Close()
+
+	ops2, opsR := ops.next(t, "redialed CH-RUNTIMEOPS connection", second)
+	handshakeChallenge(t, ops2, opsR, second, "CH-RUNTIMEOPS")
+	if err := json.NewEncoder(ops2).Encode(map[string]any{
+		"type": "lifecycle_capabilities", "protocolVersion": "1.0", "capabilities": []string{"checkpoint"},
+	}); err != nil {
+		t.Fatalf("write lifecycle_capabilities: %v", err)
+	}
+	handshakeFrame(t, ops2, opsR, "lifecycle_support", "CH-RUNTIMEOPS")
+
+	msg2, msgR := msg.next(t, "redialed CH-MSGSOCK connection", second)
+	handshakeChallenge(t, msg2, msgR, second, "CH-MSGSOCK")
+	for _, frame := range []string{probeStart("sess_hs", "st_hs", "v"), probeMessage("sess_hs", "m_hs")} {
+		if _, err := msg2.Write([]byte(frame + "\n")); err != nil {
+			t.Fatalf("write %s: %v", frame, err)
+		}
+	}
+	if f := handshakeFrame(t, msg2, msgR, "response", "CH-MSGSOCK"); f["sessionId"] != "sess_hs" || f["error"] != nil {
+		t.Fatalf("response on the redialed connection = %v, want an answer for sess_hs", f)
+	}
+}
+
+// spec: 4.7.11 (Runtime connection handshake, Nonce-only fallback), 4.7.6
+// (mcpNonce row), 15.7 (Runtime Author SDKs)
+// diagnosis: an SDK's runtime half of the runtime connection handshake is
+// broken. Either its first line on CH-MSGSOCK or CH-RUNTIMEOPS is not the
+// manifest's nonce, it did not read the manifest again and redial when the
+// adapter closed a connection presenting a replaced nonce, it did not
+// answer a challenge that arrived before the first protocol frame, or its
+// MCP client did not answer the challenge a nonce-only platform MCP server
+// writes in place of the initialize response. Any of these leaves an SDK
+// runtime unable to connect to an adapter that enforces the handshake.
+func TestRuntimeSDKConnectionHandshake_spec_4_7_11(t *testing.T) {
+	t.Run("go", func(t *testing.T) {
+		runtimeHandshakeCase(t, buildRuntimeBinary(t, "./sdks/runtime/go/example/lifecycle"))
+	})
+	t.Run("python", func(t *testing.T) {
+		python := requireTool(t, "python3")
+		runtimeHandshakeCase(t, buildPythonRuntime(t, python, "lifecycle"))
+	})
+	t.Run("typescript", func(t *testing.T) {
+		node := requireTool(t, "node")
+		npm := requireTool(t, "npm")
+		runtimeHandshakeCase(t, buildTypeScriptRuntime(t, node, npm, "lifecycle"))
 	})
 }

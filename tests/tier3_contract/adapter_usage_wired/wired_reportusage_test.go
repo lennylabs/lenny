@@ -49,6 +49,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // echoLoop is a minimal §28.5.3 runtime loop for the InProcessRuntime the
@@ -87,7 +88,11 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	t.Helper()
 
 	sock := shortSocket(t, "lifecycle.sock")
-	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares each connection's nonce line with a test
+	// manifest published beside the socket, which the dialing runtime reads.
+	// spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.PublishIn(t, filepath.Dir(sock), nil)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -173,6 +178,13 @@ func dialRuntime(t *testing.T, sock string) *json.Encoder {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(sock), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 
 	r := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))

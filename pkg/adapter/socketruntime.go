@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -73,24 +74,32 @@ var errRuntimeConnectionEnded = errors.New("adapter: runtime connection ended")
 // errRuntimeConnectionEnded. ServesNextSession reports whether the
 // transport can serve the next session, which the whole-pod scrub report
 // carries to the gateway. The listener is bound once at construction,
-// before the pod is claimable, and accepts one connection.
+// before the pod is claimable, and installs one authenticated connection.
 //
 // The listener admits only the expected agent UID, which SO_PEERCRED
-// reports for each connecting process (see SocketPeerAuth). A refused
-// connection is logged and closed inside the listener's Accept, which then
-// waits for the next connection, so a foreign process neither becomes the
-// runtime connection nor consumes the accept the runtime's own dial is
-// owed. The manifest-nonce handshake the CH-MSGSOCK card also states is not
-// performed.
+// reports for each connecting process (see SocketPeerAuth), outside
+// nonce-only mode and the embedded model. A connection the peer check admits
+// then runs the runtime connection handshake in every mode: its first line
+// must carry the mcpNonce of the manifest published at that moment, and in
+// nonce-only mode the runtime must also answer a per-connection HMAC
+// challenge. A connection that fails either check is logged and closed with
+// no protocol response, and the accept loop waits for the next connection,
+// so a foreign or unauthenticated process neither becomes the runtime
+// connection nor consumes the accept the runtime's own dial is owed.
 // spec: §4.7.9, §4.7.10 (Runtime process lifetime), §4.7.11 (Separate UIDs
-// and connection authentication), §5.2 (Runtime not live), §28.5.3
-// (CH-MSGSOCK).
+// and connection authentication, Runtime connection handshake), §5.2
+// (Runtime not live), §28.5.3 (CH-MSGSOCK).
 type SocketRuntimeProcess struct {
 	listener net.Listener
 
 	// auth is the peer-authentication posture the listener enforces, fixed
 	// at construction.
 	auth SocketPeerAuth
+	// nonce reports the mcpNonce of the currently published manifest, which
+	// the runtime connection handshake compares the nonce line with. It is
+	// fixed at construction and read at each accept. spec: §4.7.11 (Runtime
+	// connection handshake).
+	nonce func() string
 	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
 	// peer's UID. It is a test seam: a test process cannot dial from a
 	// second UID without root, so a tier-1 case stands in the UID the
@@ -112,7 +121,11 @@ type SocketRuntimeProcess struct {
 	mu        sync.Mutex
 	connected bool
 	conn      net.Conn
-	cmd       *exec.Cmd
+	// reader is the buffered reader the handshake read the installed
+	// connection through. The fan-out reader scans it rather than conn, so a
+	// first frame sent in the same write as the nonce line is not lost.
+	reader *bufio.Reader
+	cmd    *exec.Cmd
 	// hub is the installed connection's subscriber set, which its single
 	// reader broadcasts to. spec: §28.5.3.
 	hub *linefanout.Hub
@@ -150,15 +163,19 @@ type SocketRuntimeProcess struct {
 // filesystem path or, on Linux, an abstract address beginning with "@".
 // The socket is bound immediately so it is ready before the §4.7
 // startup sequence spawns or schedules the runtime. auth sets the
-// SO_PEERCRED check the listener applies to each connecting process.
-// spec: §4.7.11 (Separate UIDs and connection authentication).
-func NewSocketRuntimeProcess(socket string, auth SocketPeerAuth) (*SocketRuntimeProcess, error) {
+// SO_PEERCRED check the listener applies to each connecting process, and
+// nonce reports the published manifest's mcpNonce, which the runtime
+// connection handshake checks on every accepted connection (see
+// PublishedManifestNonce). spec: §4.7.11 (Separate UIDs and connection
+// authentication, Runtime connection handshake).
+func NewSocketRuntimeProcess(socket string, auth SocketPeerAuth, nonce func() string) (*SocketRuntimeProcess, error) {
 	l, err := net.Listen("unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("adapter: bind runtime socket %s: %w", socket, err)
 	}
 	p := &SocketRuntimeProcess{
 		auth:       auth,
+		nonce:      nonce,
 		connReady:  make(chan struct{}),
 		acceptDone: make(chan struct{}),
 	}
@@ -256,19 +273,40 @@ func (p *SocketRuntimeProcess) awaitConnection(ctx context.Context, timeout time
 	return nil
 }
 
-// acceptLoop is the listener's single accept path. It accepts the first
-// connection the peer check admits, installs it as the runtime's connection,
-// and returns, so the listener accepts one connection for the pod's life and
-// a later dial stays unaccepted. A connection accepted after the pod-scope
-// teardown has run is closed here, because no Start can claim it. The loop
-// ends when the listener closes. spec: §4.7.10 (Runtime process lifetime),
-// §28.5.3 (CH-MSGSOCK).
+// acceptLoop is the listener's single accept path. It accepts each
+// connection the peer check admits and runs the runtime connection handshake
+// on it through a new buffered reader. A connection that fails the handshake
+// is logged and closed with no protocol response, and the loop accepts
+// again, so a runtime refused for a replaced nonce is installed when it
+// redials. The first connection that passes is installed, with its reader,
+// as the runtime's connection, and the loop returns, so the listener installs
+// one connection for the pod's life and a later dial stays unaccepted. A
+// connection that passes after the pod-scope teardown has run is closed here,
+// because no Start can claim it. The loop ends when the listener closes.
+// spec: §4.7.10 (Runtime process lifetime), §4.7.11 (Runtime connection
+// handshake), §28.5.3 (CH-MSGSOCK).
 func (p *SocketRuntimeProcess) acceptLoop() {
-	conn, err := p.listener.Accept()
-	if err != nil {
-		p.endAccept(err)
+	for {
+		conn, err := p.listener.Accept()
+		if err != nil {
+			p.endAccept(err)
+			return
+		}
+		br := bufio.NewReader(conn)
+		if err := authenticateRuntimeConn(conn, br, p.nonce, p.auth.NonceOnly); err != nil {
+			p.logRefusedPeer(err)
+			_ = conn.Close()
+			continue
+		}
+		p.install(conn, br)
 		return
 	}
+}
+
+// install records conn and its handshake reader as the runtime's connection
+// and releases every waiting Start. A connection that arrives after the
+// pod-scope teardown is closed instead, and the accept ends.
+func (p *SocketRuntimeProcess) install(conn net.Conn, br *bufio.Reader) {
 	p.mu.Lock()
 	if p.ended {
 		p.mu.Unlock()
@@ -277,6 +315,7 @@ func (p *SocketRuntimeProcess) acceptLoop() {
 		return
 	}
 	p.conn = conn
+	p.reader = br
 	p.connected = true
 	// The connection gets its own subscriber set, which its reader acts on.
 	p.hub = linefanout.New()
@@ -311,7 +350,9 @@ func (p *SocketRuntimeProcess) startReaderLocked() {
 	// would fail framing on a legal 17–50 MB part before it reached the
 	// gateway's §28.5.3 ingress validation. Matches echocore and the
 	// runtime SDK, which both already use 50 MB. F-15.4.1 (15.4-INFO-031).
-	p.hub.Serve(p.conn, maxJSONLFrameBytes, p.markEnded)
+	// The scan runs over the handshake's reader, which may already hold the
+	// first frame. spec: §4.7.11 (Runtime connection handshake).
+	p.hub.Serve(p.reader, maxJSONLFrameBytes, p.markEnded)
 }
 
 // markEnded records the sticky ended state. The fan-out reader runs it when

@@ -171,7 +171,7 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	body, _ := json.Marshal(map[string]any{
 		"version":    1,
 		"runtimeOps": map[string]any{"socket": socketPath},
-		"mcpNonce":   "nonce_compliance_harness",
+		"mcpNonce":   complianceManifestNonce,
 	})
 	if err := os.WriteFile(manifest, body, 0o600); err != nil {
 		os.RemoveAll(dir)
@@ -192,6 +192,10 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	}
 	go func() {
 		c, err := l.Accept()
+		if err == nil {
+			fa.reader = bufio.NewReader(c)
+			err = checkNonceLine(c, fa.reader, complianceManifestNonce)
+		}
 		fa.conn = c
 		fa.connErr = err
 		close(fa.connReady)
@@ -207,6 +211,34 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 		os.RemoveAll(dir)
 	}
 	return fa, cleanup, nil
+}
+
+// complianceManifestNonce is the mcpNonce the fake adapter's manifest
+// publishes, which the runtime's CH-RUNTIMEOPS nonce line must carry.
+const complianceManifestNonce = "nonce_compliance_harness"
+
+// checkNonceLine reads the runtime's first line on an accepted connection,
+// within the 500 ms the runtime connection handshake allows, and fails
+// unless it is the nonce line carrying nonce. The harness runs in the
+// adapter's default posture, where the peer check applies and no challenge
+// is issued. spec: §4.7.11 (Runtime connection handshake).
+func checkNonceLine(conn net.Conn, r *bufio.Reader, nonce string) error {
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	line, err := r.ReadBytes('\n')
+	if err != nil {
+		return fmt.Errorf("runtime sent no nonce line on CH-RUNTIMEOPS within 500ms: %w", err)
+	}
+	var got struct {
+		Nonce *string `json:"_lennyNonce"`
+	}
+	if err := json.Unmarshal(line, &got); err != nil || got.Nonce == nil {
+		return fmt.Errorf("runtime's first CH-RUNTIMEOPS line is not the nonce line: %s", strings.TrimSpace(string(line)))
+	}
+	if *got.Nonce != nonce {
+		return errors.New("runtime's CH-RUNTIMEOPS nonce line does not carry the manifest's mcpNonce")
+	}
+	return nil
 }
 
 // waitConn blocks until the runtime dials the lifecycle socket and the

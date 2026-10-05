@@ -338,7 +338,10 @@ type rpcResponse struct {
 // connectMCP dials the intra-pod MCP socket, completes the
 // nonce-authenticated initialize handshake (§15.4.3), and discovers the
 // tool set via tools/list. The nonce is presented as the top-level
-// params._lennyNonce field of the initialize request.
+// params._lennyNonce field of the initialize request. In nonce-only mode the
+// server writes a _lennyChallenge in place of the initialize response, and
+// connectMCP answers it before it reads that response (see initialize).
+// spec: §4.7.11 (Nonce-only fallback, Runtime connection handshake).
 func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout time.Duration) (*mcpClient, error) {
 	conn, err := dialUnixSocket(ctx, socket, timeout)
 	if err != nil {
@@ -351,7 +354,7 @@ func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout t
 	}
 	c.enc.SetEscapeHTML(false)
 
-	if _, err := c.call("initialize", map[string]any{
+	if err := c.initialize(nonce, map[string]any{
 		nonceParamKey:     nonce,
 		"protocolVersion": mcpProtocolVersion,
 		"clientInfo": map[string]any{
@@ -367,6 +370,44 @@ func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout t
 		return nil, fmt.Errorf("tools/list: %w", err)
 	}
 	return c, nil
+}
+
+// initialize sends the nonce-authenticated initialize request and reads its
+// response. A _lennyChallenge that arrives in place of the response is
+// answered with HMAC-SHA256 keyed by nonce, through the same answer code
+// the CH-MSGSOCK and CH-RUNTIMEOPS dials use (challengeResponseLine), and
+// the response is read after it. spec: §4.7.11 (Nonce-only fallback).
+func (c *mcpClient) initialize(nonce string, params map[string]any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.enc.Encode(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      c.id.Add(1),
+		Method:  "initialize",
+		Params:  params,
+	}); err != nil {
+		return fmt.Errorf("write initialize request: %w", err)
+	}
+	var raw json.RawMessage
+	if err := c.dec.Decode(&raw); err != nil {
+		return fmt.Errorf("read initialize response: %w", err)
+	}
+	if challenge, ok := challengeOf(raw); ok {
+		if _, err := c.conn.Write(challengeResponseLine(nonce, challenge)); err != nil {
+			return fmt.Errorf("write challenge response: %w", err)
+		}
+		if err := c.dec.Decode(&raw); err != nil {
+			return fmt.Errorf("read initialize response: %w", err)
+		}
+	}
+	var resp rpcResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("decode initialize response: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("initialize: rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	return nil
 }
 
 // callTool invokes one MCP tool via tools/call and returns the raw

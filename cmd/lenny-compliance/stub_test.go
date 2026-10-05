@@ -198,8 +198,8 @@ func (s *complianceStub) acknowledge(sessionID, startID string) {
 	s.writeAck(ack)
 }
 
-// runtimeOps dials the manifest's CH-RUNTIMEOPS socket, answers the
-// capability handshake with every capability, and answers each
+// runtimeOps dials the manifest's CH-RUNTIMEOPS socket, writes the
+// manifest's nonce line, answers the capability handshake with every capability, and answers each
 // session-scoped frame.
 func (s *complianceStub) runtimeOps(manifestPath string) {
 	body, err := os.ReadFile(manifestPath)
@@ -210,6 +210,7 @@ func (s *complianceStub) runtimeOps(manifestPath string) {
 		RuntimeOps struct {
 			Socket string `json:"socket"`
 		} `json:"runtimeOps"`
+		MCPNonce string `json:"mcpNonce"`
 	}
 	if json.Unmarshal(body, &m) != nil || m.RuntimeOps.Socket == "" {
 		return
@@ -220,6 +221,11 @@ func (s *complianceStub) runtimeOps(manifestPath string) {
 	}
 	defer conn.Close()
 	enc := json.NewEncoder(conn)
+	// The first line is the manifest's nonce, which the harness's fake
+	// adapter requires. spec: 4.7.11 (Runtime connection handshake).
+	if err := enc.Encode(map[string]string{"_lennyNonce": m.MCPNonce}); err != nil {
+		return
+	}
 	r := bufio.NewReader(conn)
 	if _, err := r.ReadBytes('\n'); err != nil {
 		return

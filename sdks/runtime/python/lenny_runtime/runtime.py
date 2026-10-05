@@ -36,10 +36,10 @@ from .transport import (
     ByteSink,
     ByteSource,
     FrameWriter,
+    AuthenticatedStream,
     LineReader,
-    SocketStream,
     StdioSource,
-    dial_unix_socket,
+    dial_authenticated,
 )
 from .types import (
     AdapterManifest,
@@ -235,7 +235,7 @@ class _Process:
         self._workers: list[threading.Thread] = []
         self._workers_lock = threading.Lock()
         self._exit_reason: TerminationReason | None = None
-        self._socket_stream: SocketStream | None = None
+        self._socket_stream: AuthenticatedStream | None = None
 
     def run(self) -> None:
         """Drive one runtime process: resolve the transport, load the
@@ -723,6 +723,7 @@ class _Process:
             else:
                 self._lifecycle = Lifecycle.dial(
                     self._manifest,
+                    self._manifest_path(),
                     self._opts.dial_timeout_s,
                     self._opts.lifecycle or LifecycleHooks(),
                     LifecycleHost(
@@ -778,6 +779,15 @@ class _Process:
         rec.set_credentials(creds)
         return creds
 
+    def _manifest_path(self) -> str:
+        """Resolve the §4.7 adapter manifest path: the explicit option,
+        else LENNY_ADAPTER_MANIFEST, else the default path."""
+        return (
+            self._opts.manifest_path
+            or os.environ.get(MANIFEST_ENV_VAR)
+            or DEFAULT_MANIFEST_PATH
+        )
+
     def _load_manifest(self) -> None:
         """Parse the §4.7 adapter manifest.
 
@@ -785,11 +795,7 @@ class _Process:
         logged and ignored. A manifest version newer than the SDK
         understands is rejected (§4.7 forward-compatibility rule).
         """
-        path = (
-            self._opts.manifest_path
-            or os.environ.get(MANIFEST_ENV_VAR)
-            or DEFAULT_MANIFEST_PATH
-        )
+        path = self._manifest_path()
         try:
             with open(path, encoding="utf-8") as fh:
                 raw = json.load(fh)
@@ -817,7 +823,8 @@ class _Process:
 
         When explicit streams were supplied it adapts them; when socket
         transport is enabled and LENNY_ADAPTER_SOCKET names a socket it
-        dials that socket; otherwise it returns the stdin/stdout binary
+        dials that socket through the runtime connection handshake;
+        otherwise it returns the stdin/stdout binary
         buffers. The read side is wrapped in a :class:`StdioSource` so
         the line reader gets first-available-chunk reads.
         """
@@ -832,7 +839,12 @@ class _Process:
         if self._opts.socket_transport:
             name = os.environ.get(SOCKET_ENV_VAR, "").strip()
             if name:
-                stream = dial_unix_socket(name, self._opts.dial_timeout_s)
+                # The runtime connection handshake reads the nonce from
+                # the resolved manifest path before each dial and redial.
+                # spec: §4.7.11 (Runtime connection handshake).
+                stream = dial_authenticated(
+                    name, self._manifest_path(), self._opts.dial_timeout_s
+                )
                 self._socket_stream = stream
                 return stream, stream
         return StdioSource(sys.stdin.buffer), sys.stdout.buffer

@@ -76,7 +76,7 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 		return time.AfterFunc(d, func() { f(); close(holdFired) })
 	}
 
-	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, publishSpawnedRuntimeManifest(t))
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}

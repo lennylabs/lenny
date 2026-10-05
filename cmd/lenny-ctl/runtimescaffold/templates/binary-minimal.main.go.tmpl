@@ -19,6 +19,15 @@
 // frames over the connection. openTransport below resolves which one
 // applies; the frame loop in run is identical either way.
 //
+// On the socket the adapter authenticates the connection before any frame
+// flows. The runtime's first line is {"_lennyNonce":"<mcpNonce>"}, read
+// from the adapter manifest just before the dial. In the nonce-only
+// security mode the adapter then sends {"_lennyChallenge":"<hex>"}, which
+// the runtime answers with the HMAC-SHA256 of the challenge keyed by the
+// nonce. When the adapter closes the connection before its first frame,
+// the manifest's nonce has changed: the runtime reads the manifest again
+// and dials again.
+//
 // Replace the body of handleMessage with a model call to build a real
 // agent. The rest of the loop is the protocol and stays unchanged.
 //
@@ -27,6 +36,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,6 +60,19 @@ const (
 // to the runtime container in this environment variable. Absent, the
 // runtime uses the stdin/stdout transport instead.
 const adapterSocketEnvVar = "LENNY_ADAPTER_SOCKET"
+
+// manifestEnvVar overrides the adapter manifest path; defaultManifestPath
+// applies when it is unset. The manifest carries the mcpNonce the socket
+// handshake presents.
+const (
+	manifestEnvVar      = "LENNY_ADAPTER_MANIFEST"
+	defaultManifestPath = "/run/lenny/adapter-manifest.json"
+)
+
+// handshakePoll is the pause between two reads of a manifest that is not
+// yet written, and before each redial. The runtime keeps polling with no
+// overall deadline.
+const handshakePoll = 100 * time.Millisecond
 
 // dialTimeout bounds how long openTransport waits for the adapter's
 // socket listener to accept a connection. The adapter spawns the
@@ -142,6 +168,84 @@ func openTransport() (io.Reader, io.Writer, func(), error) {
 	if socket == "" {
 		return os.Stdin, os.Stdout, func() {}, nil
 	}
+	manifestPath := strings.TrimSpace(os.Getenv(manifestEnvVar))
+	if manifestPath == "" {
+		manifestPath = defaultManifestPath
+	}
+	for {
+		nonce := waitForNonce(manifestPath)
+		conn, err := dialSocket(socket)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		in, ok := authenticate(conn, nonce)
+		if ok {
+			return in, conn, func() { _ = conn.Close() }, nil
+		}
+		// The adapter closed the connection before its first frame: the
+		// manifest's nonce changed. Read it again and redial.
+		_ = conn.Close()
+		time.Sleep(handshakePoll)
+	}
+}
+
+// waitForNonce returns the mcpNonce of the manifest at path, polling until
+// the manifest exists and carries one.
+func waitForNonce(path string) string {
+	for {
+		var m struct {
+			MCPNonce string `json:"mcpNonce"`
+		}
+		if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &m) == nil && m.MCPNonce != "" {
+			return m.MCPNonce
+		}
+		time.Sleep(handshakePoll)
+	}
+}
+
+// authenticate writes the nonce line and reads until the adapter's first
+// frame, answering each challenge on the way. It returns a reader that
+// yields that first frame and everything after it, and false when the
+// adapter closed the connection first.
+func authenticate(conn net.Conn, nonce string) (io.Reader, bool) {
+	if err := writeLine(conn, map[string]string{"_lennyNonce": nonce}); err != nil {
+		return nil, false
+	}
+	br := bufio.NewReader(conn)
+	for {
+		line, err := br.ReadBytes('\n')
+		if err != nil {
+			return nil, false
+		}
+		var challenge struct {
+			Challenge *string `json:"_lennyChallenge"`
+		}
+		if json.Unmarshal(line, &challenge) == nil && challenge.Challenge != nil {
+			mac := hmac.New(sha256.New, []byte(nonce))
+			mac.Write([]byte(*challenge.Challenge))
+			answer := map[string]string{"_lennyChallengeResponse": hex.EncodeToString(mac.Sum(nil))}
+			if err := writeLine(conn, answer); err != nil {
+				return nil, false
+			}
+			continue
+		}
+		return io.MultiReader(bytes.NewReader(line), br), true
+	}
+}
+
+// writeLine writes v as one JSON line.
+func writeLine(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(append(b, '\n'))
+	return err
+}
+
+// dialSocket dials the adapter's socket, retrying within dialTimeout to
+// absorb a startup race with the listener.
+func dialSocket(socket string) (net.Conn, error) {
 	addr := socket
 	if strings.HasPrefix(socket, "@") {
 		// A Linux abstract address begins with "@"; the kernel resolves
@@ -154,11 +258,11 @@ func openTransport() (io.Reader, io.Writer, func(), error) {
 		var d net.Dialer
 		conn, err := d.Dial("unix", addr)
 		if err == nil {
-			return conn, conn, func() { _ = conn.Close() }, nil
+			return conn, nil
 		}
 		lastErr = err
 		if time.Now().After(deadline) {
-			return nil, nil, nil, fmt.Errorf("dial adapter socket %q: %w", socket, lastErr)
+			return nil, fmt.Errorf("dial adapter socket %q: %w", socket, lastErr)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

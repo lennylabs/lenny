@@ -15,7 +15,12 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .transport import FrameWriter, LineReader, SocketStream, dial_unix_socket
+from .transport import (
+    AuthenticatedStream,
+    FrameWriter,
+    LineReader,
+    dial_authenticated,
+)
 from .types import AdapterManifest, CredentialBundle
 
 # LIFECYCLE_CAPABILITIES is the §15.4.3 / §15.4.6 set of Full-level
@@ -121,7 +126,7 @@ class Lifecycle:
 
     def __init__(
         self,
-        stream: SocketStream,
+        stream: AuthenticatedStream,
         hooks: LifecycleHooks,
         host: LifecycleHost,
     ) -> None:
@@ -137,6 +142,7 @@ class Lifecycle:
     def dial(
         cls,
         manifest: AdapterManifest,
+        manifest_path: str,
         timeout_s: float,
         hooks: LifecycleHooks,
         host: LifecycleHost,
@@ -151,7 +157,12 @@ class Lifecycle:
             raise RuntimeError(
                 "adapter manifest has no CH-RUNTIMEOPS socket"
             )
-        stream = dial_unix_socket(manifest.lifecycle_channel.socket, timeout_s)
+        # The runtime connection handshake reads the nonce from
+        # manifest_path before each dial and redial.
+        # spec: §4.7.11 (Runtime connection handshake).
+        stream = dial_authenticated(
+            manifest.lifecycle_channel.socket, manifest_path, timeout_s
+        )
         lc = cls(stream, hooks, host)
 
         # §15.4.3 handshake: the adapter sends lifecycle_capabilities;

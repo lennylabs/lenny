@@ -229,7 +229,7 @@ func (s *Server) ServeConn(conn net.Conn, nonce string) error {
 // observes the deadline. The deadline is cleared on return so the
 // post-handshake tool loop reads without one.
 func (s *Server) challenge(conn net.Conn, dec *json.Decoder, enc *json.Encoder, nonce string) error {
-	challenge, err := newChallenge()
+	challenge, err := NewChallenge()
 	if err != nil {
 		return err
 	}

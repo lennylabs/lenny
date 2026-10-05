@@ -19,7 +19,7 @@ import (
 // process's own UID and registers its pod-scope teardown.
 func newAcceptTestRuntime(t *testing.T) *adapter.SocketRuntimeProcess {
 	t.Helper()
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t),
+	sp, err := newSocketRuntime(t, runtimeSocketAddr(t),
 		adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)

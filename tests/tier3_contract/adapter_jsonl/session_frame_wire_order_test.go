@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // wireTap records every byte the runtime reads off its CH-MSGSOCK
@@ -60,15 +61,19 @@ func (w *wireTap) frames(t *testing.T) []string {
 
 // dialEchoRuntime dials the adapter's runtime socket and runs the echocore
 // loop over the connection, which ignores session_start and session_end
-// under the unknown-type rule. It returns the tap on the connection's
-// inbound side and the channel the loop's exit error arrives on.
-func dialEchoRuntime(t *testing.T, addr string) (*wireTap, <-chan error) {
+// under the unknown-type rule. Its first line is the nonce line carrying
+// nonce. It returns the tap on the connection's inbound side and the
+// channel the loop's exit error arrives on.
+func dialEchoRuntime(t *testing.T, addr, nonce string) (*wireTap, <-chan error) {
 	t.Helper()
 	conn, err := net.Dial("unix", addr)
 	if err != nil {
 		t.Fatalf("dial runtime socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 	tap := &wireTap{}
 	exited := make(chan error, 1)
 	go func() {
@@ -136,13 +141,16 @@ func sendMessage(t *testing.T, sp *adapter.SocketRuntimeProcess, out <-chan []by
 //	exit on shutdown, so the frames cannot be a breaking change.
 func TestSessionFramesBracketEachSessionOnOneRuntimeConnection_spec_28_5_3(t *testing.T) {
 	addr := runtimeSocketAddress(t)
-	sp, err := adapter.NewSocketRuntimeProcess(addr, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener requires the published manifest's nonce as the
+	// connection's first line. spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.Publish(t, nil)
+	sp, err := adapter.NewSocketRuntimeProcess(addr, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = sp.CloseListener() })
 	sp.AcceptTimeout = 10 * time.Second
-	tap, exited := dialEchoRuntime(t, addr)
+	tap, exited := dialEchoRuntime(t, addr, manifest.Nonce)
 
 	s := adapter.New("wire-order")
 	s.WorkspaceBase = t.TempDir()

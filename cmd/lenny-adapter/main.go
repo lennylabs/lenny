@@ -395,6 +395,12 @@ func main() {
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.
 	adapterSrv.ManifestDir = *credentialsDir
+	// §4.7.11 Runtime connection handshake: both runtime listeners compare
+	// each accepted connection's nonce line with the mcpNonce of the
+	// manifest published in ManifestDir at that moment. They are bound here,
+	// before any start publishes a manifest, so they take a provider rather
+	// than a value.
+	runtimeNonce := adapter.PublishedManifestNonce(adapterSrv.ManifestDir)
 	// §4.7: the manifest's observability object points an OTel-emitting
 	// runtime at the deployment's OTLP collector.
 	adapterSrv.OTLPEndpoint = *otlpEndpoint
@@ -404,7 +410,7 @@ func main() {
 		// §4.7 sidecar model: bind the abstract socket the runtime
 		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
 		// the runtime container to this same name.
-		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth)
+		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth, runtimeNonce)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
@@ -428,7 +434,7 @@ func main() {
 	// advertises it in the session manifest.
 	var lifecycle *adapter.RuntimeOps
 	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth)
+		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth, runtimeNonce)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}

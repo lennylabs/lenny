@@ -860,7 +860,7 @@ func TestShutdownOfAClaimedButUnrecordedStartTearsDownWithoutReporting_spec_4_7_
 // bound-but-unstarted entry on that pod runs no runtime close, so the
 // shared connection stays up.
 func TestShutdownOfAnUnstartedEntryLeavesTheSocketRuntimeIntact_spec_4_7_1(t *testing.T) {
-	sp, err := NewSocketRuntimeProcess(shortSocketName(t, "rt.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	sp, err := newTestSocketRuntime(t, shortSocketName(t, "rt.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -870,6 +870,8 @@ func TestShutdownOfAnUnstartedEntryLeavesTheSocketRuntimeIntact_spec_4_7_1(t *te
 		c, derr := net.Dial("unix", sp.SocketPath())
 		if derr != nil {
 			t.Errorf("dial runtime socket: %v", derr)
+		} else if werr := writeTestListenerNonce(c, sp.SocketPath()); werr != nil {
+			t.Errorf("runtime nonce line: %v", werr)
 		}
 		dialed <- c
 	}()

@@ -49,6 +49,10 @@ var errLifecycleVersionIncompatible = errors.New("lifecycle protocol version inc
 var lifecycleCapabilities = []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"}
 
 var (
+	// errRuntimeConnRefused reports a connection the runtime connection
+	// handshake refused before it was bound. spec: §4.7.11 (Runtime
+	// connection handshake).
+	errRuntimeConnRefused    = errors.New("CH-RUNTIMEOPS connection refused by the runtime connection handshake")
 	errLifecycleClosed       = errors.New("CH-RUNTIMEOPS is closed")
 	errLifecycleNotConnected = errors.New("CH-RUNTIMEOPS has no runtime connection")
 )
@@ -107,6 +111,12 @@ type RuntimeOps struct {
 	// auth is the SO_PEERCRED posture the listener enforces, fixed at
 	// construction. spec: §4.7.11.
 	auth SocketPeerAuth
+	// nonce reports the mcpNonce of the currently published manifest, which
+	// the runtime connection handshake compares each connection's nonce line
+	// with. It is fixed at construction and read at each accept, because the
+	// runtime may connect at any time from boot. spec: §4.7.11 (Runtime
+	// connection handshake).
+	nonce func() string
 	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
 	// peer's UID. It is a test seam: a test process cannot dial from a
 	// second UID without root. It is written only before Run.
@@ -158,17 +168,20 @@ type tokenSink interface {
 // CH-MSGSOCK and intra-pod MCP listeners take: outside nonce-only mode only
 // auth.ExpectedUID is admitted, and a refused connection is logged as
 // runtimeops_peer_refused, closed, and skipped inside Accept, so it never
-// becomes the runtime connection Run serves. The manifest-nonce handshake
-// the CH-RUNTIMEOPS card also states is not performed.
-// spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
-// (CH-RUNTIMEOPS, Endpoint).
-func NewRuntimeOps(socketPath string, auth SocketPeerAuth) (*RuntimeOps, error) {
+// becomes the runtime connection Run serves. nonce reports the published
+// manifest's mcpNonce (see PublishedManifestNonce); every admitted
+// connection then runs the runtime connection handshake against it before
+// the lifecycle_capabilities handshake.
+// spec: §4.7.11 (Separate UIDs and connection authentication, Runtime
+// connection handshake), §28.5.3 (CH-RUNTIMEOPS, Endpoint).
+func NewRuntimeOps(socketPath string, auth SocketPeerAuth, nonce func() string) (*RuntimeOps, error) {
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("CH-RUNTIMEOPS listen %s: %w", socketPath, err)
 	}
 	lc := &RuntimeOps{
 		auth:     auth,
+		nonce:    nonce,
 		ready:    make(chan struct{}),
 		done:     make(chan struct{}),
 		pending:  map[string]chan error{},
@@ -234,7 +247,13 @@ func (lc *RuntimeOps) Run(ctx context.Context) error {
 			}
 			return fmt.Errorf("CH-RUNTIMEOPS accept: %w", err)
 		}
-		if err := lc.serveConn(conn); err != nil && !errors.Is(err, errLifecycleClosed) {
+		err = lc.serveConn(conn)
+		if errors.Is(err, errRuntimeConnRefused) {
+			// A refused connection was never bound, so there is no
+			// per-connection state to reset.
+			continue
+		}
+		if err != nil && !errors.Is(err, errLifecycleClosed) {
 			// A per-connection handshake or read error ends this runtime
 			// connection but not the channel: the next runtime (e.g. after
 			// Resume restarts the binary) dials again and re-handshakes.
@@ -247,9 +266,21 @@ func (lc *RuntimeOps) Run(ctx context.Context) error {
 	}
 }
 
-// serveConn binds conn as the active runtime connection, completes the
-// handshake, and serves frames until the connection ends.
+// serveConn runs the runtime connection handshake on conn, then binds it as
+// the active runtime connection, completes the lifecycle_capabilities
+// handshake, and serves frames until the connection ends. A connection that
+// fails the runtime connection handshake is logged and closed with no
+// protocol response before it is bound, so no request is ever written to it,
+// and serveConn returns errRuntimeConnRefused so Run accepts the next
+// connection. spec: §4.7.11 (Runtime connection handshake), §28.5.3
+// (CH-RUNTIMEOPS).
 func (lc *RuntimeOps) serveConn(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	if err := authenticateRuntimeConn(conn, r, lc.nonce, lc.auth.NonceOnly); err != nil {
+		lc.logRefusedPeer(err)
+		_ = conn.Close()
+		return errRuntimeConnRefused
+	}
 	ready := make(chan struct{})
 	lc.mu.Lock()
 	if lc.closed {
@@ -264,7 +295,6 @@ func (lc *RuntimeOps) serveConn(conn net.Conn) error {
 	lc.ready = ready
 	lc.mu.Unlock()
 
-	r := bufio.NewReader(conn)
 	if err := lc.handshake(r); err != nil {
 		return err
 	}

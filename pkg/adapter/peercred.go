@@ -82,10 +82,10 @@ func matchPeerUID(conn net.Conn, expectedUID uint32, lookup func(net.Conn) (uint
 }
 
 // SocketPeerAuth is the connection-authentication posture of the adapter's
-// listeners on the adapter-agent sockets: the CH-MSGSOCK runtime socket and
-// the intra-pod platform and connector MCP sockets. The zero value requires
-// the peer to run as UID 0, so a caller that omits the agent UID admits no
-// unprivileged process rather than every process.
+// listeners on the adapter-agent sockets: the CH-MSGSOCK and CH-RUNTIMEOPS
+// runtime sockets and the intra-pod platform and connector MCP sockets. The
+// zero value requires the peer to run as UID 0, so a caller that omits the
+// agent UID admits no unprivileged process rather than every process.
 // spec: §4.7.11 (Separate UIDs and connection authentication), §28.5.3
 // (CH-MSGSOCK, Endpoint).
 type SocketPeerAuth struct {
@@ -100,8 +100,9 @@ type SocketPeerAuth struct {
 	// is unavailable in this mode and that the manifest nonce and the
 	// per-connection HMAC-SHA256 challenge authenticate the connection
 	// instead, so the listeners apply no peer check. The MCP servers run the
-	// challenge; CH-MSGSOCK has neither exchange, which leaves that socket
-	// unauthenticated in this mode (BUILD-GAPS F-4.7.25).
+	// challenge after the nonce-authenticated initialize, and the CH-MSGSOCK
+	// and CH-RUNTIMEOPS listeners run it after the nonce line of the runtime
+	// connection handshake (see authenticateRuntimeConn).
 	NonceOnly bool
 	// NoSocketBoundary records the embedded deployment model, which the
 	// specification describes as a single trusted process with no
@@ -141,8 +142,9 @@ func (a SocketPeerAuth) wrap(l net.Listener, check func(net.Conn) error, onRejec
 
 // logPeerRefusal records a refused adapter-agent connection under event,
 // with the peer UID SO_PEERCRED reported or, when the UID could not be read,
-// the lookup error. The record carries identifiers only: a refused
-// connection never received a byte. A nil logger logs to slog.Default.
+// the lookup error, or the handshake error for a connection refused by the
+// runtime connection handshake. The record carries identifiers only, never a
+// nonce value, and a refused connection received no protocol frame. A nil logger logs to slog.Default.
 func logPeerRefusal(logger *slog.Logger, event, socket string, expectedUID uint32, err error) {
 	if logger == nil {
 		logger = slog.Default()

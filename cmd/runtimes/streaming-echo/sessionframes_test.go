@@ -112,11 +112,18 @@ func TestRuntimeOpsTerminateFrameIsIgnored_spec_4_7_10(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = l.Close() })
+	// The fake adapter publishes a manifest and requires its nonce as the
+	// connection's first line. spec: 4.7.11 (Runtime connection handshake).
+	const nonce = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	manifestPath := filepath.Join(t.TempDir(), "adapter-manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"version":1,"mcpNonce":"`+nonce+`"}`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runRuntimeOps(ctx, sock, io.Discard)
+		runRuntimeOps(ctx, sock, manifestPath, io.Discard)
 	}()
 	conn, err := l.Accept()
 	if err != nil {
@@ -128,6 +135,14 @@ func TestRuntimeOpsTerminateFrameIsIgnored_spec_4_7_10(t *testing.T) {
 		<-done
 	})
 	r := bufio.NewReader(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	nonceLine, err := r.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read nonce line: %v", err)
+	}
+	if got := strings.TrimSpace(string(nonceLine)); got != `{"_lennyNonce":"`+nonce+`"}` {
+		t.Fatalf("first line = %s, want the manifest's nonce line", got)
+	}
 	send := func(v any) {
 		b, _ := json.Marshal(v)
 		if _, err := conn.Write(append(b, '\n')); err != nil {

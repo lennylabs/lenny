@@ -229,7 +229,7 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	// session the frame names.
 	s := New("served")
 	bindSessionForTest(t, s, "sess-wire")
-	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	lc, err := newTestRuntimeOps(t, shortSocketName(t, "wire.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}

@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // credProbeSessionID is the session the cases bind their slot tree to.
@@ -138,7 +139,7 @@ func writeCredPathManifest(t *testing.T, dir, credentialsPath, runtimeOpsSocket 
 	t.Helper()
 	m := map[string]any{
 		"version":  1,
-		"mcpNonce": "nonce_credpath",
+		"mcpNonce": credPathManifestNonce,
 	}
 	if credentialsPath != "" {
 		m["sessionId"] = credProbeSessionID
@@ -436,6 +437,16 @@ type credRotationAdapter struct {
 	r    *bufio.Reader
 }
 
+// credPathManifestNonce is the mcpNonce writeCredPathManifest publishes,
+// which the fake CH-RUNTIMEOPS adapter requires as the connection's first
+// line.
+const credPathManifestNonce = "nonce_credpath"
+
+// startCredRotationAdapter listens on a fake CH-RUNTIMEOPS socket. Its
+// accept requires the nonce line carrying credPathManifestNonce before it
+// opens the capability handshake; a connection whose first line is anything
+// else is closed and never becomes the channel. spec: 4.7.11 (Runtime
+// connection handshake).
 func startCredRotationAdapter(t *testing.T) *credRotationAdapter {
 	t.Helper()
 	// The Unix socket path is capped at 108 bytes, which a test temp
@@ -458,9 +469,14 @@ func startCredRotationAdapter(t *testing.T) *credRotationAdapter {
 		if err != nil {
 			return
 		}
+		r := bufio.NewReader(conn)
+		if err := runtimenonce.Check(conn, r, credPathManifestNonce); err != nil {
+			_ = conn.Close()
+			return
+		}
 		fa.mu.Lock()
 		fa.conn = conn
-		fa.r = bufio.NewReader(conn)
+		fa.r = r
 		fa.mu.Unlock()
 		_ = json.NewEncoder(conn).Encode(map[string]any{
 			"type":         "lifecycle_capabilities",

@@ -56,8 +56,6 @@ const (
 	exitOK            = 0
 	exitRuntimeError  = 1
 	exitProtocolError = 2
-
-	defaultManifestPath = "/run/lenny/adapter-manifest.json"
 )
 
 func main() {
@@ -94,9 +92,10 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	// streaming-echo can be exercised in the Basic-only test paths without
 	// a manifest. The socket is opened in a background goroutine so a slow
 	// connect does not block stdin processing.
-	manifest, manifestErr := loadManifest(os.Getenv("LENNY_ADAPTER_MANIFEST"))
+	manifestPath := runtimekit.ManifestPath()
+	manifest, manifestErr := loadManifest(manifestPath)
 	if manifestErr == nil && manifest.RuntimeOps.Socket != "" {
-		go runRuntimeOps(ctx, manifest.RuntimeOps.Socket, stderr)
+		go runRuntimeOps(ctx, manifest.RuntimeOps.Socket, manifestPath, stderr)
 	} else if manifestErr != nil {
 		fmt.Fprintf(stderr, "streaming-echo: no adapter manifest (%v); runtime operations channel disabled\n", manifestErr)
 	}
@@ -160,9 +159,6 @@ type adapterManifest struct {
 }
 
 func loadManifest(path string) (adapterManifest, error) {
-	if path == "" {
-		path = defaultManifestPath
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return adapterManifest{}, err
@@ -181,8 +177,8 @@ func loadManifest(path string) (adapterManifest, error) {
 // Connection failures are logged but not fatal — the spec permits the
 // adapter side of the channel to be temporarily unavailable. A failed
 // connect on first try gets one retry pause and then gives up.
-func runRuntimeOps(ctx context.Context, socket string, stderr io.Writer) {
-	conn, err := dialLifecycleSocket(ctx, socket)
+func runRuntimeOps(ctx context.Context, socket, manifestPath string, stderr io.Writer) {
+	conn, err := dialLifecycleSocket(ctx, socket, manifestPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "streaming-echo: runtime operations channel dial failed: %v\n", err)
 		return
@@ -262,33 +258,13 @@ func runRuntimeOps(ctx context.Context, socket string, stderr io.Writer) {
 	}
 }
 
-func dialLifecycleSocket(ctx context.Context, socket string) (net.Conn, error) {
-	// Linux abstract socket addresses start with @ and are translated to
-	// a leading NUL when dialled. The net package handles this by passing
-	// the @-prefixed name unchanged to the syscall; the kernel resolves
-	// it. On macOS, abstract sockets are not supported — the path is
-	// taken as-is on the filesystem.
-	addr := socket
-	if strings.HasPrefix(socket, "@") {
-		// net.Dial expects "\x00..." for abstract sockets when not on
-		// Linux; on Linux net handles the @ prefix natively. Strip the
-		// @ and let the kernel decide — this matches the Go stdlib
-		// behaviour for unix-abstract addresses.
-		addr = "\x00" + socket[1:]
-	}
-	d := net.Dialer{}
-	conn, err := d.DialContext(ctx, "unix", addr)
-	if err == nil {
-		return conn, nil
-	}
-	// One bounded retry. Helps the test harness that may not have its
-	// listener up at the instant the runtime starts.
-	select {
-	case <-time.After(200 * time.Millisecond):
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return d.DialContext(ctx, "unix", addr)
+// dialLifecycleSocket dials CH-RUNTIMEOPS through the runtime connection
+// handshake: the first line on each connection is the nonce from the
+// manifest at manifestPath, read again before each redial, and a challenge
+// that arrives before the adapter's lifecycle_capabilities is answered.
+// spec: §4.7.11 (Runtime connection handshake).
+func dialLifecycleSocket(ctx context.Context, socket, manifestPath string) (net.Conn, error) {
+	return runtimekit.DialAuthenticated(ctx, socket, manifestPath)
 }
 
 func readJSONLine(r *bufio.Reader) ([]byte, error) {

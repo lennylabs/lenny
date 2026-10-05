@@ -14,7 +14,13 @@ import json
 import threading
 from typing import Any
 
-from .transport import LineReader, SocketStream, dial_unix_socket
+from .transport import (
+    LineReader,
+    SocketStream,
+    challenge_of,
+    challenge_response_line,
+    dial_unix_socket,
+)
 from .types import (
     AdapterManifest,
     MessagePart,
@@ -65,7 +71,11 @@ class McpClient:
         the tool set via ``tools/list``.
 
         The nonce is presented as the top-level ``params._lennyNonce``
-        field of the initialize request.
+        field of the initialize request. In nonce-only mode the server
+        writes a ``_lennyChallenge`` in place of the initialize response,
+        and the client answers it before it reads that response.
+
+        spec: §4.7.11 (Nonce-only fallback).
         """
         stream = dial_unix_socket(socket_name, timeout_s)
         client = cls(stream)
@@ -77,6 +87,7 @@ class McpClient:
                     "protocolVersion": MCP_PROTOCOL_VERSION,
                     "clientInfo": {"name": client_name, "version": "1.0.0"},
                 },
+                challenge_nonce=nonce,
             )
             client.call("tools/list", {})
         except Exception as err:
@@ -84,8 +95,15 @@ class McpClient:
             raise RuntimeError(f"connect {socket_name}: {err}") from err
         return client
 
-    def call(self, method: str, params: Any) -> Any:
-        """Send one JSON-RPC request and read the matching response."""
+    def call(
+        self, method: str, params: Any, challenge_nonce: str | None = None
+    ) -> Any:
+        """Send one JSON-RPC request and read the matching response.
+
+        When ``challenge_nonce`` is set, a ``_lennyChallenge`` that arrives
+        in place of the response is answered with the HMAC keyed by that
+        nonce, and the response is read after it.
+        """
         with self._lock:
             self._next_id += 1
             request = {
@@ -100,6 +118,17 @@ class McpClient:
             self._stream.write(line)
             self._stream.flush()
             raw = self._reader.next()
+            challenge = (
+                challenge_of(raw)
+                if challenge_nonce is not None and raw is not None
+                else None
+            )
+            if challenge is not None and challenge_nonce is not None:
+                self._stream.write(
+                    challenge_response_line(challenge_nonce, challenge)
+                )
+                self._stream.flush()
+                raw = self._reader.next()
             if raw is None:
                 raise RuntimeError(f"{method}: MCP server closed the connection")
             resp = json.loads(raw)

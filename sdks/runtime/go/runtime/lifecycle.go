@@ -116,7 +116,10 @@ func (p *process) dialLifecycle(ctx context.Context) (*Lifecycle, error) {
 	if p.manifest == nil || p.manifest.RuntimeOps == nil || p.manifest.RuntimeOps.Socket == "" {
 		return nil, errors.New("adapter manifest has no CH-RUNTIMEOPS socket")
 	}
-	conn, err := dialUnixSocket(ctx, p.manifest.RuntimeOps.Socket, p.cfg.dialTimeout)
+	// The runtime connection handshake reads the nonce from the manifest
+	// before each dial and redial. spec: §4.7.11 (Runtime connection
+	// handshake).
+	conn, err := dialAuthenticated(ctx, p.manifest.RuntimeOps.Socket, p.cfg.manifestPath, p.cfg.dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("dial lifecycle socket: %w", err)
 	}

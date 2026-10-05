@@ -71,7 +71,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // concurrentPool names the deployer pool contract this flow stands up: a
@@ -128,7 +130,7 @@ func TestConcurrentWorkspacePerSlotExecution_spec_5_2(t *testing.T) {
 	// adapter binds the abstract socket and spawns the real echo-concurrent
 	// binary, which dials back and runs its sessionId dispatch loop over the one
 	// connection. Every slot rides this single connection (spec/05:509).
-	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, publishSpawnedRuntimeManifest(t))
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}
@@ -323,6 +325,19 @@ func recvResponse(t *testing.T, stream adapterv1.Adapter_AttachClient) slotRespo
 func buildConcurrentRuntime(t *testing.T) string {
 	t.Helper()
 	return buildRepoBinary(t, "cmd/runtimes/echo-concurrent")
+}
+
+// publishSpawnedRuntimeManifest publishes a test manifest, names it in
+// LENNY_ADAPTER_MANIFEST so a runtime the adapter spawns through SpawnPath
+// inherits it, and returns the nonce provider the runtime listener takes.
+// The spawned runtime's first line is that manifest's nonce, which the
+// listener compares with the provider's value. spec: 4.7.11 (Runtime
+// connection handshake).
+func publishSpawnedRuntimeManifest(t *testing.T) func() string {
+	t.Helper()
+	m := runtimenonce.Publish(t, nil)
+	t.Setenv(runtimekit.ManifestEnvVar, m.Path)
+	return adapter.PublishedManifestNonce(m.Dir)
 }
 
 // concurrentSocketAddr returns the abstract Unix socket the adapter binds
@@ -535,7 +550,7 @@ func newAbandonFixture(t *testing.T) *abandonFixture {
 	if runtime.GOOS == "linux" {
 		addr = fmt.Sprintf("@lenny-t4-abandon-%d", time.Now().UnixNano())
 	}
-	proc, err := adapter.NewSocketRuntimeProcess(addr, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	proc, err := adapter.NewSocketRuntimeProcess(addr, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, publishSpawnedRuntimeManifest(t))
 	if err != nil {
 		t.Fatalf("bind pod runtime socket: %v", err)
 	}

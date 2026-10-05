@@ -6,8 +6,8 @@
 // runtime that needs to react registers callbacks through
 // LifecycleHooks.
 
-import type { Socket } from "node:net";
-import { FrameWriter, LineReader, dialUnixSocket } from "./transport.js";
+import type { Duplex } from "node:stream";
+import { FrameWriter, LineReader, dialAuthenticated } from "./transport.js";
 import type { AdapterManifest, CredentialBundle } from "./types.js";
 
 // LIFECYCLE_CAPABILITIES is the §15.4.3 / §15.4.6 set of Full-level
@@ -95,7 +95,7 @@ export class Lifecycle {
   private closed = false;
 
   private constructor(
-    private readonly conn: Socket,
+    private readonly conn: Duplex,
     private readonly writer: FrameWriter,
     private readonly reader: LineReader,
     private readonly hooks: LifecycleHooks,
@@ -107,6 +107,7 @@ export class Lifecycle {
   // lifecycle_support handshake, and starts the event loop.
   static async dial(
     manifest: AdapterManifest,
+    manifestPath: string,
     timeoutMs: number,
     hooks: LifecycleHooks,
     host: LifecycleHost,
@@ -114,8 +115,12 @@ export class Lifecycle {
     if (!manifest.runtimeOps?.socket) {
       throw new Error("adapter manifest has no CH-RUNTIMEOPS socket");
     }
-    const conn = await dialUnixSocket(
+    // The runtime connection handshake reads the nonce from manifestPath
+    // before each dial and redial. spec: §4.7.11 (Runtime connection
+    // handshake).
+    const conn = await dialAuthenticated(
       manifest.runtimeOps.socket,
+      manifestPath,
       timeoutMs,
     );
     const writer = new FrameWriter(conn);

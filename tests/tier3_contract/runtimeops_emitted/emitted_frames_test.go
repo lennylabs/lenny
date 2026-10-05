@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -75,7 +76,10 @@ func startRuntimeOps(t *testing.T) (*adapter.RuntimeOps, *runtimePeer) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lc.sock")
-	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener requires the published manifest's nonce as the
+	// connection's first line. spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.Publish(t, nil)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -92,6 +96,9 @@ func startRuntimeOps(t *testing.T) (*adapter.RuntimeOps, *runtimePeer) {
 		t.Fatalf("dial CH-RUNTIMEOPS: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := runtimenonce.Write(conn, manifest.Nonce); err != nil {
+		t.Fatal(err)
+	}
 	p := &runtimePeer{t: t, conn: conn, r: bufio.NewReader(conn)}
 	caps := p.read()
 	if caps["type"] != "lifecycle_capabilities" {

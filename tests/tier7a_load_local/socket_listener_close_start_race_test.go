@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // listenerRaceAcceptTimeout bounds the first Start's accept. Its runtime
@@ -119,7 +120,11 @@ func newListenerRaceRuntime(t *testing.T) (*adapter.SocketRuntimeProcess, string
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socket := filepath.Join(dir, "r.sock")
-	rt, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares each connection's nonce line with a test
+	// manifest published beside the socket, which dialRuntimeSocket reads.
+	// spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.PublishIn(t, dir, nil)
+	rt, err := adapter.NewSocketRuntimeProcess(socket, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -129,14 +134,23 @@ func newListenerRaceRuntime(t *testing.T) (*adapter.SocketRuntimeProcess, string
 }
 
 // dialRuntimeSocket stands in for the pod's runtime process connecting to
-// the adapter's address.
+// the adapter's address. Its first line is the nonce line carrying the
+// mcpNonce of the manifest newListenerRaceRuntime published beside the
+// socket.
 func dialRuntimeSocket(t *testing.T, socket string) net.Conn {
 	t.Helper()
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(socket), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
 		t.Fatalf("dial runtime socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 	return conn
 }
 

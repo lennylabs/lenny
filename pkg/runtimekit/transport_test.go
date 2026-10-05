@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/runtimekit"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 func TestOpenWithoutSocketEnvUsesStdinStdout(t *testing.T) {
@@ -31,8 +32,15 @@ func TestOpenWithoutSocketEnvUsesStdinStdout(t *testing.T) {
 	}
 }
 
+// spec: 4.7.11 (Runtime connection handshake)
+//
+// Open dials the socket LENNY_ADAPTER_SOCKET names, and its first line is
+// the nonce line carrying the mcpNonce of the manifest LENNY_ADAPTER_MANIFEST
+// names.
 func TestOpenWithSocketEnvDialsTheSocket(t *testing.T) {
 	socket := transportSocketAddr(t)
+	manifest := runtimenonce.Publish(t, nil)
+	t.Setenv(runtimekit.ManifestEnvVar, manifest.Path)
 	// A listener stands in for the adapter.
 	addr := socket
 	if strings.HasPrefix(socket, "@") {
@@ -64,12 +72,16 @@ func TestOpenWithSocketEnvDialsTheSocket(t *testing.T) {
 
 	adapterConn := <-accepted
 	defer adapterConn.Close()
+	adapterReader := bufio.NewReader(adapterConn)
+	if err := runtimenonce.Check(adapterConn, adapterReader, manifest.Nonce); err != nil {
+		t.Fatalf("nonce line: %v", err)
+	}
 
 	// The runtime writes a frame; the adapter side reads it.
 	if _, err := tr.Writer.Write([]byte(`{"type":"response"}` + "\n")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	line, err := bufio.NewReader(adapterConn).ReadString('\n')
+	line, err := adapterReader.ReadString('\n')
 	if err != nil {
 		t.Fatalf("adapter read: %v", err)
 	}

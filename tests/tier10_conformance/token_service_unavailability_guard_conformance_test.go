@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // guardLifecycleFrame is the subset of a §4.7 runtime<->adapter lifecycle JSONL
@@ -57,17 +58,26 @@ type guardRuntimePeer struct {
 	enc  *json.Encoder
 }
 
-// dialGuardRuntimePeer connects to the adapter lifecycle socket and completes
+// dialGuardRuntimePeer connects to the adapter lifecycle socket, writes the
+// nonce line carrying the mcpNonce of the manifest published beside the
+// socket (spec: 4.7.11, Runtime connection handshake), and completes
 // the lifecycle_capabilities / lifecycle_support handshake, advertising
 // credential_rotation so a rotation the adapter (wrongly) initiated would reach
 // this peer as credentials_rotated.
 func dialGuardRuntimePeer(t *testing.T, socketPath string) *guardRuntimePeer {
 	t.Helper()
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(socketPath), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 	p := &guardRuntimePeer{t: t, conn: conn, r: bufio.NewReader(conn), enc: json.NewEncoder(conn)}
 
 	cap := p.read()
@@ -149,7 +159,8 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socketPath := filepath.Join(sockDir, "lc.sock")
 
-	lc, err := adapter.NewRuntimeOps(socketPath, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	manifest := runtimenonce.PublishIn(t, sockDir, nil)
+	lc, err := adapter.NewRuntimeOps(socketPath, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
 	}

@@ -27,6 +27,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // usageFrame is the runtime side of the CH-RUNTIMEOPS frames the case
@@ -53,7 +54,10 @@ func startUsageRuntimeOps(t *testing.T, s *adapter.Server) *json.Encoder {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lc.sock")
-	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares the runtime's nonce line with the manifest the
+	// Server's starts published in ManifestDir. spec: 4.7.11 (Runtime
+	// connection handshake).
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(s.ManifestDir))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -73,6 +77,13 @@ func startUsageRuntimeOps(t *testing.T, s *adapter.Server) *json.Encoder {
 		t.Fatalf("dial CH-RUNTIMEOPS: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(s.ManifestDir, adapter.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 	dec := json.NewDecoder(conn)
 	var caps usageFrame
 	if err := dec.Decode(&caps); err != nil || caps.Type != "lifecycle_capabilities" {

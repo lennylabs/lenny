@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // probeRuntime is one probe process or in-process Go runtime: the stdin
@@ -344,8 +345,11 @@ func waitFor(d time.Duration, cond func() bool) bool {
 }
 
 // opsListener is the adapter side of CH-RUNTIMEOPS for the session_started
-// cases: it accepts the probe's connection, announces the checkpoint
-// capability, and lets the case write frames and read replies.
+// cases: it accepts the probe's connection, requires the nonce line
+// carrying the manifest's mcpNonce, announces the checkpoint capability,
+// and lets the case write frames and read replies. A connection whose first
+// line is anything else is closed and never becomes the channel.
+// spec: 4.7.11 (Runtime connection handshake).
 type opsListener struct {
 	ln   net.Listener
 	mu   sync.Mutex
@@ -373,21 +377,29 @@ func startOpsListener(t *testing.T) *opsListener {
 		if err != nil {
 			return
 		}
+		r := bufio.NewReader(conn)
+		if err := runtimenonce.Check(conn, r, opsManifestNonce); err != nil {
+			_ = conn.Close()
+			return
+		}
 		_ = json.NewEncoder(conn).Encode(map[string]any{
 			"type": "lifecycle_capabilities", "capabilities": []string{"checkpoint"},
 		})
 		l.mu.Lock()
-		l.conn, l.r = conn, bufio.NewReader(conn)
+		l.conn, l.r = conn, r
 		l.mu.Unlock()
 	}()
 	return l
 }
 
+// opsManifestNonce is the mcpNonce writeOpsManifest publishes.
+const opsManifestNonce = "nonce_probe"
+
 // writeOpsManifest writes a pod-scoped manifest naming the listener's
 // socket under dir.
 func writeOpsManifest(t *testing.T, dir string, l *opsListener) string {
 	t.Helper()
-	m := map[string]any{"version": 1, "mcpNonce": "nonce_probe"}
+	m := map[string]any{"version": 1, "mcpNonce": opsManifestNonce}
 	if l != nil {
 		m["runtimeOps"] = map[string]any{"socket": l.ln.Addr().String()}
 	}
