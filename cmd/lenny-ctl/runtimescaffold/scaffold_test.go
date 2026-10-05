@@ -358,10 +358,14 @@ func TestGenerateGoCellsCompile(t *testing.T) {
 			dir := filepath.Join(base, "buildme")
 
 			// The binary cell has no SDK dependency, so it builds as
-			// generated. The SDK cells need the replace directive.
+			// generated. The SDK cells need the replace directives: a
+			// dependency's own replace lines are ignored, so the
+			// generated module carries the SDK's replace of the root
+			// module as well.
 			if c.lang != LangBinary {
 				appendToFile(t, filepath.Join(dir, "go.mod"),
-					"\nreplace github.com/lennylabs/runtime-sdk-go => "+sdkMod+"\n")
+					"\nreplace github.com/lennylabs/runtime-sdk-go => "+sdkMod.dir+"\n"+
+						"\nreplace "+lennyModulePath+" => "+sdkMod.repoRoot+"\n")
 			}
 
 			runGo(t, dir, "build", "./...")
@@ -369,12 +373,27 @@ func TestGenerateGoCellsCompile(t *testing.T) {
 	}
 }
 
+// lennyModulePath is the root module path. The Go runtime-author SDK
+// imports pkg/runtimekit from it for the runtime connection handshake
+// (spec: 4.7.11 (Runtime connection handshake)).
+const lennyModulePath = "github.com/lennylabs/lenny"
+
+// sdkReplacement names the directory holding the copied SDK module and
+// the repository root that satisfies the SDK's dependency on the root
+// module.
+type sdkReplacement struct {
+	dir      string
+	repoRoot string
+}
+
 // buildSDKReplacementModule copies the in-repo Go runtime-author SDK
 // into a temp directory and adds a go.mod declaring the published
 // module path, so a generated skeleton can `replace` the published
-// module with it. The in-repo SDK package imports only the standard
-// library, so the single-directory copy is self-contained.
-func buildSDKReplacementModule(t *testing.T) string {
+// module with it. The SDK package imports the standard library and
+// pkg/runtimekit from the root module, so the go.mod requires the root
+// module at a placeholder version that the generated module's replace
+// resolves to the repository root.
+func buildSDKReplacementModule(t *testing.T) sdkReplacement {
 	t.Helper()
 	repoRoot := findRepoRoot(t)
 	srcDir := filepath.Join(repoRoot, "sdks", "runtime", "go", "runtime")
@@ -401,11 +420,12 @@ func buildSDKReplacementModule(t *testing.T) string {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dst, "go.mod"),
-		[]byte("module github.com/lennylabs/runtime-sdk-go\n\ngo 1.25\n"), 0o644); err != nil {
+	gomod := "module github.com/lennylabs/runtime-sdk-go\n\ngo 1.25\n\n" +
+		"require " + lennyModulePath + " v0.0.0-00010101000000-000000000000\n"
+	if err := os.WriteFile(filepath.Join(dst, "go.mod"), []byte(gomod), 0o644); err != nil {
 		t.Fatalf("write SDK go.mod: %v", err)
 	}
-	return dst
+	return sdkReplacement{dir: dst, repoRoot: repoRoot}
 }
 
 // findRepoRoot walks up from the test file until it finds the
