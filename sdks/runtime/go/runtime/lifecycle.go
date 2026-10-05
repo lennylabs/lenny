@@ -11,6 +11,8 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // lifecycleCapabilities is the §15.4.3 / §15.4.6 set of Full-level
@@ -116,10 +118,10 @@ func (p *process) dialLifecycle(ctx context.Context) (*Lifecycle, error) {
 	if p.manifest == nil || p.manifest.RuntimeOps == nil || p.manifest.RuntimeOps.Socket == "" {
 		return nil, errors.New("adapter manifest has no CH-RUNTIMEOPS socket")
 	}
-	// The runtime connection handshake reads the nonce from the manifest
-	// before each dial and redial. spec: §4.7.11 (Runtime connection
-	// handshake).
-	conn, err := dialAuthenticated(ctx, p.manifest.RuntimeOps.Socket, p.cfg.manifestPath, p.cfg.dialTimeout)
+	// runtimekit.DialAuthenticated performs the runtime connection
+	// handshake, reading the nonce from the manifest before each dial and
+	// redial. spec: §4.7.11 (Runtime connection handshake).
+	conn, err := runtimekit.DialAuthenticated(ctx, p.manifest.RuntimeOps.Socket, p.cfg.manifestPath)
 	if err != nil {
 		return nil, fmt.Errorf("dial lifecycle socket: %w", err)
 	}

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // mcpProtocolVersion is the §15.4.3 intra-pod MCP spec version the
@@ -375,7 +377,7 @@ func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout t
 // initialize sends the nonce-authenticated initialize request and reads its
 // response. A _lennyChallenge that arrives in place of the response is
 // answered with HMAC-SHA256 keyed by nonce, through the same answer code
-// the CH-MSGSOCK and CH-RUNTIMEOPS dials use (challengeResponseLine), and
+// the CH-MSGSOCK and CH-RUNTIMEOPS dials use (runtimekit.ChallengeResponseLine), and
 // the response is read after it. spec: §4.7.11 (Nonce-only fallback).
 func (c *mcpClient) initialize(nonce string, params map[string]any) error {
 	c.mu.Lock()
@@ -392,8 +394,8 @@ func (c *mcpClient) initialize(nonce string, params map[string]any) error {
 	if err := c.dec.Decode(&raw); err != nil {
 		return fmt.Errorf("read initialize response: %w", err)
 	}
-	if challenge, ok := challengeOf(raw); ok {
-		if _, err := c.conn.Write(challengeResponseLine(nonce, challenge)); err != nil {
+	if challenge, ok := runtimekit.ChallengeOf(raw); ok {
+		if _, err := c.conn.Write(runtimekit.ChallengeResponseLine(nonce, challenge)); err != nil {
 			return fmt.Errorf("write challenge response: %w", err)
 		}
 		if err := c.dec.Decode(&raw); err != nil {

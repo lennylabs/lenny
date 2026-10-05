@@ -6,7 +6,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -84,10 +87,10 @@ func readLine(t *testing.T, conn net.Conn, r *bufio.Reader) string {
 
 // readFirstFrame reads the runtime side's first line in the background, so
 // the fake adapter can drive the handshake in the foreground.
-func readFirstFrame(conn net.Conn) <-chan string {
+func readFirstFrame(r io.Reader) <-chan string {
 	got := make(chan string, 1)
 	go func() {
-		line, err := bufio.NewReader(conn).ReadString('\n')
+		line, err := bufio.NewReader(r).ReadString('\n')
 		if err != nil {
 			got <- "error: " + err.Error()
 			return
@@ -109,28 +112,107 @@ func awaitFrame(t *testing.T, got <-chan string) string {
 	}
 }
 
-// The cases below pin the Go SDK's copy of the runtime half of the
-// handshake to the same behavior the pkg/runtimekit cases pin.
+// The runtime half of the handshake lives once, in pkg/runtimekit, whose
+// tier-1 cases pin the challenge answer, the redial with the re-read nonce,
+// the wait for an unpublished manifest, and cancellation. The cases below pin
+// that both Go SDK dials and the MCP client reach it.
 
-// spec: 4.7.11 (Runtime connection handshake, Nonce-only fallback)
+// handshakeHelperNames are the identifiers of the runtime half of the
+// handshake that pkg/runtimekit owns. The SDK package declares none of them.
+var handshakeHelperNames = map[string]bool{
+	"dialAuthenticated":     true,
+	"authConn":              true,
+	"waitManifestNonce":     true,
+	"readManifestNonce":     true,
+	"challengeOf":           true,
+	"challengeResponse":     true,
+	"challengeResponseLine": true,
+	"nonceLine":             true,
+	"encodeHandshakeLine":   true,
+}
+
+// spec: 4.7.11 (Runtime connection handshake)
 //
-// A challenge that arrives before the adapter's first protocol frame is
-// answered with HMAC-SHA256 keyed by the nonce the connection presented,
-// and the runtime side reads the protocol frame that follows, with the
-// challenge consumed.
-func TestSDKDialAuthenticatedAnswersAChallengeBeforeTheFirstFrame_spec_4_7_11(t *testing.T) {
-	socket, conns := fakeListener(t)
-	manifest := runtimenonce.Publish(t, nil)
-	conn, err := dialAuthenticated(context.Background(), socket, manifest.Path, 5*time.Second)
+// The Go SDK carries no copy of the runtime half of the handshake: it
+// declares none of the helpers pkg/runtimekit owns, the CH-MSGSOCK and
+// CH-RUNTIMEOPS dials call runtimekit.DialAuthenticated, and the MCP
+// initialize answers the challenge through runtimekit.ChallengeResponseLine.
+func TestSDKHandshakeIsRuntimekitsSingleImplementation_spec_4_7_11(t *testing.T) {
+	paths, err := filepath.Glob("*.go")
 	if err != nil {
-		t.Fatalf("DialAuthenticated: %v", err)
+		t.Fatalf("list the SDK package: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	got := readFirstFrame(conn)
+	fset := token.NewFileSet()
+	callers := map[string]map[string]bool{}
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, decl := range file.Decls {
+			checkNoHandshakeCopy(t, decl)
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			callers[fn.Name.Name] = runtimekitCalls(fn.Body)
+		}
+	}
+	for fn, want := range map[string]string{
+		"openTransport": "DialAuthenticated",
+		"dialLifecycle": "DialAuthenticated",
+		"initialize":    "ChallengeResponseLine",
+	} {
+		if !callers[fn][want] {
+			t.Errorf("%s does not call runtimekit.%s", fn, want)
+		}
+	}
+}
 
-	adapter := nextConn(t, conns)
+// checkNoHandshakeCopy fails the test when decl declares a handshake helper
+// pkg/runtimekit owns.
+func checkNoHandshakeCopy(t *testing.T, decl ast.Decl) {
+	t.Helper()
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		if handshakeHelperNames[d.Name.Name] {
+			t.Errorf("the SDK declares %s, a copy of the pkg/runtimekit handshake", d.Name.Name)
+		}
+	case *ast.GenDecl:
+		for _, spec := range d.Specs {
+			if ts, ok := spec.(*ast.TypeSpec); ok && handshakeHelperNames[ts.Name.Name] {
+				t.Errorf("the SDK declares type %s, a copy of the pkg/runtimekit handshake", ts.Name.Name)
+			}
+		}
+	}
+}
+
+// runtimekitCalls returns the runtimekit selectors body references.
+func runtimekitCalls(body ast.Node) map[string]bool {
+	out := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == "runtimekit" {
+			out[sel.Sel.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
+// answerChallengeAndSend drives the fake adapter's half of the handshake: it
+// checks the nonce line, writes a challenge, validates the answer, and writes
+// frame as the first protocol frame. It returns the connection's reader.
+func answerChallengeAndSend(t *testing.T, adapter net.Conn, nonce, frame string) *bufio.Reader {
+	t.Helper()
 	r := bufio.NewReader(adapter)
-	if err := runtimenonce.Check(adapter, r, manifest.Nonce); err != nil {
+	if err := runtimenonce.Check(adapter, r, nonce); err != nil {
 		t.Fatalf("nonce line: %v", err)
 	}
 	const challenge = "00112233445566778899aabbccddeeff"
@@ -138,141 +220,77 @@ func TestSDKDialAuthenticatedAnswersAChallengeBeforeTheFirstFrame_spec_4_7_11(t 
 		t.Fatalf("write challenge: %v", err)
 	}
 	answer := readLine(t, adapter, r)
-	if err := mcp.ValidateChallengeResponse([]byte(answer), manifest.Nonce, challenge); err != nil {
+	if err := mcp.ValidateChallengeResponse([]byte(answer), nonce, challenge); err != nil {
 		t.Fatalf("challenge answer %s: %v", answer, err)
 	}
-	if _, err := adapter.Write([]byte(`{"type":"session_start","sessionId":"s1"}` + "\n")); err != nil {
+	if _, err := adapter.Write([]byte(frame + "\n")); err != nil {
 		t.Fatalf("write frame: %v", err)
 	}
-	if line := awaitFrame(t, got); line != `{"type":"session_start","sessionId":"s1"}` {
-		t.Fatalf("first frame the runtime side read = %s, want the session_start", line)
-	}
+	return r
 }
 
-// spec: 4.7.11 (Runtime connection handshake)
+// spec: 4.7.11 (Runtime connection handshake), 28.5.3 (CH-MSGSOCK)
 //
-// When the adapter closes the connection before its first protocol frame,
-// because the manifest's nonce has been replaced, the runtime side reads the
-// manifest again, dials again, presents the new nonce, and reads the first
-// frame on the new connection.
-func TestSDKDialAuthenticatedRedialsWithTheRereadNonce_spec_4_7_11(t *testing.T) {
+// The SDK's CH-MSGSOCK transport presents the manifest nonce, answers a
+// challenge before the adapter's first frame, and yields that frame to the
+// frame loop with the challenge consumed.
+func TestSDKMessageSocketTransportCompletesTheHandshake_spec_4_7_11(t *testing.T) {
 	socket, conns := fakeListener(t)
 	manifest := runtimenonce.Publish(t, nil)
-	conn, err := dialAuthenticated(context.Background(), socket, manifest.Path, 5*time.Second)
+	t.Setenv(socketEnvVar, socket)
+	cfg := defaultConfig()
+	cfg.manifestPath = manifest.Path
+	tr, err := cfg.openTransport(context.Background())
 	if err != nil {
-		t.Fatalf("DialAuthenticated: %v", err)
+		t.Fatalf("openTransport: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	got := readFirstFrame(conn)
-
-	first := nextConn(t, conns)
-	if err := runtimenonce.Check(first, bufio.NewReader(first), manifest.Nonce); err != nil {
-		t.Fatalf("first nonce line: %v", err)
-	}
-	replaced := runtimenonce.NewNonce(t)
-	runtimenonce.Rewrite(t, manifest.Path, replaced, nil)
-	_ = first.Close()
-
-	second := nextConn(t, conns)
-	r := bufio.NewReader(second)
-	if err := runtimenonce.Check(second, r, replaced); err != nil {
-		t.Fatalf("redial nonce line: %v", err)
-	}
-	if _, err := second.Write([]byte(`{"type":"lifecycle_capabilities"}` + "\n")); err != nil {
-		t.Fatalf("write frame: %v", err)
-	}
-	if line := awaitFrame(t, got); line != `{"type":"lifecycle_capabilities"}` {
-		t.Fatalf("first frame after the redial = %s, want lifecycle_capabilities", line)
-	}
-	// Writes after the handshake reach the redialed connection.
-	if _, err := conn.Write([]byte(`{"type":"lifecycle_support"}` + "\n")); err != nil {
-		t.Fatalf("write after redial: %v", err)
-	}
-	if line := readLine(t, second, r); line != `{"type":"lifecycle_support"}` {
-		t.Fatalf("adapter read %s after the redial, want lifecycle_support", line)
+	t.Cleanup(func() { _ = tr.Close() })
+	got := readFirstFrame(tr.Reader)
+	const frame = `{"type":"session_start","sessionId":"s1"}`
+	answerChallengeAndSend(t, nextConn(t, conns), manifest.Nonce, frame)
+	if line := awaitFrame(t, got); line != frame {
+		t.Fatalf("first frame the transport yielded = %s, want the session_start", line)
 	}
 }
 
-// spec: 4.7.11 (Runtime connection handshake)
+// spec: 4.7.11 (Runtime connection handshake), 15.4.3 (CH-RUNTIMEOPS)
 //
-// The runtime polls for a manifest that is not yet published and dials once
-// it carries a nonce, presenting that nonce.
-func TestSDKDialAuthenticatedWaitsForTheManifest_spec_4_7_11(t *testing.T) {
+// The SDK's CH-RUNTIMEOPS dial presents the manifest nonce, answers a
+// challenge, and then completes the lifecycle_capabilities and
+// lifecycle_support exchange on the authenticated connection.
+func TestSDKLifecycleDialCompletesTheHandshake_spec_4_7_11(t *testing.T) {
 	socket, conns := fakeListener(t)
-	path := filepath.Join(t.TempDir(), "adapter-manifest.json")
-	nonce := runtimenonce.NewNonce(t)
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		b, _ := json.Marshal(map[string]any{"version": 1, "mcpNonce": nonce})
-		_ = os.WriteFile(path, b, 0o600)
-	}()
-	conn, err := dialAuthenticated(context.Background(), socket, path, 5*time.Second)
-	if err != nil {
-		t.Fatalf("DialAuthenticated: %v", err)
+	manifest := runtimenonce.Publish(t, nil)
+	cfg := defaultConfig()
+	cfg.manifestPath = manifest.Path
+	p := &process{cfg: cfg, manifest: &AdapterManifest{RuntimeOps: &SocketRef{Socket: socket}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	type result struct {
+		lc  *Lifecycle
+		err error
 	}
-	t.Cleanup(func() { _ = conn.Close() })
+	done := make(chan result, 1)
+	go func() {
+		lc, err := p.dialLifecycle(ctx)
+		done <- result{lc, err}
+	}()
 	adapter := nextConn(t, conns)
-	if err := runtimenonce.Check(adapter, bufio.NewReader(adapter), nonce); err != nil {
-		t.Fatalf("nonce line: %v", err)
+	r := answerChallengeAndSend(t, adapter, manifest.Nonce, `{"type":"lifecycle_capabilities"}`)
+	var support struct {
+		Type string `json:"type"`
 	}
-}
-
-// spec: 4.7.11 (Runtime connection handshake)
-//
-// A cancelled context ends the wait for an unpublished manifest, and Close
-// ends a connection whose handshake has not completed: a blocked Read
-// returns rather than redialing.
-func TestSDKDialAuthenticatedStopsOnCancelAndClose_spec_4_7_11(t *testing.T) {
-	socket, conns := fakeListener(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-	if _, err := dialAuthenticated(ctx, socket, filepath.Join(t.TempDir(), "absent.json"), 5*time.Second); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("DialAuthenticated with no manifest = %v, want the context's deadline", err)
-	}
-
-	manifest := runtimenonce.Publish(t, nil)
-	conn, err := dialAuthenticated(context.Background(), socket, manifest.Path, 5*time.Second)
-	if err != nil {
-		t.Fatalf("DialAuthenticated: %v", err)
-	}
-	_ = nextConn(t, conns)
-	readErr := make(chan error, 1)
-	go func() {
-		_, err := conn.Read(make([]byte, 16))
-		readErr <- err
-	}()
-	time.Sleep(50 * time.Millisecond)
-	if err := conn.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+	if err := json.Unmarshal([]byte(readLine(t, adapter, r)), &support); err != nil || support.Type != "lifecycle_support" {
+		t.Fatalf("the runtime answered lifecycle_capabilities with %q (%v), want lifecycle_support", support.Type, err)
 	}
 	select {
-	case err := <-readErr:
-		if !errors.Is(err, net.ErrClosed) {
-			t.Fatalf("Read after Close = %v, want net.ErrClosed", err)
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("dialLifecycle: %v", res.err)
 		}
+		t.Cleanup(func() { _ = res.lc.conn.Close() })
 	case <-time.After(5 * time.Second):
-		t.Fatal("Read did not return after Close")
-	}
-	if conn.LocalAddr() == nil || conn.RemoteAddr() == nil {
-		t.Fatal("the connection reports no addresses")
-	}
-}
-
-// spec: 4.7.11 (Runtime connection handshake)
-//
-// Only a single-member _lennyChallenge object is a challenge; a protocol
-// frame, malformed JSON, and a non-string value are not.
-func TestSDKChallengeOfRecognizesOnlyAChallengeLine_spec_4_7_11(t *testing.T) {
-	if c, ok := challengeOf([]byte(`{"_lennyChallenge":"ab"}`)); !ok || c != "ab" {
-		t.Fatalf("ChallengeOf(challenge) = %q, %v", c, ok)
-	}
-	for _, line := range []string{`{"type":"message"}`, `not json`, `{"_lennyChallenge":1}`, `[]`} {
-		if _, ok := challengeOf([]byte(line)); ok {
-			t.Fatalf("ChallengeOf(%s) reported a challenge", line)
-		}
-	}
-	if got, want := challengeResponse("n", "c"), mcp.ExpectedChallengeResponse("n", "c"); got != want {
-		t.Fatalf("ChallengeResponse = %s, want the adapter's %s", got, want)
+		t.Fatal("dialLifecycle did not return")
 	}
 }
 

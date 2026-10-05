@@ -79,6 +79,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // Handler is the single interface a runtime author implements. One
@@ -717,9 +719,10 @@ func (t *transport) Close() error {
 
 // openTransport resolves the §28.5.3 transport. When socket transport is
 // enabled and LENNY_ADAPTER_SOCKET names an adapter socket, it dials that
-// abstract Unix socket through the runtime connection handshake
-// (dialAuthenticated), which reads the nonce from the resolved manifest path before
-// each dial and redial; otherwise it returns os.Stdin/os.Stdout.
+// abstract Unix socket through runtimekit.DialAuthenticated, the one
+// implementation of the runtime half of the runtime connection handshake,
+// which reads the nonce from the resolved manifest path before each dial and
+// redial; otherwise it returns os.Stdin/os.Stdout.
 // spec: §4.7.11 (Runtime connection handshake).
 func (c config) openTransport(ctx context.Context) (*transport, error) {
 	if c.reader != nil || c.writer != nil {
@@ -735,7 +738,7 @@ func (c config) openTransport(ctx context.Context) (*transport, error) {
 	}
 	if c.socketTransport {
 		if name := strings.TrimSpace(os.Getenv(socketEnvVar)); name != "" {
-			conn, err := dialAuthenticated(ctx, name, c.manifestPath, c.dialTimeout)
+			conn, err := runtimekit.DialAuthenticated(ctx, name, c.manifestPath)
 			if err != nil {
 				return nil, fmt.Errorf("dial adapter socket %q: %w", name, err)
 			}
