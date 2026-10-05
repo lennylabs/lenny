@@ -36,10 +36,16 @@
 //     answers no response and exits with the §15.4 protocol-error code
 //     rather than serving the frame on a pod-global default session.
 //
+// The cases at the end of the file drive each runtime-author SDK's echo
+// example the same way at Basic level, through two sequential sessions and
+// two concurrent sessions on one process, and require each reply to name
+// its own session's identifier and experiment variant.
+//
 // spec: 5.2 (per-session multiplexing
 //
 //	over stdin), 28.5.3 (single stdin channel carrying sessionId on every
-//	pod), 6.4 (per-slot cwd /workspace/slots/{sessionId}/current/).
+//	pod), 6.4 (per-slot cwd /workspace/slots/{sessionId}/current/), 4.7.10
+//	(runtime process lifetime), 15.4.6 (session lifetime).
 
 package tier10_conformance_test
 
@@ -48,7 +54,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -307,5 +315,173 @@ func TestUnaddressedUnknownFrameTypeIsTolerated_spec_15_4(t *testing.T) {
 	}
 	if got := inlineText(result.responses[0]); !strings.Contains(got, "ping") {
 		t.Errorf("response echoed %q, want the addressed message's text", got)
+	}
+}
+
+// sdkEchoRuntimes lists each runtime-author SDK's echo example as a
+// runtime the case starts over stdin and stdout. A builder skips its case
+// when its toolchain is absent.
+var sdkEchoRuntimes = []struct {
+	name  string
+	build func(t *testing.T) interpretedProbe
+}{
+	{"go", goEchoExample},
+	{"python", pythonEchoExample},
+	{"typescript", typeScriptEchoExample},
+}
+
+// goEchoExample builds the Go SDK's echo example.
+func goEchoExample(t *testing.T) interpretedProbe {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "go-echo")
+	cmd := exec.Command("go", "build", "-o", bin, "./sdks/runtime/go/example/echo")
+	cmd.Dir = repoRoot(t)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build the Go SDK echo example: %v\n%s", err, out)
+	}
+	return interpretedProbe{argv: []string{bin}}
+}
+
+// pythonEchoExample runs the Python SDK's echo example module.
+func pythonEchoExample(t *testing.T) interpretedProbe {
+	t.Helper()
+	python := requireCredProbeTool(t, "python3")
+	root := filepath.Join(repoRoot(t), "sdks", "runtime", "python")
+	return interpretedProbe{
+		argv: []string{python, "-m", "lenny_runtime.examples.echo"}, workdir: root,
+		env: []string{"PYTHONPATH=" + root},
+	}
+}
+
+// typeScriptEchoExample builds the TypeScript SDK and runs its echo example.
+func typeScriptEchoExample(t *testing.T) interpretedProbe {
+	t.Helper()
+	node := requireCredProbeTool(t, "node")
+	npm := requireCredProbeTool(t, "npm")
+	root := filepath.Join(repoRoot(t), "sdks", "runtime", "typescript")
+	for _, args := range [][]string{{"install", "--no-audit", "--no-fund"}, {"run", "build"}} {
+		cmd := exec.Command(npm, args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("npm %v: %v\n%s", args, err, out)
+		}
+	}
+	return interpretedProbe{argv: []string{node, filepath.Join(root, "dist", "examples", "echo", "main.js")}, workdir: root}
+}
+
+// openWithVariant writes a session_start enrolling sessionID in variant
+// and requires the session_started that names the session and the start.
+func openWithVariant(t *testing.T, rt *sessionRuntime, sessionID, variant string) {
+	t.Helper()
+	rt.send(t, fmt.Sprintf(`{"type":"session_start","sessionId":%q,"startId":"st_%s",`+
+		`"experimentContext":{"experimentId":"exp_lifetime","variantId":%q,"inherited":false}}`,
+		sessionID, sessionID, variant))
+	f := rt.next(t, 10*time.Second)
+	if f["type"] != "session_started" || f["sessionId"] != sessionID || f["startId"] != "st_"+sessionID || f["error"] != nil {
+		t.Fatalf("frame after session_start(%s) = %v, want its session_started without error", sessionID, f)
+	}
+}
+
+// writeMessage writes one message for sessionID.
+func writeMessage(t *testing.T, rt *sessionRuntime, sessionID string) {
+	t.Helper()
+	rt.send(t, fmt.Sprintf(`{"type":"message","id":"msg_%s","sessionId":%q,"input":[{"type":"text","inline":"ping"}]}`,
+		sessionID, sessionID))
+}
+
+// readReplies reads n responses and returns their reply text by session.
+func readReplies(t *testing.T, rt *sessionRuntime, n int) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for len(out) < n {
+		f := rt.next(t, 10*time.Second)
+		if f["type"] != "response" {
+			t.Fatalf("frame = %v, want a response", f)
+		}
+		id, _ := f["sessionId"].(string)
+		parts, _ := f["output"].([]any)
+		if len(parts) == 0 {
+			t.Fatalf("response for %s carries no output: %v", id, f)
+		}
+		p, _ := parts[0].(map[string]any)
+		out[id], _ = p["inline"].(string)
+	}
+	return out
+}
+
+// requireContext fails the test unless reply names sessionID and variant.
+func requireContext(t *testing.T, reply, sessionID, variant string) {
+	t.Helper()
+	if want := "session=" + sessionID + " variant=" + variant; !strings.Contains(reply, want) {
+		t.Fatalf("reply %q does not carry %q: the session was served under another session's context", reply, want)
+	}
+}
+
+// heartbeatAlive requires a heartbeat_ack, which shows the process still
+// runs after a session ended.
+func heartbeatAlive(t *testing.T, rt *sessionRuntime) {
+	t.Helper()
+	rt.send(t, `{"type":"heartbeat","ts":1}`)
+	if f := rt.next(t, 10*time.Second); f["type"] != "heartbeat_ack" {
+		t.Fatalf("frame = %v, want heartbeat_ack from a runtime still running after session_end", f)
+	}
+}
+
+// spec: 4.7.10 (Runtime process lifetime), 15.4.6 (session lifetime)
+// diagnosis: an SDK-built Basic runtime did not serve two sessions in
+//
+//	sequence on one process, each under its own context: the second
+//	session's reply named the first session or its experiment variant, a
+//	session_start was not answered with a session_started naming its
+//	session, or the process exited at the first session's session_end. A
+//	recycling pool keeps the runtime process across sessions, so such a
+//	runtime serves every later session under a stale context.
+func TestRuntimeSDKEchoServesSequentialSessionsOnOneProcess_spec_4_7_10(t *testing.T) {
+	for _, sdk := range sdkEchoRuntimes {
+		t.Run(sdk.name, func(t *testing.T) {
+			dir := t.TempDir()
+			rt := startProbeRuntime(t, sdk.build(t), filepath.Join(dir, "absent.json"))
+			for _, s := range []struct{ id, variant string }{{"sess_a", "control"}, {"sess_b", "treatment"}} {
+				openWithVariant(t, rt, s.id, s.variant)
+				writeMessage(t, rt, s.id)
+				requireContext(t, readReplies(t, rt, 1)[s.id], s.id, s.variant)
+				rt.send(t, fmt.Sprintf(`{"type":"session_end","sessionId":%q}`, s.id))
+				heartbeatAlive(t, rt)
+			}
+			if err := rt.close(t); err != nil {
+				t.Fatalf("runtime exit: %v", err)
+			}
+		})
+	}
+}
+
+// spec: 4.7.10 (Runtime process lifetime), 15.4.6 (session lifetime), 5.2 (per-session multiplexing over stdin)
+// diagnosis: an SDK-built Basic runtime did not serve two concurrent
+//
+//	sessions on one process, each under its own context: an interleaved
+//	reply named the other session or its experiment variant, or one
+//	session's session_end ended the other or the process. A concurrent pool
+//	multiplexes sessions onto one runtime process, so such a runtime
+//	answers one tenant's session under another's context.
+func TestRuntimeSDKEchoServesConcurrentSessionsOnOneProcess_spec_4_7_10(t *testing.T) {
+	for _, sdk := range sdkEchoRuntimes {
+		t.Run(sdk.name, func(t *testing.T) {
+			dir := t.TempDir()
+			rt := startProbeRuntime(t, sdk.build(t), filepath.Join(dir, "absent.json"))
+			openWithVariant(t, rt, "sess_a", "control")
+			openWithVariant(t, rt, "sess_b", "treatment")
+			writeMessage(t, rt, "sess_a")
+			writeMessage(t, rt, "sess_b")
+			replies := readReplies(t, rt, 2)
+			requireContext(t, replies["sess_a"], "sess_a", "control")
+			requireContext(t, replies["sess_b"], "sess_b", "treatment")
+			rt.send(t, `{"type":"session_end","sessionId":"sess_a"}`)
+			heartbeatAlive(t, rt)
+			writeMessage(t, rt, "sess_b")
+			requireContext(t, readReplies(t, rt, 1)["sess_b"], "sess_b", "treatment")
+			if err := rt.close(t); err != nil {
+				t.Fatalf("runtime exit: %v", err)
+			}
+		})
 	}
 }

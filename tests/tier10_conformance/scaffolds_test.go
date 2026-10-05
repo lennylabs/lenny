@@ -119,6 +119,17 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 	return artifacts
 }
 
+// checkPassedNamed reports whether the report carries a passing check
+// named name.
+func checkPassedNamed(r complianceReport, name string) bool {
+	for _, c := range r.Checks {
+		if c.Name == name {
+			return c.Pass
+		}
+	}
+	return false
+}
+
 // buildError carries the failing package and the build output so a
 // build failure produces an actionable diagnosis.
 type buildError struct {
@@ -288,11 +299,14 @@ func TestStandardLevel(t *testing.T) {
 	}
 }
 
-// spec: 12.10 (Full-level conformance battery)
+// spec: 12.10 (Full-level conformance battery), 15.4.6 (CH-RUNTIMEOPS opening), 28.5.3 (CH-MSGSOCK Outbound: session_started)
 // diagnosis: The Full battery — Standard plus the §15.4.6 CH-RUNTIMEOPS
 // handshake, checkpoint, interrupt, credential rotation, and
 // deadline-signal handling — fails for streaming-echo, so the Full
-// lifecycle contract regressed.
+// lifecycle contract regressed. A failed runtime_ops_handshake check means
+// the reference runtime no longer answers the battery's session_start with
+// the session_started carrying its sessionId and startId, which every
+// start on a Full-level pod waits for.
 func TestFullLevel(t *testing.T) {
 	a := buildArtifacts(t)
 
@@ -320,6 +334,11 @@ func TestFullLevel(t *testing.T) {
 		if !seen {
 			t.Errorf("Full battery is missing the §15.4.6 category %q", name)
 		}
+	}
+	// The CH-RUNTIMEOPS opening check reads the session_started that
+	// answers its session_start after the capability handshake.
+	if !checkPassedNamed(report, "runtime_ops_handshake") {
+		t.Errorf("streaming-echo failed runtime_ops_handshake, which asserts its session_started acknowledgement")
 	}
 
 	// echo has no CH-RUNTIMEOPS; the Full lifecycle checks must

@@ -362,3 +362,53 @@ func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_5(t *testing.T) {
 		t.Errorf("annotations rendered when empty: %s", out)
 	}
 }
+
+// spec: 15.7 (Runtime Author SDKs), 28.5.3 (CH-MSGSOCK, shutdown), 4.7.10
+// (Runtime process lifetime)
+//
+// A shutdown frame drains every live session as EOF does: each session
+// dispatches the messages it queued, including one queued behind a
+// handler still running when the frame arrived, before its OnTerminate,
+// which receives the shutdown frame's reason, and Run returns only after
+// every session's release.
+func TestShutdownDrainsEverySessionWithItsReason(t *testing.T) {
+	g := newGate()
+	h := &recorder{messageGate: func(_ context.Context, m Message) {
+		if m.Envelope.ID == "a1" {
+			g.wait("a1")
+		}
+	}}
+	l := startLiveSDK(t, h)
+	for _, id := range []string{"sess_a", "sess_b"} {
+		l.send(startFrame(id, "st_"+id))
+		_ = l.next(3 * time.Second)
+	}
+	l.send(msgFrame("sess_a", "a1", "a"))
+	g.awaitEntry(t)
+	l.send(msgFrame("sess_a", "a2", "a"))
+	l.send(`{"type":"shutdown","reason":"drain","deadline_ms":5000}`)
+	select {
+	case <-l.done:
+		t.Fatal("Run returned while a session handler was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(g.release)
+	var answered []string
+	for f := range l.frames {
+		if f["type"] == "response" {
+			answered = append(answered, firstOutput(f))
+		}
+	}
+	<-l.done
+	if l.err != nil {
+		t.Fatalf("Run returned %v", l.err)
+	}
+	if len(answered) != 2 {
+		t.Fatalf("responses after shutdown = %v, want the answers to a1 and a2", answered)
+	}
+	for _, id := range []string{"sess_a", "sess_b"} {
+		if r := h.terminations(id); len(r) != 1 || r[0].Reason != "drain" {
+			t.Fatalf("%s terminations = %+v, want one carrying the shutdown reason", id, r)
+		}
+	}
+}

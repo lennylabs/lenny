@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,53 +17,96 @@ import (
 	"google.golang.org/grpc/status"
 
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/ackruntime"
 )
 
 // frameRuntime is a RuntimeProcess that records, in one ordered log, every
-// frame written to it (as "write:<type>") and every Close ("close"), so a
-// test can assert where a session frame falls relative to the teardown.
+// Start ("start"), Interrupt ("interrupt") and Close ("close"), and every
+// frame written to it as "<type>@running" or "<type>@idle". The suffix is
+// whether the adapter's §4.7.1 rule-8 record held the session
+// (runtimeHoldsLocked) at the moment the frame reached the runtime, which
+// is the Point column of the §28.5.3 Session frame writes table: a start's
+// session_start and an open sequence's session_end land before the record,
+// and a teardown's session_end lands after it.
+//
 // onWrite, when set, runs after a frame is recorded and before
 // WriteEnvelope returns, which lets a test interleave a registry change
-// with the open sequence at the point the frame reaches the runtime.
+// with the open sequence at the point the frame reaches the runtime. ack,
+// when set, receives every frame too and answers it on Output, for a row
+// whose start waits for session_started; without it Output is a closed
+// channel.
 type frameRuntime struct {
 	mu       sync.Mutex
 	events   []string
 	frames   [][]byte
 	writeErr error
 	onWrite  func(frame []byte)
+	holds    func(sessionID string) bool
+	ack      *ackruntime.Runtime
 }
 
-func (r *frameRuntime) Start(context.Context, string) error { return nil }
+func (r *frameRuntime) record(event string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+}
 
-func (r *frameRuntime) WriteEnvelope(_ string, envelope []byte) error {
+// recordHolds installs the rule-8 record probe frameServer wires to the
+// Server under test.
+func (r *frameRuntime) recordHolds(holds func(string) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.holds = holds
+}
+
+func (r *frameRuntime) Start(context.Context, string) error {
+	r.record("start")
+	return nil
+}
+
+func (r *frameRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
 	r.mu.Lock()
 	if r.writeErr != nil {
 		err := r.writeErr
 		r.mu.Unlock()
 		return err
 	}
-	r.events = append(r.events, "write:"+jsonlFrameType(envelope))
-	r.frames = append(r.frames, append([]byte(nil), envelope...))
-	hook := r.onWrite
+	holds := r.holds
 	r.mu.Unlock()
+	point := "idle"
+	if holds != nil && holds(sessionID) {
+		point = "running"
+	}
+	r.mu.Lock()
+	r.events = append(r.events, jsonlFrameType(envelope)+"@"+point)
+	r.frames = append(r.frames, append([]byte(nil), envelope...))
+	hook, ack := r.onWrite, r.ack
+	r.mu.Unlock()
+	if ack != nil {
+		_ = ack.WriteEnvelope(sessionID, envelope)
+	}
 	if hook != nil {
 		hook(envelope)
 	}
 	return nil
 }
 
-func (r *frameRuntime) Output(context.Context, string) (<-chan []byte, error) {
+func (r *frameRuntime) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
+	if r.ack != nil {
+		return r.ack.Output(ctx, sessionID)
+	}
 	ch := make(chan []byte)
 	close(ch)
 	return ch, nil
 }
 
-func (r *frameRuntime) Interrupt(context.Context, string, bool) error { return nil }
+func (r *frameRuntime) Interrupt(context.Context, string, bool) error {
+	r.record("interrupt")
+	return nil
+}
 
 func (r *frameRuntime) Close(context.Context, string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, "close")
+	r.record("close")
 	return nil
 }
 
@@ -79,7 +123,8 @@ func (r *frameRuntime) written() [][]byte {
 }
 
 // sdkWarmFrameRuntime is frameRuntime with the §6.1 SDK-warm surface, which
-// records its DemoteSDK in the same log as "demote".
+// records its ConfigureWorkspace as "configure" and its DemoteSDK as
+// "demote" in the same log.
 type sdkWarmFrameRuntime struct {
 	frameRuntime
 }
@@ -87,27 +132,66 @@ type sdkWarmFrameRuntime struct {
 func (r *sdkWarmFrameRuntime) PreConnect(context.Context) error { return nil }
 
 func (r *sdkWarmFrameRuntime) ConfigureWorkspace(context.Context, string, string) error {
+	r.record("configure")
 	return nil
 }
 
 func (r *sdkWarmFrameRuntime) DemoteSDK(context.Context) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, "demote")
+	r.record("demote")
 	return nil
 }
 
-// frameServer returns a Server wired to a fresh workspace base and rt.
+// frameServer returns a Server wired to a fresh workspace base and rt, and
+// points rt's rule-8 record probe at the Server. WriteEnvelope is never
+// called under s.mu, so the probe takes the lock itself.
 func frameServer(t *testing.T, rt RuntimeProcess) *Server {
 	t.Helper()
 	s := New("frames-test")
 	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
+	if r, ok := rt.(interface{ recordHolds(func(string) bool) }); ok {
+		r.recordHolds(func(sessionID string) bool {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			return s.runtimeHoldsLocked(sessionID)
+		})
+	}
 	return s
+}
+
+// ackFrameServer is frameServer over a runtime whose CH-RUNTIMEOPS
+// connection completed its capability handshake, so every start it runs
+// waits for session_started, which rt.ack answers by its reply policy. It
+// returns the handshaken CH-RUNTIMEOPS peer.
+func ackFrameServer(t *testing.T, rt *frameRuntime) (*Server, *fakeRuntime) {
+	t.Helper()
+	rt.ack = ackruntime.New(t)
+	lc, peer := startRuntimeOps(t)
+	peer.handshake()
+	awaitHandshake(t, lc)
+	s := frameServer(t, rt)
+	s.Lifecycle = lc
+	s.SessionStartAckTimeout = 200 * time.Millisecond
+	return s, peer
 }
 
 func frameStartReq(sessionID string) *adapterv1.StartSessionRequest {
 	return &adapterv1.StartSessionRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}
+}
+
+func frameResumeReq(sessionID string) *adapterv1.ResumeRequest {
+	return &adapterv1.ResumeRequest{
+		SessionId:    &adapterv1.SessionId{Value: sessionID},
+		BindAttempt:  "attempt-a",
+		CheckpointId: "ckpt-1",
+	}
+}
+
+func frameConfigureReq(s *Server, sessionID string) *adapterv1.ConfigureWorkspaceRequest {
+	return &adapterv1.ConfigureWorkspaceRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Cwd:       s.WorkspaceBase,
+	}
 }
 
 // decodeFrame decodes one JSONL frame into its members.
@@ -130,6 +214,53 @@ func equalLog(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// expectLog fails the test when rt's log is not exactly want.
+func expectLog(t *testing.T, rt *frameRuntime, want ...string) {
+	t.Helper()
+	if got := rt.log(); !equalLog(got, want) {
+		t.Fatalf("runtime events = %v, want %v", got, want)
+	}
+}
+
+// expectCode fails the test when err does not carry code.
+func expectCode(t *testing.T, err error, code codes.Code) {
+	t.Helper()
+	if status.Code(err) != code {
+		t.Fatalf("answer = %v, want %v", err, code)
+	}
+}
+
+// holdsRecord reports whether the rule-8 record holds sessionID.
+func holdsRecord(s *Server, sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runtimeHoldsLocked(sessionID)
+}
+
+// sdkWarmServer returns a pre-connected SDK-warm Server over rt.
+func sdkWarmServer(t *testing.T, rt *sdkWarmFrameRuntime, ack bool) *Server {
+	t.Helper()
+	var s *Server
+	if ack {
+		s, _ = ackFrameServer(t, &rt.frameRuntime)
+		s.Runtime = rt
+	} else {
+		s = frameServer(t, rt)
+	}
+	if err := s.PreConnect(context.Background()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	return s
+}
+
+// shortCtx is a context whose deadline a guard wait outlives.
+func shortCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start) — a session with no
@@ -219,341 +350,420 @@ func TestSessionStartFrameCarriesSessionContext_spec_28_5_3(t *testing.T) {
 	}
 }
 
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes; Inbound: session_start)
-// — a Shutdown of a running session writes its session_end before the
-// teardown closes the runtime, and the next start of the same session
-// writes a session_start whose startId differs from the first one's.
-func TestShutdownWritesSessionEndBeforeCloseAndRestartMintsNewStartID_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
+// spec: 28.5.3 (CH-MSGSOCK session frame writes), 4.7.1 (role and gateway RPC contract), 5.2 (slot-identifier reclaim hold)
+// One subtest per row of the §28.5.3 Session frame writes table, each
+// asserting the row's Frame column (which frame reaches the runtime, if
+// any) and its Point column (whether the rule-8 record held the session
+// when the frame was written, and where the frame falls relative to the
+// runtime's Start, Close, ConfigureWorkspace and DemoteSDK). The variants
+// the table implies are subtests of their row: the guard-expired start and
+// compensating Shutdown, the DemoteSDK whose guard acquisition expires,
+// the acknowledgement failures on a stale startId and on error, the
+// hold-timeout pass 1 that lands between the two confirmations, a failed
+// session_end write, and a start with no AssignCredentials.
+func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 	ctx := context.Background()
-	if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
-		t.Fatalf("StartSession: %v", err)
-	}
-	if _, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-1")); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
-	if got, want := rt.log(), []string{"write:session_start", "write:session_end", "close"}; !equalLog(got, want) {
-		t.Fatalf("runtime events = %v, want %v", got, want)
-	}
-	if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
-		t.Fatalf("second StartSession: %v", err)
-	}
-	frames := rt.written()
-	if len(frames) != 3 {
-		t.Fatalf("frames written = %d, want 3", len(frames))
-	}
-	end := decodeFrame(t, frames[1])
-	if len(end) != 2 || end["sessionId"] != "sess-1" {
-		t.Errorf("session_end = %s, want type and sessionId only", frames[1])
-	}
-	first, second := decodeFrame(t, frames[0])["startId"], decodeFrame(t, frames[2])["startId"]
-	if first == second {
-		t.Errorf("both starts of sess-1 carry startId %v, want distinct values", first)
-	}
+
+	t.Run("pod-warm start writes session_start before the record", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		s.CredentialsDir = t.TempDir()
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		expectLog(t, rt, "start", "session_start@idle")
+		if !holdsRecord(s, "sess-1") {
+			t.Error("the start did not take the rule-8 record")
+		}
+		// No AssignCredentials ran for the entry, so no credential file was
+		// provisioned and the frame omits the member rather than naming a
+		// path the runtime cannot read.
+		if _, present := decodeFrame(t, rt.written()[0])["credentialsPath"]; present {
+			t.Errorf("session_start of an entry with no AssignCredentials carries credentialsPath: %s", rt.written()[0])
+		}
+	})
+
+	t.Run("SDK-warm start writes session_start after ConfigureWorkspace and before the record", func(t *testing.T) {
+		rt := &sdkWarmFrameRuntime{}
+		s := sdkWarmServer(t, rt, false)
+		if _, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1")); err != nil {
+			t.Fatalf("ConfigureWorkspace: %v", err)
+		}
+		expectLog(t, &rt.frameRuntime, "configure", "session_start@idle")
+		if !holdsRecord(s, "sess-1") {
+			t.Error("the SDK-warm start did not take the rule-8 record")
+		}
+	})
+
+	t.Run("SDK-warm repeat writes nothing", func(t *testing.T) {
+		rt := &sdkWarmFrameRuntime{}
+		s := sdkWarmServer(t, rt, false)
+		for i := 0; i < 2; i++ {
+			if _, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1")); err != nil {
+				t.Fatalf("ConfigureWorkspace #%d: %v", i+1, err)
+			}
+		}
+		expectLog(t, &rt.frameRuntime, "configure", "session_start@idle", "configure")
+	})
+
+	t.Run("resume writes session_start under its held guard before the record", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if _, err := s.Resume(rctx, frameResumeReq("sess-1")); err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+		expectLog(t, rt, "start", "session_start@idle")
+		if !holdsRecord(s, "sess-1") {
+			t.Error("the resumed session did not reach running")
+		}
+	})
+
+	t.Run("first confirmation refused writes nothing", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		claim, err := s.claimSessionSlot("sess-1", slotResolve{allowCreate: true}, false, false)
+		if err != nil {
+			t.Fatalf("claim: %v", err)
+		}
+		s.mu.Lock()
+		s.slots["sess-1"] = &slotState{sessionID: "sess-1", started: true, bindAttempt: claim.attempt}
+		s.mu.Unlock()
+		confirmed, err := s.openRuntimeSession(ctx, "sess-1", claim, manifestInputs{}, false)
+		if err != nil || confirmed {
+			t.Fatalf("openRuntimeSession = (%v, %v), want (false, nil)", confirmed, err)
+		}
+		expectLog(t, rt)
+		if holdsRecord(s, "sess-1") {
+			t.Error("the refused start took the rule-8 record")
+		}
+	})
+
+	t.Run("second confirmation refused writes session_end before the start backs out", func(t *testing.T) {
+		t.Run("pod-warm", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s := frameServer(t, rt)
+			rt.onWrite = deregisterOnSessionStart(s, "sess-1")
+			_, err := s.StartSession(ctx, frameStartReq("sess-1"))
+			expectCode(t, err, codes.Aborted)
+			expectLog(t, rt, "start", "session_start@idle", "session_end@idle", "close")
+			if holdsRecord(s, "sess-1") {
+				t.Error("the refused start took the rule-8 record")
+			}
+		})
+		t.Run("SDK-warm session_end precedes DemoteSDK", func(t *testing.T) {
+			rt := &sdkWarmFrameRuntime{}
+			s := sdkWarmServer(t, rt, false)
+			rt.onWrite = deregisterOnSessionStart(s, "sess-1")
+			_, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1"))
+			expectCode(t, err, codes.Aborted)
+			expectLog(t, &rt.frameRuntime, "configure", "session_start@idle", "session_end@idle", "demote")
+		})
+		t.Run("hold-timeout pass 1 removes the entry after the session_start write", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s := frameServer(t, rt)
+			var members []heldSession
+			rt.onWrite = func(frame []byte) {
+				if jsonlFrameType(frame) == sessionStartFrameType {
+					members = s.deregisterStartedSessions()
+				}
+			}
+			_, err := s.StartSession(ctx, frameStartReq("sess-1"))
+			expectCode(t, err, codes.Aborted)
+			if len(members) != 1 {
+				t.Fatalf("pass 1 removed %d entries, want the starting one", len(members))
+			}
+			// Pass 2 runs once the open sequence has released the guard,
+			// and writes no frame of its own.
+			for _, m := range members {
+				s.terminateHeldSession(ctx, m)
+			}
+			expectLog(t, rt, "start", "session_start@idle", "session_end@idle", "close", "close")
+		})
+	})
+
+	t.Run("acknowledgement failure writes session_end and fails the start", func(t *testing.T) {
+		t.Run("answered only with an earlier start's startId", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s, _ := ackFrameServer(t, rt)
+			if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+				t.Fatalf("first StartSession: %v", err)
+			}
+			earlier := decodeFrame(t, rt.written()[0])["startId"].(string)
+			if _, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-1")); err != nil {
+				t.Fatalf("Shutdown: %v", err)
+			}
+			rt.ack.SetReply(func(in []byte) []byte { return answerWith(in, earlier, "") })
+			_, err := s.StartSession(ctx, frameStartReq("sess-1"))
+			expectCode(t, err, codes.Internal)
+			expectLog(t, rt,
+				"start", "session_start@idle", "session_end@running", "close",
+				"start", "session_start@idle", "session_end@idle", "close")
+			if n := s.slotCount(); n != 0 || holdsRecord(s, "sess-1") {
+				t.Errorf("failed start left %d entries (record %v), want none", n, holdsRecord(s, "sess-1"))
+			}
+		})
+		t.Run("session_started carries error", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s, _ := ackFrameServer(t, rt)
+			rt.ack.SetReply(func(in []byte) []byte { return answerWith(in, "", "RUNTIME_ERROR") })
+			_, err := s.StartSession(ctx, frameStartReq("sess-1"))
+			expectCode(t, err, codes.Internal)
+			expectLog(t, rt, "start", "session_start@idle", "session_end@idle", "close")
+		})
+		t.Run("SDK-warm start answers Internal and the DemoteSDK fallback writes nothing", func(t *testing.T) {
+			rt := &sdkWarmFrameRuntime{}
+			s := sdkWarmServer(t, rt, true)
+			rt.ack.SetReply(ackruntime.Withhold)
+			_, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1"))
+			expectCode(t, err, codes.Internal)
+			if _, err := s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{}); err != nil {
+				t.Fatalf("DemoteSDK fallback: %v", err)
+			}
+			expectLog(t, &rt.frameRuntime, "configure", "session_start@idle", "session_end@idle", "demote")
+		})
+	})
+
+	t.Run("start that fails before the confirmation writes nothing", func(t *testing.T) {
+		writeErr := errors.New("connection reset")
+		t.Run("pod-warm session_start write fails", func(t *testing.T) {
+			rt := &frameRuntime{writeErr: writeErr}
+			s := frameServer(t, rt)
+			_, err := s.StartSession(ctx, frameStartReq("sess-1"))
+			expectCode(t, err, codes.Internal)
+			expectLog(t, rt, "start", "close")
+			if n := s.slotCount(); n != 0 || holdsRecord(s, "sess-1") {
+				t.Errorf("failed start left %d entries (record %v), want none", n, holdsRecord(s, "sess-1"))
+			}
+		})
+		t.Run("resume session_start write fails", func(t *testing.T) {
+			rt := &frameRuntime{writeErr: writeErr}
+			s := frameServer(t, rt)
+			_, err := s.Resume(ctx, frameResumeReq("sess-1"))
+			expectCode(t, err, codes.Internal)
+			expectLog(t, rt, "start", "close")
+			if n := s.slotCount(); n != 0 {
+				t.Errorf("registry holds %d entries after the failed resume, want 0", n)
+			}
+		})
+		t.Run("SDK-warm session_start write fails", func(t *testing.T) {
+			rt := &sdkWarmFrameRuntime{frameRuntime{writeErr: writeErr}}
+			s := sdkWarmServer(t, rt, false)
+			_, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1"))
+			expectCode(t, err, codes.Internal)
+			expectLog(t, &rt.frameRuntime, "configure")
+			if n := s.slotCount(); n != 0 || holdsRecord(s, "sess-1") {
+				t.Errorf("failed SDK-warm start left %d entries (record %v), want none", n, holdsRecord(s, "sess-1"))
+			}
+		})
+		t.Run("guard acquisition expires", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s := frameServer(t, rt)
+			t.Cleanup(holdGuard(t, s, "sess-1"))
+			_, err := s.StartSession(shortCtx(t), frameStartReq("sess-1"))
+			expectCode(t, err, codes.Internal)
+			expectLog(t, rt, "start", "close")
+			if n := s.slotCount(); n != 0 {
+				t.Errorf("registry holds %d entries after the failed start, want 0", n)
+			}
+		})
+	})
+
+	t.Run("Shutdown of a running session writes session_end after the record and before Close", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		if _, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-1")); err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("second StartSession: %v", err)
+		}
+		expectLog(t, rt, "start", "session_start@idle", "session_end@running", "close", "start", "session_start@idle")
+		frames := rt.written()
+		if end := decodeFrame(t, frames[1]); len(end) != 2 || end["sessionId"] != "sess-1" {
+			t.Errorf("session_end = %s, want type and sessionId only", frames[1])
+		}
+		if first, second := decodeFrame(t, frames[0])["startId"], decodeFrame(t, frames[2])["startId"]; first == second {
+			t.Errorf("both starts of sess-1 carry startId %v, want distinct values", first)
+		}
+	})
+
+	t.Run("compensating Shutdown whose guard acquisition expires still writes session_end", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		assignForAttempt(t, s, "sess-1", "attempt-a")
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		t.Cleanup(holdGuard(t, s, "sess-1"))
+		resp, err := s.Shutdown(shortCtx(t), &adapterv1.ShutdownRequest{
+			SessionId: &adapterv1.SessionId{Value: "sess-1"}, BindAttempt: "attempt-a",
+		})
+		if err != nil || resp.GetSlotReclaim() != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED {
+			t.Fatalf("Shutdown = (%v, %v), want RECLAIMED", resp, err)
+		}
+		expectLog(t, rt, "start", "session_start@idle", "session_end@running", "close")
+	})
+
+	t.Run("Shutdown of an entry that never reached running, or of no entry, writes nothing", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		if _, err := s.ensureSlotPaths("sess-1", slotResolve{allowCreate: true}); err != nil {
+			t.Fatalf("register slot: %v", err)
+		}
+		for _, id := range []string{"sess-1", "sess-absent"} {
+			if _, err := s.Shutdown(ctx, unconditionalShutdownReq(id)); err != nil {
+				t.Fatalf("Shutdown(%s): %v", id, err)
+			}
+		}
+		expectLog(t, rt)
+	})
+
+	t.Run("a failed session_end write does not fail the teardown", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		rt.mu.Lock()
+		rt.writeErr = errors.New("broken pipe")
+		rt.mu.Unlock()
+		resp, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-1"))
+		if err != nil || !resp.GetExitedCleanly() {
+			t.Fatalf("Shutdown = (%v, %v), want a clean teardown", resp, err)
+		}
+		expectLog(t, rt, "start", "session_start@idle", "close")
+	})
+
+	t.Run("DemoteSDK of a running session writes session_end before the demotion", func(t *testing.T) {
+		rt := &sdkWarmFrameRuntime{}
+		s := sdkWarmServer(t, rt, false)
+		if _, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1")); err != nil {
+			t.Fatalf("ConfigureWorkspace: %v", err)
+		}
+		if _, err := s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{}); err != nil {
+			t.Fatalf("DemoteSDK: %v", err)
+		}
+		expectLog(t, &rt.frameRuntime, "configure", "session_start@idle", "session_end@running", "demote")
+		if n := s.slotCount(); n != 0 || s.SDKWarmReady() {
+			t.Errorf("after DemoteSDK: %d entries, SDK-warm ready %v; want none and false", n, s.SDKWarmReady())
+		}
+	})
+
+	t.Run("DemoteSDK with no running session writes nothing", func(t *testing.T) {
+		rt := &sdkWarmFrameRuntime{}
+		s := sdkWarmServer(t, rt, false)
+		if _, err := s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{}); err != nil {
+			t.Fatalf("DemoteSDK: %v", err)
+		}
+		expectLog(t, &rt.frameRuntime, "demote")
+	})
+
+	t.Run("DemoteSDK whose guard acquisition expires fails closed", func(t *testing.T) {
+		rt := &sdkWarmFrameRuntime{}
+		s := sdkWarmServer(t, rt, false)
+		if _, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1")); err != nil {
+			t.Fatalf("ConfigureWorkspace: %v", err)
+		}
+		t.Cleanup(holdGuard(t, s, "sess-1"))
+		_, err := s.DemoteSDK(shortCtx(t), &adapterv1.DemoteSDKRequest{})
+		expectCode(t, err, codes.DeadlineExceeded)
+		expectLog(t, &rt.frameRuntime, "configure", "session_start@idle")
+		if n := s.slotCount(); n != 1 || !s.SDKWarmReady() || !holdsRecord(s, "sess-1") {
+			t.Errorf("failed DemoteSDK changed state: %d entries, SDK-warm ready %v, record %v",
+				n, s.SDKWarmReady(), holdsRecord(s, "sess-1"))
+		}
+	})
+
+	t.Run("coordinator hold timeout writes nothing", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		s.hold.mu.Lock()
+		s.hold.active = true
+		s.hold.mu.Unlock()
+		s.onHoldTimeout()
+		expectLog(t, rt, "start", "session_start@idle", "close")
+	})
+
+	t.Run("interrupt writes nothing", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		for _, mode := range []adapterv1.InterruptRequest_Mode{
+			adapterv1.InterruptRequest_MODE_CLEAN, adapterv1.InterruptRequest_MODE_HARD,
+		} {
+			if _, err := s.Interrupt(ctx, &adapterv1.InterruptRequest{
+				SessionId: &adapterv1.SessionId{Value: "sess-1"}, Mode: mode, DeadlineMs: 1000,
+			}); err != nil {
+				t.Fatalf("Interrupt(%v): %v", mode, err)
+			}
+		}
+		for _, ev := range rt.log()[2:] {
+			if strings.HasPrefix(ev, "session_") {
+				t.Errorf("an interrupt wrote %s", ev)
+			}
+		}
+	})
+
+	t.Run("type mcp runtime writes no session frame on any path", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		s.RuntimeKind = RuntimeKindMCP
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		if _, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-1")); err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+		if err := s.writeSessionStart("sess-2", s.nextStartID(), manifestInputs{}); err != nil {
+			t.Fatalf("writeSessionStart: %v", err)
+		}
+		s.writeSessionEnd("sess-2")
+		expectLog(t, rt, "start", "close")
+	})
 }
 
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — a Shutdown that
-// removes an entry whose session never reached running writes no frame.
-func TestShutdownOfUnstartedEntryWritesNoSessionEnd_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	if _, err := s.ensureSlotPaths("sess-1", slotResolve{allowCreate: true}); err != nil {
-		t.Fatalf("register slot: %v", err)
-	}
-	if _, err := s.Shutdown(context.Background(), unconditionalShutdownReq("sess-1")); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
-	if got := rt.log(); len(got) != 0 {
-		t.Errorf("runtime events = %v, want none for an entry that never started", got)
-	}
-}
-
-// spec: §4.7.1 (role and gateway RPC contract), rule 8; §28.5.3
-// (CH-MSGSOCK, Session frame writes) — an open sequence that finds a
-// different entry under the identifier than the one its claim was
-// admitted against refuses at the first confirmation and writes no frame.
-func TestOpenRuntimeSessionRefusesReplacedEntryWithoutFrames_spec_4_7_1(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	claim, err := s.claimSessionSlot("sess-1", slotResolve{allowCreate: true}, false, false)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	s.mu.Lock()
-	s.slots["sess-1"] = &slotState{sessionID: "sess-1", started: true, bindAttempt: claim.attempt}
-	s.mu.Unlock()
-	confirmed, err := s.openRuntimeSession(context.Background(), "sess-1", claim, manifestInputs{}, false)
-	if err != nil || confirmed {
-		t.Fatalf("openRuntimeSession = (%v, %v), want (false, nil)", confirmed, err)
-	}
-	if got := rt.log(); len(got) != 0 {
-		t.Errorf("runtime events = %v, want no frame on a refused first confirmation", got)
-	}
-	s.mu.Lock()
-	holds := s.runtimeHoldsLocked("sess-1")
-	s.mu.Unlock()
-	if holds {
-		t.Error("the refused start took the rule-8 record")
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §4.7.1 (role and
-// gateway RPC contract), rule 8; §5.2 (slot-identifier reclaim hold) — when
-// the entry leaves the registry after the session_start is written, the
-// second confirmation is refused, the open sequence writes session_end
-// before the start takes the session back off the runtime, and the start
-// answers Aborted with no record taken.
-func TestStartSessionWritesSessionEndWhenSecondConfirmationRefused_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	rt.onWrite = func(frame []byte) {
-		if jsonlFrameType(frame) != "session_start" {
+// deregisterOnSessionStart returns an onWrite hook that removes sessionID's
+// entry without the slot guard when its session_start reaches the runtime,
+// as the hold-timeout termination's pass 1 and a Shutdown whose guard
+// acquisition expired do. That is the removal an open sequence can meet
+// between its two confirmations.
+func deregisterOnSessionStart(s *Server, sessionID string) func([]byte) {
+	return func(frame []byte) {
+		if jsonlFrameType(frame) != sessionStartFrameType {
 			return
 		}
-		// The hold-timeout termination's first pass removes an entry
-		// without the slot guard, which is the removal an open sequence can
-		// meet between its two confirmations.
 		s.mu.Lock()
-		s.deregisterSlotLocked("sess-1")
+		s.deregisterSlotLocked(sessionID)
 		s.mu.Unlock()
 	}
-	_, err := s.StartSession(context.Background(), frameStartReq("sess-1"))
-	if status.Code(err) != codes.Aborted {
-		t.Fatalf("StartSession code = %v, want Aborted", status.Code(err))
-	}
-	if got, want := rt.log(), []string{"write:session_start", "write:session_end", "close"}; !equalLog(got, want) {
-		t.Fatalf("runtime events = %v, want %v", got, want)
-	}
-	s.mu.Lock()
-	holds := s.runtimeHoldsLocked("sess-1")
-	s.mu.Unlock()
-	if holds {
-		t.Error("the refused start took the rule-8 record")
-	}
 }
 
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §5.2 (slot-identifier
-// reclaim hold) — a start whose open sequence cannot take the slot
-// serialization before its request's deadline fails with nothing written,
-// takes the session back off the runtime, and releases its claim.
-func TestStartSessionFailsWhenSlotSerializationNotAcquired_spec_5_2(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	unlock, guarded := s.lockSlotGuard(context.Background(), "sess-1")
-	if !guarded {
-		t.Fatal("precondition: the test could not take the slot guard")
+// assignForAttempt registers sessionID's entry under attempt through
+// AssignCredentials, so a compensating Shutdown carrying the attempt's
+// token matches it.
+func assignForAttempt(t *testing.T, s *Server, sessionID, attempt string) {
+	t.Helper()
+	if s.CredentialsDir == "" {
+		s.CredentialsDir = t.TempDir()
 	}
-	defer unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_, err := s.StartSession(ctx, frameStartReq("sess-1"))
-	if status.Code(err) != codes.Internal {
-		t.Fatalf("StartSession code = %v, want Internal", status.Code(err))
-	}
-	if got, want := rt.log(), []string{"close"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v (no frame, then the runtime close)", got, want)
-	}
-	if n := s.slotCount(); n != 0 {
-		t.Errorf("registry holds %d entries after the failed start, want 0", n)
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — a start whose
-// session_start write fails treats the frame as undelivered: it answers
-// Internal, takes the session back off the runtime, releases its claim and
-// takes no record.
-func TestStartSessionFailsOnSessionStartWriteError_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{writeErr: errors.New("connection reset")}
-	s := frameServer(t, rt)
-	_, err := s.StartSession(context.Background(), frameStartReq("sess-1"))
-	if status.Code(err) != codes.Internal {
-		t.Fatalf("StartSession code = %v, want Internal", status.Code(err))
-	}
-	if got, want := rt.log(), []string{"close"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v", got, want)
-	}
-	if n := s.slotCount(); n != 0 {
-		t.Errorf("registry holds %d entries after the failed start, want 0", n)
-	}
-	s.mu.Lock()
-	holds := s.runtimeHoldsLocked("sess-1")
-	s.mu.Unlock()
-	if holds {
-		t.Error("a start whose session_start was not delivered took the rule-8 record")
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §5.2 (slot-identifier
-// reclaim hold) — Resume holds the slot guard from ahead of its claim, so
-// its open sequence runs under that guard rather than acquiring it again,
-// and writes the restored session's session_start.
-func TestResumeWritesSessionStartUnderItsHeldGuard_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_, err := s.Resume(ctx, &adapterv1.ResumeRequest{
-		SessionId:    &adapterv1.SessionId{Value: "sess-1"},
-		BindAttempt:  "attempt-a",
-		CheckpointId: "ckpt-1",
-	})
-	if err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-	if got, want := rt.log(), []string{"write:session_start"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v", got, want)
-	}
-	s.mu.Lock()
-	holds := s.runtimeHoldsLocked("sess-1")
-	s.mu.Unlock()
-	if !holds {
-		t.Error("the resumed session did not reach running")
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the SDK-warm start
-// writes session_start on its fresh arm, and its idempotent repeat for the
-// same session writes nothing.
-func TestConfigureWorkspaceWritesSessionStartOnFreshArmOnly_spec_28_5_3(t *testing.T) {
-	rt := &sdkWarmFrameRuntime{}
-	s := frameServer(t, rt)
-	req := &adapterv1.ConfigureWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceBase,
-	}
-	for i := 0; i < 2; i++ {
-		if _, err := s.ConfigureWorkspace(context.Background(), req); err != nil {
-			t.Fatalf("ConfigureWorkspace #%d: %v", i+1, err)
-		}
-	}
-	if got, want := rt.log(), []string{"write:session_start"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v", got, want)
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — DemoteSDK while the
-// session is running writes its session_end before the pre-connected SDK
-// is torn down, and removes the entry.
-func TestDemoteSDKWritesSessionEndBeforeTeardown_spec_28_5_3(t *testing.T) {
-	rt := &sdkWarmFrameRuntime{}
-	s := frameServer(t, rt)
-	if err := s.PreConnect(context.Background()); err != nil {
-		t.Fatalf("PreConnect: %v", err)
-	}
-	if _, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceBase,
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		BindAttempt: attempt,
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic": {LeaseId: "l-" + attempt, Provider: "anthropic", Payload: []byte("{}")},
+		},
 	}); err != nil {
-		t.Fatalf("ConfigureWorkspace: %v", err)
-	}
-	if _, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{}); err != nil {
-		t.Fatalf("DemoteSDK: %v", err)
-	}
-	if got, want := rt.log(), []string{"write:session_start", "write:session_end", "demote"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v", got, want)
-	}
-	if n := s.slotCount(); n != 0 {
-		t.Errorf("registry holds %d entries after DemoteSDK, want 0", n)
-	}
-	if s.SDKWarmReady() {
-		t.Error("DemoteSDK left the pod SDK-warm ready")
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes, the DemoteSDK deadline
-// row); §5.2 (slot-identifier reclaim hold) — a DemoteSDK whose wait for
-// the slot serialization outlasts its request's deadline fails closed with
-// DeadlineExceeded: it writes no session_end, does not tear the SDK down,
-// and leaves the entry and the SDK-warm readiness unchanged.
-func TestDemoteSDKFailsClosedWhenSlotSerializationNotAcquired_spec_28_5_3(t *testing.T) {
-	rt := &sdkWarmFrameRuntime{}
-	s := frameServer(t, rt)
-	if err := s.PreConnect(context.Background()); err != nil {
-		t.Fatalf("PreConnect: %v", err)
-	}
-	if _, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceBase,
-	}); err != nil {
-		t.Fatalf("ConfigureWorkspace: %v", err)
-	}
-	unlock, guarded := s.lockSlotGuard(context.Background(), "sess-1")
-	if !guarded {
-		t.Fatal("precondition: the test could not take the slot guard")
-	}
-	defer unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_, err := s.DemoteSDK(ctx, &adapterv1.DemoteSDKRequest{})
-	if status.Code(err) != codes.DeadlineExceeded {
-		t.Fatalf("DemoteSDK code = %v, want DeadlineExceeded", status.Code(err))
-	}
-	if got, want := rt.log(), []string{"write:session_start"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v (no session_end and no demotion)", got, want)
-	}
-	if n := s.slotCount(); n != 1 {
-		t.Errorf("registry holds %d entries, want the entry left standing", n)
-	}
-	if !s.SDKWarmReady() {
-		t.Error("the failed DemoteSDK cleared the SDK-warm readiness")
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — DemoteSDK while no
-// session is running writes no session_end.
-func TestDemoteSDKWithNoSessionWritesNoSessionEnd_spec_28_5_3(t *testing.T) {
-	rt := &sdkWarmFrameRuntime{}
-	s := frameServer(t, rt)
-	if err := s.PreConnect(context.Background()); err != nil {
-		t.Fatalf("PreConnect: %v", err)
-	}
-	if _, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{}); err != nil {
-		t.Fatalf("DemoteSDK: %v", err)
-	}
-	if got, want := rt.log(), []string{"demote"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v", got, want)
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes, the type: mcp row);
-// §4.7.10 — a type: mcp runtime exchanges no CH-MSGSOCK frame, so neither
-// session frame is written to it.
-func TestSessionFramesNotWrittenForMCPRuntime_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	s.RuntimeKind = RuntimeKindMCP
-	if err := s.writeSessionStart("sess-1", s.nextStartID(), manifestInputs{}); err != nil {
-		t.Fatalf("writeSessionStart: %v", err)
-	}
-	s.writeSessionEnd("sess-1")
-	if got := rt.log(); len(got) != 0 {
-		t.Errorf("runtime events = %v, want none for a type: mcp runtime", got)
-	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — a teardown proceeds
-// when its session_end write fails: the frame is not acknowledged, so the
-// failure is logged and the runtime is still closed.
-func TestShutdownProceedsWhenSessionEndWriteFails_spec_28_5_3(t *testing.T) {
-	rt := &frameRuntime{}
-	s := frameServer(t, rt)
-	ctx := context.Background()
-	if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
-		t.Fatalf("StartSession: %v", err)
-	}
-	rt.mu.Lock()
-	rt.writeErr = errors.New("broken pipe")
-	rt.mu.Unlock()
-	resp, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-1"))
-	if err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
-	if !resp.GetExitedCleanly() {
-		t.Error("Shutdown answered exited_cleanly false on a failed session_end write")
-	}
-	if got, want := rt.log(), []string{"write:session_start", "close"}; !equalLog(got, want) {
-		t.Errorf("runtime events = %v, want %v", got, want)
+		t.Fatalf("AssignCredentials: %v", err)
 	}
 }
 
@@ -569,51 +779,6 @@ func TestSessionStartFrameRejectsUnsafeSessionIdentifier_spec_28_5_3(t *testing.
 	if _, err := s.buildSessionStartFrame("../escape", "1", manifestInputs{}); err == nil {
 		t.Error("buildSessionStartFrame accepted an unsafe session identifier")
 	}
-}
-
-// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — a resume or an
-// SDK-warm start whose session_start write fails answers Internal, takes no
-// record, and releases its slot, so a retry can land on a fresh pod.
-func TestResumeAndSDKWarmStartFailOnSessionStartWriteError_spec_28_5_3(t *testing.T) {
-	writeErr := errors.New("connection reset")
-	t.Run("resume", func(t *testing.T) {
-		rt := &frameRuntime{writeErr: writeErr}
-		s := frameServer(t, rt)
-		_, err := s.Resume(context.Background(), &adapterv1.ResumeRequest{
-			SessionId:    &adapterv1.SessionId{Value: "sess-1"},
-			BindAttempt:  "attempt-a",
-			CheckpointId: "ckpt-1",
-		})
-		if status.Code(err) != codes.Internal {
-			t.Fatalf("Resume code = %v, want Internal", status.Code(err))
-		}
-		if got, want := rt.log(), []string{"close"}; !equalLog(got, want) {
-			t.Errorf("runtime events = %v, want %v", got, want)
-		}
-		if n := s.slotCount(); n != 0 {
-			t.Errorf("registry holds %d entries after the failed resume, want 0", n)
-		}
-	})
-	t.Run("sdk_warm_start", func(t *testing.T) {
-		rt := &sdkWarmFrameRuntime{frameRuntime{writeErr: writeErr}}
-		s := frameServer(t, rt)
-		_, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
-			Cwd:       s.WorkspaceBase,
-		})
-		if status.Code(err) != codes.Internal {
-			t.Fatalf("ConfigureWorkspace code = %v, want Internal", status.Code(err))
-		}
-		if n := s.slotCount(); n != 0 {
-			t.Errorf("registry holds %d entries after the failed SDK-warm start, want 0", n)
-		}
-		s.mu.Lock()
-		holds := s.runtimeHoldsLocked("sess-1")
-		s.mu.Unlock()
-		if holds {
-			t.Error("a start whose session_start was not delivered took the rule-8 record")
-		}
-	})
 }
 
 const proxyLeasePayload = `{"deliveryMode":"proxy","materializedConfig":` +
@@ -837,4 +1002,313 @@ func TestSessionStartExperimentContextMapsProtoFields_spec_28_5_3(t *testing.T) 
 	if got.ExperimentID != "exp_9" || got.VariantID != "control" || got.Inherited {
 		t.Errorf("session_start experimentContext = %+v", got)
 	}
+}
+
+// subscribeRecorder is frameRuntime that also logs each Output
+// subscription as "subscribe" and keeps its context, so a case can assert
+// where the open sequence subscribes relative to its session_start write
+// and that it cancels the subscription when it returns.
+type subscribeRecorder struct {
+	*frameRuntime
+	ctxs []context.Context
+}
+
+func (r *subscribeRecorder) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
+	r.record("subscribe")
+	r.mu.Lock()
+	r.ctxs = append(r.ctxs, ctx)
+	r.mu.Unlock()
+	return r.frameRuntime.Output(ctx, sessionID)
+}
+
+// subscriptions returns the contexts of every Output call so far.
+func (r *subscribeRecorder) subscriptions() []context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]context.Context(nil), r.ctxs...)
+}
+
+// startWithheld starts sessionID on s in the background with its
+// session_started withheld, and returns once the session_start reached the
+// runtime, with the channel the start's answer arrives on.
+func startWithheld(t *testing.T, s *Server, rt *frameRuntime, sessionID string) <-chan error {
+	t.Helper()
+	rt.ack.SetReply(ackruntime.Withhold)
+	done := make(chan error, 1)
+	go func() { done <- startSession(context.Background(), s, sessionID) }()
+	waitForStartID(t, rt.ack)
+	return done
+}
+
+// signalDeadlineAsync issues SignalDeadline for sessionID with a long
+// remainingMs in the background, so the call waits on the session's gate
+// until a transition lets it return.
+func signalDeadlineAsync(s *Server, sessionID string) <-chan *adapterv1.SignalDeadlineResponse {
+	out := make(chan *adapterv1.SignalDeadlineResponse, 1)
+	go func() {
+		resp, _ := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
+			SessionId: &adapterv1.SessionId{Value: sessionID}, RemainingMs: 60_000,
+		})
+		out <- resp
+	}()
+	return out
+}
+
+// expectUndeliveredWithin fails the test unless the SignalDeadline answer
+// arrives, undelivered, within d.
+func expectUndeliveredWithin(t *testing.T, answers <-chan *adapterv1.SignalDeadlineResponse, d time.Duration) {
+	t.Helper()
+	select {
+	case resp := <-answers:
+		if resp == nil || resp.GetDelivered() {
+			t.Fatalf("SignalDeadline = %+v, want undelivered", resp)
+		}
+	case <-time.After(d):
+		t.Fatalf("SignalDeadline still waiting %s after the removal released the gate", d)
+	}
+}
+
+// waitPending polls until pending reports true.
+func waitPending(t *testing.T, what string, pending func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !pending() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never queued on the op lock", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// boundUnstarted registers sessionID as a bound entry whose start has not
+// run, so its gate stays not started for as long as the case needs.
+func boundUnstarted(t *testing.T, s *Server, sessionID string) *slotState {
+	t.Helper()
+	s.WorkspaceBase = t.TempDir()
+	assignForAttempt(t, s, sessionID, "attempt-a")
+	st := s.slotStateForSession(sessionID)
+	if st == nil || st.ack.current() != ackNotStarted {
+		t.Fatalf("precondition: %s is not a registered entry with a not-started gate", sessionID)
+	}
+	return st
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Outbound: session_started), 28.5.3 (CH-RUNTIMEOPS Messages), 28.5.3 (CH-MSGSOCK session frame writes)
+// The rules the acknowledgement gate and the session_started wait add,
+// beyond the gate transitions, the wait's start-failure arms and the
+// zero-value default that TestAckGateTransitions_spec_28_5_3,
+// TestOpenSequenceWaitsForSessionStarted_spec_28_5_3 and
+// TestSessionStartedWaitBounds_spec_28_5_3 pin: the subscription rule of
+// the wait; each session-scoped sender's own bound on its gate wait; a
+// removal while an acknowledgement is pending, by a Shutdown whose guard
+// acquisition expired and by the hold-timeout termination's pass 1, waking
+// a waiting sender without a frame; and a Checkpoint or clean Interrupt
+// queued on the pod-level op lock behind a co-tenant's upload while its
+// entry is released and a successor registers under the same identifier,
+// which writes no frame for the successor.
+func TestSessionStartedGatesRuntimeOpsAndBoundsTheStart_spec_28_5_3(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a waiting start subscribes before session_start and cancels the subscription on every return", func(t *testing.T) {
+		for _, withhold := range []bool{false, true} {
+			base := &frameRuntime{}
+			s, _ := ackFrameServer(t, base)
+			rt := &subscribeRecorder{frameRuntime: base}
+			s.Runtime = rt
+			if withhold {
+				base.ack.SetReply(ackruntime.Withhold)
+			}
+			err := startSession(ctx, s, "sess-a")
+			if (err != nil) != withhold {
+				t.Fatalf("withhold=%v: StartSession = %v", withhold, err)
+			}
+			if got := rt.log(); len(got) < 3 || got[1] != "subscribe" || got[2] != "session_start@idle" {
+				t.Fatalf("withhold=%v: runtime events = %v, want the subscription ahead of session_start", withhold, got)
+			}
+			subs := rt.subscriptions()
+			if len(subs) != 1 || subs[0].Err() == nil {
+				t.Fatalf("withhold=%v: %d subscriptions, want one whose context the sequence cancelled", withhold, len(subs))
+			}
+		}
+	})
+
+	t.Run("a start that does not wait opens no subscription", func(t *testing.T) {
+		rt := &subscribeRecorder{frameRuntime: &frameRuntime{}}
+		s := frameServer(t, rt)
+		if err := startSession(ctx, s, "sess-a"); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		if len(rt.subscriptions()) != 0 {
+			t.Errorf("a start with no CH-RUNTIMEOPS handshake subscribed to the runtime output")
+		}
+		if st, _ := gateOf(s, "sess-a"); st != ackNotAwaiting {
+			t.Errorf("gate = %s, want not_awaiting", st)
+		}
+	})
+
+	t.Run("each sender's gate wait ends at its own bound", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s, peer := ackFrameServer(t, rt)
+		s.SessionStartAckTimeout = time.Minute
+		s.CredentialsAckTimeout = 100 * time.Millisecond
+		st := boundUnstarted(t, s, "sess-a")
+		sid := &adapterv1.SessionId{Value: "sess-a"}
+		within := func(name string, f func()) {
+			t.Helper()
+			began := time.Now()
+			f()
+			if d := time.Since(began); d > 5*time.Second {
+				t.Errorf("%s waited %s on a gate no start settles, want its own short bound", name, d)
+			}
+		}
+		within("checkpoint", func() {
+			err := s.awaitCheckpointGate(ctx, st, &adapterv1.CheckpointStart{DeadlineMs: 100})
+			expectCode(t, err, codes.Internal)
+		})
+		within("interrupt", func() {
+			resp, err := s.Interrupt(ctx, &adapterv1.InterruptRequest{
+				SessionId: sid, Mode: adapterv1.InterruptRequest_MODE_CLEAN, DeadlineMs: 100,
+			})
+			if err != nil || resp.GetStatus() != adapterv1.InterruptResponse_STATUS_INTERRUPT_TIMEOUT {
+				t.Errorf("Interrupt = (%+v, %v), want INTERRUPT_TIMEOUT", resp, err)
+			}
+		})
+		within("deadline signal", func() {
+			resp, err := s.SignalDeadline(ctx, &adapterv1.SignalDeadlineRequest{SessionId: sid, RemainingMs: 100})
+			if err != nil || resp.GetDelivered() {
+				t.Errorf("SignalDeadline = (%+v, %v), want undelivered", resp, err)
+			}
+		})
+		within("rotation", func() {
+			_, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
+				SessionId: sid,
+				Leases: map[string]*adapterv1.CredentialLease{
+					"anthropic": {LeaseId: "l-2", Provider: "anthropic", Payload: []byte("{}")},
+				},
+			})
+			expectCode(t, err, codes.DeadlineExceeded)
+		})
+		s.SessionStartAckTimeout = 100 * time.Millisecond
+		within("files_updated", func() { s.signalFilesUpdated(ctx, st, "sess-a") })
+		expectNoFrame(t, peer, 200*time.Millisecond)
+	})
+
+	removals := map[string]func(t *testing.T, s *Server) (wait func()){
+		"Shutdown whose guard acquisition expired": func(t *testing.T, s *Server) func() {
+			if _, err := s.Shutdown(shortCtx(t), unconditionalShutdownReq("sess-a")); err != nil {
+				t.Fatalf("Shutdown: %v", err)
+			}
+			return func() {}
+		},
+		"hold-timeout pass 1": func(t *testing.T, s *Server) func() {
+			s.hold.mu.Lock()
+			s.hold.active = true
+			s.hold.mu.Unlock()
+			done := make(chan struct{})
+			go func() { s.onHoldTimeout(); close(done) }()
+			return func() { <-done }
+		},
+	}
+	for name, remove := range removals {
+		t.Run(name+" while an acknowledgement is pending wakes a waiting sender", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s, peer := ackFrameServer(t, rt)
+			s.SessionStartAckTimeout = 2 * time.Second
+			started := startWithheld(t, s, rt, "sess-a")
+			answers := signalDeadlineAsync(s, "sess-a")
+			select {
+			case resp := <-answers:
+				t.Fatalf("SignalDeadline returned %+v before the gate moved", resp)
+			case <-time.After(50 * time.Millisecond):
+			}
+			finish := remove(t, s)
+			expectUndeliveredWithin(t, answers, time.Second)
+			if err := <-started; err == nil {
+				t.Error("the start whose entry was removed while it waited succeeded")
+			}
+			finish()
+			expectNoFrame(t, peer, 200*time.Millisecond)
+		})
+	}
+
+	t.Run("a sender queued on the op lock while its entry is replaced writes no frame", func(t *testing.T) {
+		for _, op := range []string{"interrupt", "checkpoint"} {
+			t.Run(op, func(t *testing.T) {
+				rt := &frameRuntime{}
+				s, peer := ackFrameServer(t, rt)
+				s.CheckpointTransport = nopCheckpointTransport{}
+				if err := startSession(ctx, s, "sess-a"); err != nil {
+					t.Fatalf("StartSession: %v", err)
+				}
+				// The co-tenant's upload holds the pod-level op lock.
+				release, err := s.ops.Begin(ctx, opCheckpoint, "sess-b")
+				if err != nil {
+					t.Fatalf("co-tenant op lock: %v", err)
+				}
+				answer := queueOnOpLock(t, s, op)
+				if _, err := s.Shutdown(ctx, unconditionalShutdownReq("sess-a")); err != nil {
+					t.Fatalf("Shutdown: %v", err)
+				}
+				if err := startSession(ctx, s, "sess-a"); err != nil {
+					t.Fatalf("successor StartSession: %v", err)
+				}
+				if st, _ := gateOf(s, "sess-a"); st != ackRead {
+					t.Fatalf("successor gate = %s, want read", st)
+				}
+				release()
+				select {
+				case err := <-answer:
+					if err == nil {
+						t.Errorf("%s for the released entry succeeded", op)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatalf("%s did not return once the co-tenant released the op lock", op)
+				}
+				expectNoFrame(t, peer, 200*time.Millisecond)
+			})
+		}
+	})
+}
+
+// queueOnOpLock starts a clean Interrupt or a Checkpoint for sess-a in the
+// background, returns once it is pending on the op lock, and delivers its
+// outcome as an error: a refused interrupt is reported as an error so the
+// caller treats every outcome but a delivered frame alike.
+func queueOnOpLock(t *testing.T, s *Server, op string) <-chan error {
+	t.Helper()
+	answer := make(chan error, 1)
+	switch op {
+	case "interrupt":
+		go func() {
+			resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
+				SessionId: &adapterv1.SessionId{Value: "sess-a"}, Mode: adapterv1.InterruptRequest_MODE_CLEAN, DeadlineMs: 2000,
+			})
+			if err == nil && resp.GetStatus() != adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED {
+				err = fmt.Errorf("interrupt answered %s", resp.GetStatus())
+			}
+			answer <- err
+		}()
+		waitPending(t, op, func() bool {
+			s.ops.mu.Lock()
+			defer s.ops.mu.Unlock()
+			return s.ops.interruptPending
+		})
+	default:
+		stream := &abortingCheckpointStream{
+			ctx: context.Background(), onChunkReady: func() {}, abort: make(chan struct{}),
+			start: &adapterv1.CheckpointStart{
+				CheckpointId: "ckpt-1", SessionId: &adapterv1.SessionId{Value: "sess-a"},
+				Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+				ChunkSizeBytes: 1 << 20, DeadlineMs: 2000,
+			},
+		}
+		go func() { answer <- s.Checkpoint(stream) }()
+		waitPending(t, op, func() bool {
+			s.ops.mu.Lock()
+			defer s.ops.mu.Unlock()
+			_, pending := s.ops.checkpoints["sess-a"]
+			return pending
+		})
+	}
+	return answer
 }

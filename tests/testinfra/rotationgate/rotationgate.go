@@ -110,6 +110,24 @@ func (p *Peer) Read() Frame {
 	return f
 }
 
+// ReadWithin reads the next frame from the adapter, waiting at most d. It
+// reports false, and never fails the test, when no whole frame arrives in
+// time or the connection ends, so a goroutine other than the test's own
+// can call it.
+func (p *Peer) ReadWithin(d time.Duration) (Frame, bool) {
+	_ = p.conn.SetReadDeadline(time.Now().Add(d))
+	defer func() { _ = p.conn.SetReadDeadline(time.Time{}) }()
+	line, err := p.r.ReadBytes('\n')
+	if err != nil {
+		return Frame{}, false
+	}
+	var f Frame
+	if json.Unmarshal(line, &f) != nil {
+		return Frame{}, false
+	}
+	return f, true
+}
+
 // ExpectSilence asserts the adapter sends no frame within d. The
 // in-flight gate must hold credentials_rotated while a request for the
 // provider is counted as in flight (§4.7 in-flight request completion
