@@ -446,19 +446,25 @@ func TestSessionRoundTrip(t *testing.T) {
 	// frame before forwarding it and re-encodes the object to do so, so the
 	// bytes the runtime receives are not the bytes sent and their key order
 	// is the encoder's. Decode before comparing.
-	// spec: §28.5.3 — inbound frames carry sessionId on every pod.
-	if len(rt.envelopes) != 1 {
-		t.Fatalf("runtime received %d envelopes, want 1", len(rt.envelopes))
+	// spec: §28.5.3 — inbound frames carry sessionId on every pod, and the
+	// start's session_start precedes the message (CH-MSGSOCK, Inbound:
+	// session_start rule 1).
+	if len(rt.envelopes) != 2 {
+		t.Fatalf("runtime received %d envelopes, want the session_start and the message", len(rt.envelopes))
+	}
+	var start map[string]any
+	if err := json.Unmarshal(rt.envelopes[0], &start); err != nil || start["type"] != "session_start" {
+		t.Fatalf("first frame = %s, want the start's session_start", rt.envelopes[0])
 	}
 	var frame map[string]any
-	if err := json.Unmarshal(rt.envelopes[0], &frame); err != nil {
-		t.Fatalf("the envelope the adapter forwarded is not a JSON object: %v (%s)", err, rt.envelopes[0])
+	if err := json.Unmarshal(rt.envelopes[1], &frame); err != nil {
+		t.Fatalf("the envelope the adapter forwarded is not a JSON object: %v (%s)", err, rt.envelopes[1])
 	}
 	if frame["type"] != "user" || frame["content"] != "hello" {
-		t.Errorf("the forwarded envelope dropped the gateway's own fields: %s", rt.envelopes[0])
+		t.Errorf("the forwarded envelope dropped the gateway's own fields: %s", rt.envelopes[1])
 	}
 	if frame["sessionId"] != "sess-x" {
-		t.Errorf("runtime received %s, want the session's address stamped on it", rt.envelopes[0])
+		t.Errorf("runtime received %s, want the session's address stamped on it", rt.envelopes[1])
 	}
 
 	clean, err := cl.Shutdown(ctx, "sess-x", "", 0)

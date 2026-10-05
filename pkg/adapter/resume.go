@@ -135,14 +135,15 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 	connectors := s.sessionConnectors(ctx, sessionID)
 	// §15.4: re-deliver the manifest so the restored runtime reads the
 	// same §4.7 / §8.3 fields as before the resume.
-	nonce, err := s.writeSessionManifest(manifestInputs{
+	in := manifestInputs{
 		sessionID:          sessionID,
 		experimentContext:  req.GetExperimentContext(),
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),
 		minPlatformVersion: req.GetMinPlatformVersion(),
 		connectors:         connectors,
-	})
+	}
+	nonce, err := s.writeSessionManifest(in)
 	if err != nil {
 		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
@@ -162,11 +163,21 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
-	// spec: §4.7.1 rule 8 — the resume confirms the registry still holds
-	// the entry its claim was admitted against before the runtime is
-	// recorded as holding the session. Resume opens no span, so the
-	// refusal carries no span categorization.
-	if !s.noteRuntimeStarted(sessionID, claim.attempt) {
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the resume writes
+	// the restored session's session_start inside the open sequence, which
+	// makes the rule-8 confirmations and takes the record. Resume holds the
+	// slot guard from ahead of its claim, so the sequence runs under it
+	// rather than acquiring the capacity-one guard a second time. Resume
+	// opens no span, so its failures carry no span categorization.
+	confirmed, err := s.openRuntimeSession(ctx, sessionID, claim, in, true)
+	if err != nil {
+		// The session_start write failed; the frame is treated as
+		// undelivered.
+		_ = s.Runtime.Close(ctx, sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
+		return nil, status.Errorf(codes.Internal, "open runtime session: %v", err)
+	}
+	if !confirmed {
 		return nil, s.rollbackUnconfirmedStart(ctx, sessionID)
 	}
 	// spec: §4.4 / §7.2 ResumeMode — the adapter restored the workspace

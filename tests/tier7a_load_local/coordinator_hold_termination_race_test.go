@@ -669,20 +669,21 @@ func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T
 	awaitStartedEntry(t, s, "sess-a")
 	startHoldSession(t, s, "sess-b")
 
-	// The co-tenant's close is held until the parked start has completed,
-	// which puts the late start between the two members' closes. The hook
-	// fires on the termination's close of sess-a only: the refused start
-	// closes sess-a a second time from inside that same hook, and the
-	// second close must not release the gates again.
+	// The parked start is released from inside the termination's close of
+	// sess-a, so its Runtime.Start returns while the termination still
+	// holds sess-a's slot guard. The start's open sequence runs under that
+	// serialization (§28.5.3, CH-MSGSOCK, Session frame writes), so it
+	// waits for the termination's section to end rather than completing
+	// inside it, and then finds the entry gone. The hook fires on the
+	// termination's close of sess-a only: the refused start closes sess-a a
+	// second time, and that close must not release the gates again.
 	cotenantClose := rt.gateClose("sess-b")
-	var lateErr error
 	var hookFired atomic.Bool
 	rt.onClosed = func(sessionID string) {
 		if sessionID != "sess-a" || !hookFired.CompareAndSwap(false, true) {
 			return
 		}
 		close(lateStart)
-		lateErr = <-started
 		close(cotenantClose)
 	}
 
@@ -692,6 +693,12 @@ func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T
 	clk.last(t).fire()
 
 	awaitClosed(t, rt, "sess-a", "sess-b")
+	var lateErr error
+	select {
+	case lateErr = <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the late StartSession never returned after the termination released the slot serialization")
+	}
 
 	if code := status.Code(lateErr); code != codes.Aborted {
 		t.Errorf("the late StartSession = %v (code %v), want codes.Aborted: the start must "+

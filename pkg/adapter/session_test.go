@@ -78,9 +78,73 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	// Echo outside the lock so a blocking channel send never stalls a
 	// concurrent reader of the recorded slices.
 	if echo {
-		out <- append([]byte(nil), envelope...)
+		if reply := echoReply(envelope); reply != nil {
+			out <- reply
+		}
 	}
 	return nil
+}
+
+// echoReply is what the echoing fake writes back for one inbound frame. It
+// plays a runtime that keeps per-session context for the §28.5.3 session
+// frames: a session_start is answered with its session_started, which the
+// adapter consumes and relays to no Attach stream, and a session_end is
+// answered with nothing. Every other frame is echoed verbatim.
+func echoReply(envelope []byte) []byte {
+	var probe struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+		StartID   string `json:"startId"`
+	}
+	if err := json.Unmarshal(envelope, &probe); err != nil {
+		return append([]byte(nil), envelope...)
+	}
+	switch probe.Type {
+	case "session_start":
+		b, _ := json.Marshal(map[string]string{
+			"type": "session_started", "sessionId": probe.SessionID, "startId": probe.StartID,
+		})
+		return b
+	case "session_end":
+		return nil
+	default:
+		return append([]byte(nil), envelope...)
+	}
+}
+
+// contentEnvelopes returns the frames written to the runtime other than
+// the §28.5.3 session_start and session_end the adapter writes itself, for
+// a test that counts the content it delivered.
+func (f *fakeRuntime) contentEnvelopes() [][]byte {
+	var out [][]byte
+	for _, e := range f.envelopesSnapshot() {
+		switch frameTypeOf(e) {
+		case "session_start", "session_end":
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// frameTypes returns the type discriminator of each recorded frame, in
+// write order.
+func (f *fakeRuntime) frameTypes() []string {
+	var out []string
+	for _, e := range f.envelopesSnapshot() {
+		out = append(out, frameTypeOf(e))
+	}
+	return out
+}
+
+// frameTypeOf returns one JSONL frame's type discriminator, empty when the
+// frame does not decode.
+func frameTypeOf(frame []byte) string {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(frame, &probe)
+	return probe.Type
 }
 
 func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
@@ -333,15 +397,17 @@ func TestSendMessageForwardsStampedEnvelopeToRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if len(rt.envelopes) != 1 {
-		t.Fatalf("runtime received %d envelopes, want 1", len(rt.envelopes))
+	// The start's session_start precedes the message on the connection
+	// (§28.5.3, CH-MSGSOCK, Inbound: session_start rule 1).
+	if got := rt.frameTypes(); len(got) != 2 || got[0] != "session_start" || got[1] != "message" {
+		t.Fatalf("runtime received frames %v, want [session_start message]", got)
 	}
 	var frame map[string]any
-	if err := json.Unmarshal(rt.envelopes[0], &frame); err != nil {
-		t.Fatalf("the envelope the adapter wrote is not a JSON object: %v (%s)", err, rt.envelopes[0])
+	if err := json.Unmarshal(rt.envelopes[1], &frame); err != nil {
+		t.Fatalf("the envelope the adapter wrote is not a JSON object: %v (%s)", err, rt.envelopes[1])
 	}
 	if frame["sessionId"] != "sess-1" {
-		t.Errorf("runtime received %s, want the request's session address stamped on it", rt.envelopes[0])
+		t.Errorf("runtime received %s, want the request's session address stamped on it", rt.envelopes[1])
 	}
 	if frame["type"] != "message" || frame["input"] == nil {
 		t.Errorf("the stamp dropped the gateway's own fields: %s", rt.envelopes[0])

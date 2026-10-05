@@ -28,6 +28,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -378,10 +379,24 @@ func TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4(t *testing.T) 
 
 	dropCoordinatorStream(t, s, client)
 
+	// The connection first carries the session_start sess-alice's start
+	// wrote (§28.5.3, CH-MSGSOCK, Session frame writes); the hold-timeout
+	// termination writes no session_end, and the connection then ends.
 	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := bufio.NewReader(peer).ReadString('\n'); !errors.Is(err, io.EOF) {
-		t.Fatalf("runtime read after the coordinator-lost termination = %v, want io.EOF; "+
-			"the kept runtime still holds the terminated session's connection", err)
+	r := bufio.NewReader(peer)
+	for {
+		line, err := r.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("runtime read after the coordinator-lost termination = %v, want io.EOF; "+
+				"the kept runtime still holds the terminated session's connection", err)
+		}
+		if !strings.Contains(line, `"type":"session_start"`) {
+			t.Fatalf("runtime read %q after the coordinator-lost termination, want only the start's "+
+				"session_start and then io.EOF", line)
+		}
 	}
 
 	began := time.Now()

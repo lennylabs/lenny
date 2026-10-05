@@ -16,6 +16,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
@@ -394,6 +395,15 @@ type Server struct {
 	// mu is never held while a channel is acquired. spec: §5.2 (slot-identifier
 	// reclaim hold); §4.7.1 (role and gateway RPC contract).
 	slotGuards map[string]chan struct{}
+	// startIDs mints the startId of each session_start this Server writes.
+	// The counter is per Server, which is per pod, and only increases, so
+	// every session_start written on the pod carries a value distinct from
+	// every other written there, and a session_started answering an earlier
+	// start of the same session is never read as a later start's. It is
+	// atomic because concurrent open sequences for different slots hold
+	// different per-slot guards and no common lock. spec: §28.5.3
+	// (CH-MSGSOCK, Inbound: session_start).
+	startIDs atomic.Uint64
 }
 
 // New returns a Server advertising the given build version and the v1

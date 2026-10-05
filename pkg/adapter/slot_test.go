@@ -259,8 +259,8 @@ func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
 		t.Fatalf("SendMessage(slot-a): %v", err)
 	}
 	// The single pod-global runtime receives the slot-a envelope.
-	if got := len(rt.envelopesSnapshot()); got != 1 {
-		t.Errorf("pod runtime envelopes = %d, want 1", got)
+	if got := len(rt.contentEnvelopes()); got != 1 {
+		t.Errorf("pod runtime content envelopes = %d, want 1", got)
 	}
 	// A session the registry holds no bound entry for is rejected: the
 	// adapter validates the binding before delivery so a message for a
@@ -273,8 +273,8 @@ func TestSendMessageSlotRoutesToSlotRuntime_spec_6_4(t *testing.T) {
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("unbound session code = %v, want FailedPrecondition", status.Code(err))
 	}
-	if got := len(rt.envelopesSnapshot()); got != 1 {
-		t.Errorf("pod runtime envelopes after rejected send = %d, want 1", got)
+	if got := len(rt.contentEnvelopes()); got != 1 {
+		t.Errorf("pod runtime content envelopes after rejected send = %d, want 1", got)
 	}
 }
 

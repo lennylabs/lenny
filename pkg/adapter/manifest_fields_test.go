@@ -16,9 +16,10 @@ const proxyLeasePayload = `{"deliveryMode":"proxy","materializedConfig":` +
 
 const directLeasePayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-x"}}`
 
-// spec: §4.7 — a proxy-mode lease yields a manifest llm object with the
-// dialect, base URL, and canonical API-key env var the runtime points its
-// SDK at.
+// spec: §4.7; §4.7.11 (item 4); §28.5.3 (CH-MSGSOCK, Inbound: session_start)
+// — a proxy-mode lease yields an llm object with the dialect and canonical
+// API-key env var the runtime configures its SDK with, and no proxy URL,
+// which stays in the session's credential file alone.
 func TestManifestLLMFromProxyLease_spec_4_7(t *testing.T) {
 	llm := manifestLLMFromPayload([]byte(proxyLeasePayload))
 	if llm == nil {
@@ -30,16 +31,24 @@ func TestManifestLLMFromProxyLease_spec_4_7(t *testing.T) {
 	if llm.Dialect != "anthropic" {
 		t.Errorf("dialect = %q, want anthropic", llm.Dialect)
 	}
-	if llm.BaseURL != "https://proxy.lenny-system/v1" {
-		t.Errorf("baseUrl = %q, want the proxy url", llm.BaseURL)
+	raw, err := json.Marshal(llm)
+	if err != nil {
+		t.Fatalf("encode llm: %v", err)
+	}
+	var members map[string]any
+	if err := json.Unmarshal(raw, &members); err != nil {
+		t.Fatalf("decode llm: %v", err)
+	}
+	if _, ok := members["baseUrl"]; ok {
+		t.Errorf("proxy-mode llm carries baseUrl: %s; the proxy URL belongs to the credential file alone", raw)
 	}
 	if llm.APIKeyEnv != "ANTHROPIC_API_KEY" {
 		t.Errorf("apiKeyEnv = %q, want ANTHROPIC_API_KEY", llm.APIKeyEnv)
 	}
 }
 
-// spec: §4.7 — a direct-mode lease omits dialect/baseUrl because the
-// runtime uses the upstream provider's native SDK.
+// spec: §4.7 — a direct-mode lease omits the dialect because the runtime
+// uses the upstream provider's native SDK.
 func TestManifestLLMFromDirectLease_spec_4_7(t *testing.T) {
 	llm := manifestLLMFromPayload([]byte(directLeasePayload))
 	if llm == nil {
@@ -48,8 +57,8 @@ func TestManifestLLMFromDirectLease_spec_4_7(t *testing.T) {
 	if llm.DeliveryMode != "direct" {
 		t.Errorf("deliveryMode = %q, want direct", llm.DeliveryMode)
 	}
-	if llm.Dialect != "" || llm.BaseURL != "" {
-		t.Errorf("direct-mode llm carries dialect=%q baseUrl=%q, want both empty", llm.Dialect, llm.BaseURL)
+	if llm.Dialect != "" {
+		t.Errorf("direct-mode llm carries dialect=%q, want empty", llm.Dialect)
 	}
 }
 
@@ -107,7 +116,7 @@ func TestWriteSessionManifestLLMField_spec_4_7(t *testing.T) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
-	if m.LLM == nil || m.LLM.DeliveryMode != "proxy" || m.LLM.BaseURL != "https://proxy.lenny-system/v1" {
+	if m.LLM == nil || m.LLM.DeliveryMode != "proxy" || m.LLM.Dialect != "anthropic" {
 		t.Errorf("manifest llm = %+v, want the proxy lease config", m.LLM)
 	}
 }

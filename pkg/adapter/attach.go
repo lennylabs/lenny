@@ -102,6 +102,14 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 				hb.ack()
 				continue
 			}
+			// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule
+			// 5 — session_started acknowledges the adapter's own
+			// session_start. The adapter consumes it and relays it to no
+			// Attach stream, whether or not a start is waiting for it, so
+			// a runtime that acknowledges every start reaches no client.
+			if jsonlFrameType(line) == "session_started" {
+				continue
+			}
 			// spec: §28.5.3 — set_tracing_context is an outbound
 			// protocol frame the adapter consumes (it registers the
 			// tracing identifiers with the gateway for delegation

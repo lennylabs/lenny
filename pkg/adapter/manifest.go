@@ -91,9 +91,6 @@ type ManifestLLM struct {
 	// Dialect is the wire format the runtime's SDK speaks to the proxy:
 	// "openai" or "anthropic". Set in proxy mode; omitted in direct mode.
 	Dialect string `json:"dialect,omitempty"`
-	// BaseURL is the proxy endpoint the runtime configures its SDK against
-	// (the lease's proxyUrl). Set in proxy mode; omitted in direct mode.
-	BaseURL string `json:"baseUrl,omitempty"`
 	// APIKeyEnv is the canonical env var the runtime's SDK reads for its
 	// API key (ANTHROPIC_API_KEY for anthropic, OPENAI_API_KEY for openai).
 	// Set in proxy mode where the runtime exports the lease token into it.
@@ -397,15 +394,17 @@ func (s *Server) manifestLLM(sessionID string) *ManifestLLM {
 type llmPayload struct {
 	DeliveryMode       string `json:"deliveryMode"`
 	MaterializedConfig struct {
-		ProxyURL     string `json:"proxyUrl"`
 		ProxyDialect string `json:"proxyDialect"`
 	} `json:"materializedConfig"`
 }
 
-// manifestLLMFromPayload builds the §4.7 llm manifest object from one
-// credential lease's payload. Proxy-mode leases carry the dialect and base
-// URL the runtime points its SDK at; direct-mode leases omit them because
-// the runtime uses the upstream provider's native SDK.
+// manifestLLMFromPayload builds the §4.7 llm object from one credential
+// lease's payload. Proxy-mode leases carry the dialect and API-key variable
+// the runtime configures its SDK with; direct-mode leases omit them because
+// the runtime uses the upstream provider's native SDK. The proxy URL is
+// not carried: it stays in the session's credential file alone, at
+// materializedConfig.proxyUrl. spec: §4.7.11, item 4; §28.5.3 (CH-MSGSOCK,
+// Inbound: session_start).
 func manifestLLMFromPayload(payload []byte) *ManifestLLM {
 	var p llmPayload
 	if len(payload) > 0 {
@@ -417,7 +416,6 @@ func manifestLLMFromPayload(payload []byte) *ManifestLLM {
 	llm := &ManifestLLM{DeliveryMode: p.DeliveryMode}
 	if p.DeliveryMode == "proxy" {
 		llm.Dialect = p.MaterializedConfig.ProxyDialect
-		llm.BaseURL = p.MaterializedConfig.ProxyURL
 		llm.APIKeyEnv = apiKeyEnvForDialect(p.MaterializedConfig.ProxyDialect)
 	}
 	return llm

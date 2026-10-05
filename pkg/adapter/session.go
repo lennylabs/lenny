@@ -73,8 +73,9 @@ type RuntimeProcess interface {
 // (§4.7, §6.1). It is the final RPC of the §4.7 session assignment
 // sequence: the workspace is already materialized by FinalizeWorkspace
 // and setup is already run by RunSetup, so StartSession claims the pod,
-// writes the §15.4 adapter manifest, and starts the session on the
-// runtime process, which the kubelet started with the pod (§4.7.9). It
+// writes the §15.4 adapter manifest, makes the runtime process, which the
+// kubelet started with the pod (§4.7.9), live for the session, and opens
+// the session on it with a §28.5.3 session_start. It
 // rejects the call with Unavailable when the pod already holds a
 // session. A pod with maxConcurrentSessions 1 holds one session at a
 // time: with recycling enabled it serves sequential sessions of one
@@ -135,14 +136,15 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 	// rather than failing the start.
 	connectors := s.sessionConnectors(ctx, sessionID)
 	// §15.4: write the adapter manifest the runtime reads at startup.
-	nonce, err := s.writeSessionManifest(manifestInputs{
+	in := manifestInputs{
 		sessionID:          sessionID,
 		experimentContext:  req.GetExperimentContext(),
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),
 		minPlatformVersion: req.GetMinPlatformVersion(),
 		connectors:         connectors,
-	})
+	}
+	nonce, err := s.writeSessionManifest(in)
 	if err != nil {
 		s.releaseClaimedSlot(ctx, sessionID, claim)
 		// §16.3: a manifest-write failure is TRANSIENT (a retry on a fresh
@@ -175,10 +177,23 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
 	}
-	// spec: §4.7.1 rule 8 — the start confirms the registry still holds
-	// the entry its claim was admitted against before the runtime is
-	// recorded as holding the session.
-	if !s.noteRuntimeStarted(sessionID, claim.attempt) {
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the pod-warm
+	// start writes session_start inside the open sequence, which makes the
+	// rule-8 confirmations and takes the record at which the slot reaches
+	// running.
+	confirmed, err := s.openRuntimeSession(ctx, sessionID, claim, in, false)
+	if err != nil {
+		// The session_start write failed, or the open sequence could not
+		// begin before the request's deadline. The frame is treated as
+		// undelivered, so the start takes the session back off the runtime
+		// and releases the claim.
+		_ = s.Runtime.Close(ctx, sessionID)
+		s.releaseClaimedSlot(ctx, sessionID, claim)
+		// §16.3: a start that cannot open its session is TRANSIENT.
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
+		return nil, status.Errorf(codes.Internal, "open runtime session: %v", err)
+	}
+	if !confirmed {
 		rollbackErr := s.rollbackUnconfirmedStart(ctx, sessionID)
 		// §16.3: a lost race with a reclaim is the TRANSIENT category.
 		spanErr = tracing.CategorizeError(rollbackErr, tracing.CategoryTransient)
@@ -413,15 +428,27 @@ type reclaimedSlot struct {
 // once. The gateway advances the pod's served-session count on every report
 // with no per-session dedup, so the one-report rule has to hold here.
 //
-// No CH-RUNTIMEOPS terminate frame is sent: the runtime process lives as
-// long as the pod, and no drain coordination exists at pod exit (§15.4.2).
+// A session that reached running is released on the runtime with a
+// CH-MSGSOCK session_end, written before Runtime.Close. The runtime
+// process lives as long as the pod, so the session's end is signalled on
+// the connection that carries it rather than by ending the process.
 //
 // spec: §4.7.1 (role and gateway RPC contract), rules 12 and 14; §5.2 (pool
-// configuration and execution modes); §4.7.10 (Runtime process lifetime).
+// configuration and execution modes); §4.7.10 (Runtime process lifetime);
+// §28.5.3 (CH-MSGSOCK, Session frame writes).
 func (s *Server) tearDownReclaimedSlot(ctx context.Context, req *adapterv1.ShutdownRequest, r reclaimedSlot) (exitedCleanly, completed bool) {
 	sessionID := req.GetSessionId().GetValue()
 	closeErr := error(nil)
 	if r.started {
+		// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — a Shutdown
+		// that removes an entry whose session reached running writes the
+		// session's session_end before the teardown ends the session's use
+		// of the runtime. live was read in the deregistration's critical
+		// section, and the write precedes the release of the reclaim hold
+		// that section opened.
+		if r.live {
+			s.writeSessionEnd(sessionID)
+		}
 		// §4.7: flush a final usage report onto the gateway control stream
 		// so the gateway can run budget_return.lua (§8.3) with the
 		// session's complete token totals.
