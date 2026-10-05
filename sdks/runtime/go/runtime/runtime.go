@@ -107,7 +107,9 @@ type Handler interface {
 	// response error and the session continues with its next message.
 	OnMessage(ctx context.Context, msg Message) (Reply, error)
 	// OnTerminate runs once when the session ends, after the session's
-	// last handler call returned. It SHOULD return before the shutdown
+	// last handler call returned. It runs for every session the SDK
+	// opened, including one whose creation failed because OnCreate
+	// returned an error or its credential file could not be read. It SHOULD return before the shutdown
 	// deadline elapses.
 	OnTerminate(ctx context.Context, sessionID string, reason TerminationReason) error
 }

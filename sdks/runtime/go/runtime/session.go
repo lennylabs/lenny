@@ -60,9 +60,6 @@ type sessionState struct {
 	// createErr is the credential-read or OnCreate failure, if any. It is
 	// final once set, which happens before session_started is written.
 	createErr error
-	// createInvoked records that OnCreate ran, so OnTerminate runs for
-	// the same states OnCreate ran for.
-	createInvoked bool
 	// endRead is set when the frame loop reads the session's session_end.
 	endRead bool
 	// closeReason is the reason EOF or shutdown closed the session with.
@@ -397,9 +394,6 @@ func (p *process) createContext(st *sessionState) error {
 	if p.manifest != nil {
 		req.RuntimeOptions = p.manifest.RuntimeOptions
 	}
-	st.mu.Lock()
-	st.createInvoked = true
-	st.mu.Unlock()
 	if err := p.handler.OnCreate(p.withSessionContext(st), req); err != nil {
 		return fmt.Errorf("OnCreate: %w", err)
 	}
@@ -418,19 +412,19 @@ func (p *process) dispatch(st *sessionState, env *MessageEnvelope) {
 // release cancels the session context and runs OnTerminate. It runs on
 // the session's goroutine after the in-flight handler returned, so
 // OnTerminate never overlaps one of the session's own handler calls.
-// OnTerminate runs for every state whose OnCreate ran, and receives a
-// context that keeps the session's values but is not cancelled, so the
-// teardown can still do I/O.
+// OnTerminate runs for every state the SDK opened, whether its creation
+// succeeded, OnCreate failed, or the credential file could not be read,
+// so every session ends the same way. It receives a context that keeps
+// the session's values but is not cancelled, so the teardown can still
+// do I/O.
+//
+// spec: §15.7 (Runtime Author SDKs), §28.5.3 (CH-MSGSOCK, Inbound:
+// session_end).
 func (p *process) release(st *sessionState) {
 	st.cancel()
-	st.mu.Lock()
-	invoked := st.createInvoked
-	st.mu.Unlock()
-	if invoked {
-		ctx := context.WithoutCancel(p.withSessionContext(st))
-		if err := p.handler.OnTerminate(ctx, st.id, st.terminationReason()); err != nil {
-			p.cfg.logf("runtime: session %s: OnTerminate error: %v", st.id, err)
-		}
+	ctx := context.WithoutCancel(p.withSessionContext(st))
+	if err := p.handler.OnTerminate(ctx, st.id, st.terminationReason()); err != nil {
+		p.cfg.logf("runtime: session %s: OnTerminate error: %v", st.id, err)
 	}
 	close(st.released)
 	p.sessions.forget(st)

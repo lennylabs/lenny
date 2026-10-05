@@ -189,7 +189,8 @@ func TestFailedCreateAnswersWithErrorsAndKeepsServing(t *testing.T) {
 //
 // A credentialsPath naming a file the runtime cannot read fails the
 // session's creation: session_started carries the error, OnCreate does
-// not run, and the process keeps running.
+// not run, and the process keeps running. The session still ends with
+// OnTerminate, as a session whose OnCreate failed does.
 func TestUnreadableCredentialFileFailsTheSessionCreation(t *testing.T) {
 	h := &recorder{}
 	missing := filepath.Join(t.TempDir(), "slots", "sess_a", "credentials.json")
@@ -208,8 +209,38 @@ func TestUnreadableCredentialFileFailsTheSessionCreation(t *testing.T) {
 	if msg, _ := started["error"].(map[string]any)["message"].(string); !strings.Contains(msg, missing) {
 		t.Fatalf("error message %q does not name the credential file", msg)
 	}
-	if len(h.createRequests()) != 0 || len(h.terminations("sess_a")) != 0 {
-		t.Fatal("OnCreate or OnTerminate ran for a session whose credential file could not be read")
+	if len(h.createRequests()) != 0 {
+		t.Fatal("OnCreate ran for a session whose credential file could not be read")
+	}
+	if r := h.terminations("sess_a"); len(r) != 1 || r[0].Reason != "stdin_closed" {
+		t.Fatalf("terminations = %+v, want one stdin_closed for the session whose credential read failed", r)
+	}
+}
+
+// spec: 15.7 (API surface, Handler), 28.5.3 (CH-MSGSOCK, Inbound:
+// session_start credentialsPath, Inbound: session_end), 4.7.11 (item 4)
+//
+// A session whose credential file could not be read ends on its
+// session_end with one OnTerminate carrying the session_end reason, the
+// same way a session whose OnCreate failed ends.
+func TestCredentialReadFailureSessionEndRunsOnTerminate(t *testing.T) {
+	h := &recorder{}
+	missing := filepath.Join(t.TempDir(), "slots", "sess_a", "credentials.json")
+	l := startLiveSDK(t, h)
+	l.send(fmt.Sprintf(`{"type":"session_start","sessionId":"sess_a","startId":"st_1","credentialsPath":%q}`, missing))
+	if f := l.next(3 * time.Second); f["type"] != "session_started" || errorCode(f) != "RUNTIME_ERROR" {
+		t.Fatalf("frame = %v, want session_started carrying RUNTIME_ERROR", f)
+	}
+	l.send(endFrame("sess_a"))
+	waitFor(t, 3*time.Second, func() bool { return len(h.terminations("sess_a")) > 0 })
+	if r := h.terminations("sess_a"); len(r) != 1 || r[0].Reason != "session_end" {
+		t.Fatalf("terminations = %+v, want one session_end for the session whose credential read failed", r)
+	}
+	if _, err := l.closeAndWait(); err != nil {
+		t.Fatalf("Run returned %v", err)
+	}
+	if n := len(h.terminations("sess_a")); n != 1 {
+		t.Fatalf("OnTerminate ran %d times after the connection closed, want 1", n)
 	}
 }
 
