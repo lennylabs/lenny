@@ -11,11 +11,12 @@
 // slot serialization or, when the open sequence holds it, after a guard
 // acquisition that expired. A retry binds a fresh entry under the same
 // identifier and starts it while a deadline signal for the session is in
-// flight. Across those interleavings the runtime must read the session's
-// frames as alternating session_start and session_end, the adapter's
-// running record must match the last frame, and no deadline_approaching may
-// reach the runtime before it has written the session_started that answers
-// the retry's session_start.
+// flight, beside an Attach stream bound to the session. Across those
+// interleavings the runtime must read the session's frames as alternating
+// session_start and session_end, and the adapter's running record must match
+// the last frame. No deadline_approaching may reach the runtime before it
+// has written the session_started that answers the retry's session_start,
+// and no session_started may reach the Attach stream.
 //
 // spec: §28.5.3 (CH-MSGSOCK, Session frame writes), §28.5.3 (CH-RUNTIMEOPS,
 // Messages), §4.7.1 (role and gateway RPC contract), §5.2 (slot-identifier
@@ -211,10 +212,12 @@ func signalDeadlineRace(s *adapter.Server, peer *rotationgate.Peer, seq *atomic.
 //	frame that disagrees with the adapter's running record; or a
 //	deadline_approaching reached the runtime before the session_started
 //	answering the retry's session_start, or a SignalDeadline outlived its
-//	remainingMs bound. A stale attempt's session_end then releases the
-//	retry's context on a runtime that lives as long as the pod, or a
-//	multi-session runtime receives a CH-RUNTIMEOPS frame for a session it
-//	has not opened.
+//	remainingMs bound; or the Attach stream bound to the session relayed a
+//	session_started or ended during the iteration. A stale attempt's
+//	session_end then releases the retry's context on a runtime that lives
+//	as long as the pod, a multi-session runtime receives a CH-RUNTIMEOPS
+//	frame for a session it has not opened, or a client receives the
+//	adapter's own acknowledgement frame as content.
 func TestSessionFramesStayPairedAcrossReclaimAndRetry_spec_28_5_3(t *testing.T) {
 	const iterations = 24
 	for i := 0; i < iterations; i++ {
@@ -240,23 +243,12 @@ func runPairingIteration(t *testing.T, i int) {
 	s.Runtime = rt
 	s.SessionStartAckTimeout = 300 * time.Millisecond
 	peer := rotationgate.DialPeer(t, sock)
+	client := holdRaceClient(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if !s.Lifecycle.WaitHandshake(ctx, 5*time.Second) {
 		t.Fatal("CH-RUNTIMEOPS capability handshake did not complete")
 	}
-	// The Attach stream's subscription to the runtime output, which every
-	// frame the runtime writes is fanned out to beside the open sequence's
-	// own subscription.
-	attach, err := s.Runtime.Output(ctx, sessionID)
-	if err != nil {
-		t.Fatalf("Output: %v", err)
-	}
-	go func() {
-		for range attach {
-		}
-	}()
-
 	if err := assignAttempt(s, sessionID, "attempt-1"); err != nil {
 		t.Fatalf("assign attempt 1: %v", err)
 	}
@@ -270,13 +262,16 @@ func runPairingIteration(t *testing.T, i int) {
 	}()
 	compensate(t, s, rt, sessionID, expiredGuard)
 
-	probe := retryWithDeadlineSignal(t, s, rt, peer, seq, sessionID, i%3 == 2)
+	probe := retryWithDeadlineSignal(t, s, rt, client, peer, seq, sessionID, i%3 == 2)
 	close(rt.unpark)
 	<-first
 	if err := waitStarted(probe); err != nil {
 		t.Fatal(err)
 	}
 	assertFramesPaired(t, s, rt, sessionID, probe.signal)
+	if probe.attach != nil {
+		probe.attach.assertNoSessionStarted(t)
+	}
 }
 
 // compensate runs attempt 1's compensating Shutdown. Without expiredGuard
@@ -313,19 +308,22 @@ func compensate(t *testing.T, s *adapter.Server, rt *pairingRuntime, sessionID s
 type retryOutcome struct {
 	started chan error
 	signal  <-chan deadlineProbe
+	attach  *attachWatch
 }
 
 // retryWithDeadlineSignal binds attempt 2 and, when the bind is admitted,
-// runs its StartSession and a SignalDeadline for the session concurrently.
+// opens an Attach stream bound to the session and runs attempt 2's
+// StartSession and a SignalDeadline for the session concurrently beside it.
 // A bind refused by the reclaim hold of a cleanup that did not complete is
 // an expected outcome of the guard-expired interleaving.
-func retryWithDeadlineSignal(t *testing.T, s *adapter.Server, rt *pairingRuntime, peer *rotationgate.Peer, seq *atomic.Int64, sessionID string, withhold bool) retryOutcome {
+func retryWithDeadlineSignal(t *testing.T, s *adapter.Server, rt *pairingRuntime, client adapterv1.AdapterClient, peer *rotationgate.Peer, seq *atomic.Int64, sessionID string, withhold bool) retryOutcome {
 	t.Helper()
 	out := retryOutcome{started: make(chan error, 1)}
 	if assignAttempt(s, sessionID, "attempt-2") != nil {
 		out.started <- nil
 		return out
 	}
+	out.attach = watchAttach(t, client, rt, sessionID)
 	if withhold {
 		rt.withholdNext()
 	}
@@ -339,6 +337,103 @@ func retryWithDeadlineSignal(t *testing.T, s *adapter.Server, rt *pairingRuntime
 		out.started <- nil
 	}()
 	return out
+}
+
+// attachWatch is an Attach stream bound to the session, read for the rest
+// of the iteration. It records every session_started frame the stream
+// relays and the error that ended the stream before the case closed it.
+type attachWatch struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	mu      sync.Mutex
+	started []string
+	endErr  error
+}
+
+// watchAttach opens an Attach stream for sessionID through the adapter's
+// gRPC surface, which runs the stream's session-bound and runtime
+// admission, and confirms the stream is subscribed to the runtime output
+// by writing a status frame for the session and reading it back. A frame
+// the runtime writes before the subscription would reach the stream's
+// filter never, so without the confirmation the absence of
+// session_started would prove nothing.
+func watchAttach(t *testing.T, client adapterv1.AdapterClient, rt *pairingRuntime, sessionID string) *attachWatch {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	stream, err := client.Attach(ctx)
+	if err != nil {
+		t.Fatalf("Attach(%s): %v", sessionID, err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{SessionId: &adapterv1.SessionId{Value: sessionID}}); err != nil {
+		t.Fatalf("Attach bind(%s): %v", sessionID, err)
+	}
+	rt.Emit([]byte(`{"type":"status","sessionId":"` + sessionID + `","state":"thinking"}`))
+	for {
+		got, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("Attach(%s) ended before relaying the subscription probe: %v", sessionID, err)
+		}
+		if relayedType(got.GetEnvelopeJson()) == "status" {
+			break
+		}
+	}
+	w := &attachWatch{cancel: cancel, done: make(chan struct{})}
+	go w.read(ctx, stream)
+	return w
+}
+
+func (w *attachWatch) read(ctx context.Context, stream adapterv1.Adapter_AttachClient) {
+	defer close(w.done)
+	for {
+		got, err := stream.Recv()
+		if err != nil {
+			if ctx.Err() == nil {
+				w.mu.Lock()
+				w.endErr = err
+				w.mu.Unlock()
+			}
+			return
+		}
+		if relayedType(got.GetEnvelopeJson()) == "session_started" {
+			w.mu.Lock()
+			w.started = append(w.started, string(got.GetEnvelopeJson()))
+			w.mu.Unlock()
+		}
+	}
+}
+
+// assertNoSessionStarted closes the stream and requires that it stayed open
+// for the whole iteration and relayed no session_started: the adapter
+// consumes the acknowledgement of its own session_start and relays it to no
+// Attach stream. spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+func (w *attachWatch) assertNoSessionStarted(t *testing.T) {
+	t.Helper()
+	w.cancel()
+	select {
+	case <-w.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the Attach stream did not end after the case closed it")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.endErr != nil {
+		t.Errorf("the Attach stream bound to the session ended during the iteration: %v", w.endErr)
+	}
+	if len(w.started) != 0 {
+		t.Errorf("the Attach stream relayed session_started %v, want every acknowledgement consumed by the adapter", w.started)
+	}
+}
+
+// relayedType reads the type of a relayed frame, or "" for one that does
+// not decode.
+func relayedType(envelope []byte) string {
+	var f struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(envelope, &f)
+	return f.Type
 }
 
 func waitStarted(o retryOutcome) error {

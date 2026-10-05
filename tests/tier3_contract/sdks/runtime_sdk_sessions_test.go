@@ -15,7 +15,14 @@
 // a create whose session_start names the experiment variant "block", or a
 // message whose envelope id starts with "block", until the test writes a
 // release file. A create whose variant is "fail" fails. Every reply names
-// the create call that built the context serving the session.
+// the create call that built the context serving the message and the lease
+// of the credential bundle the SDK handed the message handler, and each
+// release records the create call whose context it ends where the SDK gives
+// the release a per-context handle. The probe reads the creation from state
+// the SDK carries per context (the Go session context, the Python session
+// worker thread, and the TypeScript credential bundle object) rather than
+// from a map keyed by sessionId, so a reply served from an earlier
+// context of the same session names that earlier creation.
 //
 // spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started; Inbound:
 // session_end; Session errors); §28.5.3 (CH-RUNTIMEOPS, Messages); §15.7
@@ -89,7 +96,7 @@ func startGoProbe(t *testing.T, dir, manifest string) *probeRuntime {
 	outR, outW := io.Pipe()
 	done := make(chan int, 1)
 	go func() {
-		err := runtime.Run(&goProbe{dir: dir, served: map[string]int{}},
+		err := runtime.Run(&goProbe{dir: dir, byCtx: map[<-chan struct{}]int{}, byCreds: map[*runtime.CredentialBundle]int{}},
 			runtime.WithStreams(inR, outW), runtime.WithSocketTransport(false),
 			runtime.WithLogger(nil), runtime.WithManifestPath(manifest),
 			runtime.WithLifecycleHandlers())
@@ -206,6 +213,22 @@ func probeStart(sessionID, startID, variant string) string {
 	return fmt.Sprintf(`{"type":"session_start","sessionId":%q,"startId":%q,`+
 		`"experimentContext":{"experimentId":"exp_probe","variantId":%q,"inherited":false}}`,
 		sessionID, startID, variant)
+}
+
+// probeStartWithCreds is probeStart carrying a credentialsPath whose
+// bundle names the lease lease_<startID>, written under dir, so the
+// credential bundle a handler receives identifies the start that built
+// its context.
+func probeStartWithCreds(t *testing.T, dir, sessionID, startID, variant string) string {
+	t.Helper()
+	path := filepath.Join(dir, "creds-"+startID+".json")
+	body := fmt.Sprintf(`{"providers":[{"leaseId":"lease_%s","provider":"probe","deliveryMode":"proxy"}]}`, startID)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write credential file: %v", err)
+	}
+	return fmt.Sprintf(`{"type":"session_start","sessionId":%q,"startId":%q,"credentialsPath":%q,`+
+		`"experimentContext":{"experimentId":"exp_probe","variantId":%q,"inherited":false}}`,
+		sessionID, startID, path, variant)
 }
 
 func probeMessage(sessionID, id string) string {
@@ -467,7 +490,8 @@ func TestRuntimeSDKSessionStartedFollowsContextCreation_spec_28_5_3(t *testing.T
 // spec: 28.5.3 (CH-MSGSOCK Inbound: session_end), 15.7 (Runtime Author SDKs)
 // diagnosis: two overlapping context creations for one session were not
 //
-//	each released exactly once, or the earlier one served a message. A
+//	each released exactly once, the first release did not end the first
+//	creation's context, or the earlier context served a message. A
 //	session_end that arrives while the session's create is still running
 //	ends that creation, which the SDK releases when it completes; a later
 //	session_start for the same session builds a new context. An SDK keyed
@@ -479,21 +503,23 @@ func TestRuntimeSDKOverlappingCreationsAreEachReleasedOnce_spec_28_5_3(t *testin
 			dir := t.TempDir()
 			p := sdk.start(t, dir, writeOpsManifest(t, dir, nil))
 
-			p.send(t, probeStart("sess_a", "st_1", "block"))
+			p.send(t, probeStartWithCreds(t, dir, "sess_a", "st_1", "block"))
 			p.awaitFile(t, "created-1")
 			p.send(t, probeEnd("sess_a"))
-			p.send(t, probeStart("sess_a", "st_2", "block"))
+			p.send(t, probeStartWithCreds(t, dir, "sess_a", "st_2", "block"))
 			p.release(t, "release-1")
 			p.awaitEvents(t, "terminate_sess_a", 1)
 			p.awaitFile(t, "created-2")
 			p.release(t, "release-2")
 			p.nextOfType(t, "session_started", "st_1")
 			p.send(t, probeMessage("sess_a", "m_a"))
-			if f := p.nextOfType(t, "response", "st_1"); f["sessionId"] != "sess_a" || !strings.Contains(replyText(f), "creation 2") {
-				t.Fatalf("response = %v, want it served by creation 2", f)
+			if f := p.nextOfType(t, "response", "st_1"); f["sessionId"] != "sess_a" ||
+				!strings.Contains(replyText(f), "creation 2 m_a lease lease_st_2") {
+				t.Fatalf("response = %v, want it served from creation 2's context with st_2's credentials", f)
 			}
 			p.send(t, probeEnd("sess_a"))
 			p.awaitEvents(t, "terminate_sess_a", 2)
+			assertReleasedInCreationOrder(t, sdk, p.events())
 			p.heartbeat(t)
 			if code := p.close(t); code != 0 {
 				t.Fatalf("probe exit = %d, want 0", code)
@@ -502,6 +528,34 @@ func TestRuntimeSDKOverlappingCreationsAreEachReleasedOnce_spec_28_5_3(t *testin
 				t.Fatalf("on_terminate ran %d times for sess_a, want once per creation: %v", n, p.events())
 			}
 		})
+	}
+}
+
+// assertReleasedInCreationOrder requires that sess_a's first release ends
+// creation 1's context and the second ends creation 2's. The release of
+// creation 1 precedes creation 2's create call in every SDK, because a
+// later start of a session opens only after the previous context's
+// release. Where the SDK hands the release a per-context handle (the Go
+// session context and the Python session worker thread), the probe also
+// records which creation each release ended; the TypeScript onTerminate
+// receives only the sessionId, so the order is the check there.
+func assertReleasedInCreationOrder(t *testing.T, sdk probeSDK, ev []string) {
+	t.Helper()
+	first, second := indexOf(ev, "terminate_sess_a_session_end"), indexOf(ev, "create_sess_a_2")
+	if first < 0 || second < 0 || first > second {
+		t.Fatalf("events = %v, want creation 1's release before creation 2's create call", ev)
+	}
+	if sdk.name == "typescript" {
+		return
+	}
+	var released []string
+	for _, e := range ev {
+		if strings.HasPrefix(e, "released_sess_a_") {
+			released = append(released, e)
+		}
+	}
+	if want := []string{"released_sess_a_1", "released_sess_a_2"}; strings.Join(released, ",") != strings.Join(want, ",") {
+		t.Fatalf("releases = %v, want creation 1's context released first and creation 2's second: %v", released, ev)
 	}
 }
 
@@ -544,8 +598,8 @@ func assertSessionEndOrdering(t *testing.T, sdk probeSDK) {
 	t.Helper()
 	dir := t.TempDir()
 	p := sdk.start(t, dir, writeOpsManifest(t, dir, nil))
-	p.send(t, probeStart("sess_a", "st_a", "control"))
-	p.send(t, probeStart("sess_b", "st_b", "control"))
+	p.send(t, probeStartWithCreds(t, dir, "sess_a", "st_a", "control"))
+	p.send(t, probeStartWithCreds(t, dir, "sess_b", "st_b", "control"))
 	p.nextOfType(t, "session_started")
 	p.nextOfType(t, "session_started")
 
@@ -558,7 +612,7 @@ func assertSessionEndOrdering(t *testing.T, sdk probeSDK) {
 	}
 
 	p.send(t, probeEnd("sess_a"))
-	p.send(t, probeStart("sess_a", "st_a2", "control"))
+	p.send(t, probeStartWithCreds(t, dir, "sess_a", "st_a2", "control"))
 	p.send(t, probeMessage("sess_a", "after"))
 	p.expectNone(t, 300*time.Millisecond, "sess_a's handler is still in flight")
 	if n := p.countEvents("terminate_sess_a"); n != 0 {
@@ -569,7 +623,7 @@ func assertSessionEndOrdering(t *testing.T, sdk probeSDK) {
 		t.Fatalf("frame = %v, want session_started for st_a2", f)
 	}
 	f := p.nextOfType(t, "response")
-	if f["sessionId"] != "sess_a" || f["error"] != nil || !strings.Contains(replyText(f), "creation 3 after") {
+	if f["sessionId"] != "sess_a" || f["error"] != nil || !strings.Contains(replyText(f), "creation 3 after lease lease_st_a2") {
 		t.Fatalf("response = %v, want the new context (creation 3) answering after, and no answer for the discarded or in-flight messages", f)
 	}
 	ev := p.events()
@@ -658,12 +712,25 @@ func indexOf(list []string, s string) int {
 	return -1
 }
 
-// goProbe is the Go-SDK probe handler.
+// goProbe is the Go-SDK probe handler. It keys each creation by the
+// session context the SDK hands OnCreate and OnMessage, whose Done channel
+// is the context's own, and by the credential bundle the SDK carries on the
+// context it hands OnTerminate, which keeps the session's values but not
+// its cancellation.
 type goProbe struct {
-	dir    string
-	mu     sync.Mutex
-	calls  int
-	served map[string]int
+	dir     string
+	mu      sync.Mutex
+	calls   int
+	byCtx   map[<-chan struct{}]int
+	byCreds map[*runtime.CredentialBundle]int
+}
+
+// probeLease names the first lease of creds, or "none".
+func probeLease(creds *runtime.CredentialBundle) string {
+	if creds == nil || len(creds.Providers) == 0 {
+		return "none"
+	}
+	return creds.Providers[0].LeaseID
 }
 
 func (h *goProbe) event(line string) {
@@ -690,11 +757,14 @@ func (h *goProbe) await(name string) {
 	}
 }
 
-func (h *goProbe) OnCreate(_ context.Context, req runtime.CreateRequest) error {
+func (h *goProbe) OnCreate(ctx context.Context, req runtime.CreateRequest) error {
 	h.mu.Lock()
 	h.calls++
 	n := h.calls
-	h.served[req.SessionID] = n
+	h.byCtx[ctx.Done()] = n
+	if req.Credentials != nil {
+		h.byCreds[req.Credentials] = n
+	}
 	h.mu.Unlock()
 	h.event(fmt.Sprintf("create %s %d", req.SessionID, n))
 	h.touch(fmt.Sprintf("created-%d", n))
@@ -711,20 +781,27 @@ func (h *goProbe) OnCreate(_ context.Context, req runtime.CreateRequest) error {
 	return nil
 }
 
-func (h *goProbe) OnMessage(_ context.Context, m runtime.Message) (runtime.Reply, error) {
+func (h *goProbe) OnMessage(ctx context.Context, m runtime.Message) (runtime.Reply, error) {
 	id := m.Envelope.ID
 	if strings.HasPrefix(id, "block") {
 		h.touch("handling-" + m.SessionID)
 		h.await("release-msg-" + m.SessionID)
 	}
 	h.mu.Lock()
-	n := h.served[m.SessionID]
+	n := h.byCtx[ctx.Done()]
 	h.mu.Unlock()
-	return runtime.TextReply(fmt.Sprintf("creation %d %s", n, id)), nil
+	return runtime.TextReply(fmt.Sprintf("creation %d %s lease %s", n, id, probeLease(runtime.CredentialsFrom(ctx)))), nil
 }
 
-func (h *goProbe) OnTerminate(_ context.Context, sessionID string, reason runtime.TerminationReason) error {
+func (h *goProbe) OnTerminate(ctx context.Context, sessionID string, reason runtime.TerminationReason) error {
 	h.event(fmt.Sprintf("terminate %s %s", sessionID, reason.Reason))
+	h.mu.Lock()
+	n := 0
+	if creds := runtime.CredentialsFrom(ctx); creds != nil {
+		n = h.byCreds[creds]
+	}
+	h.mu.Unlock()
+	h.event(fmt.Sprintf("released %s %d", sessionID, n))
 	return nil
 }
 
@@ -736,7 +813,9 @@ from lenny_runtime import LifecycleHooks, ProtocolError, Reply, RunOptions, run,
 DIR = os.environ["PROBE_DIR"]
 _lock = threading.Lock()
 _calls = 0
-_served = {}
+# Each session's calls run on that session's own worker thread, so the
+# creation a context came from is per-thread state.
+_context = threading.local()
 
 def _event(line):
     with _lock:
@@ -756,7 +835,7 @@ class Probe:
         with _lock:
             _calls += 1
             n = _calls
-            _served[req.session_id] = n
+        _context.creation = n
         _event("create %s %d" % (req.session_id, n))
         _touch("created-%d" % n)
         variant = req.experiment_context.variant_id if req.experiment_context else ""
@@ -770,12 +849,14 @@ class Probe:
         if mid.startswith("block"):
             _touch("handling-" + msg.session_id)
             _await("release-msg-" + msg.session_id)
-        with _lock:
-            n = _served.get(msg.session_id, 0)
-        return Reply(parts=[text("creation %d %s" % (n, mid))], final=True)
+        n = getattr(_context, "creation", 0)
+        creds = tools.credentials
+        lease = creds.providers[0].lease_id if creds and creds.providers else "none"
+        return Reply(parts=[text("creation %d %s lease %s" % (n, mid, lease))], final=True)
 
     def on_terminate(self, session_id, reason):
         _event("terminate %s %s" % (session_id, reason.reason))
+        _event("released %s %d" % (session_id, getattr(_context, "creation", 0)))
 
 try:
     run(Probe(), RunOptions(level="full", lifecycle=LifecycleHooks()))
@@ -793,7 +874,9 @@ import { isProtocolError, run, text } from %q;
 
 const dir = process.env.PROBE_DIR;
 let calls = 0;
-const served = new Map();
+// The SDK hands onCreate and onMessage the same credential bundle object for
+// one context, so the bundle object identifies the creation that built it.
+const creations = new WeakMap();
 const event = (line) => appendFileSync(join(dir, "events"), line + "\n");
 const touch = (name) => writeFileSync(join(dir, name), "");
 const wait = async (name) => {
@@ -806,7 +889,9 @@ try {
   await run({
     onCreate: async (req) => {
       const n = ++calls;
-      served.set(req.sessionId, n);
+      if (req.credentials) {
+        creations.set(req.credentials, n);
+      }
       event("create " + req.sessionId + " " + n);
       touch("created-" + n);
       const variant = req.experimentContext?.variantId ?? "";
@@ -817,13 +902,16 @@ try {
         await wait("release-" + n);
       }
     },
-    onMessage: async (msg) => {
+    onMessage: async (msg, tools) => {
       const id = msg.envelope.id;
       if (id.startsWith("block")) {
         touch("handling-" + msg.sessionId);
         await wait("release-msg-" + msg.sessionId);
       }
-      return { parts: [text("creation " + (served.get(msg.sessionId) ?? 0) + " " + id)], final: true };
+      const creds = tools.credentials;
+      const n = (creds && creations.get(creds)) ?? 0;
+      const lease = creds?.providers?.[0]?.leaseId ?? "none";
+      return { parts: [text("creation " + n + " " + id + " lease " + lease)], final: true };
     },
     onTerminate: async (sessionId, reason) => {
       event("terminate " + sessionId + " " + reason.reason);

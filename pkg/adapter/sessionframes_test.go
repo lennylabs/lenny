@@ -3,10 +3,12 @@
 package adapter
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -692,6 +694,40 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 		expectLog(t, rt, "start", "session_start@idle", "close")
 	})
 
+	t.Run("coordinator hold timeout, embedded model, ends the loop and writes nothing", func(t *testing.T) {
+		loop := &recordingLoop{done: make(chan struct{})}
+		s := frameServer(t, NewInProcessRuntime(loop.run))
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		loop.awaitFrames(t, 1)
+		s.hold.mu.Lock()
+		s.hold.active = true
+		s.hold.mu.Unlock()
+		s.onHoldTimeout()
+		select {
+		case <-loop.done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the hold-timeout termination did not end the embedded loop")
+		}
+		if got := loop.types(); !equalLog(got, []string{sessionStartFrameType}) {
+			t.Fatalf("embedded loop read %v, want only the session_start: the termination's close ends the loop and writes no frame", got)
+		}
+	})
+
+	t.Run("heartbeat escalation ends the stream and writes nothing", func(t *testing.T) {
+		rt := &frameRuntime{}
+		s := frameServer(t, rt)
+		if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		s.onHeartbeatHung(ctx, "sess-1", rt)
+		expectLog(t, rt, "start", "session_start@idle", "interrupt")
+		if !holdsRecord(s, "sess-1") {
+			t.Error("the heartbeat escalation released the rule-8 record, which only the later teardown releases")
+		}
+	})
+
 	t.Run("interrupt writes nothing", func(t *testing.T) {
 		rt := &frameRuntime{}
 		s := frameServer(t, rt)
@@ -730,6 +766,44 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 		s.writeSessionEnd("sess-2")
 		expectLog(t, rt, "start", "close")
 	})
+}
+
+// recordingLoop is an embedded runtime loop that records the type of every
+// frame it reads, answers nothing, and closes done when its input ends,
+// which is how the embedded model observes the close of a session.
+type recordingLoop struct {
+	mu     sync.Mutex
+	frames []string
+	done   chan struct{}
+}
+
+func (l *recordingLoop) run(_ context.Context, in io.Reader, _ io.Writer) error {
+	defer close(l.done)
+	sc := bufio.NewScanner(in)
+	for sc.Scan() {
+		l.mu.Lock()
+		l.frames = append(l.frames, jsonlFrameType(sc.Bytes()))
+		l.mu.Unlock()
+	}
+	return nil
+}
+
+func (l *recordingLoop) types() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.frames...)
+}
+
+// awaitFrames waits until the loop has read n frames.
+func (l *recordingLoop) awaitFrames(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(l.types()) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("embedded loop read %v, want %d frames", l.types(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // deregisterOnSessionStart returns an onWrite hook that removes sessionID's

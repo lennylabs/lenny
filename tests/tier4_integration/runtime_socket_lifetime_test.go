@@ -67,6 +67,13 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
 	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
+	// The hold that the third session's coordinator loss arms fires
+	// quickly, and the timer seam reports when the termination returned.
+	srv.CoordinatorHoldTimeout = 200 * time.Millisecond
+	holdFired := make(chan struct{})
+	srv.HoldAfterFunc = func(d time.Duration, f func()) adapter.TimerHandle {
+		return time.AfterFunc(d, func() { f(); close(holdFired) })
+	}
 
 	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
@@ -81,6 +88,11 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 	// The recording peer is the pod's runtime connection: it logs every
 	// frame the adapter writes and relays it to the echo runtime, which
 	// answers the messages. The second session rides the same connection.
+	// The echo runtime is not spawned through the adapter's SpawnPath,
+	// because a spawned child dials the socket itself and the frames it
+	// reads are then visible to no one but the child. A peer between the
+	// socket and the child is what observes the frames in the order the
+	// runtime receives them, and what observes the connection's end.
 	peer := startRecordingPeer(t, addr, echoBin)
 
 	client := concurrentAdapterClient(t, srv)
@@ -94,24 +106,12 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 		}
 	}
 
-	// A third session is running when the pod-scope teardown the
-	// coordinator hold timeout runs ends the connection. Its later
-	// teardown writes no session_end, because no connection carries it.
-	ctx := context.Background()
-	if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-carol"}, Runtime: "echo",
-	}); err != nil {
-		t.Fatalf("StartSession(sess-carol): %v", err)
-	}
-	if err := rt.CloseListener(); err != nil {
-		t.Fatalf("CloseListener: %v", err)
-	}
+	// A third session is running when the coordinator hold timeout fires.
+	// The termination's pod-scope teardown ends the connection, and neither
+	// it nor the per-session termination that follows writes session_end:
+	// the runtime's log ends at the third session's session_start.
+	runHoldTimeoutTermination(t, client, "sess-carol", holdFired)
 	peer.awaitEnd(t)
-	if _, err := client.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-carol"}, UnconditionalTeardown: true,
-	}); err != nil {
-		t.Fatalf("Shutdown(sess-carol): %v", err)
-	}
 
 	want := []string{
 		"session_start:sess-alice", "message:sess-alice", "session_end:sess-alice",
@@ -120,6 +120,43 @@ func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *t
 	}
 	if got := peer.log(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("runtime connection carried %v, want %v", got, want)
+	}
+}
+
+// runHoldTimeoutTermination starts sessionID, opens and then drops the
+// pod's CH-ADAPTEREVENTS stream while the session is running, which is the
+// coordinator-loss signal that arms the hold, and waits until the hold
+// timeout's termination has returned, which fired reports. The termination
+// runs the transport's pod-scope teardown and then terminates every started
+// session.
+// spec: §10.1.4 (Hold state timeout); §4.7.10 (Runtime process lifetime).
+func runHoldTimeoutTermination(t *testing.T, client adapterv1.AdapterClient, sessionID string, fired <-chan struct{}) {
+	t.Helper()
+	ctx := context.Background()
+	evCtx, dropEvents := context.WithCancel(ctx)
+	events, err := client.AdapterEvents(evCtx)
+	if err != nil {
+		dropEvents()
+		t.Fatalf("open AdapterEvents: %v", err)
+	}
+	go func() {
+		for {
+			if _, err := events.Recv(); err != nil {
+				return
+			}
+		}
+	}()
+	if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID}, Runtime: "echo",
+	}); err != nil {
+		dropEvents()
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
+	dropEvents()
+	select {
+	case <-fired:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("the coordinator hold timeout never terminated %s", sessionID)
 	}
 }
 
