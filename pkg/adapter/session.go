@@ -209,7 +209,10 @@ func (s *Server) StartSession(ctx context.Context, req *adapterv1.StartSessionRe
 // per-session identifier an adapter-side obligation on every
 // session-scoped frame on every pod. The runtime's response is surfaced
 // asynchronously, so SendMessage returns once the envelope is delivered.
-// spec: §28.5.3; §5.2.
+// A session whose open sequence has not yet written its session_start is
+// refused with FailedPrecondition, so the message never reaches the
+// runtime ahead of that frame.
+// spec: §28.5.3; §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1; §5.2.
 func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageRequest) (*adapterv1.SendMessageResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
@@ -229,7 +232,7 @@ func (s *Server) SendMessage(_ context.Context, req *adapterv1.SendMessageReques
 			"session %s has no running runtime", sessionID)
 	}
 	if err := s.writeSessionEnvelope(rt, sessionID, req.GetEnvelopeJson()); err != nil {
-		return nil, status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
+		return nil, envelopeWriteStatus("deliver message to runtime", err)
 	}
 	return &adapterv1.SendMessageResponse{}, nil
 }

@@ -52,7 +52,7 @@ func (s *Server) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest,
 	}
 	if env := first.GetEnvelopeJson(); len(env) > 0 {
 		if err := s.writeSessionEnvelope(rt, sessionID, env); err != nil {
-			return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
+			return envelopeWriteStatus("deliver message to runtime", err)
 		}
 	}
 
@@ -197,7 +197,7 @@ func (s *Server) emitLocalToolCall(ctx context.Context, sessionID, slotID string
 	}
 	if err := s.writeSessionEnvelope(rt, sessionID, result); err != nil {
 		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
-		return status.Errorf(codes.Internal, "deliver tool result to runtime: %v", err)
+		return envelopeWriteStatus("deliver tool result to runtime", err)
 	}
 	return nil
 }
@@ -257,7 +257,7 @@ func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.Attach
 		}
 		if env := msg.GetEnvelopeJson(); len(env) > 0 {
 			if err := s.writeSessionEnvelope(rt, sessionID, env); err != nil {
-				return status.Errorf(codes.Internal, "deliver message to runtime: %v", err)
+				return envelopeWriteStatus("deliver message to runtime", err)
 			}
 		}
 	}
@@ -270,11 +270,30 @@ func (s *Server) attachRecvLoop(stream grpc.BidiStreamingServer[adapterv1.Attach
 // stamp is unconditional and every inbound frame carries it.
 // spec: §5.2; §6.4; §28.5.3.
 func (s *Server) writeSessionEnvelope(rt RuntimeProcess, sessionID string, envelope []byte) error {
+	// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1 — the
+	// session's session_start precedes every other frame addressed to it,
+	// so a write for a session whose open sequence has not written that
+	// frame is refused rather than left to the gateway's call order.
+	if err := s.checkSessionStartWritten(sessionID); err != nil {
+		return err
+	}
 	stamped, err := stampSessionID(envelope, sessionID)
 	if err != nil {
 		return err
 	}
 	return rt.WriteEnvelope(sessionID, stamped)
+}
+
+// envelopeWriteStatus maps a writeSessionEnvelope error to the gRPC status
+// its caller returns: FailedPrecondition for a session whose session_start
+// the adapter has not written, which the caller may retry once the start
+// has opened the session, and Internal for a failed write.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule 1.
+func envelopeWriteStatus(what string, err error) error {
+	if errors.Is(err, errSessionNotOpened) {
+		return status.Errorf(codes.FailedPrecondition, "%s: %v", what, err)
+	}
+	return status.Errorf(codes.Internal, "%s: %v", what, err)
 }
 
 // sessionScopedFrameTypes is the §28.5.3 session-scoped set: the frame

@@ -78,6 +78,19 @@ type slotState struct {
 	// under the same key carries a new gate. spec: §28.5.3 (CH-MSGSOCK,
 	// Outbound: session_started); §28.5.3 (CH-RUNTIMEOPS, Messages).
 	ack ackGate
+	// sessionStartWritten records, under s.mu, that this entry's open
+	// sequence wrote the session's session_start. The open sequence is the
+	// only writer of session_start, and the message-writing paths (Attach
+	// and SendMessage) refuse an entry that does not carry it, so on the
+	// runtime connection the session_start precedes every message addressed
+	// to the session whatever order the gateway's calls arrive in. It is
+	// set right after the write and before any session_started wait,
+	// because the session's other frames do not wait for the
+	// acknowledgement. A start that writes the session's session_end clears
+	// it. The flag is per entry, so a successor attempt's entry starts
+	// without it. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule
+	// 1; §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule 4.
+	sessionStartWritten bool
 	// bindAttempt is the §4.7.1 bind attempt token the request that created
 	// the entry carried, empty when that request carried none. It is written
 	// once, by the create branch of ensureSlotStateLocked, and never again
