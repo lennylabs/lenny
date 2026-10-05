@@ -157,7 +157,6 @@ func writeManifest(t *testing.T, dir, nonce, platformSock string) string {
 // delegateHandler runs the §8.5 delegation flow through the SDK tools.
 type delegateHandler struct {
 	gotTools bool
-	gotCreds bool
 }
 
 func (h *delegateHandler) OnCreate(ctx context.Context, req CreateRequest) error {

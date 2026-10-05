@@ -718,3 +718,55 @@ func TestToolCallCarriesTheSessionAndCompletesOnItsResult(t *testing.T) {
 		t.Fatalf("frame = %v, want the turn's response", f)
 	}
 }
+
+// spec: 28.5.3 (CH-MSGSOCK, Inbound: tool_result)
+//
+// A tool_result is routed by its sessionId. A result whose id matches
+// session A's pending call but whose sessionId names session B, or a
+// session the runtime does not hold, does not complete A's call, and the
+// call stays pending until a result addressed to A arrives.
+func TestToolResultForAnotherSessionDoesNotCompleteThePendingCall(t *testing.T) {
+	got := make(chan string, 1)
+	h := &recorder{messageGate: func(ctx context.Context, m Message) {
+		if m.SessionID != "sess_a" {
+			return
+		}
+		content, err := AdapterToolsFrom(ctx).ReadFile(ctx, "notes.txt")
+		if err != nil {
+			content = "error: " + err.Error()
+		}
+		got <- content
+	}}
+	l := startLiveSDK(t, h)
+	l.send(startFrame("sess_a", "st_1"))
+	_ = l.next(3 * time.Second)
+	l.send(startFrame("sess_b", "st_2"))
+	_ = l.next(3 * time.Second)
+	l.send(msgFrame("sess_a", "m1", "x"))
+	call := l.next(3 * time.Second)
+	if call["type"] != "tool_call" || call["sessionId"] != "sess_a" {
+		t.Fatalf("frame = %v, want a tool_call for sess_a", call)
+	}
+
+	for _, sid := range []string{"sess_b", "sess_unknown"} {
+		l.send(fmt.Sprintf(`{"type":"tool_result","id":%q,"sessionId":%q,"content":[{"type":"text","inline":"wrong"}]}`, call["id"], sid))
+	}
+	if extra := l.heartbeatBarrier(); len(extra) != 0 {
+		t.Fatalf("frames after misaddressed tool_results = %v, want none", extra)
+	}
+	select {
+	case c := <-got:
+		t.Fatalf("ReadFile completed with %q from a tool_result addressed to another session", c)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	l.send(fmt.Sprintf(`{"type":"tool_result","id":%q,"sessionId":"sess_a","content":[{"type":"text","inline":"right"}]}`, call["id"]))
+	select {
+	case c := <-got:
+		if c != "right" {
+			t.Fatalf("ReadFile returned %q, want right", c)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ReadFile did not complete on the tool_result addressed to its session")
+	}
+}

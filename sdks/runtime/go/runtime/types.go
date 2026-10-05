@@ -334,16 +334,6 @@ type frameType struct {
 	Type string `json:"type"`
 }
 
-// inboundMessage is the §28.5.3 inbound message frame. It is the
-// MessageEnvelope with an explicit type discriminator.
-type inboundMessage = MessageEnvelope
-
-// inboundHeartbeat is the §28.5.3 heartbeat frame.
-type inboundHeartbeat struct {
-	Type string `json:"type"`
-	TS   int64  `json:"ts"`
-}
-
 // inboundSessionStart is the §28.5.3 session_start frame. An absent or
 // null object member decodes to nil.
 type inboundSessionStart struct {
@@ -407,20 +397,4 @@ type outboundToolCall struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
 	SessionID string         `json:"sessionId,omitempty"`
-}
-
-// outboundStatus is the §28.5.3 optional status frame. It is
-// session-scoped, so it carries the session it is addressed to.
-// spec: §28.5.3.
-type outboundStatus struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId,omitempty"`
-	State     string `json:"state,omitempty"`
-	Message   string `json:"message,omitempty"`
-}
-
-// outboundTracingContext is the §28.5.3 set_tracing_context frame.
-type outboundTracingContext struct {
-	Type    string         `json:"type"`
-	Context map[string]any `json:"context"`
 }

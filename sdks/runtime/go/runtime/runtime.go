@@ -380,8 +380,8 @@ func (p *process) closeChannels() {
 
 // loop is the §28.5.3 frame loop. It reads newline-delimited JSON from
 // in and routes each frame by type without blocking on any session's
-// work: session_start, message, and session_end go to the addressed
-// session's state, heartbeat and tool_result are serviced inline, and a
+// work: session_start, message, tool_result, and session_end go to the
+// addressed session's state, a heartbeat is acknowledged inline, and a
 // shutdown frame ends the loop. Unknown frame types are ignored for
 // forward compatibility. It returns when in reaches EOF, a shutdown
 // frame arrives, or an unrecoverable error occurs.
@@ -507,8 +507,13 @@ func (p *process) handleMessage(st *sessionState, env *MessageEnvelope) {
 }
 
 // handleToolResult routes an inbound §28.5.3 tool_result frame to the
-// pending stdout tool_call that emitted the matching id. A result with
-// no pending call is dropped and logged (§28.5.3 correlation rule).
+// pending tool_call of the session its sessionId addresses. A result
+// whose id matches no pending call of that session, including one whose
+// id belongs to another session's call, is dropped and logged (§28.5.3
+// correlation rule). Delivery never blocks the frame loop: the waiter's
+// channel is buffered for its single result.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: tool_result).
 func (p *process) handleToolResult(line []byte) {
 	var tr inboundToolResult
 	if err := json.Unmarshal(line, &tr); err != nil {
@@ -516,7 +521,7 @@ func (p *process) handleToolResult(line []byte) {
 		return
 	}
 	if !p.w.deliverToolResult(tr) {
-		p.cfg.logf("runtime: tool_result %q has no pending tool_call", tr.ID)
+		p.cfg.logf("runtime: tool_result %q for session %q has no pending tool_call in that session", tr.ID, tr.SessionID)
 	}
 }
 
@@ -664,10 +669,17 @@ func (w *frameWriter) registerToolCall(id string, owner *sessionState) chan inbo
 }
 
 // deliverToolResult routes an inbound tool_result to the channel of its
-// matching tool_call. It reports whether a pending call was found.
+// matching tool_call. A call matches only when its id equals the frame's
+// id and the session that issued it is the one the frame's sessionId
+// names, so a result addressed to another session, or to a session the
+// runtime does not hold, never completes the call and leaves it pending
+// for its own result. It reports whether a pending call was found.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: tool_result).
 func (w *frameWriter) deliverToolResult(tr inboundToolResult) bool {
 	w.mu.Lock()
 	pc, ok := w.pending[tr.ID]
+	ok = ok && pc.owner.id == tr.SessionID
 	if ok {
 		delete(w.pending, tr.ID)
 	}
