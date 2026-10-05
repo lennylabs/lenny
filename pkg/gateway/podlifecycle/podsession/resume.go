@@ -34,7 +34,8 @@ type ResumeRequest struct {
 	// from.
 	CheckpointID string
 	// ExperimentContext and TracingContext are re-delivered to the
-	// restored runtime in the adapter manifest. Nil when unset.
+	// restored runtime in the resumed session's session_start frame on
+	// CH-MSGSOCK (§28.5.3). Nil when unset.
 	ExperimentContext *adapterv1.ExperimentContext
 	TracingContext    map[string]string
 	// AgentInterface and MinPlatformVersion re-deliver the §15.4 manifest

@@ -96,7 +96,11 @@ type ManifestLLM struct {
 	Dialect string `json:"dialect,omitempty"`
 	// APIKeyEnv is the canonical env var the runtime's SDK reads for its
 	// API key (ANTHROPIC_API_KEY for anthropic, OPENAI_API_KEY for openai).
-	// Set in proxy mode where the runtime exports the lease token into it.
+	// Set in proxy mode. The runtime passes this session's lease token to
+	// the LLM client it builds for the session, or sets the variable only
+	// in the environment of a subprocess it starts for this session, and
+	// never in its own process environment, which every session it serves
+	// shares. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
 	APIKeyEnv string `json:"apiKeyEnv,omitempty"`
 }
 

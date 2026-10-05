@@ -37,11 +37,12 @@ type BindRequest struct {
 	// Plan is the workspace the adapter materializes before start.
 	Plan *adapterv1.WorkspacePlan
 	// ExperimentContext is the §8.3 / §10.7 experiment enrollment
-	// delivered to the runtime in the adapter manifest. Nil for an
-	// unenrolled session.
+	// delivered to the runtime in the session's session_start frame on
+	// CH-MSGSOCK (§28.5.3). Nil for an unenrolled session.
 	ExperimentContext *adapterv1.ExperimentContext
 	// TracingContext is the §8.3 opaque tracing-identifier map delivered
-	// to the runtime in the adapter manifest. Nil when none is set.
+	// to the runtime in the session's session_start frame on CH-MSGSOCK
+	// (§28.5.3). Nil when none is set.
 	TracingContext map[string]string
 	// SetupPolicy is the §5.1 runtime setupPolicy bounding the setup
 	// phase. Nil when the runtime declares no aggregate cap.

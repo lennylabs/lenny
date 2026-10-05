@@ -184,8 +184,9 @@ func TestShutdownRemovesTheSlotTreeAfterTheRuntimeClose_spec_6_4(t *testing.T) {
 // co-tenant's runtime once, because the runtime process lives as long as the
 // pod and serves the pod's later sessions.
 //
-// diagnosis: a session teardown sent the runtime a terminate frame, which
-// tells a process the pod keeps across sessions to exit.
+// diagnosis: a session teardown wrote a CH-RUNTIMEOPS frame; the channel
+// carries no message that ends a session or the runtime process, which the
+// pod keeps across sessions.
 func TestShutdownOfACoTenantedPodSendsNoDrain_spec_5_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
@@ -276,8 +277,9 @@ func TestShutdownOfACoTenantedPodSendsNoDrain_spec_5_2(t *testing.T) {
 // binding it, so the pod reaches occupancy zero in its bound sessions, and
 // the runtime process lives on to serve the session being prepared.
 //
-// diagnosis: a session teardown sent the runtime a terminate frame, which
-// tells a process the pod keeps across sessions to exit.
+// diagnosis: a session teardown wrote a CH-RUNTIMEOPS frame; the channel
+// carries no message that ends a session or the runtime process, which the
+// pod keeps across sessions.
 func TestShutdownWithARegisteredUnboundEntrySendsNoDrain_spec_5_2(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()

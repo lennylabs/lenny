@@ -964,9 +964,10 @@ func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
 // The coordinator hold timeout runs the pod-scope teardown and terminates
 // every started session, and it writes no CH-RUNTIMEOPS frame on the way.
 //
-// diagnosis: the coordinator hold timeout wrote a CH-RUNTIMEOPS frame; a
-// terminate frame tells the runtime process to exit, and no drain
-// coordination exists on this path.
+// diagnosis: the coordinator hold timeout wrote a CH-RUNTIMEOPS frame; the
+// channel carries no message that ends a session or the runtime process,
+// which lives as long as the pod, and no drain coordination exists on this
+// path.
 func TestCoordinatorHoldTimeoutSendsNoTerminateFrame_spec_10_1_4(t *testing.T) {
 	setCoordinatorHold(false)
 	rt := newPodScopedHoldRuntime()

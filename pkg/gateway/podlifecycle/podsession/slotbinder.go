@@ -50,7 +50,8 @@ type SlotBindRequest struct {
 	// sessions always materialize a per-slot workspace.
 	Plan *adapterv1.WorkspacePlan
 	// ExperimentContext and TracingContext are delivered to the runtime
-	// in the adapter manifest. Nil when unset.
+	// in the session's session_start frame on CH-MSGSOCK (§28.5.3). Nil
+	// when unset.
 	ExperimentContext *adapterv1.ExperimentContext
 	TracingContext    map[string]string
 	// SetupPolicy bounds the §5.1 setup phase. Nil when the runtime
