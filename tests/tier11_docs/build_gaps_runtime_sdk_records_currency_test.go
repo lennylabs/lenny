@@ -204,6 +204,16 @@ func sourceMatches(t testing.TB, path string, re *regexp.Regexp) bool {
 // options, in the snake-case spelling the proto style fixes.
 var protoRuntimeOptionsField = regexp.MustCompile(`(?m)^\s*[\w.<>, ]+\s+runtime_options\s*=\s*\d+`)
 
+// createRequestFieldsGap reports whether the CreateRequest finding is still
+// open. The finding names two fields, each with its own missing carrier, so it
+// stays open until both have landed: a runtime-options carrier alone, or a
+// populated WorkspacePlan alone, leaves the other half of the gap in the tree.
+//
+// spec: §15.7 (SDK Handler types)
+func createRequestFieldsGap(optionsCarried, planCarried bool) bool {
+	return !optionsCarried || !planCarried
+}
+
 // runtimeSDKGap is one BUILD-GAPS finding filed for a gap the tree still
 // has, and the probe that reports whether the gap is still present.
 type runtimeSDKGap struct {
@@ -217,12 +227,12 @@ type runtimeSDKGap struct {
 var runtimeSDKGaps = []runtimeSDKGap{
 	{
 		id:   "F-15.7.13",
-		what: "the adapter manifest, the adapter proto, and the session_start frame carry no runtime options, and no Go SDK file sets CreateRequest.WorkspacePlan",
+		what: "the adapter manifest and the adapter proto carry no runtime options, or no Go SDK file sets CreateRequest.WorkspacePlan",
 		present: func(t testing.TB, root string) bool {
 			_, manifestTags := structFields(t, filepath.Join(root, "pkg", "adapter", "manifest.go"), "Manifest")
 			proto := sourceMatches(t, filepath.Join(root, "schemas", "lenny-adapter.proto"), protoRuntimeOptionsField)
 			sdkSetsPlan := packageSetsField(t, filepath.Join(root, "sdks", "runtime", "go", "runtime"), "WorkspacePlan")
-			return !manifestTags["runtimeOptions"] && !proto && !sdkSetsPlan
+			return createRequestFieldsGap(manifestTags["runtimeOptions"] || proto, sdkSetsPlan)
 		},
 	},
 	{
@@ -397,6 +407,21 @@ func TestRuntimeSDKGapProbes_spec_15_7(t *testing.T) {
 	if !protoRuntimeOptionsField.MatchString("message StartSessionRequest {\n  map<string, string> runtime_options = 7;\n}\n") {
 		t.Error("protoRuntimeOptionsField misses a runtime_options field")
 	}
+	for _, tc := range []struct {
+		name                    string
+		optionsCarried, planSet bool
+		want                    bool
+	}{
+		{"neither field carried", false, false, true},
+		{"runtime options carried, plan unset", true, false, true},
+		{"plan set, runtime options uncarried", false, true, true},
+		{"both fields carried", true, true, false},
+	} {
+		if got := createRequestFieldsGap(tc.optionsCarried, tc.planSet); got != tc.want {
+			t.Errorf("createRequestFieldsGap(%s) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
 	if protoRuntimeOptionsField.MatchString("  // runtime_options would carry the caller's options\n") {
 		t.Error("protoRuntimeOptionsField matches a comment")
 	}
