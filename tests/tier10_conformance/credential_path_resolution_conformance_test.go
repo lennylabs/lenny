@@ -17,7 +17,8 @@
 //
 // The Go cases drive in-process runtimes built on the Go SDK, at Basic
 // level and at Full level against a fake CH-RUNTIMEOPS. The Python and
-// TypeScript cases drive probe runtimes built on those SDKs.
+// TypeScript cases drive probe runtimes built on those SDKs the same way,
+// over the probe process's stdin and stdout.
 //
 // spec: 28.5.3 (CH-MSGSOCK Inbound: session_start, CH-RUNTIMEOPS
 // credentials_rotated), 4.7.11 (adapter-agent security boundary, item 4),
@@ -84,22 +85,6 @@ func writeCredentialBundle(t *testing.T, path, provider string) {
 	}
 }
 
-// writeFlatCredentialSlotTree writes the flat credential bundle the
-// Python and TypeScript SDKs still decode for sessionID under root and
-// returns its path.
-func writeFlatCredentialSlotTree(t *testing.T, root, sessionID, provider string) string {
-	t.Helper()
-	path := credentialSlotPath(t, root, sessionID)
-	body, _ := json.Marshal(map[string]any{
-		"mode": "direct", "provider": provider,
-		"leaseId": "lease_" + provider, "apiKey": "sk-" + provider,
-	})
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatalf("write credential file: %v", err)
-	}
-	return path
-}
-
 // bundleProvider returns the first providers entry's provider, or "none"
 // when the runtime holds no bundle.
 func bundleProvider(c *runtime.CredentialBundle) string {
@@ -146,9 +131,9 @@ func (l *credLogSink) waitFor(substr string, d time.Duration) bool {
 }
 
 // writeCredPathManifest writes a §4.7 manifest naming credentialsPath
-// and, when runtimeOpsSocket is non-empty, a CH-RUNTIMEOPS socket. The
-// Python and TypeScript probes still read the path from the manifest; a
-// Go case passes a decoy path the Go SDK must ignore, or none.
+// and, when runtimeOpsSocket is non-empty, a CH-RUNTIMEOPS socket. A case
+// passes a decoy path every SDK must ignore, because the session_start is
+// the only source of a session's credential path, or none.
 func writeCredPathManifest(t *testing.T, dir, credentialsPath, runtimeOpsSocket string) string {
 	t.Helper()
 	m := map[string]any{
@@ -206,44 +191,77 @@ func (h *credProbeHandler) bundle(sessionID string) (*runtime.CredentialBundle, 
 	return c, ok
 }
 
-// goSessionRuntime is an in-process Go-SDK runtime driven over pipes:
-// the case writes CH-MSGSOCK frames and reads each frame the runtime
-// writes.
-type goSessionRuntime struct {
-	in     *io.PipeWriter
+// sessionRuntime is a runtime driven over its stdin and stdout: the case
+// writes CH-MSGSOCK frames and reads each frame the runtime writes. It is
+// either an in-process Go-SDK runtime over pipes or an interpreted probe
+// process.
+type sessionRuntime struct {
+	in     io.WriteCloser
 	frames chan map[string]any
-	done   chan struct{}
-	err    error
+	// wait blocks until the runtime exits and returns its error.
+	wait func() error
+}
+
+// readFrames decodes each JSON Lines frame from out onto r.frames, closing
+// the channel at end of stream.
+func (r *sessionRuntime) readFrames(out io.Reader) {
+	defer close(r.frames)
+	sc := bufio.NewScanner(out)
+	for sc.Scan() {
+		var m map[string]any
+		if json.Unmarshal(sc.Bytes(), &m) == nil {
+			r.frames <- m
+		}
+	}
 }
 
 // startGoSessionRuntime runs h under runtime.Run with opts over pipes.
-func startGoSessionRuntime(t *testing.T, h runtime.Handler, opts ...runtime.Option) *goSessionRuntime {
+func startGoSessionRuntime(t *testing.T, h runtime.Handler, opts ...runtime.Option) *sessionRuntime {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
-	r := &goSessionRuntime{in: inW, frames: make(chan map[string]any, 64), done: make(chan struct{})}
+	done := make(chan struct{})
+	var runErr error
+	r := &sessionRuntime{in: inW, frames: make(chan map[string]any, 64)}
+	r.wait = func() error { <-done; return runErr }
 	all := append([]runtime.Option{runtime.WithStreams(inR, outW), runtime.WithSocketTransport(false)}, opts...)
 	go func() {
-		r.err = runtime.Run(h, all...)
+		runErr = runtime.Run(h, all...)
 		_ = outW.Close()
-		close(r.done)
+		close(done)
 	}()
-	go func() {
-		defer close(r.frames)
-		sc := bufio.NewScanner(outR)
-		for sc.Scan() {
-			var m map[string]any
-			if json.Unmarshal(sc.Bytes(), &m) == nil {
-				r.frames <- m
-			}
-		}
-	}()
+	go r.readFrames(outR)
 	t.Cleanup(func() { _ = inW.Close() })
 	return r
 }
 
+// startProbeRuntime starts an interpreted probe runtime with the manifest
+// env var set and its stdin and stdout piped.
+func startProbeRuntime(t *testing.T, probe interpretedProbe, manifest string) *sessionRuntime {
+	t.Helper()
+	cmd := exec.Command(probe.argv[0], probe.argv[1:]...)
+	cmd.Dir = probe.workdir
+	cmd.Env = append(append(os.Environ(), "LENNY_ADAPTER_MANIFEST="+manifest), probe.env...)
+	cmd.Stderr = os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start probe %v: %v", probe.argv, err)
+	}
+	r := &sessionRuntime{in: stdin, frames: make(chan map[string]any, 64), wait: cmd.Wait}
+	go r.readFrames(stdout)
+	t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Process.Kill() })
+	return r
+}
+
 // send writes one frame line on the runtime's stdin.
-func (r *goSessionRuntime) send(t *testing.T, line string) {
+func (r *sessionRuntime) send(t *testing.T, line string) {
 	t.Helper()
 	if _, err := io.WriteString(r.in, line+"\n"); err != nil {
 		t.Fatalf("write stdin: %v", err)
@@ -251,7 +269,7 @@ func (r *goSessionRuntime) send(t *testing.T, line string) {
 }
 
 // next returns the next frame the runtime wrote.
-func (r *goSessionRuntime) next(t *testing.T, d time.Duration) map[string]any {
+func (r *sessionRuntime) next(t *testing.T, d time.Duration) map[string]any {
 	t.Helper()
 	select {
 	case f, ok := <-r.frames:
@@ -267,7 +285,7 @@ func (r *goSessionRuntime) next(t *testing.T, d time.Duration) map[string]any {
 
 // open writes a session_start for sessionID, naming credentialsPath when
 // it is non-empty, and reads the session_started that answers it.
-func (r *goSessionRuntime) open(t *testing.T, sessionID, credentialsPath string) map[string]any {
+func (r *sessionRuntime) open(t *testing.T, sessionID, credentialsPath string) map[string]any {
 	t.Helper()
 	frame := map[string]any{"type": "session_start", "sessionId": sessionID, "startId": "st_" + sessionID}
 	if credentialsPath != "" {
@@ -283,7 +301,7 @@ func (r *goSessionRuntime) open(t *testing.T, sessionID, credentialsPath string)
 }
 
 // ask writes a message for sessionID and returns the response text.
-func (r *goSessionRuntime) ask(t *testing.T, sessionID string) string {
+func (r *sessionRuntime) ask(t *testing.T, sessionID string) string {
 	t.Helper()
 	r.send(t, fmt.Sprintf(`{"type":"message","id":"msg_%s","sessionId":%q,"input":[{"type":"text","inline":"ping"}]}`, sessionID, sessionID))
 	f := r.next(t, 5*time.Second)
@@ -299,15 +317,17 @@ func (r *goSessionRuntime) ask(t *testing.T, sessionID string) string {
 	return s
 }
 
-// close closes stdin and returns Run's error.
-func (r *goSessionRuntime) close(t *testing.T) error {
+// close closes stdin and returns the runtime's exit error.
+func (r *sessionRuntime) close(t *testing.T) error {
 	t.Helper()
 	_ = r.in.Close()
 	for range r.frames {
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- r.wait() }()
 	select {
-	case <-r.done:
-		return r.err
+	case err := <-exited:
+		return err
 	case <-time.After(10 * time.Second):
 		t.Fatal("the runtime did not exit after stdin closed")
 		return nil
@@ -515,7 +535,7 @@ type rotation struct {
 
 // startRotationRuntime starts a Full-level Go-SDK runtime against a fake
 // CH-RUNTIMEOPS and returns it once the handshake completed.
-func startRotationRuntime(t *testing.T, logs *credLogSink) (*goSessionRuntime, *credRotationAdapter, chan rotation) {
+func startRotationRuntime(t *testing.T, logs *credLogSink) (*sessionRuntime, *credRotationAdapter, chan rotation) {
 	t.Helper()
 	fa := startCredRotationAdapter(t)
 	manifest := writeCredPathManifest(t, t.TempDir(), "", fa.socket())
@@ -651,51 +671,14 @@ func TestGoRuntimeSDKRotationReloadsOnlyTheNamedSession_spec_4_7_10(t *testing.T
 	}
 }
 
-// credProbeMessage is the inbound §28.5.3 message frame the interpreted
-// probes answer. The probe's response output carries the provider of the
-// bundle the SDK loaded, so the case reads the resolution off the wire.
-const credProbeMessage = `{"type":"message","id":"msg_credpath","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"ping"}]}`
-
-// runCredProbeBinary runs a probe runtime with the manifest env var set,
-// feeds it one message frame, and returns the first response frame's
-// concatenated text output.
-func runCredProbeBinary(t *testing.T, argv []string, manifest, workdir string, extraEnv ...string) string {
-	t.Helper()
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = workdir
-	cmd.Env = append(append(os.Environ(), "LENNY_ADAPTER_MANIFEST="+manifest), extraEnv...)
-	cmd.Stdin = strings.NewReader(credProbeMessage + "\n")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("probe runtime %v: %v\nstderr: %s", argv, err, stderr.String())
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var frame struct {
-			Type   string `json:"type"`
-			Output []struct {
-				Inline string `json:"inline"`
-			} `json:"output"`
-		}
-		if err := json.Unmarshal([]byte(line), &frame); err != nil {
-			continue
-		}
-		if frame.Type != "response" {
-			continue
-		}
-		var b strings.Builder
-		for _, p := range frame.Output {
-			b.WriteString(p.Inline)
-		}
-		return b.String()
-	}
-	t.Fatalf("probe runtime %v emitted no response frame\nstdout: %s\nstderr: %s", argv, out, stderr.String())
-	return ""
+// interpretedProbe is a probe runtime built on the Python or TypeScript
+// SDK: the argv that runs it, its working directory, and its extra
+// environment. The probe answers each message with the first providers
+// entry's provider of the bundle the session holds, or "none".
+type interpretedProbe struct {
+	argv    []string
+	workdir string
+	env     []string
 }
 
 // requireCredProbeTool resolves a toolchain binary or skips: an
@@ -709,38 +692,177 @@ func requireCredProbeTool(t *testing.T, tool string) string {
 	return path
 }
 
-// spec: 4.7, 6.1
-// diagnosis: a runtime built on the Python SDK did not load the bundle
-//
-//	the manifest's credentialsPath named. The Python SDK carries no
-//	compiler, so a missed resolution is invisible until a session reads
-//	the wrong file or none at all.
-func TestPythonRuntimeSDKResolvesCredentialPathFromTheManifest_spec_4_7(t *testing.T) {
+// pythonCredProbeRuntime writes the Python probe under dir.
+func pythonCredProbeRuntime(t *testing.T, dir string) interpretedProbe {
+	t.Helper()
 	python := requireCredProbeTool(t, "python3")
 	root := filepath.Join(repoRoot(t), "sdks", "runtime", "python")
-
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	writeFlatCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
-	manifest := writeCredPathManifest(t, dir,
-		filepath.Join(credRoot, "slots", credProbeSessionID, "credentials.json"), "")
-
 	probe := filepath.Join(dir, "probe.py")
 	if err := os.WriteFile(probe, []byte(pythonCredProbe), 0o600); err != nil {
 		t.Fatalf("write python probe: %v", err)
 	}
-	got := runCredProbeBinary(t, []string{python, probe}, manifest, root, "PYTHONPATH="+root)
-	if got != "anthropic" {
-		t.Fatalf("python probe reported provider %q, want %q: the manifest's credentialsPath was not resolved", got, "anthropic")
+	return interpretedProbe{argv: []string{python, probe}, workdir: root, env: []string{"PYTHONPATH=" + root}}
+}
+
+// typeScriptCredProbeRuntime builds the TypeScript SDK and writes the
+// probe under dir.
+func typeScriptCredProbeRuntime(t *testing.T, dir string) interpretedProbe {
+	t.Helper()
+	node := requireCredProbeTool(t, "node")
+	npm := requireCredProbeTool(t, "npm")
+	root := filepath.Join(repoRoot(t), "sdks", "runtime", "typescript")
+	build := exec.Command(npm, "run", "build")
+	build.Dir = root
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("npm run build: %v\n%s", err, combined)
+	}
+	probe := filepath.Join(dir, "probe.mjs")
+	entry := filepath.Join(root, "dist", "src", "index.js")
+	if err := os.WriteFile(probe, []byte(fmt.Sprintf(typeScriptCredProbe, entry)), 0o600); err != nil {
+		t.Fatalf("write typescript probe: %v", err)
+	}
+	return interpretedProbe{argv: []string{node, probe}, workdir: root}
+}
+
+// interpretedSDKs names the probe builder of each interpreted SDK.
+var interpretedSDKs = []struct {
+	name  string
+	probe func(*testing.T, string) interpretedProbe
+}{
+	{"python", pythonCredProbeRuntime},
+	{"typescript", typeScriptCredProbeRuntime},
+}
+
+// assertProbeResolvesCredentialPathFromSessionStart opens one session on
+// the probe with a credentialsPath and a manifest naming a readable decoy,
+// and requires the session's handler to see the bundle the session_start
+// named.
+func assertProbeResolvesCredentialPathFromSessionStart(t *testing.T, build func(*testing.T, string) interpretedProbe) {
+	t.Helper()
+	dir := t.TempDir()
+	credRoot := filepath.Join(dir, "run", "lenny")
+	real := writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
+	decoy := writeCredentialSlotTree(t, credRoot, "sess_decoy", "decoy")
+	manifest := writeCredPathManifest(t, dir, decoy, "")
+
+	rt := startProbeRuntime(t, build(t, dir), manifest)
+	if f := rt.open(t, credProbeSessionID, real); f["error"] != nil {
+		t.Fatalf("session_started = %v, want no error", f)
+	}
+	if got := rt.ask(t, credProbeSessionID); got != "anthropic" {
+		t.Fatalf("probe reported provider %q, want %q: the SDK read a path other than the session_start's", got, "anthropic")
+	}
+	if err := rt.close(t); err != nil {
+		t.Fatalf("probe exit: %v", err)
 	}
 }
 
-// pythonCredProbe is a Basic-level Python runtime that answers each
-// message with the provider of the credential bundle the SDK loaded, or
-// "none" when it loaded none.
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.11 (item 4)
+// diagnosis: a runtime built on the Python SDK did not load the bundle
+//
+//	the session_start's credentialsPath named. The manifest here names a
+//	readable decoy, so a failure means the SDK still reads the pod-scoped
+//	manifest's path, which on a kept runtime names another session's file
+//	or none.
+func TestPythonRuntimeSDKResolvesCredentialPathFromSessionStart_spec_4_7(t *testing.T) {
+	assertProbeResolvesCredentialPathFromSessionStart(t, pythonCredProbeRuntime)
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.11 (item 4)
+// diagnosis: a runtime built on the TypeScript SDK did not load the
+//
+//	bundle the session_start's credentialsPath named. The manifest here
+//	names a readable decoy, so a failure means the SDK still reads the
+//	pod-scoped manifest's path.
+func TestTypeScriptRuntimeSDKResolvesCredentialPathFromSessionStart_spec_4_7(t *testing.T) {
+	assertProbeResolvesCredentialPathFromSessionStart(t, typeScriptCredProbeRuntime)
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.10 (runtime
+// process lifetime), 4.7.11 (item 4)
+// diagnosis: two sessions on one Python- or TypeScript-SDK runtime process
+//
+//	did not each hold their own credentials. Each session's handler must
+//	see the bundle its own session_start named; an SDK that loads one
+//	bundle per process serves session B with session A's lease, which
+//	crosses users inside a tenant.
+func TestInterpretedRuntimeSDKsTwoSessionsHoldSeparateCredentials_spec_4_7_10(t *testing.T) {
+	for _, sdk := range interpretedSDKs {
+		t.Run(sdk.name, func(t *testing.T) {
+			dir := t.TempDir()
+			credRoot := filepath.Join(dir, "run", "lenny")
+			pathA := writeCredentialSlotTree(t, credRoot, "sess_a", "anthropic")
+			pathB := writeCredentialSlotTree(t, credRoot, "sess_b", "openai")
+			rt := startProbeRuntime(t, sdk.probe(t, dir), filepath.Join(dir, "absent.json"))
+			rt.open(t, "sess_a", pathA)
+			rt.open(t, "sess_b", pathB)
+			for _, c := range []struct{ session, want string }{
+				{"sess_a", "anthropic"}, {"sess_b", "openai"}, {"sess_a", "anthropic"},
+			} {
+				if got := rt.ask(t, c.session); got != c.want {
+					t.Fatalf("%s answered with provider %q, want %q", c.session, got, c.want)
+				}
+			}
+			if err := rt.close(t); err != nil {
+				t.Fatalf("probe exit: %v", err)
+			}
+		})
+	}
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS credentials_rotated, CH-RUNTIMEOPS
+// Messages), 4.7.10 (runtime process lifetime), 4.7.11 (item 4)
+// diagnosis: a credentials_rotated event on a Python- or TypeScript-SDK
+//
+//	runtime changed a session other than the one it named, or an event
+//	naming a session the runtime does not hold was acknowledged. The event
+//	names the session it rotates in sessionId and the file the adapter
+//	rewrote in credentialsPath; an SDK that reloads one process-wide bundle
+//	hands B's requests A's new lease, and one that acknowledges an event
+//	for an unheld session reports a rotation it never applied.
+func TestInterpretedRuntimeSDKsRotationReloadsOnlyTheNamedSession_spec_4_7_10(t *testing.T) {
+	for _, sdk := range interpretedSDKs {
+		t.Run(sdk.name, func(t *testing.T) {
+			dir := t.TempDir()
+			credRoot := filepath.Join(dir, "run", "lenny")
+			pathA := writeCredentialSlotTree(t, credRoot, "sess_a", "anthropic")
+			pathB := writeCredentialSlotTree(t, credRoot, "sess_b", "openai")
+			rotatedA := writeCredentialSlotTree(t, credRoot, "sess_a_rotated", "rotated")
+			fa := startCredRotationAdapter(t)
+			manifest := writeCredPathManifest(t, dir, "", fa.socket())
+			rt := startProbeRuntime(t, sdk.probe(t, dir), manifest)
+			fa.handshake(t)
+			rt.open(t, "sess_a", pathA)
+			rt.open(t, "sess_b", pathB)
+
+			// An event for a session the runtime does not hold is dropped
+			// without a reply, so the next acknowledgement read answers
+			// the rotation of sess_a.
+			fa.send(t, map[string]any{
+				"type": "credentials_rotated", "sessionId": "sess_unheld",
+				"provider": "rotated", "leaseId": "lease_unheld", "credentialsPath": rotatedA,
+			})
+			rotate(t, fa, "sess_a", "rotated", rotatedA, "lease_rotated")
+			if p := rt.ask(t, "sess_a"); p != "rotated" {
+				t.Fatalf("sess_a provider after its rotation = %q, want rotated", p)
+			}
+			if p := rt.ask(t, "sess_b"); p != "openai" {
+				t.Fatalf("sess_b provider after sess_a's rotation = %q, want openai (unchanged)", p)
+			}
+			if err := rt.close(t); err != nil {
+				t.Fatalf("probe exit: %v", err)
+			}
+		})
+	}
+}
+
+// pythonCredProbe is a Full-level Python runtime that answers each message
+// with the first providers entry's provider of the bundle the session
+// holds, or "none" when it holds none. Without a CH-RUNTIMEOPS socket in
+// the manifest the SDK runs it at Basic level.
 const pythonCredProbe = `
 import sys
-from lenny_runtime import Reply, run, text
+from lenny_runtime import LifecycleHooks, Reply, RunOptions, run, text
 
 class Probe:
     def on_create(self, req):
@@ -748,61 +870,27 @@ class Probe:
 
     def on_message(self, msg, tools):
         creds = tools.credentials
-        return Reply(parts=[text(creds.provider if creds and creds.provider else "none")], final=True)
+        provider = creds.providers[0].provider if creds and creds.providers else "none"
+        return Reply(parts=[text(provider)], final=True)
 
-    def on_terminate(self, reason):
+    def on_terminate(self, session_id, reason):
         pass
 
-sys.exit(run(Probe()) or 0)
+sys.exit(run(Probe(), RunOptions(level="full", lifecycle=LifecycleHooks())) or 0)
 `
 
-// spec: 4.7, 6.1
-// diagnosis: a runtime built on the TypeScript SDK did not load the
-//
-//	bundle the manifest's credentialsPath named. Like the Python SDK it
-//	has no compile-time tie to the adapter's manifest, so the resolution
-//	is only held by this case.
-func TestTypeScriptRuntimeSDKResolvesCredentialPathFromTheManifest_spec_4_7(t *testing.T) {
-	node := requireCredProbeTool(t, "node")
-	npm := requireCredProbeTool(t, "npm")
-	root := filepath.Join(repoRoot(t), "sdks", "runtime", "typescript")
-
-	build := exec.Command(npm, "run", "build")
-	build.Dir = root
-	if combined, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("npm run build: %v\n%s", err, combined)
-	}
-
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	writeFlatCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
-	manifest := writeCredPathManifest(t, dir,
-		filepath.Join(credRoot, "slots", credProbeSessionID, "credentials.json"), "")
-
-	probe := filepath.Join(dir, "probe.mjs")
-	entry := filepath.Join(root, "dist", "src", "index.js")
-	body := fmt.Sprintf(typeScriptCredProbe, entry)
-	if err := os.WriteFile(probe, []byte(body), 0o600); err != nil {
-		t.Fatalf("write typescript probe: %v", err)
-	}
-	got := runCredProbeBinary(t, []string{node, probe}, manifest, root)
-	if got != "anthropic" {
-		t.Fatalf("typescript probe reported provider %q, want %q: the manifest's credentialsPath was not resolved", got, "anthropic")
-	}
-}
-
-// typeScriptCredProbe is a Basic-level TypeScript-SDK runtime, in the
-// built JavaScript the package publishes. The single format verb is the
-// absolute path of the built entrypoint.
+// typeScriptCredProbe is the TypeScript-SDK counterpart of pythonCredProbe,
+// in the built JavaScript the package publishes. The single format verb is
+// the absolute path of the built entrypoint.
 const typeScriptCredProbe = `
 import { run, text } from %q;
 
 await run({
   onCreate: async () => {},
   onMessage: async (_msg, tools) => ({
-    parts: [text(tools.credentials?.provider ?? "none")],
+    parts: [text(tools.credentials?.providers?.[0]?.provider ?? "none")],
     final: true,
   }),
-  onTerminate: async () => {},
-});
+  onTerminate: async (_sessionId, _reason) => {},
+}, { level: "full", lifecycle: {} });
 `

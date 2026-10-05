@@ -6,8 +6,9 @@ The wire-level dataclasses (:class:`MessagePart`, :class:`MessageEnvelope`)
 mirror the §28.5.3 adapter binary protocol. The convenience dataclasses
 (:class:`CreateRequest`, :class:`Message`, :class:`Reply`,
 :class:`CredentialBundle`, :class:`AdapterManifest`,
-:class:`WorkspacePlan`) are §15.7 wrappers the SDK materializes from the
-manifest, the credential file, and the stdin framing before invoking
+:class:`WorkspacePlan`) are §15.7 wrappers the SDK materializes from each
+session's ``session_start`` frame, the credential file that frame names,
+the pod-scoped manifest, and the stdin framing before invoking
 :class:`Handler` methods. They introduce no new wire types.
 """
 
@@ -182,43 +183,133 @@ class ResponseError:
 
 
 @dataclass
-class CredentialBundle:
-    """Parsed §4.7 runtime credential file the manifest's
-    ``credentialsPath`` names, this session's own
-    ``/run/lenny/slots/{sessionId}/credentials.json``.
+class ProviderCredential:
+    """One entry of a :class:`CredentialBundle`'s ``providers`` list.
 
-    The SDK refreshes it in place on a ``credentials_rotated`` lifecycle
-    message. Fields are the union of proxy and direct delivery modes; an
-    unset field is absent in the file.
+    ``materialized_config`` is left as the decoded JSON object because
+    its fields depend on the provider and the delivery mode: a proxy
+    entry carries ``proxyUrl`` and ``leaseToken``, and a direct entry
+    carries the provider's own credential fields.
+
+    spec: §4.7.11 (item 4, runtime credential file contract), §4.9
+    (materializedConfig schema by provider).
     """
 
-    # mode is proxy or direct (§4.7 manifest llm fields).
-    mode: str | None = None
-    # provider names the upstream LLM provider for this lease.
-    provider: str | None = None
     # lease_id identifies the §4.9 credential lease.
-    lease_id: str | None = None
-    # api_key is the upstream key under direct delivery.
-    api_key: str | None = None
-    # api_key_env names the environment variable carrying the key under
-    # proxy delivery.
-    api_key_env: str | None = None
-    # base_url is the upstream or proxy endpoint base URL.
-    base_url: str | None = None
-    # expires_at is the RFC 3339 lease expiry timestamp.
+    lease_id: str = ""
+    # provider is the credential provider identifier.
+    provider: str = ""
+    # expires_at is the ISO 8601 lease expiry timestamp.
     expires_at: str | None = None
+    # delivery_mode is direct or proxy.
+    delivery_mode: str = ""
+    # materialized_config is the entry's materializedConfig object.
+    materialized_config: dict[str, Any] | None = None
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> ProviderCredential:
+        """Build a ProviderCredential from one providers entry."""
+        config = raw.get("materializedConfig")
+        return cls(
+            lease_id=str(raw.get("leaseId", "")),
+            provider=str(raw.get("provider", "")),
+            expires_at=raw.get("expiresAt"),
+            delivery_mode=str(raw.get("deliveryMode", "")),
+            materialized_config=dict(config) if isinstance(config, dict) else None,
+        )
+
+
+@dataclass
+class CredentialBundle:
+    """Parsed runtime credential file that a session's ``session_start``
+    names in ``credentialsPath``, the session's own
+    ``/run/lenny/slots/{sessionId}/credentials.json``.
+
+    The file lists one entry per credential provider the session holds a
+    lease for. The SDK reloads the session's bundle on a
+    ``credentials_rotated`` lifecycle event naming that session.
+
+    spec: §4.7.11 (item 4, runtime credential file contract), §28.5.3
+    (CH-MSGSOCK, Inbound: session_start).
+    """
+
+    # providers holds one entry per leased credential provider.
+    providers: list[ProviderCredential] = field(default_factory=list)
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> CredentialBundle:
-        """Build a CredentialBundle from the §4.7 credential file."""
+        """Build a CredentialBundle from the credential file."""
+        entries = raw.get("providers")
         return cls(
-            mode=raw.get("mode"),
-            provider=raw.get("provider"),
-            lease_id=raw.get("leaseId"),
-            api_key=raw.get("apiKey"),
+            providers=[
+                ProviderCredential.from_wire(e)
+                for e in (entries if isinstance(entries, list) else [])
+                if isinstance(e, dict)
+            ],
+        )
+
+
+@dataclass
+class ExperimentContext:
+    """Experiment enrollment a session's ``session_start`` carries in
+    ``experimentContext``.
+
+    ``inherited`` is True when the enrollment was propagated from a
+    parent session through delegation.
+
+    spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start field table),
+    §10.7.
+    """
+
+    experiment_id: str = ""
+    variant_id: str = ""
+    inherited: bool = False
+
+    @classmethod
+    def from_wire(cls, raw: Any) -> ExperimentContext | None:
+        """Build an ExperimentContext, or None for an absent or null
+        member."""
+        if not isinstance(raw, dict):
+            return None
+        return cls(
+            experiment_id=str(raw.get("experimentId", "")),
+            variant_id=str(raw.get("variantId", "")),
+            inherited=bool(raw.get("inherited", False)),
+        )
+
+
+@dataclass
+class LLMConfig:
+    """LLM provider configuration a session's ``session_start`` carries
+    in ``llm``.
+
+    ``delivery_mode`` is direct or proxy; ``dialect`` names the provider
+    dialect a proxy-mode runtime speaks to the LLM Proxy; ``api_key_env``
+    names the variable a runtime's LLM client reads its key from, which
+    the runtime sets for this session only and never in its own process
+    environment; ``headers`` lists the headers a proxy-mode runtime sends.
+
+    spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start field table), §4.9.
+    """
+
+    delivery_mode: str = ""
+    dialect: str | None = None
+    api_key_env: str | None = None
+    headers: dict[str, str] | None = None
+
+    @classmethod
+    def from_wire(cls, raw: Any) -> LLMConfig | None:
+        """Build an LLMConfig, or None for an absent or null member."""
+        if not isinstance(raw, dict):
+            return None
+        headers = raw.get("headers")
+        return cls(
+            delivery_mode=str(raw.get("deliveryMode", "")),
+            dialect=raw.get("dialect"),
             api_key_env=raw.get("apiKeyEnv"),
-            base_url=raw.get("baseUrl"),
-            expires_at=raw.get("expiresAt"),
+            headers={str(k): str(v) for k, v in headers.items()}
+            if isinstance(headers, dict)
+            else None,
         )
 
 
@@ -258,41 +349,32 @@ class AdapterLocalTool:
 class AdapterManifest:
     """Parsed §4.7 adapter manifest at /run/lenny/adapter-manifest.json.
 
-    Unknown fields are ignored (§4.7 forward compatibility).
+    It carries only pod-scoped fields: one runtime process serves every
+    session the pod holds, so each session's own context arrives in that
+    session's ``session_start`` frame rather than here. Unknown fields are
+    ignored (§4.7 forward compatibility).
+
+    spec: §4.7 (adapter manifest field reference), §4.7.10 (runtime
+    process lifetime).
     """
 
     # version is the manifest schema version. Every increment is
     # breaking; the SDK rejects a version newer than it understands.
     version: int = 0
-    # session_id is the session this runtime instance is bound to.
-    session_id: str = ""
-    # task_id is the session's external-protocol task identifier. Each
-    # session has exactly one execution, so it equals the session id; the
-    # adapter derives it from session_id. The manifest is per-session and
-    # task_id is frozen for the session's lifetime.
-    # spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
-    task_id: str = ""
     # mcp_nonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
     # SDK injects it as params._lennyNonce on every MCP initialize.
     mcp_nonce: str = ""
-    # credentials_path is the §4.7 absolute path of this session's own
-    # credential file. The SDK reads credential material from it and
-    # falls back to the credentials_path option when the manifest omits
-    # it. spec: §4.7; §6.1.
-    credentials_path: str = ""
     # platform_mcp_server names the platform MCP server socket.
     platform_mcp_server: MCPServerRef | None = None
     # connector_servers names the per-connector MCP server sockets.
     connector_servers: list[ConnectorServerRef] = field(default_factory=list)
-    # lifecycle_channel names the Full-level lifecycle channel socket.
+    # lifecycle_channel names the Full-level CH-RUNTIMEOPS socket.
     lifecycle_channel: SocketRef | None = None
     # adapter_local_tools enumerates the §28.5.3 adapter-local tools the
     # runtime may invoke via stdout tool_call frames.
     adapter_local_tools: list[AdapterLocalTool] = field(default_factory=list)
     # runtime_options is the effective caller options map.
     runtime_options: dict[str, Any] = field(default_factory=dict)
-    # tracing_context carries §16.3 tracing identifiers.
-    tracing_context: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_wire(cls, raw: dict[str, Any]) -> AdapterManifest:
@@ -301,10 +383,7 @@ class AdapterManifest:
         lifecycle = raw.get("runtimeOps")
         return cls(
             version=int(raw.get("version", 0)),
-            session_id=str(raw.get("sessionId", "")),
-            task_id=str(raw.get("taskId", "")),
             mcp_nonce=str(raw.get("mcpNonce", "")),
-            credentials_path=str(raw.get("credentialsPath", "")),
             platform_mcp_server=MCPServerRef(socket=str(platform["socket"]))
             if isinstance(platform, dict) and platform.get("socket")
             else None,
@@ -326,7 +405,6 @@ class AdapterManifest:
                 if isinstance(t, dict)
             ],
             runtime_options=dict(raw.get("runtimeOptions", {})),
-            tracing_context=dict(raw.get("tracingContext", {})),
         )
 
 
@@ -347,13 +425,14 @@ class WorkspacePlan:
 class TerminationReason:
     """Reason passed to :meth:`Handler.on_terminate`.
 
-    The SDK populates it from the §28.5.3 shutdown frame or the
-    lifecycle-channel terminate event.
+    The SDK populates it from the session's ``session_end``, from the
+    §28.5.3 shutdown frame, or from the end of the connection.
     """
 
-    # reason is the adapter-supplied reason string (drain, deadline,
-    # etc.) or stdin_closed when the adapter closed stdin without a
-    # shutdown frame.
+    # reason is session_end when the session's session_end ended it, the
+    # shutdown frame's reason (drain, deadline, etc.) when a shutdown
+    # ended the process, or stdin_closed when the adapter closed the
+    # connection without a shutdown frame.
     reason: str
     # deadline_ms is the shutdown deadline in milliseconds when the
     # adapter supplied one; zero otherwise.
@@ -363,28 +442,44 @@ class TerminationReason:
 @dataclass
 class CreateRequest:
     """§15.7 snapshot of session context handed to
-    :meth:`Handler.on_create` once before the first :class:`Message`.
+    :meth:`Handler.on_create` when the session's ``session_start``
+    arrives and before the session's first :class:`Message`.
 
-    Handler implementations MUST treat it as read-only.
+    The SDK assembles it from the ``session_start`` frame, the credential
+    file that frame names, and the pod-scoped adapter manifest. Handler
+    implementations MUST treat it as read-only.
+
+    spec: §15.7 (SDK Handler types), §28.5.3 (CH-MSGSOCK, Inbound:
+    session_start).
     """
 
-    # session_id is the session this runtime instance is bound to.
+    # session_id is the session this request opens, the session_start's
+    # sessionId.
     session_id: str = ""
     # task_id is the session's external-protocol task identifier. Each
-    # session has exactly one execution, so it equals the session id; the
-    # adapter derives it from session_id. task_id is frozen for the
-    # session's lifetime and on_create is invoked once with this value.
-    # spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
+    # session has exactly one execution, so it equals session_id; the SDK
+    # derives it from the session_start's sessionId.
+    # spec: §15.7 (TaskID derived from sessionId), §7.2 (one execution per session)
     task_id: str = ""
     # runtime_options is the effective caller options map.
     runtime_options: dict[str, Any] = field(default_factory=dict)
     # workspace_plan references the §14 materialized workspace plan.
     workspace_plan: WorkspacePlan | None = None
-    # credentials is the current §4.7 credential bundle. The SDK
-    # refreshes it in place on rotation rather than re-invoking
-    # on_create. None when the runtime has no active lease.
+    # credentials is the session's credential bundle, read from the file
+    # the session_start's credentialsPath names. None when the frame
+    # names no credentialsPath. The SDK reloads the session's bundle on a
+    # credentials_rotated event rather than re-invoking on_create.
     credentials: CredentialBundle | None = None
-    # manifest_snapshot is the parsed adapter manifest.
+    # experiment_context is the session_start's experimentContext; None
+    # when the session is not enrolled in an experiment.
+    experiment_context: ExperimentContext | None = None
+    # tracing_context is the session_start's tracingContext; None for a
+    # top-level session.
+    tracing_context: dict[str, str] | None = None
+    # llm is the session_start's llm; None when the session has no active
+    # LLM credential lease.
+    llm: LLMConfig | None = None
+    # manifest_snapshot is the parsed pod-scoped adapter manifest.
     manifest_snapshot: AdapterManifest | None = None
 
 
@@ -399,17 +494,17 @@ class Message:
     # envelope is the canonical §15.4 MessageEnvelope. All message
     # semantics live on this field.
     envelope: MessageEnvelope
-    # session_id is the session the message was delivered to.
+    # session_id is the session the message was delivered to, the
+    # frame's sessionId.
     session_id: str = ""
     # task_id is the external-protocol task identifier of the session the
-    # message belongs to. It equals the session id (the adapter derives it
-    # from session_id) and always equals CreateRequest.task_id, which is
-    # frozen for the session's lifetime.
-    # spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
+    # message belongs to. It equals session_id and always equals the
+    # session's CreateRequest.task_id.
+    # spec: §15.7 (TaskID derived from sessionId), §7.2 (one execution per session)
     task_id: str = ""
-    # sequence is a monotonic, SDK-assigned per-task counter ordering
-    # messages as the SDK observed them on stdin. It is local to this
-    # process and suitable for logging only.
+    # sequence is a monotonic, SDK-assigned per-session counter ordering
+    # the session's messages as the SDK observed them on stdin. It is
+    # local to this process and suitable for logging only.
     sequence: int = 0
 
 

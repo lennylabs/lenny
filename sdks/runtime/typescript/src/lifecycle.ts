@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// This module implements the §15.4.3 Full-level lifecycle channel. The
+// This module implements the §15.4.3 Full-level CH-RUNTIMEOPS. The
 // SDK answers the protocol-level handshake and the checkpoint,
 // interrupt, credential-rotation, and deadline events automatically; a
 // runtime that needs to react registers callbacks through
@@ -20,46 +20,77 @@ const LIFECYCLE_CAPABILITIES = [
   "deadline_signal",
 ];
 
-// LifecycleEvent is a decoded lifecycle-channel frame handed to a
-// runtime callback. raw carries the full frame for fields the typed
-// callbacks do not cover.
+// SESSION_SCOPED_EVENTS are the adapter-to-runtime CH-RUNTIMEOPS frames
+// that name a session. The SDK hands each to the session it names and
+// drops, without a reply, one naming a session the runtime does not hold or
+// whose context it failed to create. The adapter writes them only after it
+// reads the session's session_started, so the SDK keeps no queue of early
+// events.
+//
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+const SESSION_SCOPED_EVENTS = new Set([
+  "checkpoint_request",
+  "checkpoint_complete",
+  "interrupt_request",
+  "credentials_rotated",
+  "deadline_approaching",
+  "deadline_signal",
+  "files_updated",
+]);
+
+// LifecycleEvent is a decoded CH-RUNTIMEOPS frame handed to a runtime
+// callback. sessionId names the session a session-scoped event concerns.
+// raw carries the full frame for fields the typed callbacks do not cover.
 export interface LifecycleEvent {
   type: string;
+  sessionId: string;
   raw: Record<string, unknown>;
 }
 
 // LifecycleHooks holds the optional runtime callbacks for lifecycle
-// events. An undefined hook means the SDK answers with the default
-// behavior.
+// events. Each callback receives the session the event names. An
+// undefined hook means the SDK answers with the default behavior.
 export interface LifecycleHooks {
   // onCheckpoint runs on a §15.4.3 checkpoint_request before the SDK
-  // replies checkpoint_ready. The callback quiesces runtime output.
-  onCheckpoint?(checkpointId: string): Promise<void> | void;
+  // replies checkpoint_ready. The callback quiesces the named session's
+  // output.
+  onCheckpoint?(sessionId: string, checkpointId: string): Promise<void> | void;
   // onInterrupt runs on a §15.4.3 interrupt_request before the SDK
-  // replies interrupt_acknowledged. The callback brings the runtime to
-  // a safe stop point.
-  onInterrupt?(interruptId: string): Promise<void> | void;
-  // onCredentialsRotated runs after the SDK re-reads the §4.7
-  // credential file on a credentials_rotated event.
-  onCredentialsRotated?(creds: CredentialBundle | undefined): void;
-  // onDeadline runs on a §15.4.3 deadline_approaching or
-  // deadline_signal event.
+  // replies interrupt_acknowledged. The callback brings the named
+  // session's work to a safe stop point.
+  onInterrupt?(sessionId: string, interruptId: string): Promise<void> | void;
+  // onCredentialsRotated runs after the SDK re-reads the credential file a
+  // credentials_rotated event names for the named session, with the
+  // session's refreshed bundle.
+  onCredentialsRotated?(
+    sessionId: string,
+    creds: CredentialBundle | undefined,
+  ): void;
+  // onDeadline runs on a §15.4.3 deadline_approaching or deadline_signal
+  // event for a session the runtime holds.
   onDeadline?(event: LifecycleEvent): void;
 }
 
-// LifecycleHost is the subset of the SDK session the lifecycle channel
-// reaches: the stdout frame writer (for the §15.4.6 terminate
-// response), credential reload, the terminate callback, and the
-// diagnostic logger.
+// LifecycleHost is the subset of the SDK process the CH-RUNTIMEOPS
+// reaches. heldSession returns the live session a session-scoped event
+// names, or undefined when the runtime does not hold it or failed to
+// create its context. reloadCredentials re-reads the file an event names
+// into that session's bundle and resolves to the bundle the session holds
+// afterwards. endProcess handles the terminate event: it records the
+// termination reason every live session's onTerminate receives and stops
+// the frame loop.
 export interface LifecycleHost {
   stdoutWriter: FrameWriter;
-  reloadCredentials(): CredentialBundle | undefined;
-  invokeTerminate(reason: string, deadlineMs: number): Promise<void>;
-  stopFrameLoop(): void;
+  heldSession(sessionId: string): unknown;
+  reloadCredentials(
+    session: unknown,
+    path: string,
+  ): Promise<CredentialBundle | undefined>;
+  endProcess(reason: string, deadlineMs: number): void;
   log(msg: string): void;
 }
 
-// Lifecycle is the §15.4.3 Full-level lifecycle channel surface. The
+// Lifecycle is the §15.4.3 Full-level CH-RUNTIMEOPS surface. The
 // channel is constructed only when the runtime runs at Full level and
 // the manifest advertised a lifecycle socket.
 export class Lifecycle {
@@ -73,7 +104,7 @@ export class Lifecycle {
     private readonly host: LifecycleHost,
   ) {}
 
-  // dial opens the §15.4.3 lifecycle channel: it dials the
+  // dial opens the §15.4.3 CH-RUNTIMEOPS: it dials the
   // manifest-advertised socket, completes the lifecycle_capabilities /
   // lifecycle_support handshake, and starts the event loop.
   static async dial(
@@ -83,7 +114,7 @@ export class Lifecycle {
     host: LifecycleHost,
   ): Promise<Lifecycle> {
     if (!manifest.runtimeOps?.socket) {
-      throw new Error("adapter manifest has no lifecycle channel socket");
+      throw new Error("adapter manifest has no CH-RUNTIMEOPS socket");
     }
     const conn = await dialUnixSocket(
       manifest.runtimeOps.socket,
@@ -126,7 +157,7 @@ export class Lifecycle {
     return lc;
   }
 
-  // loop processes inbound lifecycle-channel frames until the
+  // loop processes inbound CH-RUNTIMEOPS frames until the
   // connection closes or the adapter sends terminate.
   private async loop(): Promise<void> {
     for (;;) {
@@ -150,39 +181,66 @@ export class Lifecycle {
         continue;
       }
       const kind = typeof frame.type === "string" ? frame.type : "";
-      switch (kind) {
-        case "checkpoint_request":
-          await this.handleCheckpoint(frame);
-          break;
-        case "interrupt_request":
-          await this.handleInterrupt(frame);
-          break;
-        case "credentials_rotated":
-          await this.handleCredentialsRotated(frame);
-          break;
-        case "deadline_approaching":
-        case "deadline_signal":
-          this.handleDeadline({ type: kind, raw: frame });
-          break;
-        case "terminate":
-          await this.handleTerminate(frame);
-          return;
-        default:
-          this.host.log(`ignoring unknown lifecycle event "${kind}"`);
+      if (kind === "terminate") {
+        await this.handleTerminate(frame);
+        return;
       }
+      if (!SESSION_SCOPED_EVENTS.has(kind)) {
+        this.host.log(`ignoring unknown lifecycle event "${kind}"`);
+        continue;
+      }
+      await this.route(kind, frame);
+    }
+  }
+
+  // route hands a session-scoped event to the session it names, or drops
+  // it without a reply when the runtime does not hold that session.
+  //
+  // spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+  private async route(
+    kind: string,
+    frame: Record<string, unknown>,
+  ): Promise<void> {
+    const sessionId =
+      typeof frame.sessionId === "string" ? frame.sessionId : "";
+    const session = this.host.heldSession(sessionId);
+    if (session === undefined) {
+      this.host.log(
+        `dropping lifecycle event "${kind}" for session "${sessionId}", which this runtime does not hold`,
+      );
+      return;
+    }
+    switch (kind) {
+      case "checkpoint_request":
+        await this.handleCheckpoint(sessionId, frame);
+        break;
+      case "interrupt_request":
+        await this.handleInterrupt(sessionId, frame);
+        break;
+      case "credentials_rotated":
+        await this.handleCredentialsRotated(session, sessionId, frame);
+        break;
+      case "deadline_approaching":
+      case "deadline_signal":
+        this.handleDeadline({ type: kind, sessionId, raw: frame });
+        break;
+      default:
+      // checkpoint_complete and files_updated need no reply.
     }
   }
 
   // handleCheckpoint answers a §15.4.3 checkpoint_request: it runs the
-  // runtime quiesce callback and replies checkpoint_ready.
+  // runtime quiesce callback for the named session and replies
+  // checkpoint_ready.
   private async handleCheckpoint(
+    sessionId: string,
     frame: Record<string, unknown>,
   ): Promise<void> {
     const checkpointId =
       typeof frame.checkpointId === "string" ? frame.checkpointId : "";
     if (this.hooks.onCheckpoint) {
       try {
-        await this.hooks.onCheckpoint(checkpointId);
+        await this.hooks.onCheckpoint(sessionId, checkpointId);
       } catch (err) {
         this.host.log(`onCheckpoint callback error: ${(err as Error).message}`);
       }
@@ -191,15 +249,17 @@ export class Lifecycle {
   }
 
   // handleInterrupt answers a §15.4.3 interrupt_request: it runs the
-  // runtime safe-stop callback and replies interrupt_acknowledged.
+  // runtime safe-stop callback for the named session and replies
+  // interrupt_acknowledged.
   private async handleInterrupt(
+    sessionId: string,
     frame: Record<string, unknown>,
   ): Promise<void> {
     const interruptId =
       typeof frame.interruptId === "string" ? frame.interruptId : "";
     if (this.hooks.onInterrupt) {
       try {
-        await this.hooks.onInterrupt(interruptId);
+        await this.hooks.onInterrupt(sessionId, interruptId);
       } catch (err) {
         this.host.log(`onInterrupt callback error: ${(err as Error).message}`);
       }
@@ -207,18 +267,33 @@ export class Lifecycle {
     await this.writer.write({ type: "interrupt_acknowledged", interruptId });
   }
 
-  // handleCredentialsRotated answers a §15.4.3 credentials_rotated
-  // event: it re-reads the §4.7 credential file in place, runs the
-  // runtime rotation callback, and replies credentials_acknowledged.
+  // handleCredentialsRotated answers a §15.4.3 credentials_rotated event:
+  // it re-reads the credential file the event names into the named
+  // session's bundle, runs the runtime rotation callback, and replies
+  // credentials_acknowledged. The session comes from the frame's sessionId
+  // rather than from parsing credentialsPath, whose root is
+  // operator-configurable.
+  //
+  // spec: §28.5.3 (CH-RUNTIMEOPS, credentials_rotated), §4.7.11 (item 4).
   private async handleCredentialsRotated(
+    session: unknown,
+    sessionId: string,
     frame: Record<string, unknown>,
   ): Promise<void> {
     const leaseId = typeof frame.leaseId === "string" ? frame.leaseId : "";
     const provider =
       typeof frame.provider === "string" ? frame.provider : "";
-    const creds = this.host.reloadCredentials();
+    const path =
+      typeof frame.credentialsPath === "string" ? frame.credentialsPath : "";
+    const creds = await this.host.reloadCredentials(session, path);
     if (this.hooks.onCredentialsRotated) {
-      this.hooks.onCredentialsRotated(creds);
+      try {
+        this.hooks.onCredentialsRotated(sessionId, creds);
+      } catch (err) {
+        this.host.log(
+          `onCredentialsRotated callback error: ${(err as Error).message}`,
+        );
+      }
     }
     await this.writer.write({
       type: "credentials_acknowledged",
@@ -237,10 +312,10 @@ export class Lifecycle {
     }
   }
 
-  // handleTerminate answers a §15.4.3 terminate event: it emits a final
-  // §28.5.3 response frame on stdout (carrying a DEADLINE_EXCEEDED
-  // error, per the §15.4.6 deadline-signal expectation), invokes
-  // onTerminate, and stops the frame loop so the runtime exits.
+  // handleTerminate answers a CH-RUNTIMEOPS terminate event: it emits a
+  // final §28.5.3 response frame on stdout carrying a DEADLINE_EXCEEDED
+  // error, records the termination reason every live session's onTerminate
+  // receives, and stops the frame loop so the runtime exits.
   private async handleTerminate(
     frame: Record<string, unknown>,
   ): Promise<void> {
@@ -248,33 +323,34 @@ export class Lifecycle {
     const reason = reasonRaw === "" ? "lifecycle_terminate" : reasonRaw;
     const deadlineMs =
       typeof frame.deadlineMs === "number" ? frame.deadlineMs : 0;
-
-    // §15.4.6 deadline-signal handling: the runtime writes a final
-    // response on the stdout protocol channel before it exits.
     try {
       await this.host.stdoutWriter.write({
         type: "response",
         output: [],
         error: { code: "DEADLINE_EXCEEDED", message: reason },
+        sessionId: typeof frame.sessionId === "string" ? frame.sessionId : "",
       });
     } catch (err) {
       this.host.log(`write terminate response: ${(err as Error).message}`);
     }
-
-    await this.host.invokeTerminate(reason, deadlineMs);
-    this.host.stopFrameLoop();
+    this.host.endProcess(reason, deadlineMs);
   }
 
-  // send writes an arbitrary frame on the lifecycle channel. It is the
-  // escape hatch for lifecycle messages the SDK does not model.
+  // send writes an arbitrary frame on the CH-RUNTIMEOPS. It is the escape
+  // hatch for lifecycle messages the SDK does not model. It applies no
+  // per-session filter, because a runtime may still report a late
+  // llm_request_completed for a request that started before the session's
+  // session_end.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
   send(frame: unknown): Promise<void> {
     if (this.closed) {
-      return Promise.reject(new Error("lifecycle channel closed"));
+      return Promise.reject(new Error("CH-RUNTIMEOPS closed"));
     }
     return this.writer.write(frame);
   }
 
-  // close releases the lifecycle-channel connection.
+  // close releases the CH-RUNTIMEOPS connection.
   close(): void {
     if (this.closed) {
       return;

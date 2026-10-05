@@ -3,15 +3,24 @@
 // This module is the §15.7 entry point of the TypeScript runtime-author
 // SDK. run wires up the §28.5.3 stdin/stdout framing, optionally dials
 // the manifest-advertised Unix sockets (platform MCP server, connector
-// MCP servers, lifecycle channel) with the §15.4.3 manifest-nonce
-// handshake, parses the §4.7 credential file, and drives the §15.4.2
-// dispatch loop.
+// MCP servers, CH-RUNTIMEOPS) once per process with the §15.4.3
+// manifest-nonce handshake, and drives the frame loop. One process serves
+// every session the pod holds: each session_start opens a session with its
+// own context and promise chain, and each session_end releases it
+// (§4.7.10).
 
 import { readFile } from "node:fs/promises";
 import type { Readable, Writable } from "node:stream";
 import { Lifecycle } from "./lifecycle.js";
 import type { LifecycleHooks } from "./lifecycle.js";
 import { Tools } from "./mcp.js";
+import {
+  SessionRecord,
+  SessionTable,
+  decodeSessionStart,
+  loadCredentialBundle,
+  sessionErrorResponse,
+} from "./session.js";
 import { AdapterToolset, ToolCallRegistry } from "./tool.js";
 import type { InboundToolResult } from "./tool.js";
 import { FrameWriter, LineReader, dialUnixSocket } from "./transport.js";
@@ -49,7 +58,7 @@ const DEFAULT_MANIFEST_PATH = "/run/lenny/adapter-manifest.json";
 export interface RunOptions {
   // level is the §15.4.3 integration level. Defaults to "basic".
   // "standard" dials the platform and connector MCP servers; "full"
-  // additionally opens the lifecycle channel.
+  // additionally opens the CH-RUNTIMEOPS.
   level?: IntegrationLevel;
   // lifecycle holds the Full-level lifecycle-event callbacks. Setting
   // it implies level "full".
@@ -58,12 +67,6 @@ export interface RunOptions {
   // the LENNY_ADAPTER_MANIFEST environment variable when set, otherwise
   // /run/lenny/adapter-manifest.json.
   manifestPath?: string;
-  // credentialsPath is the §4.7 runtime credential file path used when
-  // the adapter manifest carries no credentialsPath. The manifest's
-  // value wins, because the adapter writes one file per session at
-  // /run/lenny/slots/{sessionId}/credentials.json and no fixed location
-  // names it. spec: §4.7; §6.1.
-  credentialsPath?: string;
   // socketTransport enables the §4.7 abstract-Unix-socket transport
   // fallback. When true (the default) and LENNY_ADAPTER_SOCKET is set,
   // run dials that socket instead of using stdin/stdout.
@@ -86,7 +89,6 @@ interface ResolvedConfig {
   level: IntegrationLevel;
   lifecycle: LifecycleHooks;
   manifestPath: string;
-  credentialsPath: string;
   socketTransport: boolean;
   dialTimeoutMs: number;
   input?: Readable;
@@ -106,7 +108,6 @@ function resolveConfig(opts: RunOptions): ResolvedConfig {
       opts.manifestPath ??
       process.env[MANIFEST_ENV_VAR] ??
       DEFAULT_MANIFEST_PATH,
-    credentialsPath: opts.credentialsPath ?? "",
     socketTransport: opts.socketTransport ?? true,
     dialTimeoutMs: opts.dialTimeoutMs ?? 5000,
     input: opts.input,
@@ -132,72 +133,61 @@ function stampParts(parts: MessagePart[]): MessagePart[] {
 }
 
 // run wires up the §28.5.3 stdin/stdout framing, dials the higher-level
-// channels for the configured integration level, parses the §4.7
-// credential file, and drives the §15.4.2 dispatch loop. It resolves
-// when the adapter closes the inbound stream or sends a shutdown frame.
+// channels for the configured integration level once per process, and
+// drives the frame loop. Each session_start opens a session with its own
+// context and promise chain, and each session loads its credentials from
+// the path its session_start names. run resolves when the adapter closes
+// the inbound stream or sends a shutdown frame, after it ends every
+// session the process holds.
 //
 // run with no options covers the Basic level. Set level to "standard"
 // or "full" to opt into the higher integration levels.
+//
+// spec: §15.7 (API surface, Run), §4.7.10 (runtime process lifetime).
 export async function run(handler: Handler, opts: RunOptions = {}): Promise<void> {
   if (!handler) {
     throw new Error("runtime: run requires a handler");
   }
-  const session = new Session(handler, resolveConfig(opts));
-  return session.run();
+  return new RuntimeProcess(handler, resolveConfig(opts)).run();
 }
 
-// Session holds the per-process SDK state for one run call.
-class Session {
+// errorMessage returns the message of a thrown value.
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// RuntimeProcess holds the SDK state of one run call. The manifest, the
+// MCP connections, and the CH-RUNTIMEOPS are process-scoped and shared by
+// every session; each session's own context lives in its SessionRecord.
+class RuntimeProcess {
   private writer!: FrameWriter;
   private manifest?: AdapterManifest;
-  // credPath is the §4.7 credential file this runtime reads, resolved
-  // from the manifest at startup with the credentialsPath option as the
-  // fallback. spec: §4.7; §6.1.
-  private credPath = "";
-  private credentials?: CredentialBundle;
   private tools?: Tools;
   private lifecycle?: Lifecycle;
   private readonly registry = new ToolCallRegistry();
-  private sequence = 0;
-  private terminated = false;
+  private readonly sessions = new SessionTable();
+  // unreleased holds every record whose context is not yet released,
+  // including one a session_end removed, so run waits for each.
+  private readonly unreleased = new Set<SessionRecord>();
   private exitReason?: TerminationReason;
   private loopStopped = false;
-
-  // dispatchTail serializes message handling so the §15.4
-  // coordinator-local FIFO contract holds: handlers run one at a time
-  // in the order the loop read their frames.
-  private dispatchTail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly handler: Handler,
     private readonly cfg: ResolvedConfig,
   ) {}
 
-  // run drives one runtime lifecycle: resolve the transport, load the
-  // manifest and credentials, dial the higher-level channels for the
-  // configured level, then run the §28.5.3 frame loop.
+  // run drives one runtime process: resolve the transport, load the
+  // manifest, dial the higher-level channels for the configured level,
+  // run the §28.5.3 frame loop, and end every session once the loop ends.
   async run(): Promise<void> {
     const transport = await this.openTransport();
     this.writer = new FrameWriter(transport.output);
 
-    // §4.7 manifest and credential file. Both are optional: a
-    // Basic-level runtime is exercised without a manifest, and a
-    // runtime whose pool has no active lease has no credential file.
+    // §4.7 manifest. It is optional: a Basic-level runtime is exercised
+    // without one.
     await this.loadManifest();
-    this.credPath = this.resolveCredentialsPath();
-    await this.loadCredentials();
-
     await this.startChannels();
-
-    // onCreate runs once before the first message with the task-scoped
-    // snapshot the SDK assembled from the manifest and credential file.
-    try {
-      await this.handler.onCreate(this.buildCreateRequest());
-    } catch (err) {
-      this.closeChannels();
-      transport.close();
-      throw new Error(`runtime: onCreate: ${(err as Error).message}`);
-    }
 
     let loopErr: Error | undefined;
     try {
@@ -206,20 +196,17 @@ class Session {
       loopErr = err as Error;
     }
 
-    // Wait for every queued message handler to write its response
-    // frame before onTerminate.
-    await this.dispatchTail;
-
-    // onTerminate runs once on the way out. The reason is the shutdown
-    // frame's reason when the loop exited on a shutdown; otherwise the
-    // adapter closed the transport without one. A lifecycle terminate,
-    // if it fired, already invoked onTerminate and this call is a
-    // no-op.
-    const reason: TerminationReason = this.exitReason ?? {
-      reason: "stdin_closed",
-      deadlineMs: 0,
-    };
-    await this.invokeTerminate(reason.reason, reason.deadlineMs);
+    // Every live session dispatches the messages it queued and then runs
+    // onTerminate with the shutdown frame's reason, or stdin_closed when
+    // the adapter closed the transport without one. run resolves after
+    // every session's context was released, including one a session_end
+    // removed whose release is still running.
+    this.closeSessions(
+      this.exitReason ?? { reason: "stdin_closed", deadlineMs: 0 },
+    );
+    while (this.unreleased.size > 0) {
+      await Promise.all([...this.unreleased].map((rec) => rec.released));
+    }
 
     this.registry.rejectAll(new Error("runtime: inbound stream closed"));
     this.closeChannels();
@@ -230,23 +217,21 @@ class Session {
   }
 
   // loop is the §28.5.3 frame loop. It reads newline-delimited JSON and
-  // routes each frame by type: message frames are dispatched in FIFO
-  // order, heartbeat frames are answered immediately, tool_result
-  // frames are correlated, and a shutdown frame ends the loop. Unknown
-  // frame types are ignored for forward compatibility (§28.5.3).
+  // routes each frame by type without waiting on any session's work:
+  // session_start, message, tool_result, and session_end go to the
+  // addressed session, a heartbeat is answered inline, and a shutdown
+  // frame ends the loop. Unknown frame types are ignored for forward
+  // compatibility.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK).
   private async loop(input: Readable): Promise<void> {
     const reader = new LineReader(input);
-    for (;;) {
-      if (this.loopStopped) {
-        return;
-      }
+    while (!this.loopStopped) {
       let line: string | null;
       try {
         line = await reader.next();
       } catch (err) {
-        throw new ProtocolError(
-          `input read error: ${(err as Error).message}`,
-        );
+        throw new ProtocolError(`input read error: ${errorMessage(err)}`);
       }
       if (line === null) {
         return;
@@ -254,85 +239,307 @@ class Session {
       if (line.length === 0) {
         continue;
       }
-      let frame: { type?: unknown };
+      let frame: Record<string, unknown>;
       try {
-        frame = JSON.parse(line) as { type?: unknown };
+        frame = JSON.parse(line) as Record<string, unknown>;
       } catch (err) {
-        throw new ProtocolError(
-          `malformed JSON Lines on input: ${(err as Error).message}`,
-        );
+        throw new ProtocolError(`malformed JSON Lines on input: ${errorMessage(err)}`);
       }
-      const kind = typeof frame.type === "string" ? frame.type : "";
-      switch (kind) {
-        case "message":
-          this.enqueueMessage(line);
-          break;
-        case "heartbeat":
-          await this.writer.write({ type: "heartbeat_ack" });
-          break;
-        case "tool_result":
-          this.handleToolResult(line);
-          break;
-        case "shutdown":
-          this.handleShutdown(line);
-          return;
-        default:
-          this.cfg.logger(`runtime: ignoring unknown frame type "${kind}"`);
+      if (await this.routeFrame(frame)) {
+        return;
       }
     }
   }
 
-  // enqueueMessage decodes one §28.5.3 message frame and chains its
-  // handler onto the dispatch tail so messages are processed one at a
-  // time in arrival order.
-  private enqueueMessage(line: string): void {
-    let env: MessageEnvelope;
-    try {
-      env = JSON.parse(line) as MessageEnvelope;
-    } catch (err) {
+  // routeFrame handles one inbound frame. It resolves true for a shutdown
+  // frame, which ends the loop.
+  private async routeFrame(frame: Record<string, unknown>): Promise<boolean> {
+    const kind =
+      frame !== null && typeof frame === "object" && typeof frame.type === "string"
+        ? frame.type
+        : "";
+    switch (kind) {
+      case "session_start":
+        this.handleSessionStart(frame);
+        break;
+      case "session_end":
+        this.handleSessionEnd(frame);
+        break;
+      case "message":
+        this.routeMessage(frame as unknown as MessageEnvelope);
+        break;
+      case "heartbeat":
+        await this.writer.write({ type: "heartbeat_ack" });
+        break;
+      case "tool_result":
+        this.handleToolResult(frame as unknown as InboundToolResult);
+        break;
+      case "shutdown":
+        this.handleShutdown(frame);
+        return true;
+      default:
+        this.cfg.logger(`runtime: ignoring unknown frame type "${kind}"`);
+    }
+    return false;
+  }
+
+  // handleSessionStart opens the session a session_start names. A frame
+  // for a session the runtime already holds creates nothing and is
+  // answered with session_started again, carrying the held session's
+  // creation error when there is one.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start rules 2 and 3).
+  private handleSessionStart(frame: Record<string, unknown>): void {
+    const start = decodeSessionStart(frame);
+    if (start.sessionId === "" || start.startId === "") {
+      throw new ProtocolError("session_start carries no sessionId or no startId");
+    }
+    const { rec, held } = this.sessions.open(start);
+    if (held) {
+      this.ackDuplicateStart(rec, start.startId);
+      return;
+    }
+    this.unreleased.add(rec);
+    this.chain(rec, () => this.create(rec));
+  }
+
+  // ackDuplicateStart answers a duplicate session_start for a held
+  // session. While the held session's creation is still running the answer
+  // waits for it, so session_started never precedes the context it
+  // reports.
+  private ackDuplicateStart(rec: SessionRecord, startId: string): void {
+    if (!rec.createDone) {
+      rec.pendingAcks.push(startId);
+      return;
+    }
+    void this.writeSessionStarted(rec, startId, rec.createError);
+  }
+
+  // handleSessionEnd ends the start of the session's live record. The loop
+  // removes the record from the routing table, marks it ended so no later
+  // response or tool_call for it is written, rejects its pending tool_call
+  // waiters, and chains its release. The session's chain skips the
+  // messages still queued, waits for the in-flight handler, and runs
+  // onTerminate once the creation has finished. A session_end for a
+  // session the runtime does not hold is ignored.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rules 2 and 3).
+  private handleSessionEnd(frame: Record<string, unknown>): void {
+    const sessionId = typeof frame.sessionId === "string" ? frame.sessionId : "";
+    const rec = this.sessions.remove(sessionId);
+    if (!rec) {
       this.cfg.logger(
-        `runtime: malformed message envelope: ${(err as Error).message}`,
+        `runtime: ignoring session_end for session "${sessionId}", which this runtime does not hold`,
       );
       return;
     }
-    this.dispatchTail = this.dispatchTail.then(() => this.handleMessage(env));
+    rec.ended = true;
+    rec.endRead = true;
+    this.registry.cancelOwner(rec);
+    this.chain(rec, () => this.release(rec));
   }
 
-  // handleMessage invokes onMessage for one decoded §28.5.3 message and
-  // writes the resulting response frame. A handler rejection is
-  // reported as a structured response error so the adapter records the
-  // failure without losing context (§28.5.3 error reporting via
-  // response).
-  private async handleMessage(env: MessageEnvelope): Promise<void> {
-    this.sequence += 1;
+  // routeMessage chains a message frame onto its session's promise chain.
+  // A message for a session whose session_start the runtime never read is
+  // answered at once with a RUNTIME_ERROR response; a message for a session
+  // whose creation failed is answered the same way on the session's chain,
+  // in order. A message for a session the runtime read a session_end for,
+  // and that no later session_start reopened, is logged and dropped: after
+  // the session_end the runtime writes no response addressed to the
+  // session.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end
+  // rule 2).
+  private routeMessage(env: MessageEnvelope): void {
+    const sessionId = env.sessionId ?? "";
+    const rec = this.sessions.lookup(sessionId);
+    if (rec) {
+      this.chain(rec, () => (rec.endRead ? undefined : this.dispatch(rec, env)));
+      return;
+    }
+    if (this.sessions.endedSince(sessionId)) {
+      this.cfg.logger(
+        `runtime: dropping message "${env.id}" for session "${sessionId}", which already ended`,
+      );
+      return;
+    }
+    this.cfg.logger(
+      `runtime: message "${env.id}" for session "${sessionId}", which this runtime does not hold`,
+    );
+    void this.safeWrite(
+      sessionErrorResponse(sessionId, `no session ${sessionId} is open on this runtime`),
+    );
+  }
+
+  // chain appends step to the session's promise chain. A step that throws
+  // is logged, and the chain continues.
+  private chain(rec: SessionRecord, step: () => Promise<void> | void): void {
+    rec.tail = rec.tail.then(step).catch((err: unknown) => {
+      this.cfg.logger(`runtime: session ${rec.id}: ${errorMessage(err)}`);
+    });
+  }
+
+  // create loads the session's credential bundle, invokes onCreate, and
+  // writes the session's session_started, with error when either failed.
+  // It then answers any duplicate session_start read meanwhile. A failure
+  // is the session's own: the process keeps serving its other sessions.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started rules 1 and 2,
+  // Session errors), §15.7 (Handler).
+  private async create(rec: SessionRecord): Promise<void> {
+    const err = await this.createContext(rec);
+    if (err) {
+      this.cfg.logger(`runtime: session ${rec.id}: ${err.message}`);
+    }
+    rec.createError = err;
+    await this.writeSessionStarted(rec, rec.startId, err);
+    rec.createDone = true;
+    const acks = rec.pendingAcks;
+    rec.pendingAcks = [];
+    for (const startId of acks) {
+      await this.writeSessionStarted(rec, startId, err);
+    }
+  }
+
+  // createContext reads the credential file the session_start names and
+  // invokes onCreate with the session's CreateRequest. It resolves to the
+  // failure, or undefined.
+  private async createContext(rec: SessionRecord): Promise<Error | undefined> {
+    try {
+      rec.credentials = await loadCredentialBundle(rec.start.credentialsPath);
+    } catch (err) {
+      return err as Error;
+    }
+    const req: CreateRequest = {
+      sessionId: rec.id,
+      taskId: rec.id,
+      runtimeOptions: this.manifest?.runtimeOptions,
+      credentials: rec.credentials,
+      experimentContext: rec.start.experimentContext,
+      tracingContext: rec.start.tracingContext,
+      llm: rec.start.llm,
+      manifestSnapshot: this.manifest,
+    };
+    try {
+      await this.handler.onCreate(req);
+    } catch (err) {
+      return new Error(`onCreate: ${errorMessage(err)}`);
+    }
+    return undefined;
+  }
+
+  // dispatch handles one queued message for the session.
+  private async dispatch(rec: SessionRecord, env: MessageEnvelope): Promise<void> {
+    if (rec.createError) {
+      await this.writeFor(
+        rec,
+        sessionErrorResponse(rec.id, `the context of session ${rec.id} could not be created`),
+      );
+      return;
+    }
+    await this.handleMessage(rec, env);
+  }
+
+  // release runs onTerminate for the session and drops its record. It runs
+  // on the session's chain after the in-flight handler settled, so
+  // onTerminate never overlaps one of the session's own handler calls. It
+  // runs for every record the SDK opened, whether its creation succeeded
+  // or failed, so every session ends the same way.
+  //
+  // spec: §15.7 (Runtime Author SDKs), §28.5.3 (CH-MSGSOCK, Inbound:
+  // session_end).
+  private async release(rec: SessionRecord): Promise<void> {
+    try {
+      await this.handler.onTerminate(rec.id, rec.terminationReason());
+    } catch (err) {
+      this.cfg.logger(`runtime: session ${rec.id}: onTerminate error: ${errorMessage(err)}`);
+    }
+    rec.markReleased();
+    this.sessions.forget(rec);
+    this.unreleased.delete(rec);
+  }
+
+  // closeSessions chains the release of every live session with reason, on
+  // EOF or shutdown. Each session dispatches the messages it already
+  // queued and then runs onTerminate with reason.
+  private closeSessions(reason: TerminationReason): void {
+    for (const rec of this.sessions.liveRecords()) {
+      rec.closeReason ??= reason;
+      this.chain(rec, () => this.release(rec));
+    }
+  }
+
+  // heldSession returns the live record a session-scoped CH-RUNTIMEOPS
+  // event names, or undefined when the runtime does not hold the session
+  // or failed to create its context. The caller drops the event without a
+  // reply.
+  //
+  // spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+  private heldSession(sessionId: string): SessionRecord | undefined {
+    const rec = this.sessions.lookup(sessionId);
+    if (!rec || rec.createError) {
+      return undefined;
+    }
+    return rec;
+  }
+
+  // writeSessionStarted writes the session_started frame answering the
+  // session_start whose startId is startId. It is written even after the
+  // session's session_end, because the frame answers a session_start read
+  // before it.
+  private async writeSessionStarted(
+    rec: SessionRecord,
+    startId: string,
+    err: Error | undefined,
+  ): Promise<void> {
+    await this.safeWrite({
+      type: "session_started",
+      sessionId: rec.id,
+      startId,
+      ...(err ? { error: { code: "RUNTIME_ERROR", message: err.message } } : {}),
+    });
+  }
+
+  // writeFor writes a frame addressed to rec, dropping it when the session
+  // already ended. The check and the enqueue happen in one turn of the
+  // event loop, so no frame for a session follows the frame loop's read of
+  // its session_end.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+  private async writeFor(rec: SessionRecord, frame: Record<string, unknown>): Promise<void> {
+    if (rec.ended) {
+      this.cfg.logger(`runtime: session ${rec.id} ended; dropping its ${String(frame.type)} frame`);
+      return;
+    }
+    await this.safeWrite(frame);
+  }
+
+  // handleMessage invokes onMessage for one of the session's messages and
+  // writes the resulting response frame. It runs on the session's chain,
+  // one message at a time. A handler rejection is reported as a structured
+  // response error so the adapter records the failure without losing
+  // context (§28.5.3 error reporting via response). A response for a
+  // session that already ended is dropped.
+  private async handleMessage(rec: SessionRecord, env: MessageEnvelope): Promise<void> {
+    rec.sequence += 1;
     const msg: Message = {
       envelope: env,
-      sessionId: this.manifest?.sessionId ?? "",
-      taskId: this.manifest?.taskId ?? "",
-      sequence: this.sequence,
+      sessionId: rec.id,
+      taskId: rec.id,
+      sequence: rec.sequence,
     };
     const tools: HandlerTools = {
-      adapter: new AdapterToolset(
-        this.writer,
-        this.registry,
-        this.cfg.dialTimeoutMs,
-        env.sessionId,
-      ),
+      adapter: new AdapterToolset(this.writer, this.registry, this.cfg.dialTimeoutMs, rec),
       platform: this.tools,
-      credentials: this.credentials,
+      credentials: rec.credentials,
     };
 
     let reply: Reply;
     try {
       reply = await this.handler.onMessage(msg, tools);
     } catch (err) {
-      this.cfg.logger(`runtime: onMessage error: ${(err as Error).message}`);
-      await this.safeWrite({
-        type: "response",
-        output: [],
-        error: { code: "RUNTIME_ERROR", message: (err as Error).message },
-        sessionId: env.sessionId ?? "",
-      });
+      this.cfg.logger(`runtime: session ${rec.id}: onMessage error: ${errorMessage(err)}`);
+      await this.writeFor(rec, sessionErrorResponse(rec.id, errorMessage(err)));
       return;
     }
 
@@ -342,48 +549,38 @@ class Session {
     if (reply.streaming && !reply.final) {
       return;
     }
-    await this.safeWrite({
+    await this.writeFor(rec, {
       type: "response",
       output: stampParts(reply.parts ?? []),
       ...(reply.error ? { error: reply.error } : {}),
-      // §28.5.3: the runtime echoes the session identifier it was handed
-      // on every session-scoped frame it emits, on every pod.
-      sessionId: env.sessionId ?? "",
+      // §28.5.3: every session-scoped frame carries the session it
+      // addresses.
+      sessionId: rec.id,
     });
   }
 
   // handleToolResult routes an inbound §28.5.3 tool_result frame to the
-  // pending tool_call that emitted the matching id.
-  private handleToolResult(line: string): void {
-    let tr: InboundToolResult;
-    try {
-      tr = JSON.parse(line) as InboundToolResult;
-    } catch (err) {
-      this.cfg.logger(
-        `runtime: malformed tool_result frame: ${(err as Error).message}`,
-      );
-      return;
-    }
+  // pending tool_call of the session its sessionId addresses. A result
+  // whose id matches no pending call of that session is dropped and
+  // logged.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Inbound: tool_result).
+  private handleToolResult(tr: InboundToolResult): void {
     if (!this.registry.deliver(tr)) {
       this.cfg.logger(
-        `runtime: tool_result "${tr.id}" has no pending tool_call`,
+        `runtime: tool_result "${tr.id}" for session "${tr.sessionId ?? ""}" has no pending tool_call in that session`,
       );
     }
   }
 
-  // handleShutdown decodes the §28.5.3 shutdown frame and records the
-  // termination reason for run to apply after draining in-flight
-  // handlers.
-  private handleShutdown(line: string): void {
-    let sd: { reason?: string; deadline_ms?: number };
-    try {
-      sd = JSON.parse(line) as { reason?: string; deadline_ms?: number };
-    } catch {
-      sd = {};
-    }
+  // handleShutdown records the termination reason of a §28.5.3 shutdown
+  // frame. Shutdown is process-scoped: run hands the reason to every live
+  // session after the loop ends, and each session drains its queued
+  // messages before its onTerminate.
+  private handleShutdown(frame: Record<string, unknown>): void {
     this.exitReason = {
-      reason: sd.reason ?? "shutdown",
-      deadlineMs: sd.deadline_ms ?? 0,
+      reason: typeof frame.reason === "string" ? frame.reason : "shutdown",
+      deadlineMs: typeof frame.deadline_ms === "number" ? frame.deadline_ms : 0,
     };
   }
 
@@ -394,16 +591,18 @@ class Session {
     try {
       await this.writer.write(frame);
     } catch (err) {
-      this.cfg.logger(`runtime: write frame: ${(err as Error).message}`);
+      this.cfg.logger(`runtime: write frame: ${errorMessage(err)}`);
     }
   }
 
   // startChannels dials the §15.4.3 platform MCP server, connector MCP
-  // servers, and lifecycle channel for the configured integration
-  // level. When a higher-level channel is configured but the manifest
-  // does not advertise it, the SDK logs the gap and degrades to the
-  // level the manifest supports, so a Standard- or Full-level binary
+  // servers, and CH-RUNTIMEOPS for the configured integration level, once
+  // per process. When a higher-level channel is configured but the
+  // manifest does not advertise it, the SDK logs the gap and degrades to
+  // the level the manifest supports, so a Standard- or Full-level binary
   // still runs in a Basic-only environment.
+  //
+  // spec: §15.7 (Run dials the sockets once per process).
   private async startChannels(): Promise<void> {
     if (levelRank(this.cfg.level) >= levelRank("standard")) {
       if (!this.manifest?.platformMcpServer?.socket) {
@@ -417,7 +616,7 @@ class Session {
     if (levelRank(this.cfg.level) >= levelRank("full")) {
       if (!this.manifest?.runtimeOps?.socket) {
         this.cfg.logger(
-          "runtime: no lifecycle channel in the manifest; lifecycle features disabled",
+          "runtime: the manifest advertises no CH-RUNTIMEOPS socket; lifecycle features disabled",
         );
       } else {
         this.lifecycle = await Lifecycle.dial(
@@ -426,13 +625,11 @@ class Session {
           this.cfg.lifecycle,
           {
             stdoutWriter: this.writer,
-            reloadCredentials: () => {
-              void this.loadCredentials();
-              return this.credentials;
-            },
-            invokeTerminate: (reason, deadlineMs) =>
-              this.invokeTerminate(reason, deadlineMs),
-            stopFrameLoop: () => {
+            heldSession: (sessionId) => this.heldSession(sessionId),
+            reloadCredentials: (session, path) =>
+              this.reloadCredentials(session as SessionRecord, path),
+            endProcess: (reason, deadlineMs) => {
+              this.exitReason = { reason, deadlineMs };
               this.loopStopped = true;
             },
             log: (msg) => this.cfg.logger(`runtime: ${msg}`),
@@ -448,36 +645,31 @@ class Session {
     this.lifecycle?.close();
   }
 
-  // invokeTerminate calls Handler.onTerminate at most once. The
-  // terminated guard makes a lifecycle-channel terminate and the stdin
-  // shutdown path idempotent.
-  private async invokeTerminate(
-    reason: string,
-    deadlineMs: number,
-  ): Promise<void> {
-    if (this.terminated) {
-      return;
-    }
-    this.terminated = true;
-    try {
-      await this.handler.onTerminate({ reason, deadlineMs });
-    } catch (err) {
+  // reloadCredentials re-reads the credential file a credentials_rotated
+  // event names for the session and resolves to the bundle the session
+  // holds afterwards. The event names the file the adapter just rewrote,
+  // so a failed read is reported and the session keeps the bundle it
+  // holds. An event carrying no path breaks the frame's contract; the
+  // session keeps its bundle rather than reading a file the event did not
+  // name.
+  //
+  // spec: §28.5.3 (CH-RUNTIMEOPS, credentials_rotated), §4.7.11 (item 4).
+  private async reloadCredentials(
+    rec: SessionRecord,
+    path: string,
+  ): Promise<CredentialBundle | undefined> {
+    if (path === "") {
       this.cfg.logger(
-        `runtime: onTerminate error: ${(err as Error).message}`,
+        `runtime: credential rotation for session ${rec.id}: event carries no credentialsPath; keeping the bundle already held`,
       );
+      return rec.credentials;
     }
-  }
-
-  // buildCreateRequest assembles the §15.7 onCreate snapshot from the
-  // manifest and credential file.
-  private buildCreateRequest(): CreateRequest {
-    return {
-      sessionId: this.manifest?.sessionId ?? "",
-      taskId: this.manifest?.taskId ?? "",
-      runtimeOptions: this.manifest?.runtimeOptions,
-      credentials: this.credentials,
-      manifestSnapshot: this.manifest,
-    };
+    try {
+      rec.credentials = await loadCredentialBundle(path);
+    } catch (err) {
+      this.cfg.logger(`runtime: credential rotation for session ${rec.id}: ${errorMessage(err)}`);
+    }
+    return rec.credentials;
   }
 
   // loadManifest parses the §4.7 adapter manifest. A missing file
@@ -490,7 +682,7 @@ class Session {
       data = await readFile(this.cfg.manifestPath, "utf8");
     } catch (err) {
       this.cfg.logger(
-        `runtime: no adapter manifest at ${this.cfg.manifestPath} (${(err as Error).message})`,
+        `runtime: no adapter manifest at ${this.cfg.manifestPath} (${errorMessage(err)})`,
       );
       return;
     }
@@ -499,7 +691,7 @@ class Session {
       m = JSON.parse(data) as AdapterManifest;
     } catch (err) {
       this.cfg.logger(
-        `runtime: malformed adapter manifest ${this.cfg.manifestPath}: ${(err as Error).message}`,
+        `runtime: malformed adapter manifest ${this.cfg.manifestPath}: ${errorMessage(err)}`,
       );
       return;
     }
@@ -510,43 +702,6 @@ class Session {
       return;
     }
     this.manifest = m;
-  }
-
-  // resolveCredentialsPath is the §4.7 credential file this runtime
-  // reads: the manifest's credentialsPath, which names this session's
-  // own /run/lenny/slots/{sessionId}/credentials.json, falling back to
-  // the credentialsPath option when the manifest carries none. There is
-  // no fixed default, because the file's location depends on the
-  // session identifier.
-  //
-  // spec: §4.7 (manifest credentialsPath); §6.1 (per-session credential
-  // file).
-  private resolveCredentialsPath(): string {
-    return this.manifest?.credentialsPath || this.cfg.credentialsPath;
-  }
-
-  // loadCredentials parses the §4.7 runtime credential file. A missing
-  // file is normal when the runtime's pool has no active lease, and an
-  // unresolved path is normal when neither the manifest nor the caller
-  // named one.
-  private async loadCredentials(): Promise<void> {
-    const path = this.credPath;
-    if (path === "") {
-      return;
-    }
-    let data: string;
-    try {
-      data = await readFile(path, "utf8");
-    } catch {
-      return;
-    }
-    try {
-      this.credentials = JSON.parse(data) as CredentialBundle;
-    } catch (err) {
-      this.cfg.logger(
-        `runtime: malformed credential file ${path}: ${(err as Error).message}`,
-      );
-    }
   }
 
   // openTransport resolves the §28.5.3 transport. When explicit streams

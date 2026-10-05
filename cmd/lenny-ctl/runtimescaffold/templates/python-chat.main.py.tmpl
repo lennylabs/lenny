@@ -8,11 +8,12 @@ LLM-proxy credential delivery. The runtime turns each inbound message
 into a provider request and streams the response back.
 
 The runtime is started with ``level="full"``, so the SDK opens the
-lifecycle channel. The ``on_credentials_rotated`` callback is where the
-runtime rebinds its provider client after the credential lease rotates;
-the SDK has already re-read this session's own credential file, at the
-path the adapter manifest's ``credentialsPath`` names, by the time the
-callback runs.
+CH-RUNTIMEOPS. The ``on_credentials_rotated`` callback is where the
+runtime rebinds a session's provider client after that session's
+credential lease rotates. Each session's credential file is named by the
+``credentialsPath`` member of that session's ``session_start`` frame, and
+the SDK has already re-read the file the rotation event names into the
+session's bundle by the time the callback runs.
 
 The message handler is an echo placeholder. Replace
 :meth:`on_message` with a provider call: read the current credential
@@ -52,14 +53,12 @@ class RuntimeHandler:
     in :meth:`on_message`.
     """
 
-    def __init__(self) -> None:
-        self._seq = 0
-
     def on_create(self, req: CreateRequest) -> None:
-        """Receive the task-scoped context snapshot.
+        """Receive the session's context snapshot from its
+        ``session_start``.
 
-        The create request carries the initial credential bundle for the
-        provider lease.
+        The create request carries the session's initial credential
+        bundle for the provider lease.
         """
 
     def on_message(self, msg: Message, tools: HandlerTools) -> Reply:
@@ -68,32 +67,31 @@ class RuntimeHandler:
         Replace this body with a provider call routed through the LLM
         proxy.
         """
-        self._seq += 1
         out = []
         for part in msg.envelope.input:
             if part.type == "text" and part.inline:
-                out.append(text(f"[{{.Name}} seq={self._seq}] {part.inline}"))
+                out.append(text(f"[{{.Name}} seq={msg.sequence}] {part.inline}"))
             else:
                 out.append(part)
         return Reply(parts=out, final=True)
 
-    def on_terminate(self, reason: TerminationReason) -> None:
+    def on_terminate(self, session_id: str, reason: TerminationReason) -> None:
         """Run once when the session ends. This skeleton has no teardown."""
 
 
-def _on_checkpoint(checkpoint_id: str) -> None:
+def _on_checkpoint(session_id: str, checkpoint_id: str) -> None:
     """Quiesce output before the SDK replies checkpoint_ready.
 
     A chat runtime stops streaming here.
     """
 
 
-def _on_interrupt(interrupt_id: str) -> None:
+def _on_interrupt(session_id: str, interrupt_id: str) -> None:
     """Bring the runtime to a safe stop point before the SDK replies
     interrupt_acknowledged."""
 
 
-def _on_credentials_rotated(creds: CredentialBundle | None) -> None:
+def _on_credentials_rotated(session_id: str, creds: CredentialBundle | None) -> None:
     """Rebind the provider client to the refreshed bundle.
 
     The SDK has already re-read the credential file by the time this

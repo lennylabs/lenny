@@ -7,11 +7,12 @@
 // streams the response back.
 //
 // The runtime is started with level "full", so the SDK opens the
-// lifecycle channel. The onCredentialsRotated callback is where the
-// runtime rebinds its provider client after the credential lease
-// rotates; the SDK has already re-read this session's own credential
-// file, at the path the adapter manifest's credentialsPath names, by
-// the time the callback runs.
+// CH-RUNTIMEOPS. The onCredentialsRotated callback is where the runtime
+// rebinds a session's provider client after that session's credential
+// lease rotates. Each session's credential file is named by the
+// credentialsPath member of that session's session_start frame, and the
+// SDK has already re-read the file the rotation event names into the
+// session's bundle by the time the callback runs.
 //
 // The message handler is an echo placeholder. Replace onMessage with a
 // provider call: read the current credential bundle, send a
@@ -32,9 +33,9 @@ const EXIT_PROTOCOL_ERROR = 2;
 class RuntimeHandler implements Handler {
   private seq = 0;
 
-  // onCreate receives the task-scoped context snapshot. The create
-  // request carries the initial credential bundle for the provider
-  // lease.
+  // onCreate receives the session's context snapshot from its
+  // session_start. The create request carries the session's initial
+  // credential bundle for the provider lease.
   onCreate(): void {}
 
   // onMessage echoes the inbound parts. Replace this body with a
@@ -64,9 +65,10 @@ run(new RuntimeHandler(), {
     // An interrupt brings the runtime to a safe stop point before the
     // SDK replies interrupt_acknowledged.
     onInterrupt() {},
-    // On rotation the SDK has already re-read the credential file;
-    // rebind the provider client to the refreshed bundle here.
-    onCredentialsRotated() {},
+    // On rotation the SDK has already re-read the credential file the
+    // event named into the session's bundle; rebind that session's
+    // provider client to the refreshed bundle here.
+    onCredentialsRotated(_sessionId: string) {},
   },
 }).then(
   () => process.exit(EXIT_OK),

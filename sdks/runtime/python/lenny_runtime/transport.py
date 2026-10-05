@@ -115,10 +115,40 @@ class FrameWriter:
 
     def write(self, frame: Any) -> None:
         """Serialize one frame and flush it."""
-        line = (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
+        line = _encode(frame)
         with self._lock:
             self._stream.write(line)
             self._stream.flush()
+
+    def write_for(self, owner: Any, frame: Any) -> bool:
+        """Write a frame addressed to ``owner``, or drop it when the
+        owner's ``ended`` mark is set.
+
+        The check and the write happen under one lock, so no frame for
+        a session follows the frame loop's read of its ``session_end``.
+        It reports whether the frame was written.
+
+        spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+        """
+        line = _encode(frame)
+        with self._lock:
+            if getattr(owner, "ended", False):
+                return False
+            self._stream.write(line)
+            self._stream.flush()
+            return True
+
+    def end_owner(self, owner: Any) -> None:
+        """Set ``owner``'s ``ended`` mark under the writer's lock, so a
+        :meth:`write_for` racing the mark either completes before it or
+        drops its frame."""
+        with self._lock:
+            owner.ended = True
+
+
+def _encode(frame: Any) -> bytes:
+    """Serialize one frame as a JSON line."""
+    return (json.dumps(frame, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 class LineReader:

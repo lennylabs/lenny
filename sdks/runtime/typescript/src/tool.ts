@@ -20,9 +20,31 @@ export interface InboundToolResult {
   sessionId?: string;
 }
 
+// ToolCallOwner is the session a tool_call belongs to: id is the
+// session's sessionId, and ended is the drop mark the frame loop sets
+// when it reads the session's session_end.
+export interface ToolCallOwner {
+  readonly id: string;
+  ended: boolean;
+}
+
+// SessionEndedError is the rejection of a tool_call whose session ended
+// before its result arrived, or whose frame was dropped because the
+// session had already ended.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+export class SessionEndedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionEndedError";
+  }
+}
+
 // PendingToolCall is the in-flight bookkeeping for one tool_call: the
-// callbacks that resolve when the correlated tool_result arrives.
+// session that issued it and the callbacks that settle when the
+// correlated tool_result arrives.
 interface PendingToolCall {
+  owner: ToolCallOwner;
   resolve(result: InboundToolResult): void;
   reject(err: Error): void;
 }
@@ -33,19 +55,25 @@ interface PendingToolCall {
 export class ToolCallRegistry {
   private readonly pending = new Map<string, PendingToolCall>();
 
-  // register records a pending tool_call id and returns a promise that
-  // resolves with the correlated tool_result.
-  register(id: string): Promise<InboundToolResult> {
+  // register records a pending tool_call id for owner and returns a
+  // promise that resolves with the correlated tool_result.
+  register(id: string, owner: ToolCallOwner): Promise<InboundToolResult> {
     return new Promise<InboundToolResult>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { owner, resolve, reject });
     });
   }
 
   // deliver routes an inbound tool_result to the call that emitted the
-  // matching id. It reports whether a pending call was found.
+  // matching id. A call matches only when its id equals the frame's id and
+  // the session that issued it is the one the frame's sessionId names, so
+  // a result addressed to another session never completes the call and
+  // leaves it pending for its own result. It reports whether a pending
+  // call was found.
+  //
+  // spec: §28.5.3 (CH-MSGSOCK, Inbound: tool_result).
   deliver(result: InboundToolResult): boolean {
     const entry = this.pending.get(result.id);
-    if (!entry) {
+    if (!entry || entry.owner.id !== (result.sessionId ?? "")) {
       return false;
     }
     this.pending.delete(result.id);
@@ -60,6 +88,20 @@ export class ToolCallRegistry {
     if (entry) {
       this.pending.delete(id);
       entry.reject(err);
+    }
+  }
+
+  // cancelOwner fails every pending call owner issued. The frame loop
+  // calls it when it reads the owner's session_end, so each waiting call
+  // rejects at once.
+  cancelOwner(owner: ToolCallOwner): void {
+    for (const [id, entry] of this.pending) {
+      if (entry.owner === owner) {
+        this.pending.delete(id);
+        entry.reject(
+          new SessionEndedError(`session ${owner.id} ended; tool_call abandoned`),
+        );
+      }
     }
   }
 
@@ -111,7 +153,7 @@ export class AdapterToolset implements AdapterTools {
     private readonly writer: FrameWriter,
     private readonly registry: ToolCallRegistry,
     private readonly timeoutMs: number,
-    private readonly sessionId: string | undefined,
+    private readonly owner: ToolCallOwner,
   ) {}
 
   // toolCall emits a §28.5.3 tool_call frame for the named
@@ -122,19 +164,28 @@ export class AdapterToolset implements AdapterTools {
     args: Record<string, unknown>,
   ): Promise<ToolResult> {
     const id = newCallId();
-    const wait = this.registry.register(id);
-    const frame: Record<string, unknown> = {
-      type: "tool_call",
-      id,
-      name,
-      arguments: args,
-    };
+    const wait = this.registry.register(id, this.owner);
     // §28.5.3: a session-scoped frame carries the session it addresses on
-    // every pod, so the key is written whatever the pool's concurrency.
-    frame.sessionId = this.sessionId ?? "";
+    // every pod, and no frame for a session is written after its
+    // session_end, so the write is dropped once the session ended.
+    if (this.owner.ended) {
+      const err = new SessionEndedError(
+        `session ${this.owner.id} ended; tool_call "${name}" dropped`,
+      );
+      this.registry.cancel(id, err);
+      wait.catch(() => undefined);
+      throw err;
+    }
     try {
-      await this.writer.write(frame);
+      await this.writer.write({
+        type: "tool_call",
+        id,
+        name,
+        arguments: args,
+        sessionId: this.owner.id,
+      });
     } catch (err) {
+      wait.catch(() => undefined);
       this.registry.cancel(id, err as Error);
       throw new Error(`write tool_call "${name}": ${(err as Error).message}`);
     }

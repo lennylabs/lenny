@@ -5,8 +5,9 @@
 // inbound and outbound frame types) mirror the §28.5.3 adapter binary
 // protocol. The convenience types (CreateRequest, Message, Reply,
 // CredentialBundle, AdapterManifest, WorkspacePlan) are §15.7 wrappers
-// the SDK materializes from the manifest, the credential file, and the
-// stdin framing before invoking Handler methods. They introduce no new
+// the SDK materializes from each session's session_start frame, the
+// credential file that frame names, the pod-scoped manifest, and the stdin
+// framing before invoking Handler methods. They introduce no new
 // wire types.
 
 // SCHEMA_VERSION is the current MessagePart and MessageEnvelope schema
@@ -83,27 +84,65 @@ export interface ResponseError {
   message?: string;
 }
 
-// CredentialBundle is the parsed §4.7 runtime credential file the
-// manifest's credentialsPath names, this session's own
-// /run/lenny/slots/{sessionId}/credentials.json. The SDK refreshes it on a
-// credentials_rotated lifecycle message. Fields are the union of proxy
-// and direct delivery modes; an absent field is missing in the file.
+// CredentialBundle is the parsed runtime credential file that a
+// session's session_start names in credentialsPath, the session's own
+// /run/lenny/slots/{sessionId}/credentials.json. The file lists one entry
+// per credential provider the session holds a lease for. The SDK reloads
+// the session's bundle on a credentials_rotated lifecycle event naming
+// that session.
+//
+// spec: §4.7.11 (item 4, runtime credential file contract), §28.5.3
+// (CH-MSGSOCK, Inbound: session_start).
 export interface CredentialBundle {
-  // mode is proxy or direct (§4.7 manifest llm fields).
-  mode?: string;
-  // provider names the upstream LLM provider for this lease.
-  provider?: string;
+  // providers holds one entry per leased credential provider.
+  providers: ProviderCredential[];
+}
+
+// ProviderCredential is one entry of a CredentialBundle's providers list.
+// materializedConfig is left as the decoded JSON object because its fields
+// depend on the provider and the delivery mode: a proxy entry carries
+// proxyUrl and leaseToken, and a direct entry carries the provider's own
+// credential fields.
+//
+// spec: §4.7.11 (item 4, runtime credential file contract), §4.9
+// (materializedConfig schema by provider).
+export interface ProviderCredential {
   // leaseId identifies the §4.9 credential lease.
-  leaseId?: string;
-  // apiKey is the upstream key under direct delivery.
-  apiKey?: string;
-  // apiKeyEnv names the environment variable carrying the key under
-  // proxy delivery.
-  apiKeyEnv?: string;
-  // baseUrl is the upstream or proxy endpoint base URL.
-  baseUrl?: string;
-  // expiresAt is the RFC 3339 lease expiry timestamp.
+  leaseId: string;
+  // provider is the credential provider identifier.
+  provider: string;
+  // expiresAt is the ISO 8601 lease expiry timestamp.
   expiresAt?: string;
+  // deliveryMode is direct or proxy.
+  deliveryMode: string;
+  // materializedConfig is the entry's materializedConfig object.
+  materializedConfig?: Record<string, unknown>;
+}
+
+// ExperimentContext is the experiment enrollment a session's
+// session_start carries in experimentContext. inherited is true when the
+// enrollment was propagated from a parent session through delegation.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start field table), §10.7.
+export interface ExperimentContext {
+  experimentId: string;
+  variantId: string;
+  inherited: boolean;
+}
+
+// LLMConfig is the LLM provider configuration a session's session_start
+// carries in llm. deliveryMode is direct or proxy; dialect names the
+// provider dialect a proxy-mode runtime speaks to the LLM Proxy; apiKeyEnv
+// names the variable a runtime's LLM client reads its key from, which the
+// runtime sets for this session only and never in its own process
+// environment; headers lists the headers a proxy-mode runtime sends.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start field table), §4.9.
+export interface LLMConfig {
+  deliveryMode: string;
+  dialect?: string;
+  apiKeyEnv?: string;
+  headers?: Record<string, string>;
 }
 
 // MCPServerRef names a platform MCP server socket in the manifest.
@@ -132,40 +171,31 @@ export interface AdapterLocalTool {
 
 // AdapterManifest is the parsed §4.7 adapter manifest written to
 // /run/lenny/adapter-manifest.json before the runtime binary is
-// spawned. Unknown fields are ignored (§4.7 forward compatibility).
+// spawned. It carries only pod-scoped fields: one runtime process serves
+// every session the pod holds, so each session's own context arrives in
+// that session's session_start frame rather than here. Unknown fields are
+// ignored (§4.7 forward compatibility).
+//
+// spec: §4.7 (adapter manifest field reference), §4.7.10 (runtime process
+// lifetime).
 export interface AdapterManifest {
   // version is the manifest schema version. Every increment is
   // breaking; the SDK rejects a version newer than it understands.
   version?: number;
-  // sessionId is the session this runtime instance is bound to.
-  sessionId?: string;
-  // taskId is the session's external-protocol task identifier. Each
-  // session has exactly one execution, so it equals the session id; the
-  // adapter derives it from sessionId. The manifest is per-session and
-  // taskId is frozen for the session's lifetime.
-  // spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
-  taskId?: string;
   // mcpNonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
   // SDK injects it as params._lennyNonce on every MCP initialize.
   mcpNonce?: string;
-  // credentialsPath is the §4.7 absolute path of this session's own
-  // credential file. The SDK reads credential material from it and
-  // falls back to the credentialsPath option when the manifest omits
-  // it. spec: §4.7; §6.1.
-  credentialsPath?: string;
   // platformMcpServer names the platform MCP server socket.
   platformMcpServer?: MCPServerRef;
   // connectorServers names the per-connector MCP server sockets.
   connectorServers?: ConnectorServerRef[];
-  // runtimeOps names the Full-level lifecycle channel socket.
+  // runtimeOps names the Full-level CH-RUNTIMEOPS socket.
   runtimeOps?: SocketRef;
   // adapterLocalTools enumerates the §28.5.3 adapter-local tools the
   // runtime may invoke via stdout tool_call frames.
   adapterLocalTools?: AdapterLocalTool[];
   // runtimeOptions is the effective caller options map.
   runtimeOptions?: Record<string, unknown>;
-  // tracingContext carries §16.3 tracing identifiers.
-  tracingContext?: Record<string, unknown>;
 }
 
 // WorkspacePlan is a reference to the §14 materialized workspace plan.
@@ -178,12 +208,13 @@ export interface WorkspacePlan {
 }
 
 // TerminationReason is the reason passed to Handler.onTerminate. The
-// SDK populates it from the §28.5.3 shutdown frame or the
-// lifecycle-channel terminate event.
+// SDK populates it from the session's session_end, from the §28.5.3
+// shutdown frame, or from the end of the connection.
 export interface TerminationReason {
-  // reason is the adapter-supplied reason string (drain, deadline,
-  // etc.) or stdin_closed when the adapter closed stdin without a
-  // shutdown frame.
+  // reason is session_end when the session's session_end ended it, the
+  // shutdown frame's reason (drain, deadline, etc.) when a shutdown ended
+  // the process, or stdin_closed when the adapter closed the connection
+  // without a shutdown frame.
   reason: string;
   // deadlineMs is the shutdown deadline in milliseconds when the
   // adapter supplied one; zero otherwise.
@@ -191,26 +222,42 @@ export interface TerminationReason {
 }
 
 // CreateRequest is the §15.7 snapshot of session context handed to
-// Handler.onCreate once before the first Message. Handler implementations
-// MUST treat it as read-only.
+// Handler.onCreate when the session's session_start arrives and before the
+// session's first Message is delivered. The SDK assembles it from the
+// session_start frame, the credential file that frame names, and the
+// pod-scoped adapter manifest. Handler implementations MUST treat it as
+// read-only.
+//
+// spec: §15.7 (SDK Handler types), §28.5.3 (CH-MSGSOCK, Inbound:
+// session_start).
 export interface CreateRequest {
-  // sessionId is the session this runtime instance is bound to.
+  // sessionId is the session this request opens, the session_start's
+  // sessionId.
   sessionId: string;
   // taskId is the session's external-protocol task identifier. Each
-  // session has exactly one execution, so it equals the session id; the
-  // adapter derives it from sessionId. taskId is frozen for the session's
-  // lifetime and onCreate is invoked once with this value.
-  // spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
+  // session has exactly one execution, so it equals sessionId; the SDK
+  // derives it from the session_start's sessionId.
+  // spec: §15.7 (TaskID derived from sessionId), §7.2 (one execution per session)
   taskId: string;
   // runtimeOptions is the effective caller options map.
   runtimeOptions?: Record<string, unknown>;
   // workspacePlan references the §14 materialized workspace plan.
   workspacePlan?: WorkspacePlan;
-  // credentials is the current §4.7 credential bundle. The SDK
-  // refreshes it in place on rotation rather than re-invoking
-  // onCreate. Undefined when the runtime has no active lease.
+  // credentials is the session's credential bundle, read from the file the
+  // session_start's credentialsPath names. Undefined when the frame names
+  // no credentialsPath. The SDK reloads the session's bundle on a
+  // credentials_rotated event rather than re-invoking onCreate.
   credentials?: CredentialBundle;
-  // manifestSnapshot is the parsed adapter manifest.
+  // experimentContext is the session_start's experimentContext; undefined
+  // when the session is not enrolled in an experiment.
+  experimentContext?: ExperimentContext;
+  // tracingContext is the session_start's tracingContext; undefined for a
+  // top-level session.
+  tracingContext?: Record<string, string>;
+  // llm is the session_start's llm; undefined when the session has no
+  // active LLM credential lease.
+  llm?: LLMConfig;
+  // manifestSnapshot is the parsed pod-scoped adapter manifest.
   manifestSnapshot?: AdapterManifest;
 }
 
@@ -221,17 +268,17 @@ export interface Message {
   // envelope is the canonical §15.4 MessageEnvelope. All message
   // semantics live on this field.
   envelope: MessageEnvelope;
-  // sessionId is the session the message was delivered to.
+  // sessionId is the session the message was delivered to, the frame's
+  // sessionId.
   sessionId: string;
   // taskId is the external-protocol task identifier of the session the
-  // message belongs to. It equals the session id (the adapter derives it
-  // from sessionId) and always equals CreateRequest.taskId, which is
-  // frozen for the session's lifetime.
-  // spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
+  // message belongs to. It equals sessionId and always equals the
+  // session's CreateRequest.taskId.
+  // spec: §15.7 (TaskID derived from sessionId), §7.2 (one execution per session)
   taskId: string;
-  // sequence is a monotonic, SDK-assigned per-task counter ordering
-  // messages as the SDK observed them on stdin. It is local to this
-  // process and suitable for logging only.
+  // sequence is a monotonic, SDK-assigned per-session counter ordering the
+  // session's messages as the SDK observed them on stdin. It is local to
+  // this process and suitable for logging only.
   sequence: number;
 }
 
@@ -259,21 +306,40 @@ export function textReply(s: string): Reply {
   return { parts: [text(s)], final: true };
 }
 
-// Handler is the single interface a runtime author implements. The SDK
-// invokes onCreate once before the first message of a task, onMessage
-// for every inbound §28.5.3 message frame, and onTerminate once when
-// the adapter closes stdin or sends a shutdown frame.
+// Handler is the single interface a runtime author implements. One
+// runtime process serves any number of sessions, one after another and
+// side by side. The SDK invokes onCreate when a session_start opens a
+// session, and writes the session's session_started once onCreate
+// settles; onMessage for each of the session's messages; and onTerminate
+// once when that session ends, on its session_end or at the end of the
+// connection. Each session's calls are chained on that session's own
+// promise chain, so calls for one session never overlap while calls for
+// different sessions interleave; an implementation keeps per-session state
+// keyed by session. A session whose onCreate rejects is answered as the
+// CH-MSGSOCK Session errors rule states, and the process keeps serving its
+// other sessions.
+//
+// spec: §15.7 (API surface, Handler), §4.7.10 (runtime process lifetime),
+// §28.5.3 (CH-MSGSOCK, Inbound: session_start, Session errors).
 export interface Handler {
-  // onCreate receives the task-scoped context snapshot before the
-  // first Message is delivered. A rejected promise aborts the runtime.
+  // onCreate receives the session's context snapshot before the
+  // session's first Message is delivered. A rejection or throw fails the
+  // session's creation: the SDK writes session_started with error and
+  // answers the session's messages with a RUNTIME_ERROR response.
   onCreate(req: CreateRequest): Promise<void> | void;
   // onMessage handles one inbound message and returns the turn's
   // Reply. A rejected promise is reported to the adapter as a
-  // structured response error and the runtime continues.
+  // structured response error and the session continues with its next
+  // message.
   onMessage(msg: Message, tools: HandlerTools): Promise<Reply> | Reply;
-  // onTerminate runs once when the session ends. It SHOULD return
-  // before the shutdown deadline elapses.
-  onTerminate(reason: TerminationReason): Promise<void> | void;
+  // onTerminate runs once when the session sessionId ends, after the
+  // session's last handler call settled. It runs for every session the SDK
+  // opened, including one whose creation failed. It SHOULD settle before
+  // the shutdown deadline elapses.
+  onTerminate(
+    sessionId: string,
+    reason: TerminationReason,
+  ): Promise<void> | void;
 }
 
 // HandlerTools is the SDK surface passed to Handler.onMessage. It
@@ -288,8 +354,8 @@ export interface HandlerTools {
   // the runtime runs at Standard level or above and the manifest
   // advertised a platform MCP server. Undefined otherwise.
   platform?: PlatformTools;
-  // credentials is the current §4.7 credential bundle, or undefined
-  // when the runtime's pool has no active lease.
+  // credentials is the session's current credential bundle, or undefined
+  // when the session's session_start named no credential file.
   credentials?: CredentialBundle;
 }
 
