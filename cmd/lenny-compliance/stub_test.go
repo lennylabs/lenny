@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,6 +41,9 @@ const (
 	// stubExitOnEndEnv, when set, makes the stub exit on its first
 	// session_end.
 	stubExitOnEndEnv = "LENNY_COMPLIANCE_STUB_EXIT_ON_END"
+	// stubExitAfterResponsesEnv, when set to a count N, makes the stub
+	// exit right after it writes its Nth response.
+	stubExitAfterResponsesEnv = "LENNY_COMPLIANCE_STUB_EXIT_AFTER_RESPONSES"
 )
 
 // setStub configures the test binary as a stub runtime for the rest of the
@@ -47,7 +51,7 @@ const (
 func setStub(t *testing.T, env map[string]string) string {
 	t.Helper()
 	t.Setenv(complianceStubEnv, "1")
-	for _, k := range []string{stubAckEnv, stubAckDelayEnv, stubNoRereadEnv, stubDeadlineEnv, stubExitOnEndEnv} {
+	for _, k := range []string{stubAckEnv, stubAckDelayEnv, stubNoRereadEnv, stubDeadlineEnv, stubExitOnEndEnv, stubExitAfterResponsesEnv} {
 		t.Setenv(k, env[k])
 	}
 	return os.Args[0]
@@ -62,6 +66,8 @@ type complianceStub struct {
 	// responded is closed once the stub answered a message.
 	responded     chan struct{}
 	respondedOnce sync.Once
+	// responses counts the responses the stub wrote.
+	responses int
 }
 
 // write encodes one stdout frame under the writer lock.
@@ -98,6 +104,10 @@ func runComplianceStub(string) int {
 		case "message":
 			s.write(map[string]any{"type": "response", "sessionId": f.SessionID, "output": []map[string]any{{"type": "text", "inline": "pong"}}})
 			s.respondedOnce.Do(func() { close(s.responded) })
+			s.responses++
+			if limit, err := strconv.Atoi(os.Getenv(stubExitAfterResponsesEnv)); err == nil && s.responses == limit {
+				return 0
+			}
 		case "heartbeat":
 			s.write(map[string]any{"type": "heartbeat_ack"})
 		case "shutdown":

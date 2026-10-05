@@ -2,10 +2,12 @@
 
 // Tests for the Basic session lifetime category. The pass arms run the
 // echo reference runtime built by TestMain and the stub runtime; the
-// reject arm runs the stub configured to exit on its first session_end.
+// reject arms run the stub configured to exit on its first session_end or
+// right after its last response to the concurrent sessions.
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -41,5 +43,37 @@ func TestSessionLifetimeRejectsARuntimeThatExitsOnSessionEnd_spec_15_4_6(t *test
 	}
 	if !strings.Contains(err.Error(), "closed stdout before the harness closed stdin") {
 		t.Fatalf("failure %q must say the runtime exited before stdin closed", err)
+	}
+}
+
+// lifetimeResponseCount is the number of responses the session lifetime
+// check reads: one each for the sequential sessions A and B, and two each
+// for the concurrent sessions C and D.
+const lifetimeResponseCount = 6
+
+// spec: 15.4.6 (Conformance Test Suite, Basic session lifetime), 4.7.10
+// (Runtime process lifetime)
+//
+// diagnosis: a failure means the session lifetime check passes a runtime
+// that exits right after answering the concurrent sessions while they are
+// still open, so the battery certifies a runtime that ends its process
+// before the harness closes stdin.
+func TestSessionLifetimeRejectsARuntimeThatExitsAfterTheConcurrentSessions_spec_15_4_6(t *testing.T) {
+	bin := setStub(t, map[string]string{stubExitAfterResponsesEnv: strconv.Itoa(lifetimeResponseCount)})
+	detail, err := checkSessionLifetime(bin, 30*time.Second, false)
+	if err == nil {
+		t.Fatalf("the check passed a runtime that exits after its last concurrent response: %q", detail)
+	}
+	for _, want := range []string{"after the concurrent sessions", "closed stdout before the harness closed stdin"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("failure %q must contain %q", err, want)
+		}
+	}
+
+	// The same stub without the defect, exiting only after a response the
+	// check never asks for, passes: the rejection above is the exit itself.
+	bin = setStub(t, map[string]string{stubExitAfterResponsesEnv: strconv.Itoa(lifetimeResponseCount + 1)})
+	if detail, err := checkSessionLifetime(bin, 30*time.Second, false); err != nil {
+		t.Fatalf("a stub that stays alive failed the session lifetime check: %q, %v", detail, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -81,10 +82,10 @@ func checkSessionLifetime(binary string, timeout time.Duration, _ bool) (string,
 		if err := expectResponses(frames, map[string]int{id: 1}); err != nil {
 			return "", fmt.Errorf("sequential session %s: %w", id, err)
 		}
-		if err := writeLines(stdin, `{"type":"session_end","sessionId":"`+id+`"}`, `{"type":"heartbeat","ts":1}`); err != nil {
+		if err := writeLines(stdin, `{"type":"session_end","sessionId":"`+id+`"}`); err != nil {
 			return "", err
 		}
-		if err := expectHeartbeatAck(frames); err != nil {
+		if err := confirmServing(stdin, frames); err != nil {
 			return "", fmt.Errorf("after session_end for %s: %w", id, err)
 		}
 	}
@@ -98,6 +99,13 @@ func checkSessionLifetime(binary string, timeout time.Duration, _ bool) (string,
 	}
 	if err := expectResponses(frames, map[string]int{s.c: 2, s.d: 2}); err != nil {
 		return "", fmt.Errorf("concurrent sessions: %w", err)
+	}
+	// The concurrent responses alone do not show the process outlives
+	// them: a runtime that exits on its last response has written every
+	// frame the check waited for. Sessions C and D are still open here, so
+	// the process must still answer a heartbeat before stdin closes.
+	if err := confirmServing(stdin, frames); err != nil {
+		return "", fmt.Errorf("after the concurrent sessions: %w", err)
 	}
 	return "two sequential and two concurrent sessions served on one process", nil
 }
@@ -134,6 +142,22 @@ func expectResponses(frames *frameReader, want map[string]int) error {
 		remaining--
 	}
 	return nil
+}
+
+// confirmServing writes a heartbeat and requires its heartbeat_ack, so a
+// runtime that exited or closed stdout fails with lifetimeReadError's
+// closed-stdout error rather than passing on the frames it already wrote.
+// A write error is reported only after the read: a runtime that exited
+// breaks the stdin pipe too, and the closed-stdout error names the cause.
+//
+// spec: §15.4.6 (Conformance Test Suite, Basic session lifetime), §4.7.10
+// (Runtime process lifetime).
+func confirmServing(stdin io.Writer, frames *frameReader) error {
+	writeErr := writeLines(stdin, `{"type":"heartbeat","ts":1}`)
+	if err := expectHeartbeatAck(frames); err != nil {
+		return err
+	}
+	return writeErr
 }
 
 // expectHeartbeatAck reads frames until a heartbeat_ack, skipping
