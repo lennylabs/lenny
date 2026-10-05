@@ -475,12 +475,9 @@ func main() {
 		// SDK down within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s),
 		// force-terminating it on overrun, so it is not abandoned
 		// mid-connection and cannot leak credentials or hold provider
-		// connections open. A no-op for a pod-warm pod.
-		adapterSrv.ShutdownDemoteSDK(adapter.DemoteTimeoutFromEnv())
-		if lifecycle != nil {
-			_ = lifecycle.Close()
-		}
-		srv.GracefulStop()
+		// connections open. The exit path then closes CH-RUNTIMEOPS and
+		// stops the server, writing no session frame of its own (§28.5.3).
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
 	}()
 
 	log.Printf("lenny-adapter: serving the adapter on %s (tls=%t)", *addr, tlsOpt != nil)

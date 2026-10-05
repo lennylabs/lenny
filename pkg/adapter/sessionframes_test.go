@@ -750,6 +750,48 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 		}
 	})
 
+	t.Run("pod exit writes nothing of its own", func(t *testing.T) {
+		t.Run("pod-warm: the exit closes CH-RUNTIMEOPS and writes no session_end", func(t *testing.T) {
+			rt := &frameRuntime{}
+			s, _ := ackFrameServer(t, rt)
+			if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+				t.Fatalf("StartSession: %v", err)
+			}
+			stopper := &recordingStopper{}
+			s.ExitOnSignal(time.Second, stopper)
+			expectLog(t, rt, "start", "session_start@idle")
+			if !stopper.stopped || !lifecycleClosed(s.Lifecycle) {
+				t.Errorf("exit path: GracefulStop %v, CH-RUNTIMEOPS closed %v; want both", stopper.stopped, lifecycleClosed(s.Lifecycle))
+			}
+		})
+
+		t.Run("SDK-warm: only the DemoteSDK teardown's own session_end is written", func(t *testing.T) {
+			rt := &sdkWarmFrameRuntime{}
+			s := sdkWarmServer(t, rt, false)
+			if _, err := s.ConfigureWorkspace(ctx, frameConfigureReq(s, "sess-1")); err != nil {
+				t.Fatalf("ConfigureWorkspace: %v", err)
+			}
+			s.ExitOnSignal(time.Second, &recordingStopper{})
+			expectLog(t, &rt.frameRuntime, "configure", "session_start@idle", "session_end@running", "demote")
+		})
+
+		t.Run("embedded model: the loop reads only the session_start", func(t *testing.T) {
+			loop := &recordingLoop{done: make(chan struct{})}
+			s := frameServer(t, NewInProcessRuntime(loop.run))
+			if _, err := s.StartSession(ctx, frameStartReq("sess-1")); err != nil {
+				t.Fatalf("StartSession: %v", err)
+			}
+			loop.awaitFrames(t, 1)
+			s.ExitOnSignal(time.Second, &recordingStopper{})
+			// The embedded loop ends with the adapter process; give a
+			// stray write time to reach it before reading the log.
+			time.Sleep(20 * time.Millisecond)
+			if got := loop.types(); !equalLog(got, []string{sessionStartFrameType}) {
+				t.Fatalf("embedded loop read %v, want only the session_start: the exit path writes no frame", got)
+			}
+		})
+	})
+
 	t.Run("type mcp runtime writes no session frame on any path", func(t *testing.T) {
 		rt := &frameRuntime{}
 		s := frameServer(t, rt)
@@ -766,6 +808,19 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 		s.writeSessionEnd("sess-2")
 		expectLog(t, rt, "start", "close")
 	})
+}
+
+// recordingStopper is a GracefulStopper that records whether the exit
+// path stopped it.
+type recordingStopper struct{ stopped bool }
+
+func (r *recordingStopper) GracefulStop() { r.stopped = true }
+
+// lifecycleClosed reports whether lc's Close has run.
+func lifecycleClosed(lc *RuntimeOps) bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.closed
 }
 
 // recordingLoop is an embedded runtime loop that records the type of every

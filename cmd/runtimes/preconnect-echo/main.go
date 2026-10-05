@@ -148,8 +148,7 @@ func main() {
 		// within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s), force-terminating
 		// it on overrun, before the process exits so it does not leak
 		// credentials or hold provider connections open.
-		adapterSrv.ShutdownDemoteSDK(adapter.DemoteTimeoutFromEnv())
-		srv.GracefulStop()
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
 	}()
 
 	// §6.1 — pre-connect the SDK at warm time, before any session

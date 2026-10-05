@@ -168,7 +168,7 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
-		srv.GracefulStop()
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
 	}()
 
 	log.Printf("echo-embedded: serving the §4.7 embedded runtime on %s (tls=%t)", *addr, tlsOpt != nil)
