@@ -35,8 +35,10 @@ const (
 	// without opening the credential file it names.
 	stubNoRereadEnv = "LENNY_COMPLIANCE_STUB_NO_REREAD"
 	// stubDeadlineEnv selects the stub's deadline_approaching behavior:
-	// ok (the default), exit (exit after the message's response), or
-	// second (write another response for the session).
+	// ok (the default), exit (exit after the message's response),
+	// exitafterack (exit right after the first heartbeat_ack written
+	// after a response), or second (write another response for the
+	// session).
 	stubDeadlineEnv = "LENNY_COMPLIANCE_STUB_DEADLINE"
 	// stubExitOnEndEnv, when set, makes the stub exit on its first
 	// session_end.
@@ -68,6 +70,16 @@ type complianceStub struct {
 	respondedOnce sync.Once
 	// responses counts the responses the stub wrote.
 	responses int
+}
+
+// exit closes stdout under the writer lock and then exits. Closing stdout
+// first makes the harness see the end of stdout at once, rather than after
+// the race detector's exit delay, and the lock keeps a concurrent write
+// from landing after the close.
+func (s *complianceStub) exit() {
+	s.outMu.Lock()
+	_ = os.Stdout.Close()
+	os.Exit(0)
 }
 
 // write encodes one stdout frame under the writer lock.
@@ -110,6 +122,9 @@ func runComplianceStub(string) int {
 			}
 		case "heartbeat":
 			s.write(map[string]any{"type": "heartbeat_ack"})
+			if os.Getenv(stubDeadlineEnv) == "exitafterack" && s.responses > 0 {
+				s.exit()
+			}
 		case "shutdown":
 			return 0
 		}
@@ -218,7 +233,7 @@ func (s *complianceStub) onDeadline(f map[string]any) {
 	}
 	switch mode {
 	case "exit":
-		os.Exit(0)
+		s.exit()
 	case "second":
 		s.write(map[string]any{"type": "response", "sessionId": f["sessionId"], "output": []map[string]any{}, "error": map[string]any{"code": "DEADLINE_EXCEEDED", "message": "deadline"}})
 	}

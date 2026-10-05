@@ -571,12 +571,23 @@ func serveRotatedBundle(path, provider string, wait time.Duration) error {
 // deadline_approaching, and the bound on the runtime's response.
 const deadlineRemainingMs = 3000
 
+// deadlineSettleWindow is how long the deadline check keeps watching the
+// runtime's stdout after the heartbeat_ack. A runtime that exits on
+// deadline_approaching closes stdout inside the window. Without it, a
+// runtime that answers the heartbeat and then exits would pass the check,
+// because answering one heartbeat does not show the process stays alive.
+// The window exceeds the race detector's default one-second exit delay, so
+// an exiting runtime built with -race is still observed closing stdout.
+const deadlineSettleWindow = 1500 * time.Millisecond
+
 // checkDeadlineSignal drives the deadline signal handling category. After
 // the session_started read it writes a message for the session and then
 // deadline_approaching naming the session, before it reads the response.
 // The runtime writes the response to that message before remainingMs
 // elapses, writes no other response for the session, and still answers a
-// later heartbeat, which shows the process is alive. A runtime that does
+// later heartbeat. The check then watches stdout for deadlineSettleWindow
+// and fails when it closes, so a runtime that exits shortly after the
+// heartbeat_ack is not taken for one that keeps running. A runtime that does
 // not declare deadline_signal has no category to satisfy.
 //
 // spec: §15.4.6 (Conformance Test Suite, deadline signal handling),
@@ -616,7 +627,10 @@ func checkDeadlineSignal(binary string, ackWait time.Duration) (string, error) {
 	if err := awaitAckWithoutResponse(run.frames, 3*time.Second); err != nil {
 		return "", err
 	}
-	return "response before remainingMs, no further response, heartbeat still answered", nil
+	if err := awaitSettleWithoutResponse(run.frames, deadlineSettleWindow); err != nil {
+		return "", err
+	}
+	return "response before remainingMs, no further response, heartbeat still answered, process still running", nil
 }
 
 // awaitDeadlineResponse reads frames until the response to the session's
@@ -640,6 +654,23 @@ func awaitDeadlineResponse(frames *frameReader, wait time.Duration) error {
 	}
 }
 
+// awaitSettleWithoutResponse watches stdout for window after the
+// heartbeat_ack that follows deadline_approaching. It fails when stdout closes, because the
+// runtime exited on deadline_approaching, or when a second response for
+// the session arrives. The window elapsing with neither is success.
+func awaitSettleWithoutResponse(frames *frameReader, window time.Duration) error {
+	deadline := time.Now().Add(window)
+	for {
+		line, err := frames.next(time.Until(deadline))
+		if errors.Is(err, errFrameWait) {
+			return nil
+		}
+		if _, err := classifyPostDeadlineFrame(line, err); err != nil {
+			return err
+		}
+	}
+}
+
 // awaitAckWithoutResponse reads frames until heartbeat_ack, skipping
 // session_started frames. A response read first is a second response for
 // the session after deadline_approaching, and the end of stdout means the
@@ -648,23 +679,39 @@ func awaitAckWithoutResponse(frames *frameReader, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for {
 		line, err := frames.next(time.Until(deadline))
-		if errors.Is(err, errStdoutClosed) {
-			return fmt.Errorf("runtime exited after deadline_approaching: %w", err)
-		}
-		if err != nil {
+		if errors.Is(err, errFrameWait) {
 			return fmt.Errorf("no heartbeat_ack after deadline_approaching: %w", err)
 		}
-		f, ok := decodeSessionFrame(line)
-		if !ok || f.Type == "session_started" {
-			continue
-		}
-		switch f.Type {
-		case "heartbeat_ack":
-			return nil
-		case "response":
-			return fmt.Errorf("runtime wrote a second response after deadline_approaching: %s", line)
+		acked, err := classifyPostDeadlineFrame(line, err)
+		if err != nil || acked {
+			return err
 		}
 	}
+}
+
+// classifyPostDeadlineFrame judges one read made after the response to the
+// session's message. It reports a heartbeat_ack as acked, fails on the end
+// of stdout or a second response for the session, and ignores every other
+// frame. readErr is the read's error, which the caller has already checked
+// is not errFrameWait.
+func classifyPostDeadlineFrame(line string, readErr error) (acked bool, err error) {
+	if errors.Is(readErr, errStdoutClosed) {
+		return false, fmt.Errorf("runtime exited after deadline_approaching: %w", readErr)
+	}
+	if readErr != nil {
+		return false, fmt.Errorf("read after deadline_approaching: %w", readErr)
+	}
+	f, ok := decodeSessionFrame(line)
+	if !ok {
+		return false, nil
+	}
+	switch f.Type {
+	case "heartbeat_ack":
+		return true, nil
+	case "response":
+		return false, fmt.Errorf("runtime wrote a second response after deadline_approaching: %s", line)
+	}
+	return false, nil
 }
 
 // handshake performs the lifecycle_capabilities exchange and returns the

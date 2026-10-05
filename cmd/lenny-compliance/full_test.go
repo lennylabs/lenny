@@ -157,7 +157,8 @@ func TestRuntimeOpsHandshakeRequiresTheMatchingAcknowledgement_spec_15_4_6(t *te
 // spec: 15.4.6 (deadline signal handling), 4.7.10 (Runtime process lifetime)
 //
 // diagnosis: a failure means the deadline check passes a runtime that
-// exits on deadline_approaching or writes a second response for the
+// exits on deadline_approaching, including one that answers the heartbeat
+// first and exits right after, or writes a second response for the
 // session, or fails a runtime that answers its message once and keeps
 // running.
 func TestDeadlineSignalCheckRejectsExitAndSecondResponse_spec_15_4_6(t *testing.T) {
@@ -166,6 +167,7 @@ func TestDeadlineSignalCheckRejectsExitAndSecondResponse_spec_15_4_6(t *testing.
 		wantErr string
 	}{
 		{mode: "exit", wantErr: "exited after deadline_approaching"},
+		{mode: "exitafterack", wantErr: "exited after deadline_approaching"},
 		{mode: "second", wantErr: "second response"},
 		{mode: "ok"},
 	}
