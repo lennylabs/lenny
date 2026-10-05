@@ -45,6 +45,15 @@ type slotWorker struct {
 	pw        *io.PipeWriter
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// ended is set once the front loop has dispatched the session's
+	// session_end. demux.outMu guards it, and slotWriter reads it under
+	// the same lock immediately before writing, so no frame addressed to
+	// the session reaches the transport once the flag is set. The worker
+	// keeps draining after the flag is set (a message delivered before
+	// session_end may still be in echocore's buffer), and every frame that
+	// drain produces is dropped.
+	ended bool
 }
 
 // newSlotWorker starts the session's echocore loop.
@@ -76,7 +85,7 @@ func newSlotWorker(ctx context.Context, sessionID string, d *demux, stderr io.Wr
 		// echocore produces and forwards it to the shared transport.
 		// echocore is driven unmodified; the multiplexing lives entirely
 		// in the front loop and this writer.
-		sw := &slotWriter{sessionID: sessionID, out: d}
+		sw := &slotWriter{worker: w, out: d}
 		err := echocore.Run(ctx, pr, sw, stderr)
 		if err != nil {
 			d.recordErr(slotError(sessionID, err))
@@ -107,6 +116,18 @@ func (w *slotWorker) close() {
 	w.closeOnce.Do(func() { _ = w.pw.Close() })
 }
 
+// markEnded records that the session's session_end was dispatched. It
+// takes demux.outMu, so a frame write already holding the lock finishes
+// first and every later write for the session observes the flag and is
+// dropped.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end).
+func (w *slotWorker) markEnded(d *demux) {
+	d.outMu.Lock()
+	w.ended = true
+	d.outMu.Unlock()
+}
+
 // wait blocks until the session's echocore loop has drained.
 func (w *slotWorker) wait() { <-w.done }
 
@@ -126,20 +147,22 @@ func slotCwd(sessionID string) string {
 // re-encoded frame. sessionId is the only field the §28.5.3 outbound
 // schema adds for multiplexing, so it is the only field stamped.
 type slotWriter struct {
-	sessionID string
-	out       *demux
+	worker *slotWorker
+	out    *demux
 }
 
 // Write stamps the session address onto a single outbound frame and
 // forwards it. The frame is one JSON object terminated by a newline
 // (echocore's encoder contract), so a single Write maps to a single
-// frame.
+// frame. A frame produced after the session's session_end was dispatched
+// is dropped by writeSessionFrame, and Write still reports success so the
+// draining echocore loop runs to EOF rather than failing the runtime.
 func (s *slotWriter) Write(p []byte) (int, error) {
 	stamped, err := s.stamp(p)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.out.writeFrame(stamped); err != nil {
+	if err := s.out.writeSessionFrame(s.worker, stamped); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -172,7 +195,7 @@ func (s *slotWriter) stamp(frame []byte) ([]byte, error) {
 		// Protocol-level ack with no content payload; leave it untouched.
 		return frame, nil
 	}
-	id, err := json.Marshal(s.sessionID)
+	id, err := json.Marshal(s.worker.sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("stamp session address: encode sessionId: %w", err)
 	}

@@ -178,22 +178,29 @@ func (d *demux) startSession(sessionID string, line []byte) error {
 	return nil
 }
 
-// endSession releases the session's worker: it removes the worker from the
-// map, ends its inbound stream, and waits for its echocore loop to drain,
-// so the session's context is gone before the front loop reads the next
-// frame. A session_end for a session the runtime does not hold is ignored.
-// A per-session echocore error was already recorded by the worker and
-// surfaces from closeAll.
+// endSession releases the session's worker. It first marks the worker
+// ended under the output lock, so no frame addressed to the session is
+// written from here on: a message delivered before session_end can still
+// be in echocore's buffer, and the response its drain produces is dropped
+// rather than written after the runtime read session_end. It then removes
+// the worker from the map, ends its inbound stream, and waits for its
+// echocore loop to drain, so the session's context is gone before the
+// front loop reads the next frame. A session_end for a session the runtime
+// does not hold is ignored. A per-session echocore error was already
+// recorded by the worker and surfaces from closeAll.
 //
-// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end).
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
 func (d *demux) endSession(sessionID string) {
 	d.mu.Lock()
 	w, ok := d.slots[sessionID]
-	delete(d.slots, sessionID)
 	d.mu.Unlock()
 	if !ok {
 		return
 	}
+	w.markEnded(d)
+	d.mu.Lock()
+	delete(d.slots, sessionID)
+	d.mu.Unlock()
 	w.close()
 	w.wait()
 }
@@ -207,9 +214,16 @@ type demux struct {
 
 	// outMu serialises writes to the real transport across all per-slot
 	// workers, since several echocore loops write the single connection
-	// concurrently.
+	// concurrently. It also guards every slotWorker.ended flag, so the
+	// ended check and the frame write are one critical section.
 	outMu sync.Mutex
 	out   io.Writer
+
+	// sessionWriteGate, when non-nil, is called with the session's
+	// identifier before a worker's frame takes outMu. It is a test seam
+	// for ordering a worker's write against the front loop; production
+	// leaves it nil.
+	sessionWriteGate func(sessionID string)
 
 	mu       sync.Mutex
 	slots    map[string]*slotWorker
@@ -296,13 +310,40 @@ func (d *demux) closeAll() error {
 	return d.firstErr
 }
 
-// writeFrame serialises a single outbound JSONL frame onto the shared
-// transport. Per-session workers call it after stamping sessionId, so the
-// one connection carries the interleaved per-session output. The front
-// loop calls it directly for the pod-global heartbeat_ack.
+// writeSessionFrame writes one frame a session's worker produced, unless
+// the session's session_end has been dispatched. The ended check and the
+// write happen under the same outMu hold, so a frame is either written
+// before endSession marks the worker or dropped after it. A dropped frame
+// is not an error. The optional sessionWriteGate runs before the lock is
+// taken; production leaves it nil and tests use it to order a worker's
+// write against the front loop.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+func (d *demux) writeSessionFrame(w *slotWorker, frame []byte) error {
+	if d.sessionWriteGate != nil {
+		d.sessionWriteGate(w.sessionID)
+	}
+	d.outMu.Lock()
+	defer d.outMu.Unlock()
+	if w.ended {
+		return nil
+	}
+	return d.writeLocked(frame)
+}
+
+// writeFrame serialises a single pod-level outbound JSONL frame onto the
+// shared transport. The front loop calls it for the heartbeat_ack and for
+// session_started, which the runtime writes itself rather than through a
+// session's worker.
 func (d *demux) writeFrame(frame []byte) error {
 	d.outMu.Lock()
 	defer d.outMu.Unlock()
+	return d.writeLocked(frame)
+}
+
+// writeLocked writes one frame and its terminating newline. The caller
+// holds outMu.
+func (d *demux) writeLocked(frame []byte) error {
 	if _, err := d.out.Write(frame); err != nil {
 		return err
 	}

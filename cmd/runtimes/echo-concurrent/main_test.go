@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
@@ -312,7 +314,7 @@ func TestProtocolErrorMessage(t *testing.T) {
 // a non-object outbound frame verbatim, so a future non-object frame on a
 // slot is not dropped or corrupted by the stamping path.
 func TestStampLeavesNonObjectFrameUnchanged(t *testing.T) {
-	s := &slotWriter{sessionID: "sess-01"}
+	s := &slotWriter{worker: &slotWorker{sessionID: "sess-01"}}
 	got, err := s.stamp([]byte("[]"))
 	if err != nil {
 		t.Fatalf("stamp non-object frame: %v", err)
@@ -470,11 +472,14 @@ func TestSessionEndReleasesTheWorker_spec_28_5_3(t *testing.T) {
 		message("sess-01", "a2")+
 		`{"type":"heartbeat","ts":1}`+"\n")
 
+	// The a1 response may be dropped: session_end follows a1 with no wait,
+	// and a response the worker produces after session_end was dispatched
+	// is never written. The a2 response is always written.
 	responses := responsesOnly(frames)
-	if len(responses) != 2 {
-		t.Fatalf("responses = %+v, want one per message", responses)
+	if len(responses) == 0 {
+		t.Fatal("no responses, want at least the a2 echo")
 	}
-	if got := inline(responses[1]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a2") {
+	if got := inline(responses[len(responses)-1]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a2") {
 		t.Fatalf("response after session_end and a new session_start = %q, want a fresh worker's seq=1 echo of a2", got)
 	}
 	var sawAck bool
@@ -504,4 +509,96 @@ func TestUnaddressedOrMalformedSessionFrameIsAProtocolError_spec_28_5_3(t *testi
 			t.Fatalf("run(%q) err = %v, want a protocol error", in, err)
 		}
 	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_end)
+//
+// After the runtime reads a session's session_end it writes no frame
+// addressed to that session. A message delivered immediately before
+// session_end can still be in the session's echocore buffer when the
+// front loop dispatches session_end, so its response is produced while
+// the worker drains. The write gate holds every frame the worker produces
+// until session_end has been dispatched (the session is gone from the
+// worker map), which is the late-write ordering; the response must then be
+// dropped. A second session served after the end confirms the runtime
+// keeps writing for the sessions it still holds.
+func TestNoFrameForASessionAfterItsSessionEnd_spec_28_5_3(t *testing.T) {
+	var out lockedBuffer
+	d := newDemux(context.Background(), &out, io.Discard)
+	d.sessionWriteGate = func(sessionID string) {
+		if sessionID != "sess-01" {
+			return
+		}
+		waitSessionReleased(t, d, sessionID)
+	}
+
+	for _, f := range []string{
+		sessionStart("sess-01", "st_1"),
+		message("sess-01", "a1"),
+		sessionEnd("sess-01"),
+		message("sess-02", "b1"),
+	} {
+		var env struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+		}
+		line := []byte(strings.TrimSuffix(f, "\n"))
+		if err := json.Unmarshal(line, &env); err != nil {
+			t.Fatalf("decode %q: %v", f, err)
+		}
+		if err := d.dispatch(env.Type, env.SessionID, line); err != nil {
+			t.Fatalf("dispatch %s: %v", env.Type, err)
+		}
+	}
+	if err := d.closeAll(); err != nil {
+		t.Fatalf("closeAll: %v", err)
+	}
+
+	frames := decodeFrames(t, out.String())
+	var sawB1 bool
+	for _, f := range frames {
+		if f.SessionID == "sess-01" && f.Type != "session_started" {
+			t.Fatalf("frame %+v addressed to sess-01 was written after its session_end", f)
+		}
+		sawB1 = sawB1 || (f.SessionID == "sess-02" && strings.Contains(inline(f), "b1"))
+	}
+	if !sawB1 {
+		t.Fatalf("frames = %+v, want sess-02's b1 echo after sess-01 ended", frames)
+	}
+}
+
+// waitSessionReleased blocks until endSession has removed sessionID from
+// the worker map, or fails the test after a bound.
+func waitSessionReleased(t *testing.T, d *demux, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		_, held := d.slots[sessionID]
+		d.mu.Unlock()
+		if !held {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Errorf("session %q was never released by session_end", sessionID)
+}
+
+// lockedBuffer is a bytes.Buffer safe for the concurrent reads the test
+// makes while workers write.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
