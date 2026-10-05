@@ -4484,6 +4484,10 @@
       "title": "Local Development Mode (lenny-dev)",
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
+        "pkg/gateway/session/executor/subprocess_session_start_test.go",
+        "pkg/gateway/session/executor/subprocess_session_start_internal_test.go",
+        "tests/tier3_contract/adapter_jsonl/subprocess_session_start_test.go",
+        "tests/tier7a_load_local/subprocess_session_start_order_test.go",
         "tests/tier11_docs/time_to_hello_world_test.go",
         "tests/tier3_contract/compose_mode/compose_mode_test.go",
         "tests/tier2_component/embedded/bringup_test.go",
@@ -5963,6 +5967,10 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "pkg/gateway/session/executor/subprocess_session_start_test.go",
+        "pkg/gateway/session/executor/subprocess_session_start_internal_test.go",
+        "tests/tier3_contract/adapter_jsonl/subprocess_session_start_test.go",
+        "tests/tier7a_load_local/subprocess_session_start_order_test.go",
         "pkg/adapter/runtimeops_peercred_test.go::TestRuntimeOpsRefusesForeignUIDAndServesTheRuntimeNext_spec_4_7_11",
         "pkg/adapter/runtimeops_peercred_linux_test.go::TestRuntimeOpsRefusesOtherUIDThroughSOPeercred_spec_4_7_11",
         "tests/tier9_security/runtime_socket_peercred_test.go::TestRuntimeOpsSocketRefusesForeignUIDPeer_spec_4_7_11",
