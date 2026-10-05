@@ -207,11 +207,22 @@ func (g *ackGate) settle(startID string) bool {
 	return true
 }
 
-// fail moves the gate to failed unless it is already released.
-func (g *ackGate) fail() {
+// fail moves the gate to failed for the start whose startID it names,
+// unless the gate is already released or failed. A start that ends before
+// it minted a startID passes the empty string. The transition applies only
+// while the gate belongs to that start (its startID is the gate's) or
+// while no start has reset it yet, so a start that returns late cannot
+// fail a later start's gate on the same entry, which would refuse every
+// session-scoped CH-RUNTIMEOPS frame for the session that later start
+// runs. spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §5.2 (slot
+// serialization).
+func (g *ackGate) fail(startID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.state == ackReleased || g.state == ackFailed {
+		return
+	}
+	if g.startID != startID && g.state != ackNotStarted {
 		return
 	}
 	g.transitionLocked(ackFailed)

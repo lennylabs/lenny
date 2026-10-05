@@ -137,7 +137,7 @@ func TestAckGateTransitions_spec_28_5_3(t *testing.T) {
 	t.Run("a failed gate refuses a waiter", func(t *testing.T) {
 		var g ackGate
 		g.reset("1", true)
-		g.fail()
+		g.fail("1")
 		if g.current() != ackFailed {
 			t.Fatalf("gate = %s, want failed", g.current())
 		}
@@ -173,7 +173,7 @@ func TestAckGateTransitions_spec_28_5_3(t *testing.T) {
 			t.Fatalf("waiter after release = %v, want errSessionStartNotAcknowledged", err)
 		}
 		g.reset("2", false)
-		g.fail()
+		g.fail("2")
 		if g.settle("1") || g.current() != ackReleased {
 			t.Fatalf("gate after reset, fail, and settle = %s, want released", g.current())
 		}
@@ -398,7 +398,10 @@ func TestFailedGateWritesNoRuntimeOpsFrame_spec_28_5_3(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	st := s.slotStateForSession("sess-a")
-	st.ack.fail()
+	st.ack.mu.Lock()
+	running := st.ack.startID
+	st.ack.mu.Unlock()
+	st.ack.fail(running)
 	ctx := context.Background()
 	sid := &adapterv1.SessionId{Value: "sess-a"}
 

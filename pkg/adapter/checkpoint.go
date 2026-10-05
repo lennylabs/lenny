@@ -173,8 +173,12 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// The entry's acknowledgement gate is read again after the op lock is
 	// held, without waiting: the stream can queue behind a co-tenant's whole
 	// upload, and the session can end in that interval. The deferred
-	// checkpoint_complete reads the same entry's gate, so a session that
-	// ended during the upload receives no frame.
+	// checkpoint_complete reads the same entry's gate, also without waiting,
+	// because it runs before the deferred release of the op lock: a wait
+	// there would hold s.ops, and stall every co-tenant's checkpoint and
+	// interrupt, for as long as the unbounded stream context lives. A read
+	// or not-awaiting gate still admits the frame on the abort path, and a
+	// session that ended or restarted during the upload receives none.
 	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	completeStatus, completeReason := "ok", ""
 	if s.Lifecycle != nil {
@@ -185,7 +189,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
 		}
 		defer func() {
-			if s.awaitSessionStarted(ctx, slot) != nil {
+			if s.sessionStartedNow(slot) != nil {
 				return
 			}
 			_ = s.Lifecycle.CompleteCheckpoint(sessionID, start.GetCheckpointId(), completeStatus, completeReason)

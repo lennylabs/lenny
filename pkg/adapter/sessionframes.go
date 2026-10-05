@@ -190,7 +190,9 @@ func (s *Server) nextStartID() string {
 //
 // Every return other than a taken record fails the entry's gate, unless a
 // removal already released it, so a session-scoped CH-RUNTIMEOPS sender
-// waiting on the gate returns without writing.
+// waiting on the gate returns without writing. The transition runs while
+// the sequence still holds the slot guard and names this start's startId,
+// so it never fails a later start's gate on the same entry.
 //
 // The refused arm of step 5 writes session_end without re-reading the
 // registry, and needs no re-read. Step 1 established identity under the
@@ -210,24 +212,30 @@ func (s *Server) nextStartID() string {
 // 8; §5.2 (slot-identifier reclaim hold)
 func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim slotClaim, in manifestInputs, guardHeld bool) (confirmed bool, err error) {
 	awaiting := s.startAwaitsSessionStarted(ctx)
-	defer func() {
-		if (!confirmed || err != nil) && claim.entry != nil {
-			claim.entry.ack.fail()
-		}
-	}()
 	if !guardHeld {
 		unlock, guarded := s.lockSlotGuard(ctx, sessionID)
 		defer unlock()
 		if !guarded {
+			failStartGate(claim, "")
 			warnSlotGuardNotAcquired(sessionID, "openRuntimeSession")
 			return false, fmt.Errorf("open session %s: slot serialization not acquired before the request deadline: %w",
 				sessionID, ctx.Err())
 		}
 	}
+	// Registered after the guard's unlock, so it runs first: the gate
+	// moves to failed while the slot serialization is still held, before a
+	// later start on the entry can take the guard and reset the gate.
+	startID := ""
+	defer func() {
+		if !confirmed || err != nil {
+			failStartGate(claim, startID)
+		}
+	}()
 	if !s.registryHoldsClaimEntry(sessionID, claim) {
 		return false, nil
 	}
-	if err := s.writeStartFrame(ctx, sessionID, s.nextStartID(), claim.entry, in, awaiting); err != nil {
+	startID = s.nextStartID()
+	if err := s.writeStartFrame(ctx, sessionID, startID, claim.entry, in, awaiting); err != nil {
 		return false, err
 	}
 	if s.noteRuntimeStarted(sessionID, claim.attempt) {
@@ -235,6 +243,15 @@ func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim
 	}
 	s.writeSessionEnd(sessionID)
 	return false, nil
+}
+
+// failStartGate moves the claimed entry's gate to failed for the start
+// whose startID it names; a start that ended before minting one passes the
+// empty string. A claim with no entry has no gate.
+func failStartGate(claim slotClaim, startID string) {
+	if claim.entry != nil {
+		claim.entry.ack.fail(startID)
+	}
 }
 
 // errSessionStartUnacknowledged is the error of a start whose wait for
@@ -301,14 +318,18 @@ func (s *Server) writeAwaitedSessionStart(ctx context.Context, sessionID, startI
 		return err
 	}
 	code, read := readSessionStarted(waitCtx, frames, sessionID, startID)
-	if read && code == "" {
+	if !read || code != "" {
+		return s.failUnacknowledgedStart(sessionID, startID, entry, code)
+	}
+	if entry.ack.settle(startID) || entry.ack.current() == ackReleased {
 		// A removal can release the gate during the wait; the second
-		// confirmation then refuses the start, so settle's result is not
-		// needed here.
-		entry.ack.settle(startID)
+		// confirmation then refuses the start and writes its session_end.
 		return nil
 	}
-	return s.failUnacknowledgedStart(sessionID, entry, code)
+	// The gate left pending for this start without a removal, so it can
+	// no longer admit the session's CH-RUNTIMEOPS frames: the start fails
+	// rather than take the record behind a gate that refuses them.
+	return s.failUnacknowledgedStart(sessionID, startID, entry, ackGateNotPending)
 }
 
 // failUnacknowledgedStart ends a start whose session_started wait ended
@@ -316,18 +337,21 @@ func (s *Server) writeAwaitedSessionStart(ctx context.Context, sessionID, startI
 // session_start_unacknowledged, fails the entry's gate, and only then
 // writes session_end, with no record taken. spec: §28.5.3
 // (CH-MSGSOCK, Session frame writes), the acknowledgement-failure row.
-func (s *Server) failUnacknowledgedStart(sessionID string, entry *slotState, code string) error {
+func (s *Server) failUnacknowledgedStart(sessionID, startID string, entry *slotState, code string) error {
 	slog.Warn("session_start_unacknowledged", "slot_id", sessionID, "error_code", code)
-	entry.ack.fail()
+	entry.ack.fail(startID)
 	s.writeSessionEnd(sessionID)
 	return fmt.Errorf("open session %s: %w (%s)", sessionID, errSessionStartUnacknowledged, code)
 }
 
 // Error codes session_start_unacknowledged carries when the wait ended
-// without a frame rather than on a session_started carrying error.
+// without a frame rather than on a session_started carrying error, or when
+// the frame was read but the entry's gate had already left pending for
+// this start.
 const (
 	ackWaitTimedOut     = "SESSION_START_ACK_TIMEOUT"
 	ackWaitOutputClosed = "RUNTIME_OUTPUT_CLOSED"
+	ackGateNotPending   = "SESSION_START_GATE_NOT_PENDING"
 )
 
 // sessionStartedFrame is the part of a §28.5.3 session_started frame the
