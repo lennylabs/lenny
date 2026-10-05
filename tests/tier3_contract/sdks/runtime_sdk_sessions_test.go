@@ -315,6 +315,14 @@ func (p *probeRuntime) close(t *testing.T) int {
 	}
 }
 
+// hasMember reports whether the frame carries the named member at all,
+// including one set to JSON null, so an acknowledgement with "error":null
+// is not mistaken for one that omits the member.
+func hasMember(f map[string]any, name string) bool {
+	_, ok := f[name]
+	return ok
+}
+
 func containsString(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
@@ -511,7 +519,14 @@ func TestRuntimeSDKOverlappingCreationsAreEachReleasedOnce_spec_28_5_3(t *testin
 			p.awaitEvents(t, "terminate_sess_a", 1)
 			p.awaitFile(t, "created-2")
 			p.release(t, "release-2")
-			p.nextOfType(t, "session_started", "st_1")
+			// The adapter's start gate matches the acknowledgement by
+			// startId and fails the start on an error member, so creation
+			// 2's acknowledgement must name st_2 and carry no error. An
+			// acknowledgement for the ended creation 1 may precede it.
+			if f := p.nextOfType(t, "session_started", "st_1"); f["sessionId"] != "sess_a" ||
+				f["startId"] != "st_2" || hasMember(f, "error") {
+				t.Fatalf("acknowledgement for creation 2 = %v, want session_started for sess_a naming st_2 without error", f)
+			}
 			p.send(t, probeMessage("sess_a", "m_a"))
 			if f := p.nextOfType(t, "response", "st_1"); f["sessionId"] != "sess_a" ||
 				!strings.Contains(replyText(f), "creation 2 m_a lease lease_st_2") {
