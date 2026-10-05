@@ -288,7 +288,7 @@ func TestSubprocessExecutorServesNextSession_spec_5_2(t *testing.T) {
 func TestSubprocessExecutorOutputFansOutPastACancelledWait_spec_28_5_3(t *testing.T) {
 	cat, err := exec.LookPath("cat")
 	if err != nil {
-		t.Skipf("cat not on PATH: %v", err)
+		t.Skipf("blocked: cat not on PATH: %v", err)
 	}
 	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: cat})
 	defer e.Close(context.Background(), "sess_fan")

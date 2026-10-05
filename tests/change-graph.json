@@ -352,6 +352,17 @@
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
     },
+    "tests/testinfra/ackruntime": {
+      "unit": ["pkg/adapter/..."],
+      "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
+      "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
+    },
+    "pkg/adapter/linefanout": {
+      "unit": [
+        "pkg/adapter/...",
+        "pkg/gateway/session/executor/..."
+      ]
+    },
     "tests/testinfra/mocks/otelcollector": {
       "unit": ["tests/testinfra/mocks/otelcollector/..."],
       "component": ["tests/tier2_component/observability/..."]
