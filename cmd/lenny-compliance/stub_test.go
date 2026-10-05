@@ -50,6 +50,9 @@ const (
 	// status frame before each response and before each heartbeat_ack, as
 	// a runtime that reports progress while it serves a message does.
 	stubStatusEnv = "LENNY_COMPLIANCE_STUB_STATUS"
+	// stubResponseErrorEnv, when set, makes every response the stub
+	// writes carry an error, as a runtime whose model call fails does.
+	stubResponseErrorEnv = "LENNY_COMPLIANCE_STUB_RESPONSE_ERROR"
 )
 
 // setStub configures the test binary as a stub runtime for the rest of the
@@ -57,7 +60,7 @@ const (
 func setStub(t *testing.T, env map[string]string) string {
 	t.Helper()
 	t.Setenv(complianceStubEnv, "1")
-	for _, k := range []string{stubAckEnv, stubAckDelayEnv, stubNoRereadEnv, stubDeadlineEnv, stubExitOnEndEnv, stubExitAfterResponsesEnv, stubStatusEnv} {
+	for _, k := range []string{stubAckEnv, stubAckDelayEnv, stubNoRereadEnv, stubDeadlineEnv, stubExitOnEndEnv, stubExitAfterResponsesEnv, stubStatusEnv, stubResponseErrorEnv} {
 		t.Setenv(k, env[k])
 	}
 	return os.Args[0]
@@ -117,6 +120,15 @@ func (s *complianceStub) writeAck(ack map[string]any) {
 	_ = s.out.Encode(ack)
 }
 
+// stubResponse builds the stub's response to a message for sessionID. It
+// carries an error when stubResponseErrorEnv is set.
+func stubResponse(sessionID string) map[string]any {
+	if os.Getenv(stubResponseErrorEnv) != "" {
+		return map[string]any{"type": "response", "sessionId": sessionID, "output": []map[string]any{}, "error": map[string]any{"code": "RATE_LIMITED", "message": "stub model call failed"}}
+	}
+	return map[string]any{"type": "response", "sessionId": sessionID, "output": []map[string]any{{"type": "text", "inline": "pong"}}}
+}
+
 // runComplianceStub runs the stub over stdin and stdout, dialing
 // CH-RUNTIMEOPS when the manifest names a socket. It returns the exit code.
 func runComplianceStub(string) int {
@@ -146,7 +158,7 @@ func runComplianceStub(string) int {
 			}
 		case "message":
 			s.writeStatus(f.SessionID)
-			s.write(map[string]any{"type": "response", "sessionId": f.SessionID, "output": []map[string]any{{"type": "text", "inline": "pong"}}})
+			s.write(stubResponse(f.SessionID))
 			s.respondedOnce.Do(func() { close(s.responded) })
 			s.responses++
 			if limit, err := strconv.Atoi(os.Getenv(stubExitAfterResponsesEnv)); err == nil && s.responses == limit {

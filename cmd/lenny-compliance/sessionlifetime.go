@@ -111,9 +111,13 @@ func checkSessionLifetime(binary string, timeout time.Duration, _ bool) (string,
 }
 
 // expectResponses reads frames until it has read want[sessionID] responses
-// for every session in want. A response for a session outside want, an
-// extra response, or a response carrying error fails it, as do the end of
-// stdout and a read that outlasts sessionLifetimeReadWait. Every frame
+// for every session in want. A response counts toward its session whether
+// or not it carries error: the check asks only that the runtime answer each
+// message and stay alive, and a runtime whose model call fails (the check's
+// session_start carries no llm and no credentialsPath) answers with an
+// error response and is still conformant. A response for a session outside
+// want or an extra response fails it, as do the end of stdout and a read
+// that outlasts sessionLifetimeReadWait. Every frame
 // other than a response is skipped, because a runtime may write
 // session_started, status, tool_call, and other outbound frames while it
 // serves a message.
@@ -136,9 +140,6 @@ func expectResponses(frames *frameReader, want map[string]int) error {
 		}
 		if want[f.SessionID] == 0 {
 			return fmt.Errorf("response for session %q, want one for %v: %s", f.SessionID, want, line)
-		}
-		if f.Error != nil {
-			return fmt.Errorf("response for session %s carries error %s: the runtime did not serve the session", f.SessionID, f.Error.Code)
 		}
 		want[f.SessionID]--
 		remaining--

@@ -91,3 +91,18 @@ func TestSessionLifetimeSkipsStatusFramesBeforeResponsesAndAcks_spec_15_4_6(t *t
 		t.Fatalf("a runtime that writes status frames failed the session lifetime check: %q, %v", detail, err)
 	}
 }
+
+// spec: 15.4.6 (Conformance Test Suite, Basic session lifetime), 4.7.10
+// (Runtime process lifetime)
+//
+// diagnosis: a failure means the session lifetime check rejects a runtime
+// that answers every message with an error-carrying response and stays
+// alive, so the Basic battery fails a conformant runtime whose model call
+// fails under the check's session_start, which carries no llm and no
+// credentialsPath.
+func TestSessionLifetimeCountsErrorResponses_spec_15_4_6(t *testing.T) {
+	bin := setStub(t, map[string]string{stubResponseErrorEnv: "1"})
+	if detail, err := checkSessionLifetime(bin, 30*time.Second, false); err != nil {
+		t.Fatalf("a runtime that answers with error responses failed the session lifetime check: %q, %v", detail, err)
+	}
+}
