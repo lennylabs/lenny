@@ -89,6 +89,18 @@ func (s *complianceStub) write(v any) {
 	_ = s.out.Encode(v)
 }
 
+// writeAck marks the session acknowledged and then encodes the
+// session_started frame, both under the writer lock. The flag is set before
+// any byte of the frame reaches stdout, so a harness that reads the
+// acknowledgement and then writes a session-scoped CH-RUNTIMEOPS frame can
+// never find the runtimeOps guard still reading acked as false.
+func (s *complianceStub) writeAck(ack map[string]any) {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	s.acked.Store(true)
+	_ = s.out.Encode(ack)
+}
+
 // runComplianceStub runs the stub over stdin and stdout, dialing
 // CH-RUNTIMEOPS when the manifest names a socket. It returns the exit code.
 func runComplianceStub(string) int {
@@ -146,13 +158,11 @@ func (s *complianceStub) acknowledge(sessionID, startID string) {
 		delay, _ := time.ParseDuration(os.Getenv(stubAckDelayEnv))
 		go func() {
 			time.Sleep(delay)
-			s.write(ack)
-			s.acked.Store(true)
+			s.writeAck(ack)
 		}()
 		return
 	}
-	s.write(ack)
-	s.acked.Store(true)
+	s.writeAck(ack)
 }
 
 // runtimeOps dials the manifest's CH-RUNTIMEOPS socket, answers the
@@ -236,5 +246,52 @@ func (s *complianceStub) onDeadline(f map[string]any) {
 		s.exit()
 	case "second":
 		s.write(map[string]any{"type": "response", "sessionId": f["sessionId"], "output": []map[string]any{}, "error": map[string]any{"code": "DEADLINE_EXCEEDED", "message": "deadline"}})
+	}
+}
+
+// ackObservingWriter records, for each write, whether the stub's acked flag
+// was already set when the bytes reached stdout.
+type ackObservingWriter struct {
+	stub *complianceStub
+	mu   sync.Mutex
+	seen []bool
+	done chan struct{}
+}
+
+func (w *ackObservingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	w.seen = append(w.seen, w.stub.acked.Load())
+	w.mu.Unlock()
+	close(w.done)
+	return len(p), nil
+}
+
+// TestStubMarksAcknowledgedBeforeSessionStartedReachesStdout pins the stub's
+// ordering: in both the immediate and the delayed arm, acked is true by the
+// time any byte of session_started is written. A harness check that reads
+// the acknowledgement and then writes a session-scoped CH-RUNTIMEOPS frame
+// must never trip the delayed stub's early-frame exit.
+// spec: 15.4.6 (Conformance Test Suite), 28.5.3 (CH-MSGSOCK Outbound:
+// session_started)
+func TestStubMarksAcknowledgedBeforeSessionStartedReachesStdout(t *testing.T) {
+	for _, mode := range []string{"", "delayed"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			t.Setenv(stubAckEnv, mode)
+			t.Setenv(stubAckDelayEnv, "1ms")
+			s := &complianceStub{responded: make(chan struct{})}
+			w := &ackObservingWriter{stub: s, done: make(chan struct{})}
+			s.out = json.NewEncoder(w)
+			s.acknowledge("sess-1", "start-1")
+			select {
+			case <-w.done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the stub never wrote session_started")
+			}
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			if len(w.seen) != 1 || !w.seen[0] {
+				t.Fatalf("acked at write time = %v; want [true]: the flag must be set before session_started reaches stdout", w.seen)
+			}
+		})
 	}
 }
