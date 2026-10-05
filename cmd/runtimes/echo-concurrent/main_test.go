@@ -89,7 +89,8 @@ func TestDemultiplexesTwoSessionsWithIsolatedSequences(t *testing.T) {
 	// Interleave two sessions: sess-01 gets two messages, sess-02 one.
 	// Each session's sequence counter is independent, so sess-01's second
 	// response is seq=2 while sess-02's only response is seq=1.
-	in := message("sess-01", "a1") +
+	in := sessionStart("sess-01", "st_1") + sessionStart("sess-02", "st_2") +
+		message("sess-01", "a1") +
 		message("sess-02", "b1") +
 		message("sess-01", "a2")
 	frames := responsesOnly(drive(t, in))
@@ -218,7 +219,7 @@ func TestHeartbeatAckIsPodGlobalAndUnaddressed(t *testing.T) {
 // further output. spec: §28.5.3.
 func TestShutdownEndsEverySlot(t *testing.T) {
 	var out bytes.Buffer
-	in := message("sess-01", "before") +
+	in := sessionStart("sess-01", "st_1") + message("sess-01", "before") +
 		`{"type":"shutdown","reason":"drain","deadline_ms":1}` + "\n" +
 		message("sess-01", "after")
 	if err := run(context.Background(), strings.NewReader(in), &out, io.Discard); err != nil {
@@ -280,7 +281,8 @@ func TestPerSlotProtocolErrorFailsTheRuntime(t *testing.T) {
 	// A frame whose `input` is a string, not a MessagePart array: the front
 	// loop accepts it (it reads only type and sessionId) but echocore's
 	// handleMessage rejects the body.
-	in := `{"type":"message","id":"m1","sessionId":"sess-01","input":"not-an-array"}` + "\n"
+	in := sessionStart("sess-01", "st_1") +
+		`{"type":"message","id":"m1","sessionId":"sess-01","input":"not-an-array"}` + "\n"
 	var out bytes.Buffer
 	err := run(context.Background(), strings.NewReader(in), &out, io.Discard)
 	if err == nil {
@@ -536,6 +538,7 @@ func TestNoFrameForASessionAfterItsSessionEnd_spec_28_5_3(t *testing.T) {
 		sessionStart("sess-01", "st_1"),
 		message("sess-01", "a1"),
 		sessionEnd("sess-01"),
+		sessionStart("sess-02", "st_2"),
 		message("sess-02", "b1"),
 	} {
 		var env struct {
@@ -601,4 +604,111 @@ func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// outError is the error field of an outbound response frame.
+type outError struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Error     *struct {
+		Code string `json:"code"`
+	} `json:"error"`
+}
+
+// driveRaw runs the dispatch loop over input, followed by a heartbeat and
+// a shutdown, and returns the raw outbound JSONL and the diagnostics the
+// runtime wrote to stderr.
+func driveRaw(t *testing.T, input string) (out, stderr string) {
+	t.Helper()
+	var o, e bytes.Buffer
+	in := input + `{"type":"heartbeat","ts":1}` + "\n" + `{"type":"shutdown","reason":"drain","deadline_ms":1}` + "\n"
+	if err := run(context.Background(), strings.NewReader(in), &o, &e); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return o.String(), e.String()
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Session errors)
+//
+// A message for a session whose session_start the runtime never read is
+// answered with a response carrying error for that sessionId, and the
+// runtime keeps serving. The message must not create a session context, so
+// it gets no echo, and a later message for the same session is rejected
+// the same way.
+func TestMessageWithoutSessionStartIsAnsweredWithAnError_spec_28_5_3(t *testing.T) {
+	out, _ := driveRaw(t, message("sess-09", "x1")+message("sess-09", "x2"))
+	var errs int
+	var sawAck bool
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var f outError
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			t.Fatalf("decode %q: %v", line, err)
+		}
+		switch f.Type {
+		case "heartbeat_ack":
+			sawAck = true
+		case "response":
+			if f.SessionID != "sess-09" || f.Error == nil || f.Error.Code != "RUNTIME_ERROR" {
+				t.Fatalf("response %q, want a RUNTIME_ERROR response for sess-09", line)
+			}
+			errs++
+		default:
+			t.Fatalf("unexpected frame %q for a session that was never started", line)
+		}
+	}
+	if errs != 2 {
+		t.Fatalf("got %d error responses, want one per message (2): %s", errs, out)
+	}
+	if !sawAck {
+		t.Fatal("no heartbeat_ack after the rejected messages: the runtime stopped serving")
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_end rule 2, Session errors)
+//
+// After session_end released a session, a message or a tool_result for it
+// does not recreate the session's context and is not answered, because
+// after session_end the runtime writes no frame addressed to the session.
+// The runtime keeps serving and records a diagnostic. A session_start for
+// the same session reopens it, and a message after that gets a fresh
+// worker's echo.
+func TestMessageAfterSessionEndDoesNotReopenTheSession_spec_28_5_3(t *testing.T) {
+	out, stderr := driveRaw(t, sessionStart("sess-01", "st_1")+
+		sessionEnd("sess-01")+
+		message("sess-01", "late")+
+		`{"type":"tool_result","sessionId":"sess-01","id":"tc_1","content":[]}`+"\n")
+	for _, f := range decodeFrames(t, out) {
+		if f.SessionID == "sess-01" && f.Type != "session_started" {
+			t.Fatalf("frame %+v addressed to sess-01 after its session_end: the late frame reopened the session", f)
+		}
+	}
+	if !strings.Contains(stderr, "already ended") {
+		t.Fatalf("stderr %q, want a diagnostic for the frame dropped after session_end", stderr)
+	}
+
+	frames := drive(t, sessionStart("sess-01", "st_1")+
+		sessionEnd("sess-01")+
+		message("sess-01", "late")+
+		sessionStart("sess-01", "st_2")+
+		message("sess-01", "again"))
+	responses := responsesOnly(frames)
+	if len(responses) != 1 || !strings.Contains(inline(responses[0]), "[echo seq=1]") || !strings.Contains(inline(responses[0]), "again") {
+		t.Fatalf("responses = %+v, want only the reopened session's seq=1 echo of again", responses)
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Session errors)
+//
+// A tool_result for a session the runtime never started has no response
+// to carry an error, so it is dropped with a diagnostic and the runtime
+// keeps serving.
+func TestToolResultForAnUnheldSessionIsDropped_spec_28_5_3(t *testing.T) {
+	out, stderr := driveRaw(t, `{"type":"tool_result","sessionId":"sess-09","id":"tc_1","content":[]}`+"\n")
+	frames := decodeFrames(t, out)
+	if len(frames) != 1 || frames[0].Type != "heartbeat_ack" {
+		t.Fatalf("frames = %+v, want only the heartbeat_ack", frames)
+	}
+	if !strings.Contains(stderr, "does not hold") {
+		t.Fatalf("stderr %q, want a diagnostic for the dropped tool_result", stderr)
+	}
 }

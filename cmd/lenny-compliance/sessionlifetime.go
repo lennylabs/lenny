@@ -111,10 +111,15 @@ func checkSessionLifetime(binary string, timeout time.Duration, _ bool) (string,
 }
 
 // expectResponses reads frames until it has read want[sessionID] responses
-// for every session in want, skipping session_started frames. A response
-// for a session outside want, an extra response, or a response carrying
-// error fails it, as do the end of stdout and a read that outlasts
-// sessionLifetimeReadWait.
+// for every session in want. A response for a session outside want, an
+// extra response, or a response carrying error fails it, as do the end of
+// stdout and a read that outlasts sessionLifetimeReadWait. Every frame
+// other than a response is skipped, because a runtime may write
+// session_started, status, tool_call, and other outbound frames while it
+// serves a message.
+//
+// spec: §15.4.6 (Conformance Test Suite, Basic session lifetime), §28.5.3
+// (CH-MSGSOCK, Outbound: status).
 func expectResponses(frames *frameReader, want map[string]int) error {
 	remaining := 0
 	for _, n := range want {
@@ -126,11 +131,8 @@ func expectResponses(frames *frameReader, want map[string]int) error {
 			return lifetimeReadError("a response", err)
 		}
 		f, ok := decodeSessionFrame(line)
-		if !ok || f.Type == "session_started" {
+		if !ok || f.Type != "response" {
 			continue
-		}
-		if f.Type != "response" {
-			return fmt.Errorf("expected a response, got %s", line)
 		}
 		if want[f.SessionID] == 0 {
 			return fmt.Errorf("response for session %q, want one for %v: %s", f.SessionID, want, line)
@@ -160,8 +162,10 @@ func confirmServing(stdin io.Writer, frames *frameReader) error {
 	return writeErr
 }
 
-// expectHeartbeatAck reads frames until a heartbeat_ack, skipping
-// session_started frames. Any other frame fails it.
+// expectHeartbeatAck reads frames until a heartbeat_ack. A response read
+// first fails it, because every message the check wrote has already had
+// its response, so the frame is an extra one. Every other frame is
+// skipped, as expectResponses skips it.
 func expectHeartbeatAck(frames *frameReader) error {
 	for {
 		line, err := frames.next(sessionLifetimeReadWait)
@@ -169,13 +173,15 @@ func expectHeartbeatAck(frames *frameReader) error {
 			return lifetimeReadError("heartbeat_ack", err)
 		}
 		f, ok := decodeSessionFrame(line)
-		if !ok || f.Type == "session_started" {
+		if !ok {
 			continue
 		}
-		if f.Type != "heartbeat_ack" {
-			return fmt.Errorf("expected heartbeat_ack, got %s", line)
+		switch f.Type {
+		case "heartbeat_ack":
+			return nil
+		case "response":
+			return fmt.Errorf("extra response while waiting for heartbeat_ack: %s", line)
 		}
-		return nil
 	}
 }
 

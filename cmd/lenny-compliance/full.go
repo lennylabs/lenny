@@ -634,8 +634,14 @@ func checkDeadlineSignal(binary string, ackWait time.Duration) (string, error) {
 }
 
 // awaitDeadlineResponse reads frames until the response to the session's
-// message, skipping session_started frames, and fails when it does not
-// arrive within wait or does not carry the session's sessionId.
+// message, and fails when it does not arrive within wait or does not carry
+// the session's sessionId. Every frame other than a response is skipped:
+// a runtime may write session_started, status, tool_call, and other
+// outbound frames while it serves the message, and none of them is what
+// the check judges.
+//
+// spec: §15.4.6 (Conformance Test Suite, deadline signal handling),
+// §28.5.3 (CH-MSGSOCK, Outbound: status).
 func awaitDeadlineResponse(frames *frameReader, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for {
@@ -644,10 +650,10 @@ func awaitDeadlineResponse(frames *frameReader, wait time.Duration) error {
 			return fmt.Errorf("no response to the session's message before remainingMs (%s) elapsed: %w", wait, err)
 		}
 		f, ok := decodeSessionFrame(line)
-		if !ok || f.Type == "session_started" {
+		if !ok || f.Type != "response" {
 			continue
 		}
-		if f.Type != "response" || f.SessionID != complianceSessionID {
+		if f.SessionID != complianceSessionID {
 			return fmt.Errorf("expected the response for session %s, got %s", complianceSessionID, line)
 		}
 		return nil

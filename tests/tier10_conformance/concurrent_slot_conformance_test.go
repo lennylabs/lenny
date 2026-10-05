@@ -137,6 +137,14 @@ func concurrentMessage(sessionID, text string) string {
 	return string(b) + "\n"
 }
 
+// concurrentSessionStart builds the session_start that opens sessionID.
+// The reference runtime creates a session's context only on session_start,
+// so every session a case messages is opened first.
+func concurrentSessionStart(sessionID, startID string) string {
+	b, _ := json.Marshal(map[string]any{"type": "session_start", "sessionId": sessionID, "startId": startID})
+	return string(b) + "\n"
+}
+
 // inlineText concatenates the inline text parts of a response frame.
 func inlineText(f concurrentFrame) string {
 	var b strings.Builder
@@ -171,6 +179,8 @@ func TestConcurrentSessionDispatchConformance(t *testing.T) {
 	// messages and sess-02 one. The single dispatch loop must demultiplex
 	// both streams.
 	frames := []string{
+		concurrentSessionStart(sessionA, "st_a"),
+		concurrentSessionStart(sessionB, "st_b"),
 		concurrentMessage(sessionA, "a1"),
 		concurrentMessage(sessionB, "b1"),
 		concurrentMessage(sessionA, "a2"),
@@ -281,6 +291,7 @@ func TestUnaddressedUnknownFrameTypeIsTolerated_spec_15_4(t *testing.T) {
 
 	result := runConcurrentRuntime(t, a.echoConcurrent, []string{
 		`{"type":"this_is_a_future_message_type","x":1}` + "\n",
+		concurrentSessionStart("sess_alice", "st_alice"),
 		concurrentMessage("sess_alice", "ping"),
 	})
 	if result.exitCode != 0 {

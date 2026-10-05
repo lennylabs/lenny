@@ -188,6 +188,24 @@ func TestDeadlineSignalCheckRejectsExitAndSecondResponse_spec_15_4_6(t *testing.
 	}
 }
 
+// spec: 15.4.6 (deadline signal handling), 28.5.3 (CH-MSGSOCK Outbound:
+// status)
+//
+// diagnosis: a failure means the deadline check rejects a runtime that
+// writes the optional outbound status frame before its response or its
+// heartbeat_ack, or passes such a runtime when it writes a second response
+// after deadline_approaching.
+func TestDeadlineSignalCheckSkipsStatusFrames_spec_15_4_6(t *testing.T) {
+	bin := setStub(t, map[string]string{stubStatusEnv: "1"})
+	if detail, err := checkDeadlineSignal(bin, testAckWait); err != nil {
+		t.Fatalf("the check failed a runtime that writes status before its response: %q, %v", detail, err)
+	}
+	bin = setStub(t, map[string]string{stubStatusEnv: "1", stubDeadlineEnv: "second"})
+	if detail, err := checkDeadlineSignal(bin, testAckWait); err == nil || !strings.Contains(err.Error(), "second response") {
+		t.Fatalf("checkDeadlineSignal = (%q, %v), want an error naming a second response", detail, err)
+	}
+}
+
 // spec: 15.4.6 (credential rotation handling), 28.5.3 (CH-RUNTIMEOPS
 // credentials_rotated)
 //

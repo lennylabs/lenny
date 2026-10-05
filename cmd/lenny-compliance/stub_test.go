@@ -46,6 +46,10 @@ const (
 	// stubExitAfterResponsesEnv, when set to a count N, makes the stub
 	// exit right after it writes its Nth response.
 	stubExitAfterResponsesEnv = "LENNY_COMPLIANCE_STUB_EXIT_AFTER_RESPONSES"
+	// stubStatusEnv, when set, makes the stub write an optional outbound
+	// status frame before each response and before each heartbeat_ack, as
+	// a runtime that reports progress while it serves a message does.
+	stubStatusEnv = "LENNY_COMPLIANCE_STUB_STATUS"
 )
 
 // setStub configures the test binary as a stub runtime for the rest of the
@@ -53,7 +57,7 @@ const (
 func setStub(t *testing.T, env map[string]string) string {
 	t.Helper()
 	t.Setenv(complianceStubEnv, "1")
-	for _, k := range []string{stubAckEnv, stubAckDelayEnv, stubNoRereadEnv, stubDeadlineEnv, stubExitOnEndEnv, stubExitAfterResponsesEnv} {
+	for _, k := range []string{stubAckEnv, stubAckDelayEnv, stubNoRereadEnv, stubDeadlineEnv, stubExitOnEndEnv, stubExitAfterResponsesEnv, stubStatusEnv} {
 		t.Setenv(k, env[k])
 	}
 	return os.Args[0]
@@ -70,6 +74,18 @@ type complianceStub struct {
 	respondedOnce sync.Once
 	// responses counts the responses the stub wrote.
 	responses int
+	// lastSession is the sessionId of the last session-scoped frame the
+	// stub read, which its status frames before a heartbeat_ack carry.
+	lastSession string
+}
+
+// writeStatus writes a status frame for sessionID when stubStatusEnv is
+// set, and does nothing otherwise.
+func (s *complianceStub) writeStatus(sessionID string) {
+	if os.Getenv(stubStatusEnv) == "" || sessionID == "" {
+		return
+	}
+	s.write(map[string]any{"type": "status", "state": "thinking", "message": "working", "sessionId": sessionID})
 }
 
 // exit closes stdout under the writer lock and then exits. Closing stdout
@@ -118,6 +134,9 @@ func runComplianceStub(string) int {
 		if json.Unmarshal(sc.Bytes(), &f) != nil {
 			continue
 		}
+		if f.SessionID != "" {
+			s.lastSession = f.SessionID
+		}
 		switch f.Type {
 		case "session_start":
 			s.acknowledge(f.SessionID, f.StartID)
@@ -126,6 +145,7 @@ func runComplianceStub(string) int {
 				return 0
 			}
 		case "message":
+			s.writeStatus(f.SessionID)
 			s.write(map[string]any{"type": "response", "sessionId": f.SessionID, "output": []map[string]any{{"type": "text", "inline": "pong"}}})
 			s.respondedOnce.Do(func() { close(s.responded) })
 			s.responses++
@@ -133,6 +153,7 @@ func runComplianceStub(string) int {
 				return 0
 			}
 		case "heartbeat":
+			s.writeStatus(s.lastSession)
 			s.write(map[string]any{"type": "heartbeat_ack"})
 			if os.Getenv(stubDeadlineEnv) == "exitafterack" && s.responses > 0 {
 				s.exit()

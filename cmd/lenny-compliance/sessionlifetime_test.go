@@ -77,3 +77,17 @@ func TestSessionLifetimeRejectsARuntimeThatExitsAfterTheConcurrentSessions_spec_
 		t.Fatalf("a stub that stays alive failed the session lifetime check: %q, %v", detail, err)
 	}
 }
+
+// spec: 15.4.6 (Conformance Test Suite, Basic session lifetime), 28.5.3
+// (CH-MSGSOCK Outbound: status)
+//
+// diagnosis: a failure means the session lifetime check rejects a runtime
+// that writes the optional outbound status frame before a response or a
+// heartbeat_ack, so the Basic battery fails a conformant runtime that
+// reports progress while it serves a message.
+func TestSessionLifetimeSkipsStatusFramesBeforeResponsesAndAcks_spec_15_4_6(t *testing.T) {
+	bin := setStub(t, map[string]string{stubStatusEnv: "1"})
+	if detail, err := checkSessionLifetime(bin, 30*time.Second, false); err != nil {
+		t.Fatalf("a runtime that writes status frames failed the session lifetime check: %q, %v", detail, err)
+	}
+}

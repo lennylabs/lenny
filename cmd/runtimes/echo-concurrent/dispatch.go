@@ -132,7 +132,8 @@ var sessionScopedInboundTypes = map[string]bool{
 // boundary frames act on the worker map itself: session_start creates or
 // keeps the session's worker and acknowledges it, and session_end closes
 // and drains the worker and forgets it. Every other addressed frame goes
-// to the session's echocore loop.
+// to the session's echocore loop when the runtime holds the session, and
+// is answered by rejectUnheld when it does not.
 //
 // spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start, Inbound: session_end,
 // Outbound: session_started).
@@ -144,7 +145,7 @@ func (d *demux) dispatch(frameType, sessionID string, line []byte) error {
 		d.endSession(sessionID)
 		return nil
 	default:
-		return d.route(sessionID, line)
+		return d.route(frameType, sessionID, line)
 	}
 }
 
@@ -163,7 +164,7 @@ func (d *demux) startSession(sessionID string, line []byte) error {
 	if err := json.Unmarshal(line, &start); err != nil {
 		return protocolError{msg: fmt.Sprintf("malformed session_start: %v", err)}
 	}
-	d.worker(sessionID)
+	d.openWorker(sessionID)
 	ack, err := json.Marshal(map[string]string{
 		"type":      "session_started",
 		"sessionId": sessionID,
@@ -200,6 +201,7 @@ func (d *demux) endSession(sessionID string) {
 	w.markEnded(d)
 	d.mu.Lock()
 	delete(d.slots, sessionID)
+	d.ended[sessionID] = struct{}{}
 	d.mu.Unlock()
 	w.close()
 	w.wait()
@@ -225,8 +227,15 @@ type demux struct {
 	// leaves it nil.
 	sessionWriteGate func(sessionID string)
 
-	mu       sync.Mutex
-	slots    map[string]*slotWorker
+	mu    sync.Mutex
+	slots map[string]*slotWorker
+	// ended holds every session whose session_end released its worker and
+	// that no later session_start reopened. A frame for such a session is
+	// dropped rather than answered, because after session_end the runtime
+	// writes no frame addressed to the session. An entry is one sessionId,
+	// and the sessions one runtime process serves are bounded by its pool's
+	// per-pod session limit.
+	ended    map[string]struct{}
 	firstErr error
 }
 
@@ -236,14 +245,62 @@ func newDemux(ctx context.Context, out io.Writer, stderr io.Writer) *demux {
 		stderr: stderr,
 		out:    out,
 		slots:  make(map[string]*slotWorker),
+		ended:  make(map[string]struct{}),
 	}
 }
 
-// route delivers an inbound frame to the worker for sessionID, creating
-// the worker on first use.
-func (d *demux) route(sessionID string, line []byte) error {
-	w := d.worker(sessionID)
-	return w.deliver(line)
+// route delivers an inbound frame to the worker session_start created for
+// sessionID. It never creates a worker: the worker is the session's
+// context, and only session_start creates a session's context. A frame for
+// a session the runtime does not hold goes to rejectUnheld.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end rule 2).
+func (d *demux) route(frameType, sessionID string, line []byte) error {
+	d.mu.Lock()
+	w, held := d.slots[sessionID]
+	_, ended := d.ended[sessionID]
+	d.mu.Unlock()
+	if held {
+		return w.deliver(line)
+	}
+	return d.rejectUnheld(frameType, sessionID, ended)
+}
+
+// rejectUnheld answers a frame for a session the runtime does not hold and
+// keeps the runtime running. A frame for a session that session_end
+// released is dropped with a diagnostic, because after session_end the
+// runtime writes no frame addressed to the session. A message for a
+// session whose session_start the runtime never read is answered with a
+// response carrying error for that sessionId. Any other frame type, such
+// as a tool_result, has no response to carry the error and is dropped with
+// a diagnostic.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end rule 2).
+func (d *demux) rejectUnheld(frameType, sessionID string, ended bool) error {
+	if ended {
+		fmt.Fprintf(d.stderr, "echo-concurrent: dropping %q frame for session %q, which already ended\n", frameType, sessionID)
+		return nil
+	}
+	if frameType != "message" {
+		fmt.Fprintf(d.stderr, "echo-concurrent: dropping %q frame for session %q, which this runtime does not hold\n", frameType, sessionID)
+		return nil
+	}
+	frame, err := json.Marshal(map[string]any{
+		"type":      "response",
+		"sessionId": sessionID,
+		"output":    []any{},
+		"error": map[string]string{
+			"code":    "RUNTIME_ERROR",
+			"message": "no session " + sessionID + " is open on this runtime",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("encode unheld-session response: %w", err)
+	}
+	if err := d.writeFrame(frame); err != nil {
+		return fmt.Errorf("write unheld-session response: %w", err)
+	}
+	return nil
 }
 
 // broadcast delivers a frame to every active worker. It is used for the
@@ -262,10 +319,14 @@ func (d *demux) broadcast(line []byte) {
 	}
 }
 
-// worker returns the worker for sessionID, starting it on first use.
-func (d *demux) worker(sessionID string) *slotWorker {
+// openWorker returns the worker for sessionID, starting it when the
+// runtime does not hold the session, and clears any ended mark a previous
+// session_end left so the reopened session is served again. startSession
+// is its only caller.
+func (d *demux) openWorker(sessionID string) *slotWorker {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	delete(d.ended, sessionID)
 	if w, ok := d.slots[sessionID]; ok {
 		return w
 	}
