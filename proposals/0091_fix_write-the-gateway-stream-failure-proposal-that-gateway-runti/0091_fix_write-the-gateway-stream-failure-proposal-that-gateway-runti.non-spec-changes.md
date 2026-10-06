@@ -31,7 +31,7 @@ Spec ties: §28.5.1 `CH-ATTACH` **Timing.** (as SPEC-2a states it), §28.5.3 `CH
 
    On `ctx.Done()`, `Send` returns the context error, wrapped, and leaves the turn registered and the token held. Only the reader completes a turn. It does so when it consumes a `response` frame, or when the stream ends. Completing a turn clears the registration and returns the token. On `conn.done`, `Send` returns a wrapped stream-ended error. The tenant for the approval gate comes from the conn rather than a fresh registry read.
 5. **Reader.** The reader loops on `Recv` and handles each frame in this order:
-   1. When an approval gate is wired, the reader gates a `tool_call` frame carrying `approvalRequired: true` on the conn's context with the conn's `tenantID`, whether or not a turn is registered, and relays the verdict through `conn.send`. A gate error is written to the registered turn's result channel, if one exists, and the turn stays registered until its `response` arrives. A relay write error ends the conn as a stream end.
+   1. When an approval gate is wired, the reader gates a `tool_call` frame carrying `approvalRequired: true` on the conn's context with the conn's `tenantID`, whether or not a turn is registered, and relays the verdict through `conn.send`. A gate error is written to the registered turn's result channel, if one exists, and the turn stays registered until its `response` arrives. A relay write error is dropped, and the reader's next `Recv` returns the stream's end for `endConn` to classify.
    2. A `response` frame completes the registered turn by writing to its result channel. A `response` that arrives while no turn is registered is discarded.
    3. Every other frame is discarded, as `readAttachResponse` skips such frames today.
 
@@ -160,6 +160,7 @@ Tier 1, `pkg/gateway/session/executor/pod_test.go`, against a fake `AttachStream
 - (h) **Stale reader.** After `EvictStream` and a re-Attach, the old stream's end leaves the new stream cached.
 - (i) **Gateway-caused end is silent.** An `EvictStream` or `Release` end does not reach the classification. Assert it through a recording handler or an internal test hook.
 - (j) **Between-turn approval.** An `approvalRequired` `tool_call` that arrives while no turn is registered is gated and answered.
+- (k) **Gate error.** A gate error mid-turn makes that `Send` return the wrapped gate error, and the next `Send` receives its own reply after the gated turn's `response`.
 
 Tier 7a, `tests/tier7a_load_local`:
 
@@ -199,7 +200,7 @@ Spec ties: 7.3 (Retry and Resume), 6.2 (Pod State Machine), 5.2 (Pool Configurat
 Spec ties: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume).
 
 - Tier 1, `pod_test.go`:
-  - `DeadlineExceeded` and `Internal` ends call the handler once.
+  - `DeadlineExceeded` and `Internal` ends call the handler once, including a `DeadlineExceeded` end while the reader waits in the approval gate, whose relay write then fails.
   - `io.EOF`, `FailedPrecondition`, `InvalidArgument`, and `Unavailable` ends evict without a handler call.
   - A crashed runtime is reported on the next `Send`'s re-Attach when that stream ends with `Internal`.
 - Tier 1, `pkg/gateway/sessionserver/stream_failure_test.go`:
@@ -228,7 +229,7 @@ Tier 7a, `tests/tier7a_load_local`:
 
 Tier 8, `tests/tier8_chaos`:
 
-- Killing the runtime connection mid-turn produces one `runtime_crash` report. Killing it between turns does the same.
+- Killing the runtime connection, mid-turn or between turns, produces no report until the next message delivery, which produces one `runtime_crash` report (SPEC-2b).
 - An `LNK-POD-GRPC` partition test waits past the gateway keepalive time plus timeout, asserts that the stream was evicted with `UNAVAILABLE`, and then asserts that the row has not left `running`. Asserting before the eviction would pass without exercising the `UNAVAILABLE` branch.
 
 Tier 11, `tests/tier11_docs`, in the `concurrent_slot_lifecycle_doc_reconciliation_test.go` pattern:
