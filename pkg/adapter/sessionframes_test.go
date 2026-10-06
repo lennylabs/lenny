@@ -430,7 +430,7 @@ func TestSessionFrameWriteMatrix_spec_28_5_3(t *testing.T) {
 			t.Fatalf("claim: %v", err)
 		}
 		s.mu.Lock()
-		s.slots["sess-1"] = &slotState{sessionID: "sess-1", started: true, bindAttempt: claim.attempt}
+		s.slots["sess-1"] = &slotState{sessionID: "sess-1", started: true, bindAttempt: claim.entry.bindAttempt}
 		s.mu.Unlock()
 		confirmed, err := s.openRuntimeSession(ctx, "sess-1", claim, manifestInputs{}, false)
 		if err != nil || confirmed {

@@ -38,43 +38,44 @@ import (
 // sessionID, the record at which the slot reaches §6.2 running, and reports
 // whether the record was taken. It runs immediately after a successful
 // start. It refuses in the two states a §7.1 reclaim leaves: the registry
-// holds no entry bound to this session, or it holds one stamped with a
-// different bind attempt. Recording in either would put a session in
-// runtimeLive that the registry does not hold under this attempt's
-// identity, holding runtimeIdleLocked false and soleSession empty for the
-// life of the pod.
+// holds no entry under this slot identifier, or it holds an entry other
+// than entry, the one this start's claim was admitted against. Recording in
+// either would put a session in runtimeLive that the registry does not hold
+// under this start's identity, holding runtimeIdleLocked false and
+// soleSession empty for the life of the pod.
 //
 // The second state is the replaced-entry case. The slot identifier equals
 // the session identifier, so a successor attempt at the same session holds
 // an entry under the same key with the same sessionID, and a predicate
 // reading only st.sessionID cannot see that the entry belongs to a later
-// attempt. The bind attempt can, because the successor stamped the entry it
-// created with its own token and the adapter never overwrites a token on a
-// resolve.
+// attempt. Rule 8 compares entry identity, the same pointer comparison
+// registryHoldsClaimEntry takes before the session_start write. A token
+// comparison does not conform: a successor bound under the same token, or
+// two untokened entries for one session, carry equal tokens on distinct
+// entries.
 //
-// attempt is the token the entry carried when this start's own claim was
-// admitted, passed in rather than re-read here: a read taken after the
-// claim is as racy as the confirmation it anchors. A start that carries no
-// token of its own passes the entry's token, so an entry no later attempt
-// replaced compares equal to itself. The predicate reads the registry entry
-// rather than st.started, because the claim sets st.started before
-// Runtime.Start and it is therefore true for this very call.
+// entry is the registry entry the claim was admitted against, passed in
+// rather than looked up again here: a read taken after the claim is as racy
+// as the confirmation it anchors. The predicate reads the registry rather
+// than st.started, because the claim sets st.started before Runtime.Start
+// and it is therefore true for this very call.
 //
 // The resolve, the confirmation and the record run under one hold of s.mu,
 // which is the start step of the §4.7.1 registry critical section: a
 // confirmation that released the lock before recording would record a
 // session a reclaim had already released.
 //
-// spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract), rule 8
+// spec: §7.1 (normal flow); §4.7.1 (Role and Gateway RPC Contract), rule 8
 // (the start-confirmation rule); §15.4.3.
-func (s *Server) noteRuntimeStarted(sessionID, attempt string) bool {
-	if sessionID == "" {
+func (s *Server) noteRuntimeStarted(sessionID string, entry *slotState) bool {
+	if sessionID == "" || entry == nil {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// spec: §4.7.1 (Role and Gateway RPC Contract), rule 8: entry identity.
 	st, ok := s.slots[sessionID]
-	if !ok || st.sessionID != sessionID || st.bindAttempt != attempt {
+	if !ok || st != entry || st.sessionID != sessionID {
 		return false
 	}
 	s.noteRuntimeStartedLocked(sessionID)

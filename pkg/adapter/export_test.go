@@ -49,7 +49,7 @@ func (s *Server) ClaimSessionForTest(sessionID string) error {
 	// A completed start's open sequence has written the session's
 	// session_start, which is what admits its message writes.
 	s.markSessionStartWritten(claim.entry, true)
-	_ = s.noteRuntimeStarted(sessionID, claim.attempt)
+	_ = s.noteRuntimeStarted(sessionID, claim.entry)
 	return nil
 }
 

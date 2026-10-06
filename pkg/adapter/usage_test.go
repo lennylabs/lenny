@@ -396,10 +396,9 @@ func TestSessionUsageMeterConcurrentFoldRaceSmoke_spec_11_2(t *testing.T) {
 
 // bindSessionForTest binds the named session's slot entry so a
 // session-scoped RPC's checkSessionBound admits it, which is the state a
-// completed bind leaves on every pod, and returns the bind attempt token
-// the entry carries so a caller can confirm a start against it through
-// noteRuntimeStarted. spec: §5.2.
-func bindSessionForTest(t *testing.T, s *Server, sessionID string) string {
+// completed bind leaves on every pod, and returns the entry so a caller can
+// confirm a start against it through noteRuntimeStarted. spec: §5.2.
+func bindSessionForTest(t *testing.T, s *Server, sessionID string) *slotState {
 	t.Helper()
 	if s.WorkspaceBase == "" {
 		s.WorkspaceBase = t.TempDir()
@@ -412,5 +411,5 @@ func bindSessionForTest(t *testing.T, s *Server, sessionID string) string {
 	}
 	st.sessionID = sessionID
 	st.started = true
-	return st.bindAttempt
+	return st
 }

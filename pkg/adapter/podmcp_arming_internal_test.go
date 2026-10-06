@@ -82,7 +82,7 @@ func TestPodMCPArmingSurvivesDepartingSessionRelease_spec_15_4_3(t *testing.T) {
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server for alice: %v", err)
 	}
-	_ = s.noteRuntimeStarted("alice", aliceClaim.attempt)
+	_ = s.noteRuntimeStarted("alice", aliceClaim.entry)
 
 	// alice's Shutdown: the locked cancel-deregister step has run and the
 	// runtime close is still in flight.
@@ -189,7 +189,7 @@ func TestPodMCPArmingDeclinedOnCoTenantedPod_spec_15_4_3(t *testing.T) {
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server: %v", err)
 	}
-	_ = s.noteRuntimeStarted("alice", aliceClaim.attempt)
+	_ = s.noteRuntimeStarted("alice", aliceClaim.entry)
 
 	bobClaim, err := s.claimSessionSlot("bob", slotResolve{allowCreate: true}, false, false)
 	if err != nil {
@@ -236,7 +236,7 @@ func TestPodMCPArmingReportsTheLiveArming_spec_15_4_3(t *testing.T) {
 	if err := s.startPlatformMCP("nonce-alice"); err != nil {
 		t.Fatalf("arm the platform MCP server for alice: %v", err)
 	}
-	_ = s.noteRuntimeStarted("alice", aliceClaim.attempt)
+	_ = s.noteRuntimeStarted("alice", aliceClaim.entry)
 
 	session, nonce := s.PodMCPArming()
 	if session != "alice" {

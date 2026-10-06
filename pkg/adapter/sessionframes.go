@@ -202,7 +202,7 @@ func (s *Server) nextStartID() string {
 // the §5.2 reclaim hold in the same critical section, and that hold does
 // not end before the removing section's cleanup completes, which requires
 // the guard this sequence holds. The entry can therefore only have been
-// removed, never replaced, and the token comparison inside
+// removed, never replaced, and the entry-identity comparison inside
 // noteRuntimeStarted detects exactly that. So no successor attempt's
 // session_start can have been written for the identifier, and this
 // attempt's session_end cannot reach the runtime after a later attempt's
@@ -242,7 +242,7 @@ func (s *Server) openRuntimeSession(ctx context.Context, sessionID string, claim
 	if err := s.writeStartFrame(ctx, sessionID, startID, claim.entry, in, awaiting); err != nil {
 		return false, err
 	}
-	if s.noteRuntimeStarted(sessionID, claim.attempt) {
+	if s.noteRuntimeStarted(sessionID, claim.entry) {
 		return true, nil
 	}
 	s.markSessionStartWritten(claim.entry, false)

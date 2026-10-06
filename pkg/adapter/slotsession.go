@@ -70,21 +70,16 @@ type slotClaim struct {
 	// and two concurrent claims that both observed it free would hand the
 	// loser EADDRINUSE.
 	startMCP bool
-	// attempt is the bind attempt token the entry carried inside the
-	// critical section that claimed it. The handler holds it across
-	// Runtime.Start and passes it to noteRuntimeStarted, so the start
-	// confirmation compares against the value the claim itself was
-	// admitted against. On a start that carries no token of its own it is
-	// the entry's own stamp, so an entry no later attempt replaced compares
-	// equal to itself. spec: §4.7.1 (role and gateway RPC contract), rule 8.
-	attempt string
 	// entry is the registry entry the claim was admitted against. The
-	// handler's failure rollbacks release the slot only while the registry
-	// still holds this entry under the session identifier, so an abandoned
-	// attempt's late failure cannot remove the entry a successor attempt
-	// created after a reclaim. Pointer identity is compared rather than the
-	// token alone, because two untokened entries for one session carry the
-	// same empty token. spec: §4.7.1 (role and gateway RPC contract).
+	// handler holds it across Runtime.Start and passes it to
+	// noteRuntimeStarted, so the start confirmation compares the entry the
+	// claim itself was admitted against. The handler's failure rollbacks
+	// release the slot only while the registry still holds this entry under
+	// the session identifier, so an abandoned attempt's late failure cannot
+	// remove the entry a successor attempt created after a reclaim. Pointer
+	// identity is compared rather than the token alone, because two
+	// untokened entries for one session carry the same empty token.
+	// spec: §4.7.1 (Role and Gateway RPC Contract), rule 8.
 	entry *slotState
 }
 
@@ -113,14 +108,14 @@ func (s *Server) claimSessionSlotUnderLock(sessionID string, r slotResolve, sdkW
 	// the idempotent repeat and states the refusal for a later reader.
 	if st.started {
 		if idempotentRepeat {
-			return slotClaim{attempt: st.bindAttempt, entry: st}, nil, nil
+			return slotClaim{entry: st}, nil, nil
 		}
 		return slotClaim{}, nil, errSlotBindAlreadyStarted(sessionID)
 	}
 	st.sessionID = sessionID
 	st.started = true
 	startMCP, stale := s.claimPodMCPStartLocked(sessionID)
-	return slotClaim{fresh: true, startMCP: startMCP, attempt: st.bindAttempt, entry: st}, stale, nil
+	return slotClaim{fresh: true, startMCP: startMCP, entry: st}, stale, nil
 }
 
 // claimPodMCPStartLocked reports whether the caller must arm the pod's

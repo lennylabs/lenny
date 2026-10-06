@@ -714,6 +714,7 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "pkg/adapter/slotsession_test.go::TestTheRecordTimeConfirmationComparesEntryIdentity_spec_4_7_1",
         "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",
         "tests/tier7a_load_local/message_session_start_order_race_test.go",
         "tests/tier7a_load_local/session_frame_pairing_race_test.go",

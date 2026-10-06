@@ -214,7 +214,7 @@ func TestShutdownOfACoTenantedPodSendsNoDrain_spec_5_2(t *testing.T) {
 
 	if frame, ok := fr.readWithin(750 * time.Millisecond); ok {
 		t.Errorf("CH-RUNTIMEOPS carried a %q frame while a co-tenant was still bound; a session "+
-			"teardown sends the runtime no frame", frame.Type)
+			"teardown sends no CH-RUNTIMEOPS frame (its session_end goes on CH-MSGSOCK)", frame.Type)
 	}
 
 	s.mu.Lock()
@@ -1262,16 +1262,16 @@ func TestAStartWhoseSlotWasReclaimedRollsBackAndAborts_spec_4_7_1(t *testing.T) 
 
 // spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes)
 //
-// Rule 8 compares the bind attempt token, not only the session. A reclaim
-// removed the first attempt's entry and a successor attempt re-created it
-// under the same slot identifier with the same session bound, so a
-// predicate reading only st.sessionID would confirm the first attempt's
-// start. The confirmation refuses it, refuses on an absent entry, and
-// confirms the successor's own start.
+// Rule 8 compares entry identity, not only the session. A reclaim removed
+// the first attempt's entry and a successor attempt re-created it under the
+// same slot identifier with the same session bound, so a predicate reading
+// only st.sessionID would confirm the first attempt's start. The
+// confirmation refuses it, refuses on an absent entry, and confirms the
+// successor's own start.
 func TestTheStartConfirmationRefusesAReplacedEntry_spec_4_7_1(t *testing.T) {
 	s, _ := slotPod(t)
 	s.Runtime = &probeRuntime{}
-	if s.noteRuntimeStarted("alice", "") {
+	if s.noteRuntimeStarted("alice", nil) {
 		t.Error("noteRuntimeStarted confirmed a session the registry holds no entry for")
 	}
 	bindUnstarted(t, s, "alice")
@@ -1279,24 +1279,92 @@ func TestTheStartConfirmationRefusesAReplacedEntry_spec_4_7_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claim alice: %v", err)
 	}
-	if first.attempt != shutdownAttempt {
-		t.Fatalf("claim reported attempt %q, want the entry's stamp %q", first.attempt, shutdownAttempt)
+	if first.entry.bindAttempt != shutdownAttempt {
+		t.Fatalf("claimed entry carries attempt %q, want %q", first.entry.bindAttempt, shutdownAttempt)
 	}
 	s.ReleaseSlotForTest(t.Context(), "alice")
+	if s.noteRuntimeStarted("alice", first.entry) {
+		t.Error("noteRuntimeStarted confirmed a start whose entry a reclaim removed")
+	}
 	assignWithToken(t, s, "alice", successorAttempt)
 	successor, err := s.claimSessionSlot("alice", slotResolve{}, false, false)
 	if err != nil {
 		t.Fatalf("claim the successor: %v", err)
 	}
 
-	if s.noteRuntimeStarted("alice", first.attempt) {
+	if s.noteRuntimeStarted("alice", first.entry) {
 		t.Error("noteRuntimeStarted confirmed the first attempt's start on the successor's entry")
 	}
 	if runtimeHolds(s, "alice") {
 		t.Fatal("a refused confirmation recorded alice")
 	}
-	if !s.noteRuntimeStarted("alice", successor.attempt) || !runtimeHolds(s, "alice") {
+	if !s.noteRuntimeStarted("alice", successor.entry) || !runtimeHolds(s, "alice") {
 		t.Error("the successor's own start was not confirmed and recorded")
+	}
+}
+
+// spec: §4.7.1 (Role and Gateway RPC Contract)
+//
+// The record-time confirmation of rule 8 compares entry identity, and a
+// comparison of tokens alone does not conform. A successor entry registered
+// under the same session identifier carries the same bind token as the
+// entry the first start was admitted against, either because the successor
+// bound under the same token or because neither entry carries one. A token
+// comparison confirms the first start on the successor's entry; the entry
+// comparison refuses it and confirms the successor's own start.
+func TestTheRecordTimeConfirmationComparesEntryIdentity_spec_4_7_1(t *testing.T) {
+	// Each form binds and claims alice's slot. The tokened form binds through
+	// AssignCredentials under shutdownAttempt; the untokened form creates
+	// the entry in the claim, which stamps no token.
+	tokened := func(t *testing.T, s *Server) slotClaim {
+		t.Helper()
+		assignWithToken(t, s, "alice", shutdownAttempt)
+		c, err := s.claimSessionSlot("alice", slotResolve{}, false, false)
+		if err != nil {
+			t.Fatalf("claim alice: %v", err)
+		}
+		return c
+	}
+	untokened := func(t *testing.T, s *Server) slotClaim {
+		t.Helper()
+		c, err := s.claimSessionSlot("alice", slotResolve{allowCreate: true}, false, false)
+		if err != nil {
+			t.Fatalf("claim alice: %v", err)
+		}
+		return c
+	}
+	cases := []struct {
+		name  string
+		claim func(*testing.T, *Server) slotClaim
+	}{
+		{name: "successor reuses the bind token", claim: tokened},
+		{name: "both entries untokened", claim: untokened},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := slotPod(t)
+			s.Runtime = &probeRuntime{}
+			first := tc.claim(t, s)
+			s.ReleaseSlotForTest(t.Context(), "alice")
+			successor := tc.claim(t, s)
+			if successor.entry == first.entry {
+				t.Fatal("the successor claim returned the first attempt's entry; the reclaim did not replace it")
+			}
+			if successor.entry.bindAttempt != first.entry.bindAttempt {
+				t.Fatalf("successor token %q differs from the first token %q; the case needs equal tokens",
+					successor.entry.bindAttempt, first.entry.bindAttempt)
+			}
+
+			if s.noteRuntimeStarted("alice", first.entry) {
+				t.Error("the record-time confirmation accepted the first attempt's start on a successor entry carrying the same token")
+			}
+			if runtimeHolds(s, "alice") {
+				t.Fatal("a refused confirmation recorded alice")
+			}
+			if !s.noteRuntimeStarted("alice", successor.entry) || !runtimeHolds(s, "alice") {
+				t.Error("the successor's own start was not confirmed and recorded")
+			}
+		})
 	}
 }
 
