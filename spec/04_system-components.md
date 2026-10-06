@@ -1043,7 +1043,7 @@ The boundary between the adapter and the agent binary is **untrusted**. A compro
 
    Fields per entry: `leaseId` (string), `provider` (string — the credential provider identifier), `expiresAt` (ISO 8601), `deliveryMode` (`"direct"` or `"proxy"`), `materializedConfig` (object). For `deliveryMode: proxy`, `materializedConfig` contains only `proxyUrl` (string) and `leaseToken` (string); no real API keys appear in the file. For `deliveryMode: direct`, `materializedConfig` contains the full provider credentials (see [§4.9](#49-credential-leasing-service) `materializedConfig` schema). The file is rewritten by the adapter on credential rotation; after rewrite, the adapter sends `credentials_rotated` on the CH-RUNTIMEOPS and awaits `credentials_acknowledged` from the runtime before resuming operation.
 
-5. **Agent crash isolation:** If the agent process crashes, the adapter detects it (socket EOF), reports the failure to the gateway, and does not restart the agent. The gateway handles retry at the session level.
+5. **Agent crash isolation:** If the agent process crashes, the adapter detects it (socket EOF), and does not restart the agent. The gateway detects the failure on the session's `CH-ATTACH` stream ([Section 28.5.1](28_communication-channels.md#2851-gateway-to-pod)) and handles retry at the session level.
 
 6. **Credential-sensitive RPC logging exclusion:** `AssignCredentials` and `RotateCredentials` RPCs carry credential material in their payloads. These RPCs must be excluded from gRPC access log payload capture, OpenTelemetry span attributes, and any request/response logging middleware. Only the RPC name, lease ID, provider type, and success/failure status should be logged — never the `materializedConfig` contents.
 
