@@ -17561,6 +17561,24 @@ The §11.3 line 212 statement that the 500ms default is per-registration is hono
 
 ---
 
+### - [ ] F-11.3.35 — `maxSuspendedPodHoldSeconds` is configured but nothing enforces it, and its flag help states the wrong outcome [Medium] — OPEN
+
+**Spec:** §6.2 **Graceful pod release during extended suspension** and §11.3: when a `suspended` session has held its pod for `maxSuspendedPodHoldSeconds` (900 s, the more restrictive of the deployment and tenant values), the gateway checkpoints it and releases the pod; the session stays `suspended`. On a checkpoint failure the pod is held and the checkpoint retried every 60 s.
+**Evidence:**
+- `watchdog.Config.MaxSuspendedPodHoldSeconds` (`pkg/gateway/runtime/watchdog/watchdog.go`) is filled with a default, but no sweep reads it.
+- The `--max-suspended-pod-hold-seconds` help text in `cmd/lenny-gateway/flags.go` says the watchdog transitions the session "to `expired`", which contradicts §6.2.
+- F-11.3.17 was closed after adding only the setting.
+- Found by the 2026-10-06 session-lifecycle review, filed 2026-10-06.
+**Gap:** A suspended session keeps its pod indefinitely, and the operator documentation describes an expiry the spec does not define.
+**Suggested resolution:** Owned by the session suspend-and-resume proposal scheduled in `gateway-runtime-comms-remediation.md` §10.2 after proposal 0091. That proposal implements the release, and it corrects the flag help text in the same change.
+
+### - [ ] F-11.3.36 — The idle-cap flag keeps a retired name, a wrong default, and a wrong reason in its help text [Low] — OPEN
+
+**Spec:** §6.2 **`maxClientIdleSeconds` clock behavior across states** and §5.2 `sessionPolicy.maxClientIdleSeconds`: the idle cap replaced the former `runtime.limits.maxIdleTimeSeconds`. Its default is the effective `maxSessionAgeSeconds` (7200 s), and expiry carries reason `max_idle_time`.
+**Evidence:** `cmd/lenny-gateway/flags.go` declares `--max-idle-time-seconds` (env `LENNY_MAX_IDLE_TIME_SECONDS`). Its help text names `maxIdleTimeSeconds` and `limits.maxIdleTimeSeconds`, says "Default 600s", and gives the reason `expired:idle`. The compiled default (`watchdog.DefaultMaxIdleSeconds`) equals the session-age cap, so the help text and the behavior disagree. Filed 2026-10-06.
+**Gap:** Operators read a default and a reason that the gateway does not use.
+**Suggested resolution:** Owned by the session suspend-and-resume proposal, which redefines idle (no turn in flight and no traffic in either direction) and changes the default and the outcome to suspend. That proposal renames the flag to match `maxClientIdleSeconds` and corrects the help text in the same change.
+
 ## §11.4 User Invalidation <a id="11.4"></a>
 **Spec location:** `spec/11_policy-and-controls.md` lines 244-264
 
