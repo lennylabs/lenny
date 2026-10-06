@@ -156,12 +156,23 @@ func (c *attachConn) registerTurn() chan turnResult {
 	return ch
 }
 
-// abortTurn clears a registered turn whose message was never written and
-// returns the token, because no reply will arrive to complete it.
-func (c *attachConn) abortTurn() {
+// abortTurn clears the turn registered as ch, whose message was never
+// written, and returns the token, because no reply will arrive to complete
+// it. The reader can complete the turn first, between the registration and
+// the failed write, when the runtime emits a `response` no message caused;
+// completing a turn already cleared the registration and returned the token,
+// so abortTurn then leaves both alone. Taking the token unconditionally would
+// either block forever on an empty token or take the token of a later Send
+// that acquired it meanwhile, which breaks one turn at a time and leaves the
+// reader blocked on its next completion. spec: §28.5.1 (CH-ATTACH Timing.),
+// §28.5.3.
+func (c *attachConn) abortTurn(ch chan turnResult) {
 	c.turnMu.Lock()
+	defer c.turnMu.Unlock()
+	if c.turn != ch {
+		return
+	}
 	c.turn = nil
-	c.turnMu.Unlock()
 	<-c.token
 }
 
@@ -189,7 +200,7 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 	}
 	result := c.registerTurn()
 	if err := c.send(envelope); err != nil {
-		c.abortTurn()
+		c.abortTurn(result)
 		return turnResult{}, c.awaitEndAfterWriteError(ctx, err)
 	}
 	return c.awaitReply(ctx, result)

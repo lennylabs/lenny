@@ -674,11 +674,10 @@ func TestSendWaitingForTheTokenHonorsItsContext_spec_28_5_1(t *testing.T) {
 	}
 }
 
-// spec: 28.5.1 (Gateway-to-pod)
-// A turn whose write fails clears its registration and returns the token,
-// because no reply will arrive to complete it, so the next turn is not
-// blocked behind a message the runtime never received.
-func TestFailedWriteReleasesTheTurn_spec_28_5_1(t *testing.T) {
+// finishedStreamConn returns a conn over a stream that has already finished,
+// so every write fails, with no reader running.
+func finishedStreamConn(t *testing.T) *attachConn {
+	t.Helper()
 	_, cl := dialScripted(t)
 	streamCtx, cancelStream := context.WithCancel(context.Background())
 	stream, err := cl.Attach(streamCtx, "sess-1")
@@ -692,9 +691,18 @@ func TestFailedWriteReleasesTheTurn_spec_28_5_1(t *testing.T) {
 		t.Fatal("Recv on a cancelled stream succeeded")
 	}
 	c := newAttachConn(context.Background(), &podsession.BindResult{SessionID: "sess-1"})
-	defer c.cancel()
+	t.Cleanup(c.cancel)
 	c.stream = stream
 	close(c.ready)
+	return c
+}
+
+// spec: 28.5.1 (Gateway-to-pod)
+// A turn whose write fails clears its registration and returns the token,
+// because no reply will arrive to complete it, so the next turn is not
+// blocked behind a message the runtime never received.
+func TestFailedWriteReleasesTheTurn_spec_28_5_1(t *testing.T) {
+	c := finishedStreamConn(t)
 	// No reader runs here, so done stands in for the reader's end handling,
 	// which a failed write waits for.
 	close(c.done)
@@ -711,6 +719,86 @@ func TestFailedWriteReleasesTheTurn_spec_28_5_1(t *testing.T) {
 	defer c.turnMu.Unlock()
 	if c.turn != nil {
 		t.Error("a failed write left its turn registered")
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 28.5.3 (Intra-pod)
+// The reader completes a turn with an unsolicited `response` between the
+// turn's registration and its failed write. Completing the turn already
+// cleared the registration and returned the token, so the failed write must
+// leave both alone: the Send returns instead of blocking on an empty token,
+// and a later Send that has acquired the token keeps it and its registered
+// turn, so the reader's completion of that later turn does not block.
+func TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1(t *testing.T) {
+	for _, laterSend := range []bool{false, true} {
+		c := finishedStreamConn(t)
+		// Holding sendMu parks the turn between its registration and its
+		// write.
+		c.sendMu.Lock()
+		got := make(chan error, 1)
+		go func() {
+			_, err := c.runTurn(context.Background(), []byte(`{"type":"message"}`))
+			got <- err
+		}()
+		deadline := time.Now().Add(streamTestTimeout)
+		for {
+			c.turnMu.Lock()
+			registered := c.turn != nil
+			c.turnMu.Unlock()
+			if registered {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("runTurn never registered its turn")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		// The reader hands an unsolicited response to the registered turn.
+		c.completeTurn(turnResult{})
+		var later chan turnResult
+		if laterSend {
+			if err := c.acquireTurn(context.Background()); err != nil {
+				t.Fatalf("later Send acquireTurn: %v", err)
+			}
+			later = c.registerTurn()
+		}
+		// done stands in for the reader's end handling of the failed stream.
+		close(c.done)
+		c.sendMu.Unlock()
+
+		select {
+		case err := <-got:
+			if !errors.Is(err, errStreamEnded) {
+				t.Fatalf("later Send %v: runTurn = %v, want the wrapped stream-ended error", laterSend, err)
+			}
+		case <-time.After(streamTestTimeout):
+			t.Fatalf("later Send %v: runTurn blocked after its write failed", laterSend)
+		}
+		if !laterSend {
+			if len(c.token) != 0 {
+				t.Error("token held after the reader completed the turn and the write failed")
+			}
+			continue
+		}
+		if len(c.token) != 1 {
+			t.Fatal("the failed write took the later Send's token")
+		}
+		c.turnMu.Lock()
+		kept := c.turn == later
+		c.turnMu.Unlock()
+		if !kept {
+			t.Fatal("the failed write cleared the later Send's registered turn")
+		}
+		// The reader completes the later turn without blocking.
+		completed := make(chan struct{})
+		go func() {
+			c.completeTurn(turnResult{})
+			close(completed)
+		}()
+		awaitClosed(t, completed, "the reader completing the later turn")
+		if len(c.token) != 0 {
+			t.Error("completing the later turn left the token held")
+		}
 	}
 }
 
