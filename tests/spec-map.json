@@ -714,6 +714,8 @@
       "title": "Role and Gateway RPC Contract",
       "spec_file": "spec/04_system-components.md",
       "tests": [
+        "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",
+        "tests/tier7a_load_local/message_session_start_order_race_test.go",
         "tests/tier7a_load_local/session_frame_pairing_race_test.go",
         "tests/tier3_contract/rest_sessions/slot_address_absence_test.go::TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestIsTransientPodClaimErrorIgnoresPlainFailedPrecondition_spec_7_3",
@@ -6006,6 +6008,8 @@
       "title": "Intra-pod",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
+        "tests/tier3_contract/adapter_jsonl/message_before_session_start_test.go",
+        "tests/tier7a_load_local/message_session_start_order_race_test.go",
         "pkg/adapter/manifest_test.go",
         "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
         "tests/tier10_conformance/scaffolds_test.go::TestFullLevel",
