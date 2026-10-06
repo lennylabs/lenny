@@ -2,13 +2,13 @@
 proposal: 0091_fix_write-the-gateway-stream-failure-proposal-that-gateway-runti
 title: Gateway does not survive or react to Attach stream failure
 kind: fix
-status: Reviewed
+status: Approved
 drafted-date: 2026-10-06
 drafted-by: change-proposal
 reviewed-date: 2026-10-06
 reviewed-by: change-proposal
-approved-date: 
-approved-by: 
+approved-date: 2026-10-06
+approved-by: jaf
 implemented-date: 
 implemented-by: 
 ---
