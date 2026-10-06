@@ -192,13 +192,33 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 		c.abortTurn()
 		return turnResult{}, fmt.Errorf("podexec: send to pod for session %s: %w", c.sessionID, err)
 	}
+	return c.awaitReply(ctx, result)
+}
+
+// awaitReply waits for the reader to complete the registered turn. On ctx's
+// end it leaves the turn registered and the token held, so only the reader
+// completes the turn.
+//
+// The reader completes a turn before its next Recv can observe the stream's
+// end, so the result and the end of ctx or of the stream can be ready at
+// once, and select picks among ready cases at random. A reply the runtime
+// produced wins: the caller must not see a delivery failure for a message
+// the runtime answered. spec: §28.5.1 (CH-ATTACH Timing.), §28.5.3.
+func (c *attachConn) awaitReply(ctx context.Context, result <-chan turnResult) (turnResult, error) {
+	var cause error
 	select {
 	case res := <-result:
 		return res, nil
 	case <-ctx.Done():
-		return turnResult{}, fmt.Errorf("podexec: await reply on session %s: %w", c.sessionID, ctx.Err())
+		cause = ctx.Err()
 	case <-c.done:
-		return turnResult{}, fmt.Errorf("podexec: await reply on session %s: %w", c.sessionID, errStreamEnded)
+		cause = errStreamEnded
+	}
+	select {
+	case res := <-result:
+		return res, nil
+	default:
+		return turnResult{}, fmt.Errorf("podexec: await reply on session %s: %w", c.sessionID, cause)
 	}
 }
 

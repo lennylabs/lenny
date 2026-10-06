@@ -748,3 +748,80 @@ func TestWaitForOpenHonorsTheCallerContext_spec_28_5_1(t *testing.T) {
 		t.Fatalf("waitReady = %v, want context.Canceled", err)
 	}
 }
+
+// spec: 28.5.1 (Gateway-to-pod), 28.5.3 (Intra-pod)
+// A completed turn's reply wins over the stream ending or the caller's
+// context ending at the same moment. The reader completes the turn before
+// its next Recv observes the end, so both channels are ready when the Send
+// waits; select picks among ready cases at random, and without the
+// tie-break about half of these waits would report a delivery failure for a
+// message the runtime answered.
+func TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	cases := []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"stream ended", context.Background()},
+		{"stream ended and context canceled", canceled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for i := 0; i < 500; i++ {
+				c := &attachConn{sessionID: "sess-1", done: make(chan struct{})}
+				result := make(chan turnResult, 1)
+				result <- turnResult{parts: []MessagePart{{Type: "text", Text: "answered"}}}
+				close(c.done)
+				res, err := c.awaitReply(tc.ctx, result)
+				if err != nil {
+					t.Fatalf("iteration %d: awaitReply = %v, want the completed reply", i, err)
+				}
+				if len(res.parts) != 1 || res.parts[0].Text != "answered" {
+					t.Fatalf("iteration %d: awaitReply parts = %+v, want the completed reply", i, res.parts)
+				}
+			}
+		})
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod)
+// With no reply, a Send waiting on an ended stream or an ended context
+// returns the matching wrapped cause.
+func TestAwaitReplyWithoutAReplyReturnsTheCause_spec_28_5_1(t *testing.T) {
+	c := &attachConn{sessionID: "sess-1", done: make(chan struct{})}
+	close(c.done)
+	if _, err := c.awaitReply(context.Background(), make(chan turnResult, 1)); !errors.Is(err, errStreamEnded) {
+		t.Fatalf("awaitReply on an ended stream = %v, want a wrapped stream-ended error", err)
+	}
+	open := &attachConn{sessionID: "sess-1", done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := open.awaitReply(ctx, make(chan turnResult, 1)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("awaitReply on an ended context = %v, want a wrapped context.Canceled", err)
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 28.5.3 (Intra-pod)
+// The adapter emits a `response` and ends the stream at once. Every Send
+// returns the reply rather than a stream-ended error, and the next Send
+// reattaches.
+func TestReplyFollowedByStreamEndReachesTheSend_spec_28_5_1(t *testing.T) {
+	e, a, _ := newScriptedExecutor(t)
+	for i := 0; i < 50; i++ {
+		pending := sendAsync(context.Background(), e, "msg")
+		ss := a.nextStream(t)
+		if f := ss.expectFrame(t); f["type"] != "message" {
+			t.Fatalf("iteration %d: gateway wrote %v, want a message envelope", i, f)
+		}
+		conn := e.cachedConn("sess-1")
+		ss.pushFrame(t, reply("answered"))
+		ss.end <- status.Error(codes.Internal, "runtime exited")
+		if r := awaitSend(t, pending); r.err != nil || r.text != "answered" {
+			t.Fatalf("iteration %d: Send = %+v, want the reply the runtime produced", i, r)
+		}
+		// The next Send must open a new stream rather than race the
+		// reader's eviction of the ended one.
+		awaitClosed(t, conn.done, "the ended stream's eviction")
+	}
+}
