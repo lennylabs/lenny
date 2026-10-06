@@ -14,8 +14,8 @@
       Tiers 0, 1, 2, 4, 5, 7a. Depends on: S5
 - [ ] **S7 · code** — CODE-2. Lands the release funnel, the slot accounting, the per-session slot-accounting lock, the release before a resume rebinds, and the hold of a resume whose bind meets another replica's lease, with their tests.
       Tiers 0, 1, 2, 7a. Depends on: S1, S2, S3, S6
-- [ ] **S8 · code** — CODE-3. Lands the injected stream-failure handler, the `runtime_crash` report on a bounded detached context, the report-timeout flag, and the path-6 delivery fallback, with their tests.
-      Tiers 0, 1. Depends on: S1, S2, S7
+- [ ] **S8 · code** — CODE-3. Lands the injected stream-failure handler, the `BindResult.CoordinationGeneration` stamp at every binding publish site, the coordination check that suppresses a stale replica's report and evicts its binding without a drain, the `runtime_crash` report on a bounded detached context, the report-timeout flag, and the path-6 delivery fallback, with their tests.
+      Tiers 0, 1, 7a. Depends on: S1, S2, S7
 - [ ] **S9 · test** — TEST-2. Lands the step-2 tests.
       Tiers 0, 4, 5, 7a, 8, 11. Depends on: S4, S8
 - [ ] **S10 · code** — CODE-5. Lands the eviction of a bound session's binding and stream after a peer takes the session over, with its tests.
