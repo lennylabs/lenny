@@ -31,10 +31,11 @@ stateDiagram-v2
 
     running --> suspended : POST /v1/sessions/{id}/interrupt
     running --> completed : agent finishes
-    running --> failed : unrecoverable error
+    running --> failed : non-retryable failure
     running --> cancelled : client/parent cancels
     running --> expired : lease/budget/deadline exhausted
-    running --> resume_pending : pod crash (retries remain)
+    running --> resume_pending : retryable failure (retries remain)
+    running --> awaiting_client_action : retryable failure (retries exhausted)
 
     suspended --> running : resume_session / delivery:immediate message
     suspended --> resume_pending : pod released + resume requested
@@ -76,7 +77,7 @@ stateDiagram-v2
 
 `input_required` is a **sub-state of `running`**, not a peer state. When an agent runtime calls `lenny/request_input`, the session enters `input_required`: the pod is live and the runtime is active, but the session is blocked waiting for client input. The `input_required` sub-state is surfaced to clients via `status_change` events. The session transitions back to `running` when input is provided.
 
-While in `input_required`, all session timers (including `maxSessionAge`) continue running; the session is logically active. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on pod crash with retries remaining), or `failed` (on pod crash with retries exhausted).
+While in `input_required`, all session timers (including `maxSessionAge`) continue running; the session is logically active. From `input_required`, the session can also transition to `cancelled` (if the parent cancels), `expired` (if a deadline is reached), `resume_pending` (on a retryable failure with retries remaining), `awaiting_client_action` (on a retryable failure with retries exhausted), or `failed` (on a non-retryable failure). The session's `retryPolicy` classifies each pod or runtime failure as retryable or non-retryable.
 
 ---
 

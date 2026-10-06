@@ -477,14 +477,16 @@ When a child fails, the gateway injects a `child_failed` event into your session
 {
   "type": "child_failed",
   "child_task_id": "task_xyz",
-  "classification": "transient",
+  "classification": "permanent",
   "error": {
     "code": "RUNTIME_CRASH",
     "message": "Agent process exited with code 137"
   },
-  "retriesExhausted": true
+  "retriesExhausted": false
 }
 ```
+
+In this example, the child's `retryPolicy` omits `runtime_crash` from `retryableFailures` and lists it under `nonRetryableFailures`, so the child failed on its first crash without a retry.
 
 Your runtime can:
 - Re-spawn a replacement child.

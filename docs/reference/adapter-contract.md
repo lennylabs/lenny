@@ -258,7 +258,7 @@ Delivered when a tool call you emitted has been executed by the adapter.
 { "type": "heartbeat", "ts": 1717430400 }
 ```
 
-Your runtime MUST respond with a `heartbeat_ack` within 10 seconds. If no ack is received, the adapter treats the process as hung and ends the session, and the runtime process receives no signal.
+Your runtime MUST respond with a `heartbeat_ack` within 10 seconds. If no ack is received, the adapter treats the process as hung and ends that session's stream to the gateway, and the runtime process receives no signal. The gateway handles the session as a runtime crash under the session's retry policy.
 
 #### `session_end` --- Release a Session
 
@@ -538,7 +538,7 @@ The adapter normalizes this to the canonical form `{"type": "response", "session
 | Code | Meaning |
 |------|---------|
 | 0 | Normal completion --- session ended cleanly or shutdown honored |
-| 1 | Runtime error --- adapter logs stderr and reports failure to gateway |
+| 1 | Runtime error --- adapter logs stderr; the gateway detects the failure on the session's Attach stream |
 | 2 | Protocol error --- agent could not parse inbound messages |
 | 137 | SIGKILL (set by OS) --- adapter treats as crash, pod is not reused |
 

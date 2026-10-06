@@ -36,26 +36,29 @@ stateDiagram-v2
     running --> suspended : interrupt_request + acknowledged
     running --> input_required : lenny/request_input (sub-state)
     running --> completed : Agent finishes
-    running --> failed : Unrecoverable error / retries exhausted / BUDGET_KEYS_EXPIRED
+    running --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
     running --> cancelled : Client or parent cancels
     running --> expired : Lease/budget/deadline exhausted
-    running --> resume_pending : Pod crash (retryCount < maxRetries)
+    running --> resume_pending : Retryable failure (retries remain)
+    running --> awaiting_client_action : Retryable failure (retries exhausted)
 
     input_required --> running : Input provided / request expires / cancelled
     input_required --> cancelled : Parent cancels
     input_required --> expired : Deadline reached
-    input_required --> resume_pending : Pod crash (retries remain)
-    input_required --> failed : Pod crash (retries exhausted) / BUDGET_KEYS_EXPIRED
+    input_required --> resume_pending : Retryable failure (retries remain)
+    input_required --> awaiting_client_action : Retryable failure (retries exhausted)
+    input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
 
     suspended --> running : resume_session (pod still held)
     suspended --> running : delivery:immediate message (pod still held)
     suspended --> resume_pending : resume_session (pod released)
     suspended --> resume_pending : delivery:immediate message (pod released)
-    suspended --> resume_pending : Pod failure while suspended (pod still held)
+    suspended --> resume_pending : Retryable failure, pod still held (retries remain)
+    suspended --> awaiting_client_action : Retryable failure, pod still held (retries exhausted)
     suspended --> completed : terminate
     suspended --> cancelled : Client or parent cancels
     suspended --> expired : perChildMaxAge wall-clock expiry
-    suspended --> failed : BUDGET_KEYS_EXPIRED
+    suspended --> failed : Non-retryable failure, pod still held / BUDGET_KEYS_EXPIRED
 
     resume_pending --> running : Pod allocated, resume successful
     resume_pending --> awaiting_client_action : Timeout (no pod available)
@@ -94,11 +97,13 @@ stateDiagram-v2
 | `resuming` | **Internal-only state.** New pod allocated; workspace checkpoint replaying and session file restoring. External clients never see this state -- the API reports the transition as `resume_pending` to `running` directly. |
 | `awaiting_client_action` | Automatic retries exhausted or `maxResumeWindowSeconds` elapsed. Client intervention required. Expires after `maxAwaitingClientActionSeconds` (default: 900s). Active children continue running. |
 | `completed` | Terminal. Agent finished normally. Workspace sealed and exported. |
-| `failed` | Terminal. Unrecoverable error, retries exhausted, or `BUDGET_KEYS_EXPIRED`. |
+| `failed` | Terminal. A non-retryable failure or other unrecoverable error, or `BUDGET_KEYS_EXPIRED`. |
 | `cancelled` | Terminal. Client or parent explicitly cancelled the session. |
 | `expired` | Terminal. Session deadline, lease expiry, or budget exhausted. |
 
 ### Transition table
+
+The session's retry policy (`retryPolicy`) classifies each pod or runtime failure of an active session as retryable or non-retryable. A retryable failure moves the session to `resume_pending` while retries remain and to `awaiting_client_action` when they are exhausted. A non-retryable failure moves it to `failed`.
 
 | From | To | Trigger | API endpoint / event |
 |:-----|:---|:--------|:---------------------|
@@ -109,21 +114,24 @@ stateDiagram-v2
 | `running` | `suspended` | Interrupt acknowledged (or timeout) | `POST /v1/sessions/{id}/interrupt` |
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
 | `running` | `completed` | Agent finishes | Internal |
-| `running` | `failed` | Crash, unrecoverable error, retries exhausted | Internal |
+| `running` | `failed` | Non-retryable failure or `BUDGET_KEYS_EXPIRED` | Internal |
 | `running` | `cancelled` | Cancel request | `DELETE /v1/sessions/{id}` |
 | `running` | `expired` | Deadline/budget/lease exhausted | Internal timer |
-| `running` | `resume_pending` | Pod crash with retries remaining | Internal |
+| `running` | `resume_pending` | Retryable failure with retries remaining | Internal |
+| `running` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
 | `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond` |
 | `input_required` | `cancelled` | Parent cancels | Internal |
 | `input_required` | `expired` | Deadline reached | Internal timer |
-| `input_required` | `resume_pending` | Pod crash with retries remaining | Internal |
-| `input_required` | `failed` | Pod crash, retries exhausted | Internal |
+| `input_required` | `resume_pending` | Retryable failure with retries remaining | Internal |
+| `input_required` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
+| `input_required` | `failed` | Non-retryable failure | Internal |
 | `suspended` | `running` | Resume (pod still held) | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
-| `suspended` | `resume_pending` | Resume or `delivery:immediate` message (pod released), or pod failure | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
+| `suspended` | `resume_pending` | Resume or `delivery:immediate` message (pod released), or a retryable failure with retries remaining (pod still held) | `POST /v1/sessions/{id}/resume`, `delivery:immediate` message, or internal |
+| `suspended` | `awaiting_client_action` | Retryable failure with retries exhausted (pod still held) | Internal |
 | `suspended` | `completed` | Terminate | `POST /v1/sessions/{id}/terminate` |
 | `suspended` | `cancelled` | Cancel | `DELETE /v1/sessions/{id}` |
 | `suspended` | `expired` | `perChildMaxAge` wall-clock expiry | Internal timer |
-| `suspended` | `failed` | `BUDGET_KEYS_EXPIRED` | Internal |
+| `suspended` | `failed` | Non-retryable failure (pod still held) or `BUDGET_KEYS_EXPIRED` | Internal |
 | `resume_pending` | `running` | Pod allocated and resume successful (internal-only `resuming` state is traversed transparently) | Internal |
 | `resume_pending` | `awaiting_client_action` | `maxResumeWindowSeconds` elapsed | Internal timer |
 | `awaiting_client_action` | `resume_pending` | Client resumes explicitly (then proceeds to `running` via resume path) | `POST /v1/sessions/{id}/resume` |
@@ -184,14 +192,17 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     attached --> completed : Session finishes
-    attached --> failed : Pod crash (retries exhausted)
-    attached --> resume_pending : Pod crash (retries remain)
+    attached --> failed : Non-retryable failure
+    attached --> resume_pending : Retryable failure (retries remain)
+    attached --> awaiting_client_action : Retryable failure (retries exhausted)
     attached --> suspended : Interrupt
     attached --> cancelled : Cancel
 
     suspended --> running_resumed : Resume
     suspended --> completed : Terminate
-    suspended --> resume_pending : Pod failure or pod released
+    suspended --> resume_pending : Retryable failure (retries remain) or pod released
+    suspended --> awaiting_client_action : Retryable failure (retries exhausted)
+    suspended --> failed : Non-retryable failure
     suspended --> cancelled : Cancel
 
     resume_pending --> resuming : New pod allocated
@@ -217,7 +228,7 @@ When occupancy reaches zero on a recycling pod, the gateway patches the claim's 
 | `claimed` | `reserved` | `preConnect: false`, scrub reported, disposition is recycle; claim patched to `reserved` with no re-warm leg |
 | `sdk_connecting` | `reserved` | SDK re-warm completes within `sdkConnectTimeoutSeconds` measured from the re-warm-start stamp |
 | `sdk_connecting` | `failed` | Re-warm watchdog fires |
-| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session, an unschedulable host node, or a runtime reported as unable to serve the next session (see the [retirement list](execution-modes#recycle-lifecycle)) |
+| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session on a pool with `maxConcurrentSessions: 1`, an unschedulable host node, or a runtime reported as unable to serve the next session (see the [retirement list](execution-modes#recycle-lifecycle)) |
 | `reserved` | `claimed` | Same-tenant session rebinds within the hold TTL (`reserved → bound` claim patch, no acquisition) |
 | `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm. The gateway also ends the hold, with the same precondition-guarded DELETE, on a pool that no longer keeps runtime processes across sessions |
 | `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. The gateway also stamps the `lenny.dev/drain-request` annotation on a pinned idle pod that an acquisition refuses on a pool outside the [runtime-process acknowledgment rule](execution-modes#presets). |
@@ -249,7 +260,7 @@ A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level c
 | `claimed` | `draining` | Served-session count reaches `recycle.maxSessionsPerPod` on a session release, `scrubProfile` is not `vm-restart`. The gateway stamps the drain request per release, decoupled from the occupancy-zero whole-pod scrub, because a persistently leaked slot can hold total occupancy above zero indefinitely. |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
-Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection), and `slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot-counter occupancy and counts toward the `claimed -> draining` threshold above.
+Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection) or when its session's stream to the pod fails after the session has started, such as when the runtime stops answering heartbeats. A slot whose stream failed counts toward the `claimed -> draining` threshold above even when its session is retried on another pod, and a runtime that stops answering heartbeats ends the stream of every open session on the pod. A slot moves `slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot-counter occupancy and counts toward the `claimed -> draining` threshold above.
 
 ---
 
@@ -265,7 +276,7 @@ stateDiagram-v2
     submitted --> running : Pod assigned, task started
 
     running --> completed : Task finishes
-    running --> failed : Crash, retries exhausted, or BUDGET_KEYS_EXPIRED
+    running --> failed : Non-retryable failure or BUDGET_KEYS_EXPIRED
     running --> cancelled : Parent cancels or cascade policy
     running --> expired : Lease/budget/deadline exhausted
     running --> input_required : lenny/request_input
@@ -273,7 +284,7 @@ stateDiagram-v2
     input_required --> running : Input provided / timeout / cancelled
     input_required --> cancelled : Parent cancels
     input_required --> expired : Deadline reached
-    input_required --> failed : Pod crash (retries exhausted) / BUDGET_KEYS_EXPIRED
+    input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
 
     completed --> [*]
     failed --> [*]
@@ -281,7 +292,7 @@ stateDiagram-v2
     expired --> [*]
 ```
 
-Recovery transitions (pod crash with `retryCount < maxRetries`) are handled at the session level: the underlying session enters `resume_pending` and, on successful recovery, the task returns to `running` or `input_required`. On retry exhaustion the task transitions to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the session-level mapping below; the canonical task state set above does not include transient recovery states.
+Recovery transitions (a retryable failure with `retryCount < maxRetries`) are handled at the session level: the underlying session enters `resume_pending` and, on successful recovery, the task returns to `running` or `input_required`. On retry exhaustion the underlying session enters `awaiting_client_action`, which external protocol clients see as `input_required` (see the session-level mapping below), and a non-retryable failure moves the task to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the session-level mapping below; the canonical task state set above does not include transient recovery states.
 
 ### Protocol mapping
 

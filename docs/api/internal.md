@@ -187,19 +187,24 @@ message AttachMessage {
 
 **Streaming semantics:**
 
-- The gateway opens the Attach stream after `StartSession` succeeds.
+- The gateway opens a session's Attach stream when it first delivers a message to the session, and holds that one stream until it releases the session's binding to the pod. The end of the client request that delivered a message does not end the stream.
 - Messages flow in both directions concurrently.
 - The gateway sends `MessageEnvelope` objects containing `MessagePart` arrays as input.
 - The pod sends `AgentOutput` objects containing `MessagePart` arrays as streaming output.
-- The stream remains open for the duration of the session.
-- If the stream is interrupted (network partition, pod restart), the gateway attempts reconnection. The pod must accept a new Attach stream for an in-progress session.
 
 **Heartbeat protocol:**
 
-- The gateway sends periodic heartbeat pings on the Attach stream.
-- The adapter must respond with `HeartbeatAck` within **10 seconds**.
-- A missed acknowledgment ends the session, and the runtime process receives no signal.
+- The adapter sends a periodic `heartbeat` frame to the runtime, and the runtime must answer with `heartbeat_ack` within **10 seconds**.
+- When the runtime misses the acknowledgment, the adapter ends that session's Attach stream with `DEADLINE_EXCEEDED`, and the runtime process receives no signal.
 - Heartbeat interval is configurable (default: 30 seconds).
+
+**Stream end:**
+
+- A stream the gateway did not end that ends with `DEADLINE_EXCEEDED` or `INTERNAL` is a stream failure. The gateway reports it as a runtime crash whether or not a message is outstanding, releases the session's binding, and moves the session to the state its retry policy selects: `resume_pending` while retries remain, `awaiting_client_action` when they are exhausted, or `failed` for a non-retryable failure.
+- A session in `resume_pending` is re-attached on a replacement pod from its last checkpoint when a pod is allocated within `maxResumeWindowSeconds`, and enters `awaiting_client_action` when that window elapses.
+- A stream that ends with `UNAVAILABLE` is discarded without a failure report, and a later message delivery opens a new stream only while the gateway replica still holds the session's binding.
+- A stream that closes when the runtime's output ends, or that ends with any other status, is discarded without a report. A runtime that has exited is reported when the next message delivery's Attach ends with `INTERNAL`.
+- A stream the gateway ends itself, when it releases the session's binding or discards its cached streams, is not a failure. The gateway does not redial Attach against the same pod after a stream failure.
 
 #### Checkpoint
 
@@ -435,17 +440,8 @@ The runtime should begin wrapping up the named session's long-running work, and 
 2. **Version negotiation:** The adapter sends `AdapterInit` with `adapterProtocolVersion` (semver, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` or closes with `PROTOCOL_VERSION_INCOMPATIBLE`.
 3. **Readiness signal:** The adapter signals `READY` via the Health service. The pod enters the warm pool.
 4. **Session assignment:** The gateway calls `StartSession`. The adapter transitions to `ACTIVE`.
-5. **Active session:** The gateway opens an `Attach` bidirectional stream. All content flows through this stream.
+5. **Active session:** At the session's first message delivery, the gateway opens the session's `Attach` bidirectional stream. All content flows through this stream.
 6. **Session end:** The gateway calls `StopSession`. On a recycled pod the adapter returns to `READY` for the pod's next session; otherwise the pod drains through `DRAINING` to `TERMINATED`.
-
-### Reconnection
-
-If the `Attach` stream is interrupted during an active session:
-
-1. The gateway detects the stream break via heartbeat timeout.
-2. For Full-level sessions with checkpoint support, the gateway may attempt to resume on the same pod (if the pod is still healthy) by opening a new `Attach` stream.
-3. If the pod is unhealthy, the gateway claims a new pod, restores from the last checkpoint, and starts a new session.
-4. For Basic- and Standard-level sessions without checkpoint support, pod failure results in session failure.
 
 ---
 

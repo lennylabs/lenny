@@ -293,8 +293,7 @@ function main(): void {
         break;
 
       case "heartbeat":
-        // Respond immediately. A missed ack within 10 seconds ends the session;
-        // the runtime process receives no signal.
+        // Respond immediately, within 10 seconds.
         writeJSON({ type: "heartbeat_ack" });
         break;
 

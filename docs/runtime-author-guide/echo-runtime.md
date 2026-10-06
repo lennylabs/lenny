@@ -135,8 +135,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "echo-runtime: received tool_result id=%s (ignored)\n", msg.ID)
 
 		case "heartbeat":
-			// Respond immediately. A missed ack within 10 seconds ends the session;
-			// the runtime process receives no signal.
+			// Respond immediately, within 10 seconds.
 			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 
 		case "shutdown":
@@ -232,7 +231,7 @@ case "heartbeat":
 	writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 ```
 
-The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds. A missed acknowledgment ends the session, and the runtime process receives no signal. The heartbeat handler should be immediate --- do not do any heavy work here.
+The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds. A missed acknowledgment ends that session's stream, and the runtime process receives no signal. The gateway handles the session as a runtime crash. The heartbeat handler should be immediate --- do not do any heavy work here.
 
 ### Handling `shutdown`
 

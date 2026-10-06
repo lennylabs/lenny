@@ -139,8 +139,7 @@ func main() {
 			handleToolResult(msg)
 
 		case "heartbeat":
-			// Respond immediately. A missed ack within 10 seconds ends the session;
-			// the runtime process receives no signal.
+			// Respond immediately, within 10 seconds.
 			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 
 		case "shutdown":
