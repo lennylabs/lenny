@@ -104,7 +104,7 @@ Clients MUST treat `uploadToken` as a secret credential: it MUST NOT be logged, 
 
 | `failureClass`            | Meaning                                                                                                                                                                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime_failure`         | Runtime crash, unrecoverable error, or retries exhausted from the `running`/`input_required`/`suspended` → `failed` transitions ([§7.2](#72-interactive-session-model))                       |
+| `runtime_failure`         | A runtime crash or unrecoverable error that [§7.3](#73-retry-and-resume) treats as non-retryable, from the `running`/`input_required`/`suspended` → `failed` transitions ([§7.2](#72-interactive-session-model)) |
 | `starting_timeout`        | `STARTING_TIMEOUT` expired during agent-runtime launch (`starting → failed`, see [§6.3](06_warm-pod-model.md#63-startup-latency-analysis))                                                    |
 | `budget_keys_expired`     | `BUDGET_KEYS_EXPIRED` detected (see [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease))                                                                                         |
 | `workspace_seal_timeout`  | Seal-and-export retry window exhausted (see §7.1 Seal-and-export invariant below)                                                                                                              |
@@ -172,15 +172,17 @@ running → suspended        (interrupt_request + interrupt_acknowledged)
 running → suspended        (interrupt_request timeout — deadlineMs elapsed without interrupt_acknowledged; adapter forces suspended, RPC returns INTERRUPT_TIMEOUT)
 running → input_required   (runtime calls lenny/request_input — sub-state of running)
 running → completed        (agent finishes)
-running → resume_pending   (pod crash / gRPC error, retryCount < maxRetries)
-running → failed           (runtime crash, unrecoverable error, retries exhausted, or BUDGET_KEYS_EXPIRED — see §8.3)
+running → resume_pending   (retryable failure, retryCount < maxRetries — see §7.3)
+running → awaiting_client_action (retryable failure, retries exhausted — see §7.3)
+running → failed           (non-retryable failure, or BUDGET_KEYS_EXPIRED — see §7.3, §8.3)
 running → cancelled        (client/parent cancels)
 running → expired          (lease/budget/deadline exhausted)
 input_required → running   (input provided via inReplyTo or request expires/cancelled)
 input_required → cancelled (parent cancels while awaiting input)
 input_required → expired   (deadline reached while awaiting input)
-input_required → resume_pending (pod crash / gRPC error while awaiting input, retryCount < maxRetries)
-input_required → failed    (pod crash / gRPC error while awaiting input, retries exhausted)
+input_required → resume_pending (retryable failure while awaiting input, retryCount < maxRetries — see §7.3)
+input_required → awaiting_client_action (retryable failure while awaiting input, retries exhausted — see §7.3)
+input_required → failed    (non-retryable failure while awaiting input — see §7.3)
 input_required → failed    (BUDGET_KEYS_EXPIRED detected while awaiting input — see §8.3)
 suspended → running        (resume_session — no new content; pod still held)
 suspended → running        (POST /v1/sessions/{id}/messages delivery:immediate; pod still held)
@@ -190,7 +192,9 @@ suspended → completed      (terminate)
 suspended → cancelled      (client/parent cancels while suspended)
 suspended → expired        (delegation lease perChildMaxAge wall-clock expiry while suspended)
 suspended → failed         (BUDGET_KEYS_EXPIRED detected — see §8.3)
-suspended → resume_pending (involuntary pod failure/eviction while suspended; pod still held)
+suspended → resume_pending (retryable failure while suspended; pod still held; retryCount < maxRetries — see §7.3)
+suspended → awaiting_client_action (retryable failure while suspended; pod still held; retries exhausted — see §7.3)
+suspended → failed         (non-retryable failure while suspended; pod still held — see §7.3)
 resume_pending → resuming              (pod allocated within maxResumeWindowSeconds)
 resume_pending → awaiting_client_action (maxResumeWindowSeconds elapsed, no pod available)
 resume_pending → cancelled              (pre-attach terminal collapse: client POST /v1/sessions/{id}/terminate, DELETE /v1/sessions/{id}, parent cancel cascade, or operator cancel arrives before a replacement pod is claimed and before the `resume_pending → resuming` transition fires. No pod attached → no snapshot-close sequence and no CoordinatorFence round-trip are required; the gateway marks the session cancelled, releases any reserved pool slot, persists the terminal state, and emits `status_change(cancelled)`. See [§15.1](15_external-api-surface.md#151-rest-api) `POST /terminate` preconditions and pre-attach note below.)
@@ -205,7 +209,7 @@ awaiting_client_action → cancelled     (client issues DELETE /v1/sessions/{id}
 awaiting_client_action → expired       (lease/budget/deadline exhausted while awaiting client action)
 ```
 
-`input_required` is a **sub-state of `running`**: the pod is live and the runtime process is active, but the agent is blocked inside a `lenny/request_input` tool call awaiting a response. This sub-state is significant for message routing (see delivery paths below) and for external observability (the gateway emits `status_change(state: "input_required")` to the client when the session enters this state, and `status_change(state: "running")` when it exits). Because `input_required` is a sub-state of `running` where the pod is live, all failure transitions defined for `running` also apply to `input_required` — including `resume_pending` on pod crash when retries remain and `failed` when retries are exhausted (these transitions are listed explicitly in the state machine above). The remaining transitions mirror those in the canonical task state machine ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)).
+`input_required` is a **sub-state of `running`**: the pod is live and the runtime process is active, but the agent is blocked inside a `lenny/request_input` tool call awaiting a response. This sub-state is significant for message routing (see delivery paths below) and for external observability (the gateway emits `status_change(state: "input_required")` to the client when the session enters this state, and `status_change(state: "running")` when it exits). Because `input_required` is a sub-state of `running` where the pod is live, all failure transitions defined for `running` also apply to `input_required` (the state machine above lists them). The remaining transitions mirror those in the canonical task state machine ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)).
 
 **Pre-attached vs. post-attached failure visibility.** The `starting → resume_pending` / `starting → failed` transitions above cover **post-attached** agent-runtime launch failures — specifically, failures that occur after the session has transitioned into the externally visible `starting` state and is visible to the client via `GET /v1/sessions/{id}`. These failures produce a visible `resume_pending` event so the client sees the recovery in progress. **Pre-attached** failures — crashes during pod warming, SDK connecting, workspace materialization, or setup commands (i.e., any state before the session is `attached`) — are handled entirely by the gateway's pre-attached retry policy ([§6.2](06_warm-pod-model.md#62-pod-state-machine) "Pre-attached failure retry policy") and are **not** exposed as session state transitions to the client. The client observes only the eventual outcome (session enters `running` on success, or a failure surfaces at the endpoint that runs the failing step: a pod-claim or credential-availability failure surfaces at `POST /v1/sessions`; a deterministic non-zero setup-command exit (a non-zero exit code or a hard timeout, which the adapter reports as a `FailedPrecondition` failure) surfaces as the non-retryable `SETUP_COMMAND_FAILED` (HTTP 422) at whichever of `POST /v1/sessions/{id}/finalize`, `POST /v1/sessions/start`, `POST /v1/sessions/{id}/start`, or `POST /v1/sessions/{id}/resume` ran the setup; a transient transport failure during setup stays the retryable atomic-unit fallback for the endpoint that ran it; and a runtime-launch failure surfaces at `POST /v1/sessions/{id}/start`). This preserves the atomicity guarantee described in §7.1: the session is either fully ready or reported as a creation error; intermediate warm-pool-side retries never surface as state transitions. The `created → failed` edge enumerated above is an **audit-only** exception scoped to `POST /v1/sessions/{id}/derive` under `gateway.persistDeriveFailureRows: true`; the primary creation path (`POST /v1/sessions`, `POST /v1/sessions/start`) never produces such a row regardless of the flag.
 
@@ -404,7 +408,7 @@ The `events_lost` field contains the count of events that occurred between the c
 **Resume flow after pod failure:**
 
 1. Gateway detects session failure
-2. Classify failure (retryable vs. non-retryable)
+2. Classify failure (retryable vs. non-retryable). A failure whose reason is on neither list is non-retryable.
 3. If retryable and `retryCount < maxRetries`:
    a. Transition to `resume_pending`; start `maxResumeWindowSeconds` wall-clock timer
    b. Allocate new warm pod (may wait if pool is temporarily exhausted)
@@ -413,7 +417,9 @@ The `events_lost` field contains the count of events that occurred between the c
    e. Replay latest workspace checkpoint
    f. Restore session file to expected path
    g. Resume session (native SDK resume or fresh session with carried state)
-4. If retries exhausted → state becomes `awaiting_client_action`
+4. If retryable and retries exhausted → state becomes `awaiting_client_action`
+5. If non-retryable and the session was `running`, `input_required`, or `suspended` → state becomes `failed`;
+   a failure during `resuming` follows [§6.2](06_warm-pod-model.md#62-pod-state-machine) **`resuming` failure transitions**
 
 A step in this flow that fails after the gateway has issued its first pod-side RPC onto the replacement pod carries the [§7.1](#71-normal-flow) pod-side reclaim obligation for the session before the replacement pod is released.
 
@@ -434,7 +440,7 @@ This guarantee is specific to the unplanned pod-restore path (`resume_pending �
 **`awaiting_client_action` semantics:**
 
 - **Entry paths:** Sessions enter `awaiting_client_action` in two ways: (a) auto-retry exhaustion (`retryCount >= maxRetries`) — the platform has given up automatic recovery; or (b) `resume_pending` timeout — `maxResumeWindowSeconds` elapsed while waiting for a pod to become available (pool exhaustion or scheduling delay). In both cases, client intervention is required.
-- **Expiry:** Sessions in `awaiting_client_action` expire after `maxAwaitingClientActionSeconds` (default 900s, configurable via `runtime.maxAwaitingClientActionSeconds`). This timer starts fresh on entry to `awaiting_client_action` — it is independent of the `maxResumeWindowSeconds` timer that governs `resume_pending` (a session that spent time in `resume_pending` before entering `awaiting_client_action` gets a full, fresh `maxAwaitingClientActionSeconds` window). After expiry the session transitions to `expired` — a terminal state. The gateway applies the session's `cascadeOnFailure` policy to all active children (same behavior as terminal failure after retry exhaustion). Artifacts are retained per the standard retention policy.
+- **Expiry:** Sessions in `awaiting_client_action` expire after `maxAwaitingClientActionSeconds` (default 900s, configurable via `runtime.maxAwaitingClientActionSeconds`). This timer starts fresh on entry to `awaiting_client_action` — it is independent of the `maxResumeWindowSeconds` timer that governs `resume_pending` (a session that spent time in `resume_pending` before entering `awaiting_client_action` gets a full, fresh `maxAwaitingClientActionSeconds` window). After expiry the session transitions to `expired` — a terminal state. The gateway applies the session's `cascadeOnFailure` policy to all active children. Artifacts are retained per the standard retention policy.
 - **DLQ drain on terminal transition:** On any terminal state transition (`completed`, `failed`, `cancelled`, `expired`) of a session that has an active DLQ (messages enqueued while in `resume_pending` or `awaiting_client_action`), the gateway drains the DLQ by emitting a `message_expired` event (canonical schema in [§15.4](15_external-api-surface.md#messageenvelope--unified-message-format)) on each registered sender session's event stream for each queued entry, with `reason: "target_terminated"` — the same reason used for the inbox-drain-on-terminal path ([§7.2](#72-interactive-session-model)) because both paths share the "target reached terminal before delivery" semantic. The DLQ Redis key is then deleted. This ensures senders are not held waiting for a session that will never resume.
 - **Children behavior:** Active children continue running when the parent enters `awaiting_client_action`. As each child reaches a terminal state (completed, failed, cancelled, expired), the gateway persists the child's completion event — including the full `TaskResult` payload — to the `session_tree_archive` Postgres table (keyed by `(root_session_id, node_session_id)`) rather than holding it only in the in-memory virtual child interface. This durability guarantee ensures that child completion events are not lost if the coordinating gateway replica crashes while the parent is in `awaiting_client_action`. On parent resumption, the gateway replays any archived child results from `session_tree_archive` before entering live-wait for any still-running children, so the parent receives a complete and consistent view of all child outcomes regardless of how long the parent remained in `awaiting_client_action`.
 - **CI / automated discovery:** Automated clients can poll `GET /v1/sessions/{id}` and check for `state: awaiting_client_action`. The webhook system ([Section 14](14_workspace-plan-schema.md), `callbackUrl`) also fires a `session.awaiting_action` event so CI systems can react without polling.

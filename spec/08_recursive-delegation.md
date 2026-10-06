@@ -302,7 +302,7 @@ Tracing endpoint URLs (where to send traces) are deployer configuration — set 
 
 **`fileExportLimits` sizing guidance:** The default `maxTotalSize: 100MB` is conservative and appropriate for most delegation workflows. For workflows that produce large build artifacts (e.g., compiled binaries, container images), deployers should increase `maxTotalSize` per delegation preset — up to the workspace size SLO ceiling (500 MB) if needed. Note that file exports transit through the gateway (parent pod → MinIO → child pod), so larger limits increase gateway I/O and MinIO bandwidth proportionally. Deployers should size MinIO I/O capacity accordingly when configuring higher limits.
 
-**`perChildRetryBudget`** — maximum number of automatic retry attempts the gateway will make for each child session spawned under this lease, independent of the parent session's own `retryPolicy.maxRetries`. When a child session fails with a retryable failure (e.g., `pod_evicted`, `node_lost`), the gateway retries up to `perChildRetryBudget` times before marking the child as permanently failed. Each retry attempt consumes one unit from the child's retry budget but does **not** consume from the parent's `retryPolicy.maxRetries` (those are separate scopes: `retryPolicy` governs the session's own recovery; `perChildRetryBudget` governs recovery of delegated children). Each retry re-uses the child's already-reserved token budget slice — no additional `budget_reserve.lua` call is made for retries, so the `maxTokenBudget` allocation is unchanged. However, each retry does allocate a new pod, so it counts against the parent's `maxTreeSize` (the failed pod's tree-size slot is released by `budget_return.lua` before the retry pod is reserved). Default: `1` (one retry per child). Set to `0` to disable child retries entirely. This field is **not extendable** via lease extensions — it is a reliability boundary, not a resource budget.
+**`perChildRetryBudget`** — maximum number of automatic retry attempts the gateway will make for each child session spawned under this lease, independent of the parent session's own `retryPolicy.maxRetries`. When a child session fails with a retryable failure (e.g., `pod_evicted`, `node_lost`), the gateway retries up to `perChildRetryBudget` times, after which the child's retries are exhausted and it takes the state that step 4 of [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume flow after pod failure** gives. Each retry attempt consumes one unit from the child's retry budget but does **not** consume from the parent's `retryPolicy.maxRetries` (those are separate scopes: `retryPolicy` governs the session's own recovery; `perChildRetryBudget` governs recovery of delegated children). Each retry re-uses the child's already-reserved token budget slice — no additional `budget_reserve.lua` call is made for retries, so the `maxTokenBudget` allocation is unchanged. However, each retry does allocate a new pod, so it counts against the parent's `maxTreeSize` (the failed pod's tree-size slot is released by `budget_return.lua` before the retry pod is reserved). Default: `1` (one retry per child). Set to `0` to disable child retries entirely. This field is **not extendable** via lease extensions — it is a reliability boundary, not a resource budget.
 
 **`allowedExternalEndpoints`** slot exists from v1 for future A2A support — controls which external agent endpoints can be delegated to.
 
@@ -836,7 +836,7 @@ The canonical task state machine is the session state machine ([Section 7.2](07_
 
 ```
 submitted → running → completed        (terminal)
-                    → failed            (terminal — unrecoverable error or pod-crash retries exhausted)
+                    → failed            (terminal — unrecoverable or non-retryable failure)
                     → cancelled         (terminal — via lenny/cancel_child or cascade policy)
                     → expired           (terminal — lease/budget/deadline exhausted)
                     → input_required    (reachable via lenny/request_input)
@@ -846,7 +846,7 @@ input_required → running               (request timeout — maxRequestInputWai
 input_required → running               (request cancelled by parent via lenny/cancel_child or equivalent)
 input_required → cancelled             (parent cancels while awaiting input)
 input_required → expired               (deadline reached while awaiting input)
-input_required → failed                (pod crash / gRPC error while awaiting input, retries exhausted)
+input_required → failed                (non-retryable failure while awaiting input)
 input_required → failed                (BUDGET_KEYS_EXPIRED detected while awaiting input — see §8.3)
 ```
 
@@ -854,7 +854,7 @@ input_required → failed                (BUDGET_KEYS_EXPIRED detected while awa
 
 Terminal states: `completed`, `failed`, `cancelled`, `expired`.
 
-**Recovery transitions are session-level, not task-level.** When a pod crash or gRPC error occurs with `retryCount < maxRetries`, the underlying session transitions to `resume_pending` — a session-level transient recovery state defined in [§7.2](07_session-lifecycle.md#72-interactive-session-model) and enumerated in the supplementary table below. On successful recovery the task returns to `running` (or `input_required` if it was awaiting input); on retry exhaustion the task transitions to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the supplementary table — the canonical task state set above does not include transient recovery states.
+**Recovery transitions are session-level, not task-level.** When a retryable failure occurs with `retryCount < maxRetries`, the underlying session transitions to `resume_pending` — a session-level transient recovery state defined in [§7.2](07_session-lifecycle.md#72-interactive-session-model) and enumerated in the supplementary table below. On successful recovery the task returns to `running` (or `input_required` if it was awaiting input); on retry exhaustion the underlying session enters `awaiting_client_action` ([§7.3](07_session-lifecycle.md#73-retry-and-resume)), which external protocol clients see as `input_required` per the supplementary table below, and a non-retryable failure moves the task to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the supplementary table — the canonical task state set above does not include transient recovery states.
 
 **Protocol mapping:**
 
@@ -939,10 +939,12 @@ On failure:
     "code": "RUNTIME_CRASH",
     "category": "TRANSIENT",
     "message": "Agent process exited with code 137",
-    "retriesExhausted": true
+    "retriesExhausted": false
   }
 }
 ```
+
+The `error.category` field carries the [Section 16.3](16_observability.md#163-distributed-tracing) category of the error, which for a crash is `TRANSIENT`. It does not record whether the gateway retried the failure. `retriesExhausted` records whether the session's retry budget was spent, and the failure classification in the `child_failed` event ([Section 8.10](#810-delegation-tree-recovery)) records whether [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) classified the failure as retryable. In the example, the child's `retryPolicy` omits `runtime_crash` from `retryableFailures` and lists it under `nonRetryableFailures`, so the child failed on its first crash without a retry.
 
 `TaskResult.schemaVersion` follows the same producer/consumer obligations as `TaskRecord.schemaVersion` ([Section 15.5](15_external-api-surface.md#155-api-versioning-and-stability) item 7). The gateway sets `schemaVersion` when constructing the `TaskResult`; consumers must apply the durable-consumer forward-read rule independently for `TaskResult` and for any nested `MessagePart` entries.
 
@@ -1064,7 +1066,7 @@ Configure via Helm `delegation.maxTreeRecoverySeconds`.
    b. Parent session receives a `children_reattached` event listing current child states
    c. Parent can continue awaiting, canceling, or interacting with children
    d. **Re-await protocol:** When the resumed parent re-issues `lenny/await_children`, the gateway first streams all already-settled child results from `session_tree_archive` in original-settlement order, then enters live-wait for any still-running children. The parent agent sees a consistent, ordered view of all child outcomes regardless of which settled before or after the parent failure.
-5. If parent reaches any terminal state — including normal completion (`completed`), failure (retry exhaustion), expiry (`maxResumeWindowSeconds` or `maxTreeRecoverySeconds` elapsed → `expired`), or cancellation (`cancelled`):
+5. If parent reaches any terminal state — including normal completion (`completed`), failure (a non-retryable failure; a parent whose retries are exhausted enters the non-terminal `awaiting_client_action` and reaches this step when that state expires, as [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) states), expiry (`maxResumeWindowSeconds` or `maxTreeRecoverySeconds` elapsed → `expired`), or cancellation (`cancelled`):
    a. Gateway applies the parent's `cascadeOnFailure` policy (see below)
 
 **Duplicate spawn across parent recovery.** A `lenny/delegate_task` spawn is an external side effect subject to the at-least-once-across-recovery guarantee in [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) (External side effects across recovery). The restored parent re-derives its next actions from the checkpoint session file, so it re-issues any `delegate_task` call whose tool result is absent from that checkpoint. The replay window covers a call that was in flight when the pod was lost and a call that already completed and was recorded as a child but ran after the last durable checkpoint. Tree recovery re-attaches children already recorded in the SessionStore task tree and emits a `children_reattached` event, which reconnects the original child on the gateway side. Reattachment does not inject the child's result into the restored runtime's session file, so it does not prevent the runtime from re-deriving and re-issuing the same spawn, and the re-await protocol deduplicates only `await_children` result collection rather than spawns. A `delegate_task` re-issued within the replay window therefore produces a duplicate child subtree alongside the reattached original. The [Section 11.5](11_policy-and-controls.md#115-idempotency) idempotency mechanism does not suppress this duplicate: it is client-facing and runs on the client-facing MCP surface, and a restored parent re-issues `delegate_task` over the intra-pod platform-tool surface, which does not run the §11.5 hook. The duplicate subtree is therefore an unmitigated residual of the at-least-once guarantee on the recovery path.

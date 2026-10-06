@@ -172,9 +172,9 @@ Per-slot sub-states (tracked per session, not as pod-level phase; a pod of eithe
 **Pod crash during an active session.** A pod crash, node failure, or unrecoverable gRPC error can occur while a session is bound to a pod. The crashed pod is always retired through the drain path regardless of `recycle` settings: a pod that fails mid-session never re-enters the warm pool and never reaches `reserved`. The session itself follows the standard recovery path:
 
 - **Retry policy:** If `retryCount < maxSessionRetries` (default: `1`, giving 2 total attempts), the gateway transitions the session to `resume_pending`, claims a fresh pod from the warm pool, and re-dispatches the session on the new pod. Where a session checkpoint exists, the replacement pod's workspace is restored from the latest checkpoint per the retry-and-resume path ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)); nothing is carried over directly from the crashed pod.
-- **Retry exhaustion:** If retries are exhausted or the failure is non-retryable (for example a workspace validation error or a policy rejection), the session transitions to `failed`. The failed pod is released from the pool and terminated. The gateway returns a structured error to the client.
+- **Retry exhaustion:** When retries are exhausted or the failure is non-retryable, the session takes the next state that [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume flow after pod failure** selects, and the gateway returns a structured error to the client.
 - **Non-retryable failures:** OOM kills, workspace validation errors, and policy rejections are not retried; the same input is likely to fail again on an identically provisioned pod.
-- **maxSessionRetries** is a `sessionPolicy` field (default: `1`). Setting it to `0` disables retries, so crashes always fail the session outright.
+- **maxSessionRetries** is a `sessionPolicy` field (default: `1`). Setting it to `0` disables automatic retries.
 
 The `resume_pending` transition here is the session crash re-dispatch onto a fresh pod: the crashed pod is drained, a replacement is claimed, and the session resumes from its latest checkpoint where one exists ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)).
 
@@ -186,15 +186,16 @@ The `resume_pending` transition here is the session crash re-dispatch onto a fre
 
 The transitions enumerated in the remaining subsections of this section (`running`, `input_required`, `suspended`, `resume_pending`, `resuming`, `awaiting_client_action`, and the session terminals `completed`, `failed`, `cancelled`, and `expired`) are **session-model states** in the Postgres session model ([§7.2](07_session-lifecycle.md#72-interactive-session-model), [§8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)) rather than coarse `Sandbox.status.phase` occupancy values. The `Sandbox.status.phase` enum carries only the coarse occupancy set above (`warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, `terminated`); a pod whose bound session is in any of these session states projects `claimed`.
 
-**`input_required` sub-state:** `input_required` is a sub-state of `running` at the pod level — the pod is live and the runtime process is active, but the agent is blocked inside a `lenny/request_input` tool call awaiting a response. The pod is NOT released or suspended. Because `input_required` is a sub-state of `running` where the pod is live, all failure transitions defined for `running` also apply — including pod crash and gRPC error transitions (`resume_pending` if `retryCount < maxRetries`, `failed` if retries exhausted). Transitions:
+**`input_required` sub-state:** `input_required` is a sub-state of `running` at the pod level — the pod is live and the runtime process is active, but the agent is blocked inside a `lenny/request_input` tool call awaiting a response. The pod is NOT released or suspended. Because `input_required` is a sub-state of `running` where the pod is live, all failure transitions defined for `running` also apply — including pod crash and gRPC error transitions ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume flow after pod failure**). Transitions:
 
 ```
 running → input_required   (runtime calls lenny/request_input)
 input_required → running   (input provided via inReplyTo, or request cancelled/expired)
 input_required → cancelled (parent cancels while awaiting input)
 input_required → expired   (session deadline reached while awaiting input)
-input_required → resume_pending (pod crash / gRPC error while awaiting input, retryCount < maxRetries)
-input_required → failed    (pod crash / gRPC error while awaiting input, retries exhausted)
+input_required → resume_pending (retryable failure while awaiting input, retryCount < maxRetries — see §7.3)
+input_required → awaiting_client_action (retryable failure while awaiting input, retries exhausted — see §7.3)
+input_required → failed    (non-retryable failure while awaiting input — see §7.3)
 input_required → failed    (BUDGET_KEYS_EXPIRED detected while awaiting input — see §8.3)
 ```
 
@@ -213,7 +214,9 @@ suspended → completed (terminate)
 suspended → cancelled (client/parent cancels while suspended)
 suspended → expired   (delegation lease perChildMaxAge wall-clock expiry while suspended)
 suspended → failed    (BUDGET_KEYS_EXPIRED detected — see §8.3)
-suspended → resume_pending (involuntary pod failure/eviction while suspended; pod still held)
+suspended → resume_pending (retryable failure while suspended; pod still held; retryCount < maxRetries — see §7.3)
+suspended → awaiting_client_action (retryable failure while suspended; pod still held; retries exhausted — see §7.3)
+suspended → failed         (non-retryable failure while suspended; pod still held — see §7.3)
 ```
 
 Pod held (initially), workspace preserved, `maxSessionAge` timer paused while suspended. `interrupt_request` is a standalone lifecycle signal — pause-and-decide with decoupled timing. Distinct from `delivery: "immediate"` in a message, which atomically interrupts and delivers content.
@@ -230,7 +233,7 @@ Once the pod is released, `resume_session` and `delivery:immediate` transitions 
 
 **Interaction with other timers during podless suspension:** `maxSessionAge` remains paused (with or without pod). `maxClientIdleSeconds` remains paused. `perChildMaxAge` (wall-clock) continues ticking — if it fires while suspended-without-pod, the session transitions directly to `expired` (no pod to release; checkpoint already happened). The orphan session reconciler skips sessions in `suspended` state with no pod binding.
 
-**Pod failure while `suspended` (pod still held):** A pod eviction, node drain, or runtime crash can occur while a session is in the `suspended` state and the pod is still held (i.e., before `maxSuspendedPodHoldSeconds` fires). When the gateway detects pod failure for a `suspended` session, the session transitions to `resume_pending` and follows the standard retry-and-resume path ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)). On successful recovery (`resuming → attached`), the session transitions to `running` — not back to `suspended` — because the interrupt context that caused the original suspension cannot be recovered from a checkpoint. The loss of interrupt context is an expected limitation: the session and workspace are recoverable, but the suspended-state semantics (paused agent, pending client decision) are not preserved across pod failure. The `maxSessionAge` timer, which was paused during `suspended`, resumes when the recovered session enters `running`. Pod failure while suspended-without-pod is impossible — there is no pod to fail.
+**Pod failure while `suspended` (pod still held):** A pod eviction, node drain, or runtime crash can occur while a session is in the `suspended` state and the pod is still held (i.e., before `maxSuspendedPodHoldSeconds` fires). When the gateway detects pod failure for a `suspended` session, the session follows the standard retry-and-resume path ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)). On successful recovery (`resuming → attached`), the session transitions to `running` — not back to `suspended` — because the interrupt context that caused the original suspension cannot be recovered from a checkpoint. The loss of interrupt context is an expected limitation: the session and workspace are recoverable, but the suspended-state semantics (paused agent, pending client decision) are not preserved across pod failure. The `maxSessionAge` timer, which was paused during `suspended`, resumes when the recovered session enters `running`. Pod failure while suspended-without-pod is impossible — there is no pod to fail.
 
 **`resuming` failure transitions:** A pod crash, gRPC error, or workspace-restoration hang while the gateway is restoring a session onto a new pod must not leave the session permanently stuck in `resuming`. This subsection is the **authoritative enumeration** of every edge out of the session-model `resuming` state (per iter3 SES-013); the [§7.2](07_session-lifecycle.md#72-interactive-session-model) session-state listing cross-references back here. `resuming` is a session-model state recorded on the Postgres session row rather than a coarse `Sandbox.status.phase` occupancy value. The gateway applies the following transitions:
 
