@@ -1,5 +1,0 @@
-{
-  "type": "terminate",
-  "deadlineMs": 5000,
-  "reason": "session_complete"
-}

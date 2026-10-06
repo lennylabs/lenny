@@ -105,6 +105,8 @@ func TestCoTenantInflightRequestGatesASiblingSessionRotation_spec_6_1(t *testing
 	if !s.Lifecycle.WaitHandshake(context.Background(), 2*time.Second) {
 		t.Fatal("lifecycle handshake did not complete")
 	}
+	rotationgate.StartSession(t, s, alice)
+	rotationgate.StartSession(t, s, bob)
 	// The pod's one runtime holds an outstanding request for the provider.
 	// The frame carries no session: the gate counts per provider across the
 	// whole pod, which is what couples the two sessions.
@@ -137,6 +139,12 @@ func TestCoTenantInflightRequestGatesASiblingSessionRotation_spec_6_1(t *testing
 	}
 	if got.CredentialsPath != aliceFile {
 		t.Errorf("credentials_rotated credentialsPath = %q, want the rotating session's file %q", got.CredentialsPath, aliceFile)
+	}
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the one connection serves
+	// both sessions, so the frame names the rotating session; a runtime that
+	// holds both rebinds alice's credentials and leaves bob's untouched.
+	if got.SessionID != alice {
+		t.Errorf("credentials_rotated sessionId = %q, want the rotating session %q (not the co-tenant %q)", got.SessionID, alice, bob)
 	}
 	peer.Send(rotationgate.Frame{Type: "credentials_acknowledged", LeaseID: "l-alice-new", Provider: provider})
 	if err := <-errc; err != nil {

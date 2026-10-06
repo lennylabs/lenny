@@ -105,15 +105,32 @@ func (r *fanoutRuntime) waitForSubscribers(t *testing.T, n int) {
 }
 
 // firstEnvelope waits for the first envelope the adapter wrote to the
-// runtime's stdin and returns it.
+// runtime's stdin other than its own session frames, and returns it. Each
+// start in resolutionPod writes a session_start ahead of any delivered
+// envelope (§28.5.3, CH-MSGSOCK, Session frame writes), so those are
+// skipped.
 func (r *fanoutRuntime) firstEnvelope(t *testing.T) []byte {
 	t.Helper()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for len(r.envelopes) == 0 {
+	for {
+		for _, env := range r.envelopes {
+			if !isSessionFrame(env) {
+				return env
+			}
+		}
 		r.cond.Wait()
 	}
-	return r.envelopes[0]
+}
+
+// isSessionFrame reports whether env is a session_start or session_end the
+// adapter writes on its own.
+func isSessionFrame(env []byte) bool {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(env, &probe)
+	return probe.Type == "session_start" || probe.Type == "session_end"
 }
 
 // resolutionPod builds an adapter server holding one slot per named

@@ -90,9 +90,16 @@ type ssRespondingRuntime struct{ out chan []byte }
 func (r *ssRespondingRuntime) Start(context.Context, string) error { return nil }
 func (r *ssRespondingRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
 	var inbound struct {
+		Type      string `json:"type"`
 		SessionID string `json:"sessionId"`
 	}
 	_ = json.Unmarshal(envelope, &inbound)
+	// A runtime that keeps no per-session context ignores the adapter's
+	// session_start and session_end (§28.5.3, CH-MSGSOCK, Inbound:
+	// session_start rule 2), so neither is answered with a response.
+	if inbound.Type == "session_start" || inbound.Type == "session_end" {
+		return nil
+	}
 	if inbound.SessionID == "" {
 		inbound.SessionID = sessionID
 	}

@@ -42,11 +42,25 @@ func (r *capturingRuntime) Interrupt(context.Context, string, bool) error { retu
 
 func (r *capturingRuntime) Close(context.Context, string) error { return nil }
 
-// written returns the lines recorded so far.
+// written returns the lines recorded so far other than the session_start
+// and session_end frames the adapter writes on its own at each start and
+// teardown (§28.5.3, CH-MSGSOCK, Session frame writes), so a case counts the
+// frames SendMessage delivered.
 func (r *capturingRuntime) written() [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([][]byte(nil), r.lines...)
+	var out [][]byte
+	for _, line := range r.lines {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(line, &probe)
+		if probe.Type == "session_start" || probe.Type == "session_end" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // stampPod starts one adapter holding a slot for each named session, with

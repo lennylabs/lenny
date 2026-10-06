@@ -332,6 +332,43 @@ func TestAttachRelaysAProtocolLevelFrame_spec_28_5_3(t *testing.T) {
 	}
 }
 
+// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule 5 — the
+// adapter consumes the runtime's session_started acknowledgement and relays
+// it to no Attach stream, even with no heartbeat monitor running, while the
+// response the runtime writes after it still reaches its session's stream.
+func TestAttachConsumesSessionStarted_spec_28_5_3(t *testing.T) {
+	s, rt := concurrentServer(t)
+	rt.output = make(chan []byte, 4)
+	ctx := context.Background()
+	if _, err := s.StartSession(ctx, slotStartReq("sess-base")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+
+	streamCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Attach(streamCtx)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-base"},
+	}); err != nil {
+		t.Fatalf("Send bind: %v", err)
+	}
+	rt.waitForSubscribers(t, 1)
+
+	rt.output <- []byte(`{"type":"session_started","sessionId":"sess-base","startId":"1"}`)
+	rt.output <- []byte(`{"type":"response","sessionId":"sess-base"}`)
+	got, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(got.GetEnvelopeJson()) != `{"type":"response","sessionId":"sess-base"}` {
+		t.Errorf("stream received %q, want the response written after session_started", got.GetEnvelopeJson())
+	}
+}
+
 // spec: §6.4; spec/15:1459 — an inbound (client→agent)
 // envelope on a per-slot Attach stream is stamped with the session's
 // sessionId before it reaches the shared runtime, so the runtime's

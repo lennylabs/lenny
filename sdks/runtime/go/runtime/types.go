@@ -2,12 +2,15 @@
 
 package runtime
 
+import "encoding/json"
+
 // This file holds the wire and convenience types the runtime-author SDK
 // surfaces. The wire-level structs (MessagePart, MessageEnvelope, the
 // inbound and outbound frame types) mirror the §28.5.3 adapter binary
 // protocol. The convenience structs (CreateRequest, Message, Reply,
 // CredentialBundle, AdapterManifest, WorkspacePlan) are §15.7 wrappers
-// the SDK materializes from the manifest, the credential file, and the
+// the SDK materializes from each session's session_start frame, the
+// credential file that frame names, the pod-scoped manifest, and the
 // stdin framing before invoking Handler methods. They introduce no new
 // wire types.
 
@@ -93,49 +96,81 @@ type ResponseError struct {
 	Message string `json:"message,omitempty"`
 }
 
-// CredentialBundle is the parsed §4.7 runtime credential file the
-// manifest's credentialsPath names, this session's own
-// /run/lenny/slots/{sessionId}/credentials.json. The SDK refreshes it on a
-// credentials_rotated lifecycle message. Fields are the union of proxy
-// and direct delivery modes; an empty field is absent in the file.
+// CredentialBundle is the parsed runtime credential file that a session's
+// session_start names in credentialsPath, the session's own
+// /run/lenny/slots/{sessionId}/credentials.json. The file lists one entry
+// per credential provider the session holds a lease for. The SDK reloads
+// the session's bundle on a credentials_rotated lifecycle event naming
+// that session.
+//
+// spec: §4.7.11 (item 4, runtime credential file contract), §28.5.3
+// (CH-MSGSOCK, Inbound: session_start).
 type CredentialBundle struct {
-	// Mode is proxy or direct (§4.7 manifest llm fields).
-	Mode string `json:"mode,omitempty"`
-	// Provider names the upstream LLM provider for this lease.
-	Provider string `json:"provider,omitempty"`
+	// Providers holds one entry per leased credential provider.
+	Providers []ProviderCredential `json:"providers"`
+}
+
+// ProviderCredential is one entry of a CredentialBundle's providers list.
+// MaterializedConfig is left undecoded because its fields depend on the
+// provider and the delivery mode: a proxy entry carries proxyUrl and
+// leaseToken, and a direct entry carries the provider's own credential
+// fields.
+//
+// spec: §4.7.11 (item 4, runtime credential file contract), §4.9
+// (materializedConfig schema by provider).
+type ProviderCredential struct {
 	// LeaseID identifies the §4.9 credential lease.
-	LeaseID string `json:"leaseId,omitempty"`
-	// APIKey is the upstream key under direct delivery.
-	APIKey string `json:"apiKey,omitempty"`
-	// APIKeyEnv names the environment variable carrying the key under
-	// proxy delivery.
-	APIKeyEnv string `json:"apiKeyEnv,omitempty"`
-	// BaseURL is the upstream or proxy endpoint base URL.
-	BaseURL string `json:"baseUrl,omitempty"`
-	// ExpiresAt is the RFC 3339 lease expiry timestamp.
+	LeaseID string `json:"leaseId"`
+	// Provider is the credential provider identifier.
+	Provider string `json:"provider"`
+	// ExpiresAt is the ISO 8601 lease expiry timestamp.
 	ExpiresAt string `json:"expiresAt,omitempty"`
+	// DeliveryMode is direct or proxy.
+	DeliveryMode string `json:"deliveryMode"`
+	// MaterializedConfig is the entry's materializedConfig object, kept
+	// as raw JSON.
+	MaterializedConfig json.RawMessage `json:"materializedConfig,omitempty"`
+}
+
+// ExperimentContext is the experiment enrollment a session's session_start
+// carries in experimentContext. Inherited is true when the enrollment was
+// propagated from a parent session through delegation.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start field table), §10.7.
+type ExperimentContext struct {
+	ExperimentID string `json:"experimentId"`
+	VariantID    string `json:"variantId"`
+	Inherited    bool   `json:"inherited"`
+}
+
+// LLMConfig is the LLM provider configuration a session's session_start
+// carries in llm. DeliveryMode is direct or proxy; Dialect names the
+// provider dialect a proxy-mode runtime speaks to the LLM Proxy; APIKeyEnv
+// names the variable a runtime's LLM client reads its key from, which the
+// runtime sets for this session only and never in its own process
+// environment; Headers lists the headers a proxy-mode runtime sends.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start field table), §4.9.
+type LLMConfig struct {
+	DeliveryMode string            `json:"deliveryMode"`
+	Dialect      string            `json:"dialect,omitempty"`
+	APIKeyEnv    string            `json:"apiKeyEnv,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
 }
 
 // AdapterManifest is the parsed §4.7 adapter manifest written to
 // /run/lenny/adapter-manifest.json before the runtime binary is
-// spawned. Unknown fields are ignored (§4.7 forward compatibility).
+// spawned. It carries only pod-scoped fields: one runtime process serves
+// every session the pod holds, so each session's own context arrives in
+// that session's session_start frame rather than here. Unknown fields are
+// ignored (§4.7 forward compatibility).
+//
+// spec: §4.7 (adapter manifest field reference), §4.7.10 (runtime process
+// lifetime).
 type AdapterManifest struct {
 	// Version is the manifest schema version. Every increment is
 	// breaking; the SDK rejects a version newer than it understands.
 	Version int `json:"version,omitempty"`
-	// SessionID is the session this runtime instance is bound to.
-	SessionID string `json:"sessionId,omitempty"`
-	// TaskID is the session's external-protocol task identifier. Each
-	// session has exactly one execution, so it equals the session id; the
-	// adapter derives it from SessionID. The manifest is per-session and
-	// TaskID is frozen for the session's lifetime.
-	// spec: §15.7 (manifest TaskID), §7.2 (one execution per session)
-	TaskID string `json:"taskId,omitempty"`
-	// CredentialsPath is the §4.7 absolute path of this session's own
-	// credential file. The SDK reads credential material from it and
-	// falls back to WithCredentialsPath when the manifest omits it.
-	// spec: §4.7; §6.1.
-	CredentialsPath string `json:"credentialsPath,omitempty"`
 	// MCPNonce is the §15.4.3 intra-pod MCP nonce (256-bit hex). The
 	// SDK injects it as params._lennyNonce on every MCP initialize.
 	MCPNonce string `json:"mcpNonce,omitempty"`
@@ -150,8 +185,6 @@ type AdapterManifest struct {
 	AdapterLocalTools []AdapterLocalTool `json:"adapterLocalTools,omitempty"`
 	// RuntimeOptions is the effective caller options map.
 	RuntimeOptions map[string]any `json:"runtimeOptions,omitempty"`
-	// TracingContext carries §16.3 tracing identifiers.
-	TracingContext map[string]any `json:"tracingContext,omitempty"`
 }
 
 // MCPServerRef names a platform MCP server socket in the manifest.
@@ -189,12 +222,13 @@ type WorkspacePlan struct {
 }
 
 // TerminationReason is the reason passed to Handler.OnTerminate. The SDK
-// populates it from the §28.5.3 shutdown frame or the CH-RUNTIMEOPS
-// terminate event.
+// populates it from the session's session_end, from the §28.5.3 shutdown
+// frame, or from the end of the connection.
 type TerminationReason struct {
-	// Reason is the adapter-supplied reason string (drain, deadline,
-	// etc.) or stdin_closed when the adapter closed stdin without a
-	// shutdown frame.
+	// Reason is session_end when the session's session_end ended it, the
+	// shutdown frame's reason (drain, deadline, etc.) when a shutdown
+	// ended the process, or stdin_closed when the adapter closed the
+	// connection without a shutdown frame.
 	Reason string
 	// DeadlineMS is the shutdown deadline in milliseconds when the
 	// adapter supplied one; zero otherwise.
@@ -202,29 +236,45 @@ type TerminationReason struct {
 }
 
 // CreateRequest is the §15.7 snapshot of session context handed to
-// Handler.OnCreate once before the first Message. Handler implementations
-// MUST treat it as read-only.
+// Handler.OnCreate when the session's session_start arrives and before the
+// session's first Message is delivered. The SDK assembles it from the
+// session_start frame, the credential file that frame names, and the
+// pod-scoped adapter manifest. Handler implementations MUST treat it as
+// read-only.
+//
+// spec: §15.7 (SDK Handler types), §28.5.3 (CH-MSGSOCK, Inbound:
+// session_start).
 type CreateRequest struct {
-	// SessionID is the session this runtime instance is bound to.
+	// SessionID is the session this request opens, the session_start's
+	// sessionId.
 	SessionID string `json:"sessionId"`
 	// TaskID is the session's external-protocol task identifier. Each
-	// session has exactly one execution, so it equals the session id; the
-	// adapter derives it from SessionID. TaskID is frozen for the session's
-	// lifetime and OnCreate is invoked once with this value.
-	// spec: §15.7 (TaskID frozen, OnCreate once), §7.2 (one execution per session)
+	// session has exactly one execution, so it equals SessionID; the SDK
+	// derives it from the session_start's sessionId.
+	// spec: §15.7 (TaskID derived from sessionId), §7.2 (one execution per session)
 	TaskID string `json:"taskId"`
 	// RuntimeOptions is the effective caller options map.
 	RuntimeOptions map[string]any `json:"runtimeOptions,omitempty"`
 	// WorkspacePlan references the §14 materialized workspace plan. Its
 	// files are staged under /workspace/slots/{sessionId}/current before
 	// OnCreate is invoked.
-	// spec: §15.7 (WorkspacePlan staged before the single OnCreate), §6.4 (one pod filesystem layout)
+	// spec: §15.7 (WorkspacePlan staged before OnCreate), §6.4 (one pod filesystem layout)
 	WorkspacePlan *WorkspacePlan `json:"workspacePlan,omitempty"`
-	// Credentials is the current §4.7 credential bundle. The SDK
-	// refreshes it in place on rotation rather than re-invoking
-	// OnCreate. Nil when the runtime has no active lease.
+	// Credentials is the session's credential bundle, read from the file
+	// the session_start's credentialsPath names. Nil when the frame names
+	// no credentialsPath. The SDK reloads the session's bundle on a
+	// credentials_rotated event rather than re-invoking OnCreate.
 	Credentials *CredentialBundle `json:"credentials,omitempty"`
-	// ManifestSnapshot is the parsed adapter manifest.
+	// ExperimentContext is the session_start's experimentContext; nil when
+	// the session is not enrolled in an experiment.
+	ExperimentContext *ExperimentContext `json:"experimentContext,omitempty"`
+	// TracingContext is the session_start's tracingContext; nil for a
+	// top-level session.
+	TracingContext map[string]string `json:"tracingContext,omitempty"`
+	// LLM is the session_start's llm; nil when the session has no active
+	// LLM credential lease.
+	LLM *LLMConfig `json:"llm,omitempty"`
+	// ManifestSnapshot is the parsed pod-scoped adapter manifest.
 	ManifestSnapshot *AdapterManifest `json:"manifestSnapshot,omitempty"`
 }
 
@@ -235,17 +285,18 @@ type Message struct {
 	// Envelope is the canonical §15.4 MessageEnvelope. All message
 	// semantics live on this field.
 	Envelope *MessageEnvelope `json:"envelope"`
-	// SessionID is the session the message was delivered to.
+	// SessionID is the session the message was delivered to, the frame's
+	// sessionId. It equals the CreateRequest.SessionID of that session's
+	// OnCreate.
 	SessionID string `json:"sessionId"`
 	// TaskID is the external-protocol task identifier of the session the
-	// message belongs to. It equals the session id (the adapter derives it
-	// from SessionID) and always equals CreateRequest.TaskID, which is
-	// frozen for the session's lifetime.
-	// spec: §15.7 (TaskID frozen), §7.2 (one execution per session)
+	// message belongs to. It equals SessionID and the CreateRequest.TaskID
+	// of that session's OnCreate.
+	// spec: §15.7 (Message), §7.2 (one execution per session)
 	TaskID string `json:"taskId"`
-	// Sequence is a monotonic, SDK-assigned per-task counter ordering
-	// messages as the SDK observed them on stdin. It is local to this
-	// process and suitable for logging only.
+	// Sequence is a monotonic, SDK-assigned per-session counter ordering
+	// the session's messages as the SDK observed them on stdin. It is
+	// local to this process and suitable for logging only.
 	Sequence uint64 `json:"sequence"`
 	// Metadata is an optional SDK-scoped pass-through map. It is not
 	// forwarded on the wire.
@@ -283,14 +334,31 @@ type frameType struct {
 	Type string `json:"type"`
 }
 
-// inboundMessage is the §28.5.3 inbound message frame. It is the
-// MessageEnvelope with an explicit type discriminator.
-type inboundMessage = MessageEnvelope
+// inboundSessionStart is the §28.5.3 session_start frame. An absent or
+// null object member decodes to nil.
+type inboundSessionStart struct {
+	Type              string             `json:"type"`
+	SessionID         string             `json:"sessionId"`
+	StartID           string             `json:"startId"`
+	CredentialsPath   string             `json:"credentialsPath,omitempty"`
+	ExperimentContext *ExperimentContext `json:"experimentContext"`
+	TracingContext    map[string]string  `json:"tracingContext"`
+	LLM               *LLMConfig         `json:"llm"`
+}
 
-// inboundHeartbeat is the §28.5.3 heartbeat frame.
-type inboundHeartbeat struct {
-	Type string `json:"type"`
-	TS   int64  `json:"ts"`
+// inboundSessionEnd is the §28.5.3 session_end frame.
+type inboundSessionEnd struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+}
+
+// outboundSessionStarted is the §28.5.3 session_started frame. Error is
+// set when the runtime failed to create the session's context.
+type outboundSessionStarted struct {
+	Type      string         `json:"type"`
+	SessionID string         `json:"sessionId"`
+	StartID   string         `json:"startId"`
+	Error     *ResponseError `json:"error,omitempty"`
 }
 
 // inboundShutdown is the §28.5.3 shutdown frame.
@@ -329,20 +397,4 @@ type outboundToolCall struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
 	SessionID string         `json:"sessionId,omitempty"`
-}
-
-// outboundStatus is the §28.5.3 optional status frame. It is
-// session-scoped, so it carries the session it is addressed to.
-// spec: §28.5.3.
-type outboundStatus struct {
-	Type      string `json:"type"`
-	SessionID string `json:"sessionId,omitempty"`
-	State     string `json:"state,omitempty"`
-	Message   string `json:"message,omitempty"`
-}
-
-// outboundTracingContext is the §28.5.3 set_tracing_context frame.
-type outboundTracingContext struct {
-	Type    string         `json:"type"`
-	Context map[string]any `json:"context"`
 }

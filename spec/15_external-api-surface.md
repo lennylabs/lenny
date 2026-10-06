@@ -1459,7 +1459,7 @@ Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-comp
 The runtime adapter contract is published as the machine-readable artifacts listed below, committed to the repository and released alongside each Lenny release:
 
 - **`schemas/lenny-adapter.proto`** — Protobuf service and message definitions for the gateway ↔ adapter gRPC surface ([Section 4.7](04_system-components.md#47-runtime-adapter) RPC table). Includes the structured error code enum with categories (transient, permanent, policy), the `Attach` bidirectional streaming messages, the version negotiation protocol (adapter advertises capabilities at startup; gateway selects a compatible protocol version), and the gRPC Health Checking Protocol binding.
-- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) (`message`, `tool_result`, `heartbeat`, `shutdown`, `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`). The CH-RUNTIMEOPS frames are schematized in `schemas/runtime-ops-events.schema.json` rather than in this artifact. Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
+- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 28.5.3](28_communication-channels.md#2853-intra-pod). The CH-RUNTIMEOPS frames are schematized in `schemas/runtime-ops-events.schema.json` rather than in this artifact. Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
 - **`schemas/messagepart.schema.json`** — JSON Schema for the `MessagePart` envelope, including the canonical type registry tables, `schemaVersion` per-type field contract, and the namespace convention for third-party `x-<vendor>/<typeName>` types.
 - **`schemas/runtime-ops-events.schema.json`** — JSON Schema for the `CH-RUNTIMEOPS` frames the adapter and the runtime exchange on the intra-pod runtime-operations channel ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), which `schemas/lenny-adapter-jsonl.schema.json` deliberately does not schematize.
 
@@ -1554,7 +1554,7 @@ Adapters ignore hint keys they do not recognize. Runtimes that do not set `proto
 
 #### `MessageEnvelope` — Unified Message Format
 
-All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages (`heartbeat`, `shutdown`, `heartbeat_ack`) use their own minimal schemas and are not `MessageEnvelope` instances — see the `CH-MSGSOCK` message schemas in [Section 28.5.3](28_communication-channels.md#2853-intra-pod).
+All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages use their own minimal schemas and are not `MessageEnvelope` instances — see the `CH-MSGSOCK` message schemas in [Section 28.5.3](28_communication-channels.md#2853-intra-pod).
 
 ```json
 {
@@ -1680,10 +1680,8 @@ The event is persisted to the sender session's event store and replayable within
 
 **Future-proof:** `MessageEnvelope` with `id`, `from`, `inReplyTo`, `threadId`, `delivery`, and `delegationDepth` accommodates all future conversational patterns without schema changes: threaded messages, multiple participants, non-linear context retrieval, broadcast, external agent participation.
 
-The message schemas of the adapter↔binary stdin and stdout messages, which are `message`,
-`heartbeat`, `shutdown`, `tool_result`, `response`, `tool_call`, `heartbeat_ack`, `status`, and
-`set_tracing_context`, are stated by the `CH-MSGSOCK` card in
-[Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
+The message schemas of the adapter↔binary stdin and stdout messages are stated by the `CH-MSGSOCK` card
+in [Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
 contract.
 
 #### 15.4.2 RPC Lifecycle State Machine
@@ -1702,7 +1700,7 @@ INIT ──→ READY ──→ ACTIVE ──→ DRAINING ──→ TERMINATED
 | `INIT`       | Adapter process starts, opens gRPC connection to gateway (mTLS), writes placeholder manifest. The adapter sends an `AdapterInit` message on the control stream with `adapterProtocolVersion` (semver string, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` (the highest compatible version the gateway supports) or closes the stream with `PROTOCOL_VERSION_INCOMPATIBLE` if no compatible version exists. Major version changes are breaking; minor/patch are backwards compatible. Current protocol version: `"1.0.0"`. |
 | `READY`      | Adapter signals readiness. Pod enters warm pool. Gateway may now assign sessions.                     |
 | `ACTIVE`     | A session is in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, and stdin/stdout relay.     |
-| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange. No drain coordination exists at pod exit at any integration level: the adapter writes no `CH-RUNTIMEOPS` `terminate` frame, and the runtime process ends with the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). |
+| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange. No drain coordination exists at pod exit at any integration level: the runtime process ends with the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). |
 | `TERMINATED` | The adapter has exited. The gateway marks the pod as no longer available.                             |
 
 Transitions are initiated by either the gateway (e.g., session assignment, drain request) or the adapter itself (e.g., readiness signal).
@@ -1717,7 +1715,8 @@ To lower the barrier for third-party runtime authors, the spec defines three int
 - Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout
 - Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds ends the session ([Section 28.5.3](28_communication-channels.md#2853-intra-pod))
 - Must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`
-- Zero Lenny knowledge required beyond the above message types
+- Handles `{type: "session_start"}` and `{type: "session_end"}`, and writes `{type: "session_started"}`, as the `CH-MSGSOCK` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states; a runtime that keeps no per-session context and opens no `CH-RUNTIMEOPS` connection ignores both and writes no `session_started`
+- Zero Lenny knowledge required beyond the above message types and, on a socket connection, the connection handshake ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1)
 - No checkpoint/restore support, no detailed health reporting
 
 **Standard** — minimum plus MCP integration:
@@ -1734,7 +1733,7 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
 - **Protocol version.** The adapter's local MCP servers speak **MCP 2025-03-26** (the platform's target MCP spec version; see [Section 15.2](#152-mcp-api) for version negotiation details). The local servers also accept **MCP 2024-11-05** for backward compatibility. Intra-pod MCP version support follows the same rolling two-version policy as the gateway ([Section 15.5](#155-api-versioning-and-stability) item 2): the oldest accepted version enters a 6-month deprecation window when a new MCP spec version is adopted, and removal applies only to new connection negotiations (active sessions on the deprecated version are not forcibly terminated).
 - **Client libraries.** Runtime authors should use an existing MCP client library for their language (e.g., `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript/Node.js, `mcp` for Python). These libraries work against the adapter's local servers with one Lenny-specific addition: the runtime must send the manifest nonce as the first message of the MCP `initialize` handshake (see Authentication below).
 - **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed by the `CH-MCP-PLATFORM` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
-- **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake, identical in mechanism to the CH-RUNTIMEOPS handshake ([Section 4.7](04_system-components.md#47-runtime-adapter), item 1). The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before spawning the runtime. The manifest nonce authenticates a connection to the pod's intra-pod MCP servers, which are pod-wide and started at most once per pod. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, rewritten by each session's start alongside the rest of the manifest). The nonce a server validates against is the one the manifest carried at the start that bound that server, and a later session's manifest write does not re-arm a running server. Because the intra-pod MCP servers are pod-wide rather than scoped to a session, the adapter resolves the calling session at call time and refuses a `tools/list` or `tools/call` unless the pod's shared runtime process has been given exactly one session and that session is the caller.
+- **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake. The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before spawning the runtime. The manifest nonce authenticates a connection to the pod's intra-pod MCP servers, which are pod-wide and started at most once per pod. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, rewritten by each session's start alongside the rest of the manifest). The nonce a server validates against is the one the manifest carried at the start that bound that server, and a later session's manifest write does not re-arm a running server. Because the intra-pod MCP servers are pod-wide rather than scoped to a session, the adapter resolves the calling session at call time and refuses a `tools/list` or `tools/call` unless the pod's shared runtime process has been given exactly one session and that session is the caller.
 
   **Nonce wire format (v1 — intra-pod only).** The nonce is a Lenny-private convention for intra-pod MCP connections only; it does not appear on any external-facing MCP endpoint and is not part of the MCP specification. The canonical injection location is the top-level `_lennyNonce` field in the MCP `initialize` request's `params` object:
   ```json
@@ -1925,6 +1924,7 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
     // The socket path is advertised in the manifest; opening it is optional
     // but required for checkpoint, clean interrupt, and credential rotation.
     lc = unix_connect(manifest.runtimeOps.socket)  // @lenny-runtime-ops
+    lc.send_line(json({"_lennyNonce": nonce}))  // connection handshake, §4.7.11 item 1
 
     // Capability negotiation: adapter sends lifecycle_capabilities first.
     cap_msg = json_parse(lc.recv_line())   // type: "lifecycle_capabilities"
@@ -1972,10 +1972,6 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
                     // Wrap up long-running work before forced termination
                     begin_graceful_wrap_up(lc_msg.remainingMs)
 
-                case "terminate":
-                    // Ordered shutdown — exit within deadlineMs
-                    cleanup_and_exit(0)
-
                 default:
                     // ignore unknown lifecycle messages for forward compatibility
 
@@ -1984,6 +1980,10 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
     while line = read_line(stdin):
         msg = json_parse(line)
         switch msg.type:
+            case "session_start":
+                // acknowledge the session (Section 28.5.3, CH-MSGSOCK Outbound: session_started)
+                write_line(stdout, json({"type": "session_started", "sessionId": msg.sessionId, "startId": msg.startId}))
+                flush(stdout)
             case "message":
                 seq += 1
                 result = platform_mcp.call("lenny/output", {
@@ -1996,8 +1996,7 @@ Pseudocode (Full-level addition — CH-RUNTIMEOPS):
                 write_line(stdout, json({"type": "heartbeat_ack"}))
                 flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
-                // shutdown arrives on stdin even for Full-level; lifecycle terminate
-                // may arrive first — handle whichever comes first
+                // shutdown arrives on stdin even for Full-level
                 platform_mcp.close()
                 lc.close()
                 exit(0)
@@ -2057,7 +2056,7 @@ The validator then reports:
 
 The observed-level probe is the local-tooling counterpart of the registration-time admission check described in [§5.1](05_runtime-registry-and-pool-model.md#51-runtime) `integrationLevel` documentation; both compare declared against the `lifecycle_support` handshake stated by the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod).
 
-**Test categories by integration level.** Each higher level inherits every test category from the levels below it.
+**Test categories by integration level.** Each higher level inherits every test category from the levels below it. A category that sends a session-scoped frame first writes `session_start` for the session that frame names, and before it writes a session-scoped `CH-RUNTIMEOPS` frame it reads the `session_started` that answers that `session_start` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). A process-scoped frame, such as `lifecycle_capabilities`, has no such precondition.
 
 | Integration level | Test category | What it asserts |
 |---|---|---|
@@ -2067,15 +2066,16 @@ The observed-level probe is the local-tooling counterpart of the registration-ti
 | **Basic** | **shutdown within `deadline_ms`** | On `{type: "shutdown", "deadline_ms": N}`, the binary exits cleanly before the deadline elapses (tested with `N = 5000`). Failing this test means the adapter will SIGKILL the process in production, losing any unflushed output. |
 | **Basic** | **`MessagePart` schema compliance** | Every `MessagePart` produced by the runtime validates against `schemas/messagepart.schema.json`, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
 | **Basic** | **per-session identifier echo** | The `response` the runtime returns for a `message` carries the same `sessionId` the inbound `message` was addressed with ([§28.5.3](28_communication-channels.md#2853-intra-pod)). A `response` that omits the identifier, or that carries a different value, fails the category. |
+| **Basic** | **session lifetime** | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
 | **Standard** | **MCP nonce handshake** | On startup, the runtime reads `/run/lenny/adapter-manifest.json`, connects to the platform MCP server, and presents `_lennyNonce` in the `initialize` params. The adapter's fake MCP server rejects any tool call without a valid nonce to verify enforcement. |
 | **Standard** | **platform MCP tool invocation** | The runtime successfully calls at least `lenny/output` and `lenny/request_input` via the MCP client. Responses are processed and forwarded through the stdin/stdout channel where applicable. |
 | **Standard** | **connector MCP server reachability** | If `manifest.connectorServers` is non-empty, the runtime connects to each with the same nonce and completes the `initialize` handshake. Test uses two fake connector servers. |
 | **Standard** | **`tool_call` / `tool_result` correlation** | Adapter-local `tool_call` emissions carry a unique `id` and the corresponding `tool_result` is read from stdin before the runtime emits its final `response`. |
-| **Full** | **CH-RUNTIMEOPS opening** | The runtime connects to the CH-RUNTIMEOPS advertised in the manifest (`@lenny-runtime-ops` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| **Full** | **CH-RUNTIMEOPS opening** | The runtime connects to the CH-RUNTIMEOPS advertised in the manifest (`@lenny-runtime-ops` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and `startId` and no `error` ([§28.5.3](28_communication-channels.md#2853-intra-pod)). |
 | **Full** | **checkpoint quiesce/resume** | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. Verified via fake-adapter fixture that times the quiesce window. |
 | **Full** | **interrupt acknowledgement** | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
-| **Full** | **credential rotation handling** | If the runtime declares `credential_rotation` support, it successfully re-reads refreshed credentials from the manifest or env on `credential_rotated` and continues to service the next message without restart. |
-| **Full** | **deadline signal handling** | On `deadline_signal`, the runtime writes a final `response` (possibly with `error.code: "DEADLINE_EXCEEDED"`) and exits cleanly before the deadline elapses. |
+| **Full** | **credential rotation handling** | If the runtime declares `credential_rotation` support, it successfully re-reads the credential file at the `credentialsPath` that `credentials_rotated` carries for the named session and continues to service the next message without restart. |
+| **Full** | **deadline signal handling** | If the runtime declares the `deadline_signal` capability in `lifecycle_support`, after the `session_started` read the **Test categories by integration level.** paragraph requires, the harness writes a `message` for the session, then `deadline_approaching` with that session's `sessionId` before reading the response. The runtime writes the response to that `message` (possibly with `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session after `deadline_approaching`, and still answers a later `heartbeat` with `heartbeat_ack`. |
 
 **How the suite is packaged.** The conformance fixtures (fake adapter, fake MCP server, fake connector servers, sample manifests, reference manifest JSON Schemas) ship inside the `lenny` binary as assets of the `lenny runtime validate` subcommand. No additional download is required. The fixtures are versioned with the Runtime Adapter Specification ([§15.4](#154-runtime-adapter-specification)); each Lenny release pins the fixture version that its `lenny runtime validate` executes against. Third-party runtime authors can pin a specific `lenny-ctl` version to stabilize the conformance surface, and can run `lenny runtime validate --report <path>` to emit a machine-readable JSON report for inclusion in release artifacts.
 
@@ -2173,14 +2173,14 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
 **What the SDKs provide.**
 
 - **Protocol codec.** Wire-level helpers for every transport the runtime binary touches, scoped by integration level ([§15.4.3](#1543-runtime-integration-levels)):
-    - **Binary protocol (all levels).** Line-delimited JSON (JSON Lines) framing and readline over **stdin/stdout** per [§28.5.3](28_communication-channels.md#2853-intra-pod), including the stdout-flushing requirement. This is the entire Basic-level wire surface.
+    - **Binary protocol (all levels).** Line-delimited JSON (JSON Lines) framing and readline over **stdin/stdout** per [§28.5.3](28_communication-channels.md#2853-intra-pod), including the stdout-flushing requirement.
     - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-runtime-ops` (Full: agent-side CH-RUNTIMEOPS). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
-    - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request and on the CH-RUNTIMEOPS), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest and attach it automatically.
-    - **Credential delivery.** Read-only access patterns for `/run/lenny/slots/{sessionId}/credentials.json` (present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest `llm` fields), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the env-var export (`llm.apiKeyEnv`) for proxy mode.
-    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) and [§28.5.3](28_communication-channels.md#2853-intra-pod).
+    - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request, and sent as the nonce line that opens `CH-MSGSOCK` and `CH-RUNTIMEOPS`, [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest, attach it automatically, and answer the nonce-only challenge.
+    - **Credential delivery.** Read-only access patterns for `/run/lenny/slots/{sessionId}/credentials.json` (present under both proxy and direct delivery modes per the `llm` fields of the session's `session_start` frame, [§28.5.3](28_communication-channels.md#2853-intra-pod)), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the per-session API key that `llm.apiKeyEnv` names for proxy mode.
+    - **Graceful shutdown.** SIGTERM handling and the `shutdown` deadline contract from the `CH-MSGSOCK` card in [§28.5.3](28_communication-channels.md#2853-intra-pod), and per-session routing of `CH-RUNTIMEOPS` events by `sessionId` ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").
     - **RPC vocabulary.** The `lenny.runtime.*` request/response vocabulary carried over the transports above.
 - **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined by the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. The `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) is authoritative for the platform MCP tool set and [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the adapter manifest; this list tracks the tool set. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
-- **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode env-var refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
+- **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode per-session API-key refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
 - **Workspace utilities.** Helpers for materializing files into `/workspace`, respecting the workspace plan ([§14](14_workspace-plan-schema.md)), and uploading checkpoints ([§7.1](07_session-lifecycle.md#71-normal-flow) seal-and-export).
 - **Telemetry.** Prometheus counters for request counts, errors, and latencies, and OpenTelemetry spans wrapping each request.
 - **Test doubles.** In-process gateway fake for unit testing; a CI-friendly `runtime-sdk testserver` binary that speaks the gateway-side protocol against a runtime binary for integration tests.
@@ -2190,49 +2190,63 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
 ```go
 package runtime
 
-// Handler is the single interface runtime authors implement.
+// Handler is the single interface runtime authors implement. One runtime
+// process serves any number of sessions
+// ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime
+// process lifetime"). The SDK invokes OnCreate when a `session_start`
+// opens a session, under the `CH-MSGSOCK` card's **Inbound:
+// `session_start`** rules in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod), and writes the
+// session's `session_started` once OnCreate returns; OnMessage for
+// each of the session's messages; and OnTerminate when that session ends,
+// on its `session_end` or at the end of the connection. Calls for different
+// sessions run concurrently, so an implementation keeps per-session state
+// keyed by session and is safe for concurrent use. A session whose OnCreate
+// fails is answered as the `CH-MSGSOCK` card's **Session errors.** rule in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod) states.
 type Handler interface {
     OnCreate(ctx context.Context, req CreateRequest) error
     OnMessage(ctx context.Context, msg Message) (Reply, error)
-    OnTerminate(ctx context.Context, reason TerminationReason) error
+    OnTerminate(ctx context.Context, sessionID string, reason TerminationReason) error
 }
 
 // Run wires up stdin/stdout framing, dials the manifest-advertised
-// abstract Unix sockets (platform MCP, connector MCP, CH-RUNTIMEOPS)
-// with the manifest-nonce handshake, refreshes credentials from
-// /run/lenny/slots/{sessionId}/credentials.json, and drives the lenny.runtime.* dispatch
-// loop. Blocks until the adapter closes stdin or sends `terminate`.
+// platform MCP, connector MCP, and CH-RUNTIMEOPS sockets once per process
+// with the manifest-nonce handshake, loads each session's credentials from
+// the path its `session_start` names, and drives the lenny.runtime.*
+// dispatch loop.
+// Blocks until the adapter closes the connection or sends `shutdown`, then
+// ends every session the process holds.
 func Run(h Handler, opts ...Option) error
 ```
 
-**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the manifest, stdin framing, and credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
+**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the `session_start` frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), the pod-scoped adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the `session_start` frame, the pod-scoped manifest, stdin framing, and the credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
 
 ```go
-// CreateRequest is the snapshot of task-scoped context handed to
-// Handler.OnCreate before the first Message is delivered on stdin. The SDK
-// assembles this value from (a) the adapter manifest written to
-// /run/lenny/adapter-manifest.json before the runtime binary is spawned
-// ([§4.7](04_system-components.md#47-runtime-adapter)), (b) the credential
-// file written by AssignCredentials at /run/lenny/slots/{sessionId}/credentials.json
-// ([§4.7](04_system-components.md#47-runtime-adapter) item 4), and (c) the
+// CreateRequest is the snapshot of session-scoped context handed to
+// Handler.OnCreate when the session's `session_start` arrives and before the
+// session's first Message is delivered. The SDK assembles this value from
+// (a) the session's `session_start` frame on CH-MSGSOCK
+// ([§28.5.3](28_communication-channels.md#2853-intra-pod)), (b) the
+// credential file at the path that frame names
+// ([§4.7](04_system-components.md#47-runtime-adapter) item 4), (c) the
+// pod-scoped adapter manifest at /run/lenny/adapter-manifest.json
+// ([§4.7](04_system-components.md#47-runtime-adapter)), and (d) the
 // StartSession RPC parameters the gateway forwarded to the adapter (see the
 // Startup Sequence in [§4.7](04_system-components.md#47-runtime-adapter)).
 // Handler implementations MUST treat CreateRequest as read-only — the wire
 // sources are authoritative and the SDK will refresh derived fields (notably
 // Credentials) in place on rotation events without re-invoking OnCreate.
 type CreateRequest struct {
-    // SessionID is the session this runtime instance is bound to. Matches
-    // `sessionId` in the adapter manifest and `SessionMetadata.SessionID`
+    // SessionID is the session this request opens. Matches `sessionId` in
+    // the session's `session_start` and `SessionMetadata.SessionID`
     // ([§15 Shared Adapter Types](#shared-adapter-types)).
     SessionID string `json:"sessionId"`
 
-    // TaskID is the session's external-protocol task identifier. Matches
-    // `taskId` in the adapter manifest. Each session has exactly one
-    // execution, and external protocols surface that execution as a Task
-    // ([§7.1](07_session-lifecycle.md#71-normal-flow)), so TaskID equals the
-    // session id; the adapter derives it from `sessionId`. TaskID is frozen
-    // for the session's lifetime and OnCreate is invoked once with this
-    // value.
+    // TaskID is the session's external-protocol task identifier. Each
+    // session has exactly one execution, and external protocols surface that
+    // execution as a Task ([§8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)),
+    // so TaskID equals the session id; the SDK derives it from `sessionId`.
     TaskID string `json:"taskId"`
 
     // RuntimeOptions is the effective options map passed by the caller in
@@ -2258,27 +2272,41 @@ type CreateRequest struct {
     // credential file contract). The SDK parses the file into this value;
     // on `credentials_rotated` lifecycle messages the SDK re-reads the file
     // and updates this pointer in place (Full-level runtimes) rather than
-    // calling OnCreate again. Nil only when the runtime's provider pool has
-    // no active lease (matches `llm: null` in the manifest).
+    // calling OnCreate again. Nil when the session's provider pool has no
+    // active lease (matches `llm: null` in the session's `session_start`) or
+    // when the session's `session_start` names no `credentialsPath`.
     Credentials *CredentialBundle `json:"credentials,omitempty"`
 
-    // ManifestSnapshot is the parsed adapter manifest
+    // ExperimentContext is the session's experiment enrollment from the
+    // session's `session_start` (`experimentContext`); nil when the session
+    // is not enrolled.
+    ExperimentContext *ExperimentContext `json:"experimentContext,omitempty"`
+
+    // TracingContext is the session's inherited tracing identifiers from the
+    // session's `session_start` (`tracingContext`); nil for a top-level
+    // session.
+    TracingContext map[string]string `json:"tracingContext,omitempty"`
+
+    // LLM is the session's LLM provider configuration from the session's
+    // `session_start` (`llm`); nil when the session has no active LLM lease.
+    LLM *LLMConfig `json:"llm,omitempty"`
+
+    // ManifestSnapshot is the parsed pod-scoped adapter manifest
     // ([§4.7](04_system-components.md#47-runtime-adapter) "Adapter manifest
-    // field reference"). Authors MAY consult it for platform MCP socket,
-    // CH-RUNTIMEOPS socket, connector servers, experiment context, and
-    // tracing context. The SDK has already dialed the advertised sockets
-    // and attached the `mcpNonce` before OnCreate is invoked; authors who
-    // only use SDK-provided MCP helpers do not need to read this field
-    // directly.
+    // field reference"). It carries only pod-scoped fields; the session's
+    // own context is in the fields above. Authors MAY consult it for the
+    // platform MCP socket, CH-RUNTIMEOPS socket, and connector servers. The
+    // SDK has dialed the advertised sockets and attached the `mcpNonce`
+    // before OnCreate is invoked; authors who only use
+    // SDK-provided MCP helpers do not need to read this field directly.
     ManifestSnapshot *AdapterManifest `json:"manifestSnapshot,omitempty"`
 }
 
 // Message is the per-turn envelope handed to Handler.OnMessage for every
 // `{type: "message"}` frame the adapter writes to stdin
 // ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Inbound: `message`"). It wraps
-// the canonical MessageEnvelope with the session/task IDs the SDK resolved
-// from the adapter manifest, so Handler implementations do not have to
-// correlate against the manifest on every turn. Fields other than Envelope
+// the canonical MessageEnvelope with the session and task IDs the SDK
+// resolved from the frame's `sessionId`. Fields other than Envelope
 // are SDK-derived conveniences — the wire contract is in §28.5.3.
 type Message struct {
     // Envelope is the canonical MessageEnvelope as defined in
@@ -2289,15 +2317,13 @@ type Message struct {
     Envelope *MessageEnvelope `json:"envelope"`
 
     // SessionID is the session the message was delivered to. Populated
-    // from `sessionId` in the adapter manifest; equals
-    // CreateRequest.SessionID.
+    // from the inbound frame's `sessionId`; equals the CreateRequest.SessionID
+    // of that session's OnCreate.
     SessionID string `json:"sessionId"`
 
     // TaskID is the external-protocol task identifier of the session the
-    // message belongs to. Populated from `taskId` in the adapter manifest;
-    // it equals the session id (the adapter derives it from `sessionId`) and
-    // always equals CreateRequest.TaskID, which is frozen for the session's
-    // lifetime.
+    // message belongs to. It equals SessionID and the CreateRequest.TaskID
+    // of that session's OnCreate.
     TaskID string `json:"taskId"`
 
     // Sequence is a monotonically increasing, SDK-assigned, per-task
@@ -2305,7 +2331,7 @@ type Message struct {
     // Distinct from `MessageEnvelope.id` (which is globally unique) and
     // from the coordinator-local sequence number persisted server-side
     // ([§15.4](#messageenvelope--unified-message-format) "Ordering guarantee"):
-    // Sequence is a local per-process counter suitable for logging and
+    // Sequence is a local per-session counter suitable for logging and
     // in-handler ordering only.
     Sequence uint64 `json:"sequence"`
 

@@ -63,6 +63,8 @@ In this tutorial you will:
 
 The worker is a Standard-level runtime that receives a sub-task, processes it, and returns a result. For this tutorial, it performs string transformations.
 
+Both runtimes in this tutorial read only pod-scoped fields from the adapter manifest: the platform MCP server socket and `mcpNonce`. A session's own context arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). Neither runtime keeps per-session context, so each reads the session identifier from the `message` it answers, and its frame loop ignores `session_start` and `session_end`.
+
 ```go
 // file: cmd/worker-runtime/main.go
 package main
@@ -112,8 +114,7 @@ type AdapterManifest struct {
 	PlatformMcpServer struct {
 		Socket string `json:"socket"`
 	} `json:"platformMcpServer"`
-	McpNonce  string `json:"mcpNonce"`
-	SessionID string `json:"sessionId"`
+	McpNonce string `json:"mcpNonce"`
 }
 
 func main() {
@@ -313,8 +314,7 @@ type AdapterManifest struct {
 	PlatformMcpServer struct {
 		Socket string `json:"socket"`
 	} `json:"platformMcpServer"`
-	McpNonce  string `json:"mcpNonce"`
-	SessionID string `json:"sessionId"`
+	McpNonce string `json:"mcpNonce"`
 }
 
 // --- Delegation Types ---

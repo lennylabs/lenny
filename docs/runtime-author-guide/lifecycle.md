@@ -66,7 +66,33 @@ In SDK-warm mode, the agent process starts during the warm phase (before any ses
 
 In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`), a pod is bound to exactly one session for its entire lifetime. After the session completes or fails, the pod is terminated and replaced --- never reused for a different session. This prevents cross-session data leakage through residual files, cached DNS, or runtime memory.
 
-**Recycling** relaxes this constraint: with `recycle.enabled: true` the pod is reused across sequential sessions, and with `maxConcurrentSessions > 1` it serves multiple simultaneous sessions. The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS exchange between sessions. Reuse requires a runtime that serves sequential sessions: your runtime process lives as long as the pod. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. No frame signals a session's end. A runtime that exits after its session makes the pod retire at the recycle boundary rather than serve the next session. The whole-pod scrub clears the shared paths and does not reach your runtime process. See the recycle lifecycle below.
+**Recycling** relaxes this constraint: with `recycle.enabled: true` the pod is reused across sequential sessions, and with `maxConcurrentSessions > 1` it serves multiple simultaneous sessions. The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS exchange between sessions. Reuse requires a runtime that serves sequential sessions: your runtime process lives as long as the pod. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. Each session opens with its `session_start` frame and ends with its `session_end` frame, as [Runtime Process Lifetime](#runtime-process-lifetime) states. A runtime that exits after its session makes the pod retire at the recycle boundary rather than serve the next session. The whole-pod scrub clears the shared paths and does not reach your runtime process. See the recycle lifecycle below.
+
+---
+
+## Runtime Process Lifetime
+
+Your runtime process lives as long as the pod, and it serves any number of sessions over its life: one after another, and at once on a pool whose `sessionPolicy.maxConcurrentSessions` is greater than 1. In the sidecar model the one connection your binary dials carries every session the pod serves, multiplexed by `sessionId`; in the embedded model the adapter runs one runtime loop per session inside its own process. No session's teardown, interrupt, or heartbeat escalation closes the connection or sends your process a signal. The adapter closes the connection when the pod terminates, and when the coordinator hold times out with no new coordinator and the adapter terminates every session it started on the pod. A runtime process that stops, or whose connection the hold timeout closed, is not re-created or reconnected inside the pod: the adapter refuses the next session's start, and the pod is retired. A connection the adapter closes before the first protocol frame, because it refused the connection or the connection failed the nonce or challenge check, is different: read the manifest again and dial again, as the [Connection Handshake](../reference/adapter-contract.md#connection-handshake) states.
+
+Each session is bracketed by frames on that connection or loop:
+
+1. **`session_start`** opens the session and carries its own context: its `sessionId`, the path of its credential file, its experiment and tracing context, and its LLM configuration. It precedes every other frame addressed to the session.
+2. **`session_started`** is your runtime's answer to `session_start`. A runtime that keeps per-session context writes it once it has created the session's context, with `error` when the creation failed; a runtime that has opened the CH-RUNTIMEOPS writes it for every `session_start`. A runtime that keeps neither may ignore `session_start` and write no `session_started`.
+3. **`session_end`** releases the session. Release the session's context when it arrives and keep serving the pod's other sessions.
+
+The end of the connection or loop ends every session it carries, with no `session_end`, and `shutdown` is a process-scoped signal that ends the process. No runtime relies on its process exiting at a session's end. Every session-scoped frame on stdin and on the CH-RUNTIMEOPS carries the `sessionId` of the session it concerns, so keep per-session state keyed by `sessionId`. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines each frame, its fields, and the rules that govern it.
+
+A session's context arrives in its `session_start` frame. The following is an example; a runtime that reads credential material takes the file's path from `credentialsPath`, and a Basic-level runtime that reads a credential file reads `credentialsPath` from the session's `session_start` frame to find it:
+
+```json
+{
+  "type": "session_start",
+  "sessionId": "sess_abc123",
+  "startId": "st_1",
+  "credentialsPath": "/run/lenny/slots/sess_abc123/credentials.json",
+  "llm": { "deliveryMode": "proxy", "dialect": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY" }
+}
+```
 
 ---
 
@@ -80,7 +106,7 @@ When a pod is claimed for a session, the gateway materializes the client's files
 
 3. **Setup commands:** If the runtime defines setup commands (e.g., `npm install`), they run in `/workspace/slots/{sessionId}/current` with a bounded timeout. Setup command output is captured for diagnostics.
 
-4. **Session start:** Your runtime process receives the session's first message. The session's working directory is `/workspace/slots/{sessionId}/current`. In the sidecar model the kubelet started your binary through the runtime image's entrypoint when the pod started, your binary dialed the adapter, and the adapter accepted that connection at the pod's first session; later sessions on the pod reach the same process.
+4. **Session start:** Your runtime process receives the session's `session_start` frame and then its first message. The session's working directory is `/workspace/slots/{sessionId}/current`. In the sidecar model the kubelet started your binary through the runtime image's entrypoint when the pod started, your binary dialed the adapter, and the adapter accepted that connection at the pod's first session; later sessions on the pod reach the same process.
 
 ### Filesystem Layout
 
@@ -108,22 +134,21 @@ The trees shared across the pod's sessions are the pod-global `/workspace/stagin
 
 ### Adapter Manifest
 
-Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`. At the Basic level, the manifest is not required for core operation, and a Basic-level runtime that reads a credential file reads `credentialsPath` from the manifest to find it. At the Standard level, you read it to discover MCP server sockets:
+Before your binary starts, the adapter writes `/run/lenny/adapter-manifest.json`. The manifest is one pod-global file that carries only pod-scoped fields; a session's own context arrives in its `session_start` frame. A Basic-level runtime reads only `mcpNonce` from it for core operation, and only when it dials the message channel as a socket. At the Standard level, you read it to discover MCP server sockets:
 
 ```json
 {
-  "sessionId": "sess_abc123",
-  "taskId": "sess_abc123",
   "platformMcpServer": {
     "socket": "@lenny-platform-mcp"
   },
   "connectorServers": [
     { "id": "github", "socket": "@lenny-connector-github" }
   ],
-  "mcpNonce": "a1b2c3d4e5f6...",
-  "credentialsPath": "/run/lenny/slots/sess_abc123/credentials.json"
+  "mcpNonce": "a1b2c3d4e5f6..."
 }
 ```
+
+The [Adapter Contract](../reference/adapter-contract.md#adapter-manifest) lists every manifest field and the connection handshake that presents `mcpNonce`.
 
 ---
 
@@ -192,7 +217,7 @@ Full-level runtimes participate in a handshake that guarantees **consistent snap
 
 ```
 1. Adapter sends checkpoint_request on the CH-RUNTIMEOPS:
-   {"type":"checkpoint_request","checkpointId":"chk_42","deadlineMs":60000}
+   {"type":"checkpoint_request","sessionId":"sess_abc123","checkpointId":"chk_42","deadlineMs":60000}
 
 2. Your runtime:
    - Finishes current output write
@@ -206,7 +231,7 @@ Full-level runtimes participate in a handshake that guarantees **consistent snap
 4. Adapter snapshots the workspace filesystem.
 
 5. Adapter sends checkpoint completion:
-   {"type":"checkpoint_complete","checkpointId":"chk_42","status":"ok"}
+   {"type":"checkpoint_complete","sessionId":"sess_abc123","checkpointId":"chk_42","status":"ok"}
 
 6. Your runtime resumes normal operation.
 ```
@@ -229,7 +254,7 @@ When a pod fails (eviction, OOM, node failure), the gateway attempts automatic r
    - Resumes the session.
 3. If retries exhausted, session becomes `awaiting_client_action`.
 
-Your runtime does not need to implement any resume logic --- the adapter handles it. From your binary's perspective, you receive the first `message` on stdin as if it were a new session.
+Your runtime does not need to implement any resume logic --- the adapter handles it. From your binary's perspective, the resumed session arrives as a new start: its `session_start` frame, followed by its first `message`.
 
 ### The `session.resumed` Event
 
@@ -256,7 +281,7 @@ Full-level runtimes can handle clean interrupts via the CH-RUNTIMEOPS:
 
 ```
 1. Adapter sends interrupt_request:
-   {"type":"interrupt_request","interruptId":"int_001","deadlineMs":30000}
+   {"type":"interrupt_request","sessionId":"sess_abc123","interruptId":"int_001","deadlineMs":30000}
 
 2. Your runtime reaches a safe stop point (finishes current output, flushes).
 
@@ -290,9 +315,9 @@ When a provider credential is rate-limited, expires, or is revoked, the platform
 
 ```
 1. Adapter sends on CH-RUNTIMEOPS:
-   {"type":"credentials_rotated","provider":"anthropic","credentialsPath":"/run/lenny/slots/sess_abc123/credentials.json","leaseId":"lease_xyz"}
+   {"type":"credentials_rotated","sessionId":"sess_abc123","provider":"anthropic","credentialsPath":"/run/lenny/slots/sess_abc123/credentials.json","leaseId":"lease_xyz"}
 
-2. Your runtime re-reads the credential file named by `credentialsPath` and rebinds the provider client to the new credential.
+2. Your runtime re-reads the credential file named by `credentialsPath` and rebinds the provider client of the session `sessionId` names to the new credential.
 
 3. Your runtime replies:
    {"type":"credentials_acknowledged","leaseId":"lease_xyz","provider":"anthropic"}
@@ -302,32 +327,27 @@ When a provider credential is rate-limited, expires, or is revoked, the platform
 
 ## Deadline Signals (Full level)
 
-Full-level runtimes receive advance warning before session expiry:
+Full-level runtimes that declare the `deadline_signal` capability receive advance warning before a session's expiry, addressed to that session by `sessionId`:
 
 ```json
-{"type":"deadline_approaching","remainingMs":60000}
+{"type":"deadline_approaching","sessionId":"sess_abc123","remainingMs":60000,"trigger":"session_age"}
 ```
 
-This gives your runtime time to wrap up long-running work, flush outputs, and produce a partial result before the hard deadline arrives.
+This gives your runtime time to wrap up the session's long-running work, flush outputs, and produce a partial result before the hard deadline arrives. Answer the session's in-flight `message`, if any, before `remainingMs` elapses, and write no other `response` for the session in reply to this frame. Your runtime keeps running and keeps serving the pod's other sessions.
 
 At the Basic and Standard levels there is no advance notice of a session's expiry, and your runtime process receives no signal when the session expires.
 
 ---
 
-## Terminate Signal (Full level)
+## Session End
 
-`terminate` belongs to the CH-RUNTIMEOPS protocol. The adapter sends it on no path: neither a session's end nor the pod's termination sends it, and your runtime process ends with the pod.
+The adapter writes `session_end` on stdin when a session it started ends on the runtime, at every integration level:
 
 ```json
-{"type":"terminate","deadlineMs":10000,"reason":"session_complete"}
+{"type":"session_end","sessionId":"sess_abc123"}
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `deadlineMs` | integer | Time in milliseconds before the adapter sends SIGTERM. |
-| `reason` | string | One of `"session_complete"`, `"budget_exhausted"`, `"eviction"`, or `"operator"`. |
-
-Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod your runtime process serves the pod's later sessions; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no CH-RUNTIMEOPS handshake. The adapter's socket address is bound for the pod's lifetime and does not change between sessions.
+On `session_end`, release the context of the session's latest start and keep running: the process serves the pod's other sessions and later ones. The frame is not acknowledged and carries no deadline. After it, write no further frame for the session, except a `session_started` still owed for a `session_start` read before it and the `llm_request_completed` of a request started before it. Ignore a `session_end` for a session your runtime does not hold. An interrupt does not end a session, and the end of the connection ends every session it carries with no `session_end`. On a recycling pod the whole-pod scrub and the manifest rewrite before the next session's start are adapter-executed and require no CH-RUNTIMEOPS handshake, and the adapter's socket address is bound for the pod's lifetime. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) states the full rules for `session_end`.
 
 ---
 
@@ -353,11 +373,12 @@ Emitted just before the runtime sends an outbound LLM request directly to the pr
 Emitted when the outbound LLM request completes or errors.
 
 ```json
-{"type":"llm_request_completed","requestId":"req_001","provider":"anthropic","status":"ok"}
+{"type":"llm_request_completed","sessionId":"sess_abc123","requestId":"req_001","provider":"anthropic","status":"ok"}
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `sessionId` | string | The session the request was made for. |
 | `requestId` | string | Matches the corresponding `llm_request_started`. |
 | `provider` | string | The LLM provider that was called. |
 | `status` | string | `"ok"` or `"error"`. |
@@ -368,7 +389,7 @@ When the in-flight counter for a provider reaches zero and a credential rotation
 
 ## Recycle Lifecycle (recycle.enabled: true)
 
-A recycling pod is reused across sequential sessions without pod replacement. The adapter runs the whole-pod scrub and regenerates the next session's manifest, and reuse requires a runtime that serves sequential sessions. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. No frame signals a session's end. A runtime that exits after its session makes the pod retire at the recycle boundary rather than serve the next session. The whole-pod scrub clears the shared paths and does not reach your runtime process.
+A recycling pod is reused across sequential sessions without pod replacement. The adapter runs the whole-pod scrub and rewrites the pod-scoped manifest before the next session's start, and reuse requires a runtime that serves sequential sessions. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. Each session opens with its `session_start` frame and ends with its `session_end` frame, as [Runtime Process Lifetime](#runtime-process-lifetime) states. A runtime that exits after its session makes the pod retire at the recycle boundary rather than serve the next session. The whole-pod scrub clears the shared paths and does not reach your runtime process.
 
 ![Recycle lifecycle: claimed, recycling whole-pod scrub, sdk_connecting SDK re-warm, reserved tenant hold, then claimed again on a same-tenant rebind or idle on hold expiry.](../assets/diagrams/recycle-lifecycle.svg)
 
@@ -405,7 +426,7 @@ A managed session is bound to a claimed pod for the session's lifetime. Session 
 
 - Every session is bound to a [slot](../reference/glossary#slot) on every pod, whatever `maxConcurrentSessions`. Your runtime implements a **dispatch loop keyed on the per-session identifier**: every session-scoped binary protocol message carries it, the adapter populates it on the frames it writes, and your runtime echoes the identifier it was handed on the frames it emits, at every integration level. Each session's workspace is `/workspace/slots/{sessionId}/current/` on every pod.
 - In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. No special runtime code is needed beyond the base adapter contract for your integration level. The pod is never reused for a different session.
-- With `recycle.enabled: true` the pod is reused across sequential sessions (see the recycle lifecycle above). Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. No frame signals a session's end. A runtime that exits after its session makes the pod retire at the recycle boundary rather than serve the next session. The whole-pod scrub clears the shared paths and does not reach your runtime process.
+- With `recycle.enabled: true` the pod is reused across sequential sessions (see the recycle lifecycle above). Recycling requires no CH-RUNTIMEOPS exchange and works at every integration level, and reuse requires a runtime that serves sequential sessions. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, your runtime process serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. Each session opens with its `session_start` frame and ends with its `session_end` frame, as [Runtime Process Lifetime](#runtime-process-lifetime) states. A runtime that exits after its session makes the pod retire at the recycle boundary rather than serve the next session. The whole-pod scrub clears the shared paths and does not reach your runtime process.
 - With `maxConcurrentSessions > 1` multiple sessions run simultaneously on one pod. Cross-slot isolation is process-level and filesystem-level only, explicitly weaker than the default. CPU and memory are shared across slots (no per-slot cgroup subdivision). `preConnect` is admitted only when `maxConcurrentSessions` is 1.
 
 ### Service Mode

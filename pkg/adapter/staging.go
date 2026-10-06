@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -216,16 +217,20 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	// resolve and that work.
 	// A held identifier is refused without waiting, and an acquisition that
 	// outlives ctx is refused with the context's own error.
-	releaseGuard, gerr := s.acquireSlotGuardForResolve(ctx, sessionID)
+	// The guard is released ahead of the function's return on the
+	// mid-session path, before the files_updated signal waits for the
+	// session's session_started, so the release is idempotent.
+	acquired, gerr := s.acquireSlotGuardForResolve(ctx, sessionID)
 	if gerr != nil {
 		spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
 		return nil, gerr
 	}
+	releaseGuard := sync.OnceFunc(acquired)
 	defer releaseGuard()
 	// spec: §6.4 — the finalize materializes into the session's own tree
 	// (/workspace/slots/{sessionId}/staging promoted to /current) and
 	// creates that tree on first reference.
-	paths, perr := s.ensureSlotPaths(sessionID, slotResolve{
+	entry, perr := s.ensureSlotEntry(sessionID, slotResolve{
 		bindAttempt:  req.GetBindAttempt(),
 		allowCreate:  !midSession,
 		allowStarted: midSession,
@@ -235,7 +240,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		spanErr = tracing.CategorizeError(rerr, slotResolveCategory(perr))
 		return nil, rerr
 	}
-	workspaceRoot, stagingDir := paths.Current, paths.Staging
+	workspaceRoot, stagingDir := entry.paths.Current, entry.paths.Staging
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
@@ -311,11 +316,13 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	// the signal is safe to emit now. It is best-effort: a not-connected
 	// channel (no Full-level runtime, or the pre-start path) is benign,
 	// and the promoted files are already on disk regardless. F-7.4.6.
+	// The frame names the session whose workspace was promoted, and it is
+	// written after the guard is released, once the session's
+	// session_started has been read.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	if midSession && s.Lifecycle != nil {
-		if sigErr := s.Lifecycle.SignalFilesUpdated(); sigErr != nil {
-			log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v",
-				req.GetSessionId().GetValue(), sigErr)
-		}
+		releaseGuard()
+		s.signalFilesUpdated(ctx, entry, sessionID)
 	}
 	// F-7.4.15 / F-14.1.18: transcribe the §14 advisory warnings onto
 	// the FinalizeWorkspaceResponse so the gateway can republish the
@@ -352,6 +359,26 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		resp.WorkspacePlanWarnings = append(resp.WorkspacePlanWarnings, pw)
 	}
 	return resp, nil
+}
+
+// signalFilesUpdated tells the runtime that a mid-session upload promoted
+// new files into the session's workspace. It holds no per-slot guard: it
+// waits on the acknowledgement gate of entry, the entry the finalize
+// resolved, bounded by SessionStartAckTimeout, so a wait does not block
+// Shutdown, DemoteSDK, or Resume from releasing the gate. The signal is
+// best-effort: a gate that does not admit the frame, or a channel no
+// runtime is connected to, delivers nothing, and the promoted files are on
+// disk regardless. spec: §7.4; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) signalFilesUpdated(ctx context.Context, entry *slotState, sessionID string) {
+	wctx, cancel := s.gateBound(ctx, 0)
+	defer cancel()
+	if err := s.awaitSessionStarted(wctx, entry); err != nil {
+		log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v", sessionID, err)
+		return
+	}
+	if err := s.Lifecycle.SignalFilesUpdated(sessionID); err != nil {
+		log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v", sessionID, err)
+	}
 }
 
 // RunSetup executes the §14 WorkspacePlan setup commands against the

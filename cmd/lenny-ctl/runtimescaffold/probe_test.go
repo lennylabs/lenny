@@ -206,8 +206,8 @@ func TestProbeObservedLevelUnderperforms(t *testing.T) {
 		"binary_exists_and_executes": true, "empty_stdin_exits_cleanly": true,
 		"message_emits_response": true, "heartbeat_emits_ack": true,
 		"unknown_type_ignored": true, "shutdown_exits_within_deadline": true,
-		"sequential_messages_handled": true,
-		"mcp_nonce_handshake":         true, "platform_mcp_tool_invocation": true,
+		"session_lifetime":    true,
+		"mcp_nonce_handshake": true, "platform_mcp_tool_invocation": true,
 		"connector_mcp_server_reachability": true, "tool_call_tool_result_correlation": true,
 		// full-level checks all fail.
 	}
@@ -221,5 +221,24 @@ func TestProbeObservedLevelUnderperforms(t *testing.T) {
 	}
 	if len(res.Missing) == 0 {
 		t.Error("underperforms should list missing full-level capabilities")
+	}
+}
+
+// spec: 15.4.6 (Conformance Test Suite, Basic session lifetime)
+//
+// The Basic session lifetime category counts against every declared level,
+// and the retired sequential-messages check maps to no level, so a runtime
+// that exits at a session_end fails validation even when it declares
+// basic.
+func TestSessionLifetimeIsABasicCategory_spec_15_4_6(t *testing.T) {
+	if lvl, ok := checkLevel["session_lifetime"]; !ok || lvl != compliance.LevelBasic {
+		t.Fatalf("checkLevel[session_lifetime] = (%q, %v), want basic", lvl, ok)
+	}
+	if _, ok := checkLevel["sequential_messages_handled"]; ok {
+		t.Fatal("checkLevel still maps the retired sequential_messages_handled check")
+	}
+	checks := []compliance.Check{chk("message_emits_response", true), chk("session_lifetime", false)}
+	if got := failuresAtOrBelow(checks, compliance.LevelBasic); len(got) != 1 || got[0] != "session_lifetime" {
+		t.Fatalf("failuresAtOrBelow(basic) = %v, want [session_lifetime]", got)
 	}
 }

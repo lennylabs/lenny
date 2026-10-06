@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 )
@@ -23,6 +25,7 @@ import (
 type outFrame struct {
 	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
+	StartID   string `json:"startId"`
 	Output    []struct {
 		Inline string `json:"inline"`
 	} `json:"output"`
@@ -86,7 +89,8 @@ func TestDemultiplexesTwoSessionsWithIsolatedSequences(t *testing.T) {
 	// Interleave two sessions: sess-01 gets two messages, sess-02 one.
 	// Each session's sequence counter is independent, so sess-01's second
 	// response is seq=2 while sess-02's only response is seq=1.
-	in := message("sess-01", "a1") +
+	in := sessionStart("sess-01", "st_1") + sessionStart("sess-02", "st_2") +
+		message("sess-01", "a1") +
 		message("sess-02", "b1") +
 		message("sess-01", "a2")
 	frames := responsesOnly(drive(t, in))
@@ -215,7 +219,7 @@ func TestHeartbeatAckIsPodGlobalAndUnaddressed(t *testing.T) {
 // further output. spec: §28.5.3.
 func TestShutdownEndsEverySlot(t *testing.T) {
 	var out bytes.Buffer
-	in := message("sess-01", "before") +
+	in := sessionStart("sess-01", "st_1") + message("sess-01", "before") +
 		`{"type":"shutdown","reason":"drain","deadline_ms":1}` + "\n" +
 		message("sess-01", "after")
 	if err := run(context.Background(), strings.NewReader(in), &out, io.Discard); err != nil {
@@ -277,7 +281,8 @@ func TestPerSlotProtocolErrorFailsTheRuntime(t *testing.T) {
 	// A frame whose `input` is a string, not a MessagePart array: the front
 	// loop accepts it (it reads only type and sessionId) but echocore's
 	// handleMessage rejects the body.
-	in := `{"type":"message","id":"m1","sessionId":"sess-01","input":"not-an-array"}` + "\n"
+	in := sessionStart("sess-01", "st_1") +
+		`{"type":"message","id":"m1","sessionId":"sess-01","input":"not-an-array"}` + "\n"
 	var out bytes.Buffer
 	err := run(context.Background(), strings.NewReader(in), &out, io.Discard)
 	if err == nil {
@@ -311,7 +316,7 @@ func TestProtocolErrorMessage(t *testing.T) {
 // a non-object outbound frame verbatim, so a future non-object frame on a
 // slot is not dropped or corrupted by the stamping path.
 func TestStampLeavesNonObjectFrameUnchanged(t *testing.T) {
-	s := &slotWriter{sessionID: "sess-01"}
+	s := &slotWriter{worker: &slotWorker{sessionID: "sess-01"}}
 	got, err := s.stamp([]byte("[]"))
 	if err != nil {
 		t.Fatalf("stamp non-object frame: %v", err)
@@ -399,4 +404,311 @@ func inline(f outFrame) string {
 		b.WriteString(p.Inline)
 	}
 	return b.String()
+}
+
+// sessionStart builds a session_start frame for sessionID with startID.
+func sessionStart(sessionID, startID string) string {
+	b, _ := json.Marshal(map[string]any{"type": "session_start", "sessionId": sessionID, "startId": startID})
+	return string(b) + "\n"
+}
+
+// sessionEnd builds a session_end frame for sessionID.
+func sessionEnd(sessionID string) string {
+	b, _ := json.Marshal(map[string]any{"type": "session_end", "sessionId": sessionID})
+	return string(b) + "\n"
+}
+
+// acks returns the session_started frames among frames, in order.
+func acks(frames []outFrame) []outFrame {
+	var out []outFrame
+	for _, f := range frames {
+		if f.Type == "session_started" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start, Outbound: session_started)
+//
+// Each session_start is answered with a session_started echoing its
+// sessionId and startId, including a repeated start for a session the
+// runtime already holds. The repeated start keeps the session's worker,
+// so the session's sequence counter continues across it.
+func TestSessionStartIsAcknowledgedAndKeepsTheWorker_spec_28_5_3(t *testing.T) {
+	frames := drive(t, sessionStart("sess-01", "st_1")+
+		message("sess-01", "a1")+
+		sessionStart("sess-01", "st_2")+
+		message("sess-01", "a2")+
+		sessionStart("sess-02", "st_3"))
+
+	got := acks(frames)
+	want := []outFrame{{Type: "session_started", SessionID: "sess-01", StartID: "st_1"}, {Type: "session_started", SessionID: "sess-01", StartID: "st_2"}, {Type: "session_started", SessionID: "sess-02", StartID: "st_3"}}
+	if len(got) != len(want) {
+		t.Fatalf("session_started frames = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i].SessionID != want[i].SessionID || got[i].StartID != want[i].StartID {
+			t.Fatalf("session_started[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	responses := responsesOnly(frames)
+	if len(responses) != 2 || !strings.Contains(inline(responses[1]), "[echo seq=2]") {
+		t.Fatalf("responses = %+v, want the repeated start to keep sess-01's worker (second response seq=2)", responses)
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_end), 4.7.10 (Runtime process
+// lifetime)
+//
+// session_end releases the session's worker, so a later session_start for
+// the same session builds a fresh one whose sequence restarts at 1, and a
+// session_end for a session the runtime does not hold is ignored. The
+// process keeps serving: a later heartbeat is still answered.
+func TestSessionEndReleasesTheWorker_spec_28_5_3(t *testing.T) {
+	frames := drive(t, sessionStart("sess-01", "st_1")+
+		message("sess-01", "a1")+
+		sessionEnd("sess-01")+
+		sessionEnd("sess-unknown")+
+		sessionStart("sess-01", "st_2")+
+		message("sess-01", "a2")+
+		`{"type":"heartbeat","ts":1}`+"\n")
+
+	// The a1 response may be dropped: session_end follows a1 with no wait,
+	// and a response the worker produces after session_end was dispatched
+	// is never written. The a2 response is always written.
+	responses := responsesOnly(frames)
+	if len(responses) == 0 {
+		t.Fatal("no responses, want at least the a2 echo")
+	}
+	if got := inline(responses[len(responses)-1]); !strings.Contains(got, "[echo seq=1]") || !strings.Contains(got, "a2") {
+		t.Fatalf("response after session_end and a new session_start = %q, want a fresh worker's seq=1 echo of a2", got)
+	}
+	var sawAck bool
+	for _, f := range frames {
+		sawAck = sawAck || f.Type == "heartbeat_ack"
+	}
+	if !sawAck {
+		t.Fatal("no heartbeat_ack after session_end: the process stopped serving")
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start)
+//
+// A session boundary frame carrying no sessionId names no session, so it
+// is a protocol error like any other unaddressed session-scoped frame, and
+// a malformed session_start body is one too.
+func TestUnaddressedOrMalformedSessionFrameIsAProtocolError_spec_28_5_3(t *testing.T) {
+	for _, in := range []string{
+		`{"type":"session_start","startId":"st_1"}` + "\n",
+		`{"type":"session_end"}` + "\n",
+		`{"type":"session_start","sessionId":"sess-01","startId":7}` + "\n",
+	} {
+		var out bytes.Buffer
+		err := run(context.Background(), strings.NewReader(in), &out, io.Discard)
+		var pe protocolError
+		if !errors.As(err, &pe) {
+			t.Fatalf("run(%q) err = %v, want a protocol error", in, err)
+		}
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_end)
+//
+// After the runtime reads a session's session_end it writes no frame
+// addressed to that session. A message delivered immediately before
+// session_end can still be in the session's echocore buffer when the
+// front loop dispatches session_end, so its response is produced while
+// the worker drains. The write gate holds every frame the worker produces
+// until session_end has been dispatched (the session is gone from the
+// worker map), which is the late-write ordering; the response must then be
+// dropped. A second session served after the end confirms the runtime
+// keeps writing for the sessions it still holds.
+func TestNoFrameForASessionAfterItsSessionEnd_spec_28_5_3(t *testing.T) {
+	var out lockedBuffer
+	d := newDemux(context.Background(), &out, io.Discard)
+	d.sessionWriteGate = func(sessionID string) {
+		if sessionID != "sess-01" {
+			return
+		}
+		waitSessionReleased(t, d, sessionID)
+	}
+
+	for _, f := range []string{
+		sessionStart("sess-01", "st_1"),
+		message("sess-01", "a1"),
+		sessionEnd("sess-01"),
+		sessionStart("sess-02", "st_2"),
+		message("sess-02", "b1"),
+	} {
+		var env struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+		}
+		line := []byte(strings.TrimSuffix(f, "\n"))
+		if err := json.Unmarshal(line, &env); err != nil {
+			t.Fatalf("decode %q: %v", f, err)
+		}
+		if err := d.dispatch(env.Type, env.SessionID, line); err != nil {
+			t.Fatalf("dispatch %s: %v", env.Type, err)
+		}
+	}
+	if err := d.closeAll(); err != nil {
+		t.Fatalf("closeAll: %v", err)
+	}
+
+	frames := decodeFrames(t, out.String())
+	var sawB1 bool
+	for _, f := range frames {
+		if f.SessionID == "sess-01" && f.Type != "session_started" {
+			t.Fatalf("frame %+v addressed to sess-01 was written after its session_end", f)
+		}
+		sawB1 = sawB1 || (f.SessionID == "sess-02" && strings.Contains(inline(f), "b1"))
+	}
+	if !sawB1 {
+		t.Fatalf("frames = %+v, want sess-02's b1 echo after sess-01 ended", frames)
+	}
+}
+
+// waitSessionReleased blocks until endSession has removed sessionID from
+// the worker map, or fails the test after a bound.
+func waitSessionReleased(t *testing.T, d *demux, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		_, held := d.slots[sessionID]
+		d.mu.Unlock()
+		if !held {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Errorf("session %q was never released by session_end", sessionID)
+}
+
+// lockedBuffer is a bytes.Buffer safe for the concurrent reads the test
+// makes while workers write.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// outError is the error field of an outbound response frame.
+type outError struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Error     *struct {
+		Code string `json:"code"`
+	} `json:"error"`
+}
+
+// driveRaw runs the dispatch loop over input, followed by a heartbeat and
+// a shutdown, and returns the raw outbound JSONL and the diagnostics the
+// runtime wrote to stderr.
+func driveRaw(t *testing.T, input string) (out, stderr string) {
+	t.Helper()
+	var o, e bytes.Buffer
+	in := input + `{"type":"heartbeat","ts":1}` + "\n" + `{"type":"shutdown","reason":"drain","deadline_ms":1}` + "\n"
+	if err := run(context.Background(), strings.NewReader(in), &o, &e); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return o.String(), e.String()
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Session errors)
+//
+// A message for a session whose session_start the runtime never read is
+// answered with a response carrying error for that sessionId, and the
+// runtime keeps serving. The message must not create a session context, so
+// it gets no echo, and a later message for the same session is rejected
+// the same way.
+func TestMessageWithoutSessionStartIsAnsweredWithAnError_spec_28_5_3(t *testing.T) {
+	out, _ := driveRaw(t, message("sess-09", "x1")+message("sess-09", "x2"))
+	var errs int
+	var sawAck bool
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var f outError
+		if err := json.Unmarshal([]byte(line), &f); err != nil {
+			t.Fatalf("decode %q: %v", line, err)
+		}
+		switch f.Type {
+		case "heartbeat_ack":
+			sawAck = true
+		case "response":
+			if f.SessionID != "sess-09" || f.Error == nil || f.Error.Code != "RUNTIME_ERROR" {
+				t.Fatalf("response %q, want a RUNTIME_ERROR response for sess-09", line)
+			}
+			errs++
+		default:
+			t.Fatalf("unexpected frame %q for a session that was never started", line)
+		}
+	}
+	if errs != 2 {
+		t.Fatalf("got %d error responses, want one per message (2): %s", errs, out)
+	}
+	if !sawAck {
+		t.Fatal("no heartbeat_ack after the rejected messages: the runtime stopped serving")
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_end rule 2, Session errors)
+//
+// After session_end released a session, a message or a tool_result for it
+// does not recreate the session's context and is not answered, because
+// after session_end the runtime writes no frame addressed to the session.
+// The runtime keeps serving and records a diagnostic. A session_start for
+// the same session reopens it, and a message after that gets a fresh
+// worker's echo.
+func TestMessageAfterSessionEndDoesNotReopenTheSession_spec_28_5_3(t *testing.T) {
+	out, stderr := driveRaw(t, sessionStart("sess-01", "st_1")+
+		sessionEnd("sess-01")+
+		message("sess-01", "late")+
+		`{"type":"tool_result","sessionId":"sess-01","id":"tc_1","content":[]}`+"\n")
+	for _, f := range decodeFrames(t, out) {
+		if f.SessionID == "sess-01" && f.Type != "session_started" {
+			t.Fatalf("frame %+v addressed to sess-01 after its session_end: the late frame reopened the session", f)
+		}
+	}
+	if !strings.Contains(stderr, "already ended") {
+		t.Fatalf("stderr %q, want a diagnostic for the frame dropped after session_end", stderr)
+	}
+
+	frames := drive(t, sessionStart("sess-01", "st_1")+
+		sessionEnd("sess-01")+
+		message("sess-01", "late")+
+		sessionStart("sess-01", "st_2")+
+		message("sess-01", "again"))
+	responses := responsesOnly(frames)
+	if len(responses) != 1 || !strings.Contains(inline(responses[0]), "[echo seq=1]") || !strings.Contains(inline(responses[0]), "again") {
+		t.Fatalf("responses = %+v, want only the reopened session's seq=1 echo of again", responses)
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Session errors)
+//
+// A tool_result for a session the runtime never started has no response
+// to carry an error, so it is dropped with a diagnostic and the runtime
+// keeps serving.
+func TestToolResultForAnUnheldSessionIsDropped_spec_28_5_3(t *testing.T) {
+	out, stderr := driveRaw(t, `{"type":"tool_result","sessionId":"sess-09","id":"tc_1","content":[]}`+"\n")
+	frames := decodeFrames(t, out)
+	if len(frames) != 1 || frames[0].Type != "heartbeat_ack" {
+		t.Fatalf("frames = %+v, want only the heartbeat_ack", frames)
+	}
+	if !strings.Contains(stderr, "does not hold") {
+		t.Fatalf("stderr %q, want a diagnostic for the dropped tool_result", stderr)
+	}
 }

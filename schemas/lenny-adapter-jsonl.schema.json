@@ -10,6 +10,9 @@
     { "$ref": "#/$defs/messageEnvelope" },
     { "$ref": "#/$defs/heartbeat" },
     { "$ref": "#/$defs/heartbeat_ack" },
+    { "$ref": "#/$defs/session_start" },
+    { "$ref": "#/$defs/session_started" },
+    { "$ref": "#/$defs/session_end" },
     { "$ref": "#/$defs/shutdown" },
     { "$ref": "#/$defs/tool_call" },
     { "$ref": "#/$defs/tool_result" },
@@ -106,14 +109,125 @@
       }
     },
 
+    "session_start": {
+      "title": "session_start",
+      "description": "Inbound frame that opens a session on the runtime and carries the session's own context. The adapter writes it once for each start and each resume of the session, and on the connection or loop that carries the session it precedes every other frame addressed to the session. A runtime that keeps per-session context creates the session's context from it and answers with session_started; a runtime that has opened CH-RUNTIMEOPS answers every session_start with session_started. A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS connection may ignore it. A runtime ignores a session_start for a session it already holds, except that it answers it with session_started again. See spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card.",
+      "type": "object",
+      "required": ["type", "sessionId", "startId"],
+      "properties": {
+        "type": { "const": "session_start" },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session the frame opens. The adapter populates it on every pod."
+        },
+        "startId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifies this write of the frame. The adapter gives each session_start it writes on the pod a value distinct from every other it has written there, so the acknowledgement of an earlier start of the same session is not read as this start's."
+        },
+        "credentialsPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path to this session's credential file, /run/lenny/slots/{sessionId}/credentials.json. The adapter writes the file before it writes this frame and rewrites it in place on a rotation for this session. Present whenever the adapter provisioned a credential file for the session and absent otherwise; the adapter never writes an empty path, and a runtime given no path loads no credential bundle for the session."
+        },
+        "experimentContext": {
+          "description": "Experiment enrollment context for this session. Absent or null when the session is not enrolled in any experiment.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["experimentId", "variantId", "inherited"],
+              "properties": {
+                "experimentId": { "type": "string" },
+                "variantId": { "type": "string" },
+                "inherited": { "type": "boolean", "description": "True when the enrollment was propagated from a parent session through delegation." }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "tracingContext": {
+          "description": "Opaque map of non-sensitive tracing identifiers propagated from the parent runtime through delegation. Absent or null for a top-level session.",
+          "oneOf": [
+            { "type": "object", "additionalProperties": { "type": "string" } },
+            { "type": "null" }
+          ]
+        },
+        "llm": {
+          "description": "LLM provider configuration for the session. Absent or null when the session has no active LLM credential lease.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["deliveryMode"],
+              "properties": {
+                "deliveryMode": { "enum": ["direct", "proxy"], "description": "The credential delivery mode active for this session's LLM provider pool." },
+                "dialect": { "type": "string", "description": "The dialect the runtime's LLM SDK speaks to the LLM Proxy, openai or anthropic. Present in proxy mode and omitted in direct mode." },
+                "apiKeyEnv": { "type": "string", "description": "Canonical environment variable name the runtime's LLM SDK reads for its API key. The runtime supplies the session's lease token as that session's key rather than setting the variable in its own process environment." },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "description": "Header names and string values the runtime's LLM SDK sends to the LLM Proxy in proxy mode. Omitted when no header is advertised."
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "session_started": {
+      "title": "session_started",
+      "description": "Outbound acknowledgement of a session_start. A runtime that keeps per-session context writes it after it has created the session's context, and a runtime that has opened CH-RUNTIMEOPS writes it for every session_start it reads. The adapter consumes it and relays it to no Attach stream, and it drops one whose startId is not that of the start waiting for the session. See spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card.",
+      "type": "object",
+      "required": ["type", "sessionId", "startId"],
+      "properties": {
+        "type": { "const": "session_started" },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session whose session_start the frame answers. The runtime echoes the identifier of the session_start it answers."
+        },
+        "startId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The runtime echoes the startId of the session_start it answers, including a repeated one."
+        },
+        "error": {
+          "type": "object",
+          "description": "Present when the runtime failed to create the session's context, and absent otherwise. The object a response error carries.",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "session_end": {
+      "title": "session_end",
+      "description": "Inbound frame that releases a session on the runtime. It ends the start of the latest session_start the runtime read for the session, and the runtime releases the context that start creates and keeps serving the pod's other sessions. It is not acknowledged and carries no deadline. A runtime ignores a session_end for a session it does not hold. When the connection or loop that carries a session ends, no session_end follows. See spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card.",
+      "type": "object",
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": { "const": "session_end" },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session the frame releases. The adapter populates it on every pod."
+        }
+      }
+    },
+
     "shutdown": {
       "title": "shutdown",
-      "description": "Inbound graceful-shutdown signal. The agent must exit cleanly within deadline_ms or receive SIGTERM.",
+      "description": "Inbound process-scoped graceful-shutdown signal. The adapter never writes it at a session boundary; a session's end is session_end. The agent must finish its current work and exit within deadline_ms or receive SIGTERM.",
       "type": "object",
       "required": ["type", "reason", "deadline_ms"],
       "properties": {
         "type": { "const": "shutdown" },
-        "reason": { "type": "string", "minLength": 1, "description": "Reason code (for example: drain, runtime_upgrade, session_complete)." },
+        "reason": { "type": "string", "minLength": 1, "description": "Reason code (for example: drain, runtime_upgrade)." },
         "deadline_ms": { "type": "integer", "minimum": 0, "description": "Milliseconds the agent has to exit before SIGTERM." }
       }
     },

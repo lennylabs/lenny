@@ -49,6 +49,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // echoLoop is a minimal §28.5.3 runtime loop for the InProcessRuntime the
@@ -87,7 +88,11 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	t.Helper()
 
 	sock := shortSocket(t, "lifecycle.sock")
-	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares each connection's nonce line with a test
+	// manifest published beside the socket, which the dialing runtime reads.
+	// spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.PublishIn(t, filepath.Dir(sock), nil)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -130,7 +135,8 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	client := adapterv1.NewAdapterClient(conn)
 
 	// Claim the pod for the session so ReportUsage's checkSession passes
-	// and the token sink resolves the folded counts to this session.
+	// and the token sink, which folds only for a bound session, accepts
+	// the counts the frames attribute to it.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
@@ -152,6 +158,7 @@ const sessionID = "sess-direct-1"
 // direct-mode llm_request_completed token counts.
 type lifecycleFrame struct {
 	Type            string   `json:"type"`
+	SessionID       string   `json:"sessionId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	RequestID       string   `json:"requestId,omitempty"`
@@ -171,6 +178,13 @@ func dialRuntime(t *testing.T, sock string) *json.Encoder {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(sock), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 
 	r := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -197,13 +211,22 @@ func dialRuntime(t *testing.T, sock string) *json.Encoder {
 	return enc
 }
 
-// sendCompleted emits one direct-mode llm_request_completed frame carrying
-// the token counts, the way a direct-mode runtime reports a settled
-// provider call (§4.7).
+// sendCompleted emits one direct-mode llm_request_completed frame for the
+// wired session carrying the token counts, the way a direct-mode runtime
+// reports a settled provider call (§4.7).
 func sendCompleted(t *testing.T, enc *json.Encoder, requestID string, in, out int64) {
+	t.Helper()
+	sendCompletedFor(t, enc, sessionID, requestID, in, out)
+}
+
+// sendCompletedFor emits one llm_request_completed frame naming session.
+// The frame is session-scoped, and the adapter folds its counts into the
+// session it names. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func sendCompletedFor(t *testing.T, enc *json.Encoder, session, requestID string, in, out int64) {
 	t.Helper()
 	if err := enc.Encode(lifecycleFrame{
 		Type:         "llm_request_completed",
+		SessionID:    session,
 		RequestID:    requestID,
 		Provider:     "anthropic",
 		Status:       "ok",
@@ -286,6 +309,32 @@ func TestWiredReportUsageReturnsDelta_spec_4_7(t *testing.T) {
 	if drained.GetInputTokens() != 0 || drained.GetOutputTokens() != 0 {
 		t.Errorf("second delta = (%d,%d), want (0,0) after the first drained the accumulation",
 			drained.GetInputTokens(), drained.GetOutputTokens())
+	}
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS, Messages), 11.2 (direct-mode usage)
+//
+// diagnosis: the wired adapter folded the token counts of an
+// llm_request_completed frame that names a session the pod holds no
+// binding for, or that names no session, into the bound session's total,
+// so a runtime could charge one session's budget with another's tokens.
+// Confirm the token sink keys the meter by the frame's sessionId and drops
+// an empty or unbound one.
+func TestWiredReportUsageDropsFramesForOtherSessions_spec_28_5_3(t *testing.T) {
+	client, sock := wiredAdapter(t)
+	enc := dialRuntime(t, sock)
+
+	sendCompletedFor(t, enc, "sess-unbound", "req-x", 900, 900)
+	sendCompletedFor(t, enc, "", "req-y", 800, 800)
+	// A frame naming the bound session follows on the same connection; the
+	// read loop handles frames in order, so once its counts arrive the two
+	// frames before it have been handled.
+	sendCompleted(t, enc, "req-1", 7, 3)
+
+	delta := pollUntilFolded(t, client, 7, 3)
+	if delta.GetInputTokens() != 7 || delta.GetOutputTokens() != 3 {
+		t.Fatalf("delta = (%d,%d), want (7,3): the counts of frames naming another session or none were folded into %s",
+			delta.GetInputTokens(), delta.GetOutputTokens(), sessionID)
 	}
 }
 

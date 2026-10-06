@@ -20,12 +20,12 @@ func TestSignalFilesUpdatedEmitsFrame_spec_7_4_433(t *testing.T) {
 	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
-	if err := lc.SignalFilesUpdated(); err != nil {
+	if err := lc.SignalFilesUpdated("sess-a"); err != nil {
 		t.Fatalf("SignalFilesUpdated: %v", err)
 	}
 	f := fr.read()
-	if f.Type != "files_updated" {
-		t.Errorf("frame type = %q, want files_updated", f.Type)
+	if f.Type != "files_updated" || f.SessionID != "sess-a" {
+		t.Errorf("frame = %+v, want files_updated for sess-a", f)
 	}
 }
 
@@ -34,13 +34,13 @@ func TestSignalFilesUpdatedEmitsFrame_spec_7_4_433(t *testing.T) {
 // sentinel rather than panicking, so FinalizeWorkspace can ignore it.
 // F-7.4.6.
 func TestSignalFilesUpdatedNoRuntimeIsBenign_spec_7_4_433(t *testing.T) {
-	lc, err := NewRuntimeOps(shortSocketName(t, "lc.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	lc, err := newTestRuntimeOps(t, shortSocketName(t, "lc.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	t.Cleanup(func() { _ = lc.Close() })
 	// No Run, no runtime connection: writeFrame has no encoder.
-	if err := lc.SignalFilesUpdated(); !errors.Is(err, errLifecycleNotConnected) {
+	if err := lc.SignalFilesUpdated("sess-a"); !errors.Is(err, errLifecycleNotConnected) {
 		t.Errorf("SignalFilesUpdated with no runtime = %v, want errLifecycleNotConnected", err)
 	}
 }
@@ -48,7 +48,9 @@ func TestSignalFilesUpdatedNoRuntimeIsBenign_spec_7_4_433(t *testing.T) {
 // TestFinalizeWorkspaceMidSessionOverlaysAndSignals is the adapter-side
 // end-to-end of a §7.4 mid-session upload: an overlay that preserves the
 // running agent's existing files plus a files_updated signal emitted only
-// after promotion. F-7.4.6.
+// after promotion. With a second session's entry on the same pod, the
+// frame names the session whose workspace was promoted. F-7.4.6.
+// spec: §7.4, §28.5.3 (CH-RUNTIMEOPS, Messages).
 func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T) {
 	root := t.TempDir()
 	// The running agent's existing workspace content, in its own slot tree.
@@ -75,10 +77,12 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 	fr.handshake()
 	srv := &Server{WorkspaceBase: root, Lifecycle: lc}
 	// §4.7.1 rule 3: a mid-session request resolves an entry the session
-	// already holds and never creates one, so the running session's entry is
-	// seeded first.
-	if _, err := srv.ensureSlotPaths("sess-mid", slotResolve{allowCreate: true}); err != nil {
-		t.Fatalf("seed sess-mid entry: %v", err)
+	// already holds and never creates one, so the running session is started
+	// first, on a runtime that answers its session_start: files_updated is
+	// written only after the adapter has read the session's session_started.
+	startAckedSession(t, srv, "sess-mid")
+	if _, err := srv.ensureSlotPaths("sess-cotenant", slotResolve{allowCreate: true}); err != nil {
+		t.Fatalf("seed sess-cotenant entry: %v", err)
 	}
 
 	req := &adapterv1.FinalizeWorkspaceRequest{
@@ -95,8 +99,8 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 	// The signal is emitted synchronously inside FinalizeWorkspace via the
 	// one-way lifecycle write; read it from the runtime side concurrently so
 	// the unbuffered socket does not deadlock the writer.
-	got := make(chan string, 1)
-	go func() { got <- fr.read().Type }()
+	got := make(chan lifecycleFrame, 1)
+	go func() { got <- fr.read() }()
 
 	if _, err := srv.FinalizeWorkspace(context.Background(), req); err != nil {
 		t.Fatalf("FinalizeWorkspace(mid_session): %v", err)
@@ -111,9 +115,12 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 	}
 	// files_updated was signaled.
 	select {
-	case frameType := <-got:
-		if frameType != "files_updated" {
-			t.Errorf("lifecycle frame = %q, want files_updated", frameType)
+	case frame := <-got:
+		if frame.Type != "files_updated" {
+			t.Errorf("lifecycle frame = %q, want files_updated", frame.Type)
+		}
+		if frame.SessionID != "sess-mid" {
+			t.Errorf("files_updated sessionId = %q, want sess-mid (the promoted session, not its co-tenant)", frame.SessionID)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("FinalizeWorkspace(mid_session) did not signal files_updated")

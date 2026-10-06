@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -40,16 +42,20 @@ type fakeRuntime struct {
 	outputErr    error
 	echoInput    bool // when set, WriteEnvelope echoes the envelope to output
 
-	// subs holds the per-Output subscriber channels the single f.output
-	// stream fans out to, mirroring the production SocketRuntimeProcess:
-	// one runtime process per pod serves every slot over one connection,
-	// so each concurrent Attach stream sees the runtime's full output and
-	// demultiplexes by sessionId. fanOnce starts the single fan-out reader on
-	// the first Output call. subCond signals every change to len(subs) so a
-	// concurrent-slot test can wait for both Attach handlers to subscribe
-	// before writing to f.output, since a frame written before a slot
-	// subscribes is not delivered to that slot's later subscription.
-	subs    []chan []byte
+	// hub fans the single f.output stream out to every Output subscriber,
+	// through the same linefanout hub the production transports use: one
+	// runtime process per pod serves every slot over one connection, so
+	// each concurrent Attach stream sees the runtime's full output and
+	// demultiplexes by sessionId, and a subscription whose context ends,
+	// such as a start's session_started wait, is removed and consumes
+	// nothing afterwards. fanOnce starts the pump that feeds f.output into
+	// the hub on the first Output call. subs counts Output subscriptions,
+	// and subCond signals every change to it so a concurrent-slot test can
+	// wait for both Attach handlers to subscribe before writing to
+	// f.output, since a frame written before a slot subscribes is not
+	// delivered to that slot's later subscription.
+	hub     *linefanout.Hub
+	subs    int
 	subCond *sync.Cond
 	fanOnce sync.Once
 }
@@ -78,12 +84,76 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	// Echo outside the lock so a blocking channel send never stalls a
 	// concurrent reader of the recorded slices.
 	if echo {
-		out <- append([]byte(nil), envelope...)
+		if reply := echoReply(envelope); reply != nil {
+			out <- reply
+		}
 	}
 	return nil
 }
 
-func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
+// echoReply is what the echoing fake writes back for one inbound frame. It
+// plays a runtime that keeps per-session context for the §28.5.3 session
+// frames: a session_start is answered with its session_started, which the
+// adapter consumes and relays to no Attach stream, and a session_end is
+// answered with nothing. Every other frame is echoed verbatim.
+func echoReply(envelope []byte) []byte {
+	var probe struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+		StartID   string `json:"startId"`
+	}
+	if err := json.Unmarshal(envelope, &probe); err != nil {
+		return append([]byte(nil), envelope...)
+	}
+	switch probe.Type {
+	case "session_start":
+		b, _ := json.Marshal(map[string]string{
+			"type": "session_started", "sessionId": probe.SessionID, "startId": probe.StartID,
+		})
+		return b
+	case "session_end":
+		return nil
+	default:
+		return append([]byte(nil), envelope...)
+	}
+}
+
+// contentEnvelopes returns the frames written to the runtime other than
+// the §28.5.3 session_start and session_end the adapter writes itself, for
+// a test that counts the content it delivered.
+func (f *fakeRuntime) contentEnvelopes() [][]byte {
+	var out [][]byte
+	for _, e := range f.envelopesSnapshot() {
+		switch frameTypeOf(e) {
+		case "session_start", "session_end":
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// frameTypes returns the type discriminator of each recorded frame, in
+// write order.
+func (f *fakeRuntime) frameTypes() []string {
+	var out []string
+	for _, e := range f.envelopesSnapshot() {
+		out = append(out, frameTypeOf(e))
+	}
+	return out
+}
+
+// frameTypeOf returns one JSONL frame's type discriminator, empty when the
+// frame does not decode.
+func frameTypeOf(frame []byte) string {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(frame, &probe)
+	return probe.Type
+}
+
+func (f *fakeRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
 	if f.outputErr != nil {
 		return nil, f.outputErr
 	}
@@ -92,35 +162,37 @@ func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error)
 		close(ch)
 		return ch, nil
 	}
-	// Subscribe to the fanned-out stream. The first Output call starts the
-	// single reader that broadcasts f.output to every subscriber, so two
-	// concurrent per-slot Attach streams each receive the full output and
-	// demultiplex by sessionId (matching SocketRuntimeProcess).
-	sub := make(chan []byte, 8)
 	f.mu.Lock()
-	f.subs = append(f.subs, sub)
+	if f.hub == nil {
+		f.hub = linefanout.New()
+	}
+	hub := f.hub
+	f.mu.Unlock()
+	sub, err := hub.Subscribe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	f.subs++
 	if f.subCond == nil {
 		f.subCond = sync.NewCond(&f.mu)
 	}
 	f.subCond.Broadcast()
 	f.mu.Unlock()
+	// The first Output starts the pump that writes f.output into the hub's
+	// source, one frame per line, and closes the source when f.output is
+	// closed, which ends every subscription.
 	f.fanOnce.Do(func() {
+		pr, pw := io.Pipe()
 		go func() {
 			for line := range f.output {
-				f.mu.Lock()
-				subs := append([]chan []byte(nil), f.subs...)
-				f.mu.Unlock()
-				for _, s := range subs {
-					s <- line
+				if _, err := pw.Write(append(append([]byte(nil), line...), '\n')); err != nil {
+					return
 				}
 			}
-			f.mu.Lock()
-			subs := append([]chan []byte(nil), f.subs...)
-			f.mu.Unlock()
-			for _, s := range subs {
-				close(s)
-			}
+			_ = pw.Close()
 		}()
+		hub.Serve(pr, 64*1024*1024, nil)
 	})
 	return sub, nil
 }
@@ -177,10 +249,10 @@ func (f *fakeRuntime) waitForSubscribers(t *testing.T, n int) {
 		f.mu.Unlock()
 	})
 	defer timer.Stop()
-	for len(f.subs) < n && !timedOut {
+	for f.subs < n && !timedOut {
 		f.subCond.Wait()
 	}
-	got := len(f.subs)
+	got := f.subs
 	f.mu.Unlock()
 	if got < n {
 		t.Fatalf("only %d of %d Output subscribers registered before timeout", got, n)
@@ -333,15 +405,17 @@ func TestSendMessageForwardsStampedEnvelopeToRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if len(rt.envelopes) != 1 {
-		t.Fatalf("runtime received %d envelopes, want 1", len(rt.envelopes))
+	// The start's session_start precedes the message on the connection
+	// (§28.5.3, CH-MSGSOCK, Inbound: session_start rule 1).
+	if got := rt.frameTypes(); len(got) != 2 || got[0] != "session_start" || got[1] != "message" {
+		t.Fatalf("runtime received frames %v, want [session_start message]", got)
 	}
 	var frame map[string]any
-	if err := json.Unmarshal(rt.envelopes[0], &frame); err != nil {
-		t.Fatalf("the envelope the adapter wrote is not a JSON object: %v (%s)", err, rt.envelopes[0])
+	if err := json.Unmarshal(rt.envelopes[1], &frame); err != nil {
+		t.Fatalf("the envelope the adapter wrote is not a JSON object: %v (%s)", err, rt.envelopes[1])
 	}
 	if frame["sessionId"] != "sess-1" {
-		t.Errorf("runtime received %s, want the request's session address stamped on it", rt.envelopes[0])
+		t.Errorf("runtime received %s, want the request's session address stamped on it", rt.envelopes[1])
 	}
 	if frame["type"] != "message" || frame["input"] == nil {
 		t.Errorf("the stamp dropped the gateway's own fields: %s", rt.envelopes[0])

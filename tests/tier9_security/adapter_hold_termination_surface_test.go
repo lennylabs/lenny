@@ -28,6 +28,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // holdTerminationPod starts one session on an adapter wired to fwd and a
@@ -331,22 +333,33 @@ func keptRuntimePod(t *testing.T, fwd *recordingForwarder) (*adapter.Server, net
 		t.Fatalf("temp runtime socket dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	sp, err := adapter.NewSocketRuntimeProcess(filepath.Join(dir, "r.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares the runtime's nonce line with the manifest the
+	// start publishes in the Server's ManifestDir. spec: 4.7.11 (Runtime
+	// connection handshake).
+	manifestDir := t.TempDir()
+	sp, err := adapter.NewSocketRuntimeProcess(filepath.Join(dir, "r.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifestDir))
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
 	t.Cleanup(func() { _ = sp.CloseListener() })
 	sp.AcceptTimeout = 30 * time.Second
-	peer, err := net.Dial("unix", sp.SocketPath())
-	if err != nil {
-		t.Fatalf("runtime dial: %v", err)
+	// The runtime's end dials through the runtime half of the handshake,
+	// which waits for the start to publish the manifest and presents its
+	// nonce.
+	type dialResult struct {
+		conn net.Conn
+		err  error
 	}
-	t.Cleanup(func() { _ = peer.Close() })
+	dialed := make(chan dialResult, 1)
+	go func() {
+		c, derr := runtimekit.DialAuthenticated(context.Background(), sp.SocketPath(), filepath.Join(manifestDir, adapter.ManifestFilename))
+		dialed <- dialResult{conn: c, err: derr}
+	}()
 
 	s := adapter.New("test")
 	s.WorkspaceBase = t.TempDir()
 	s.Runtime = sp
-	s.ManifestDir = t.TempDir()
+	s.ManifestDir = manifestDir
 	s.MCPSocket = shortMCPSocket(t)
 	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	s.PlatformForwarder = fwd
@@ -358,7 +371,12 @@ func keptRuntimePod(t *testing.T, fwd *recordingForwarder) (*adapter.Server, net
 	}); err != nil {
 		t.Fatalf("StartSession(sess-alice): %v", err)
 	}
-	return s, peer
+	d := <-dialed
+	if d.err != nil {
+		t.Fatalf("runtime dial: %v", d.err)
+	}
+	t.Cleanup(func() { _ = d.conn.Close() })
+	return s, d.conn
 }
 
 // spec: 10.1.4 (Hold state timeout), 4.7.10 (Runtime process lifetime), 13.1
@@ -378,10 +396,24 @@ func TestCoordinatorLostTerminationEndsTheKeptRuntime_spec_10_1_4(t *testing.T) 
 
 	dropCoordinatorStream(t, s, client)
 
+	// The connection first carries the session_start sess-alice's start
+	// wrote (§28.5.3, CH-MSGSOCK, Session frame writes); the hold-timeout
+	// termination writes no session_end, and the connection then ends.
 	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := bufio.NewReader(peer).ReadString('\n'); !errors.Is(err, io.EOF) {
-		t.Fatalf("runtime read after the coordinator-lost termination = %v, want io.EOF; "+
-			"the kept runtime still holds the terminated session's connection", err)
+	r := bufio.NewReader(peer)
+	for {
+		line, err := r.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("runtime read after the coordinator-lost termination = %v, want io.EOF; "+
+				"the kept runtime still holds the terminated session's connection", err)
+		}
+		if !strings.Contains(line, `"type":"session_start"`) {
+			t.Fatalf("runtime read %q after the coordinator-lost termination, want only the start's "+
+				"session_start and then io.EOF", line)
+		}
 	}
 
 	began := time.Now()

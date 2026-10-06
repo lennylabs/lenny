@@ -44,7 +44,7 @@ ASCII fallback for the diagram above (lenny-pod-containers):
 -->
 
 
-The adapter writes configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. This manifest tells your runtime where to find MCP servers, what session it is part of, where its credential file is, and what capabilities are available. A Basic-level runtime does not need the manifest for core operation --- the four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract --- and a Basic-level runtime that reads a credential file reads `credentialsPath` from the manifest to find it.
+The adapter writes pod-scoped configuration to `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest tells your runtime where to find the MCP servers and the CH-RUNTIMEOPS, which nonce authenticates its connections, and which adapter-local tools exist. Each session's own context, including the path of its credential file, reaches your runtime in that session's `session_start` frame, described under [Inbound Messages](#inbound-messages-adapter-writes-to-your-stdin). For core operation a Basic-level runtime reads only `mcpNonce`, and only when it dials the message channel as a socket (see [Connection Handshake](#connection-handshake)). The four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract, and a Basic-level runtime that reads a credential file reads `credentialsPath` from the session's `session_start` frame to find it.
 
 ---
 
@@ -61,7 +61,7 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `RunSetup` | Execute bounded setup commands (deployer-defined) |
 | `StartSession` | Start the agent runtime with `cwd=/workspace/slots/{sessionId}/current` (pod-warm mode) |
 | `ConfigureWorkspace` | Point a pre-connected session at the finalized `cwd` (SDK-warm mode). Timeout: 10s. |
-| `DemoteSDK` | Tear down the pre-connected SDK process, drop the adapter's slot registry entry the pod holds if it holds one, whichever session holds it, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. Where that cleanup runs and completes, the next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
+| `DemoteSDK` | Write the session's `session_end` frame when the pod holds a session in `running`, tear down the pre-connected SDK process, drop the adapter's slot registry entry the pod holds if it holds one, whichever session holds it, running that slot's cleanup inside the call before it answers, and return the pod to pod-warm state. Where that cleanup runs and completes, the next bind sequence on the pod creates a fresh entry and stamps it with that attempt's own token. |
 | `Attach` | Connect client stream to running session |
 | `Interrupt` | Interrupt current agent work |
 | `Checkpoint` | Export recoverable session state |
@@ -72,7 +72,7 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `RotateCredentials` | Push replacement credentials for a specific provider mid-session |
 | `Resume` | Restore from checkpoint on a replacement pod |
 | `ReportUsage` | Report LLM token counts extracted from provider responses |
-| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for, by carrying either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The response reports what became of the entry the request was addressed to: `reclaimed` when the adapter held that entry and released the slot, `superseded` when the adapter holds an entry the request is not addressed to, so nothing was released, and `absent` when the adapter holds no entry for the session. Every outcome is answered on a successful call, and the two outcomes that remove nothing run neither teardown. The slot release removes the session's slot tree and runs whenever the request removes an entry, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report and then ends the session's use of the runtime process, which stays alive for the pod's life, and sends the runtime no CH-RUNTIMEOPS frame. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a slot that reached `running`, and reports no outcome for a cleanup on a slot that did not. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
+| `Shutdown` | Graceful end-of-session teardown of the named session, stated as two teardowns with two preconditions. Every request states which teardown it is asking for, by carrying either the bind attempt whose registry entry it is reclaiming or the unconditional-teardown flag, and a request carrying neither or both is rejected as invalid and performs nothing. The response reports what became of the entry the request was addressed to: `reclaimed` when the adapter held that entry and released the slot, `superseded` when the adapter holds an entry the request is not addressed to, so nothing was released, and `absent` when the adapter holds no entry for the session. Every outcome is answered on a successful call, and the two outcomes that remove nothing run neither teardown. The slot release removes the session's slot tree and runs whenever the request removes an entry, whether or not `AssignCredentials` has bound that entry. The runtime teardown runs only for a session whose start the adapter has admitted: it flushes the session's final usage report, writes the session's `session_end` frame on stdin when the session reached `running`, and then ends the session's use of the runtime process, which stays alive for the pod's life. It sends the runtime no CH-RUNTIMEOPS frame. The adapter reports the per-slot cleanup outcome through `ReportSessionScrub` for a slot that reached `running`, and reports no outcome for a cleanup on a slot that did not. The request carries the recycle disposition beside that teardown: on the recycle disposition the adapter keeps the pod process alive, runs the whole-pod scrub the carried `RecycleScrub` parameterizes, and reports its outcome for `podId` through `ReportPodScrub`. |
 
 **Bind attempt token.** The gateway may attempt to bind one session onto a pod more than once, and each attempt mints its own opaque token, carried on the bind-sequence requests the linked contract's carriage table lists. The adapter stamps the token onto the entry it creates and afterwards compares it for equality, which is what lets a teardown that compensates an abandoned attempt name the entry it is entitled to destroy. A start that the adapter refuses at its start confirmation is taken back off the runtime process the pod's sessions share; when a later attempt at the same session has claimed the slot in the meantime, that take-back closes the later attempt's runtime session. The rules the adapter applies to the token are numbered and named in [Role and Gateway RPC Contract](https://github.com/lennylabs/lenny/blob/main/spec/04_system-components.md#471-role-and-gateway-rpc-contract), which states for each rule whatever answer it fixes; [Runtime Adapter Specification](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#154-runtime-adapter-specification) states what conformance against those rules means. An adapter author reads both. A runtime binary issues none of the requests those rules govern, which is why this page states the teardown behaviour and leaves the rules where they are stated.
 
@@ -83,7 +83,7 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `ReportSessionScrub` | Report a per-slot cleanup's outcome (`released` or `leaked`) for the cleanups the `Shutdown` row states the adapter reports, and for no other release. The request is session-scoped: it is addressed by the identifier of the released session and names no slot. The gateway increments the pod's served-session count and feeds the leak ledger. |
 | `ReportPodScrub` | Report the binary outcome of the whole-pod scrub the adapter runs when occupancy reaches zero on a recycling pod, and whether the runtime process can serve the next session. The gateway computes the recycle disposition from the outcome and `sessionPolicy`, and retires the pod with `runtime_not_live` when the report states that the runtime cannot serve the next session or omits that fact. |
 
-**Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS handshake between sessions. Your runtime process lives as long as the pod. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, it serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. No frame signals a session's end, and a runtime that exits after its session makes the pod retire at the recycle boundary. The adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, which clears the shared paths and does not reach the runtime process, then reports through these RPCs.
+**Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS handshake between sessions. Your runtime process lives as long as the pod. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, which requires `sessionPolicy.acknowledgeProcessLevelIsolation: true`, it serves the pod's later sessions on the same connection, keyed by `sessionId`, up to `maxSessionsPerPod`. Each session opens with its `session_start` frame and ends with its `session_end` frame (see [Inbound Messages](#inbound-messages-adapter-writes-to-your-stdin)), and a runtime that exits after its session makes the pod retire at the recycle boundary. The adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, which clears the shared paths and does not reach the runtime process, then reports through these RPCs.
 
 **Checkpoint and Interrupt are mutually exclusive.** The adapter maintains a per-session operation lock. Only one of these operations may execute at a time; the other is queued until the first completes.
 
@@ -119,9 +119,68 @@ This is the primary protocol your runtime implements. Every message is a single 
 
 **stderr** is captured by the adapter for logging and diagnostics but is **not** parsed as protocol messages. Use stderr freely for debug output.
 
+### Connection Handshake
+
+When your binary dials the message channel (`CH-MSGSOCK`) as a socket, and whenever a Full-level runtime dials the [CH-RUNTIMEOPS](#ch-runtimeops-full-level-only) socket, the connection opens with a handshake that precedes the channel's framed protocol and sits outside its frame schema:
+
+1. Before each dial, read `mcpNonce` from `/run/lenny/adapter-manifest.json`. When the manifest is not yet published, wait for it before dialing; the adapter refuses a connection it accepts while no manifest is published.
+2. Write the nonce line as the first line on the connection, within 500 ms of the connection being accepted:
+
+   ```json
+   {"_lennyNonce":"<nonce_hex>"}
+   ```
+
+   The adapter compares the value in constant time with the `mcpNonce` the manifest carries when it accepts the connection.
+3. In nonce-only mode (a runtime registered with `requireSoPeercred: false`, where the adapter cannot verify the peer UID), the adapter then writes a challenge line, and the runtime answers it within 500 ms with `HMAC-SHA256(key = mcpNonce, data = challenge)`, hex-encoded:
+
+   ```json
+   {"_lennyChallenge":"<hex>"}
+   {"_lennyChallengeResponse":"<hex HMAC>"}
+   ```
+
+   Answer a `_lennyChallenge` whenever one arrives before the first protocol frame on the connection.
+4. When the adapter closes the connection before the first protocol frame, read the manifest again and dial again. The adapter closes a refused connection, or one that fails either check, with no protocol response, and it keeps accepting new connections. A later session's manifest write can replace `mcpNonce` while your runtime is dialing, and the redial picks up the current value.
+
 ---
 
 ### Inbound Messages (adapter writes to your stdin)
+
+#### `session_start` --- Open a Session
+
+The adapter writes `session_start` once for each start and each resume of a session. On the connection that carries the session, it precedes every other frame addressed to the session. The frame carries the session's own context, which the pod-scoped manifest does not carry.
+
+```json
+{
+  "type": "session_start",
+  "sessionId": "sess_abc",
+  "startId": "st_1",
+  "credentialsPath": "/run/lenny/slots/sess_abc/credentials.json",
+  "experimentContext": { "experimentId": "claude-v2-rollout", "variantId": "treatment", "inherited": false },
+  "tracingContext": null,
+  "llm": { "deliveryMode": "proxy", "dialect": "anthropic", "apiKeyEnv": "ANTHROPIC_API_KEY" }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Always `"session_start"`. |
+| `sessionId` | string | Yes | The session the frame opens. The adapter populates it on every pod. |
+| `startId` | string | Yes | Identifies this write of the frame. Each `session_start` the adapter writes on the pod carries a value distinct from every other it has written there, so the acknowledgement of an earlier start of the same session is not read as this start's. |
+| `credentialsPath` | string | No | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json`. The adapter writes the file before it writes this frame and rewrites it in place when this session's credentials rotate. A runtime that reads credential material reads its path from this field rather than assuming a fixed location. Present whenever the adapter provisioned a credential file for the session and absent otherwise; a runtime given no path loads no credential bundle for the session. |
+| `experimentContext` | object or null | No | The session's experiment enrollment: `experimentId` (string), `variantId` (string), and `inherited` (boolean, `true` when propagated from a parent through delegation). Absent or `null` when the session is not enrolled in an experiment. Use it to tag traces with variant metadata in your eval platform. |
+| `tracingContext` | object or null | No | Tracing identifiers propagated from the parent runtime through delegation, as an opaque map of strings such as `{"langsmith_run_id": "run_abc123"}`. Absent or `null` for a top-level session. A child runtime uses it to stitch its native traces into the parent's trace tree. It carries only non-sensitive identifiers. |
+| `llm` | object or null | No | The session's LLM provider configuration. Absent or `null` when the session has no active LLM credential lease. |
+| `llm.deliveryMode` | string | Yes | `direct` or `proxy`: the credential delivery mode of the session's LLM provider pool. |
+| `llm.dialect` | string | Yes in proxy mode | `openai` or `anthropic`. In proxy mode the runtime's LLM SDK speaks this dialect to the `materializedConfig.proxyUrl` in the session's credential file. Omitted in direct mode, where the runtime uses the provider's native SDK. |
+| `llm.apiKeyEnv` | string | No | The environment variable name the runtime's LLM SDK reads for its API key, by convention `ANTHROPIC_API_KEY` for `dialect: anthropic` and `OPENAI_API_KEY` for `dialect: openai`. The runtime supplies the lease token from this session's credential file as this session's API key: it passes the token to the LLM client it builds for the session, or sets the variable only in the environment of a subprocess it starts for this session. It does not set the variable in its own process environment, which every session the process serves shares. |
+| `llm.headers` | object | No | Header names and string values the runtime's LLM SDK sends to the LLM proxy in proxy mode. Omitted when no header is advertised. |
+
+A runtime holds a session from its read of the session's `session_start`, including while it creates the session's context, until its read of the session's `session_end`. The following rules govern the frame:
+
+- A runtime that keeps per-session context creates the session's context from this frame and then answers it with [`session_started`](#outbound-messages-your-runtime-writes-to-stdout). A runtime that has opened the CH-RUNTIMEOPS answers every `session_start` with `session_started`, whether or not it keeps per-session context.
+- A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS may ignore the frame under the unknown-type rule.
+- A runtime ignores a `session_start` for a session it already holds, except that it answers the frame with `session_started` again.
+- A runtime that keeps per-session context and fails to create a session's context answers the session's `session_start` with a `session_started` carrying `error`, and keeps running. It answers a `message` for a session whose `session_start` it has not received, or whose context it failed to create, with a `response` carrying `error` for that `sessionId`, and keeps running.
 
 #### `message` --- All Content Delivery
 
@@ -201,13 +260,31 @@ Delivered when a tool call you emitted has been executed by the adapter.
 
 Your runtime MUST respond with a `heartbeat_ack` within 10 seconds. If no ack is received, the adapter treats the process as hung and ends the session, and the runtime process receives no signal.
 
+#### `session_end` --- Release a Session
+
+```json
+{ "type": "session_end", "sessionId": "sess_abc" }
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Always `"session_end"`. |
+| `sessionId` | string | The session the frame releases. |
+
+The adapter writes `session_end` when a session it started ends on the runtime: at the session's teardown, and when a start it opened fails before the session reaches `running`. An interrupt, which leaves the session resumable, a heartbeat escalation, pod exit, and the termination that follows a coordinator hold timeout write no `session_end` themselves; the teardown that follows a heartbeat escalation writes the session's `session_end`. The coordinator hold-timeout termination ends the connection in the sidecar model, and the session's runtime loop in the embedded model, so the end-of-connection rule below applies to every session it ends. The frame is not acknowledged and carries no deadline. The following rules govern it:
+
+- A `session_end` ends the start of the latest `session_start` the runtime read for the session before it, other than one it ignored as a repeat. The runtime releases the context that start created, identified by that `session_start`'s `startId`, and when it is still creating that context it releases the context once the creation ends. Any other creation of a context for the same session that is still in flight, which belongs to an earlier start that an earlier `session_end` ended, is released when that creation ends, and that context serves no frame of the session.
+- After `session_end` the runtime writes no further frame addressed to the session, except the `session_started` it owes for a `session_start` read before the `session_end`, and the `llm_request_completed` of a request whose `llm_request_started` preceded the `session_end`. It keeps serving the pod's other sessions.
+- A runtime ignores a `session_end` for a session it does not hold.
+- When the connection that carries a session ends, every session it carries ends, and no `session_end` follows.
+
 #### `shutdown` --- Graceful Termination
 
 ```json
 { "type": "shutdown", "reason": "drain", "deadline_ms": 10000 }
 ```
 
-Your runtime must finish current work and exit within `deadline_ms`. No acknowledgment message is required --- the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
+`shutdown` is process-scoped: the adapter never writes it at a session boundary. Your runtime must finish current work and exit within `deadline_ms`. No acknowledgment message is required --- the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
 
 | `reason` values | Description |
 |------------------|-------------|
@@ -301,6 +378,28 @@ All paths are confined to `/workspace`. The adapter rejects any path resolving o
 ```
 
 Must be sent in response to every inbound `heartbeat`. No other fields.
+
+#### `session_started` --- Acknowledge a Session Start
+
+```json
+{ "type": "session_started", "sessionId": "sess_abc", "startId": "st_1" }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | Always `"session_started"`. |
+| `sessionId` | string | Yes | The session whose `session_start` the frame answers, echoed from that frame. |
+| `startId` | string | Yes | The `startId` of the `session_start` the frame answers, including a repeated one. |
+| `error` | object | No | `{"code": string, "message": string}`, the object a `response` error carries. Present when the runtime failed to create the session's context, and absent otherwise. |
+
+Two kinds of runtime write `session_started`:
+
+- A runtime that keeps per-session context writes it for a session after it reads that session's `session_start` and has created the session's context, or with `error` when the creation failed.
+- A runtime that has opened the CH-RUNTIMEOPS writes it for every `session_start` it reads, whether or not it keeps per-session context.
+
+Either runtime writes it again for a `session_start` that names a session it already holds. A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS writes no `session_started`.
+
+The adapter waits for `session_started` when your runtime's CH-RUNTIMEOPS connection completed its capability handshake before the start began. The wait is bounded, and when the request that starts the session carries a deadline, the wait ends no later than that deadline. A start whose wait ends without the frame, or whose `session_started` carries `error`, fails: the adapter writes the session's `session_end` and takes the session back off the runtime. The adapter does not wait for `session_started` before it writes the session's other frames on stdin, because `session_start` already precedes them on the same connection. It consumes the frame and relays it to no client, and it drops a `session_started` whose `startId` is not that of the start waiting for it. How the frame orders the session's CH-RUNTIMEOPS frames is stated under [CH-RUNTIMEOPS](#ch-runtimeops-full-level-only).
 
 #### `status` --- Optional Status Update
 
@@ -467,7 +566,7 @@ At the Standard and Full levels, you can optionally expose an HTTP health check 
 
 ## Adapter Manifest
 
-The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is one pod-global file, read-only to the agent container, and the adapter rewrites it before each session's runtime start, including each session on a recycling pod. It is authoritative for the session whose start last wrote it. On a pod holding more than one bound session, a later session's start replaces the `sessionId`, `mcpNonce`, and `credentialsPath` members while an earlier session's runtime is still processing. The intra-pod MCP servers are pod-wide and started at most once per pod: a server validates a presented nonce against the value the manifest carried at the start that bound that server, and a later session's manifest write does not re-arm a running server. A runtime reads `credentialsPath` from the manifest at its own start; on a pod holding more than one bound session a later start replaces the member, so a shared runtime process serving a co-tenant session must not treat a later manifest read as its own session's path.
+The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary. The manifest is one pod-global file, read-only to the agent container, and it carries only pod-scoped fields. The adapter rewrites it before each session's runtime start, including each session on a recycling pod. A session's own identifier, credential path, experiment and tracing context, and LLM configuration reach your runtime in that session's `session_start` frame, so a later start's rewrite changes none of them for an earlier session. On a pod holding more than one bound session, a later session's start replaces the `mcpNonce` member while an earlier session's runtime is still processing. The intra-pod MCP servers are pod-wide and started at most once per pod: a server validates a presented nonce against the value the manifest carried at the start that bound that server, and a later session's manifest write does not re-arm a running server. A message channel or CH-RUNTIMEOPS socket connection is checked once, when the adapter accepts it, against the `mcpNonce` the manifest carries at that moment (see [Connection Handshake](#connection-handshake)).
 
 ```json
 {
@@ -491,10 +590,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
       }
     }
   ],
-  "sessionId": "sess_abc",
-  "taskId": "sess_abc",
   "mcpNonce": "a3f1...c7e2",
-  "credentialsPath": "/run/lenny/slots/sess_abc/credentials.json",
   "observability": {
     "otlpEndpoint": "http://otel-collector.lenny-system:4317"
   }
@@ -505,7 +601,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 
 | Level | What to read |
 |------|-------------|
-| Basic | Not required for core operation. The four built-in tools are a fixed contract. A Basic-level runtime that reads a credential file reads `credentialsPath` for its location. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
+| Basic | `mcpNonce`, and only when the runtime dials the message channel as a socket. The four built-in tools are a fixed contract. A Basic-level runtime that reads a credential file reads its location from the `credentialsPath` member of the session's `session_start` frame. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
 | Standard | `platformMcpServer.socket`, `connectorServers`, `mcpNonce` --- to connect to and authenticate with local MCP servers. |
 | Full | Standard fields plus `runtimeOps.socket`. |
 
@@ -519,10 +615,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 | `connectorServers` | Array of connector MCP server entries with `id` and `socket`. |
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
-| `sessionId` | The session whose start last wrote the manifest. On a pod holding more than one bound session a later start replaces it, so a runtime reads it at its own start rather than re-reading it later. |
-| `taskId` | The session's external-protocol task identifier. A session has exactly one execution, so it equals the session id; the adapter derives it from `sessionId`. |
-| `mcpNonce` | Hex nonce for authenticating MCP connections. |
-| `credentialsPath` | Absolute path to this session's credential file, `/run/lenny/slots/{sessionId}/credentials.json`. The adapter writes the file before spawning the binary and rewrites it in place when this session's credentials rotate. A runtime that reads credential material reads this field rather than assuming a fixed location. |
+| `mcpNonce` | Hex nonce that authenticates connections to the intra-pod MCP servers, and the message channel and CH-RUNTIMEOPS socket connections, each checked once when the adapter accepts it (see [Connection Handshake](#connection-handshake)). |
 | `observability.otlpEndpoint` | OTLP collector endpoint for runtime-emitted OpenTelemetry spans. |
 
 **Forward compatibility:** Your runtime must silently ignore unknown top-level fields. The adapter may add new fields in future versions without incrementing `version`. A `version` increment indicates a breaking change to existing field semantics.
@@ -533,11 +626,15 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 
 The CH-RUNTIMEOPS is a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-runtime-ops`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`.
 
-Opening the CH-RUNTIMEOPS is optional. Runtimes that do not open it operate in fallback-only mode (Basic or Standard level behavior).
+Opening the CH-RUNTIMEOPS is optional. Runtimes that do not open it operate in fallback-only mode (Basic or Standard level behavior). The connection opens with the [connection handshake](#connection-handshake): the runtime's first line is the `_lennyNonce` line, and in nonce-only mode it answers the adapter's challenge.
+
+The session-scoped frames on this channel carry the `sessionId` of the session they concern: `checkpoint_request`, `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `deadline_approaching`, and `files_updated` from the adapter, and `llm_request_completed` from the runtime. The runtime's replies stay correlated by `checkpointId`, `interruptId`, and `leaseId`. `lifecycle_capabilities`, `lifecycle_support`, and `llm_request_started` are process-scoped and carry no `sessionId`. A runtime that keeps per-session context drops, without a reply, a session-scoped frame that names a session it does not hold.
+
+**Ordering against the session's start.** This channel is a separate connection from the message channel, so the order in which the adapter writes `session_start` on stdin does not reach it. The adapter writes a session-scoped frame for a session on this channel only after it has read the [`session_started`](#outbound-messages-your-runtime-writes-to-stdout) that answers the session's `session_start`. The exception is a session whose start did not wait for `session_started`, because the runtime's CH-RUNTIMEOPS connection had not completed its capability handshake when the start began: the adapter writes that session's frames without this ordering, and a runtime that opens the CH-RUNTIMEOPS during a session is ordered only from its next `session_start`. A path that has a session-scoped frame to write before that read defers the frame until the read, and drops it when the session's start fails, the session ends, or a bound the adapter places on the deferral elapses first; the path then ends as it ends for a frame the runtime does not answer.
 
 ### Capability Negotiation
 
-On connection, the adapter sends `lifecycle_capabilities` first. The runtime replies with `lifecycle_support` declaring which capabilities it supports (a subset of what the adapter offered).
+After the connection handshake, the adapter sends `lifecycle_capabilities` first. The runtime replies with `lifecycle_support` declaring which capabilities it supports (a subset of what the adapter offered).
 
 **Adapter sends:**
 ```json
@@ -562,13 +659,13 @@ On connection, the adapter sends `lifecycle_capabilities` first. The runtime rep
 
 | Message Type | Fields | Description |
 |-------------|--------|-------------|
-| `lifecycle_capabilities` | `protocolVersion`, `capabilities[]` | First message on channel open. |
-| `checkpoint_request` | `checkpointId`, `deadlineMs` | Quiesce and signal readiness. Reply with `checkpoint_ready` within `deadlineMs`. |
-| `checkpoint_complete` | `checkpointId`, `status` (`"ok"` or `"failed"`), `reason` | Snapshot upload result; runtime may resume. |
-| `interrupt_request` | `interruptId`, `deadlineMs` | Reach a safe stop point within `deadlineMs`. If no `interrupt_acknowledged` within deadline, adapter forces suspended anyway. |
-| `credentials_rotated` | `provider`, `credentialsPath`, `leaseId` | New credentials written; rebind and reply with `credentials_acknowledged`. |
-| `terminate` | `deadlineMs`, `reason` | Graceful shutdown. Exit within `deadlineMs`; SIGTERM on timeout. Always means process exit. |
-| `deadline_approaching` | `remainingMs`, `trigger` | Advance warning before forced termination. `trigger`: `"session_age"`, `"budget"`, or `"idle"`. |
+| `lifecycle_capabilities` | `protocolVersion`, `capabilities[]` | First frame after the connection handshake. |
+| `checkpoint_request` | `sessionId`, `checkpointId`, `deadlineMs` | Quiesce the named session's work and signal readiness. Reply with `checkpoint_ready` within `deadlineMs`. |
+| `checkpoint_complete` | `sessionId`, `checkpointId`, `status` (`"ok"` or `"failed"`), `reason` | Snapshot upload result; the named session's work may resume. |
+| `interrupt_request` | `sessionId`, `interruptId`, `deadlineMs` | Bring the named session's work to a safe stop point within `deadlineMs`. If no `interrupt_acknowledged` arrives within the deadline, the adapter suspends the session anyway. |
+| `credentials_rotated` | `sessionId`, `provider`, `credentialsPath`, `leaseId` | New credentials written for the named session at `credentialsPath`; rebind that session and reply with `credentials_acknowledged`. |
+| `deadline_approaching` | `sessionId`, `remainingMs`, `trigger` | Advance warning before the named session's forced termination. `trigger`: `"session_age"`, `"budget"`, or `"idle"`. Wrap up that session's work; write no `response` for the session in reply to this frame when no `message` for the session is in flight. |
+| `files_updated` | `sessionId` | A mid-session upload has promoted new files into the named session's workspace. One-way, with no acknowledgement. |
 
 #### Runtime to Adapter
 
@@ -579,7 +676,7 @@ On connection, the adapter sends `lifecycle_capabilities` first. The runtime rep
 | `interrupt_acknowledged` | `interruptId` | Runtime has reached a safe stop point. |
 | `credentials_acknowledged` | `leaseId`, `provider` | Runtime has rebound to the new credential. |
 | `llm_request_started` | `requestId`, `provider` | Runtime is about to send an outbound LLM request (direct mode only). |
-| `llm_request_completed` | `requestId`, `provider`, `status` | Runtime's outbound LLM request completed. |
+| `llm_request_completed` | `sessionId`, `requestId`, `provider`, `status`, `inputTokens` (optional), `outputTokens` (optional) | Runtime's outbound LLM request completed. In direct mode the adapter adds the token counts to the total of the session `sessionId` names. |
 
 Unknown messages must be silently ignored on both sides for forward compatibility.
 
@@ -592,28 +689,34 @@ Unknown messages must be silently ignored on both sides for forward compatibilit
 ```
 1. The runtime's connection to the adapter is open; the runtime dialled it on the pod's first session.
 
-2. Adapter writes to stdin:
+2. Adapter writes to stdin (a runtime that keeps no per-session context ignores it):
+   {"type":"session_start","sessionId":"sess_abc","startId":"st_1"}
+
+3. Adapter writes to stdin:
    {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}],"from":{"kind":"client","id":"client_8f3a2b"},"threadId":"t_01"}
 
-3. Agent reads line from stdin, parses JSON, reads type/id/input/sessionId (ignores the other fields, and echoes sessionId on what it emits).
+4. Agent reads line from stdin, parses JSON, reads type/id/input/sessionId (ignores the other fields, and echoes sessionId on what it emits).
 
-4. Agent writes to stdout:
+5. Agent writes to stdout:
    {"type":"response","sessionId":"sess_abc","text":"Echo: Hello"}
 
-5. Adapter reads line from stdout, delivers response to gateway.
+6. Adapter reads line from stdout, delivers response to gateway.
 
-6. [Heartbeat interval] Adapter writes:
+7. [Heartbeat interval] Adapter writes:
    {"type":"heartbeat","ts":1717430410}
 
-7. Agent writes:
+8. Agent writes:
    {"type":"heartbeat_ack"}
 
-8. Gateway initiates shutdown. Adapter writes:
+9. The session ends. Adapter writes:
+   {"type":"session_end","sessionId":"sess_abc"}
+
+10. The pod drains. Adapter writes:
    {"type":"shutdown","reason":"drain","deadline_ms":10000}
 
-9. Agent finishes, exits with code 0.
+11. Agent finishes, exits with code 0.
 
-10. Adapter reports clean termination to gateway.
+12. Adapter reports clean termination to gateway.
 ```
 
 ### Tool Call and Result
@@ -650,13 +753,13 @@ Then the other result arrives:
 
 ```
 Adapter sends on CH-RUNTIMEOPS:
-{"type":"checkpoint_request","checkpointId":"chk_42","deadlineMs":60000}
+{"type":"checkpoint_request","sessionId":"sess_abc","checkpointId":"chk_42","deadlineMs":60000}
 
 Runtime quiesces (flushes buffers, stops writing to workspace), then:
 {"type":"checkpoint_ready","checkpointId":"chk_42"}
 
 Adapter snapshots the workspace and sends:
-{"type":"checkpoint_complete","checkpointId":"chk_42","status":"ok"}
+{"type":"checkpoint_complete","sessionId":"sess_abc","checkpointId":"chk_42","status":"ok"}
 
 Runtime resumes normal operation.
 ```
@@ -665,7 +768,7 @@ Runtime resumes normal operation.
 
 ```
 Adapter sends on CH-RUNTIMEOPS:
-{"type":"interrupt_request","interruptId":"int_7","deadlineMs":30000}
+{"type":"interrupt_request","sessionId":"sess_abc","interruptId":"int_7","deadlineMs":30000}
 
 Runtime reaches a safe stop point (e.g., finishes current LLM call), then:
 {"type":"interrupt_acknowledged","interruptId":"int_7"}
@@ -682,8 +785,8 @@ The adapter protocol is defined by the published schema artifacts the table belo
 | Artifact | Purpose | Canonical URL |
 |:---------|:--------|:--------------|
 | `lenny-adapter.proto` | gRPC service definition for the gateway ↔ adapter control plane (`Attach`, `SendMessage`, `Checkpoint`, `DemoteSDK`, etc.) and all associated message types. | `https://schemas.lenny.dev/adapter/v1/lenny-adapter.proto` |
-| `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout JSON Lines frames exchanged between the adapter and the agent binary (`message`, `heartbeat`, `heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`, `response`, `status`, and `set_tracing_context`). | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |
+| `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout JSON Lines frames exchanged between the adapter and the agent binary (`session_start`, `session_started`, `session_end`, `message`, `heartbeat`, `heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`, `response`, `status`, and `set_tracing_context`). | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |
 | `messagepart.schema.json` | JSON Schema for the structured `messageParts` field used in `agent_output` events and tool results (text, image, redaction, inline-file parts). | `https://schemas.lenny.dev/adapter/v1/messagepart.schema.json` |
-| `runtime-ops-events.schema.json` | JSON Schema for the [CH-RUNTIMEOPS](#ch-runtimeops-full-level-only) frames a Full-level runtime and the adapter exchange over the runtime-operations Unix socket (capability handshake, checkpoint, interrupt, `credentials_rotated`, `deadline_approaching`, `files_updated`, `terminate`, and the LLM-request frames). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |
+| `runtime-ops-events.schema.json` | JSON Schema for the [CH-RUNTIMEOPS](#ch-runtimeops-full-level-only) frames a Full-level runtime and the adapter exchange over the runtime-operations Unix socket (capability handshake, checkpoint, interrupt, `credentials_rotated`, `deadline_approaching`, `files_updated`, and the LLM-request frames). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |
 
 Each artifact is versioned independently and distributed alongside every Lenny release under `/schemas/adapter/v1/` in the release bundle. Compliance is checked programmatically during `lenny-ctl runtime verify`, which returns structured diff output when a runtime's frames fail validation. Fix your runtime to produce valid frames rather than pinning an older schema version -- the schemas are stable within `v1`, and breaking changes bump the major version.

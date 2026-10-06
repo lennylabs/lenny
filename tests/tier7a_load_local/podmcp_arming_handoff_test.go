@@ -51,6 +51,10 @@ type gatedRuntime struct {
 	startEntered map[string]chan struct{}
 	closeGate    map[string]chan struct{}
 	closeEntered map[string]chan struct{}
+	// sessionStarts records, per session the adapter addressed, every
+	// CH-MSGSOCK session_start frame written to the runtime, so a case can
+	// assert which session's context reached it in its own frame.
+	sessionStarts map[string][][]byte
 }
 
 func newGatedRuntime() *gatedRuntime {
@@ -59,6 +63,8 @@ func newGatedRuntime() *gatedRuntime {
 		startEntered: map[string]chan struct{}{},
 		closeGate:    map[string]chan struct{}{},
 		closeEntered: map[string]chan struct{}{},
+
+		sessionStarts: map[string][][]byte{},
 	}
 }
 
@@ -100,7 +106,28 @@ func (g *gatedRuntime) Close(_ context.Context, sessionID string) error {
 	return nil
 }
 
-func (g *gatedRuntime) WriteEnvelope(string, []byte) error { return nil }
+// WriteEnvelope records each session_start frame under the session the
+// adapter addressed it to and accepts every other frame.
+func (g *gatedRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
+	var head struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(envelope, &head) != nil || head.Type != "session_start" {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.sessionStarts[sessionID] = append(g.sessionStarts[sessionID], append([]byte(nil), envelope...))
+	return nil
+}
+
+// sessionStartFrames returns the session_start frames written for the
+// named session, in write order.
+func (g *gatedRuntime) sessionStartFrames(sessionID string) [][]byte {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([][]byte(nil), g.sessionStarts[sessionID]...)
+}
 
 func (g *gatedRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	ch := make(chan []byte)

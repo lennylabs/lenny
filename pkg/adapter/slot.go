@@ -3,6 +3,11 @@
 package adapter
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -64,6 +69,28 @@ type slotState struct {
 	// cross-link each other's checkpoint id. It keeps its own leaf mutex,
 	// independent of coord.mu. spec: §10.1.8.
 	barrier barrierGate
+	// ack is this entry's session_started acknowledgement gate. The open
+	// sequence resets it at each start and settles it on the start's
+	// outcome, the deregistration releases it, and every session-scoped
+	// CH-RUNTIMEOPS sender waits on it, so the adapter writes such a frame
+	// only after it has read the session_started that answers the start.
+	// It leaves the registry with its entry, so a successor attempt's entry
+	// under the same key carries a new gate. spec: §28.5.3 (CH-MSGSOCK,
+	// Outbound: session_started); §28.5.3 (CH-RUNTIMEOPS, Messages).
+	ack ackGate
+	// sessionStartWritten records, under s.mu, that this entry's open
+	// sequence wrote the session's session_start. The open sequence is the
+	// only writer of session_start, and the message-writing paths (Attach
+	// and SendMessage) refuse an entry that does not carry it, so on the
+	// runtime connection the session_start precedes every message addressed
+	// to the session whatever order the gateway's calls arrive in. It is
+	// set right after the write and before any session_started wait,
+	// because the session's other frames do not wait for the
+	// acknowledgement. A start that writes the session's session_end clears
+	// it. The flag is per entry, so a successor attempt's entry starts
+	// without it. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule
+	// 1; §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule 4.
+	sessionStartWritten bool
 	// bindAttempt is the §4.7.1 bind attempt token the request that created
 	// the entry carried, empty when that request carried none. It is written
 	// once, by the create branch of ensureSlotStateLocked, and never again
@@ -71,6 +98,212 @@ type slotState struct {
 	// the entry's teardown, so it is never logged or returned in a message.
 	// spec: §4.7.1 (role and gateway RPC contract).
 	bindAttempt string
+}
+
+// ackState is one state of an entry's session_started acknowledgement
+// gate. spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+type ackState int
+
+const (
+	// ackNotStarted is the gate of an entry no start has opened yet. A
+	// sender waits, so a frame for a session whose start is still ahead is
+	// written only once that start's outcome is known.
+	ackNotStarted ackState = iota
+	// ackPending is the gate of a start that waits for its session_started.
+	ackPending
+	// ackRead is the gate of a start whose session_started the adapter read.
+	ackRead
+	// ackFailed is the gate of a start that ended without the record: its
+	// wait ended without the frame, the frame carried error, its
+	// session_start write failed, or a rule-8 confirmation was refused.
+	ackFailed
+	// ackNotAwaiting is the gate of a start that did not wait, because the
+	// runtime's CH-RUNTIMEOPS handshake had not completed when it began.
+	ackNotAwaiting
+	// ackReleased is the gate of a removed entry. It is terminal.
+	ackReleased
+)
+
+// String names the state for logs and test failures.
+func (a ackState) String() string {
+	switch a {
+	case ackNotStarted:
+		return "not_started"
+	case ackPending:
+		return "pending"
+	case ackRead:
+		return "read"
+	case ackFailed:
+		return "failed"
+	case ackNotAwaiting:
+		return "not_awaiting"
+	case ackReleased:
+		return "released"
+	default:
+		return fmt.Sprintf("ackState(%d)", int(a))
+	}
+}
+
+// errSessionStartNotAcknowledged is the error a session-scoped
+// CH-RUNTIMEOPS sender receives when the gate of its session's entry
+// failed or was released, or when it did not settle before the sender's
+// bound. The sender writes no frame and ends as it ends for a frame the
+// runtime does not answer. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+var errSessionStartNotAcknowledged = errors.New("session_started not read for the session")
+
+// ackGate is an entry's session_started acknowledgement gate.
+//
+// Its lock is a leaf: it is taken after s.mu when both are held and is
+// never held across a wait. Every transition closes the current changed
+// channel and replaces it, so each waiter wakes on every transition and
+// reads the state again. A waiter from before a start therefore wakes at
+// the start's reset to pending, waits again, and returns on that start's
+// outcome. The zero value is the not-started gate.
+type ackGate struct {
+	mu      sync.Mutex
+	state   ackState
+	startID string
+	// changed is closed at the next transition. It is created lazily so
+	// the zero value is usable.
+	changed chan struct{}
+}
+
+// transitionLocked moves the gate to next and wakes every waiter. Callers
+// hold g.mu.
+func (g *ackGate) transitionLocked(next ackState) {
+	g.state = next
+	if g.changed != nil {
+		close(g.changed)
+		g.changed = nil
+	}
+}
+
+// waitChLocked returns the channel the next transition closes. Callers
+// hold g.mu.
+func (g *ackGate) waitChLocked() <-chan struct{} {
+	if g.changed == nil {
+		g.changed = make(chan struct{})
+	}
+	return g.changed
+}
+
+// reset opens the gate for one start: pending when the start waits for its
+// session_started, not awaiting when it does not. A released gate is left
+// unchanged, because an unguarded removal can deregister the entry between
+// the open sequence's first confirmation and this reset.
+func (g *ackGate) reset(startID string, awaiting bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state == ackReleased {
+		return
+	}
+	g.startID = startID
+	if awaiting {
+		g.transitionLocked(ackPending)
+		return
+	}
+	g.transitionLocked(ackNotAwaiting)
+}
+
+// settle records that the open sequence read the session_started for
+// startID carrying no error, which moves the gate to read. It runs only
+// from pending and only for the start the gate was reset to, and reports
+// whether it moved the gate. A frame carrying error fails the gate
+// through fail instead.
+func (g *ackGate) settle(startID string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state != ackPending || g.startID != startID {
+		return false
+	}
+	g.transitionLocked(ackRead)
+	return true
+}
+
+// fail moves the gate to failed for the start whose startID it names,
+// unless the gate is already released or failed. A start that ends before
+// it minted a startID passes the empty string. The transition applies only
+// while the gate belongs to that start (its startID is the gate's) or
+// while no start has reset it yet, so a start that returns late cannot
+// fail a later start's gate on the same entry, which would refuse every
+// session-scoped CH-RUNTIMEOPS frame for the session that later start
+// runs. spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §5.2 (slot
+// serialization).
+func (g *ackGate) fail(startID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state == ackReleased || g.state == ackFailed {
+		return
+	}
+	if g.startID != startID && g.state != ackNotStarted {
+		return
+	}
+	g.transitionLocked(ackFailed)
+}
+
+// release moves the gate to released, which is terminal.
+func (g *ackGate) release() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state == ackReleased {
+		return
+	}
+	g.transitionLocked(ackReleased)
+}
+
+// current returns the gate's state.
+func (g *ackGate) current() ackState {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state
+}
+
+// check reports the gate's verdict without waiting: nil for read and not
+// awaiting, an error for failed and released, and, with unsettled set, the
+// channel a waiter blocks on for not started and pending.
+func (g *ackGate) check() (unsettled <-chan struct{}, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch g.state {
+	case ackRead, ackNotAwaiting:
+		return nil, nil
+	case ackNotStarted, ackPending:
+		return g.waitChLocked(), nil
+	default:
+		return nil, fmt.Errorf("%w: gate %s", errSessionStartNotAcknowledged, g.state)
+	}
+}
+
+// await returns once the gate admits a session-scoped frame, or with an
+// error when the gate failed or was released, or when ctx ends while the
+// gate is not started or pending. Only the wait observes ctx, so a caller
+// whose context already ended still writes its frame through a settled
+// gate.
+func (g *ackGate) await(ctx context.Context) error {
+	for {
+		ch, err := g.check()
+		if err != nil || ch == nil {
+			return err
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", errSessionStartNotAcknowledged, ctx.Err())
+		}
+	}
+}
+
+// ready is await for a caller that must not wait: a gate that is not
+// started or pending is an error.
+func (g *ackGate) ready() error {
+	ch, err := g.check()
+	if err != nil {
+		return err
+	}
+	if ch != nil {
+		return fmt.Errorf("%w: gate %s", errSessionStartNotAcknowledged, g.current())
+	}
+	return nil
 }
 
 // lastFencedGeneration returns the generation this session's binding on
@@ -169,6 +402,10 @@ func (s *Server) createSlotStateLocked(slotID, bindAttempt string) (*slotState, 
 	if err := slotlayout.EnsureTree(paths); err != nil {
 		return nil, err
 	}
+	// The entry's acknowledgement gate starts not started, its zero value,
+	// so a session-scoped CH-RUNTIMEOPS sender that resolves the entry
+	// before the session's start waits for that start's outcome.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	st := &slotState{
 		paths:       paths,
 		creds:       map[string]*adapterv1.CredentialLease{},
@@ -215,13 +452,22 @@ func (s *Server) slotStateLocked(slotID string) (*slotState, bool) {
 // r is the caller's assertion about the entry, passed through to the
 // resolve. spec: §4.7.1 (role and gateway RPC contract).
 func (s *Server) ensureSlotPaths(slotID string, r slotResolve) (slotlayout.SlotPaths, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, err := s.ensureSlotStateLocked(slotID, r)
+	st, err := s.ensureSlotEntry(slotID, r)
 	if err != nil {
 		return slotlayout.SlotPaths{}, err
 	}
 	return st.paths, nil
+}
+
+// ensureSlotEntry is ensureSlotPaths for a caller that holds on to the
+// entry it resolved, such as a mid-session FinalizeWorkspace whose
+// files_updated frame waits on that entry's acknowledgement gate.
+// spec: §4.7.1 (role and gateway RPC contract); §28.5.3 (CH-RUNTIMEOPS,
+// Messages).
+func (s *Server) ensureSlotEntry(slotID string, r slotResolve) (*slotState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ensureSlotStateLocked(slotID, r)
 }
 
 // workspaceRootForSession returns the cwd the adapter-local tool dispatch

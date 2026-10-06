@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // mcpProtocolVersion is the §15.4.3 intra-pod MCP spec version the
@@ -59,21 +61,26 @@ func (t *Tools) close() {
 
 // dialTools dials the §15.4.3 platform MCP server and every connector
 // MCP server advertised in the manifest, completing the manifest-nonce
-// handshake on each.
-func (s *session) dialTools(ctx context.Context) (*Tools, error) {
-	if s.manifest == nil {
+// handshake on each. It runs once per process, so every session the
+// process serves shares the connections: a running pod MCP surface
+// validates the nonce of the start that armed it, so a per-session redial
+// with a later start's nonce would be refused.
+//
+// spec: §15.7 (Run dials the sockets once per process), §4.7.6 (mcpNonce).
+func (p *process) dialTools(ctx context.Context) (*Tools, error) {
+	if p.manifest == nil {
 		return nil, errors.New("no adapter manifest; Standard level requires the manifest")
 	}
-	if s.manifest.PlatformMCPServer == nil || s.manifest.PlatformMCPServer.Socket == "" {
+	if p.manifest.PlatformMCPServer == nil || p.manifest.PlatformMCPServer.Socket == "" {
 		return nil, errors.New("adapter manifest has no platform MCP server socket")
 	}
-	platform, err := connectMCP(ctx, s.manifest.PlatformMCPServer.Socket, s.manifest.MCPNonce, "lenny-runtime-sdk-go", s.cfg.dialTimeout)
+	platform, err := connectMCP(ctx, p.manifest.PlatformMCPServer.Socket, p.manifest.MCPNonce, "lenny-runtime-sdk-go", p.cfg.dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("connect platform MCP server: %w", err)
 	}
 	tools := &Tools{platform: platform, connectors: map[string]*mcpClient{}}
-	for _, conn := range s.manifest.ConnectorServers {
-		cc, err := connectMCP(ctx, conn.Socket, s.manifest.MCPNonce, "lenny-runtime-sdk-go", s.cfg.dialTimeout)
+	for _, conn := range p.manifest.ConnectorServers {
+		cc, err := connectMCP(ctx, conn.Socket, p.manifest.MCPNonce, "lenny-runtime-sdk-go", p.cfg.dialTimeout)
 		if err != nil {
 			tools.close()
 			return nil, fmt.Errorf("connect connector MCP server %q: %w", conn.ID, err)
@@ -333,7 +340,10 @@ type rpcResponse struct {
 // connectMCP dials the intra-pod MCP socket, completes the
 // nonce-authenticated initialize handshake (§15.4.3), and discovers the
 // tool set via tools/list. The nonce is presented as the top-level
-// params._lennyNonce field of the initialize request.
+// params._lennyNonce field of the initialize request. In nonce-only mode the
+// server writes a _lennyChallenge in place of the initialize response, and
+// connectMCP answers it before it reads that response (see initialize).
+// spec: §4.7.11 (Nonce-only fallback, Runtime connection handshake).
 func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout time.Duration) (*mcpClient, error) {
 	conn, err := dialUnixSocket(ctx, socket, timeout)
 	if err != nil {
@@ -346,7 +356,7 @@ func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout t
 	}
 	c.enc.SetEscapeHTML(false)
 
-	if _, err := c.call("initialize", map[string]any{
+	if err := c.initialize(nonce, map[string]any{
 		nonceParamKey:     nonce,
 		"protocolVersion": mcpProtocolVersion,
 		"clientInfo": map[string]any{
@@ -362,6 +372,44 @@ func connectMCP(ctx context.Context, socket, nonce, clientName string, timeout t
 		return nil, fmt.Errorf("tools/list: %w", err)
 	}
 	return c, nil
+}
+
+// initialize sends the nonce-authenticated initialize request and reads its
+// response. A _lennyChallenge that arrives in place of the response is
+// answered with HMAC-SHA256 keyed by nonce, through the same answer code
+// the CH-MSGSOCK and CH-RUNTIMEOPS dials use (runtimekit.ChallengeResponseLine), and
+// the response is read after it. spec: §4.7.11 (Nonce-only fallback).
+func (c *mcpClient) initialize(nonce string, params map[string]any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.enc.Encode(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      c.id.Add(1),
+		Method:  "initialize",
+		Params:  params,
+	}); err != nil {
+		return fmt.Errorf("write initialize request: %w", err)
+	}
+	var raw json.RawMessage
+	if err := c.dec.Decode(&raw); err != nil {
+		return fmt.Errorf("read initialize response: %w", err)
+	}
+	if challenge, ok := runtimekit.ChallengeOf(raw); ok {
+		if _, err := c.conn.Write(runtimekit.ChallengeResponseLine(nonce, challenge)); err != nil {
+			return fmt.Errorf("write challenge response: %w", err)
+		}
+		if err := c.dec.Decode(&raw); err != nil {
+			return fmt.Errorf("read initialize response: %w", err)
+		}
+	}
+	var resp rpcResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("decode initialize response: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("initialize: rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	return nil
 }
 
 // callTool invokes one MCP tool via tools/call and returns the raw

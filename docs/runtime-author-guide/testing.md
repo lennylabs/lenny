@@ -22,13 +22,14 @@ This page covers the conformance suite, the test categories per integration leve
 | Category | What is validated |
 |----------|-------------------|
 | **Protocol framing** | JSON Lines format, message parsing, field presence, type correctness, stdout flushing |
-| **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, `shutdown` |
+| **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, and `shutdown` |
+| **Session lifetime** | One process serves sequential and concurrent sessions opened by `session_start` and released by `session_end` |
 | **Forward compatibility** | Unknown message types are ignored rather than rejected |
 | **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds |
 | **Shutdown behavior** | Clean exit within `deadline_ms` on `shutdown` |
 | **Schema compliance** | Every emitted frame and every `MessagePart` validates against the published JSON Schemas |
 | **MCP integration** (Standard and Full) | Platform MCP server connection, nonce authentication, tool invocation, connector reachability |
-| **CH-RUNTIMEOPS** (Full) | Capability handshake, checkpoint, interrupt, credential rotation, deadline signal |
+| **CH-RUNTIMEOPS** (Full) | Connection handshake, capability handshake, `session_started` acknowledgement, checkpoint, interrupt, credential rotation, and deadline signal |
 
 The validator also reconciles the level your runtime declares against the level it actually demonstrates. See [Declared versus observed level](#declared-versus-observed-level).
 
@@ -69,6 +70,8 @@ To stabilize the conformance surface across releases, pin a specific `lenny` ver
 
 The validator runs a set of test categories for the declared level. Each higher level inherits every category from the levels below it: Standard runs the Basic categories plus its own, and Full runs the Standard categories plus its own. The tables below name the categories at each level.
 
+A category that sends a session-scoped frame first writes `session_start` for the session that frame names, and before it writes a session-scoped CH-RUNTIMEOPS frame it reads the `session_started` that answers that `session_start`. A process-scoped frame, such as `lifecycle_capabilities`, has no such precondition. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines the session frames.
+
 ### Basic-level categories
 
 | Category | What it asserts |
@@ -78,6 +81,7 @@ The validator runs a set of test categories for the declared level. Each higher 
 | heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. Missing the window triggers the adapter's unresponsive-agent escalation. |
 | shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the adapter SIGKILLs the process in production, losing unflushed output. |
 | `MessagePart` schema compliance | Every `MessagePart` the runtime produces validates against the published `MessagePart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
+| session lifetime | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then writes `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
 
 ### Standard-level categories (in addition to Basic)
 
@@ -92,11 +96,11 @@ The validator runs a set of test categories for the declared level. Each higher 
 
 | Category | What it asserts |
 |----------|-----------------|
-| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-runtime-ops`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-runtime-ops`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and `startId` and no `error`. |
 | checkpoint quiesce/resume | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. |
 | interrupt acknowledgement | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
-| credential rotation handling | A runtime that declares `credential_rotation` support re-reads refreshed credentials on `credentials_rotated` and services the next message without a restart. |
-| deadline signal handling | On `deadline_signal`, the runtime writes a final `response` (optionally carrying `error.code: "DEADLINE_EXCEEDED"`) and exits cleanly before the deadline elapses. |
+| credential rotation handling | A runtime that declares `credential_rotation` support re-reads the credential file at the `credentialsPath` that `credentials_rotated` carries for the named session, and services the next message without a restart. |
+| deadline signal handling | A runtime that declares the `deadline_signal` capability in `lifecycle_support` receives, after the session's `session_started`, a `message` for the session and then `deadline_approaching` with that session's `sessionId`. The runtime writes the response to that `message` (optionally carrying `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session after `deadline_approaching`, and still answers a later `heartbeat` with `heartbeat_ack`. |
 
 Each failure is classified as `schema_violation`, `timeout`, `missing_capability`, or `unexpected_error`, and the report lists the failing category with its classification and a reproduction command.
 
@@ -222,6 +226,8 @@ When the registry CI validates a submission, it runs the same `lenny runtime val
 | MCP connection refused on macOS or Windows | A runtime run under `make run` reaches the platform MCP server over a Linux abstract Unix socket, which the host process cannot use off Linux | Validate with `lenny runtime validate`, which carries its own fixtures, or run the runtime end-to-end with `lenny up` or `docker compose up`. |
 | MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then. The intra-pod MCP servers are pod-wide and started at most once per pod, so a server validates against the nonce the manifest carried at the start that bound it, and a later session's manifest write does not re-arm a running server. |
 | Manifest not found | Manifest path incorrect | The manifest is at `/run/lenny/adapter-manifest.json`, not under `/workspace/`. |
+| Socket connection closed before the first frame | The nonce line was missing, late, or stale, or a nonce-only challenge went unanswered | Send `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as the first line within 500 ms, answer a `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection. See the [connection handshake](../reference/adapter-contract.md#connection-handshake). |
+| Sessions fail to start on a runtime that opened the CH-RUNTIMEOPS | The runtime does not answer `session_start` with `session_started` before the adapter's bounded wait ends | Write `session_started` with the session's `sessionId` and `startId` for every `session_start`, once the session's context exists. |
 | Checkpoint quiesce times out | `checkpoint_ready` not sent within the deadline | Ensure your checkpoint handler quiesces state and replies with `checkpoint_ready` within `deadlineMs`. |
 
 ---

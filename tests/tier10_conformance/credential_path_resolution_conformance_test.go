@@ -6,19 +6,23 @@
 // path a rotation lands on.
 //
 // The adapter writes one credential file per session at
-// /run/lenny/slots/{sessionId}/credentials.json and names it on the §4.7
-// adapter manifest as `credentialsPath`. No fixed location names that
-// file, so a runtime that reads credential material reads the manifest
-// member, and a construction-time option is only the fallback for a
-// manifest that carries none. The Full-level `credentials_rotated` event
-// carries the path the adapter rewrote, so a rotation lands on the file
-// the event names rather than on the path the runtime started with.
+// /run/lenny/slots/{sessionId}/credentials.json and names it in the
+// `credentialsPath` member of that session's `session_start` frame on
+// CH-MSGSOCK. No fixed location names the file, and one runtime process
+// serves every session the pod holds, so a runtime that reads credential
+// material reads each session's path from that session's frame. The
+// Full-level `credentials_rotated` event names the session it rotates and
+// the path the adapter rewrote, so a rotation lands on that session's
+// bundle and on the file the event names.
 //
-// The cases drive a Basic-level runtime built on each shipped runtime
-// SDK and a Full-level Go-SDK runtime against a fake CH-RUNTIMEOPS.
+// The Go cases drive in-process runtimes built on the Go SDK, at Basic
+// level and at Full level against a fake CH-RUNTIMEOPS. The Python and
+// TypeScript cases drive probe runtimes built on those SDKs the same way,
+// over the probe process's stdin and stdout.
 //
-// spec: 4.7 (manifest credentialsPath, Full-level rotation protocol),
-// 6.1 (per-session credential file), 4.9 (credential lease)
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start, CH-RUNTIMEOPS
+// credentials_rotated), 4.7.11 (adapter-agent security boundary, item 4),
+// 4.7.10 (runtime process lifetime), 4.9 (credential lease)
 
 package tier10_conformance_test
 
@@ -38,40 +42,57 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // credProbeSessionID is the session the cases bind their slot tree to.
 // The credential file sits under slots/{sessionId}/, so the path is only
-// derivable from the identifier and the manifest is the only surface
-// that carries it.
+// derivable from the identifier.
 const credProbeSessionID = "sess_credpath"
 
-// writeCredentialSlotTree writes a §6.1 credential file for sessionID
-// under root and returns its path. The tree mirrors the pod layout
-// (<root>/slots/{sessionId}/credentials.json) so the test exercises the
-// same derivation the adapter performs.
+// writeCredentialSlotTree writes a providers-layout credential file for
+// sessionID under root and returns its path. The tree mirrors the pod
+// layout (<root>/slots/{sessionId}/credentials.json).
 func writeCredentialSlotTree(t *testing.T, root, sessionID, provider string) string {
+	t.Helper()
+	path := credentialSlotPath(t, root, sessionID)
+	writeCredentialBundle(t, path, provider)
+	return path
+}
+
+// credentialSlotPath creates the slot directory for sessionID under root
+// and returns the credential file path inside it.
+func credentialSlotPath(t *testing.T, root, sessionID string) string {
 	t.Helper()
 	dir := filepath.Join(root, "slots", sessionID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create slot credential dir: %v", err)
 	}
-	path := filepath.Join(dir, "credentials.json")
-	writeCredentialBundle(t, path, provider)
-	return path
+	return filepath.Join(dir, "credentials.json")
 }
 
-// writeCredentialBundle writes a §6.1 credential bundle for provider at
-// path, replacing whatever stood there.
+// writeCredentialBundle writes a credential file for provider at path in
+// the providers layout of the runtime credential file contract, replacing
+// whatever stood there.
 func writeCredentialBundle(t *testing.T, path, provider string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{
-		"mode": "direct", "provider": provider,
-		"leaseId": "lease_" + provider, "apiKey": "sk-" + provider,
-	})
+	body, _ := json.Marshal(map[string]any{"providers": []map[string]any{{
+		"leaseId": "lease_" + provider, "provider": provider,
+		"expiresAt": "2026-10-05T00:00:00Z", "deliveryMode": "direct",
+		"materializedConfig": map[string]any{"apiKey": "sk-" + provider},
+	}}})
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatalf("write credential file: %v", err)
 	}
+}
+
+// bundleProvider returns the first providers entry's provider, or "none"
+// when the runtime holds no bundle.
+func bundleProvider(c *runtime.CredentialBundle) string {
+	if c == nil || len(c.Providers) == 0 {
+		return "none"
+	}
+	return c.Providers[0].Provider
 }
 
 // credLogSink collects the SDK's diagnostic lines so a test can assert
@@ -111,15 +132,19 @@ func (l *credLogSink) waitFor(substr string, d time.Duration) bool {
 }
 
 // writeCredPathManifest writes a §4.7 manifest naming credentialsPath
-// and, when runtimeOpsSocket is non-empty, a CH-RUNTIMEOPS socket.
+// and, when runtimeOpsSocket is non-empty, a CH-RUNTIMEOPS socket. A case
+// passes a decoy path every SDK must ignore, because the session_start is
+// the only source of a session's credential path, or none.
 func writeCredPathManifest(t *testing.T, dir, credentialsPath, runtimeOpsSocket string) string {
 	t.Helper()
 	m := map[string]any{
-		"version":         1,
-		"sessionId":       credProbeSessionID,
-		"taskId":          credProbeSessionID,
-		"mcpNonce":        "nonce_credpath",
-		"credentialsPath": credentialsPath,
+		"version":  1,
+		"mcpNonce": credPathManifestNonce,
+	}
+	if credentialsPath != "" {
+		m["sessionId"] = credProbeSessionID
+		m["taskId"] = credProbeSessionID
+		m["credentialsPath"] = credentialsPath
 	}
 	if runtimeOpsSocket != "" {
 		m["runtimeOps"] = map[string]any{"socket": runtimeOpsSocket}
@@ -133,153 +158,176 @@ func writeCredPathManifest(t *testing.T, dir, credentialsPath, runtimeOpsSocket 
 }
 
 // credProbeHandler records the credential bundle the SDK delivered on
-// OnCreate and echoes every message so the runtime completes a turn.
+// each session's OnCreate and answers every message with the provider of
+// the bundle the session's handler context carries.
 type credProbeHandler struct {
 	mu    sync.Mutex
-	creds *runtime.CredentialBundle
+	creds map[string]*runtime.CredentialBundle
 }
 
 func (h *credProbeHandler) OnCreate(_ context.Context, req runtime.CreateRequest) error {
 	h.mu.Lock()
-	h.creds = req.Credentials
-	h.mu.Unlock()
+	defer h.mu.Unlock()
+	if h.creds == nil {
+		h.creds = map[string]*runtime.CredentialBundle{}
+	}
+	h.creds[req.SessionID] = req.Credentials
 	return nil
 }
 
-func (h *credProbeHandler) OnMessage(_ context.Context, m runtime.Message) (runtime.Reply, error) {
-	return runtime.Reply{Parts: m.Envelope.Input, Final: true}, nil
+func (h *credProbeHandler) OnMessage(ctx context.Context, _ runtime.Message) (runtime.Reply, error) {
+	return runtime.TextReply(bundleProvider(runtime.CredentialsFrom(ctx))), nil
 }
 
-func (h *credProbeHandler) OnTerminate(context.Context, runtime.TerminationReason) error { return nil }
+func (h *credProbeHandler) OnTerminate(context.Context, string, runtime.TerminationReason) error {
+	return nil
+}
 
-func (h *credProbeHandler) bundle() *runtime.CredentialBundle {
+// bundle returns the bundle OnCreate received for sessionID, and whether
+// OnCreate ran for it.
+func (h *credProbeHandler) bundle(sessionID string) (*runtime.CredentialBundle, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.creds
+	c, ok := h.creds[sessionID]
+	return c, ok
 }
 
-// credProbeSink is a concurrency-safe stdout for an in-process runtime.
-type credProbeSink struct {
-	mu  sync.Mutex
-	buf strings.Builder
+// sessionRuntime is a runtime driven over its stdin and stdout: the case
+// writes CH-MSGSOCK frames and reads each frame the runtime writes. It is
+// either an in-process Go-SDK runtime over pipes or an interpreted probe
+// process.
+type sessionRuntime struct {
+	in     io.WriteCloser
+	frames chan map[string]any
+	// wait blocks until the runtime exits and returns its error.
+	wait func() error
 }
 
-func (s *credProbeSink) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.buf.Write(p)
-}
-
-// credProbeStdin is a held-open stdin: Read blocks until Close, which
-// mirrors the adapter holding the runtime's stdin open.
-type credProbeStdin struct {
-	mu     sync.Mutex
-	cond   *sync.Cond
-	closed bool
-}
-
-func newCredProbeStdin() *credProbeStdin {
-	p := &credProbeStdin{}
-	p.cond = sync.NewCond(&p.mu)
-	return p
-}
-
-func (p *credProbeStdin) Read([]byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for !p.closed {
-		p.cond.Wait()
-	}
-	return 0, io.EOF
-}
-
-func (p *credProbeStdin) Close() {
-	p.mu.Lock()
-	p.closed = true
-	p.mu.Unlock()
-	p.cond.Broadcast()
-}
-
-// spec: 4.7, 6.1
-// diagnosis: a runtime built on the Go SDK did not load the credential
-//
-//	bundle the manifest's credentialsPath named. The credential file is
-//	written per session under /run/lenny/slots/{sessionId}/, so a runtime
-//	that keeps its construction-time path reads a file that exists on no
-//	pod and runs without credentials, or worse reads a co-tenant's file.
-//	A failure means the SDK's startup resolution regressed to a fixed
-//	location.
-func TestGoRuntimeSDKResolvesCredentialPathFromTheManifest_spec_4_7(t *testing.T) {
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
-	manifest := writeCredPathManifest(t, dir,
-		filepath.Join(credRoot, "slots", credProbeSessionID, "credentials.json"), "")
-
-	// A construction-time option naming a different, readable file must
-	// lose to the manifest: it is the fallback rather than the default.
-	decoy := filepath.Join(dir, "decoy-credentials.json")
-	body, _ := json.Marshal(map[string]any{"mode": "direct", "provider": "decoy"})
-	if err := os.WriteFile(decoy, body, 0o600); err != nil {
-		t.Fatalf("write decoy credential file: %v", err)
-	}
-
-	h := &credProbeHandler{}
-	if err := runCredProbeRuntime(t, h, manifest, decoy); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	got := h.bundle()
-	if got == nil {
-		t.Fatal("OnCreate received no credential bundle; the manifest's credentialsPath was not read")
-	}
-	if got.Provider != "anthropic" {
-		t.Fatalf("credential bundle provider = %q, want %q (the construction-time option won over the manifest)",
-			got.Provider, "anthropic")
+// readFrames decodes each JSON Lines frame from out onto r.frames, closing
+// the channel at end of stream.
+func (r *sessionRuntime) readFrames(out io.Reader) {
+	defer close(r.frames)
+	sc := bufio.NewScanner(out)
+	for sc.Scan() {
+		var m map[string]any
+		if json.Unmarshal(sc.Bytes(), &m) == nil {
+			r.frames <- m
+		}
 	}
 }
 
-// spec: 4.7, 6.1
-// diagnosis: a session with no active lease has no credential file, and
-//
-//	the runtime must start without credentials rather than fail. A
-//	failure here means the manifest-resolved path turned an absent file
-//	into a startup error.
-func TestGoRuntimeSDKStartsWithNoCredentialFileAtTheManifestPath_spec_4_7(t *testing.T) {
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	manifest := writeCredPathManifest(t, dir,
-		filepath.Join(credRoot, "slots", credProbeSessionID, "credentials.json"), "")
-
-	h := &credProbeHandler{}
-	if err := runCredProbeRuntime(t, h, manifest, ""); err != nil {
-		t.Fatalf("Run with no credential file at the manifest path returned %v, want a clean exit", err)
-	}
-	if got := h.bundle(); got != nil {
-		t.Fatalf("OnCreate received %+v, want no bundle when the session holds no lease", got)
-	}
-}
-
-// runCredProbeRuntime runs a Basic-level in-process runtime against the
-// manifest and returns Run's error once stdin closes.
-func runCredProbeRuntime(t *testing.T, h runtime.Handler, manifest, fallbackCredentials string) error {
+// startGoSessionRuntime runs h under runtime.Run with opts over pipes.
+func startGoSessionRuntime(t *testing.T, h runtime.Handler, opts ...runtime.Option) *sessionRuntime {
 	t.Helper()
-	stdin := newCredProbeStdin()
-	opts := []runtime.Option{
-		runtime.WithStreams(stdin, &credProbeSink{}),
-		runtime.WithLogger(nil),
-		runtime.WithSocketTransport(false),
-		runtime.WithManifestPath(manifest),
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	done := make(chan struct{})
+	var runErr error
+	r := &sessionRuntime{in: inW, frames: make(chan map[string]any, 64)}
+	r.wait = func() error { <-done; return runErr }
+	all := append([]runtime.Option{runtime.WithStreams(inR, outW), runtime.WithSocketTransport(false)}, opts...)
+	go func() {
+		runErr = runtime.Run(h, all...)
+		_ = outW.Close()
+		close(done)
+	}()
+	go r.readFrames(outR)
+	t.Cleanup(func() { _ = inW.Close() })
+	return r
+}
+
+// startProbeRuntime starts an interpreted probe runtime with the manifest
+// env var set and its stdin and stdout piped.
+func startProbeRuntime(t *testing.T, probe interpretedProbe, manifest string) *sessionRuntime {
+	t.Helper()
+	cmd := exec.Command(probe.argv[0], probe.argv[1:]...)
+	cmd.Dir = probe.workdir
+	cmd.Env = append(append(os.Environ(), "LENNY_ADAPTER_MANIFEST="+manifest), probe.env...)
+	cmd.Stderr = os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
 	}
-	if fallbackCredentials != "" {
-		opts = append(opts, runtime.WithCredentialsPath(fallbackCredentials))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- runtime.Run(h, opts...) }()
-	// The bundle is loaded before the frame loop starts, so closing
-	// stdin immediately still exercises the resolution.
-	stdin.Close()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start probe %v: %v", probe.argv, err)
+	}
+	r := &sessionRuntime{in: stdin, frames: make(chan map[string]any, 64), wait: cmd.Wait}
+	go r.readFrames(stdout)
+	t.Cleanup(func() { _ = stdin.Close(); _ = cmd.Process.Kill() })
+	return r
+}
+
+// send writes one frame line on the runtime's stdin.
+func (r *sessionRuntime) send(t *testing.T, line string) {
+	t.Helper()
+	if _, err := io.WriteString(r.in, line+"\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+}
+
+// next returns the next frame the runtime wrote.
+func (r *sessionRuntime) next(t *testing.T, d time.Duration) map[string]any {
+	t.Helper()
 	select {
-	case err := <-done:
+	case f, ok := <-r.frames:
+		if !ok {
+			t.Fatal("the runtime closed stdout")
+		}
+		return f
+	case <-time.After(d):
+		t.Fatalf("no frame from the runtime within %s", d)
+		return nil
+	}
+}
+
+// open writes a session_start for sessionID, naming credentialsPath when
+// it is non-empty, and reads the session_started that answers it.
+func (r *sessionRuntime) open(t *testing.T, sessionID, credentialsPath string) map[string]any {
+	t.Helper()
+	frame := map[string]any{"type": "session_start", "sessionId": sessionID, "startId": "st_" + sessionID}
+	if credentialsPath != "" {
+		frame["credentialsPath"] = credentialsPath
+	}
+	line, _ := json.Marshal(frame)
+	r.send(t, string(line))
+	f := r.next(t, 5*time.Second)
+	if f["type"] != "session_started" || f["sessionId"] != sessionID {
+		t.Fatalf("frame after session_start(%s) = %v, want its session_started", sessionID, f)
+	}
+	return f
+}
+
+// ask writes a message for sessionID and returns the response text.
+func (r *sessionRuntime) ask(t *testing.T, sessionID string) string {
+	t.Helper()
+	r.send(t, fmt.Sprintf(`{"type":"message","id":"msg_%s","sessionId":%q,"input":[{"type":"text","inline":"ping"}]}`, sessionID, sessionID))
+	f := r.next(t, 5*time.Second)
+	if f["type"] != "response" || f["sessionId"] != sessionID {
+		t.Fatalf("frame = %v, want the response for %s", f, sessionID)
+	}
+	out, _ := f["output"].([]any)
+	if len(out) == 0 {
+		return ""
+	}
+	p, _ := out[0].(map[string]any)
+	s, _ := p["inline"].(string)
+	return s
+}
+
+// close closes stdin and returns the runtime's exit error.
+func (r *sessionRuntime) close(t *testing.T) error {
+	t.Helper()
+	_ = r.in.Close()
+	for range r.frames {
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- r.wait() }()
+	select {
+	case err := <-exited:
 		return err
 	case <-time.After(10 * time.Second):
 		t.Fatal("the runtime did not exit after stdin closed")
@@ -287,8 +335,100 @@ func runCredProbeRuntime(t *testing.T, h runtime.Handler, manifest, fallbackCred
 	}
 }
 
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.11 (item 4)
+// diagnosis: a runtime built on the Go SDK did not load the credential
+//
+//	bundle the session_start's credentialsPath named. The credential file
+//	is written per session under /run/lenny/slots/{sessionId}/, and one
+//	process serves every session, so a runtime that reads a path from the
+//	pod-scoped manifest reads another session's file or none. The manifest
+//	here names a readable decoy, and a failure means the SDK read it.
+func TestGoRuntimeSDKResolvesCredentialPathFromSessionStart_spec_4_7(t *testing.T) {
+	dir := t.TempDir()
+	credRoot := filepath.Join(dir, "run", "lenny")
+	real := writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
+	decoy := writeCredentialSlotTree(t, credRoot, "sess_decoy", "decoy")
+	manifest := writeCredPathManifest(t, dir, decoy, "")
+
+	h := &credProbeHandler{}
+	rt := startGoSessionRuntime(t, h, runtime.WithLogger(nil), runtime.WithManifestPath(manifest))
+	if f := rt.open(t, credProbeSessionID, real); f["error"] != nil {
+		t.Fatalf("session_started = %v, want no error", f)
+	}
+	got, _ := h.bundle(credProbeSessionID)
+	if p := bundleProvider(got); p != "anthropic" {
+		t.Fatalf("credential bundle provider = %q, want %q (the SDK read a path other than the session_start's)", p, "anthropic")
+	}
+	if p := rt.ask(t, credProbeSessionID); p != "anthropic" {
+		t.Fatalf("handler context provider = %q, want %q", p, "anthropic")
+	}
+	if err := rt.close(t); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.11 (item 4)
+// diagnosis: a session whose session_start names no credentialsPath has
+//
+//	no provisioned credential file, and the runtime must open it without
+//	credentials rather than fail it or borrow a bundle from elsewhere. A
+//	failure means the SDK failed the session or loaded a bundle the frame
+//	did not name, such as the pod-scoped manifest's path.
+func TestGoRuntimeSDKStartsWithNoCredentialFileAtTheManifestPath_spec_4_7(t *testing.T) {
+	dir := t.TempDir()
+	credRoot := filepath.Join(dir, "run", "lenny")
+	decoy := writeCredentialSlotTree(t, credRoot, credProbeSessionID, "decoy")
+	manifest := writeCredPathManifest(t, dir, decoy, "")
+
+	h := &credProbeHandler{}
+	rt := startGoSessionRuntime(t, h, runtime.WithLogger(nil), runtime.WithManifestPath(manifest))
+	if f := rt.open(t, credProbeSessionID, ""); f["error"] != nil {
+		t.Fatalf("session_started = %v, want no error for a session with no credential file", f)
+	}
+	got, ran := h.bundle(credProbeSessionID)
+	if !ran {
+		t.Fatal("OnCreate did not run for the session")
+	}
+	if got != nil {
+		t.Fatalf("OnCreate received %+v, want no bundle when the session_start names no credentialsPath", got)
+	}
+	if err := rt.close(t); err != nil {
+		t.Fatalf("Run with no credential file returned %v, want a clean exit", err)
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.10 (runtime
+// process lifetime), 4.7.11 (item 4)
+// diagnosis: two sessions on one Go-SDK runtime process did not each hold
+//
+//	their own credentials. Each session's handler context must carry the
+//	bundle its own session_start named; a runtime that loads one bundle
+//	per process serves session B with session A's lease, which crosses
+//	users inside a tenant.
+func TestGoRuntimeSDKTwoSessionsHoldSeparateCredentials_spec_4_7_10(t *testing.T) {
+	dir := t.TempDir()
+	credRoot := filepath.Join(dir, "run", "lenny")
+	pathA := writeCredentialSlotTree(t, credRoot, "sess_a", "anthropic")
+	pathB := writeCredentialSlotTree(t, credRoot, "sess_b", "openai")
+
+	rt := startGoSessionRuntime(t, &credProbeHandler{}, runtime.WithLogger(nil),
+		runtime.WithManifestPath(filepath.Join(dir, "absent.json")))
+	rt.open(t, "sess_a", pathA)
+	rt.open(t, "sess_b", pathB)
+	for _, c := range []struct{ session, want string }{
+		{"sess_a", "anthropic"}, {"sess_b", "openai"}, {"sess_a", "anthropic"},
+	} {
+		if got := rt.ask(t, c.session); got != c.want {
+			t.Fatalf("%s answered with provider %q, want %q", c.session, got, c.want)
+		}
+	}
+	if err := rt.close(t); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
 // credRotationAdapter is the adapter side of CH-RUNTIMEOPS for the
-// rotation case: it announces credential_rotation support on connect and
+// rotation cases: it announces credential_rotation support on connect and
 // lets the case drive a credentials_rotated event.
 type credRotationAdapter struct {
 	ln   net.Listener
@@ -297,7 +437,17 @@ type credRotationAdapter struct {
 	r    *bufio.Reader
 }
 
-func startCredRotationAdapter(t *testing.T, _ string) *credRotationAdapter {
+// credPathManifestNonce is the mcpNonce writeCredPathManifest publishes,
+// which the fake CH-RUNTIMEOPS adapter requires as the connection's first
+// line.
+const credPathManifestNonce = "nonce_credpath"
+
+// startCredRotationAdapter listens on a fake CH-RUNTIMEOPS socket. Its
+// accept requires the nonce line carrying credPathManifestNonce before it
+// opens the capability handshake; a connection whose first line is anything
+// else is closed and never becomes the channel. spec: 4.7.11 (Runtime
+// connection handshake).
+func startCredRotationAdapter(t *testing.T) *credRotationAdapter {
 	t.Helper()
 	// The Unix socket path is capped at 108 bytes, which a test temp
 	// directory under a long TMPDIR overruns, so the socket lives in its
@@ -319,9 +469,14 @@ func startCredRotationAdapter(t *testing.T, _ string) *credRotationAdapter {
 		if err != nil {
 			return
 		}
+		r := bufio.NewReader(conn)
+		if err := runtimenonce.Check(conn, r, credPathManifestNonce); err != nil {
+			_ = conn.Close()
+			return
+		}
 		fa.mu.Lock()
 		fa.conn = conn
-		fa.r = bufio.NewReader(conn)
+		fa.r = r
 		fa.mu.Unlock()
 		_ = json.NewEncoder(conn).Encode(map[string]any{
 			"type":         "lifecycle_capabilities",
@@ -372,198 +527,176 @@ func (fa *credRotationAdapter) recv(t *testing.T, d time.Duration) map[string]an
 	return m
 }
 
-// waitConnected polls until the runtime dials the channel.
-func waitConnected(t *testing.T, fa *credRotationAdapter, d time.Duration) {
+// handshake waits for the runtime to dial the channel and reads its
+// lifecycle_support reply.
+func (fa *credRotationAdapter) handshake(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if fa.connected() {
-			return
+	deadline := time.Now().Add(5 * time.Second)
+	for !fa.connected() {
+		if time.Now().After(deadline) {
+			t.Fatal("the runtime did not dial CH-RUNTIMEOPS")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("the runtime did not dial CH-RUNTIMEOPS")
-}
-
-// spec: 4.7, 4.9
-// diagnosis: a Full-level rotation did not land on the file the
-//
-//	credentials_rotated event named. The adapter rewrites the rotating
-//	session's own /run/lenny/slots/{sessionId}/credentials.json and names
-//	it on the event, so a runtime that re-reads the path it started with
-//	acknowledges the rotation while continuing to hold the pre-rotation
-//	credential. That is a silent staleness failure: the acknowledgement
-//	releases the old credential the runtime is still using.
-func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) {
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	startPath := writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
-	fa := startCredRotationAdapter(t, dir)
-	manifest := writeCredPathManifest(t, dir, startPath, fa.socket())
-
-	// The rotated file is a second path, as it is on a pod where the
-	// gateway re-places the session's credential directory.
-	rotatedPath := writeCredentialSlotTree(t, credRoot, "sess_credpath_rotated", "openai")
-
-	rotated := make(chan *runtime.CredentialBundle, 4)
-	logs := &credLogSink{}
-	stdin := newCredProbeStdin()
-	done := make(chan error, 1)
-	go func() {
-		done <- runtime.Run(
-			&credProbeHandler{},
-			runtime.WithStreams(stdin, &credProbeSink{}),
-			runtime.WithLogger(logs.logf),
-			runtime.WithSocketTransport(false),
-			runtime.WithFullLevel(),
-			runtime.WithManifestPath(manifest),
-			runtime.WithLifecycleHandlers(
-				runtime.OnCredentialsRotated(func(c *runtime.CredentialBundle) { rotated <- c }),
-			),
-		)
-	}()
-	waitConnected(t, fa, 5*time.Second)
 	if support := fa.recv(t, 5*time.Second); support["type"] != "lifecycle_support" {
 		t.Fatalf("handshake reply = %v, want lifecycle_support", support)
 	}
+}
 
-	fa.send(t, map[string]any{
-		"type":            "credentials_rotated",
-		"provider":        "openai",
-		"credentialsPath": rotatedPath,
-		"leaseId":         "lease_openai",
-	})
-	ack := fa.recv(t, 5*time.Second)
-	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_openai" || ack["provider"] != "openai" {
-		t.Fatalf("rotation reply = %v, want credentials_acknowledged for lease_openai / openai", ack)
-	}
-	select {
-	case got := <-rotated:
-		if got == nil {
-			t.Fatal("OnCredentialsRotated received no bundle after a rotation naming a readable path")
-		}
-		if got.Provider != "openai" {
-			t.Fatalf("rotated bundle provider = %q, want %q: the SDK re-read its startup path rather than the event's credentialsPath",
-				got.Provider, "openai")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("OnCredentialsRotated did not run")
-	}
+// rotation is one OnCredentialsRotated callback.
+type rotation struct {
+	session  string
+	provider string
+}
 
-	// Non-happy path: an event naming a file the runtime cannot read
-	// leaves the bundle the runtime holds in place, is still
-	// acknowledged, and is reported through the SDK's diagnostic sink so
-	// the failure is not silent.
-	absentPath := filepath.Join(credRoot, "slots", "sess_absent", "credentials.json")
-	fa.send(t, map[string]any{
-		"type":            "credentials_rotated",
-		"provider":        "openai",
-		"credentialsPath": absentPath,
-		"leaseId":         "lease_absent",
-	})
-	ack = fa.recv(t, 5*time.Second)
-	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_absent" {
-		t.Fatalf("unreadable-path rotation reply = %v, want credentials_acknowledged for lease_absent", ack)
-	}
-	select {
-	case got := <-rotated:
-		if got == nil || got.Provider != "openai" {
-			t.Fatalf("bundle after an unreadable rotation path = %+v, want the bundle the runtime already held", got)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("OnCredentialsRotated did not run for the unreadable-path event")
-	}
-	if !logs.waitFor(absentPath, 5*time.Second) {
-		t.Fatalf("no diagnostic named the unreadable rotation path %s; the logged lines were %v",
-			absentPath, logs.lines())
-	}
+// startRotationRuntime starts a Full-level Go-SDK runtime against a fake
+// CH-RUNTIMEOPS and returns it once the handshake completed.
+func startRotationRuntime(t *testing.T, logs *credLogSink) (*sessionRuntime, *credRotationAdapter, chan rotation) {
+	t.Helper()
+	fa := startCredRotationAdapter(t)
+	manifest := writeCredPathManifest(t, t.TempDir(), "", fa.socket())
+	rotated := make(chan rotation, 4)
+	rt := startGoSessionRuntime(
+		t, &credProbeHandler{},
+		runtime.WithLogger(logs.logf),
+		runtime.WithManifestPath(manifest),
+		runtime.WithLifecycleHandlers(
+			runtime.OnCredentialsRotated(func(sessionID string, c *runtime.CredentialBundle) {
+				rotated <- rotation{session: sessionID, provider: bundleProvider(c)}
+			}),
+		),
+	)
+	fa.handshake(t)
+	return rt, fa, rotated
+}
 
-	// Non-happy path: an event carrying no credentialsPath breaks the
-	// wire contract, which makes the path required. The runtime keeps
-	// the bundle it holds, acknowledges the event, and reports the
-	// violation. The startup file is rewritten first, so a runtime that
-	// fell back to reading it would hand the callback "unexpected"
-	// instead of the bundle it already held.
-	writeCredentialBundle(t, startPath, "unexpected")
-	fa.send(t, map[string]any{
-		"type":     "credentials_rotated",
-		"provider": "unexpected",
-		"leaseId":  "lease_pathless",
-	})
-	ack = fa.recv(t, 5*time.Second)
-	if ack["type"] != "credentials_acknowledged" || ack["leaseId"] != "lease_pathless" {
-		t.Fatalf("pathless rotation reply = %v, want credentials_acknowledged for lease_pathless", ack)
+// rotate writes credentials_rotated for sessionID and requires the
+// credentials_acknowledged for leaseID.
+func rotate(t *testing.T, fa *credRotationAdapter, sessionID, provider, path, leaseID string) {
+	t.Helper()
+	frame := map[string]any{
+		"type": "credentials_rotated", "sessionId": sessionID,
+		"provider": provider, "leaseId": leaseID,
 	}
-	select {
-	case got := <-rotated:
-		if got == nil || got.Provider != "openai" {
-			t.Fatalf("bundle after a pathless rotation = %+v, want the bundle the runtime already held (provider %q); the runtime read a file the event did not name",
-				got, "openai")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("OnCredentialsRotated did not run for the pathless event")
+	if path != "" {
+		frame["credentialsPath"] = path
 	}
-	if !logs.waitFor("no credentialsPath", 5*time.Second) {
-		t.Fatalf("no diagnostic reported the rotation event carrying no credentialsPath; the logged lines were %v", logs.lines())
-	}
-
-	fa.send(t, map[string]any{"type": "terminate", "reason": "done"})
-	stdin.Close()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run returned %v, want a clean exit", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the runtime did not exit after terminate")
+	fa.send(t, frame)
+	if ack := fa.recv(t, 5*time.Second); ack["type"] != "credentials_acknowledged" || ack["leaseId"] != leaseID {
+		t.Fatalf("rotation reply = %v, want credentials_acknowledged for %s", ack, leaseID)
 	}
 }
 
-// credProbeMessage is the inbound §28.5.3 message frame the interpreted
-// probes answer. The probe's response output carries the provider of the
-// bundle the SDK loaded, so the case reads the resolution off the wire.
-const credProbeMessage = `{"type":"message","id":"msg_credpath","from":{"kind":"client","id":"client_alice"},"input":[{"type":"text","inline":"ping"}]}`
-
-// runCredProbeBinary runs a probe runtime with the manifest env var set,
-// feeds it one message frame, and returns the first response frame's
-// concatenated text output.
-func runCredProbeBinary(t *testing.T, argv []string, manifest, workdir string, extraEnv ...string) string {
+// awaitRotation reads the next OnCredentialsRotated callback.
+func awaitRotation(t *testing.T, rotated chan rotation) rotation {
 	t.Helper()
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = workdir
-	cmd.Env = append(append(os.Environ(), "LENNY_ADAPTER_MANIFEST="+manifest), extraEnv...)
-	cmd.Stdin = strings.NewReader(credProbeMessage + "\n")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("probe runtime %v: %v\nstderr: %s", argv, err, stderr.String())
+	select {
+	case r := <-rotated:
+		return r
+	case <-time.After(5 * time.Second):
+		t.Fatal("OnCredentialsRotated did not run")
+		return rotation{}
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var frame struct {
-			Type   string `json:"type"`
-			Output []struct {
-				Inline string `json:"inline"`
-			} `json:"output"`
-		}
-		if err := json.Unmarshal([]byte(line), &frame); err != nil {
-			continue
-		}
-		if frame.Type != "response" {
-			continue
-		}
-		var b strings.Builder
-		for _, p := range frame.Output {
-			b.WriteString(p.Inline)
-		}
-		return b.String()
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS credentials_rotated), 4.7.11 (item 4), 4.9
+// diagnosis: a Full-level rotation did not land on the file the
+//
+//	credentials_rotated event named for the session it named. The adapter
+//	rewrites the rotating session's own credential file and names it on the
+//	event, after it reads the session's session_started. A runtime that
+//	re-reads the path it started with acknowledges the rotation while still
+//	holding the pre-rotation credential, which releases the old credential
+//	the runtime is still using.
+func TestGoRuntimeSDKRotationReadsTheEventCredentialPath_spec_4_7(t *testing.T) {
+	credRoot := filepath.Join(t.TempDir(), "run", "lenny")
+	startPath := writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
+	rotatedPath := writeCredentialSlotTree(t, credRoot, "sess_credpath_rotated", "openai")
+	logs := &credLogSink{}
+	rt, fa, rotated := startRotationRuntime(t, logs)
+	rt.open(t, credProbeSessionID, startPath)
+
+	rotate(t, fa, credProbeSessionID, "openai", rotatedPath, "lease_openai")
+	if got := awaitRotation(t, rotated); got != (rotation{credProbeSessionID, "openai"}) {
+		t.Fatalf("rotation callback = %+v, want %s rotated to openai: the SDK re-read its startup path rather than the event's credentialsPath",
+			got, credProbeSessionID)
 	}
-	t.Fatalf("probe runtime %v emitted no response frame\nstdout: %s\nstderr: %s", argv, out, stderr.String())
-	return ""
+	if p := rt.ask(t, credProbeSessionID); p != "openai" {
+		t.Fatalf("session provider after rotation = %q, want openai", p)
+	}
+
+	// Non-happy path: an event naming a file the runtime cannot read
+	// leaves the session's bundle in place, is still acknowledged, and is
+	// reported through the SDK's diagnostic sink.
+	absentPath := filepath.Join(credRoot, "slots", "sess_absent", "credentials.json")
+	rotate(t, fa, credProbeSessionID, "openai", absentPath, "lease_absent")
+	if got := awaitRotation(t, rotated); got.provider != "openai" {
+		t.Fatalf("bundle after an unreadable rotation path = %+v, want the bundle the session already held", got)
+	}
+	if !logs.waitFor(absentPath, 5*time.Second) {
+		t.Fatalf("no diagnostic named the unreadable rotation path %s; the logged lines were %v", absentPath, logs.lines())
+	}
+
+	// Non-happy path: an event carrying no credentialsPath keeps the
+	// session's bundle. The startup file is rewritten first, so a runtime
+	// that fell back to reading it would report "unexpected".
+	writeCredentialBundle(t, startPath, "unexpected")
+	rotate(t, fa, credProbeSessionID, "unexpected", "", "lease_pathless")
+	if got := awaitRotation(t, rotated); got.provider != "openai" {
+		t.Fatalf("bundle after a pathless rotation = %+v, want the bundle the session already held (openai)", got)
+	}
+	if !logs.waitFor("no credentialsPath", 5*time.Second) {
+		t.Fatalf("no diagnostic reported the event carrying no credentialsPath; the logged lines were %v", logs.lines())
+	}
+
+	// The runtime ends on stdin EOF: no CH-RUNTIMEOPS frame ends the
+	// process (spec: §4.7.10, Runtime process lifetime).
+	if err := rt.close(t); err != nil {
+		t.Fatalf("Run returned %v, want a clean exit", err)
+	}
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS credentials_rotated), 4.7.10 (runtime
+// process lifetime), 4.7.11 (item 4)
+// diagnosis: a credentials_rotated event naming session A changed another
+//
+//	session's credentials, or did not reach A. The event names the session
+//	it rotates in sessionId; a runtime that applies it to every session, or
+//	to the session it started with, hands B's requests A's new lease.
+func TestGoRuntimeSDKRotationReloadsOnlyTheNamedSession_spec_4_7_10(t *testing.T) {
+	credRoot := filepath.Join(t.TempDir(), "run", "lenny")
+	pathA := writeCredentialSlotTree(t, credRoot, "sess_a", "anthropic")
+	pathB := writeCredentialSlotTree(t, credRoot, "sess_b", "openai")
+	rotatedA := writeCredentialSlotTree(t, credRoot, "sess_a_rotated", "rotated")
+	rt, fa, rotated := startRotationRuntime(t, &credLogSink{})
+	rt.open(t, "sess_a", pathA)
+	rt.open(t, "sess_b", pathB)
+
+	rotate(t, fa, "sess_a", "rotated", rotatedA, "lease_rotated")
+	if got := awaitRotation(t, rotated); got != (rotation{"sess_a", "rotated"}) {
+		t.Fatalf("rotation callback = %+v, want sess_a rotated", got)
+	}
+	if p := rt.ask(t, "sess_a"); p != "rotated" {
+		t.Fatalf("sess_a provider after its rotation = %q, want rotated", p)
+	}
+	if p := rt.ask(t, "sess_b"); p != "openai" {
+		t.Fatalf("sess_b provider after sess_a's rotation = %q, want openai (unchanged)", p)
+	}
+	// The runtime ends on stdin EOF: no CH-RUNTIMEOPS frame ends the
+	// process (spec: §4.7.10, Runtime process lifetime).
+	if err := rt.close(t); err != nil {
+		t.Fatalf("Run returned %v, want a clean exit", err)
+	}
+}
+
+// interpretedProbe is a probe runtime built on the Python or TypeScript
+// SDK: the argv that runs it, its working directory, and its extra
+// environment. The probe answers each message with the first providers
+// entry's provider of the bundle the session holds, or "none".
+type interpretedProbe struct {
+	argv    []string
+	workdir string
+	env     []string
 }
 
 // requireCredProbeTool resolves a toolchain binary or skips: an
@@ -577,38 +710,177 @@ func requireCredProbeTool(t *testing.T, tool string) string {
 	return path
 }
 
-// spec: 4.7, 6.1
-// diagnosis: a runtime built on the Python SDK did not load the bundle
-//
-//	the manifest's credentialsPath named. The Python SDK carries no
-//	compiler, so a missed resolution is invisible until a session reads
-//	the wrong file or none at all.
-func TestPythonRuntimeSDKResolvesCredentialPathFromTheManifest_spec_4_7(t *testing.T) {
+// pythonCredProbeRuntime writes the Python probe under dir.
+func pythonCredProbeRuntime(t *testing.T, dir string) interpretedProbe {
+	t.Helper()
 	python := requireCredProbeTool(t, "python3")
 	root := filepath.Join(repoRoot(t), "sdks", "runtime", "python")
-
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
-	manifest := writeCredPathManifest(t, dir,
-		filepath.Join(credRoot, "slots", credProbeSessionID, "credentials.json"), "")
-
 	probe := filepath.Join(dir, "probe.py")
 	if err := os.WriteFile(probe, []byte(pythonCredProbe), 0o600); err != nil {
 		t.Fatalf("write python probe: %v", err)
 	}
-	got := runCredProbeBinary(t, []string{python, probe}, manifest, root, "PYTHONPATH="+root)
-	if got != "anthropic" {
-		t.Fatalf("python probe reported provider %q, want %q: the manifest's credentialsPath was not resolved", got, "anthropic")
+	return interpretedProbe{argv: []string{python, probe}, workdir: root, env: []string{"PYTHONPATH=" + root}}
+}
+
+// typeScriptCredProbeRuntime builds the TypeScript SDK and writes the
+// probe under dir.
+func typeScriptCredProbeRuntime(t *testing.T, dir string) interpretedProbe {
+	t.Helper()
+	node := requireCredProbeTool(t, "node")
+	npm := requireCredProbeTool(t, "npm")
+	root := filepath.Join(repoRoot(t), "sdks", "runtime", "typescript")
+	build := exec.Command(npm, "run", "build")
+	build.Dir = root
+	if combined, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("npm run build: %v\n%s", err, combined)
+	}
+	probe := filepath.Join(dir, "probe.mjs")
+	entry := filepath.Join(root, "dist", "src", "index.js")
+	if err := os.WriteFile(probe, []byte(fmt.Sprintf(typeScriptCredProbe, entry)), 0o600); err != nil {
+		t.Fatalf("write typescript probe: %v", err)
+	}
+	return interpretedProbe{argv: []string{node, probe}, workdir: root}
+}
+
+// interpretedSDKs names the probe builder of each interpreted SDK.
+var interpretedSDKs = []struct {
+	name  string
+	probe func(*testing.T, string) interpretedProbe
+}{
+	{"python", pythonCredProbeRuntime},
+	{"typescript", typeScriptCredProbeRuntime},
+}
+
+// assertProbeResolvesCredentialPathFromSessionStart opens one session on
+// the probe with a credentialsPath and a manifest naming a readable decoy,
+// and requires the session's handler to see the bundle the session_start
+// named.
+func assertProbeResolvesCredentialPathFromSessionStart(t *testing.T, build func(*testing.T, string) interpretedProbe) {
+	t.Helper()
+	dir := t.TempDir()
+	credRoot := filepath.Join(dir, "run", "lenny")
+	real := writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
+	decoy := writeCredentialSlotTree(t, credRoot, "sess_decoy", "decoy")
+	manifest := writeCredPathManifest(t, dir, decoy, "")
+
+	rt := startProbeRuntime(t, build(t, dir), manifest)
+	if f := rt.open(t, credProbeSessionID, real); f["error"] != nil {
+		t.Fatalf("session_started = %v, want no error", f)
+	}
+	if got := rt.ask(t, credProbeSessionID); got != "anthropic" {
+		t.Fatalf("probe reported provider %q, want %q: the SDK read a path other than the session_start's", got, "anthropic")
+	}
+	if err := rt.close(t); err != nil {
+		t.Fatalf("probe exit: %v", err)
 	}
 }
 
-// pythonCredProbe is a Basic-level Python runtime that answers each
-// message with the provider of the credential bundle the SDK loaded, or
-// "none" when it loaded none.
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.11 (item 4)
+// diagnosis: a runtime built on the Python SDK did not load the bundle
+//
+//	the session_start's credentialsPath named. The manifest here names a
+//	readable decoy, so a failure means the SDK still reads the pod-scoped
+//	manifest's path, which on a kept runtime names another session's file
+//	or none.
+func TestPythonRuntimeSDKResolvesCredentialPathFromSessionStart_spec_4_7(t *testing.T) {
+	assertProbeResolvesCredentialPathFromSessionStart(t, pythonCredProbeRuntime)
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.11 (item 4)
+// diagnosis: a runtime built on the TypeScript SDK did not load the
+//
+//	bundle the session_start's credentialsPath named. The manifest here
+//	names a readable decoy, so a failure means the SDK still reads the
+//	pod-scoped manifest's path.
+func TestTypeScriptRuntimeSDKResolvesCredentialPathFromSessionStart_spec_4_7(t *testing.T) {
+	assertProbeResolvesCredentialPathFromSessionStart(t, typeScriptCredProbeRuntime)
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Inbound: session_start), 4.7.10 (runtime
+// process lifetime), 4.7.11 (item 4)
+// diagnosis: two sessions on one Python- or TypeScript-SDK runtime process
+//
+//	did not each hold their own credentials. Each session's handler must
+//	see the bundle its own session_start named; an SDK that loads one
+//	bundle per process serves session B with session A's lease, which
+//	crosses users inside a tenant.
+func TestInterpretedRuntimeSDKsTwoSessionsHoldSeparateCredentials_spec_4_7_10(t *testing.T) {
+	for _, sdk := range interpretedSDKs {
+		t.Run(sdk.name, func(t *testing.T) {
+			dir := t.TempDir()
+			credRoot := filepath.Join(dir, "run", "lenny")
+			pathA := writeCredentialSlotTree(t, credRoot, "sess_a", "anthropic")
+			pathB := writeCredentialSlotTree(t, credRoot, "sess_b", "openai")
+			rt := startProbeRuntime(t, sdk.probe(t, dir), filepath.Join(dir, "absent.json"))
+			rt.open(t, "sess_a", pathA)
+			rt.open(t, "sess_b", pathB)
+			for _, c := range []struct{ session, want string }{
+				{"sess_a", "anthropic"}, {"sess_b", "openai"}, {"sess_a", "anthropic"},
+			} {
+				if got := rt.ask(t, c.session); got != c.want {
+					t.Fatalf("%s answered with provider %q, want %q", c.session, got, c.want)
+				}
+			}
+			if err := rt.close(t); err != nil {
+				t.Fatalf("probe exit: %v", err)
+			}
+		})
+	}
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS credentials_rotated, CH-RUNTIMEOPS
+// Messages), 4.7.10 (runtime process lifetime), 4.7.11 (item 4)
+// diagnosis: a credentials_rotated event on a Python- or TypeScript-SDK
+//
+//	runtime changed a session other than the one it named, or an event
+//	naming a session the runtime does not hold was acknowledged. The event
+//	names the session it rotates in sessionId and the file the adapter
+//	rewrote in credentialsPath; an SDK that reloads one process-wide bundle
+//	hands B's requests A's new lease, and one that acknowledges an event
+//	for an unheld session reports a rotation it never applied.
+func TestInterpretedRuntimeSDKsRotationReloadsOnlyTheNamedSession_spec_4_7_10(t *testing.T) {
+	for _, sdk := range interpretedSDKs {
+		t.Run(sdk.name, func(t *testing.T) {
+			dir := t.TempDir()
+			credRoot := filepath.Join(dir, "run", "lenny")
+			pathA := writeCredentialSlotTree(t, credRoot, "sess_a", "anthropic")
+			pathB := writeCredentialSlotTree(t, credRoot, "sess_b", "openai")
+			rotatedA := writeCredentialSlotTree(t, credRoot, "sess_a_rotated", "rotated")
+			fa := startCredRotationAdapter(t)
+			manifest := writeCredPathManifest(t, dir, "", fa.socket())
+			rt := startProbeRuntime(t, sdk.probe(t, dir), manifest)
+			fa.handshake(t)
+			rt.open(t, "sess_a", pathA)
+			rt.open(t, "sess_b", pathB)
+
+			// An event for a session the runtime does not hold is dropped
+			// without a reply, so the next acknowledgement read answers
+			// the rotation of sess_a.
+			fa.send(t, map[string]any{
+				"type": "credentials_rotated", "sessionId": "sess_unheld",
+				"provider": "rotated", "leaseId": "lease_unheld", "credentialsPath": rotatedA,
+			})
+			rotate(t, fa, "sess_a", "rotated", rotatedA, "lease_rotated")
+			if p := rt.ask(t, "sess_a"); p != "rotated" {
+				t.Fatalf("sess_a provider after its rotation = %q, want rotated", p)
+			}
+			if p := rt.ask(t, "sess_b"); p != "openai" {
+				t.Fatalf("sess_b provider after sess_a's rotation = %q, want openai (unchanged)", p)
+			}
+			if err := rt.close(t); err != nil {
+				t.Fatalf("probe exit: %v", err)
+			}
+		})
+	}
+}
+
+// pythonCredProbe is a Full-level Python runtime that answers each message
+// with the first providers entry's provider of the bundle the session
+// holds, or "none" when it holds none. Without a CH-RUNTIMEOPS socket in
+// the manifest the SDK runs it at Basic level.
 const pythonCredProbe = `
 import sys
-from lenny_runtime import Reply, run, text
+from lenny_runtime import LifecycleHooks, Reply, RunOptions, run, text
 
 class Probe:
     def on_create(self, req):
@@ -616,61 +888,27 @@ class Probe:
 
     def on_message(self, msg, tools):
         creds = tools.credentials
-        return Reply(parts=[text(creds.provider if creds and creds.provider else "none")], final=True)
+        provider = creds.providers[0].provider if creds and creds.providers else "none"
+        return Reply(parts=[text(provider)], final=True)
 
-    def on_terminate(self, reason):
+    def on_terminate(self, session_id, reason):
         pass
 
-sys.exit(run(Probe()) or 0)
+sys.exit(run(Probe(), RunOptions(level="full", lifecycle=LifecycleHooks())) or 0)
 `
 
-// spec: 4.7, 6.1
-// diagnosis: a runtime built on the TypeScript SDK did not load the
-//
-//	bundle the manifest's credentialsPath named. Like the Python SDK it
-//	has no compile-time tie to the adapter's manifest, so the resolution
-//	is only held by this case.
-func TestTypeScriptRuntimeSDKResolvesCredentialPathFromTheManifest_spec_4_7(t *testing.T) {
-	node := requireCredProbeTool(t, "node")
-	npm := requireCredProbeTool(t, "npm")
-	root := filepath.Join(repoRoot(t), "sdks", "runtime", "typescript")
-
-	build := exec.Command(npm, "run", "build")
-	build.Dir = root
-	if combined, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("npm run build: %v\n%s", err, combined)
-	}
-
-	dir := t.TempDir()
-	credRoot := filepath.Join(dir, "run", "lenny")
-	writeCredentialSlotTree(t, credRoot, credProbeSessionID, "anthropic")
-	manifest := writeCredPathManifest(t, dir,
-		filepath.Join(credRoot, "slots", credProbeSessionID, "credentials.json"), "")
-
-	probe := filepath.Join(dir, "probe.mjs")
-	entry := filepath.Join(root, "dist", "src", "index.js")
-	body := fmt.Sprintf(typeScriptCredProbe, entry)
-	if err := os.WriteFile(probe, []byte(body), 0o600); err != nil {
-		t.Fatalf("write typescript probe: %v", err)
-	}
-	got := runCredProbeBinary(t, []string{node, probe}, manifest, root)
-	if got != "anthropic" {
-		t.Fatalf("typescript probe reported provider %q, want %q: the manifest's credentialsPath was not resolved", got, "anthropic")
-	}
-}
-
-// typeScriptCredProbe is a Basic-level TypeScript-SDK runtime, in the
-// built JavaScript the package publishes. The single format verb is the
-// absolute path of the built entrypoint.
+// typeScriptCredProbe is the TypeScript-SDK counterpart of pythonCredProbe,
+// in the built JavaScript the package publishes. The single format verb is
+// the absolute path of the built entrypoint.
 const typeScriptCredProbe = `
 import { run, text } from %q;
 
 await run({
   onCreate: async () => {},
   onMessage: async (_msg, tools) => ({
-    parts: [text(tools.credentials?.provider ?? "none")],
+    parts: [text(tools.credentials?.providers?.[0]?.provider ?? "none")],
     final: true,
   }),
-  onTerminate: async () => {},
-});
+  onTerminate: async (_sessionId, _reason) => {},
+}, { level: "full", lifecycle: {} });
 `

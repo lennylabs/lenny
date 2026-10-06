@@ -44,12 +44,18 @@ _EXIT_RUNTIME_ERROR = 1
 _EXIT_PROTOCOL_ERROR = 2
 
 
-def _echo_parts(parts: list[MessagePart], seq: int) -> list[MessagePart]:
-    """Prefix text parts with the per-session sequence number."""
+def _echo_parts(parts: list[MessagePart], msg: Message) -> list[MessagePart]:
+    """Prefix text parts with the session's message sequence number and
+    identifier."""
     out: list[MessagePart] = []
     for part in parts:
         if part.type == "text" and part.inline:
-            out.append(text(f"[delegate seq={seq}] {part.inline}"))
+            out.append(
+                text(
+                    f"[delegate seq={msg.sequence} session={msg.session_id}] "
+                    f"{part.inline}"
+                )
+            )
         else:
             out.append(part)
     return out
@@ -65,10 +71,11 @@ def _delegation_error(err: object) -> Reply:
 
 
 class DelegateHandler:
-    """Standard-level handler."""
+    """Standard-level handler.
 
-    def __init__(self) -> None:
-        self._seq = 0
+    It holds no per-session state, so one instance serves every session
+    the process holds.
+    """
 
     def on_create(self, req: CreateRequest) -> None:
         """No task-scoped setup.
@@ -80,20 +87,19 @@ class DelegateHandler:
     def on_message(self, msg: Message, tools: HandlerTools) -> Reply:
         """Run the §8.5 delegation flow through the SDK platform tool
         helpers. Without a platform MCP server it echoes the input."""
-        self._seq += 1
         platform = tools.platform
         if platform is None:
             # Basic-level fallback: no platform MCP server in the
             # manifest.
             return Reply(
-                parts=_echo_parts(msg.envelope.input, self._seq), final=True
+                parts=_echo_parts(msg.envelope.input, msg), final=True
             )
 
         try:
             # 1. lenny/delegate_task — spawn a child whose input is this
             #    message's input parts.
             handle = platform.delegate_task(
-                "delegate-child", _echo_parts(msg.envelope.input, self._seq)
+                "delegate-child", _echo_parts(msg.envelope.input, msg)
             )
 
             # 2. lenny/await_children — wait for the child to settle.
@@ -115,7 +121,7 @@ class DelegateHandler:
         except Exception as err:  # noqa: BLE001 — surfaced as a Reply error
             return _delegation_error(err)
 
-    def on_terminate(self, reason: TerminationReason) -> None:
+    def on_terminate(self, session_id: str, reason: TerminationReason) -> None:
         """No teardown."""
 
 

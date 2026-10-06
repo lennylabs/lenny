@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -62,8 +61,8 @@ func requireRefused(t *testing.T, conn net.Conn, when string) {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := conn.Read(make([]byte, 1))
-	if n != 0 || !errors.Is(err, io.EOF) {
-		t.Fatalf("%s: read on the refused connection = (%d, %v), want (0, EOF)", when, n, err)
+	if n != 0 || !isClosedByPeer(err) {
+		t.Fatalf("%s: read on the refused connection = (%d, %v), want (0, EOF or reset)", when, n, err)
 	}
 }
 
@@ -78,7 +77,7 @@ func startAsync(sp *adapter.SocketRuntimeProcess, sessionID string) <-chan error
 // (CH-MSGSOCK)
 func TestSocketRuntimeRefusesForeignUIDAndAcceptsTheRuntimeNext_spec_4_7_11(t *testing.T) {
 	expected := uint32(os.Getuid())
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: expected})
+	sp, err := newSocketRuntime(t, runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: expected})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -140,7 +139,7 @@ func TestSocketRuntimeRefusesForeignUIDAndAcceptsTheRuntimeNext_spec_4_7_11(t *t
 // (CH-MSGSOCK)
 func TestSocketRuntimeRefusesPeerWhoseCredentialsCannotBeRead_spec_4_7_11(t *testing.T) {
 	expected := uint32(os.Getuid())
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: expected})
+	sp, err := newSocketRuntime(t, runtimeSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: expected})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -170,7 +169,7 @@ func TestSocketRuntimeRefusesPeerWhoseCredentialsCannotBeRead_spec_4_7_11(t *tes
 
 // spec: 4.7.11 (Separate UIDs and connection authentication)
 func TestSocketRuntimeAcceptsTheExpectedUIDThroughSOPeercred_spec_4_7_11(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t),
+	sp, err := newSocketRuntime(t, runtimeSocketAddr(t),
 		adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
@@ -191,7 +190,7 @@ func TestSocketRuntimeAcceptsTheExpectedUIDThroughSOPeercred_spec_4_7_11(t *test
 
 // spec: 4.7.11 (Nonce-only fallback), 28.5.3 (CH-MSGSOCK)
 func TestSocketRuntimeNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t),
+	sp, err := newSocketRuntime(t, runtimeSocketAddr(t),
 		adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1, NonceOnly: true})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
@@ -206,6 +205,9 @@ func TestSocketRuntimeNonceOnlyModeAppliesNoPeerCheck_spec_4_7_11(t *testing.T) 
 	started := startAsync(sp, "s1")
 	rt := dialRuntimeSocket(t, sp.SocketPath())
 	defer rt.Close()
+	// Nonce-only mode follows the nonce line with a challenge.
+	// spec: 4.7.11 (Runtime connection handshake).
+	answerListenerChallenge(t, rt, sp.SocketPath())
 	if err := <-started; err != nil {
 		t.Fatalf("Start in nonce-only mode: %v", err)
 	}

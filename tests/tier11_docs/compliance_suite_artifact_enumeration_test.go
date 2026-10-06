@@ -295,7 +295,7 @@ func TestPublishedComplianceArtifactSetsNameTheRuntimeOpsEventsSchema(t *testing
 //
 // spec: §24.8 (external adapter management), §15.4 (runtime adapter specification)
 func TestComplianceArtifactEnumerationPredicates(t *testing.T) {
-	opsFrames := []string{"checkpoint_request", "credentials_rotated", "terminate"}
+	opsFrames := []string{"checkpoint_request", "credentials_rotated", "deadline_approaching"}
 	stdioFrames := []string{"message", "response"}
 
 	correctedRow := "| `lenny-ctl admin external-adapters validate --name <name>` | The suite is **schema-driven**: assertions are generated from the published `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, `schemas/messagepart.schema.json`, and `schemas/runtime-ops-events.schema.json` artifacts. | `POST /v1/admin/external-adapters/{name}/validate` | `platform-admin` |\n"
@@ -308,7 +308,7 @@ func TestComplianceArtifactEnumerationPredicates(t *testing.T) {
 		"| Artifact | Purpose | Canonical URL |\n" +
 		"|:---------|:--------|:--------------|\n" +
 		"| `lenny-adapter-jsonl.schema.json` | JSON Schema for the stdin/stdout frames (`message` and `response`). | `https://schemas.lenny.dev/adapter/v1/lenny-adapter-jsonl.schema.json` |\n" +
-		"| `runtime-ops-events.schema.json` | JSON Schema for the Full-level runtime-operations frames (`checkpoint_request`, `credentials_rotated`, and `terminate`). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |\n" +
+		"| `runtime-ops-events.schema.json` | JSON Schema for the Full-level runtime-operations frames (`checkpoint_request`, `credentials_rotated`, and `deadline_approaching`). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |\n" +
 		"\n" +
 		"## Next section\n"
 
@@ -384,7 +384,7 @@ func TestComplianceArtifactEnumerationPredicates(t *testing.T) {
 		{name: "the corrected table attributes each frame set to one artifact", content: correctedTable},
 		{
 			name:    "a table with no runtime-operations row is reported",
-			content: strings.Replace(correctedTable, "| `runtime-ops-events.schema.json` | JSON Schema for the Full-level runtime-operations frames (`checkpoint_request`, `credentials_rotated`, and `terminate`). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |\n", "", 1),
+			content: strings.Replace(correctedTable, "| `runtime-ops-events.schema.json` | JSON Schema for the Full-level runtime-operations frames (`checkpoint_request`, `credentials_rotated`, and `deadline_approaching`). | `https://schemas.lenny.dev/adapter/v1/runtime-ops-events.schema.json` |\n", "", 1),
 			reject:  true,
 		},
 		{

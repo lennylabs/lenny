@@ -29,13 +29,20 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/ackruntime"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // Frame is one §4.7 runtime<->adapter lifecycle JSONL frame, in the
 // subset these suites need to speak from an external runtime peer. Field
 // names match the §4.7 message-schema table (camelCase).
 type Frame struct {
-	Type            string   `json:"type"`
+	Type string `json:"type"`
+	// SessionID names the session a session-scoped frame concerns:
+	// credentials_rotated from the adapter, and llm_request_completed
+	// from the runtime. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	SessionID       string   `json:"sessionId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	Provider        string   `json:"provider,omitempty"`
@@ -56,16 +63,25 @@ type Peer struct {
 	enc  *json.Encoder
 }
 
-// DialPeer connects to the adapter lifecycle socket, completes the
-// lifecycle_capabilities / lifecycle_support handshake advertising
-// credential_rotation, and returns the connected peer.
+// DialPeer connects to the adapter lifecycle socket, writes the nonce line
+// carrying the mcpNonce of the manifest NewPodAdapter published beside the
+// socket, completes the lifecycle_capabilities / lifecycle_support
+// handshake advertising credential_rotation, and returns the connected
+// peer. spec: §4.7.11 (Runtime connection handshake).
 func DialPeer(t *testing.T, socketPath string) *Peer {
 	t.Helper()
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(socketPath), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 	p := &Peer{t: t, conn: conn, r: bufio.NewReader(conn), enc: json.NewEncoder(conn)}
 
 	// The adapter opens with lifecycle_capabilities; the runtime replies
@@ -102,6 +118,24 @@ func (p *Peer) Read() Frame {
 		p.t.Fatalf("decode lifecycle frame: %v", err)
 	}
 	return f
+}
+
+// ReadWithin reads the next frame from the adapter, waiting at most d. It
+// reports false, and never fails the test, when no whole frame arrives in
+// time or the connection ends, so a goroutine other than the test's own
+// can call it.
+func (p *Peer) ReadWithin(d time.Duration) (Frame, bool) {
+	_ = p.conn.SetReadDeadline(time.Now().Add(d))
+	defer func() { _ = p.conn.SetReadDeadline(time.Time{}) }()
+	line, err := p.r.ReadBytes('\n')
+	if err != nil {
+		return Frame{}, false
+	}
+	var f Frame
+	if json.Unmarshal(line, &f) != nil {
+		return Frame{}, false
+	}
+	return f, true
 }
 
 // ExpectSilence asserts the adapter sends no frame within d. The
@@ -151,9 +185,11 @@ func (r *CeilingAudit) EmitRotationCeilingHit(_ context.Context, e adapter.Rotat
 // NewPodAdapter brings up a real adapter.Server bound to a real
 // CH-RUNTIMEOPS on a Unix socket, with the pod roots the per-slot trees
 // nest under (§6.4). It returns the server, the socket path, and the
-// recording audit emitter wired to the §4.9.2 EventStore hook. No session
-// is bound yet: the caller assigns credentials for each session it needs,
-// and every session it binds shares this one runtime connection.
+// recording audit emitter wired to the §4.9.2 EventStore hook. The Server's
+// runtime answers each session_start with session_started. No session is
+// bound yet: the caller assigns credentials for each session it needs and
+// starts it with StartSession, and every session it binds shares this one
+// runtime connection.
 //
 // spec: §6.1; §6.4
 func NewPodAdapter(t *testing.T, pool string) (*adapter.Server, string, *CeilingAudit) {
@@ -167,7 +203,11 @@ func NewPodAdapter(t *testing.T, pool string) (*adapter.Server, string, *Ceiling
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socketPath := filepath.Join(sockDir, "lc.sock")
-	lc, err := adapter.NewRuntimeOps(socketPath, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares each connection's nonce line with a test
+	// manifest published beside the socket, which DialPeer reads.
+	// spec: §4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.PublishIn(t, sockDir, nil)
+	lc, err := adapter.NewRuntimeOps(socketPath, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
 	}
@@ -186,7 +226,26 @@ func NewPodAdapter(t *testing.T, pool string) (*adapter.Server, string, *Ceiling
 	s.RuntimeName = "claude-code"
 	s.Lifecycle = lc
 	s.RotationAudit = audit
+	// The pod's runtime answers each session_start with session_started,
+	// which a start waits for once the peer completed its capability
+	// handshake, and which every credentials_rotated waits for.
+	// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+	s.Runtime = ackruntime.New(t)
 	return s, socketPath, audit
+}
+
+// StartSession starts sessionID through the adapter on the pod's runtime,
+// which answers its session_start. A suite calls it after the peer's
+// handshake and before it drives a rotation for the session, because the
+// adapter writes credentials_rotated only after it has read the session's
+// session_started. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func StartSession(t *testing.T, s *adapter.Server, sessionID string) {
+	t.Helper()
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+	}); err != nil {
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
 }
 
 // CounterValue reads the current value of the named counter with the

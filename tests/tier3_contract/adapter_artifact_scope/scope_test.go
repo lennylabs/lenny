@@ -31,30 +31,70 @@ const (
 	runtimeOpsArtifact = "schemas/runtime-ops-events.schema.json"
 )
 
+// sessionIDFixture is the session every session-scoped frame below names.
+const sessionIDFixture = "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN"
+
+// sessionScopedRuntimeOpsFrames are the CH-RUNTIMEOPS frames the §28.5.3
+// card's **Messages.** bullet names session-scoped. Each carries the
+// `sessionId` of the session it concerns, so a multi-session runtime can
+// tell which session a checkpoint quiesces and the adapter can attribute
+// direct-mode tokens. The process-scoped frames and the runtime's
+// correlated replies are absent from this list.
+var sessionScopedRuntimeOpsFrames = []string{
+	"checkpoint_request",
+	"checkpoint_complete",
+	"interrupt_request",
+	"credentials_rotated",
+	"deadline_approaching",
+	"files_updated",
+	"llm_request_completed",
+}
+
 // runtimeOpsFrames are CH-RUNTIMEOPS frames drawn from the §28.5.3
 // message-schema table, each at its minimum conforming field set.
 func runtimeOpsFrames() map[string]map[string]any {
 	return map[string]map[string]any{
 		"checkpoint_request": {
 			"type":         "checkpoint_request",
+			"sessionId":    sessionIDFixture,
 			"checkpointId": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 			"deadlineMs":   30000,
 		},
+		"checkpoint_complete": {
+			"type":         "checkpoint_complete",
+			"sessionId":    sessionIDFixture,
+			"checkpointId": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JN",
+			"status":       "ok",
+		},
 		"interrupt_request": {
 			"type":        "interrupt_request",
+			"sessionId":   sessionIDFixture,
 			"interruptId": "int_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 			"deadlineMs":  5000,
 		},
 		"credentials_rotated": {
 			"type":            "credentials_rotated",
+			"sessionId":       sessionIDFixture,
 			"provider":        "anthropic",
 			"credentialsPath": "/run/lenny/slots/sess_01HX9F0YWXKK0V7QZ7G6P3R5JN/credentials.json",
 			"leaseId":         "lease_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		},
 		"deadline_approaching": {
 			"type":        "deadline_approaching",
+			"sessionId":   sessionIDFixture,
 			"remainingMs": 60000,
 			"trigger":     "session_age",
+		},
+		"files_updated": {
+			"type":      "files_updated",
+			"sessionId": sessionIDFixture,
+		},
+		"llm_request_completed": {
+			"type":      "llm_request_completed",
+			"sessionId": sessionIDFixture,
+			"requestId": "req_01HX9F0YWXKK0V7QZ7G6P3R5JN",
+			"provider":  "anthropic",
+			"status":    "ok",
 		},
 		"checkpoint_ready": {
 			"type":         "checkpoint_ready",
@@ -172,9 +212,10 @@ func TestNeitherArtifactAcceptsAMalformedRuntimeOpsFrame(t *testing.T) {
 	malformed := map[string]any{
 		"empty":                map[string]any{},
 		"unknown type":         map[string]any{"type": "checkpoint_started"},
-		"missing checkpointId": map[string]any{"type": "checkpoint_request", "deadlineMs": 30000},
+		"missing checkpointId": map[string]any{"type": "checkpoint_request", "sessionId": sessionIDFixture, "deadlineMs": 30000},
 		"wrong-typed deadline": map[string]any{
 			"type":         "checkpoint_request",
+			"sessionId":    sessionIDFixture,
 			"checkpointId": "ckpt_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 			"deadlineMs":   "30000",
 		},
@@ -196,6 +237,58 @@ func TestNeitherArtifactAcceptsAMalformedRuntimeOpsFrame(t *testing.T) {
 			})
 		}
 	}
+}
+
+// spec: 28.5.3 (CH-RUNTIMEOPS Messages)
+//
+// diagnosis: schemas/runtime-ops-events.schema.json accepted a
+//
+//	session-scoped CH-RUNTIMEOPS frame with its `sessionId` removed or
+//	empty. The card's **Messages.** bullet makes the address required on
+//	every session-scoped frame, because the runtime process serves every
+//	session the pod holds: without it a multi-session runtime cannot tell
+//	which session a checkpoint quiesces, an interrupt stops, a rotation
+//	rebinds, or a deadline warns, and the adapter cannot attribute a
+//	direct-mode token count to a session. Acceptance means the frame's
+//	`required` list lost `sessionId` or its `minLength` bound was dropped.
+func TestRuntimeOpsArtifactRequiresSessionIDOnSessionScopedFrames(t *testing.T) {
+	t.Parallel()
+
+	validator := schematest.Compile(t, runtimeOpsArtifact)
+	frames := runtimeOpsFrames()
+	for _, name := range sessionScopedRuntimeOpsFrames {
+		name := name
+		frame, ok := frames[name]
+		if !ok {
+			t.Fatalf("runtimeOpsFrames has no %q frame to check", name)
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if err := validator.Validate(frame); err != nil {
+				t.Fatalf("%s must accept the addressed %q frame, got: %v", runtimeOpsArtifact, name, err)
+			}
+			unaddressed := withoutField(frame, "sessionId")
+			if err := validator.Validate(unaddressed); err == nil {
+				t.Errorf("%s accepted %q with its sessionId removed; the session-scoped frame requires it", runtimeOpsArtifact, name)
+			}
+			empty := withoutField(frame, "sessionId")
+			empty["sessionId"] = ""
+			if err := validator.Validate(empty); err == nil {
+				t.Errorf("%s accepted %q with an empty sessionId; an empty address names no session", runtimeOpsArtifact, name)
+			}
+		})
+	}
+}
+
+// withoutField returns a copy of frame with field removed.
+func withoutField(frame map[string]any, field string) map[string]any {
+	out := make(map[string]any, len(frame))
+	for k, v := range frame {
+		if k != field {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // artifactDescription reads the top-level `description` of a published

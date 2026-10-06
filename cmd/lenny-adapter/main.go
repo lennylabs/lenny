@@ -52,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
 // version is the adapter build version, reported during gateway
@@ -227,6 +228,9 @@ func main() {
 	heartbeatAckTimeoutSec := flag.Int("heartbeat-ack-timeout-seconds",
 		envIntOr("LENNY_ADAPTER_HEARTBEAT_ACK_TIMEOUT_SECONDS", 10),
 		"§28.5.3 window (seconds) the runtime has to answer a heartbeat before the adapter considers it hung and ends the session's stream; the runtime process receives no signal. Default 10s.")
+	sessionStartAckTimeout := flag.Duration("session-start-ack-timeout",
+		runtimekit.DefaultSessionStartAckTimeout,
+		"§28.5.3 bound on a session start's wait for the runtime's session_started answer to its session_start, used when the runtime's CH-RUNTIMEOPS connection completed its capability handshake; the wait also ends at the starting request's deadline. It also bounds a session-scoped CH-RUNTIMEOPS frame's wait for that answer when the frame has no bound of its own.")
 	workspaceSizeLimitBytes := flag.Int64("workspace-size-limit-bytes",
 		envInt64Or("LENNY_WORKSPACE_SIZE_LIMIT_BYTES", 0),
 		"§4.4 hard workspace size limit: a checkpoint whose probed workspace exceeds this many bytes is aborted before any grant is minted. 0 disables the limit (the kubelet emptyDir guard is the backstop).")
@@ -342,6 +346,7 @@ func main() {
 	// A zero interval disables the probe.
 	adapterSrv.HeartbeatInterval = time.Duration(*heartbeatIntervalSec) * time.Second
 	adapterSrv.HeartbeatAckTimeout = time.Duration(*heartbeatAckTimeoutSec) * time.Second
+	adapterSrv.SessionStartAckTimeout = *sessionStartAckTimeout
 	// §6.4: decode the inline shared-asset set the controller
 	// rendered onto --shared-assets so EnsureWarmWorkspaceLayout can
 	// materialize it into the read-only /workspace/shared tree.
@@ -390,6 +395,12 @@ func main() {
 	// §15.4: the adapter manifest is written into /run/lenny alongside
 	// the credential file.
 	adapterSrv.ManifestDir = *credentialsDir
+	// §4.7.11 Runtime connection handshake: both runtime listeners compare
+	// each accepted connection's nonce line with the mcpNonce of the
+	// manifest published in ManifestDir at that moment. They are bound here,
+	// before any start publishes a manifest, so they take a provider rather
+	// than a value.
+	runtimeNonce := adapter.PublishedManifestNonce(adapterSrv.ManifestDir)
 	// §4.7: the manifest's observability object points an OTel-emitting
 	// runtime at the deployment's OTLP collector.
 	adapterSrv.OTLPEndpoint = *otlpEndpoint
@@ -399,7 +410,7 @@ func main() {
 		// §4.7 sidecar model: bind the abstract socket the runtime
 		// container dials. The controller sets LENNY_ADAPTER_SOCKET on
 		// the runtime container to this same name.
-		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth)
+		sp, err := adapter.NewSocketRuntimeProcess(*runtimeSocket, peerAuth, runtimeNonce)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
@@ -423,7 +434,7 @@ func main() {
 	// advertises it in the session manifest.
 	var lifecycle *adapter.RuntimeOps
 	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth)
+		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket, peerAuth, runtimeNonce)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
@@ -435,10 +446,9 @@ func main() {
 	// adapterSrv.Usage so ReportUsage stops returning Unimplemented in
 	// production (F-15.3.7), and, when CH-RUNTIMEOPS is configured,
 	// wire the token sink that folds each llm_request_completed frame's
-	// direct-mode token counts into it. The sink resolves the session at
-	// fold time via SoleSessionID, which names a session only while the
-	// pod's shared runtime process has been given no other, so a fold is
-	// never charged to a co-tenant's budget.
+	// direct-mode token counts into it. Each frame names its session, and
+	// the sink folds only for a session bound to the pod, so a fold is
+	// never charged to a session the pod does not serve.
 	//
 	// This runs before the lifecycle Run goroutine is launched below, so
 	// the sink is assigned to the lock-free RuntimeOps.usage field
@@ -471,12 +481,9 @@ func main() {
 		// SDK down within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s),
 		// force-terminating it on overrun, so it is not abandoned
 		// mid-connection and cannot leak credentials or hold provider
-		// connections open. A no-op for a pod-warm pod.
-		adapterSrv.ShutdownDemoteSDK(adapter.DemoteTimeoutFromEnv())
-		if lifecycle != nil {
-			_ = lifecycle.Close()
-		}
-		srv.GracefulStop()
+		// connections open. The exit path then closes CH-RUNTIMEOPS and
+		// stops the server, writing no session frame of its own (§28.5.3).
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
 	}()
 
 	log.Printf("lenny-adapter: serving the adapter on %s (tls=%t)", *addr, tlsOpt != nil)

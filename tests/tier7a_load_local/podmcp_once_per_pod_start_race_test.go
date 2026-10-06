@@ -34,11 +34,13 @@
 // that its nonce opens both of the pod's intra-pod sockets, which is what
 // a loser that cancelled and rebound the winner's servers breaks. The
 // sockets also refuse a nonce no start published, and the surviving
-// document, whichever of the two rewrites landed last, names one of the
-// two starting sessions, carries a nonce, and names those two sockets.
+// document, whichever of the two rewrites landed last, carries a nonce and
+// names those two sockets. Each start's own identity reaches the runtime in that start's
+// session_start frame, and the case asserts each session received exactly
+// one, naming it.
 //
 // spec: §4.7 (session start), §15.4.3 (intra-pod MCP surface, nonce
-// handshake).
+// handshake), §28.5.3 (CH-MSGSOCK, Inbound: session_start).
 package tier7a_load_local_test
 
 import (
@@ -165,7 +167,7 @@ func nonceAuthenticates(t *testing.T, socket, nonce string) bool {
 
 // racedManifest reads the one pod-global manifest both starts wrote. Each
 // start publishes the file as one whole document, so whichever write
-// landed last the file decodes as exactly that session's manifest and the
+// landed last the file decodes as exactly that start's manifest and the
 // incumbent's values do not survive. A residue that decodes as neither is
 // a publication defect and fails the case here.
 func racedManifest(t *testing.T, s *adapter.Server) *adapter.Manifest {
@@ -176,9 +178,35 @@ func racedManifest(t *testing.T, s *adapter.Server) *adapter.Manifest {
 		t.Fatalf("read adapter manifest: %v", err)
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatalf("the manifest the two concurrent starts rewrote does not decode as one session's document: %v", err)
+		t.Fatalf("the manifest the two concurrent starts rewrote does not decode as one start's document: %v", err)
 	}
 	return &m
+}
+
+// assertOneSessionStart asserts that the runtime received exactly one
+// session_start for sessionID and that the frame names that session. The
+// manifest is pod-scoped and names no session, so the frame is where a
+// start's identity reaches the runtime.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start; Session frame writes).
+func assertOneSessionStart(t *testing.T, rt *gatedRuntime, sessionID string) {
+	t.Helper()
+	if rt == nil {
+		t.Fatal("the race pod's runtime is not the recording gatedRuntime")
+	}
+	frames := rt.sessionStartFrames(sessionID)
+	if len(frames) != 1 {
+		t.Fatalf("session_start frames written for %s = %d, want 1", sessionID, len(frames))
+	}
+	var f struct {
+		SessionID string `json:"sessionId"`
+		StartID   string `json:"startId"`
+	}
+	if err := json.Unmarshal(frames[0], &f); err != nil {
+		t.Fatalf("decode %s session_start: %v", sessionID, err)
+	}
+	if f.SessionID != sessionID || f.StartID == "" {
+		t.Errorf("%s session_start = %s, want sessionId %q and a startId", sessionID, frames[0], sessionID)
+	}
 }
 
 // podConnectorSocket is the intra-pod socket the adapter opens for the
@@ -190,7 +218,8 @@ func podConnectorSocket(platformSocket string) string {
 	return filepath.Join(filepath.Dir(platformSocket), "lenny-connector-"+raceConnectorID+".sock")
 }
 
-// spec: 4.7 (session start), 15.4.3 (once-per-pod intra-pod MCP arming)
+// spec: 4.7 (session start), 15.4.3 (once-per-pod intra-pod MCP arming),
+// 28.5.3 (CH-MSGSOCK, Inbound: session_start)
 // diagnosis: two starts admitted onto one pod at once did not agree on
 // which of them arms the pod's MCP sockets. A start that returns
 // "start platform MCP server" lost a bind race the claim was supposed to
@@ -301,13 +330,16 @@ func podMCPStartRaceAttempt(t *testing.T, second string) {
 	if !nonceAuthenticates(t, connectorSocket, armedNonce) {
 		t.Error("the pod's connector MCP socket does not answer the nonce its arming start published, so the two surfaces were armed by different starts")
 	}
-	m := racedManifest(t, s)
-	// The surviving document is whichever write landed last. It names a
-	// starting session, carries that session's nonce, and names the pod's
-	// two intra-pod sockets.
-	if m.SessionID != "alice" && m.SessionID != "bob" {
-		t.Errorf("manifest sessionId = %q, want one of the two starting sessions", m.SessionID)
+	// Each racing start opened its session on the runtime with its own
+	// session_start frame, which carries the session's identity whichever
+	// manifest rewrite survived.
+	rt, _ := s.Runtime.(*gatedRuntime)
+	for _, id := range []string{"alice", "bob"} {
+		assertOneSessionStart(t, rt, id)
 	}
+	m := racedManifest(t, s)
+	// The surviving document is whichever write landed last. It carries a
+	// nonce and names the pod's two intra-pod sockets.
 	if m.MCPNonce == "" {
 		t.Error("the manifest carries no MCP nonce after both starts returned")
 	}

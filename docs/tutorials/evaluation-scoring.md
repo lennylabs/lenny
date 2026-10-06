@@ -50,7 +50,7 @@ Runtimes register their tracing identifiers via:
 }
 ```
 
-The gateway automatically attaches the parent's `tracingContext` to child delegation leases. Child runtimes see these identifiers in their adapter manifest and can use them to link their traces to the parent's trace tree.
+The gateway automatically attaches the parent's `tracingContext` to child delegation leases. A child runtime receives these identifiers in the `tracingContext` member of the child session's `session_start` frame and can use them to link their traces to the parent's trace tree.
 
 ---
 
@@ -122,12 +122,15 @@ This creates a new session that replays the original session's prompt history ag
 
 The steps above work without any experiments. If you are also routing traffic between variants (via Lenny's basic variant assigner or an external experimentation platform), evaluation connects with variant context in two ways:
 
-### Variant context in the adapter manifest
+### Variant context in the session's start frame
 
-When a session is routed to a variant, the adapter manifest includes an `experimentContext` field:
+When a session is routed to a variant, the session's `session_start` frame includes an `experimentContext` field:
 
 ```json
 {
+  "type": "session_start",
+  "sessionId": "sess_abc",
+  "startId": "st_1",
   "experimentContext": {
     "experimentId": "claude-v2-rollout",
     "variantId": "candidate",
@@ -136,7 +139,7 @@ When a session is routed to a variant, the adapter manifest includes an `experim
 }
 ```
 
-Runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. The runtime reads `experimentId` and `variantId` from the manifest and includes them as metadata on its eval traces.
+Runtimes can use this to tag traces with variant metadata for filtering and grouping in their eval platform. The runtime reads `experimentId` and `variantId` from the session's `session_start` frame and includes them as metadata on that session's eval traces. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines the frame.
 
 Variant comparison in eval platforms (LangSmith, Braintrust, W&B) works via metadata filtering and grouping in those platforms' UIs — they don't have native A/B comparison features. For statistical rigor (significance testing, confidence intervals, winner recommendation), bring in a dedicated experimentation platform (LaunchDarkly, Statsig, Unleash) — Lenny integrates with any OpenFeature-compatible provider. See SPEC Section 10.7 "Full A/B testing with external platforms" for the three-platform integration pattern.
 
@@ -191,7 +194,7 @@ This returns per-variant aggregation for scores stored via the built-in `/eval` 
 - **Basic score storage** (`/eval` endpoint): a database-backed mechanism to persist scores alongside session state. Use it if it fits; replace it or ignore it otherwise.
 - Eval is independent of experimentation: any session can be scored, with or without an active variant pool.
 - Cross-delegation tracing: `tracingContext` propagation supports trace stitching across delegation chains in external eval platforms — works for any multi-agent delegation, not only experiments.
-- Variant context delivery (optional): When a session is routed to a variant, the adapter manifest includes `experimentContext` so runtimes can tag traces with variant metadata for filtering and grouping.
+- Variant context delivery (optional): When a session is routed to a variant, the session's `session_start` frame includes `experimentContext` so runtimes can tag traces with variant metadata for filtering and grouping.
 - Session replay: Replaying sessions against different runtimes provides controlled comparison, with or without experiments.
 - Configurable rate limits: `evalRateLimit.perSessionPerMinute` and `evalRateLimit.perTenantPerMinute` control built-in score-submission rates.
 

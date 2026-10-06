@@ -267,12 +267,13 @@ When the pod starts, the adapter:
 4. Waits for session assignment.
 5. Receives workspace files from the gateway and materializes them to `/workspace/slots/{sessionId}/current/`.
 6. Accepts the connection your binary dials. The kubelet starts your binary through the runtime image's entrypoint when the pod starts, the adapter accepts the connection at the pod's first session, and later sessions on the pod reach the same process.
-7. Delivers the first `message` on stdin.
-8. Relays your `response` from stdout to the gateway.
-9. Sends periodic `heartbeat` messages.
-10. On session end, sends your binary nothing; the process keeps serving the pod.
+7. Writes the session's `session_start` frame on stdin, before the session's first message.
+8. Delivers the first `message` on stdin.
+9. Relays your `response` from stdout to the gateway.
+10. Sends periodic `heartbeat` messages.
+11. At the session's end, writes the session's `session_end` frame on stdin; the process keeps serving the pod.
 
-Your binary does not handle any of these steps. It reads from stdin and writes to stdout, and the adapter does the rest.
+Your binary does not handle any of these steps. It reads from stdin and writes to stdout, and the adapter does the rest. The echo runtime keeps no per-session context, so it ignores `session_start` and `session_end` under its unknown-type rule. Because it also opens no CH-RUNTIMEOPS connection, it writes no `session_started` acknowledgement. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines both frames.
 
 ---
 

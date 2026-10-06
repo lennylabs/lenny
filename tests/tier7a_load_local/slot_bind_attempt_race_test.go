@@ -124,7 +124,8 @@ var tenancies = []struct {
 // a Resume ran inside it. A recorded start puts a session the registry no
 // longer holds into the shared runtime's generation for the life of the pod,
 // which empties SoleSessionID on a co-tenanted pod and keeps the pod-wide
-// MCP surface and the direct-mode token fold from ever naming the incumbent.
+// MCP surface and the control-event session stamp from ever naming the
+// incumbent.
 func TestAStartParkedInsideRuntimeStartRacesTheReclaim_spec_4_7_1(t *testing.T) {
 	arms := []struct {
 		name string
@@ -233,18 +234,30 @@ func resumeSerializesTheReclaim(t *testing.T, coTenant bool, i int) {
 // attempt re-created one under the same slot identifier with the same
 // session, so a confirmation reading only the session bound on the entry
 // records the abandoned start onto the successor, and a rollback keyed on
-// the session identifier deletes the successor's staged tree.
+// the session identifier deletes the successor's staged tree. The successor
+// either binds under a new token or reuses the abandoned attempt's token;
+// rule 8 compares entry identity, so a confirmation comparing tokens alone
+// would record the abandoned start onto a successor that reused its token.
 func TestAParkedStartRefusesTheSuccessorsEntry_spec_4_7_1(t *testing.T) {
-	for _, ten := range tenancies {
-		t.Run(ten.name, func(t *testing.T) {
-			for i := range bindRaceIterations {
-				reverseOrderingIteration(t, ten.coTenant, i)
-			}
-		})
+	successors := []struct {
+		name  string
+		token string
+	}{
+		{"new token", "attempt-2"},
+		{"reused token", "attempt-1"},
+	}
+	for _, succ := range successors {
+		for _, ten := range tenancies {
+			t.Run(succ.name+"/"+ten.name, func(t *testing.T) {
+				for i := range bindRaceIterations {
+					reverseOrderingIteration(t, ten.coTenant, succ.token, i)
+				}
+			})
+		}
 	}
 }
 
-func reverseOrderingIteration(t *testing.T, coTenant bool, i int) {
+func reverseOrderingIteration(t *testing.T, coTenant bool, successorToken string, i int) {
 	t.Helper()
 	s, rt, reporter := bindRacePod(t, coTenant)
 	if err := assignCreds(s, "alice", "attempt-1"); err != nil {
@@ -258,7 +271,7 @@ func reverseOrderingIteration(t *testing.T, coTenant bool, i int) {
 	if _, err := fencedReclaim(s, "alice", "attempt-1"); err != nil {
 		t.Fatalf("iteration %d: reclaim: %v", i, err)
 	}
-	if err := assignCreds(s, "alice", "attempt-2"); err != nil {
+	if err := assignCreds(s, "alice", successorToken); err != nil {
 		t.Fatalf("iteration %d: the successor's bind was refused after the reclaim returned: %v", i, err)
 	}
 	close(unpark)
@@ -271,7 +284,7 @@ func reverseOrderingIteration(t *testing.T, coTenant bool, i int) {
 	if n := reporter.counts()["alice"]; n != 0 {
 		t.Errorf("iteration %d: cleanup-outcome reports for alice = %d, want 0", i, n)
 	}
-	resp, err := fencedReclaim(s, "alice", "attempt-2")
+	resp, err := fencedReclaim(s, "alice", successorToken)
 	if err != nil || resp.GetSlotReclaim() != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED {
 		t.Errorf("iteration %d: reclaim naming the successor = (%v, %v), want RECLAIMED; its entry did not survive",
 			i, resp.GetSlotReclaim(), err)

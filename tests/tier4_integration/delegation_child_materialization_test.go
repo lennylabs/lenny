@@ -98,11 +98,21 @@ func materializeFixedClock() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0
 // every written envelope with a §28.5.3 response frame, so the PodExecutor
 // Attach round-trip against a materialized child returns a concrete response
 // rather than blocking. It mirrors the executor package's respondingRuntime.
+// It plays a runtime that keeps no per-session context, which ignores the
+// session_start and session_end frames the adapter writes at each start and
+// teardown (§28.5.3, CH-MSGSOCK, Inbound: session_start rule 2).
 type materializeRespondingRuntime struct{ out chan []byte }
 
 func (r *materializeRespondingRuntime) Start(context.Context, string) error { return nil }
 
-func (r *materializeRespondingRuntime) WriteEnvelope(string, []byte) error {
+func (r *materializeRespondingRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(envelope, &probe)
+	if probe.Type == "session_start" || probe.Type == "session_end" {
+		return nil
+	}
 	r.out <- []byte(`{"type":"response","text":"ack"}`)
 	return nil
 }

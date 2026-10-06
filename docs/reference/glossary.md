@@ -143,7 +143,7 @@ A score record stored via `POST /v1/sessions/{id}/eval`, with multi-dimensional 
 ### Experiment
 {: #experiment }
 
-A variant-pool configuration for runtime version rollouts, with variant pools and deterministic sticky routing. Lenny provides the infrastructure primitives (pools, routing, manifest delivery) and a basic built-in variant assigner; for anything beyond simple rollouts, integrate an external experimentation platform via OpenFeature (LaunchDarkly, Statsig, Unleash). Managed via the Admin API.
+A variant-pool configuration for runtime version rollouts, with variant pools and deterministic sticky routing. Lenny provides the infrastructure primitives (pools, routing, and variant delivery in each session's `session_start` frame) and a basic built-in variant assigner; for anything beyond simple rollouts, integrate an external experimentation platform via OpenFeature (LaunchDarkly, Statsig, Unleash). Managed via the Admin API.
 
 ### Elicitation
 {: #elicitation }

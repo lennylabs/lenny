@@ -5,6 +5,7 @@ package adapter_test
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -64,6 +65,12 @@ func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {
 	ch, err := rt.Output(context.Background(), "sess-1")
 	if err != nil {
 		t.Fatalf("Output: %v", err)
+	}
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the SDK-warm
+	// start wrote the session's session_start to the bound loop, which
+	// echoes it ahead of the ping.
+	if got := <-ch; frameTypeOf(got) != "session_start" || !strings.Contains(string(got), `"sessionId":"sess-1"`) {
+		t.Fatalf("first echoed frame = %q, want the SDK-warm start's session_start for sess-1", got)
 	}
 	if err := rt.WriteEnvelope("sess-1", []byte(`{"type":"ping"}`)); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)

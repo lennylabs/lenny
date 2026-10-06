@@ -225,7 +225,7 @@ func basicCases() []checkCase {
 		{"heartbeat_emits_ack", "15.4", checkHeartbeatAck},
 		{"unknown_type_ignored", "15.4", checkUnknownTypeIgnored},
 		{"shutdown_exits_within_deadline", "15.4", checkShutdownDeadline},
-		{"sequential_messages_handled", "15.4", checkSequentialMessages},
+		{"session_lifetime", "15.4.6", checkSessionLifetime},
 		{"response_matches_jsonl_schema", "15.4.6", checkResponseMatchesJSONLSchema},
 		{"messagepart_schema_compliance", "15.4.6", checkMessagePartSchemaCompliance},
 		{"response_error_code_in_proto_catalog", "24.8", checkResponseErrorCodeCatalog},
@@ -278,7 +278,7 @@ func emit(r Report, asJSON bool) {
 
 // driveAdapter starts the binary, sends inputLines on stdin, then closes
 // stdin. It reads up to maxLines from stdout (or until the process exits)
-// and returns the captured lines. The process is killed if it does not
+// and returns the captured lines, skipping session_started frames. The process is killed if it does not
 // exit within timeout.
 func driveAdapter(binary string, inputLines []string, maxLines int, timeout time.Duration) (stdout []string, stderr string, exitCode int, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -322,8 +322,12 @@ func driveAdapter(binary string, inputLines []string, maxLines int, timeout time
 
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 64*1024), 50*1024*1024)
-	for scanner.Scan() {
-		stdout = append(stdout, scanner.Text())
+	for {
+		line, ok := scanFrame(scanner)
+		if !ok {
+			break
+		}
+		stdout = append(stdout, line)
 		if maxLines > 0 && len(stdout) >= maxLines {
 			break
 		}
@@ -385,9 +389,9 @@ func checkEmptyStdin(binary string, timeout time.Duration, _ bool) (string, erro
 }
 
 func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose bool) (string, error) {
-	in := []string{
+	in := withSessionStart(
 		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"ping"}]}`,
-	}
+	)
 	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
 	if err != nil {
 		return "", err
@@ -426,6 +430,50 @@ func checkMessageEmitsResponse(binary string, timeout time.Duration, verbose boo
 // is handed one and echoes it back. spec: §28.5.3.
 const complianceSessionID = "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1"
 
+// complianceSessionStart is the CH-MSGSOCK session_start frame that opens
+// complianceSessionID, as the adapter writes it before any other frame
+// for the session. It omits credentialsPath, which the frame carries only
+// when a credential file was provisioned and never as an empty string.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
+const complianceSessionStart = `{"type":"session_start","sessionId":"` + complianceSessionID +
+	`","startId":"` + complianceStartID + `","experimentContext":null,"tracingContext":null,"llm":null}`
+
+// complianceStartID is the startId of complianceSessionStart, which the
+// session_started that answers it echoes.
+const complianceStartID = "compliance-1"
+
+// withSessionStart prefixes a check's stdin lines with the session_start
+// frame that opens complianceSessionID. Every check that writes a
+// session-scoped frame uses it, so the runtime holds the session before
+// it reads the session's first message or CH-RUNTIMEOPS frame.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
+func withSessionStart(lines ...string) []string {
+	return append([]string{complianceSessionStart}, lines...)
+}
+
+// isSessionStarted reports whether a stdout line is a session_started
+// frame. A runtime that keeps per-session context answers session_start
+// with one, and the battery's frame readers skip it wherever a check
+// reads stdout so a check sees the frames its assertion is about.
+// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+func isSessionStarted(line string) bool {
+	var f struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(line), &f) == nil && f.Type == "session_started"
+}
+
+// scanFrame advances s past any session_started frames and returns the
+// next stdout line. ok is false when stdout ends first.
+func scanFrame(s *bufio.Scanner) (line string, ok bool) {
+	for s.Scan() {
+		if line = s.Text(); !isSessionStarted(line) {
+			return line, true
+		}
+	}
+	return "", false
+}
+
 // checkResponseEchoesSessionID is the Basic-level echo obligation. A
 // Basic-level runtime may ignore every envelope field but `type`, `id`,
 // and `input`, with the per-session identifier excepted: it echoes the
@@ -438,9 +486,9 @@ const complianceSessionID = "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5S1"
 // diverging only on the wire.
 // spec: §15.4.3; §28.5.3.
 func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose bool) (string, error) {
-	in := []string{
+	in := withSessionStart(
 		`{"schemaVersion":1,"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5P2","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"schemaVersion":1,"type":"text","inline":"ping"}]}`,
-	}
+	)
 	stdout, _, code, err := driveAdapter(binary, in, 1, timeout)
 	if err != nil {
 		return "", err
@@ -484,7 +532,7 @@ func checkResponseEchoesSessionID(binary string, timeout time.Duration, verbose 
 // checkResponseMatchesJSONLSchema validates that the runtime's response
 // frame matches the published adapter JSONL schema. spec: §15.4.6.
 func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbose bool) (string, error) {
-	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
+	stdout, _, code, err := driveAdapter(binary, withSessionStart(canonicalMessage), 1, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -508,7 +556,7 @@ func checkResponseMatchesJSONLSchema(binary string, timeout time.Duration, verbo
 // text-shorthand response (no output array) carries no MessageParts to
 // validate and passes. spec: §15.4.6.
 func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verbose bool) (string, error) {
-	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
+	stdout, _, code, err := driveAdapter(binary, withSessionStart(canonicalMessage), 1, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -551,7 +599,7 @@ func checkMessagePartSchemaCompliance(binary string, timeout time.Duration, verb
 // a way no JSON-Schema assertion can catch. A successful response carries no
 // error and passes vacuously. spec: §24.8.
 func checkResponseErrorCodeCatalog(binary string, timeout time.Duration, verbose bool) (string, error) {
-	stdout, _, code, err := driveAdapter(binary, []string{canonicalMessage}, 1, timeout)
+	stdout, _, code, err := driveAdapter(binary, withSessionStart(canonicalMessage), 1, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -680,23 +728,4 @@ func runShutdownDeadlineCheck(binary string, deadlineMs int) (string, error) {
 		return "", fmt.Errorf("exit took %v, exceeds the %s deadline_ms", elapsed.Round(time.Millisecond), deadline)
 	}
 	return fmt.Sprintf("clean exit in %s (deadline %s)", elapsed.Round(time.Millisecond), deadline), nil
-}
-
-func checkSequentialMessages(binary string, timeout time.Duration, _ bool) (string, error) {
-	in := []string{
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A1","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A2","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"msg_01J9X0ZW1ZF7K8Q1V2T3M4N5A3","from":{"kind":"client","id":"client_alice"},"sessionId":"` + complianceSessionID + `","input":[{"type":"text","inline":"three"}]}`,
-	}
-	stdout, _, code, err := driveAdapter(binary, in, 3, timeout)
-	if err != nil {
-		return "", err
-	}
-	if code != 0 {
-		return "", fmt.Errorf("exit %d", code)
-	}
-	if len(stdout) < 3 {
-		return "", fmt.Errorf("got %d response(s), want 3", len(stdout))
-	}
-	return fmt.Sprintf("3 messages → 3 responses (%d total stdout lines)", len(stdout)), nil
 }

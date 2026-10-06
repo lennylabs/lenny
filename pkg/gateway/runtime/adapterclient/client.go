@@ -172,10 +172,11 @@ func (c *Client) GetObservedIntegrationLevel(ctx context.Context, waitMs int32) 
 	return resp.GetObservedLevel(), nil
 }
 
-// StartSessionParams carries the §15.4 adapter-manifest inputs the
-// gateway delivers to a pod's runtime at session start. SessionID and
-// Runtime are required; the rest populate the §4.7 manifest fields and may
-// be zero.
+// StartSessionParams carries the inputs the gateway delivers to a pod's
+// runtime at session start. SessionID and Runtime are required; the rest
+// may be zero. AgentInterface and MinPlatformVersion populate the §4.7
+// manifest fields, and the experiment and tracing context reach the
+// runtime in the session's session_start frame on CH-MSGSOCK (§28.5.3).
 type StartSessionParams struct {
 	SessionID string
 	Runtime   string
@@ -195,8 +196,10 @@ type StartSessionParams struct {
 
 // StartSession starts the runtime on a pod whose workspace is already
 // materialized by FinalizeWorkspace and whose setup commands are already
-// run by RunSetup (§4.7, the final session-assignment RPC). The params
-// populate the §15.4 adapter manifest the runtime reads at startup.
+// run by RunSetup (§4.7, the final session-assignment RPC). AgentInterface
+// and MinPlatformVersion populate the §15.4 pod-scoped adapter manifest.
+// The session identifier and the experiment and tracing context reach the
+// runtime in the session's session_start frame on CH-MSGSOCK (§28.5.3).
 func (c *Client) StartSession(ctx context.Context, p StartSessionParams) error {
 	req := &adapterv1.StartSessionRequest{
 		SessionId:          &adapterv1.SessionId{Value: p.SessionID},

@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // scrubConformanceRuntime is a minimal RuntimeProcess double for the
@@ -162,8 +163,10 @@ type onceDialingRuntime struct {
 // dialRuntimeOnce dials the adapter's runtime socket the way runtimekit
 // does (an "@"-prefixed address maps to a leading NUL) and starts the
 // reader. The listener is bound at construction, so the dial completes
-// into the accept backlog before the first Start accepts it.
-func dialRuntimeOnce(t *testing.T, socket string) *onceDialingRuntime {
+// into the accept backlog before the first Start accepts it. The first line
+// is the nonce line carrying nonce. spec: 4.7.11 (Runtime connection
+// handshake).
+func dialRuntimeOnce(t *testing.T, socket, nonce string) *onceDialingRuntime {
 	t.Helper()
 	addr := socket
 	if strings.HasPrefix(socket, "@") {
@@ -175,6 +178,9 @@ func dialRuntimeOnce(t *testing.T, socket string) *onceDialingRuntime {
 	conn, err := d.DialContext(ctx, "unix", addr)
 	if err != nil {
 		t.Fatalf("dial runtime socket %q: %v", socket, err)
+	}
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
 	}
 	r := &onceDialingRuntime{conn: conn, frames: make(chan string, 16)}
 	t.Cleanup(func() { _ = conn.Close() })
@@ -255,6 +261,7 @@ func conformanceRuntimeSocket(t *testing.T) string {
 type socketRecycleFixture struct {
 	server   *adapter.Server
 	sp       *adapter.SocketRuntimeProcess
+	nonce    string
 	ops      *scrubConformanceOps
 	reporter *scrubConformanceReporter
 	done     chan struct{}
@@ -265,7 +272,8 @@ type socketRecycleFixture struct {
 // would run far past the bounds the cases assert.
 func newSocketRecycleFixture(t *testing.T) *socketRecycleFixture {
 	t.Helper()
-	sp, err := adapter.NewSocketRuntimeProcess(conformanceRuntimeSocket(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	manifest := runtimenonce.Publish(t, nil)
+	sp, err := adapter.NewSocketRuntimeProcess(conformanceRuntimeSocket(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)
 	}
@@ -273,6 +281,7 @@ func newSocketRecycleFixture(t *testing.T) *socketRecycleFixture {
 	sp.AcceptTimeout = 30 * time.Second
 
 	f := &socketRecycleFixture{
+		nonce:    manifest.Nonce,
 		sp:       sp,
 		ops:      &scrubConformanceOps{},
 		reporter: &scrubConformanceReporter{},
@@ -372,7 +381,7 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 	// Server in-process, so it needs no `go build` and no Go-toolchain guard.
 	const podID = "pod-recycle-01"
 	f := newSocketRecycleFixture(t)
-	rt := dialRuntimeOnce(t, f.sp.SocketPath())
+	rt := dialRuntimeOnce(t, f.sp.SocketPath(), f.nonce)
 
 	// A session is bound and served before the recycle Shutdown arrives.
 	f.startSession(t, "sess-1")
@@ -437,7 +446,7 @@ func TestRecycleScrubShutdownConformance(t *testing.T) {
 func TestRecycleScrubRuntimeNotLiveConformance(t *testing.T) {
 	const podID = "pod-recycle-not-live"
 	f := newSocketRecycleFixture(t)
-	rt := dialRuntimeOnce(t, f.sp.SocketPath())
+	rt := dialRuntimeOnce(t, f.sp.SocketPath(), f.nonce)
 
 	f.startSession(t, "sess-1")
 	f.sendMessage(t, "sess-1")

@@ -7,7 +7,12 @@
 // tools/list and tools/call.
 
 import type { Socket } from "node:net";
-import { LineReader, dialUnixSocket } from "./transport.js";
+import {
+  LineReader,
+  challengeOf,
+  challengeResponseLine,
+  dialUnixSocket,
+} from "./transport.js";
 import type {
   AdapterManifest,
   MCPConnection,
@@ -73,11 +78,15 @@ export class McpClient implements MCPConnection {
     const reader = new LineReader(conn);
     const client = new McpClient(conn, reader);
     try {
-      await client.call("initialize", {
-        [NONCE_PARAM_KEY]: nonce,
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        clientInfo: { name: clientName, version: "1.0.0" },
-      });
+      await client.call(
+        "initialize",
+        {
+          [NONCE_PARAM_KEY]: nonce,
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          clientInfo: { name: clientName, version: "1.0.0" },
+        },
+        nonce,
+      );
       await client.call("tools/list", {});
     } catch (err) {
       conn.destroy();
@@ -86,9 +95,20 @@ export class McpClient implements MCPConnection {
     return client;
   }
 
-  // call sends one JSON-RPC request and reads the matching response.
-  async call(method: string, params: unknown): Promise<unknown> {
-    const run = this.pending.then(() => this.callLocked(method, params));
+  // call sends one JSON-RPC request and reads the matching response. When
+  // challengeNonce is set, a _lennyChallenge that arrives in place of the
+  // response is answered with the HMAC keyed by that nonce, and the
+  // response is read after it. connect sets it on initialize, where a
+  // nonce-only MCP server issues the challenge.
+  // spec: §4.7.11 (Nonce-only fallback).
+  async call(
+    method: string,
+    params: unknown,
+    challengeNonce?: string,
+  ): Promise<unknown> {
+    const run = this.pending.then(() =>
+      this.callLocked(method, params, challengeNonce),
+    );
     this.pending = run.then(
       () => undefined,
       () => undefined,
@@ -96,15 +116,21 @@ export class McpClient implements MCPConnection {
     return run;
   }
 
-  private async callLocked(method: string, params: unknown): Promise<unknown> {
+  private async callLocked(
+    method: string,
+    params: unknown,
+    challengeNonce?: string,
+  ): Promise<unknown> {
     const id = ++this.nextId;
     const request = { jsonrpc: "2.0", id, method, params };
-    await new Promise<void>((resolve, reject) => {
-      this.conn.write(JSON.stringify(request) + "\n", (err) =>
-        err ? reject(err) : resolve(),
-      );
-    });
-    const line = await this.reader.next();
+    await this.writeLine(JSON.stringify(request) + "\n");
+    let line = await this.reader.next();
+    const challenge =
+      challengeNonce !== undefined && line !== null ? challengeOf(line) : null;
+    if (challenge !== null && challengeNonce !== undefined) {
+      await this.writeLine(challengeResponseLine(challengeNonce, challenge));
+      line = await this.reader.next();
+    }
     if (line === null) {
       throw new Error(`${method}: MCP server closed the connection`);
     }
@@ -120,6 +146,13 @@ export class McpClient implements MCPConnection {
       );
     }
     return resp.result;
+  }
+
+  // writeLine writes one newline-terminated line to the connection.
+  private writeLine(line: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.conn.write(line, (err) => (err ? reject(err) : resolve()));
+    });
   }
 
   // callTool invokes one MCP tool via tools/call and returns the raw

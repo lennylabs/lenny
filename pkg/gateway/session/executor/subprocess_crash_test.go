@@ -16,11 +16,13 @@ import (
 )
 
 // writeRuntimeScript drops an executable POSIX sh runtime that consumes
-// the inbound message line, then runs `body`.
+// the session_start the executor opens a Send-spawned child with and the
+// inbound message line, then runs `body`. Reading both lines before exiting
+// keeps the message write from racing the child's exit.
 func writeRuntimeScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "runtime.sh")
-	script := "#!/bin/sh\nread line\n" + body + "\n"
+	script := "#!/bin/sh\nread start\nread line\n" + body + "\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write runtime script: %v", err)
 	}

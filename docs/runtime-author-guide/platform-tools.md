@@ -35,6 +35,8 @@ Before calling any platform tool, connect to the platform MCP server:
 
 5. Call `tools/list` to discover available tools.
 
+The `_lennyNonce` member of `initialize` is the form the nonce takes on an MCP connection. The other runtime sockets, the message channel when your binary dials it as a socket and the CH-RUNTIMEOPS, take the same `mcpNonce` as a first line on the connection, `{"_lennyNonce":"<nonce_hex>"}`, checked once when the adapter accepts the connection. For those sockets, wait for the manifest before dialing, answer a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection before that frame. The [Adapter Contract](../reference/adapter-contract.md#connection-handshake) states the handshake in full.
+
 ---
 
 ## Tool Reference

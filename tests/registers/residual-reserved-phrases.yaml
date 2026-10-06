@@ -108,18 +108,6 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      cmd/lenny-ctl/runtimescaffold/templates/python-chat.main.py.tmpl: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      cmd/lenny-ctl/runtimescaffold/templates/python-coding.main.py.tmpl: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
       cmd/lenny-ctl/runtimescaffold/templates/runtime-binary.yaml.tmpl: lifecycle channel
     class: reserved-phrases
     disposition: excluded
@@ -133,12 +121,6 @@ entries:
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
       cmd/lenny-ctl/runtimescaffold/templates/runtime-coding.yaml.tmpl: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      cmd/lenny-ctl/runtimescaffold/templates/typescript-chat.main.ts.tmpl: lifecycle channel
     class: reserved-phrases
     disposition: excluded
     reason: |-
@@ -168,103 +150,7 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      sdks/runtime/python/lenny_runtime/__init__.py: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/examples/lifecycle.py: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/lifecycle.py: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/lifecycle.py: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/runtime.py: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/runtime.py: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/types.py: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/python/lenny_runtime/types.py: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
       sdks/runtime/python/pyproject.toml: lifecycle channels
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/examples/lifecycle/main.ts: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/index.ts: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/lifecycle.ts: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/lifecycle.ts: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/runtime.ts: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/runtime.ts: lifecycle-channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/types.ts: lifecycle channel
-    class: reserved-phrases
-    disposition: excluded
-    reason: |-
-      a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
-  - member: |-
-      sdks/runtime/typescript/src/types.ts: lifecycle-channel
     class: reserved-phrases
     disposition: excluded
     reason: |-

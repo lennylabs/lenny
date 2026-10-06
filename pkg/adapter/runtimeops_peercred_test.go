@@ -6,8 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
-	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -42,7 +40,7 @@ func (b *syncBuffer) String() string {
 func runRuntimeOps(t *testing.T, auth SocketPeerAuth, configure func(*RuntimeOps)) (*RuntimeOps, string) {
 	t.Helper()
 	sock := shortSocketName(t, "ops.sock")
-	lc, err := NewRuntimeOps(sock, auth)
+	lc, err := newTestRuntimeOps(t, sock, auth)
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -68,6 +66,9 @@ func dialOps(t *testing.T, sock string) *fakeRuntime {
 		t.Fatalf("dial CH-RUNTIMEOPS: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	// A refused connection can be closed before the line goes out; the read
+	// that follows observes the close, so a write error is not fatal here.
+	_ = writeTestListenerNonce(conn, sock)
 	return &fakeRuntime{t: t, conn: conn, r: bufio.NewReader(conn)}
 }
 
@@ -76,8 +77,8 @@ func dialOps(t *testing.T, sock string) *fakeRuntime {
 func requireOpsRefused(t *testing.T, fr *fakeRuntime, which string) {
 	t.Helper()
 	_ = fr.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if n, err := fr.conn.Read(make([]byte, 1)); n != 0 || !errors.Is(err, io.EOF) {
-		t.Fatalf("%s: read = (%d, %v), want (0, EOF)", which, n, err)
+	if n, err := fr.conn.Read(make([]byte, 1)); n != 0 || !isClosedByAdapter(err) {
+		t.Fatalf("%s: read = (%d, %v), want (0, EOF or reset)", which, n, err)
 	}
 }
 
@@ -137,7 +138,13 @@ func TestRuntimeOpsNonceOnlyAndEmbeddedPosturesApplyNoPeerCheck_spec_4_7_11(t *t
 					return 4242, nil
 				}
 			})
-			requireOpsServed(t, dialOps(t, sock), name+" peer")
+			fr := dialOps(t, sock)
+			if auth.NonceOnly {
+				// Nonce-only mode follows the nonce line with a challenge.
+				// spec: 4.7.11 (Runtime connection handshake).
+				answerTestChallenge(t, fr.conn, fr.r, sock)
+			}
+			requireOpsServed(t, fr, name+" peer")
 		})
 	}
 }

@@ -1,5 +1,6 @@
 {
   "type": "interrupt_request",
+  "sessionId": "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0",
   "interruptId": "int_01HX9F1Z9G0KCQNVT2RDPYHR3X",
   "deadlineMs": 2000
 }

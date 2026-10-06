@@ -108,6 +108,14 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// A barrier-window checkpoint runs through the same lock; the barrier's
 	// quiescence has already drained dispatch, so the lock is uncontended
 	// there by construction.
+	//
+	// The checkpoint_request and checkpoint_complete frames this stream
+	// writes wait for the session's session_started, and the wait runs
+	// here, before the op lock, because a wait under s.ops would block
+	// every co-tenant's checkpoint and interrupt.
+	if err := s.awaitCheckpointGate(ctx, slot, start); err != nil {
+		return err
+	}
 	release, err := s.ops.Begin(ctx, opCheckpoint, sessionID)
 	if err != nil {
 		// A busy lock is a gateway-side abort of this attempt; the gateway
@@ -158,13 +166,33 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// runtime stays quiesced for the whole chunked archive, and the completion
 	// frame carries status ok only when Summary is reached; a terminal Failed
 	// frame or a gateway Abort completes with status failed and the reason.
+	// Both frames name the session the stream checkpoints, so a runtime
+	// holding several sessions quiesces only this one.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	//
+	// The entry's acknowledgement gate is read again after the op lock is
+	// held, without waiting: the stream can queue behind a co-tenant's whole
+	// upload, and the session can end in that interval. The deferred
+	// checkpoint_complete reads the same entry's gate, also without waiting,
+	// because it runs before the deferred release of the op lock: a wait
+	// there would hold s.ops, and stall every co-tenant's checkpoint and
+	// interrupt, for as long as the unbounded stream context lives. A read
+	// or not-awaiting gate still admits the frame on the abort path, and a
+	// session that ended or restarted during the upload receives none.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	completeStatus, completeReason := "ok", ""
 	if s.Lifecycle != nil {
-		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
+		if gerr := s.sessionStartedNow(slot); gerr != nil {
+			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", gerr)
+		}
+		if rerr := s.Lifecycle.RequestCheckpoint(ctx, sessionID, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
 			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
 		}
 		defer func() {
-			_ = s.Lifecycle.CompleteCheckpoint(start.GetCheckpointId(), completeStatus, completeReason)
+			if s.sessionStartedNow(slot) != nil {
+				return
+			}
+			_ = s.Lifecycle.CompleteCheckpoint(sessionID, start.GetCheckpointId(), completeStatus, completeReason)
 		}()
 	}
 
@@ -175,6 +203,27 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	}
 	if failReason != "" {
 		completeStatus, completeReason = "failed", failReason
+	}
+	return nil
+}
+
+// awaitCheckpointGate waits, before the op lock, for the session_started
+// that orders this stream's CH-RUNTIMEOPS frames. The wait is bounded by
+// the stream's deadline_ms, because the handler has no deadline context of
+// its own, or by SessionStartAckTimeout when deadline_ms is zero. A gate
+// that does not admit the frame ends the stream as a quiesce handshake the
+// runtime did not answer does. A runtime with no CH-RUNTIMEOPS has no frame
+// to gate.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages); §28.5.3 (CH-MSGSOCK, Outbound:
+// session_started).
+func (s *Server) awaitCheckpointGate(ctx context.Context, slot *slotState, start *adapterv1.CheckpointStart) error {
+	if s.Lifecycle == nil {
+		return nil
+	}
+	wctx, cancel := s.gateBound(ctx, time.Duration(start.GetDeadlineMs())*time.Millisecond)
+	defer cancel()
+	if err := s.awaitSessionStarted(wctx, slot); err != nil {
+		return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", err)
 	}
 	return nil
 }

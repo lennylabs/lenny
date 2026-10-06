@@ -145,8 +145,6 @@ func writeManifest(t *testing.T, dir, nonce, platformSock string) string {
 	path := filepath.Join(dir, "adapter-manifest.json")
 	body, _ := json.Marshal(map[string]any{
 		"version":           1,
-		"sessionId":         "sess_test",
-		"taskId":            "task_test",
 		"mcpNonce":          nonce,
 		"platformMcpServer": map[string]any{"socket": platformSock},
 	})
@@ -159,7 +157,6 @@ func writeManifest(t *testing.T, dir, nonce, platformSock string) string {
 // delegateHandler runs the §8.5 delegation flow through the SDK tools.
 type delegateHandler struct {
 	gotTools bool
-	gotCreds bool
 }
 
 func (h *delegateHandler) OnCreate(ctx context.Context, req CreateRequest) error {
@@ -192,7 +189,7 @@ func (h *delegateHandler) OnMessage(ctx context.Context, m Message) (Reply, erro
 	return Reply{Parts: results[0].Output.Parts, Final: true}, nil
 }
 
-func (h *delegateHandler) OnTerminate(context.Context, TerminationReason) error { return nil }
+func (h *delegateHandler) OnTerminate(context.Context, string, TerminationReason) error { return nil }
 
 // TestStandardLevelDelegationFlow exercises the §8.5 delegation flow
 // through the SDK platform tool helpers against an in-process fake MCP
@@ -205,13 +202,14 @@ func TestStandardLevelDelegationFlow(t *testing.T) {
 
 	h := &delegateHandler{}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"delegate this"}]}`,
+		startFrame("sess_test", "st_1"),
+		msgFrame("sess_test", "m1", "delegate this"),
 	}, WithStandardLevel(), WithManifestPath(manifest))
 
 	if !h.gotTools {
 		t.Fatal("handler did not receive a Tools value at Standard level")
 	}
-	if len(frames) != 1 || frames[0]["type"] != "response" {
+	if len(frames) != 2 || frames[1]["type"] != "response" {
 		t.Fatalf("got %v, want a single response", frames)
 	}
 	called := strings.Join(srv.toolsCalled(), ",")
@@ -228,26 +226,29 @@ func TestStandardLevelDelegationFlow(t *testing.T) {
 func TestStandardLevelDegradesWithoutManifest(t *testing.T) {
 	h := &delegateHandler{}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"ping"}]}`,
+		startFrame("sess_test", "st_1"),
+		msgFrame("sess_test", "m1", "ping"),
 	}, WithStandardLevel(), WithManifestPath(filepath.Join(t.TempDir(), "absent.json")))
 
 	if h.gotTools {
 		t.Fatal("Tools should be nil when no manifest advertises a platform MCP server")
 	}
-	if len(frames) != 1 || frames[0]["type"] != "response" {
+	if len(frames) != 2 || frames[1]["type"] != "response" {
 		t.Fatalf("degraded runtime did not echo: %v", frames)
 	}
 }
 
-// TestManifestParsedIntoCreateRequest confirms the SDK materializes the
-// §4.7 manifest fields into the CreateRequest.
+// spec: 15.7 (SDK Handler types), 28.5.3 (CH-MSGSOCK, Inbound:
+// session_start)
+//
+// The session's identifiers come from its session_start, and the
+// pod-scoped manifest reaches the CreateRequest as the manifest snapshot
+// and the runtime options.
 func TestManifestParsedIntoCreateRequest(t *testing.T) {
 	dir := t.TempDir()
 	manifest := filepath.Join(dir, "adapter-manifest.json")
 	body, _ := json.Marshal(map[string]any{
 		"version":        1,
-		"sessionId":      "sess_abc",
-		"taskId":         "task_xyz",
 		"runtimeOptions": map[string]any{"model": "claude"},
 	})
 	if err := os.WriteFile(manifest, body, 0o600); err != nil {
@@ -256,14 +257,17 @@ func TestManifestParsedIntoCreateRequest(t *testing.T) {
 
 	var got CreateRequest
 	h := &captureHandler{onCreate: func(r CreateRequest) { got = r }}
-	runSDK(t, h, []string{`{"type":"shutdown","reason":"drain","deadline_ms":100}`},
+	runSDK(t, h, []string{startFrame("sess_abc", "st_1"), `{"type":"shutdown","reason":"drain","deadline_ms":100}`},
 		WithManifestPath(manifest))
 
-	if got.SessionID != "sess_abc" || got.TaskID != "task_xyz" {
-		t.Fatalf("CreateRequest ids = %q/%q, want sess_abc/task_xyz", got.SessionID, got.TaskID)
+	if got.SessionID != "sess_abc" || got.TaskID != "sess_abc" {
+		t.Fatalf("CreateRequest ids = %q/%q, want sess_abc/sess_abc", got.SessionID, got.TaskID)
 	}
 	if got.RuntimeOptions["model"] != "claude" {
 		t.Fatalf("RuntimeOptions = %v, want model=claude", got.RuntimeOptions)
+	}
+	if got.ManifestSnapshot == nil || got.ManifestSnapshot.Version != 1 {
+		t.Fatalf("ManifestSnapshot = %+v, want the parsed manifest", got.ManifestSnapshot)
 	}
 }
 
@@ -283,30 +287,33 @@ func (h *captureHandler) OnMessage(_ context.Context, m Message) (Reply, error) 
 	return Reply{Parts: m.Envelope.Input, Final: true}, nil
 }
 
-func (h *captureHandler) OnTerminate(context.Context, TerminationReason) error { return nil }
+func (h *captureHandler) OnTerminate(context.Context, string, TerminationReason) error { return nil }
 
-// TestCredentialBundleParsed confirms the SDK parses the §4.7 credential
-// file into the CreateRequest.
+// spec: 28.5.3 (CH-MSGSOCK, Inbound: session_start credentialsPath),
+// 4.7.11 (item 4, runtime credential file contract)
+//
+// The SDK decodes the credential file the session_start names, in the
+// providers layout, into the CreateRequest.
 func TestCredentialBundleParsed(t *testing.T) {
-	dir := t.TempDir()
-	credPath := filepath.Join(dir, "credentials.json")
-	body, _ := json.Marshal(map[string]any{
-		"mode": "direct", "provider": "anthropic", "leaseId": "lease_1", "apiKey": "sk-test",
-	})
-	if err := os.WriteFile(credPath, body, 0o600); err != nil {
-		t.Fatalf("write credentials: %v", err)
-	}
+	credPath := writeProviderBundle(t, t.TempDir(), "credentials.json", "anthropic")
 
 	var got CreateRequest
 	h := &captureHandler{onCreate: func(r CreateRequest) { got = r }}
-	runSDK(t, h, []string{`{"type":"shutdown","reason":"drain","deadline_ms":100}`},
-		WithCredentialsPath(credPath))
+	runSDK(t, h, []string{
+		`{"type":"session_start","sessionId":"sess_a","startId":"st_1","credentialsPath":"` + credPath + `"}`,
+		`{"type":"shutdown","reason":"drain","deadline_ms":100}`,
+	})
 
-	if got.Credentials == nil {
-		t.Fatal("CreateRequest.Credentials is nil; the credential file was not parsed")
+	if got.Credentials == nil || len(got.Credentials.Providers) != 1 {
+		t.Fatalf("CreateRequest.Credentials = %+v, want one providers entry", got.Credentials)
 	}
-	if got.Credentials.Provider != "anthropic" || got.Credentials.APIKey != "sk-test" {
-		t.Fatalf("credential bundle = %+v", got.Credentials)
+	p := got.Credentials.Providers[0]
+	if p.Provider != "anthropic" || p.LeaseID != "lease_anthropic" || p.DeliveryMode != "direct" || p.ExpiresAt == "" {
+		t.Fatalf("providers[0] = %+v", p)
+	}
+	var cfg map[string]string
+	if err := json.Unmarshal(p.MaterializedConfig, &cfg); err != nil || cfg["apiKey"] != "sk-anthropic" {
+		t.Fatalf("materializedConfig = %s (%v), want the raw entry object", p.MaterializedConfig, err)
 	}
 }
 

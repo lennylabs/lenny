@@ -128,7 +128,8 @@ func NewLifecycleClient(opts LifecycleClientOptions) *LifecycleClient {
 }
 
 // HandleCheckpointRequest acknowledges a `checkpoint_request` frame
-// from the adapter. The flow is:
+// from the adapter for sessionID, the session the frame names. The flow
+// is:
 //
 //  1. Invoke `handler` to drive the runtime's quiesce path.
 //  2. On handler success, write `checkpoint_ready` and start the
@@ -141,8 +142,13 @@ func NewLifecycleClient(opts LifecycleClientOptions) *LifecycleClient {
 // other lifecycle frames arrive concurrently.
 //
 // spec: §4.4 — runtime-side `checkpoint_ready` plus the
-// autonomous-resume contract.
-func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, checkpointID string, deadlineMs int32, handler CheckpointHandler) error {
+// autonomous-resume contract; §28.5.3 (CH-RUNTIMEOPS, Messages) — the
+// frame is session-scoped, so the failure frame names the session and
+// `checkpoint_ready` stays correlated by checkpointId.
+func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, sessionID, checkpointID string, deadlineMs int32, handler CheckpointHandler) error {
+	if sessionID == "" {
+		return errors.New("runtimekit: checkpoint_request missing sessionId")
+	}
 	if checkpointID == "" {
 		return errors.New("runtimekit: checkpoint_request missing checkpointId")
 	}
@@ -153,6 +159,7 @@ func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, checkpoin
 			// timer because there is no `checkpoint_ready` outstanding.
 			return c.writeFrame(map[string]any{
 				"type":         "checkpoint_complete",
+				"sessionId":    sessionID,
 				"checkpointId": checkpointID,
 				"status":       "failed",
 				"reason":       err.Error(),

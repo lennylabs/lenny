@@ -24,7 +24,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sync/atomic"
 
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
@@ -37,10 +36,9 @@ const (
 
 // lifecycleHandler is a Full-level runtime.Handler. The message path is
 // a plain echo; the Full-level behavior lives in the lifecycle hooks
-// passed to runtime.Run.
-type lifecycleHandler struct {
-	seq atomic.Uint64
-}
+// passed to runtime.Run, each of which names the session its event
+// concerns.
+type lifecycleHandler struct{}
 
 // OnCreate has no task-scoped setup.
 func (h *lifecycleHandler) OnCreate(context.Context, runtime.CreateRequest) error {
@@ -49,7 +47,7 @@ func (h *lifecycleHandler) OnCreate(context.Context, runtime.CreateRequest) erro
 
 // OnMessage echoes the inbound parts.
 func (h *lifecycleHandler) OnMessage(_ context.Context, msg runtime.Message) (runtime.Reply, error) {
-	n := h.seq.Add(1)
+	n := msg.Sequence
 	in := msg.Envelope.Input
 	out := make([]runtime.MessagePart, 0, len(in))
 	for _, p := range in {
@@ -63,7 +61,7 @@ func (h *lifecycleHandler) OnMessage(_ context.Context, msg runtime.Message) (ru
 }
 
 // OnTerminate has no teardown.
-func (h *lifecycleHandler) OnTerminate(context.Context, runtime.TerminationReason) error {
+func (h *lifecycleHandler) OnTerminate(context.Context, string, runtime.TerminationReason) error {
 	return nil
 }
 
@@ -72,17 +70,17 @@ func main() {
 		&lifecycleHandler{},
 		runtime.WithFullLevel(),
 		runtime.WithLifecycleHandlers(
-			// A checkpoint quiesces output before the SDK replies
-			// checkpoint_ready. This echo runtime holds no streaming
-			// state, so it is quiescent immediately.
-			runtime.OnCheckpoint(func(string) error { return nil }),
-			// An interrupt brings the runtime to a safe stop point
-			// before the SDK replies interrupt_acknowledged.
-			runtime.OnInterrupt(func(string) error { return nil }),
-			// On rotation the SDK has already re-read the credential
-			// file; a real runtime rebinds its upstream client to the
-			// refreshed bundle here.
-			runtime.OnCredentialsRotated(func(*runtime.CredentialBundle) {}),
+			// A checkpoint quiesces the named session's output before
+			// the SDK replies checkpoint_ready. This echo runtime holds
+			// no streaming state, so it is quiescent immediately.
+			runtime.OnCheckpoint(func(_, _ string) error { return nil }),
+			// An interrupt brings the named session's work to a safe
+			// stop point before the SDK replies interrupt_acknowledged.
+			runtime.OnInterrupt(func(_, _ string) error { return nil }),
+			// On rotation the SDK has already re-read the named
+			// session's credential file; a real runtime rebinds that
+			// session's upstream client to the refreshed bundle here.
+			runtime.OnCredentialsRotated(func(string, *runtime.CredentialBundle) {}),
 		),
 	)
 	if err == nil {

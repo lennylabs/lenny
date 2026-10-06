@@ -332,7 +332,7 @@ docker compose logs -f gateway
 
 ### Reading the sidecar's manifest
 
-The sidecar writes its manifest before your binary starts. With `docker compose`, you can read it inside the agent container:
+The sidecar writes its manifest before your binary starts. The manifest carries only pod-scoped fields, such as the socket names and `mcpNonce`; a session's own context arrives in its `session_start` frame on stdin, which the debug log above shows. A binary that dials a sidecar socket (the message channel or the CH-RUNTIMEOPS) waits for the manifest, sends `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as its first line, answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the sidecar closes the connection before that frame (see the [connection handshake](../reference/adapter-contract.md#connection-handshake)). With `docker compose`, you can read the manifest inside the agent container:
 
 ```bash
 docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
@@ -347,6 +347,7 @@ docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 | `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
 | MCP connection refused (Standard level) | You're on macOS with `make run`, where the host-side adapter has no Linux abstract Unix sockets | Use `lenny up` (the adapter runs in an in-cluster Linux pod) or `docker compose up` (the adapter runs in a Linux container) |
 | MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then; the intra-pod MCP servers are pod-wide and started at most once per pod, so a later session's manifest write does not re-arm a running server |
+| Socket connection closed before the first frame | The nonce line was missing or stale, or a nonce-only challenge went unanswered | Send the `_lennyNonce` line with the manifest's `mcpNonce` first, answer a `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the sidecar closes the connection |
 
 ---
 

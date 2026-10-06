@@ -3,12 +3,17 @@
 package adapter
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 )
+
+// maxEmbeddedFrameBytes is the largest JSONL frame the embedded transport's
+// output reader admits.
+const maxEmbeddedFrameBytes = 16 * 1024 * 1024
 
 // RuntimeLoop is the §28.5.3 JSONL processing loop a first-party runtime
 // implements for the §4.7 embedded deployment model. It is the same
@@ -48,7 +53,11 @@ type InProcessRuntime struct {
 	// outReader is the adapter's read end: Output streams frames the
 	// runtime loop wrote.
 	outReader *io.PipeReader
-	loopDone  chan struct{}
+	// hub broadcasts the loop's output to every Output subscriber. Each
+	// Start creates one, and its single reader starts at the first Output,
+	// so the loop's output stays in the pipe until a consumer subscribes.
+	hub      *linefanout.Hub
+	loopDone chan struct{}
 }
 
 // NewInProcessRuntime returns an embedded-model RuntimeProcess that runs
@@ -74,6 +83,7 @@ func (r *InProcessRuntime) Start(ctx context.Context, sessionID string) error {
 	r.session = sessionID
 	r.inWriter = inWriter
 	r.outReader = outReader
+	r.hub = linefanout.New()
 	r.loopDone = make(chan struct{})
 	done := r.loopDone
 
@@ -107,12 +117,17 @@ func (r *InProcessRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	return nil
 }
 
-// Output streams every §28.5.3 JSONL frame the runtime loop writes. The
-// channel closes when the loop returns; ctx cancellation stops the
-// reader so a stalled consumer does not leak the goroutine.
+// Output subscribes to every §28.5.3 JSONL frame the runtime loop writes.
+// One reader per loop, started at the first Output, broadcasts each frame to
+// the live subscribers, as SocketRuntimeProcess does: the Attach stream and a
+// start's session_started wait each subscribe, and a subscriber whose ctx
+// ends is removed and consumes nothing afterwards. The channel closes when
+// the loop's output ends or ctx ends.
+// spec: §28.5.3 (CH-MSGSOCK; Outbound: session_started).
 func (r *InProcessRuntime) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
 	r.mu.Lock()
 	reader := r.outReader
+	hub := r.hub
 	bound := r.session
 	r.mu.Unlock()
 	if bound != sessionID {
@@ -121,21 +136,12 @@ func (r *InProcessRuntime) Output(ctx context.Context, sessionID string) (<-chan
 	if reader == nil {
 		return nil, fmt.Errorf("adapter: embedded runtime for session %s is not started", sessionID)
 	}
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	ch := make(chan []byte)
-	go func() {
-		defer close(ch)
-		for scanner.Scan() {
-			line := append([]byte(nil), scanner.Bytes()...)
-			select {
-			case ch <- line:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
+	out, err := hub.Subscribe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adapter: embedded runtime output for session %s: %w", sessionID, err)
+	}
+	hub.Serve(reader, maxEmbeddedFrameBytes, nil)
+	return out, nil
 }
 
 // Interrupt stops the runtime loop. The embedded runtime shares the
@@ -171,6 +177,7 @@ func (r *InProcessRuntime) ForceClose() {
 	or := r.outReader
 	r.inWriter = nil
 	r.outReader = nil
+	r.hub = nil
 	r.loopDone = nil
 	r.session = ""
 	r.mu.Unlock()
@@ -191,6 +198,7 @@ func (r *InProcessRuntime) Close(_ context.Context, sessionID string) error {
 	done := r.loopDone
 	r.inWriter = nil
 	r.outReader = nil
+	r.hub = nil
 	r.loopDone = nil
 	r.session = ""
 	r.mu.Unlock()

@@ -1,5 +1,6 @@
 {
   "type": "llm_request_completed",
+  "sessionId": "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0",
   "requestId": "req_01HX9F0YWXKK0V7QZ7G6P3R5JN",
   "provider": "anthropic",
   "status": "ok",

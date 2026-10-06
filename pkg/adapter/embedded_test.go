@@ -131,3 +131,68 @@ func mustStartErr(rt *adapter.InProcessRuntime) string {
 	}
 	return err.Error()
 }
+
+// spec: 28.5.3 (CH-MSGSOCK Outbound: session_started), 28.5.3 (CH-MSGSOCK)
+// The embedded transport's Output fans the loop's output out to every live
+// subscriber. A start's session_started wait subscribes beside the Attach
+// stream, reads the acknowledgement, and cancels; the cancelled
+// subscription consumes nothing afterwards, so the first response written
+// after the wait reaches the Attach subscription. Before the fan-out, each
+// Output scanned the shared pipe itself, and the cancelled wait's reader
+// went on consuming frames meant for Attach.
+func TestInProcessRuntimeOutputFansOutPastACancelledWait_spec_28_5_3(t *testing.T) {
+	rt := adapter.NewInProcessRuntime(echoLoop)
+	if err := rt.Start(context.Background(), "s1"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer rt.Close(context.Background(), "s1")
+	assertFanOutPastCancelledWait(t, rt, "s1")
+}
+
+// assertFanOutPastCancelledWait drives one transport through the wait's
+// subscribe, read, and cancel, then asserts the Attach subscription
+// receives both the acknowledgement and the response written after the
+// wait, in order. The transport echoes each frame it is written.
+func assertFanOutPastCancelledWait(t *testing.T, rt adapter.RuntimeProcess, sessionID string) {
+	t.Helper()
+	attach, err := rt.Output(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("Attach Output: %v", err)
+	}
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	wait, err := rt.Output(waitCtx, sessionID)
+	if err != nil {
+		t.Fatalf("wait Output: %v", err)
+	}
+	if err := rt.WriteEnvelope(sessionID, []byte(`{"type":"session_started"}`)); err != nil {
+		t.Fatalf("write acknowledgement: %v", err)
+	}
+	if got := recvLine(t, wait); !strings.Contains(got, "session_started") {
+		t.Fatalf("wait read %q, want the acknowledgement", got)
+	}
+	cancelWait()
+	if err := rt.WriteEnvelope(sessionID, []byte(`{"type":"response"}`)); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+	if got := recvLine(t, attach); !strings.Contains(got, "session_started") {
+		t.Fatalf("Attach read %q first, want the acknowledgement", got)
+	}
+	if got := recvLine(t, attach); !strings.Contains(got, `"response"`) {
+		t.Fatalf("Attach read %q, want the response written after the wait", got)
+	}
+}
+
+// recvLine receives one frame or fails the test after two seconds.
+func recvLine(t *testing.T, ch <-chan []byte) string {
+	t.Helper()
+	select {
+	case b, ok := <-ch:
+		if !ok {
+			t.Fatal("the subscription closed before the frame")
+		}
+		return string(b)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no frame within 2s")
+	}
+	return ""
+}

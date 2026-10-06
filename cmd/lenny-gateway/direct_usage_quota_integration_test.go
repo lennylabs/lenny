@@ -76,6 +76,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // directUsageEchoLoop is a minimal §28.5.3 runtime loop for the
@@ -110,6 +111,7 @@ func directUsageSocket(t *testing.T) string {
 // token counts.
 type directUsageFrame struct {
 	Type            string   `json:"type"`
+	SessionID       string   `json:"sessionId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	RequestID       string   `json:"requestId,omitempty"`
@@ -129,7 +131,11 @@ func wiredAdapterClient(t *testing.T, sessionID string) (*adapterclient.Client, 
 	t.Helper()
 
 	sock := directUsageSocket(t)
-	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	// The listener compares each connection's nonce line with a test
+	// manifest published beside the socket, which the dialing runtime reads.
+	// spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.PublishIn(t, filepath.Dir(sock), nil)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -169,7 +175,8 @@ func wiredAdapterClient(t *testing.T, sessionID string) (*adapterclient.Client, 
 	t.Cleanup(func() { _ = conn.Close() })
 
 	// Claim the pod for the session so ReportUsage's checkSession passes and
-	// the token sink resolves the folded counts to this session. The raw
+	// the token sink, which folds only for a bound session, accepts the
+	// counts the frames attribute to it. The raw
 	// adapterv1 client drives the claim over the same connection; the
 	// returned adapterclient.Client is the gateway-side pull wrapper.
 	claimCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -194,6 +201,13 @@ func dialDirectRuntime(t *testing.T, sock string) *json.Encoder {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(sock), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 
 	r := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -221,12 +235,14 @@ func dialDirectRuntime(t *testing.T, sock string) *json.Encoder {
 }
 
 // sendCompletedCall emits one direct-mode llm_request_completed frame
-// carrying the token counts, the way a direct-mode runtime reports a settled
-// provider call (§4.7).
-func sendCompletedCall(t *testing.T, enc *json.Encoder, requestID string, in, out int64) {
+// for sessionID carrying the token counts, the way a direct-mode runtime
+// reports a settled provider call (§28.5.3 CH-RUNTIMEOPS Messages: the
+// frame names the session the adapter folds the counts into).
+func sendCompletedCall(t *testing.T, enc *json.Encoder, sessionID, requestID string, in, out int64) {
 	t.Helper()
 	if err := enc.Encode(directUsageFrame{
 		Type:         "llm_request_completed",
+		SessionID:    sessionID,
 		RequestID:    requestID,
 		Provider:     "anthropic",
 		Status:       "ok",
@@ -335,7 +351,7 @@ func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
 	// steady-state pull reads the folded delta and the production recorder fans
 	// it into the quota counter's per-tenant and per-user windows through
 	// RecordDirectUsage → recordQuota → AddHierarchical.
-	sendCompletedCall(t, enc, "req-1", 1200, 340)
+	sendCompletedCall(t, enc, sessionID, "req-1", 1200, 340)
 	first := pullDeltaUntilFolded(t, client, lease)
 	if first.InputTokens != 1200 || first.OutputTokens != 340 {
 		t.Fatalf("first pull delta = (%d,%d), want (1200,340)", first.InputTokens, first.OutputTokens)
@@ -348,7 +364,7 @@ func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
 	// A second completed call: its delta must accumulate on top of the first in
 	// the same tenant window (the counter is additive, matching the recorder
 	// fan-out).
-	sendCompletedCall(t, enc, "req-2", 500, 120)
+	sendCompletedCall(t, enc, sessionID, "req-2", 500, 120)
 	second := pullDeltaUntilFolded(t, client, lease)
 	if second.InputTokens != 500 || second.OutputTokens != 120 {
 		t.Fatalf("second pull delta = (%d,%d), want (500,120)", second.InputTokens, second.OutputTokens)

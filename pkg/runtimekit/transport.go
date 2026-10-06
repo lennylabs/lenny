@@ -20,7 +20,8 @@
 //     the LENNY_ADAPTER_SOCKET environment variable.
 //
 // Open resolves the transport from the environment: when
-// LENNY_ADAPTER_SOCKET is set it dials that socket, otherwise it
+// LENNY_ADAPTER_SOCKET is set it dials that socket and performs the runtime
+// connection handshake (DialAuthenticated), otherwise it
 // returns os.Stdin/os.Stdout. A reference runtime calls Open once at
 // startup and runs its existing JSONL loop against the returned
 // io.Reader and io.Writer unchanged.
@@ -77,15 +78,17 @@ func (t *Transport) Close() error {
 }
 
 // Open resolves the §28.5.3 transport from the process environment. When
-// SocketEnvVar names an adapter socket it dials that socket and returns
-// a socket-backed Transport; otherwise it returns a Transport over
+// SocketEnvVar names an adapter socket it dials that socket through
+// DialAuthenticated, with the manifest path ManifestPath resolves, and
+// returns a socket-backed Transport; otherwise it returns a Transport over
 // os.Stdin and os.Stdout. ctx bounds the socket dial.
+// spec: §4.7.11 (Runtime connection handshake).
 func Open(ctx context.Context) (*Transport, error) {
 	socket := strings.TrimSpace(os.Getenv(SocketEnvVar))
 	if socket == "" {
 		return &Transport{Reader: os.Stdin, Writer: os.Stdout}, nil
 	}
-	conn, err := DialSocket(ctx, socket)
+	conn, err := DialAuthenticated(ctx, socket, ManifestPath())
 	if err != nil {
 		return nil, fmt.Errorf("runtimekit: dial adapter socket %q: %w", socket, err)
 	}

@@ -33,11 +33,12 @@ const EXIT_OK = 0;
 const EXIT_RUNTIME_ERROR = 1;
 const EXIT_PROTOCOL_ERROR = 2;
 
-// echoParts prefixes text parts with the per-session sequence number.
-function echoParts(input: MessagePart[], seq: number): MessagePart[] {
+// echoParts prefixes text parts with the session's message sequence
+// number and identifier.
+function echoParts(input: MessagePart[], msg: Message): MessagePart[] {
   return input.map((p) =>
     p.type === "text" && p.inline
-      ? text(`[delegate seq=${seq}] ${p.inline}`)
+      ? text(`[delegate seq=${msg.sequence} session=${msg.sessionId}] ${p.inline}`)
       : p,
   );
 }
@@ -54,10 +55,9 @@ function delegationError(err: unknown): Reply {
   };
 }
 
-// delegateHandler is a Standard-level Handler.
+// DelegateHandler is a Standard-level Handler. It holds no per-session
+// state, so one instance serves every session the process holds.
 class DelegateHandler implements Handler {
-  private seq = 0;
-
   // onCreate has no task-scoped setup. The SDK has already dialed the
   // platform MCP server and connector MCP servers by the time onCreate
   // runs.
@@ -66,12 +66,11 @@ class DelegateHandler implements Handler {
   // onMessage runs the §8.5 delegation flow through the SDK platform
   // tool helpers. Without a platform MCP server it echoes the input.
   async onMessage(msg: Message, tools: HandlerTools): Promise<Reply> {
-    this.seq += 1;
     const input = msg.envelope.input ?? [];
     const platform = tools.platform;
     if (!platform) {
       // Basic-level fallback: no platform MCP server in the manifest.
-      return { parts: echoParts(input, this.seq), final: true };
+      return { parts: echoParts(input, msg), final: true };
     }
 
     try {
@@ -79,7 +78,7 @@ class DelegateHandler implements Handler {
       //    message's input parts.
       const handle = await platform.delegateTask(
         "delegate-child",
-        echoParts(input, this.seq),
+        echoParts(input, msg),
       );
 
       // 2. lenny/await_children — wait for the child to settle.

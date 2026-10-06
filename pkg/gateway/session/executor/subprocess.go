@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -28,7 +29,10 @@ import (
 // Each session gets its own child process, spawned lazily on the
 // first Send and torn down on Close (stdin EOF triggers the §15.4
 // clean-exit path). Concurrent Sends against one session are
-// serialised; different sessions run independent processes.
+// serialised; different sessions run independent processes. A child
+// that Send spawns reads the session's session_start ahead of every
+// message; a child that Start spawns for the §4.7 adapter reads the
+// adapter's own session_start instead.
 //
 // This is NOT the production pod-backed executor — there is no
 // Kubernetes, no warm pool, no adapter manifest, no CH-RUNTIMEOPS. It is the `make run` developer-loop executor and the
@@ -36,6 +40,11 @@ import (
 type SubprocessExecutor struct {
 	binPath string
 	timeout time.Duration
+
+	// writeSessionStart writes the session_start that opens a session on a
+	// child Send spawns. It is writeDevLoopSessionStart outside tests, which
+	// substitute a failing writer to exercise the reap of an unopened child.
+	writeSessionStart func(stdin io.Writer, sessionID string) error
 
 	mu    sync.Mutex
 	procs map[string]*subprocessSession
@@ -58,11 +67,16 @@ func NewSubprocessExecutor(opts SubprocessOptions) *SubprocessExecutor {
 		timeout = 30 * time.Second
 	}
 	return &SubprocessExecutor{
-		binPath: opts.BinPath,
-		timeout: timeout,
-		procs:   map[string]*subprocessSession{},
+		binPath:           opts.BinPath,
+		timeout:           timeout,
+		writeSessionStart: writeDevLoopSessionStart,
+		procs:             map[string]*subprocessSession{},
 	}
 }
+
+// maxStdoutFrameBytes is the largest JSONL frame the executor reads from a
+// child's stdout.
+const maxStdoutFrameBytes = 16 * 1024 * 1024
 
 // subprocessSession holds the child-process state for one session.
 type subprocessSession struct {
@@ -70,6 +84,13 @@ type subprocessSession struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
+	// stdoutPipe is the child's raw stdout and output is its fan-out. A
+	// child serves one reader of its stdout: the Send path reads it
+	// through the stdout scanner, and the §4.7 adapter path, which spawns
+	// through Start and never calls Send, reads it through output, whose
+	// single reader starts at the first Output.
+	stdoutPipe io.Reader
+	output     *linefanout.Hub
 	// stderr captures the runtime's stderr tail so a non-zero exit can be
 	// folded into a §28.5.3 RUNTIME_CRASH error.
 	stderr *capBuffer
@@ -86,6 +107,15 @@ type subprocessSession struct {
 func (s *subprocessSession) wait() error {
 	s.waitOnce.Do(func() { s.waitErr = s.cmd.Wait() })
 	return s.waitErr
+}
+
+// abandon tears down a child that was spawned but never published in
+// e.procs: it closes stdin, kills the process, and reaps it, so a child the
+// executor failed to open a session on neither lingers nor becomes a zombie.
+func (s *subprocessSession) abandon() {
+	_ = s.stdin.Close()
+	_ = s.cmd.Process.Kill()
+	_ = s.wait()
 }
 
 // capBuffer is a concurrency-safe writer that retains only the last `cap`
@@ -133,10 +163,14 @@ func exitCodeOf(err error) (code int, ok bool) {
 }
 
 // Send implements Executor. It lazily spawns the child process for
-// sessionID, writes one §28.5.3 message envelope per Message, and
-// collects the response envelopes.
+// sessionID, opening the session on a child it spawns with a §28.5.3
+// session_start, writes one §28.5.3 message envelope per Message, and
+// collects the response envelopes. A session_started the child answers
+// with is skipped by readResponse like any other non-response frame.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §17.4 (Local
+// Development Mode).
 func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
-	sess, err := e.session(sessionID)
+	sess, err := e.session(sessionID, spawnedBySend)
 	if err != nil {
 		return Response{}, err
 	}
@@ -176,8 +210,14 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 // session start, so the §4.7 adapter calls Start from StartSession and
 // the process is live before the first message arrives. Start is
 // idempotent: a second call for an already-started session is a no-op.
+//
+// A child Start spawns receives no session_start from the executor: the
+// §4.7 adapter that called Start writes the session's full session_start
+// through WriteEnvelope in its open sequence.
+// spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §17.4 (Local
+// Development Mode).
 func (e *SubprocessExecutor) Start(_ context.Context, sessionID string) error {
-	_, err := e.session(sessionID)
+	_, err := e.session(sessionID, spawnedByStart)
 	return err
 }
 
@@ -225,12 +265,16 @@ func (e *SubprocessExecutor) Interrupt(_ context.Context, sessionID string, hard
 	return nil
 }
 
-// Output streams every line the session's runtime writes to stdout as
-// a channel of §28.5.3 JSONL frames. The channel closes when the
-// runtime's stdout reaches EOF; ctx cancellation stops the reader so a
-// consumer that stops draining does not leak the goroutine. Output
-// must be consumed by a single caller — the adapter's Attach stream —
-// because it drains the shared stdout scanner.
+// Output subscribes to every line the session's runtime writes to stdout,
+// as a channel of §28.5.3 JSONL frames. One reader per child, started at
+// the first Output, broadcasts each line to the live subscribers, as the
+// adapter's socket transport does: the adapter's Attach stream and a
+// start's session_started wait each subscribe, and a subscriber whose ctx
+// ends is removed and consumes nothing afterwards. The channel closes when
+// the runtime's stdout reaches EOF or ctx ends. Output serves a child that
+// the §4.7 adapter started through Start; a child Send spawned is read by
+// Send alone.
+// spec: §28.5.3 (CH-MSGSOCK; Outbound: session_started).
 func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
 	e.mu.Lock()
 	sess, ok := e.procs[sessionID]
@@ -238,19 +282,12 @@ func (e *SubprocessExecutor) Output(ctx context.Context, sessionID string) (<-ch
 	if !ok {
 		return nil, fmt.Errorf("executor: session %s has no running runtime", sessionID)
 	}
-	ch := make(chan []byte)
-	go func() {
-		defer close(ch)
-		for sess.stdout.Scan() {
-			line := append([]byte(nil), sess.stdout.Bytes()...)
-			select {
-			case ch <- line:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
+	out, err := sess.output.Subscribe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("executor: runtime output for session %s: %w", sessionID, err)
+	}
+	sess.output.Serve(sess.stdoutPipe, maxStdoutFrameBytes, nil)
+	return out, nil
 }
 
 // readResponse scans stdout for the next `response` envelope. The
@@ -304,9 +341,73 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 	}
 }
 
+// spawnOrigin names the entry point that spawns a session's child, which
+// decides whether the executor opens the session on the child itself.
+type spawnOrigin int
+
+const (
+	// spawnedByStart is a child spawned by Start on behalf of the §4.7
+	// adapter, which writes the session's session_start itself.
+	spawnedByStart spawnOrigin = iota
+	// spawnedBySend is a child spawned by Send in the developer loop,
+	// where no adapter sits between the executor and the runtime, so the
+	// executor writes the session's session_start.
+	spawnedBySend
+)
+
+// devLoopStartID is the startId of the session_start the executor writes
+// to a child Send spawns. Each such child serves one session and receives
+// exactly one session_start, so a constant value is distinct from every
+// other session_start that child reads.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start).
+const devLoopStartID = "1"
+
+// devLoopSessionStart is the minimal §28.5.3 session_start the developer
+// loop writes. The developer loop provisions no credential file and
+// carries no experiment, tracing, or LLM context, so the frame carries
+// only its required members; the schema admits each context member as
+// absent.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start); §17.4 (Local
+// Development Mode).
+type devLoopSessionStart struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	StartID   string `json:"startId"`
+}
+
+// writeDevLoopSessionStart writes the developer-loop session_start for
+// sessionID to a freshly spawned child's stdin.
+func writeDevLoopSessionStart(stdin io.Writer, sessionID string) error {
+	line, err := json.Marshal(devLoopSessionStart{
+		Type:      "session_start",
+		SessionID: sessionID,
+		StartID:   devLoopStartID,
+	})
+	if err != nil {
+		return fmt.Errorf("executor: encode session_start for session %s: %w", sessionID, err)
+	}
+	if _, err := stdin.Write(append(line, '\n')); err != nil {
+		return fmt.Errorf("executor: write session_start for session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
 // session returns the child-process state for sessionID, spawning
 // the process on first use.
-func (e *SubprocessExecutor) session(sessionID string) (*subprocessSession, error) {
+//
+// A child spawned for Send receives the session's session_start before
+// the child is published in e.procs. The write happens under e.mu, which
+// every Send takes (through this method) before it can reach the child,
+// so the frame precedes the message of the Send that spawned the child
+// and of every concurrent Send that finds the child already published.
+// The write is one short line into a pipe nothing has written to yet, so
+// it fits the kernel pipe buffer and does not block on the child's read
+// while e.mu is held. A child whose session_start write fails is reaped
+// and never published, so no message reaches a session the child was
+// not told about.
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start rule 1); §17.4
+// (Local Development Mode).
+func (e *SubprocessExecutor) session(sessionID string, origin spawnOrigin) (*subprocessSession, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if s, ok := e.procs[sessionID]; ok {
@@ -329,8 +430,17 @@ func (e *SubprocessExecutor) session(sessionID string) (*subprocessSession, erro
 		return nil, fmt.Errorf("executor: start runtime %q: %w", e.binPath, err)
 	}
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	s := &subprocessSession{cmd: cmd, stdin: stdin, stdout: scanner, stderr: stderr}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxStdoutFrameBytes)
+	s := &subprocessSession{
+		cmd: cmd, stdin: stdin, stdout: scanner, stderr: stderr,
+		stdoutPipe: stdout, output: linefanout.New(),
+	}
+	if origin == spawnedBySend {
+		if err := e.writeSessionStart(stdin, sessionID); err != nil {
+			s.abandon()
+			return nil, err
+		}
+	}
 	e.procs[sessionID] = s
 	return s, nil
 }

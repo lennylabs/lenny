@@ -17,14 +17,19 @@ import (
 )
 
 // captureRuntimeScript is a Basic-level runtime that records every inbound
-// frame verbatim and answers each one with a canonical response. It stands
-// in for a real runtime binary so a contract case can read the envelope the
-// gateway's subprocess executor wrote off the wire rather than off the
-// producing struct.
+// frame verbatim and answers each message frame with a canonical response.
+// It answers nothing else, so the session_start the executor opens a
+// Send-spawned child with draws no response. It stands in for a real
+// runtime binary so a contract case can read the frames the gateway's
+// subprocess executor wrote off the wire rather than off the producing
+// struct.
 const captureRuntimeScript = `#!/bin/sh
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "CAPTURE_PATH"
-  printf '%s\n' '{"schemaVersion":1,"type":"response","output":[{"schemaVersion":1,"type":"text","inline":"ack"}]}'
+  case "$line" in
+    *'"type":"message"'*)
+      printf '%s\n' '{"schemaVersion":1,"type":"response","output":[{"schemaVersion":1,"type":"text","inline":"ack"}]}' ;;
+  esac
 done
 `
 
@@ -78,11 +83,16 @@ func TestSubprocessEnvelopeCarriesTheAddressedSession_spec_28_5_3(t *testing.T) 
 	if err != nil {
 		t.Fatalf("read captured frames: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
-		t.Fatalf("no envelope reached the runtime")
+	var frame string
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if strings.Contains(line, `"type":"message"`) {
+			frame = line
+			break
+		}
 	}
-	frame := lines[0]
+	if frame == "" {
+		t.Fatalf("no message envelope reached the runtime: %s", raw)
+	}
 
 	var probe map[string]any
 	if err := json.Unmarshal([]byte(frame), &probe); err != nil {

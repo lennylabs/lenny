@@ -440,13 +440,13 @@ require github.com/mark3labs/mcp-go v0.x.x
 
 ### 2. Read the Adapter Manifest
 
+The manifest carries only pod-scoped fields. A session's own context, such as its credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). This example keeps no per-session context, so it takes the session identifier from each `message`'s `sessionId` and ignores `session_start` and `session_end` under the unknown-type rule.
+
 ```go
 import "encoding/json"
 import "os"
 
 type AdapterManifest struct {
-	SessionID         string `json:"sessionId"`
-	TaskID            string `json:"taskId"`
 	PlatformMcpServer struct {
 		Socket string `json:"socket"`
 	} `json:"platformMcpServer"`

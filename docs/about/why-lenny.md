@@ -135,7 +135,7 @@ Memory, caching, guardrails, evaluation scoring, and credential routing are defi
 
 ### Experimentation
 
-Lenny's focus is **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and propagation of the chosen variant into the adapter manifest so the runtime knows which configuration it's running under. These are the parts you can't get anywhere else and that every experimentation flow needs.
+Lenny's focus is **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and delivery of the chosen variant in each session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) so the runtime knows which configuration it's running under. These are the parts you can't get anywhere else and that every experimentation flow needs.
 
 A **basic built-in variant assigner** ships with the platform. It supports deterministic bucketing on a session-level key (for example, tenant or user ID) with configurable split ratios. It is intentionally limited — enough for simple runtime-version rollouts, not enough to replace a real experimentation platform.
 

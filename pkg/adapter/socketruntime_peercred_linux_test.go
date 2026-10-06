@@ -20,7 +20,7 @@ import (
 // spec: 4.7.11 (Separate UIDs and connection authentication), 28.5.3
 // (CH-MSGSOCK)
 func TestSocketRuntimeRefusesOtherUIDThroughSOPeercred_spec_4_7_11(t *testing.T) {
-	sp, err := adapter.NewSocketRuntimeProcess(runtimeSocketAddr(t),
+	sp, err := newSocketRuntime(t, runtimeSocketAddr(t),
 		adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid()) + 1})
 	if err != nil {
 		t.Fatalf("NewSocketRuntimeProcess: %v", err)

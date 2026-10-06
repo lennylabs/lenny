@@ -21,9 +21,12 @@ import (
 // A handler reaches AdapterTools through AdapterToolsFrom on the
 // context the SDK passes to OnMessage.
 type AdapterTools struct {
-	w         *frameWriter
-	timeout   time.Duration
-	sessionID string
+	w       *frameWriter
+	timeout time.Duration
+	// owner is the session whose turn the tools serve. Every tool_call
+	// carries its identifier, and a call issued after the session ended
+	// writes no frame and fails at once.
+	owner *sessionState
 }
 
 // ToolResult is the decoded result of an adapter-local tool call. A
@@ -36,19 +39,24 @@ type ToolResult struct {
 
 // ToolCall emits a §28.5.3 tool_call frame for the named adapter-local
 // tool and blocks until the correlated tool_result arrives. ctx bounds
-// the wait. The id is generated and unique within the process.
+// the wait. The id is generated and unique within the process. A call
+// issued after the session's session_end, including one from a goroutine
+// the handler left running, writes no frame and returns an error at once,
+// and a call pending when the session ends returns an error at once.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
 func (a *AdapterTools) ToolCall(ctx context.Context, name string, arguments map[string]any) (ToolResult, error) {
-	if a == nil || a.w == nil {
+	if a == nil || a.w == nil || a.owner == nil {
 		return ToolResult{}, errors.New("adapter tools unavailable: runtime not started")
 	}
 	id := newCallID()
-	ch := a.w.registerToolCall(id)
-	if err := a.w.write(outboundToolCall{
+	ch := a.w.registerToolCall(id, a.owner)
+	if err := a.w.writeFor(a.owner, outboundToolCall{
 		Type:      "tool_call",
 		ID:        id,
 		Name:      name,
 		Arguments: arguments,
-		SessionID: a.sessionID,
+		SessionID: a.owner.id,
 	}); err != nil {
 		a.w.cancelToolCall(id)
 		return ToolResult{}, fmt.Errorf("write tool_call %q: %w", name, err)
@@ -62,7 +70,10 @@ func (a *AdapterTools) ToolCall(ctx context.Context, name string, arguments map[
 	defer timer.Stop()
 
 	select {
-	case tr := <-ch:
+	case tr, ok := <-ch:
+		if !ok {
+			return ToolResult{}, fmt.Errorf("tool_call %q: %w", name, errSessionEnded)
+		}
 		return ToolResult{Content: tr.Content, IsError: tr.IsError}, nil
 	case <-ctx.Done():
 		a.w.cancelToolCall(id)

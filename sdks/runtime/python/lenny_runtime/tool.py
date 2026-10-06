@@ -13,18 +13,39 @@ from __future__ import annotations
 
 import secrets
 import threading
-from typing import Any
+from typing import Any, Protocol
 
 from .transport import FrameWriter
 from .types import MessagePart, ToolResult
 
 
+class ToolCallOwner(Protocol):
+    """The session a ``tool_call`` belongs to.
+
+    ``id`` is the session's ``sessionId``; ``ended`` is the drop mark the
+    frame loop sets when it reads the session's ``session_end``.
+    """
+
+    id: str
+    ended: bool
+
+
+class SessionEndedError(RuntimeError):
+    """Raised by a ``tool_call`` whose session ended before its result
+    arrived, or whose frame was dropped because the session had already
+    ended.
+
+    spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+    """
+
+
 class _Pending:
     """In-flight bookkeeping for one ``tool_call``: an event that fires
-    when the correlated ``tool_result`` arrives, plus the result slot
-    and a rejection flag."""
+    when the correlated ``tool_result`` arrives, plus the result slot,
+    a rejection flag, and the session that issued the call."""
 
-    def __init__(self) -> None:
+    def __init__(self, owner: ToolCallOwner) -> None:
+        self.owner = owner
         self.event = threading.Event()
         self.result: ToolResult | None = None
         self.error: Exception | None = None
@@ -42,22 +63,33 @@ class ToolCallRegistry:
         self._lock = threading.Lock()
         self._pending: dict[str, _Pending] = {}
 
-    def register(self, call_id: str) -> _Pending:
-        """Record a pending ``tool_call`` id and return its
+    def register(self, call_id: str, owner: ToolCallOwner) -> _Pending:
+        """Record a pending ``tool_call`` id for ``owner`` and return its
         bookkeeping."""
-        pending = _Pending()
+        pending = _Pending(owner)
         with self._lock:
             self._pending[call_id] = pending
         return pending
 
     def deliver(self, raw: dict[str, Any]) -> bool:
         """Route an inbound ``tool_result`` to the call that emitted the
-        matching id. Reports whether a pending call was found."""
+        matching id.
+
+        A call matches only when its id equals the frame's id and the
+        session that issued it is the one the frame's ``sessionId``
+        names, so a result addressed to another session never completes
+        the call and leaves it pending for its own result. Reports
+        whether a pending call was found.
+
+        spec: §28.5.3 (CH-MSGSOCK, Inbound: tool_result).
+        """
         call_id = str(raw.get("id", ""))
+        session_id = str(raw.get("sessionId", ""))
         with self._lock:
-            pending = self._pending.pop(call_id, None)
-        if pending is None:
-            return False
+            pending = self._pending.get(call_id)
+            if pending is None or pending.owner.id != session_id:
+                return False
+            del self._pending[call_id]
         pending.result = ToolResult(
             content=[MessagePart.from_wire(p) for p in raw.get("content", [])],
             is_error=bool(raw.get("isError", False)),
@@ -72,6 +104,21 @@ class ToolCallRegistry:
             pending = self._pending.pop(call_id, None)
         if pending is not None:
             pending.error = err
+            pending.event.set()
+
+    def cancel_owner(self, owner: ToolCallOwner) -> None:
+        """Fail every pending call ``owner`` issued.
+
+        The frame loop calls it when it reads the owner's
+        ``session_end``, so each waiting call raises at once.
+        """
+        with self._lock:
+            ids = [i for i, p in self._pending.items() if p.owner is owner]
+            owned = [self._pending.pop(i) for i in ids]
+        for pending in owned:
+            pending.error = SessionEndedError(
+                f"session {owner.id} ended; tool_call abandoned"
+            )
             pending.event.set()
 
     def reject_all(self, err: Exception) -> None:
@@ -121,12 +168,12 @@ class AdapterToolset:
         writer: FrameWriter,
         registry: ToolCallRegistry,
         timeout_s: float,
-        session_id: str | None,
+        owner: ToolCallOwner,
     ) -> None:
         self._writer = writer
         self._registry = registry
         self._timeout_s = timeout_s if timeout_s > 0 else 30.0
-        self._session_id = session_id
+        self._owner = owner
 
     def tool_call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         """Emit a §28.5.3 ``tool_call`` frame for the named
@@ -136,22 +183,28 @@ class AdapterToolset:
         The id is generated and unique within the process.
         """
         call_id = _new_call_id()
-        pending = self._registry.register(call_id)
+        pending = self._registry.register(call_id, self._owner)
+        # §28.5.3: a session-scoped frame carries the session it addresses
+        # on every pod, and no frame for a session is written after its
+        # session_end, so the write is dropped once the session ended.
         frame: dict[str, Any] = {
             "type": "tool_call",
             "id": call_id,
             "name": name,
             "arguments": arguments,
+            "sessionId": self._owner.id,
         }
-        # §28.5.3: a session-scoped frame carries the session it addresses
-        # on every pod, so the key is written whatever the pool's
-        # concurrency.
-        frame["sessionId"] = self._session_id or ""
         try:
-            self._writer.write(frame)
+            written = self._writer.write_for(self._owner, frame)
         except Exception as err:
             self._registry.cancel(call_id, err)
             raise RuntimeError(f"write tool_call {name!r}: {err}") from err
+        if not written:
+            err = SessionEndedError(
+                f"session {self._owner.id} ended; tool_call {name!r} dropped"
+            )
+            self._registry.cancel(call_id, err)
+            raise err
 
         if not pending.event.wait(self._timeout_s):
             self._registry.cancel(

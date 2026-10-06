@@ -21,7 +21,7 @@
 //
 // The predicate covers the runtime-author documentation and, in the second
 // case below, every specification statement of the handshake together with the
-// adapter manifest's currency statement.
+// adapter manifest's statement that it carries only pod-scoped fields.
 //
 // This test reads the repository state directly (no build tag, no
 // infrastructure), the same posture as the other tier-11 doc checks.
@@ -228,14 +228,13 @@ func nonceBlockStart(line string) bool {
 
 // intraPodNonceSites returns every specification statement of the intra-pod
 // MCP nonce handshake the pod-wide rule reaches, together with the adapter
-// manifest's currency statement. A site left behind states a handshake that
-// contradicts the ones beside it.
+// manifest's statement that it carries only pod-scoped fields. A site left
+// behind states a handshake that contradicts the ones beside it.
 func intraPodNonceSites() []nonceStatementSite {
 	spec15 := []string{"spec", "15_external-api-surface.md"}
 	spec28 := []string{"spec", "28_communication-channels.md"}
 	spec04 := []string{"spec", "04_system-components.md"}
 	spec29 := []string{"spec", "29_communication-scenarios.md"}
-	spec06 := []string{"spec", "06_warm-pod-model.md"}
 	return []nonceStatementSite{
 		{
 			label:  "spec/15 §15.4.3 Authentication lead",
@@ -309,20 +308,7 @@ func intraPodNonceSites() []nonceStatementSite {
 			anchor: "**Adapter manifest:** One pod-global file written to",
 			want: []string{
 				"One pod-global file",
-				"authoritative for the session whose start last wrote it",
-			},
-		},
-		{
-			// The credential-lease paragraph restates the manifest write that
-			// precedes each session's runtime start. It stated the currency
-			// rule in its retired form while §4.7.5 carried the replacement,
-			// so it is swept with the sites that cite it.
-			label:  "spec/06 §6.1 per-session credential lease paragraph",
-			path:   spec06,
-			anchor: "**Per-session credential lease lifecycle.**",
-			want: []string{
-				"rewrites the pod-global adapter manifest before each session's runtime start",
-				"before that session's binary is spawned",
+				"carries only pod-scoped fields",
 			},
 		},
 		{
@@ -330,12 +316,14 @@ func intraPodNonceSites() []nonceStatementSite {
 			path:   []string{"docs", "reference", "adapter-contract.md"},
 			anchor: "The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binary.",
 			// The reader-facing mirror states the nonce arming rule as well as
-			// the manifest's currency, so a runtime author reading only this
-			// page presents the value that bound the server it connects to
-			// rather than the value present at its own process start.
+			// the manifest's pod-scoped contents, so a runtime author reading
+			// only this page presents the value that bound the server it
+			// connects to rather than the value present at its own process
+			// start, and takes its session's context from the session's own
+			// frame rather than from the manifest.
 			want: []string{
 				"one pod-global file",
-				"authoritative for the session whose start last wrote it",
+				"carries only pod-scoped fields",
 				noncePodWideRule,
 				nonceArmingRule,
 				nonceNoReArmRule,
@@ -344,12 +332,14 @@ func intraPodNonceSites() []nonceStatementSite {
 	}
 }
 
-// retiredManifestStabilityPhrasings are the readings the currency rule
-// replaces. Each one tells a runtime author that the file it reads stays the
-// file its own session's start wrote, which is false on a pod holding a second
-// bound session: that session's start replaces the `sessionId`, `mcpNonce`, and
-// `credentialsPath` members while the earlier session's runtime is still
-// processing.
+// retiredManifestStabilityPhrasings are retired readings of the adapter
+// manifest. Each one tells a runtime author that the manifest holds per-session
+// state for its own session. The manifest is one pod-global file that carries
+// only pod-scoped fields, and each session's identifier, credential path, and
+// related per-session context arrive in that session's session_start frame
+// rather than in the manifest, so a site that describes the manifest as written
+// or kept current per session points the runtime author at the wrong source.
+// spec: 4.7.5 (Adapter manifest)
 // The sweep is case-insensitive, because the retired sentence opened a
 // paragraph and so spelled its first word with a capital, and it carries both
 // the definite and the possessive spelling of the currency clause.
@@ -362,10 +352,10 @@ var retiredManifestStabilityPhrasings = []string{
 	"does not change while the runtime is processing",
 }
 
-// spec: 4.7, 4.7.5, 15.4.3, 28.5.3, 28.6, 29.4
+// spec: 4.7, 4.7.5 (Adapter manifest), 15.4.3, 28.5.3, 28.6, 29.4
 // diagnosis: one statement of the intra-pod MCP nonce handshake, or of the
 //
-//	adapter manifest's currency, disagrees with the others. The intra-pod MCP
+//	adapter manifest's pod-scoped contents, disagrees with the others. The intra-pod MCP
 //	servers are pod-wide and started at most once per pod, a server validates
 //	against the nonce the manifest carried at the start that bound it, and a
 //	later session's manifest write does not re-arm a running server. A site

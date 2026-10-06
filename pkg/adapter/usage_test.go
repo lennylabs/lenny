@@ -226,13 +226,10 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 
 	// With CH-RUNTIMEOPS, the sink is wired onto it before Run, and a
 	// completed-LLM frame folds its tokens into the wired meter under the
-	// pod's current session.
+	// session the frame names.
 	s := New("served")
-	attempt := bindSessionForTest(t, s, "sess-wire")
-	// The sink resolves through soleSession, which names a session only
-	// once the pod's shared runtime process has been given it and no other.
-	_ = s.noteRuntimeStarted("sess-wire", attempt)
-	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	bindSessionForTest(t, s, "sess-wire")
+	lc, err := newTestRuntimeOps(t, shortSocketName(t, "wire.sock"), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
 		t.Fatalf("NewRuntimeOps: %v", err)
 	}
@@ -246,7 +243,7 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	}
 
 	// The wired sink folds into the returned meter under that session.
-	lc.usage.AddTokens(11, 4)
+	lc.usage.AddTokens("sess-wire", 11, 4)
 	u, err := m.Cumulative(context.Background(), "sess-wire")
 	if err != nil {
 		t.Fatalf("Cumulative: %v", err)
@@ -283,25 +280,77 @@ func TestReportUsageRejectsEmptySession_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
-// The session token sink folds counts into the pod's current session and
-// drops a frame that arrives while the pod is idle (no assigned session).
-func TestSessionTokenSinkResolvesCurrentSession_spec_4_7(t *testing.T) {
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2 (direct-mode usage)
+// The wired token sink folds each llm_request_completed frame's counts
+// into the session the frame names. With two sessions bound to the pod,
+// a frame naming bob's session folds into bob's total and leaves alice's
+// untouched; a sink that attributed by the pod's sole session would
+// drop it, because a co-tenanted pod has none.
+func TestSessionTokenSinkFoldsUnderNamedSession_spec_28_5_3(t *testing.T) {
+	s := New("served")
+	bindSessionForTest(t, s, "sess-alice")
+	bindSessionForTest(t, s, "sess-bob")
 	m := NewSessionUsageMeter(fixedClock())
-	current := "sess-live"
-	sink := NewSessionTokenSink(m, func() string { return current })
+	sink := NewSessionTokenSink(m, s.checkSessionBound)
 
-	sink.AddTokens(8, 3)
-	u, _ := m.Usage(context.Background(), "sess-live")
-	if u.InputTokens != 8 || u.OutputTokens != 3 {
-		t.Fatalf("live-session fold = (%d,%d), want (8,3)", u.InputTokens, u.OutputTokens)
+	sink.AddTokens("sess-bob", 8, 3)
+	bob, _ := m.Cumulative(context.Background(), "sess-bob")
+	if bob.InputTokens != 8 || bob.OutputTokens != 3 {
+		t.Fatalf("sess-bob fold = (%d,%d), want (8,3)", bob.InputTokens, bob.OutputTokens)
 	}
+	if alice, _ := m.Cumulative(context.Background(), "sess-alice"); alice.InputTokens != 0 || alice.OutputTokens != 0 {
+		t.Fatalf("sess-alice total = %+v after a frame naming sess-bob, want zero", alice)
+	}
+}
 
-	// A frame while the pod is idle is dropped (no session to attribute).
-	current = ""
-	sink.AddTokens(99, 99)
-	if idle, _ := m.Usage(context.Background(), ""); idle != (Usage{}) {
-		t.Fatalf("idle-session fold recorded tokens: %+v", idle)
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2 (direct-mode usage)
+// The token sink drops the counts of a frame that names a session the
+// pod holds no binding for, and of a frame that names no session, so a
+// runtime cannot charge tokens to a session the pod does not serve.
+func TestSessionTokenSinkDropsUnboundSession_spec_28_5_3(t *testing.T) {
+	s := New("served")
+	bindSessionForTest(t, s, "sess-alice")
+	m := NewSessionUsageMeter(fixedClock())
+	sink := NewSessionTokenSink(m, s.checkSessionBound)
+
+	sink.AddTokens("sess-mallory", 99, 99)
+	if got, _ := m.Cumulative(context.Background(), "sess-mallory"); got != (Usage{}) {
+		t.Fatalf("unbound-session fold recorded tokens: %+v", got)
+	}
+	sink.AddTokens("", 77, 77)
+	if got, _ := m.Cumulative(context.Background(), ""); got != (Usage{}) {
+		t.Fatalf("empty-session fold recorded tokens: %+v", got)
+	}
+	if got, _ := m.Cumulative(context.Background(), "sess-alice"); got != (Usage{}) {
+		t.Fatalf("sess-alice total = %+v after frames naming other sessions, want zero", got)
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §4.7 (credential rotation)
+// An llm_request_completed frame whose tokens the sink drops still
+// decrements the in-flight counter, so a frame naming an unbound session
+// cannot wedge the credential-rotation gate.
+func TestDroppedTokenFrameStillDecrementsInflight_spec_28_5_3(t *testing.T) {
+	s := New("served")
+	bindSessionForTest(t, s, "sess-alice")
+	m := NewSessionUsageMeter(fixedClock())
+	lc, fr := startRuntimeOpsWithSink(t, NewSessionTokenSink(m, s.checkSessionBound))
+	fr.handshake()
+
+	fr.write(lifecycleFrame{Type: "llm_request_started", RequestID: "r1", Provider: "anthropic"})
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", SessionID: "sess-mallory", RequestID: "r1",
+		Provider: "anthropic", Status: "ok", InputTokens: 5, OutputTokens: 5,
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for lc.InflightCount("anthropic") != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("InflightCount = %d after the completion, want 0", lc.InflightCount("anthropic"))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got, _ := m.Cumulative(context.Background(), "sess-mallory"); got != (Usage{}) {
+		t.Fatalf("unbound-session frame folded tokens: %+v", got)
 	}
 }
 
@@ -347,10 +396,9 @@ func TestSessionUsageMeterConcurrentFoldRaceSmoke_spec_11_2(t *testing.T) {
 
 // bindSessionForTest binds the named session's slot entry so a
 // session-scoped RPC's checkSessionBound admits it, which is the state a
-// completed bind leaves on every pod, and returns the bind attempt token
-// the entry carries so a caller can confirm a start against it through
-// noteRuntimeStarted. spec: §5.2.
-func bindSessionForTest(t *testing.T, s *Server, sessionID string) string {
+// completed bind leaves on every pod, and returns the entry so a caller can
+// confirm a start against it through noteRuntimeStarted. spec: §5.2.
+func bindSessionForTest(t *testing.T, s *Server, sessionID string) *slotState {
 	t.Helper()
 	if s.WorkspaceBase == "" {
 		s.WorkspaceBase = t.TempDir()
@@ -363,5 +411,5 @@ func bindSessionForTest(t *testing.T, s *Server, sessionID string) string {
 	}
 	st.sessionID = sessionID
 	st.started = true
-	return st.bindAttempt
+	return st
 }
