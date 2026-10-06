@@ -37,6 +37,8 @@ The step-2 design must settle these points:
 - Automatic replacement-pod re-dispatch. The §28.8 row and §6.2 say the session is re-attached on a replacement pod, but no gateway code drives `resume_pending` forward. The watchdog moves it to `awaiting_client_action` when `maxResumeWindowSeconds` elapses. Without re-dispatch, a session that this proposal moves to `resume_pending` waits out that window or a client resume. The proposal states this behavior and names the owner of the remaining gap. Re-dispatch is in scope only if it is needed to send `Shutdown`.
 - Cross-replica release. A release on a replica that does not hold the in-memory binding is a no-op. This defect affects every watchdog and terminate release and is not specific to stream failure. It is filed as a separate finding.
 
+**Scope (owner decision, 2026-10-06).** This proposal does not change `REG-COORDLEASE` ownership. On a stream-failure edge the coordinating replica releases the session's pod binding and keeps the coordination lease, which it continues to renew in `resume_pending` and `awaiting_client_action`, as §29.3, §29.6, §7.2, and §7.3 already state and as the shipped Sweeper already does. A `POST /v1/sessions/{id}/resume` whose bind meets that lease answers the retryable `RESUME_FAILED` and holds the row in `awaiting_client_action`, rather than demoting it to `failed`. When and by whom the lease is acquired, adopted, or released in the recovering states, and the §29.3 off-holder forward for the resume route, belong to a separate proposal; RECORDS-1 files them.
+
 ## Evidence
 
 - pkg/gateway/session/executor/pod.go `streamFor`: `bind.Adapter.Attach(ctx, sessionID)` opens with the caller's context, and the stream is cached in `e.streams`. (verified)

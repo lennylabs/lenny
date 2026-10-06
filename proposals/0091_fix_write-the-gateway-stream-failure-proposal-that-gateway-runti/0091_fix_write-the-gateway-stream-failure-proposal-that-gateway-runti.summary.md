@@ -85,7 +85,7 @@
 
 ## Open decisions for human to make
 
-None.
+None. The owner decided on 2026-10-06 (option a) that this proposal keeps the spec's existing `REG-COORDLEASE` ownership: the failure edge releases only the pod binding, and the lease lifecycle in the recovering states moves to separate work. This reverses the earlier owner-delegate directive that the failure edge also releases the lease, which was adopted from a loop patch without checking the spec.
 
 ## Defects in the shipped tree that this proposal does not stage
 
