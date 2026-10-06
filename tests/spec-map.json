@@ -1840,7 +1840,12 @@
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier3_contract/mcp_tool_approval_address/tool_approval_address_test.go::TestToolUseRequestedAddressesSessionOnly_spec_7_2",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
-        "tests/tier7a_load_local/finalize_admission_race_test.go"
+        "tests/tier7a_load_local/finalize_admission_race_test.go",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestHeldAttachStreamOutlivesTheDeliveringRequest_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestAbandonedTurnLateReplyNeverReachesTheNextTurn_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestBetweenTurnApprovalIsGatedAndAnswered_spec_7_2",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestApprovalGateErrorRelaysADeny_spec_7_2",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestEvictedConnRelaysNoVerdict_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -6115,7 +6120,8 @@
         "pkg/adapter/usage_test.go",
         "tests/tier3_contract/adapter_jsonl/adapter_session_frames_test.go",
         "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
-        "tests/tier7a_load_local/session_frame_order_race_test.go"
+        "tests/tier7a_load_local/session_frame_order_race_test.go",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestReaderDrainsUnsolicitedFramesBetweenTurns_spec_28_5_1"
       ],
       "packages": [
         "pkg/adapter",

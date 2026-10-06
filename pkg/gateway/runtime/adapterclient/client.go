@@ -866,8 +866,11 @@ type AttachStream struct {
 
 // Attach opens the §4.7 content stream for sessionID and binds it with
 // an envelope-free first message, so the returned stream is ready to
-// carry content. The caller closes the stream by cancelling ctx.
-// spec: §7.2; §28.5.3.
+// carry content. The stream lives as long as ctx: the caller ends it by
+// cancelling ctx. The gateway's pod executor opens it on a session-scoped
+// context detached from the delivering request, holds it until the
+// session's binding is released, and cancels that context when it evicts
+// the stream. spec: §28.5.1 (CH-ATTACH Timing.); §7.2; §28.5.3.
 func (c *Client) Attach(ctx context.Context, sessionID string) (*AttachStream, error) {
 	stream, err := c.rpc.Attach(ctx)
 	if err != nil {
