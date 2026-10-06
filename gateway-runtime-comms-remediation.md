@@ -2459,6 +2459,18 @@ other while their code proceeds in parallel.
     prerequisite.
   Drafted as proposal 0091 (2026-10-06). F-7.3.28 was confirmed before drafting: a tier-1 repro against a
   real adapter gRPC server fails on a session's second message with `podexec: send to pod: EOF`.
+  - **Scope decision (owner, 2026-10-06, option a).** 0091 does not change `REG-COORDLEASE` ownership. On a
+    stream-failure edge the coordinating replica releases the pod binding and keeps the coordination lease,
+    which it renews in `resume_pending` and `awaiting_client_action`, as the spec and the shipped code already
+    do. A `POST /resume` that meets the lease answers the retryable `RESUME_FAILED` and holds the session,
+    instead of demoting it to `failed`. An earlier owner-delegate directive to release the lease on failure
+    edges was reversed: it pulled the lease lifecycle into 0091 and caused three redesign stops.
+  - **Other owner-delegate answers recorded in 0091.** These are the inbox drain on direct entry to
+    `awaiting_client_action` (filed separately), Sweeper eviction of a session's stream and binding when this
+    replica has lost the lease, and no whole-pod drain on a heartbeat escalation. Several defects are
+    filed: the per-frame `coordination_generation` check on `CH-ATTACH`, two retry budgets, the embedded
+    `Interrupt`, the hung-runtime scrub residual (assigned to proposal 0087 part 1's `CH-SUPERVISE`
+    liveness ping), and the undocumented `retryPolicy.mode: client_only`.
 - [ ] Session suspend-and-resume proposal (not yet written), after proposal 0091 and before proposal 0087
   part 1 (owner decision, 2026-10-06). It is a release prerequisite: without a resume driver, the failure
   handling of proposal 0091 ends in `resume_pending` with nothing to move the session on, and an idle
@@ -2479,6 +2491,14 @@ other while their code proceeds in parallel.
     lifetime, 7 days by default. Today a podless suspended root session has both clocks paused and
     can stay suspended forever.
   - **`maxSessionAgeSeconds`.** Unchanged at 7200 s; it continues to count only active time.
+  - **Coordination lease in the recovering states (owner decision, 2026-10-06).** This proposal also owns
+    the `REG-COORDLEASE` lifecycle in `resume_pending` and `awaiting_client_action`: when and by whom the
+    lease is acquired, adopted, or released there (§29.2 step 11 notes that the spec states no
+    acquisition point), and the §29.3 forward of a `POST /resume` that reaches a replica other than the
+    lease holder. The resume driver is where these decisions take effect, so one proposal designs them
+    together. Proposal 0091 keeps the lease with the coordinator and files these items.
+  - **Retry budgets.** Reconcile `sessionPolicy.maxSessionRetries` (§6.2) with `retryPolicy.maxRetries` (§7.3),
+    filed by proposal 0091. The resume driver spends the budget.
   - **Spec gaps to settle:**
     - the disposition (recycle or retire) of a pod a suspension releases;
     - what releasing "the pod" means for one session on a concurrent pod;
