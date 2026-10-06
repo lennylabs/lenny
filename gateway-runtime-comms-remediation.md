@@ -2457,6 +2457,43 @@ other while their code proceeds in parallel.
   - **First task.** Verify F-7.3.28 (the cached stream may be opened with the first request's context).
   - **Dependency.** Proposal 0090's `session_end` after a stream failure depends on it. It is a release
     prerequisite.
+  Drafted as proposal 0091 (2026-10-06). F-7.3.28 was confirmed before drafting: a tier-1 repro against a
+  real adapter gRPC server fails on a session's second message with `podexec: send to pod: EOF`.
+- [ ] Session suspend-and-resume proposal (not yet written), after proposal 0091 and before proposal 0087
+  part 1 (owner decision, 2026-10-06). It is a release prerequisite: without a resume driver, the failure
+  handling of proposal 0091 ends in `resume_pending` with nothing to move the session on, and an idle
+  session holds its pod or slot for up to two hours before it ends for good.
+  - **Resume driver.** Nothing in the tree moves a session from `resume_pending` to `resuming`, claims a
+    replacement pod, and restores the checkpoint (§7.3 **Resume flow after pod failure**, §29.6). This
+    proposal builds that path, which both failure recovery and idle suspension use.
+  - **Idle definition (owner decision).** A session is idle when no turn is in flight and nothing passes
+    in either direction between client and runtime. Runtime output to the client counts as activity, and
+    so does a client message. A long silent turn, such as a tool call with no output, is not idle.
+  - **Idle leads to suspension, not expiry (owner decision).** When the idle window ends, the session is
+    suspended with an immediate checkpoint, and its pod or slot is released at once rather than after
+    `maxSuspendedPodHoldSeconds`. Default idle window: 15 minutes, operator-tunable. Today
+    `maxClientIdleSeconds` defaults to 7200 s and ends the session as `expired`.
+  - **Any message resumes (owner decision).** Any new message to a suspended session triggers a resume, not
+    only `delivery: immediate`, so idle suspension is invisible to the client.
+  - **Bounded suspension (owner decision).** A suspended session expires after a long, operator-tunable
+    lifetime, 7 days by default. Today a podless suspended root session has both clocks paused and
+    can stay suspended forever.
+  - **`maxSessionAgeSeconds`.** Unchanged at 7200 s; it continues to count only active time.
+  - **Spec gaps to settle:**
+    - the disposition (recycle or retire) of a pod a suspension releases;
+    - what releasing "the pod" means for one session on a concurrent pod;
+    - what a restore does when no checkpoint exists, for example after a crash in a session's first
+      checkpoint interval;
+    - a REST way to resume a suspended session without sending content;
+    - that an `expired` session's pod is recycled on a recycling pool, which §29.4 implies but no section
+      states.
+  - **Findings it closes.** BUILD-GAPS F-11.3.35 (the suspended-pod hold is configured but not enforced,
+    and its flag help states an expiry) and F-11.3.36 (the idle-cap flag's stale name, default, and reason).
+    The proposal fixes both flag texts in the same change as their behavior.
+  - **After expiry.** `POST /v1/sessions/{id}/derive` already creates a new session from an expired one. It
+    copies the sealed workspace and can place the old transcript in it as a file. It does not carry the
+    runtime's conversation state or connector tokens. Derive continues the work, and suspension
+    preserves the conversation.
 
 **Phase 3: after proposal 0087 part 1**
 
