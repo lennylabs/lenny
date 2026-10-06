@@ -18,7 +18,7 @@
       Tiers 0, 1. Depends on: S1, S2, S7
 - [ ] **S9 · test** — TEST-2. Lands the step-2 tests.
       Tiers 0, 4, 5, 7a, 8, 11. Depends on: S4, S8
-- [ ] **S10 · code** — CODE-5. Lands the Sweeper's eviction of a bound session whose lease another replica holds, with its tests.
+- [ ] **S10 · code** — CODE-5 and its tests.
       Tiers 0, 1, 8. Depends on: S2, S5
 - [ ] **S11 · docs** — RECORDS-1. Lands the claim rows, the finding closures and new findings, and the remediation-plan tick.
       Tiers 0, 11. Depends on: S6, S9, S10

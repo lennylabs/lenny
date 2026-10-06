@@ -13,7 +13,7 @@ SPEC-1 states the mid-session failure outcome once, in §7.3 **Resume flow after
 - **Hang before the first message, or after an `UNAVAILABLE` end.** No stream is open, so no heartbeat runs. The next message delivery or the session watchdog detects the hang. This is accepted.
 - **Connection loss.** An `UNAVAILABLE` end is discarded without a report. The specification does not state how the gateway distinguishes a lost pod from a partitioned one on this channel, and the card records that.
 - **Hung runtime on a pod serving concurrent sessions.** Every open slot stream on the pod fails. The coordinating replica counts each failed slot toward the §5.2 whole-pod replacement trigger and requests the drain in the order that CODE-2 items 4 and 6 state. Below the threshold, each failed slot is released under the §5.2 per-slot cleanup disposition: a slot whose cleanup is not acknowledged clean is `leaked` and stays counted. A pod whose last slot releases cleanly takes the pool's occupancy-zero path, where §4.7 `ReportPodScrub` reports a hung runtime whose connection is open as live, so the pod serves again and the hang is found as the §5.2 **Runtime not live:** bullet states for a runtime that stops after the report. Failures that fall outside the trigger's rolling window do not accumulate, so at a low session arrival rate the pod can keep serving. This is accepted. SPEC-4 limits the retire-on-failure statements in §4.6.3, §5.2, §6.1, and §6.2 to `maxConcurrentSessions: 1`. This adopts the outcome of proposal 0079. The count is kept per gateway replica, which the summary lists as a defect this proposal does not stage.
-- **Session in `resume_pending` with no re-dispatch driver.** The session waits out `maxResumeWindowSeconds` and then enters `awaiting_client_action`, unless the client resumes it. The card keeps its existing replacement-pod re-attach sentence; the missing driver is filed by RECORDS-1.
+- **Session in `resume_pending` with no re-dispatch driver.** The outcome is the summary **Defects** entry **No driver moves `resume_pending` to `resuming` on a replacement pod.** The card keeps its existing replacement-pod re-attach sentence; the missing driver is filed by RECORDS-1.
 - **Launch-time retry paths.** The pre-running `starting → failed (retries exhausted, ...)` edge in §7.2 and the §6.2 pre-attached retry policy's **Exhaustion:** bullet describe launch-time retries that the §7.3 classifier does not govern. They stay unchanged.
 
 ## Staged edits
@@ -123,7 +123,7 @@ on retry exhaustion the underlying session enters `awaiting_client_action` ([§7
 In the "On failure:" `TaskResult` example, replace `"retriesExhausted": true` with `"retriesExhausted": false`, and leave `"category": "TRANSIENT"` unchanged. After the example's closing fence, and before the paragraph that begins "`TaskResult.schemaVersion` follows", insert
 
 ```
-The `error.category` field carries the [Section 16.3](16_observability.md#163-distributed-tracing) category of the error, which for a crash is `TRANSIENT`. It does not record whether the gateway retried the failure. `retriesExhausted` records whether the session's retry budget was spent, and the failure classification in the `child_failed` event ([Section 8.10](#810-delegation-tree-recovery)) records whether [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) classified the failure as retryable. In the example, the child's `retryPolicy` lists `runtime_crash` under `nonRetryableFailures`, so the child failed on its first crash without a retry.
+The `error.category` field carries the [Section 16.3](16_observability.md#163-distributed-tracing) category of the error, which for a crash is `TRANSIENT`. It does not record whether the gateway retried the failure. `retriesExhausted` records whether the session's retry budget was spent, and the failure classification in the `child_failed` event ([Section 8.10](#810-delegation-tree-recovery)) records whether [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) classified the failure as retryable. In the example, the child's `retryPolicy` omits `runtime_crash` from `retryableFailures` and lists it under `nonRetryableFailures`, so the child failed on its first crash without a retry.
 ```
 
 **SPEC-1f. §8.10 Delegation Tree Recovery, **Parent pod failure with active children:**, step 5.** Replace "failure (retry exhaustion)" with
@@ -166,7 +166,7 @@ In the **Expiry:** bullet, delete " (same behavior as terminal failure after ret
 
 **SPEC-1k. Bounded sweep.** After SPEC-1a to SPEC-1j, grep `spec/` for `retries exhausted`, `retry exhaustion`, `retries are exhausted`, and `ends the session`. Reconcile only a statement that gives the outcome of a mid-session (post-`running`) session failure. Leave unchanged the §7.2 `starting → failed (retries exhausted, or STARTING_TIMEOUT expired ...)` edge, the §6.2 pre-attached retry policy's **Exhaustion:** bullet, and every hit about checkpoint uploads, `CoordinatorFence`, credentials, or webhooks.
 
-### SPEC-2 · spec/28_communication-channels.md § 28.5.1 `CH-ATTACH` card, § 28.5.3 `CH-MSGSOCK` card, § 28.6; spec/04_system-components.md § 4.7
+### SPEC-2 · spec/28_communication-channels.md § 28.5.1 `CH-ATTACH` card, § 28.5.3 `CH-MSGSOCK` card and **Exit Codes** table, § 28.6; spec/04_system-components.md § 4.7
 
 **SPEC-2a. The **Timing.** bullet.** After the sentence "The specification states no deadline for `Attach`.", insert
 
@@ -219,6 +219,12 @@ and does not restart the agent; the gateway detects the failure on the session's
 
 ```
 and does not restart the agent. The gateway detects the failure on the session's `CH-ATTACH` stream ([Section 28.5.1](28_communication-channels.md#2851-gateway-to-pod)) and handles retry at the session level.
+```
+
+**SPEC-2f. §28.5.3, the **Exit Codes** table, row `1`.** Replace "adapter logs stderr and reports failure to gateway" with
+
+```
+adapter logs stderr; the gateway detects the failure on the session's `CH-ATTACH` stream (§28.5.1)
 ```
 
 ### SPEC-3 · spec/28_communication-channels.md § 28.8 Failure and degradation matrix, `CH-ATTACH` and `CH-MSGSOCK` rows
