@@ -1848,6 +1848,7 @@
         "pkg/gateway/session/executor/podstream_internal_test.go::TestApprovalGateErrorRelaysADeny_spec_7_2",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestEvictedConnRelaysNoVerdict_spec_7_2",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestReleaseEndOfStreamIsSilent_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestSendWaitingOnAReplyReturnsWhenTheStreamEnds_spec_28_5_1",

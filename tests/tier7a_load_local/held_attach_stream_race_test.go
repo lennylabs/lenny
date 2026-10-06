@@ -36,6 +36,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -45,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -91,6 +94,12 @@ func (a *heldEchoAdapter) verdictCounts() map[string]int {
 		out[k] = v
 	}
 	return out
+}
+
+// Shutdown answers the teardown a slot release sends with a clean exit, so the
+// release decrements the slot counter rather than treating the slot as leaked.
+func (a *heldEchoAdapter) Shutdown(context.Context, *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
 }
 
 // heldInbound is the subset of an inbound envelope the fake adapter reads.
@@ -186,15 +195,19 @@ func pushApprovals(ctx context.Context, out chan<- []byte, n int) {
 	}
 }
 
-// heldServe serves srv over bufconn and returns a connected client.
-func heldServe(t *testing.T, srv adapterv1.AdapterServer) *adapterclient.Client {
+// heldServe serves srv over bufconn and returns a function that dials a new
+// client to it. Each session binds over its own client, because releasing a
+// slot binding closes that binding's adapter connection.
+func heldServe(t *testing.T, srv adapterv1.AdapterServer) func() *adapterclient.Client {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := grpc.NewServer()
 	adapterv1.RegisterAdapterServer(gs, srv)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
-	return heldDial(t, func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) })
+	return func() *adapterclient.Client {
+		return heldDial(t, func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) })
+	}
 }
 
 func heldDial(t *testing.T, dialer func(context.Context, string) (net.Conn, error)) *adapterclient.Client {
@@ -209,11 +222,36 @@ func heldDial(t *testing.T, dialer func(context.Context, string) (net.Conn, erro
 	return cl
 }
 
-// heldBind publishes a binding for each session on cl.
-func heldBind(reg *podsession.Registry, cl *adapterclient.Client, sessions ...string) {
+// heldBind publishes a slot binding for each session, each over its own
+// client from dial.
+func heldBind(reg *podsession.Registry, dial func() *adapterclient.Client, sessions ...string) {
 	for _, id := range sessions {
-		reg.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "sbx-" + id, Adapter: cl})
+		heldBindOn(reg, dial(), id)
 	}
+}
+
+// heldBindOn publishes a slot binding for sessionID over cl, on the sandbox
+// heldExecutor seeds for it.
+func heldBindOn(reg *podsession.Registry, cl *adapterclient.Client, sessionID string) {
+	reg.Put(&podsession.BindResult{SessionID: sessionID, TenantID: "acme", SandboxName: "sbx-" + sessionID, SlotID: "slot-" + sessionID, Adapter: cl})
+}
+
+// heldExecutor returns a pod executor over reg whose binder releases the
+// named sessions' slots without a cluster. Each session's sandbox starts with
+// a slot count high enough that a release always leaves sibling slots on the
+// pod, so the release sends the adapter its teardown, decrements the counter,
+// closes the binding's client, and never reaches the per-pod claim.
+func heldExecutor(t *testing.T, reg *podsession.Registry, sessions ...string) *executor.PodExecutor {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	for _, id := range sessions {
+		if err := mr.Set("lenny:pod:sbx-"+id+":active_slots", "1000000"); err != nil {
+			t.Fatalf("seed slot counter for %s: %v", id, err)
+		}
+	}
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	return executor.NewPodExecutor(reg, &podsession.Binder{SlotCounter: slotcounter.New(rc)})
 }
 
 // heldSend sends content on sessionID and fails the test when a successful
@@ -229,13 +267,12 @@ func heldSend(t *testing.T, ctx context.Context, e *executor.PodExecutor, sessio
 	return nil
 }
 
-// heldRelease ends every session's stream through Release. The binding is
-// removed first, so Release stops after the stream eviction and needs no
-// pod binder.
-func heldRelease(t *testing.T, e *executor.PodExecutor, reg *podsession.Registry, sessions ...string) {
+// heldRelease releases every session through Release, with its binding still
+// published, so Release itself evicts the stream, removes the binding, and
+// releases the slot.
+func heldRelease(t *testing.T, e *executor.PodExecutor, sessions ...string) {
 	t.Helper()
 	for _, id := range sessions {
-		reg.Remove(id)
 		if err := e.Release(context.Background(), id, ""); err != nil {
 			t.Errorf("Release %s: %v", id, err)
 		}
@@ -305,8 +342,9 @@ func heldRaceSender(t *testing.T, e *executor.PodExecutor, id string, s int, del
 
 // heldConcurrentRelease waits until id has carried heldReleaseAfter turns,
 // then releases it while its Sends, the EvictStream loop, and the adapter's
-// stream ends are still running. The binding is removed first, so Release
-// stops after the stream eviction and needs no pod binder.
+// stream ends are still running. The binding is still published when Release
+// starts, so Release itself evicts the stream and removes the binding while
+// Sends read it, then releases the slot through the binder.
 func heldConcurrentRelease(t *testing.T, e *executor.PodExecutor, reg *podsession.Registry, id string, delivered *atomic.Int64, released *atomic.Bool, sendsDone <-chan struct{}) {
 	deadline := time.Now().Add(heldWait)
 	for delivered.Load() < heldReleaseAfter {
@@ -322,9 +360,15 @@ func heldConcurrentRelease(t *testing.T, e *executor.PodExecutor, reg *podsessio
 		return
 	default:
 	}
-	reg.Remove(id)
+	if _, bound := reg.Get(id); !bound {
+		t.Errorf("%s was unbound before its concurrent Release; Release would not exercise its own unbinding", id)
+		return
+	}
 	if err := e.Release(context.Background(), id, ""); err != nil {
 		t.Errorf("concurrent Release %s: %v", id, err)
+	}
+	if _, bound := reg.Get(id); bound {
+		t.Errorf("%s is still bound after its Release returned", id)
 	}
 	released.Store(true)
 }
@@ -341,14 +385,14 @@ func heldConcurrentRelease(t *testing.T, e *executor.PodExecutor, reg *podsessio
 // goroutine serving it.
 func TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1(t *testing.T) {
 	adapterSrv := &heldEchoAdapter{endAfter: 7}
-	cl := heldServe(t, adapterSrv)
+	dial := heldServe(t, adapterSrv)
 	reg := podsession.NewRegistry()
 	sessions := []string{"sess-0", "sess-1", "sess-2", "sess-3"}
 	// These sessions are released while their Sends are still running.
 	releasing := []string{"sess-r0", "sess-r1"}
 	all := append(append([]string{}, sessions...), releasing...)
-	heldBind(reg, cl, all...)
-	e := executor.NewPodExecutor(reg, nil)
+	heldBind(reg, dial, all...)
+	e := heldExecutor(t, reg, all...)
 
 	var wg sync.WaitGroup
 	var delivered atomic.Int64
@@ -414,7 +458,7 @@ func TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1(t *testing.T) {
 			t.Errorf("%s was never released concurrently", id)
 		}
 	}
-	heldRelease(t, e, reg, sessions...)
+	heldRelease(t, e, sessions...)
 	heldAssertNoStreamGoroutines(t)
 }
 
@@ -428,10 +472,10 @@ func TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1(t *testing.T) {
 func TestApprovalRelayRacesATurnSend_spec_7_2(t *testing.T) {
 	const approvals = 150
 	adapterSrv := &heldEchoAdapter{approvals: approvals}
-	cl := heldServe(t, adapterSrv)
+	dial := heldServe(t, adapterSrv)
 	reg := podsession.NewRegistry()
-	heldBind(reg, cl, "sess-approve")
-	e := executor.NewPodExecutor(reg, nil)
+	heldBind(reg, dial, "sess-approve")
+	e := heldExecutor(t, reg, "sess-approve")
 	var gated atomic.Int64
 	e.SetApprovalGate(heldGate(func(_ context.Context, _, _ string, call executor.PendingToolCall) (executor.ApprovalDecision, error) {
 		n := gated.Add(1)
@@ -473,7 +517,7 @@ func TestApprovalRelayRacesATurnSend_spec_7_2(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	heldRelease(t, e, reg, "sess-approve")
+	heldRelease(t, e, "sess-approve")
 	heldAssertNoStreamGoroutines(t)
 }
 
@@ -494,7 +538,9 @@ func TestBlockedOpenDelaysNoOtherSessionAndEndsOnEvict_spec_28_5_1(t *testing.T)
 	live := heldServe(t, &heldEchoAdapter{})
 	dialed := make(chan struct{}, 8)
 	unblock := make(chan struct{})
-	t.Cleanup(func() { close(unblock) })
+	var unblockOnce sync.Once
+	release := func() { unblockOnce.Do(func() { close(unblock) }) }
+	t.Cleanup(release)
 	unreachable := heldDial(t, func(ctx context.Context, _ string) (net.Conn, error) {
 		dialed <- struct{}{}
 		select {
@@ -506,8 +552,8 @@ func TestBlockedOpenDelaysNoOtherSessionAndEndsOnEvict_spec_28_5_1(t *testing.T)
 
 	reg := podsession.NewRegistry()
 	heldBind(reg, live, "sess-live", "sess-other")
-	heldBind(reg, unreachable, "sess-blocked")
-	e := executor.NewPodExecutor(reg, nil)
+	heldBindOn(reg, unreachable, "sess-blocked")
+	e := heldExecutor(t, reg, "sess-live", "sess-other", "sess-blocked")
 	for _, id := range []string{"sess-live", "sess-other"} {
 		ctx, cancel := context.WithTimeout(context.Background(), heldWait)
 		if err := heldSend(t, ctx, e, id, "open"); err != nil {
@@ -538,7 +584,7 @@ func TestBlockedOpenDelaysNoOtherSessionAndEndsOnEvict_spec_28_5_1(t *testing.T)
 		t.Errorf("Send on another session took %v during a blocked open, want under %v", d, prompt)
 	}
 	start = time.Now()
-	heldRelease(t, e, reg, "sess-other")
+	heldRelease(t, e, "sess-other")
 	if d := time.Since(start); d > prompt {
 		t.Errorf("Release of another session took %v during a blocked open, want under %v", d, prompt)
 	}
@@ -562,6 +608,9 @@ func TestBlockedOpenDelaysNoOtherSessionAndEndsOnEvict_spec_28_5_1(t *testing.T)
 	if len(heldExecutorGoroutines()) == 0 {
 		t.Fatal("no executor reader goroutine found while a stream is held; the leak check cannot see readers")
 	}
-	heldRelease(t, e, reg, "sess-live", "sess-blocked")
+	// Let the unreachable adapter's dial fail at once, so the blocked
+	// session's slot teardown fails fast instead of waiting out the dial.
+	release()
+	heldRelease(t, e, "sess-live", "sess-blocked")
 	heldAssertNoStreamGoroutines(t)
 }

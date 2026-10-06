@@ -7,10 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -20,6 +25,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -967,5 +973,111 @@ func TestReplyFollowedByStreamEndReachesTheSend_spec_28_5_1(t *testing.T) {
 		// The next Send must open a new stream rather than race the
 		// reader's eviction of the ended one.
 		awaitClosed(t, conn.done, "the ended stream's eviction")
+	}
+}
+
+// releaseProbeAdapter is an AdapterServer for the Release ordering test. Its
+// Attach holds every stream open until the RPC ends, and its Shutdown runs
+// onShutdown before it answers. ReleaseSlot sends that Shutdown after
+// Release has finished with the binding and the stream cache, and before it
+// closes the adapter connection, so onShutdown observes the executor at the
+// point where no stream may remain for the released session.
+type releaseProbeAdapter struct {
+	adapterv1.UnimplementedAdapterServer
+	onShutdown func()
+}
+
+func (a *releaseProbeAdapter) Attach(stream grpc.BidiStreamingServer[adapterv1.AttachRequest, adapterv1.AttachResponse]) error {
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+func (a *releaseProbeAdapter) Shutdown(context.Context, *adapterv1.ShutdownRequest) (*adapterv1.ShutdownResponse, error) {
+	a.onShutdown()
+	return &adapterv1.ShutdownResponse{ExitedCleanly: true}, nil
+}
+
+// releaseProbeBinder returns a binder whose ReleaseSlot completes without a
+// cluster: the slot counter for sandbox starts high enough that every release
+// leaves sibling slots on the pod, so ReleaseSlot never reaches the claim.
+func releaseProbeBinder(t *testing.T, sandbox string) *podsession.Binder {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	if err := mr.Set("lenny:pod:"+sandbox+":active_slots", "1000000"); err != nil {
+		t.Fatalf("seed slot counter: %v", err)
+	}
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	return &podsession.Binder{SlotCounter: slotcounter.New(rc)}
+}
+
+// spinSends sends on sessionID until stop closes. Each Send runs on a
+// deadline far shorter than any open, so it caches a conn when the session
+// is bound and returns without waiting for a reply.
+func spinSends(e *PodExecutor, sessionID string, stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Microsecond)
+		_, _ = e.Send(ctx, sessionID, []Message{{Role: "user", Content: "spin"}})
+		cancel()
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model)
+// Release runs with the binding still published while Sends on the same
+// session spin. By the time Release hands the binding to the binder, no
+// stream may be cached for the session: a Send that read the binding in the
+// gap between the stream eviction and the registry removal would cache and
+// open a stream that outlives the Release.
+func TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1(t *testing.T) {
+	const sandbox = "sbx-1"
+	const iterations = 300
+	e := NewPodExecutor(podsession.NewRegistry(), releaseProbeBinder(t, sandbox))
+	probe := &releaseProbeAdapter{}
+	var leaked atomic.Int64
+	probe.onShutdown = func() {
+		if e.cachedConn("sess-1") != nil {
+			leaked.Add(1)
+		}
+	}
+	lis := bufconn.Listen(1 << 20)
+	gs := grpc.NewServer()
+	adapterv1.RegisterAdapterServer(gs, probe)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	for i := 0; i < iterations; i++ {
+		// ReleaseSlot closes the binding's adapter client, so each
+		// iteration binds over a fresh one.
+		cl, err := adapterclient.Dial("passthrough:///bufnet",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+			grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			t.Fatalf("dial adapter: %v", err)
+		}
+		e.registry.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: sandbox, SlotID: "slot-1", Adapter: cl})
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		for s := 0; s < 4; s++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); spinSends(e, "sess-1", stop) }()
+		}
+		deadline := time.Now().Add(streamTestTimeout)
+		for e.cachedConn("sess-1") == nil && time.Now().Before(deadline) {
+			runtime.Gosched()
+		}
+		if err := e.Release(context.Background(), "sess-1", ""); err != nil {
+			t.Fatalf("iteration %d: Release: %v", i, err)
+		}
+		close(stop)
+		wg.Wait()
+		e.EvictStream("sess-1")
+	}
+	if n := leaked.Load(); n > 0 {
+		t.Fatalf("%d of %d Releases reached the binder with a stream still cached: a Send reopened a stream over the binding Release was removing", n, iterations)
 	}
 }

@@ -164,11 +164,31 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*attachC
 func (e *PodExecutor) EvictStream(sessionID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.evictStreamLocked(sessionID)
+}
+
+// evictStreamLocked is EvictStream's body. The caller holds e.mu.
+func (e *PodExecutor) evictStreamLocked(sessionID string) {
 	if c, ok := e.streams[sessionID]; ok {
 		c.closedByGateway.Store(true)
 		c.cancel()
 		delete(e.streams, sessionID)
 	}
+}
+
+// unbind removes the session's binding from the registry and evicts its held
+// stream under one hold of e.mu. streamFor reads the registry under e.mu
+// before it caches a conn, so once unbind returns no Send can open a stream
+// over the removed binding. Evicting first and removing outside the lock
+// would leave a gap in which a Send reads the still-published binding and
+// caches a stream that outlives the release. spec: §28.5.1 (CH-ATTACH
+// Timing.), §7.2.
+func (e *PodExecutor) unbind(sessionID string) (*podsession.BindResult, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	bind, ok := e.registry.Remove(sessionID)
+	e.evictStreamLocked(sessionID)
+	return bind, ok
 }
 
 // toolCallFrame is the subset of the §28.5.3 tool_call frame the
@@ -219,9 +239,8 @@ func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 // phase — the per-slot lifecycle tracks that — so it releases the slot
 // without a disposition.
 func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition Disposition) error {
-	e.EvictStream(sessionID)
-
-	bind, ok := e.registry.Remove(sessionID)
+	// The stream and the binding go together, before the binder runs.
+	bind, ok := e.unbind(sessionID)
 	if !ok {
 		return nil
 	}
