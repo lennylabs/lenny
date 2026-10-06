@@ -151,7 +151,7 @@ func (e *ssDisconnectSpy) Release(ctx context.Context, sessionID string, disp ex
 var _ executor.SessionReleaser = (*ssDisconnectSpy)(nil)
 
 // spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model), 15
-// (single-shot release on request timeout)
+// (External API Surface)
 // diagnosis: a client disconnect mid-turn either kept the single-shot
 // dispatch waiting on a reply that will never come (Send did not return the
 // context error promptly), ended the session's Attach stream with the

@@ -274,46 +274,110 @@ func heldAssertNoStreamGoroutines(t *testing.T) {
 	}
 }
 
+// heldReleaseAfter is the number of delivered turns a session carries before
+// its concurrent Release fires, so the Release lands while that session's
+// other Sends are still in flight.
+const heldReleaseAfter = 5
+
+// heldRaceSender runs one Send goroutine's turns on id. Every fourth turn
+// runs on a deadline shorter than the adapter's reply delay, so it is
+// abandoned mid-turn and leaves a late reply on the stream. A Send that
+// starts after the session's Release returned must fail, because the
+// binding is gone and no stream may outlive the Release.
+func heldRaceSender(t *testing.T, e *executor.PodExecutor, id string, s int, delivered *atomic.Int64, released *atomic.Bool) {
+	for i := 0; i < 40; i++ {
+		timeout := heldWait
+		if i%4 == 0 {
+			timeout = time.Millisecond
+		}
+		afterRelease := released.Load()
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		err := heldSend(t, ctx, e, id, fmt.Sprintf("%s/%d/%d", id, s, i))
+		cancel()
+		if err == nil {
+			delivered.Add(1)
+			if afterRelease {
+				t.Errorf("Send on %s started after its Release and was delivered: a stream outlived the Release", id)
+			}
+		}
+	}
+}
+
+// heldConcurrentRelease waits until id has carried heldReleaseAfter turns,
+// then releases it while its Sends, the EvictStream loop, and the adapter's
+// stream ends are still running. The binding is removed first, so Release
+// stops after the stream eviction and needs no pod binder.
+func heldConcurrentRelease(t *testing.T, e *executor.PodExecutor, reg *podsession.Registry, id string, delivered *atomic.Int64, released *atomic.Bool, sendsDone <-chan struct{}) {
+	deadline := time.Now().Add(heldWait)
+	for delivered.Load() < heldReleaseAfter {
+		if time.Now().After(deadline) {
+			t.Errorf("%s carried %d turns before the concurrent Release, want %d", id, delivered.Load(), heldReleaseAfter)
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-sendsDone:
+		t.Errorf("every Send finished before %s was released; Release did not run concurrently", id)
+		return
+	default:
+	}
+	reg.Remove(id)
+	if err := e.Release(context.Background(), id, ""); err != nil {
+		t.Errorf("concurrent Release %s: %v", id, err)
+	}
+	released.Store(true)
+}
+
 // spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model)
 // diagnosis: concurrent Send, EvictStream, Release, and adapter-side stream
 // ends on the same sessions raced on the executor's stream cache, the turn
 // token, or the conn's lifecycle. A race-detector report means unguarded
 // shared state; a Send that received another turn's reply means an
-// abandoned turn's late reply or a stale reader reached a later turn; a
-// leftover reader or open goroutine after Release means a stream's end did
-// not stop the goroutine serving it.
+// abandoned turn's late reply or a stale reader reached a later turn; a Send
+// delivered after its session's concurrent Release means a Send reopened
+// and cached a stream over a binding Release had removed; a leftover reader
+// or open goroutine after Release means a stream's end did not stop the
+// goroutine serving it.
 func TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1(t *testing.T) {
 	adapterSrv := &heldEchoAdapter{endAfter: 7}
 	cl := heldServe(t, adapterSrv)
 	reg := podsession.NewRegistry()
 	sessions := []string{"sess-0", "sess-1", "sess-2", "sess-3"}
-	heldBind(reg, cl, sessions...)
+	// These sessions are released while their Sends are still running.
+	releasing := []string{"sess-r0", "sess-r1"}
+	all := append(append([]string{}, sessions...), releasing...)
+	heldBind(reg, cl, all...)
 	e := executor.NewPodExecutor(reg, nil)
 
 	var wg sync.WaitGroup
 	var delivered atomic.Int64
+	perSession := make(map[string]*atomic.Int64, len(all))
+	released := make(map[string]*atomic.Bool, len(all))
+	for _, id := range all {
+		perSession[id] = &atomic.Int64{}
+		released[id] = &atomic.Bool{}
+	}
 	stop := make(chan struct{})
-	for _, id := range sessions {
+	for _, id := range all {
 		for s := 0; s < 3; s++ {
 			wg.Add(1)
 			go func(id string, s int) {
 				defer wg.Done()
-				for i := 0; i < 40; i++ {
-					// Every fourth turn runs on a deadline shorter than
-					// the adapter's reply delay, so it is abandoned
-					// mid-turn and leaves a late reply on the stream.
-					timeout := heldWait
-					if i%4 == 0 {
-						timeout = time.Millisecond
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), timeout)
-					if heldSend(t, ctx, e, id, fmt.Sprintf("%s/%d/%d", id, s, i)) == nil {
-						delivered.Add(1)
-					}
-					cancel()
-				}
+				heldRaceSender(t, e, id, s, perSession[id], released[id])
 			}(id, s)
 		}
+	}
+	sendsDone := make(chan struct{})
+	go func() { wg.Wait(); close(sendsDone) }()
+
+	var relWG sync.WaitGroup
+	for _, id := range releasing {
+		relWG.Add(1)
+		go func(id string) {
+			defer relWG.Done()
+			heldConcurrentRelease(t, e, reg, id, perSession[id], released[id], sendsDone)
+		}(id)
 	}
 	evictDone := make(chan struct{})
 	go func() {
@@ -324,24 +388,31 @@ func TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1(t *testing.T) {
 				return
 			default:
 			}
-			e.EvictStream(sessions[i%len(sessions)])
+			e.EvictStream(all[i%len(all)])
 			time.Sleep(3 * time.Millisecond)
 		}
 	}()
 
-	waitDone := make(chan struct{})
-	go func() { wg.Wait(); close(waitDone) }()
 	select {
-	case <-waitDone:
+	case <-sendsDone:
 	case <-time.After(6 * heldWait):
-		t.Fatal("concurrent Sends did not finish: a turn or an open deadlocked")
+		t.Fatal("concurrent Sends did not finish: a turn, an open, or a Release deadlocked")
 	}
+	relWG.Wait()
 	close(stop)
 	<-evictDone
 
-	t.Logf("%d of %d Sends delivered across evictions, abandons, and stream ends", delivered.Load(), len(sessions)*3*40)
+	for _, id := range all {
+		delivered.Add(perSession[id].Load())
+	}
+	t.Logf("%d of %d Sends delivered across evictions, abandons, releases, and stream ends", delivered.Load(), len(all)*3*40)
 	if delivered.Load() == 0 {
 		t.Fatal("no Send was delivered under load; the stream never carried a turn")
+	}
+	for _, id := range releasing {
+		if !released[id].Load() {
+			t.Errorf("%s was never released concurrently", id)
+		}
 	}
 	heldRelease(t, e, reg, sessions...)
 	heldAssertNoStreamGoroutines(t)

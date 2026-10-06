@@ -316,7 +316,7 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 }
 
 // spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model), 8.2
-// (delegated child interaction)
+// (Delegation Mechanism)
 // diagnosis: lenny/delegate_task delivered the task input to the
 // materialized child, but a follow-up message to the child failed: the
 // child's Attach stream was opened on the delegate_task request's context

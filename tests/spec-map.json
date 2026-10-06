@@ -1189,6 +1189,7 @@
       "title": "Pool Configuration and Execution Modes",
       "spec_file": "spec/05_runtime-registry-and-pool-model.md",
       "tests": [
+        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1",
         "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestRuntimeSDKEchoServesConcurrentSessionsOnOneProcess_spec_4_7_10",
         "tests/tier7a_load_local/session_frame_pairing_race_test.go",
         "pkg/adapter/sessionframes_test.go",
@@ -1855,13 +1856,10 @@
         "pkg/gateway/session/executor/podstream_internal_test.go::TestOpenWithoutAdapterFails_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestSendWaitingForTheTokenHonorsItsContext_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteReleasesTheTurn_spec_28_5_1",
-        "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestTurnOnAnEndedStreamFails_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestWaitForOpenHonorsTheCallerContext_spec_28_5_1",
-        "pkg/gateway/session/executor/podstream_internal_test.go::TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestAwaitReplyWithoutAReplyReturnsTheCause_spec_28_5_1",
-        "pkg/gateway/session/executor/podstream_internal_test.go::TestReplyFollowedByStreamEndReachesTheSend_spec_28_5_1",
         "tests/tier7a_load_local/held_attach_stream_race_test.go::TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1",
         "tests/tier7a_load_local/held_attach_stream_race_test.go::TestApprovalRelayRacesATurnSend_spec_7_2",
         "tests/tier7a_load_local/held_attach_stream_race_test.go::TestBlockedOpenDelaysNoOtherSessionAndEndsOnEvict_spec_28_5_1",
@@ -1974,6 +1972,7 @@
       "title": "Delegation Mechanism \u2014 cycle detection and maxDepth",
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
+        "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",
         "pkg/delegation/cycle/cycle_test.go::TestAllModesIsExhaustive",
         "pkg/delegation/cycle/cycle_test.go::TestIdentityEqualsRequiresBothFields",
         "pkg/delegation/cycle/cycle_test.go::TestDecideNonCyclicHopAdmits",
@@ -3765,6 +3764,7 @@
       "title": "External API Surface",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/tier2_component/translators/openai_singleshot_disconnect_test.go::TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1",
         "pkg/api/v1/session/session_test.go::TestAllStatesCountMatchesSpec",
         "pkg/api/v1/session/session_test.go::TestIsTerminalCoversFourStates",
         "pkg/api/v1/session/session_test.go::TestFailureClassEnumIsExhaustive",

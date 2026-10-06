@@ -180,7 +180,7 @@ func awaitEchoEvent(t *testing.T, events <-chan sessiondriver.Event, prompt stri
 }
 
 // spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model), 5.2
-// (concurrent sessions)
+// (Pool Configuration and Execution Modes)
 //
 // diagnosis: on a concurrent pool two sessions share one agent pod, each in
 // its own slot, and each holds its own Attach stream to the pod's adapter.
