@@ -1462,6 +1462,7 @@
         "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelDrainsBeforeSlotRelease_spec_5_2",
         "pkg/gateway/sessionserver/failure_internal_test.go::TestFailedSlotIncrementsSlotFailureTotal_spec_5_2",
         "pkg/gateway/sessionserver/failure_internal_test.go::TestResumeReleaseWaitsForFunnelSlotAccounting_spec_5_2",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelUnlocksSlotAccountingBeforeRelease_spec_5_2",
         "pkg/gateway/sessionserver/failure_internal_test.go::TestSlotAccountLockContextCancel_spec_5_2",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotFailureAccountingRetriesDrainAfterError_spec_5_2",
         "pkg/gateway/runtime/slothealth/slothealth_test.go::TestTripIsOneShot_spec_5_2",

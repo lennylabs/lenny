@@ -84,6 +84,9 @@ func (l *funnelLog) index(prefix string) int {
 type funnelExecutor struct {
 	log      *funnelLog
 	registry *podsession.Registry
+	// onRelease, when set, runs at the start of every Release call, so a
+	// test can observe the funnel's state at the point it releases.
+	onRelease func(sessionID string)
 
 	mu    sync.Mutex
 	calls []executor.Disposition
@@ -98,6 +101,9 @@ func (f *funnelExecutor) Close(ctx context.Context, sessionID string) error {
 }
 
 func (f *funnelExecutor) Release(_ context.Context, sessionID string, d executor.Disposition) error {
+	if f.onRelease != nil {
+		f.onRelease(sessionID)
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, d)
 	f.mu.Unlock()
@@ -482,6 +488,60 @@ func TestFailureFunnelDrainsBeforeSlotRelease_spec_5_2(t *testing.T) {
 			}
 			if n := f.replacementCount(); n != 1 {
 				t.Errorf("replacements = %d, want 1", n)
+			}
+		})
+	}
+}
+
+// spec: §5.2 (Pool Configuration and Execution Modes), §7.3 (Retry and
+// Resume), §10.1.1 (Stateless Replicas and Per-Session Coordination)
+// diagnosis: on every committed edge the funnel releases the per-session
+// slot-accounting lock once the slot accounting returns, before it releases
+// the binding, so the lock covers the accounting alone. On the failed edge
+// that is before the terminal pipeline (seal, executor release, cascade,
+// billing, and audit) runs. A failure means the lock is held across the
+// release or the terminal pipeline's I/O, and a waiter on the session's lock
+// blocks behind work the lock does not protect.
+func TestFailureFunnelUnlocksSlotAccountingBeforeRelease_spec_5_2(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		retries      int64
+		want         session.State
+	}{
+		{"failed edge", "workspace_validation_failed", 0, session.StateFailed},
+		{"resume_pending edge", "runtime_crash", 0, session.StateResumePending},
+		{"awaiting_client_action edge", "runtime_crash", 2, session.StateAwaitingClientAction},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFunnelFixture(t, funnelOpts{})
+			snap, _ := f.seed(t, "sess-span", session.StateRunning, tc.retries, true)
+			var mu sync.Mutex
+			var refs []int
+			f.exec.onRelease = func(id string) {
+				mu.Lock()
+				defer mu.Unlock()
+				refs = append(refs, f.srv.slotAccountLocks.refCount(id))
+			}
+
+			disp, err := f.report(context.Background(), snap, tc.reason)
+			if err != nil {
+				t.Fatalf("applyFailureFromActive: %v", err)
+			}
+			if disp.To != tc.want {
+				t.Fatalf("To = %q, want %q", disp.To, tc.want)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(refs) == 0 {
+				t.Fatalf("no executor release observed; events = %v", f.log.list())
+			}
+			for i, n := range refs {
+				if n != 0 {
+					t.Errorf("release %d ran with %d lock refs on the session, want 0", i, n)
+				}
+			}
+			if n := f.log.count("release:"); n != 1 {
+				t.Errorf("releases = %d, want 1; events = %v", n, f.log.list())
 			}
 		})
 	}

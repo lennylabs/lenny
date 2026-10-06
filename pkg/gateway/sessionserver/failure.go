@@ -227,7 +227,7 @@ func (s *Server) applyFailureFromActive(ctx context.Context, row sessionstore.Se
 		// failed per §6.2. The §7.3 default-platform list calls
 		// these out as the "policy rejection" / "workspace validation"
 		// terminal causes. recordSessionCompleted releases the binding.
-		return s.transitionToFailed(ctx, row, rep, classification, maxRetries, from, slot)
+		return s.transitionToFailed(ctx, row, rep, classification, maxRetries, from, slot, unlock)
 	}
 	// No snapshot state equals a target state, so the edge committed
 	// exactly when the row left the snapshot state.
@@ -403,9 +403,16 @@ func (s *Server) transitionToAwaitingClientAction(ctx context.Context, row sessi
 // with the failed disposition. bind is the failure funnel's snapshot of a
 // slot binding, or nil; a slot is counted toward the pod's §5.2 whole-pod
 // replacement trigger after the commit and before that release.
+//
+// unlock releases the funnel's per-session slot-accounting lock. It runs
+// once the accounting returns and before the terminal pipeline, so the
+// lock covers the accounting alone rather than the seal, release, cascade,
+// billing, and audit work recordSessionCompleted performs. unlock is
+// idempotent; the funnel's deferred call covers the conflict and error
+// returns.
 func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Session, rep FailureReport,
 	classification session.FailureClassification, maxRetries int, from session.State,
-	bind *podsession.BindResult,
+	bind *podsession.BindResult, unlock func(),
 ) (FailureDisposition, error) {
 	updated, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
 		if r.State != row.State {
@@ -431,6 +438,7 @@ func (s *Server) transitionToFailed(ctx context.Context, row sessionstore.Sessio
 	// spec: §5.2 (whole-pod replacement trigger) — count the failed slot
 	// and stamp any drain before recordSessionCompleted releases it.
 	s.accountFailedSlot(ctx, row, bind, rep.Reason, classification)
+	unlock()
 	// spec: §4.6 — `from` is the pre-terminal state, so the terminal
 	// pod-release path can distinguish a pre-running claimed session from
 	// a handed-off running/resuming one.
