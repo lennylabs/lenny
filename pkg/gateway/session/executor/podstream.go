@@ -190,9 +190,26 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 	result := c.registerTurn()
 	if err := c.send(envelope); err != nil {
 		c.abortTurn()
-		return turnResult{}, fmt.Errorf("podexec: send to pod for session %s: %w", c.sessionID, err)
+		return turnResult{}, c.awaitEndAfterWriteError(ctx, err)
 	}
 	return c.awaitReply(ctx, result)
+}
+
+// awaitEndAfterWriteError returns once the conn's end handling has finished
+// or ctx has ended. A write error on an opened conn means the stream has
+// ended, and the reader then always runs endConn and closes done. Waiting
+// for done keeps a Send from returning a delivery failure while the
+// stream-end observer is still classifying the end, so a caller that
+// re-reads the session after the error sees the state the observer
+// recorded, and a retried delivery cannot open a new stream over a binding
+// the observer is about to release. spec: §28.5.1 (CH-ATTACH Timing.).
+func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error) error {
+	select {
+	case <-c.done:
+		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, errStreamEnded, sendErr)
+	case <-ctx.Done():
+		return fmt.Errorf("podexec: send to pod for session %s: %w: %w", c.sessionID, ctx.Err(), sendErr)
+	}
 }
 
 // awaitReply waits for the reader to complete the registered turn. On ctx's

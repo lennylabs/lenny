@@ -695,11 +695,14 @@ func TestFailedWriteReleasesTheTurn_spec_28_5_1(t *testing.T) {
 	defer c.cancel()
 	c.stream = stream
 	close(c.ready)
+	// No reader runs here, so done stands in for the reader's end handling,
+	// which a failed write waits for.
+	close(c.done)
 
 	ctx, cancel := context.WithTimeout(context.Background(), streamTestTimeout)
 	defer cancel()
-	if _, err := c.runTurn(ctx, []byte(`{"type":"message"}`)); err == nil || errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("runTurn on a finished stream = %v, want the write error", err)
+	if _, err := c.runTurn(ctx, []byte(`{"type":"message"}`)); !errors.Is(err, errStreamEnded) || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runTurn on a finished stream = %v, want the wrapped stream-ended error", err)
 	}
 	if len(c.token) != 0 {
 		t.Error("a failed write kept the turn token")
@@ -708,6 +711,59 @@ func TestFailedWriteReleasesTheTurn_spec_28_5_1(t *testing.T) {
 	defer c.turnMu.Unlock()
 	if c.turn != nil {
 		t.Error("a failed write left its turn registered")
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod)
+// A Send that still holds a conn whose stream has ended, and whose write
+// therefore fails, returns only after the stream-end observer has run, so a
+// caller never sees a delivery failure before the end is classified. When
+// the caller's context ends first, the Send returns the context error.
+func TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1(t *testing.T) {
+	e, a, _ := newScriptedExecutor(t)
+	entered := make(chan struct{})
+	unblock := make(chan struct{})
+	e.onStreamEnd = func(_, _, _ string, _ error) {
+		close(entered)
+		<-unblock
+	}
+	r := sendAsync(context.Background(), e, "open")
+	ss := a.nextStream(t)
+	ss.expectFrame(t)
+	ss.pushFrame(t, reply("ok"))
+	awaitSend(t, r)
+	conn := e.cachedConn("sess-1")
+
+	ss.end <- status.Error(codes.Internal, "runtime exited")
+	awaitClosed(t, entered, "the stream-end observer starting")
+
+	// The stream has finished, so the write fails; done is still open while
+	// the observer runs, so the token is free and the write is attempted.
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := conn.runTurn(canceled, []byte(`{"type":"message"}`)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("runTurn with an ended context = %v, want context.Canceled", err)
+	}
+
+	type turnErr struct{ err error }
+	got := make(chan turnErr, 1)
+	go func() {
+		_, err := conn.runTurn(context.Background(), []byte(`{"type":"message"}`))
+		got <- turnErr{err}
+	}()
+	select {
+	case res := <-got:
+		t.Fatalf("runTurn returned %v while the stream-end observer was still running", res.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(unblock)
+	select {
+	case res := <-got:
+		if !errors.Is(res.err, errStreamEnded) {
+			t.Fatalf("runTurn after the observer = %v, want the wrapped stream-ended error", res.err)
+		}
+	case <-time.After(streamTestTimeout):
+		t.Fatal("runTurn never returned after the stream-end observer finished")
 	}
 }
 
