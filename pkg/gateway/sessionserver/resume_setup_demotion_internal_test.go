@@ -12,10 +12,12 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 )
 
@@ -231,6 +233,41 @@ func TestResumeFailureReachesTheSlotAccounting_spec_5_2(t *testing.T) {
 			}
 			if len(binder.drained) != 0 {
 				t.Errorf("drained = %v, want none below threshold 2", binder.drained)
+			}
+		})
+	}
+}
+
+// spec: §7.3 (Retry and Resume), §7.2 (Interactive Session Model)
+// diagnosis: the resume hold writes awaiting_client_action only over a row the
+// store still holds in `resuming`. A row a concurrent resume committed to
+// `running`, or a concurrent DELETE moved to a terminal state on a §7.2
+// mid-resume terminal-collapse edge, keeps its state. A failure means a failed
+// resume overwrites a newer state, so a running session is parked or a
+// cancelled session is revived.
+func TestHoldOrFailOnResumeErrorKeepsNewerState_spec_7_3(t *testing.T) {
+	for _, tc := range []struct {
+		state session.State
+		err   error
+	}{
+		{session.StateRunning, leasestore.ErrHeld},
+		{session.StateCancelled, podclaim.ErrNoIdlePod},
+	} {
+		t.Run(string(tc.state), func(t *testing.T) {
+			store := memstore.New()
+			s := New(store, Options{})
+			if err := store.Create(context.Background(), sessionstore.Session{
+				ID: "sess-newer", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			s.holdOrFailOnResumeError(context.Background(), "acme", "sess-newer", tc.err)
+			row, err := store.Get(context.Background(), "acme", "sess-newer")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if row.State != tc.state {
+				t.Errorf("state = %q, want %q unchanged", row.State, tc.state)
 			}
 		})
 	}

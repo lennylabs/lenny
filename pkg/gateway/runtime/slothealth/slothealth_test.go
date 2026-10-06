@@ -269,3 +269,58 @@ func TestRecordLeakIsKeyedBySlot_spec_5_2(t *testing.T) {
 		t.Fatalf("leaked after Forget = %d, want 0", l)
 	}
 }
+
+// spec: §5.2 (Concurrent-workspace slot retry policy, whole-pod replacement
+// trigger)
+// Trip fires once per pod at the threshold, Untrip lets the next Trip fire
+// again without losing the counts, and Forget keeps the mark so a drained pod
+// is not tripped twice. A failure means the replacement trigger can drain one
+// pod more than once, or a failed drain can never be retried.
+func TestTripIsOneShot_spec_5_2(t *testing.T) {
+	tr := New()
+	tr.RecordFailure("pod-a")
+	if tr.Trip("pod-a", 4) {
+		t.Fatal("Trip fired below the threshold of 2")
+	}
+	if tr.Tripped("pod-a") {
+		t.Fatal("Tripped after a Trip that did not fire")
+	}
+	tr.RecordFailure("pod-a")
+	if !tr.Trip("pod-a", 4) {
+		t.Fatal("Trip did not fire at the threshold")
+	}
+	if !tr.Tripped("pod-a") {
+		t.Fatal("Tripped false after Trip fired")
+	}
+	tr.RecordFailure("pod-a")
+	if tr.Trip("pod-a", 4) {
+		t.Error("Trip fired a second time on a marked pod")
+	}
+	if failed, _ := tr.Counts("pod-a"); failed != 3 {
+		t.Errorf("failed count = %d, want 3: Trip must leave the counts unchanged", failed)
+	}
+
+	tr.Untrip("pod-a")
+	if tr.Tripped("pod-a") {
+		t.Fatal("Tripped after Untrip")
+	}
+	if failed, _ := tr.Counts("pod-a"); failed != 3 {
+		t.Errorf("failed count after Untrip = %d, want 3", failed)
+	}
+	if !tr.Trip("pod-a", 4) {
+		t.Error("Trip did not fire again after Untrip with the counts still over the threshold")
+	}
+
+	tr.Forget("pod-a")
+	if !tr.Tripped("pod-a") {
+		t.Error("Forget cleared the trip mark")
+	}
+	tr.RecordFailure("pod-a")
+	tr.RecordFailure("pod-a")
+	if tr.Trip("pod-a", 4) {
+		t.Error("Trip fired on a drained pod whose mark survived Forget")
+	}
+	if tr.Tripped("pod-b") {
+		t.Error("an unrecorded pod reads tripped")
+	}
+}

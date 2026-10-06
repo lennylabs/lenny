@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -412,34 +414,159 @@ func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2
 	}
 }
 
-// spec: §7.2 — the pre-attach terminal-collapse path
-// (resume_pending → cancelled/completed) intentionally does NOT bump
-// coordination_generation: no pod is attached, no CoordinatorFence
-// round-trip is pending, so the bump is unnecessary. Verify that a
-// failure report from resume_pending bumps RetryCount but leaves the
-// CG counter untouched. F-7.1.14.
+// spec: §7.2 (Interactive Session Model), §7.3 (Retry and Resume)
+// diagnosis: §7.2 gives resume_pending no failure edge, so a report on a
+// resume_pending row duplicates the report that entered it and is a no-op. It
+// must leave State, RetryCount, and CoordinationGeneration unchanged and
+// release nothing. A failure means a duplicate report spends a retry, moves
+// the row to failed, or releases a binding a later bind published.
 func TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F_7_1_14(t *testing.T) {
-	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
-	row := sessionstore.Session{
-		ID: "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateResumePending, RetryCount: 0,
-		CoordinationGeneration: 11,
+	for _, reason := range []string{"pod_evicted", "workspace_validation_failed"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newReportFixture(t)
+			seedRow(t, f.store, sessionstore.Session{
+				ID: "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateResumePending, RetryCount: 1,
+				CoordinationGeneration: 11,
+			})
+			f.bind("sess-cg3")
+			disp, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-cg3", Reason: reason,
+			})
+			if err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if disp.From != session.StateResumePending || disp.To != session.StateResumePending {
+				t.Fatalf("disposition %q → %q, want the resume_pending no-op", disp.From, disp.To)
+			}
+			got, err := f.store.Get(context.Background(), "acme", "sess-cg3")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.State != session.StateResumePending || got.RetryCount != 1 || got.CoordinationGeneration != 11 {
+				t.Errorf("row = %q/retries %d/generation %d, want resume_pending/1/11 unchanged",
+					got.State, got.RetryCount, got.CoordinationGeneration)
+			}
+			if len(f.exec.released) != 0 {
+				t.Errorf("released = %v, want none", f.exec.released)
+			}
+		})
 	}
-	seedRow(t, store, row)
-	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
-		TenantID: "acme", SessionID: "sess-cg3", Reason: "pod_evicted",
+}
+
+// reportFixture is a server whose executor records each release and whose
+// coordination lease store names this replica, rep-1, as every seeded
+// session's holder.
+type reportFixture struct {
+	srv      *sessionserver.Server
+	store    sessionstore.Store
+	registry *podsession.Registry
+	exec     *releaseRecordingExecutor
+	leases   *componentLeaseStore
+}
+
+func newReportFixture(t *testing.T) *reportFixture {
+	t.Helper()
+	f := &reportFixture{
+		store:    memstore.New(),
+		registry: podsession.NewRegistry(),
+		exec:     &releaseRecordingExecutor{},
+		leases:   newComponentLeaseStore(),
+	}
+	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		RetryPolicyCaps:        session.RetryPolicyCaps{MaxRetries: 2},
+		Executor:               f.exec,
+		PodRegistry:            f.registry,
+		CoordinationLeaseStore: f.leases,
+		ReplicaID:              "rep-1",
 	})
-	if err != nil {
-		t.Fatalf("ReportSessionFailure: %v", err)
+	return f
+}
+
+// bind publishes an exclusive binding for id and gives rep-1 its lease.
+func (f *reportFixture) bind(id string) {
+	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-" + id})
+	f.leases.holders[clk("acme", id)] = "rep-1"
+}
+
+// spec: §7.3 (Retry and Resume), §6.2 (Pod State Machine), §10.1.1
+// (Stateless Replicas and Per-Session Coordination), §28.5.1 (Gateway-to-pod)
+// diagnosis: a failure report that moves an active session off its pod
+// releases the binding with the failed disposition exactly once, on every
+// edge and from every active source state. The resume_pending and
+// awaiting_client_action edges leave the coordination lease naming this
+// replica. A failure means a failed session keeps its slot, claim, and
+// workspace until terminate or the watchdog, a recycling pod is recycled after
+// a crash, or the funnel hands away the lease the Sweeper must keep renewing.
+func TestReportSessionFailureReleasesTheBindingOnEveryEdge_spec_7_3(t *testing.T) {
+	cases := []struct {
+		name    string
+		retries int64
+		reason  string
+		want    session.State
+	}{
+		{"retries left", 0, "runtime_crash", session.StateResumePending},
+		{"retries exhausted", 2, "runtime_crash", session.StateAwaitingClientAction},
+		{"non-retryable", 0, "workspace_validation_failed", session.StateFailed},
 	}
-	if disp.From != session.StateResumePending {
-		t.Fatalf("From = %q, want resume_pending", disp.From)
+	for _, from := range []session.State{session.StateRunning, session.StateInputRequired, session.StateSuspended} {
+		for _, tc := range cases {
+			t.Run(string(from)+"/"+tc.name, func(t *testing.T) {
+				f := newReportFixture(t)
+				seedRow(t, f.store, sessionstore.Session{
+					ID: "sess-rel", TenantID: "acme", RuntimeRef: "claude-code",
+					State: from, RetryCount: tc.retries,
+				})
+				f.bind("sess-rel")
+				disp, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+					TenantID: "acme", SessionID: "sess-rel", Reason: tc.reason,
+				})
+				if err != nil {
+					t.Fatalf("ReportSessionFailure: %v", err)
+				}
+				if disp.To != tc.want {
+					t.Fatalf("To = %q, want %q", disp.To, tc.want)
+				}
+				if len(f.exec.released) != 1 || f.exec.released[0] != executor.DispositionFailed {
+					t.Errorf("released = %v, want exactly one failed release", f.exec.released)
+				}
+				if tc.want != session.StateFailed {
+					if h := f.leases.holders[clk("acme", "sess-rel")]; h != "rep-1" {
+						t.Errorf("lease holder = %q, want rep-1 kept by the coordinating replica", h)
+					}
+				}
+			})
+		}
 	}
-	got, err := store.Get(context.Background(), "acme", "sess-cg3")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.CoordinationGeneration != 11 {
-		t.Errorf("CoordinationGeneration = %d, want 11 (pre-attach collapse must NOT bump)", got.CoordinationGeneration)
+}
+
+// spec: §7.3 (Retry and Resume), §7.2 (Interactive Session Model)
+// diagnosis: a report that changes nothing releases nothing: a report on a
+// session in awaiting_client_action, on a terminal session, or on a session
+// whose report loses a concurrent transition. A report on a resuming session
+// leaves the in-flight resume's binding to the resume rollback. A failure
+// means a duplicate or late report tears down a binding it does not own.
+func TestReportSessionFailureWithoutACommitReleasesNothing_spec_7_3(t *testing.T) {
+	for _, st := range []session.State{
+		session.StateAwaitingClientAction, session.StateFailed, session.StateResuming,
+	} {
+		t.Run(string(st), func(t *testing.T) {
+			f := newReportFixture(t)
+			seedRow(t, f.store, sessionstore.Session{
+				ID: "sess-none", TenantID: "acme", RuntimeRef: "claude-code", State: st,
+			})
+			f.bind("sess-none")
+			if _, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-none", Reason: "runtime_crash",
+			}); err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if len(f.exec.released) != 0 {
+				t.Errorf("released = %v, want none", f.exec.released)
+			}
+			if _, ok := f.registry.Get("sess-none"); !ok {
+				t.Error("binding removed by a report that released nothing")
+			}
+		})
 	}
 }

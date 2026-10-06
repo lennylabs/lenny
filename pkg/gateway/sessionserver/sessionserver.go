@@ -373,6 +373,12 @@ type Server struct {
 	// the pod's leaked slots, which remain counted in active_slots until the
 	// pod terminates. Nil disables the emission.
 	slotLeakGauge func(pod, pool string, leaked int)
+	// slotAccountLocks orders, per session, the failure funnel's slot
+	// accounting before a same-replica resume releases the session's earlier
+	// binding, so a drain the accounting requests is stamped before the
+	// release can reach the occupancy-zero recycle edge. The zero value is
+	// ready to use. spec: §5.2 "whole-pod replacement trigger".
+	slotAccountLocks sessionLocks
 	// observeStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.

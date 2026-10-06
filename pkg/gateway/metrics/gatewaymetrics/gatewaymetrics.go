@@ -1170,7 +1170,9 @@ func (m *Metrics) IncLLMTranslationError(pool, provider, errorType string) {
 // IncSlotFailure increments the §5.2
 // counter for the (errorType, pool, podName) tuple. Called by the
 // concurrent-mode slot binder when a slot bind stage failed after the
-// slot was reserved.
+// slot was reserved, and by the gateway's failure funnel when a slot's
+// session failed mid-session, where errorType is the §7.3 failure reason
+// or `unknown`.
 // spec: §5.2.
 func (m *Metrics) IncSlotFailure(errorType, pool, podName string) {
 	if m == nil {

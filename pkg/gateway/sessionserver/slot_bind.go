@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
@@ -148,7 +149,8 @@ func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
 // binds calls it, both concurrent bind paths and the §7.3 re-attach, so the
 // create-time reserved path and the checkpoint restore reach the threshold
 // §5.2 obliges them to reach, which the trigger states with no carve-out by
-// code path.
+// code path. The failure funnel calls it too, through accountFailedSlot, for a
+// slot whose session failed mid-session.
 //
 // The caller owns the reservation release and passes the slot's disposition
 // as leaked: true when the compensating reclaim was not acknowledged clean or
@@ -157,38 +159,33 @@ func classifySlotBindFailure(err error, req podsession.SlotBindRequest) error {
 // leak gauge and RecordLeak, keyed by slot) rather than in the rolling
 // window; any other failure is recorded once in the window (RecordFailure).
 //
-// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state machine).
+// The trigger fires once per pod. A pod the tracker has already tripped
+// returns at entry, so a failure that arrives while its drain is in flight is
+// neither counted nor drained again, and the replacement counter counts the
+// pod once. A drain that cannot be stamped clears the trip so the pod's next
+// accounted failure re-requests it.
+//
+// spec: §5.2 (pool configuration and execution modes, whole-pod replacement
+// trigger); §6.2 (pod state machine).
 func accountSlotFailure(ctx context.Context, binder slotBinder, health *slothealth.Tracker,
 	slots *slotstate.Registry, replacement func(pool string),
 	leakGauge func(pod, pool string, leaked int),
 	pool string, maxConcurrentSessions int32,
 	sbe *podsession.SlotBindError, leaked bool,
 ) {
-	if leaked {
-		// spec: §6.2 "`leaked` slot semantics" — the slot was not reclaimed,
-		// so it remains counted in active_slots (the lenny_adapter_leaked_slots
-		// gauge / the Redis slot-counter occupancy) until the pod terminates.
-		// A leaked slot persists rather than aging out, so it is counted once
-		// toward the threshold through the persistent RecordLeak rather than
-		// the windowed RecordFailure.
-		n := slots.MarkLeaked(sbe.SlotID, sbe.Pod, pool)
-		if leakGauge != nil {
-			leakGauge(sbe.Pod, pool, n)
-		}
-		health.RecordLeak(sbe.Pod, sbe.SlotID)
-	} else {
-		// spec: §6.2 "`leaked` slot semantics" — the slot was reclaimed, so
-		// this is a transient failure counted once in the rolling 5-minute
-		// window.
-		health.RecordFailure(sbe.Pod)
+	if health.Tripped(sbe.Pod) {
+		return
 	}
-	if !health.Unhealthy(sbe.Pod, maxConcurrentSessions) {
+	recordSlotOutcome(health, slots, leakGauge, pool, sbe, leaked)
+	if !health.Trip(sbe.Pod, maxConcurrentSessions) {
 		return
 	}
 	// Retire the whole pod: the combined windowed-failure plus persistent-leak
 	// count crossed the §5.2 unhealthy threshold.
 	if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
 		log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
+		health.Untrip(sbe.Pod)
+		return
 	}
 	if replacement != nil {
 		replacement(pool)
@@ -200,6 +197,153 @@ func accountSlotFailure(ctx context.Context, binder slotBinder, health *slotheal
 	slots.ForgetPod(sbe.Pod)
 	if leakGauge != nil {
 		leakGauge(sbe.Pod, pool, 0)
+	}
+}
+
+// recordSlotOutcome records one slot failure on the pod's §5.2 health ledger
+// with the lifetime its disposition fixes: a leaked slot persistently, keyed
+// by slot, and a reclaimed slot once in the rolling window.
+func recordSlotOutcome(health *slothealth.Tracker, slots *slotstate.Registry,
+	leakGauge func(pod, pool string, leaked int), pool string,
+	sbe *podsession.SlotBindError, leaked bool,
+) {
+	if !leaked {
+		// spec: §6.2 "`leaked` slot semantics" — the slot was reclaimed, so
+		// this is a transient failure counted once in the rolling 5-minute
+		// window.
+		health.RecordFailure(sbe.Pod)
+		return
+	}
+	// spec: §6.2 "`leaked` slot semantics" — the slot was not reclaimed,
+	// so it remains counted in active_slots (the lenny_adapter_leaked_slots
+	// gauge / the Redis slot-counter occupancy) until the pod terminates.
+	// A leaked slot persists rather than aging out, so it is counted once
+	// toward the threshold through the persistent RecordLeak rather than
+	// the windowed RecordFailure.
+	n := slots.MarkLeaked(sbe.SlotID, sbe.Pod, pool)
+	if leakGauge != nil {
+		leakGauge(sbe.Pod, pool, n)
+	}
+	health.RecordLeak(sbe.Pod, sbe.SlotID)
+}
+
+// slotFailureUnknownLabel is the lenny_slot_failure_total error_type value the
+// failure funnel uses for a reason outside the §7.3 lists, so a deployer's
+// unlisted label adds no series. spec: §5.2, §16.1.
+const slotFailureUnknownLabel = "unknown"
+
+// accountFailedSlot counts a slot whose session the failure funnel moved off
+// an active state toward the pod's §5.2 whole-pod replacement trigger, and
+// increments lenny_slot_failure_total once for it with the §7.3 failure
+// reason as error_type. It runs before the funnel releases the slot: on a
+// recycling concurrent pool the last ReleaseSlot patches the claim to
+// recycling and starts the whole-pod scrub, so a drain stamped after it could
+// reach a pod already handed on.
+//
+// A pool that cannot be resolved still records the failure in the window,
+// unless the pod is already tripped, so the pod's next accounted failure on
+// this replica counts it; the threshold is not evaluated and the counter is
+// not incremented.
+//
+// spec: §5.2 (Failure isolation, whole-pod replacement trigger); §7.3 (retry
+// and resume); §6.2 (pod crash during an active session).
+func (s *Server) accountFailedSlot(ctx context.Context, row sessionstore.Session, bind *podsession.BindResult,
+	reason string, classification session.FailureClassification,
+) {
+	if s.podBinder == nil || bind == nil {
+		return
+	}
+	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace,
+		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
+	if err != nil {
+		log.Printf("sessionserver: §5.2 resolve pool for failed slot of session %s on pod %s: %v",
+			row.ID, bind.SandboxName, err)
+		if !s.slotHealth.Tripped(bind.SandboxName) {
+			s.slotHealth.RecordFailure(bind.SandboxName)
+		}
+		return
+	}
+	if s.podBinder.SlotFailure != nil {
+		errorType := reason
+		if classification == session.FailureUnknown {
+			errorType = slotFailureUnknownLabel
+		}
+		s.podBinder.SlotFailure(errorType, match.Pool, bind.SandboxName)
+	}
+	accountSlotFailure(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement, s.slotLeakGauge,
+		match.Pool, maxConcurrentSessions(match.MaxConcurrentSessions),
+		&podsession.SlotBindError{Pod: bind.SandboxName, SlotID: bind.SlotID}, false)
+}
+
+// sessionLocks is a per-session mutex whose Lock honors the caller's context.
+// It orders the failure funnel's slot accounting before a same-replica resume
+// releases the session's earlier binding, so the drain the accounting requests
+// is stamped before ReleaseSlot can reach the occupancy-zero recycle edge.
+// Each entry is reference-counted by the goroutines holding or waiting on it
+// and is deleted when the last one leaves, so idle sessions hold no entry. The
+// zero value is ready to use. It has no wait budget of its own: the caller's
+// context bounds the wait.
+//
+// spec: §5.2 (whole-pod replacement trigger).
+type sessionLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sessionLockEntry
+}
+
+// sessionLockEntry is one session's lock, a channel of capacity one that a
+// holder fills, plus the count of goroutines holding or waiting on it. refs is
+// mutated only under sessionLocks.mu.
+type sessionLockEntry struct {
+	sem  chan struct{}
+	refs int
+}
+
+// Lock blocks until the caller holds sessionID's lock or ctx is done. On
+// success it returns an unlock function that is safe to call more than once;
+// on a done context it returns the context error and holds nothing.
+func (l *sessionLocks) Lock(ctx context.Context, sessionID string) (func(), error) {
+	e := l.ref(sessionID)
+	select {
+	case e.sem <- struct{}{}:
+	case <-ctx.Done():
+		l.unref(sessionID, e)
+		return nil, ctx.Err()
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			<-e.sem
+			l.unref(sessionID, e)
+		})
+	}, nil
+}
+
+// ref fetches or creates sessionID's entry and counts one more referencing
+// goroutine, under l.mu so the count and the map stay consistent with unref.
+func (l *sessionLocks) ref(sessionID string) *sessionLockEntry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.locks == nil {
+		l.locks = map[string]*sessionLockEntry{}
+	}
+	e, ok := l.locks[sessionID]
+	if !ok {
+		e = &sessionLockEntry{sem: make(chan struct{}, 1)}
+		l.locks[sessionID] = e
+	}
+	e.refs++
+	return e
+}
+
+// unref drops one reference and deletes the entry when the last referencing
+// goroutine leaves, so a later Lock mints a fresh entry only when no goroutine
+// still holds or waits on the old one.
+func (l *sessionLocks) unref(sessionID string, e *sessionLockEntry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e.refs--
+	if e.refs <= 0 && l.locks[sessionID] == e {
+		delete(l.locks, sessionID)
 	}
 }
 

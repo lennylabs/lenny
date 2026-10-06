@@ -74,7 +74,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 	var adapterReportedResumeMode string
 	if s.podBinder != nil {
-		mode, err := s.resumeOnPod(r.Context(), row)
+		mode, err := s.releaseThenResumeOnPod(r.Context(), row)
 		if err != nil {
 			// spec: §16.1 catalog — record the failed resume attempt
 			// before unwinding so the {pool, outcome="failure"} counter
@@ -189,15 +189,28 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 // never demoted to a terminal state the retry would be rejected against.
 // spec: §7.3, §6.2 (transient
 // setup failure retried on a fresh pod). F-7.3.23.
+//
+// The hold writes `awaiting_client_action` only over a row the store still
+// holds in `resuming`. A row a concurrent `DELETE` or cascade moved to a
+// terminal state on a §7.2 mid-resume terminal-collapse edge, or that a
+// concurrent resume already committed to `running`, keeps its state.
+// spec: §7.2 (mid-resume terminal collapse); §7.3.
 func (s *Server) holdOrFailOnResumeError(ctx context.Context, tenantID, id string, err error) {
 	if isTransientPodClaimError(err) {
 		if _, uerr := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
+			if row.State != session.StateResuming {
+				return errResumeHoldStale
+			}
 			row.State = session.StateAwaitingClientAction
 			return nil
-		}); uerr != nil {
+		}); uerr != nil && !errors.Is(uerr, errResumeHoldStale) {
 			log.Printf("sessionserver: revert resuming → awaiting_client_action for session %s: %v", id, uerr)
 		}
 		return
 	}
 	s.failSession(ctx, tenantID, id)
 }
+
+// errResumeHoldStale aborts the resume hold's store write when the row has
+// left `resuming`; the hold treats it as no change.
+var errResumeHoldStale = errors.New("sessionserver: resume hold: row no longer resuming")

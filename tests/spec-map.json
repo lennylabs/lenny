@@ -1458,7 +1458,14 @@
         "tests/tier4_integration/recycle_runtime_not_live_test.go::TestRecyclePathRuntimeNotLiveRetires_spec_5_2",
         "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2",
         "tests/tier10_conformance/recycle_scrub_conformance_test.go::TestRecycleScrubRuntimeNotLiveConformance",
-        "tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition"
+        "tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelDrainsBeforeSlotRelease_spec_5_2",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestFailedSlotIncrementsSlotFailureTotal_spec_5_2",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestResumeReleaseWaitsForFunnelSlotAccounting_spec_5_2",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestSlotAccountLockContextCancel_spec_5_2",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotFailureAccountingRetriesDrainAfterError_spec_5_2",
+        "pkg/gateway/runtime/slothealth/slothealth_test.go::TestTripIsOneShot_spec_5_2",
+        "tests/tier7a_load_local/failure_funnel_race_test.go::TestSlotTripOncePerPodUnderConcurrentFailures_spec_5_2"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -1635,7 +1642,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1",
-        "pkg/sandbox/podscrub/podscrub_test.go::TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2"
+        "pkg/sandbox/podscrub/podscrub_test.go::TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2",
+        "tests/tier2_component/slotrelease/failed_release_retires_test.go::TestFailedReleaseRetiresRecyclingSessionPod_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1870,7 +1878,8 @@
         "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1",
-        "tests/tier2_component/translators/openai_singleshot_disconnect_test.go::TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1"
+        "tests/tier2_component/translators/openai_singleshot_disconnect_test.go::TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1",
+        "pkg/gateway/sessionserver/failure_test.go::TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F_7_1_14"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1902,7 +1911,14 @@
         "pkg/gateway/sessionserver/resume_external_effect_regression_test.go",
         "pkg/gateway/sessionserver/start_pod_test.go",
         "pkg/gateway/runtime/adapterclient/client_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "pkg/gateway/sessionserver/failure_test.go::TestReportSessionFailureReleasesTheBindingOnEveryEdge_spec_7_3",
+        "pkg/gateway/sessionserver/failure_test.go::TestReportSessionFailureWithoutACommitReleasesNothing_spec_7_3",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelCommitsOnlyFromSnapshotState_spec_7_3",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelReleasesOnlyTheReportedBinding_spec_7_3",
+        "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelWithoutPodRegistry_spec_7_3",
+        "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorKeepsNewerState_spec_7_3",
+        "tests/tier7a_load_local/failure_funnel_race_test.go::TestFailureFunnelRacesSameReplicaResume_spec_7_3"
       ],
       "packages": [
         "pkg/session/resume",
@@ -2133,7 +2149,8 @@
       "spec_file": "spec/08_recursive-delegation.md",
       "tests": [
         "pkg/delegation/recovery/...",
-        "pkg/gateway/sessionserver/start_pod_test.go"
+        "pkg/gateway/sessionserver/start_pod_test.go",
+        "pkg/gateway/sessionserver/resume_rebind_internal_test.go::TestTreeRecoveryReattachRunsNoEarlierBindingRelease_spec_8_10"
       ],
       "packages": [
         "pkg/delegation/tree",
@@ -2393,7 +2410,9 @@
         "tests/tier4_integration/checkpoint_grant_remint_test.go",
         "tests/tier4_integration/checkpoint_intent_generation_test.go",
         "pkg/gateway/checkpoint/checkpointer/checkpointer_test.go",
-        "tests/tier2_component/migrations/prod_columns_test.go"
+        "tests/tier2_component/migrations/prod_columns_test.go",
+        "pkg/gateway/sessionserver/resume_rebind_test.go::TestResumeReleasesEarlierBindingBeforeBind_spec_10_1",
+        "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRenewsSelfHeldLeaseInRecoveringStates_spec_10_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -2406,7 +2425,8 @@
       "tests": [
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
-        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
+        "pkg/gateway/sessionserver/resume_rebind_test.go::TestResumeReleasesEarlierBindingBeforeBind_spec_10_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -3911,7 +3931,9 @@
         "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestWritePodClaimErrorFallback_spec_7_1_4",
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "pkg/gateway/sessionserver/upload_to_session_test.go::TestAMidSessionUploadTheAdapterRefusesAnswersUpstreamError_spec_7_4",
-        "tests/tier7a_load_local/finalize_admission_race_test.go"
+        "tests/tier7a_load_local/finalize_admission_race_test.go",
+        "pkg/gateway/sessionserver/resume_rebind_test.go::TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestResumeOnForeignLeaseIsTransient_spec_29_6"
       ],
       "packages": [
         "pkg/api/v1/session",

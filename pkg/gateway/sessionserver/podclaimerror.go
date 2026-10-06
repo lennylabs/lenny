@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/upload"
 )
 
@@ -483,6 +484,15 @@ func isTransientPodClaimError(err error) bool {
 	case errors.Is(err, podclaim.ErrNoIdlePod):
 		return true
 	case errors.Is(err, podclaim.ErrNoConcurrentSlot), errors.Is(err, podclaim.ErrTenantMismatch):
+		return true
+	case errors.Is(err, leasestore.ErrHeld):
+		// spec: §29.3 (Interactive message send, Off-holder matrix), §29.6
+		// (Restore and resume), §7.3 (Retry and Resume) — the resume's bind met
+		// another replica's coordination lease. resumeOnPod has already rolled
+		// the claimed pod back and published no binding. The holder still
+		// coordinates the session, so the row holds in awaiting_client_action
+		// and the retryable RESUME_FAILED answer stands: a retry succeeds once
+		// it reaches the holder or the holder's lease lapses.
 		return true
 	case errors.Is(err, coordfence.ErrRelinquished):
 		// spec: §11.3 — the coordinator relinquished the session

@@ -4,7 +4,10 @@ package podsession
 
 // §5.2 lenny_slot_failure_total error_type labels: the
 // concurrent-mode slot bind stages whose failure terminates a reserved
-// slot. The set is finite so the metric stays low-cardinality.
+// slot. The gateway's failure funnel also labels the counter, for a slot
+// whose session fails mid-session, with the §7.3 failure reason, or with
+// `unknown` for a reason outside the §7.3 lists. Both sets are finite so
+// the metric stays low-cardinality.
 const (
 	slotFailureWorkspacePrep = "workspace_prep"
 	// slotFailureWorkspaceFinalize labels a FinalizeWorkspace failure so the

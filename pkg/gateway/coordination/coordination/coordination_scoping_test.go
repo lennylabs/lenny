@@ -5,11 +5,13 @@ package coordination
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
 // fakeBindings is an in-memory BindingRegistry for the acquire-scoping
@@ -210,5 +212,58 @@ func TestSweepEvictsDeadConnectionBinding_spec_10_1(t *testing.T) {
 	}
 	if h, ok := leases.held("acme", "dead"); ok {
 		t.Errorf("lease still held by %q after dead-connection eviction, want released", h)
+	}
+}
+
+// acquireCountingLeases wraps fakeLeases and records each Acquire's session.
+type acquireCountingLeases struct {
+	*fakeLeases
+	acquired []string
+}
+
+func (a *acquireCountingLeases) Acquire(ctx context.Context, tenantID, sessionID, holder string, ttl time.Duration) (leasestore.Lease, error) {
+	a.acquired = append(a.acquired, sessionID)
+	return a.fakeLeases.Acquire(ctx, tenantID, sessionID, holder, ttl)
+}
+
+// spec: §10.1 (Horizontal Scaling), §10.1.1 (Stateless Replicas and
+// Per-Session Coordination), §7.3 (Retry and Resume)
+// diagnosis: the failure funnel releases a failed session's pod binding and
+// leaves its coordination lease with the coordinating replica. The Sweeper's
+// self-held renew term keeps that lease in resume_pending and
+// awaiting_client_action with no binding and no pod assignment. A failure
+// means the lease of a recovering session lapses on its TTL, so the replica
+// the §7.2 inbox rows and the §29.6 resume preconditions assume coordinates
+// the session no longer holds it.
+func TestSweepRenewsSelfHeldLeaseInRecoveringStates_spec_10_1(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	mustCreate(t, sessions, sessionstore.Session{ID: "pending", TenantID: "acme", State: session.StateResumePending})
+	mustCreate(t, sessions, sessionstore.Session{ID: "awaiting", TenantID: "acme", State: session.StateAwaitingClientAction})
+
+	leases := &acquireCountingLeases{fakeLeases: newFakeLeases()}
+	leases.holders[lk("acme", "pending")] = "rep-1"
+	leases.holders[lk("acme", "awaiting")] = "rep-1"
+	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, leases,
+		Options{ReplicaID: "rep-1", Bindings: newFakeBindings()})
+
+	held, err := sw.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if held != 2 {
+		t.Fatalf("held = %d, want 2 (both self-held recovering leases renewed)", held)
+	}
+	got := map[string]int{}
+	for _, id := range leases.acquired {
+		got[id]++
+	}
+	if got["pending"] != 1 || got["awaiting"] != 1 {
+		t.Errorf("Acquire calls = %v, want one for each recovering session", leases.acquired)
+	}
+	for _, id := range []string{"pending", "awaiting"} {
+		if h, ok := leases.held("acme", id); !ok || h != "rep-1" {
+			t.Errorf("session %s holder = %q ok=%v, want rep-1", id, h, ok)
+		}
 	}
 }
