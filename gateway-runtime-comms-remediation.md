@@ -2419,7 +2419,7 @@ other while their code proceeds in parallel.
   - Review finding 12: a node-level process-limit note, the supervisor's own log channel kept separate from
     the runtime's stdout, no secrets in the supervisor's argv, exit (never re-dial) when its connection
     closes, and the gVisor and Kata checks re-run on runtime version changes.
-- [ ] Runtime-SDK proposal (proposal 0090): the single runtime lifetime contract in section 10.3, with
+- [x] Runtime-SDK proposal (proposal 0090, implemented 2026-10-06, merge on `proposal-b`): the single runtime lifetime contract in section 10.3, with
   session-start and session-end frames on `CH-MSGSOCK`, per-session context delivered by frame, the Go,
   Python, and TypeScript SDKs serving sessions keyed by `sessionId`, the runtime side of the per-generation
   nonce, the tier-10 conformance case, and the Go `Handler` doc-comment correction moved out of proposal
