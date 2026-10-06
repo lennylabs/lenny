@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: `session_start.llm.dialect` declared as a free string
+## Accepted: `session_start.llm.dialect` declared as a free string
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S10 (SCHEMA-1: frame schemas, fixtures, gates).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of §28.5.3 would expect the schema to reject a `dialect` value other than `openai` or `anthropic`. The schema accepts any string, and the two values appear only in the description.
 
-## Proposed: `tests/spec-map.json` credits the new tier-3 cases
+## Accepted: `tests/spec-map.json` credits the new tier-3 cases
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S10 (SCHEMA-1: frame schemas, fixtures, gates).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing SCHEMA-1 with the diff would find an edit to `tests/spec-map.json` that the proposal does not stage, and could take it for an unrelated change.
 
-## Proposed: `HandleCheckpointRequest` takes a session ID and stamps it on the failure frame
+## Accepted: `HandleCheckpointRequest` takes a session ID and stamps it on the failure frame
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S11 (CODE-3: adapter CH-RUNTIMEOPS sessionId, token sink, Terminate deletion).
 
@@ -44,9 +44,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of CODE-3 would not expect a signature change to `HandleCheckpointRequest`, and could take the new `sessionID` parameter or the asymmetry between `checkpoint_complete` and `checkpoint_ready` for an unrelated change or an oversight.
 
-## Proposed: `fullSessionID` deleted in favor of `complianceSessionID`
+## Accepted: `fullSessionID` deleted in favor of `complianceSessionID`
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S11 (CODE-3: adapter CH-RUNTIMEOPS sessionId, token sink, Terminate deletion).
 
@@ -58,9 +58,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of CODE-3 would expect `fullSessionID` to still exist and could reintroduce a second session identifier in the Full fake adapter, which would split the manifest session from the session the checks address.
 
-## Proposed: files updated beyond the CODE-3 target list
+## Accepted: files updated beyond the CODE-3 target list
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S11 (CODE-3: adapter CH-RUNTIMEOPS sessionId, token sink, Terminate deletion).
 
@@ -72,9 +72,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the CODE-3 target list with the diff would find edits to files the proposal does not name, and could take them for unrelated changes.
 
-## Proposed: delegate examples omit the experiment variant
+## Accepted: delegate examples omit the experiment variant
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S15 (CODE-5: multi-session Python and TypeScript SDKs).
 
@@ -86,9 +86,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of CODE-5 item 6 would expect the Python and TypeScript delegate examples to report the experiment variant, and a TEST-1 tier-10 case that asserts the variant on the delegate example's output would fail.
 
-## Proposed: files changed beyond the CODE-5 target list
+## Accepted: files changed beyond the CODE-5 target list
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S15 (CODE-5: multi-session Python and TypeScript SDKs).
 
@@ -100,9 +100,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader comparing the CODE-5 target list with the diff would find edits to the transport and tool modules and two new session modules that the proposal does not name, and could take them for unrelated changes. The same reader would also expect edits to `mcp.py` and `mcp.ts` that are absent.
 
-## Proposed: manifestInputs.sessionID member deleted
+## Accepted: manifestInputs.sessionID member deleted
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S17 (CODE-8: remove per-session manifest fields).
 
@@ -114,9 +114,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of CODE-8 item 1 could expect `manifestInputs` to still carry a `sessionID` member and look for the setters in `session.go`, `resume.go`, and `sdkwarm.go`, which no longer exist.
 
-## Proposed: files changed beyond the CODE-8 target list
+## Accepted: files changed beyond the CODE-8 target list
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S17 (CODE-8: remove per-session manifest fields).
 
@@ -137,9 +137,9 @@ The implementor owns this file. It stays empty until an implementation records a
 **Suggested next step:** correct the proposal
 **Evidence:** The pairing race test was created in 3e563c847 (round 1), moved to an Attach stream in e0f0d9e32 (round 2), given the bind-outcome assertion `requireReclaimHoldRefusal` in 9b041d819 (round 3), and given the expired-guard refusal arm in 5c0f313a0 (round 5). Round 4 (47353c49b) addressed a different finding. The finding recurred in rounds 3, 4, and 5. After round 5 the reviewer recorded the code as correct against §5.2 and §28.5.3. Three judges ruled the finding unresolvable with high confidence: each found that §5.2 rules out binding attempt 2 in the expired-guard arm, that the landed test follows §5.2, and that only a proposal correction decided by a human resolves the mismatch. The judges separately ruled the outstanding Pod exit matrix finding (`pkg/adapter/sessionframes_test.go`) resolvable and outside this deviation.
 
-## Proposed: CODE-7 client inventory omits sites added by earlier steps
+## Accepted: CODE-7 client inventory omits sites added by earlier steps
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S22 (record the CODE-7 client-inventory deviation), for the sites step S20 (CODE-7: Part B connection handshake) covered.
 
@@ -159,7 +159,7 @@ The per-SDK `session_started` `CH-RUNTIMEOPS` fake listener that the last invent
 
 **What a later reader would otherwise get wrong.** A reader relying on the inventory to find every client or listener of `CH-MSGSOCK` and `CH-RUNTIMEOPS` would miss the five tests above and would look for the per-SDK `session_started` listener in the wrong file. A later change to the handshake that updates only the inventoried rows would leave those tests failing.
 
-## Proposed: record-time start confirmation still compares the bind token
+## Accepted: record-time start confirmation still compares the bind token
 
 **Status:** resolved
 
@@ -181,7 +181,7 @@ if !ok || st.sessionID != sessionID || st.bindAttempt != attempt {
 
 **What a later reader would otherwise get wrong.** A reader of `pkg/adapter/runtimegeneration.go` would take the token comparison in `noteRuntimeStarted` as the current rule-8 contract, although the landed spec states that a comparison of tokens alone does not conform.
 
-## Proposed: co-tenant teardown test asserts that a session teardown sends the runtime no frame
+## Accepted: co-tenant teardown test asserts that a session teardown sends the runtime no frame
 
 **Status:** resolved
 
@@ -202,9 +202,9 @@ t.Errorf("CH-RUNTIMEOPS carried a %q frame while a co-tenant was still bound; a 
 
 **What a later reader would otherwise get wrong.** A reader of `pkg/adapter/slotsession_test.go` would take the failure message as the current contract and conclude that a session teardown sends the runtime no frame on any channel, although the landed spec requires `session_end` on `CH-MSGSOCK`.
 
-## Proposed: earlier commit messages on the branch carry proposal-internal labels
+## Accepted: earlier commit messages on the branch carry proposal-internal labels
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** the design-conformance review of the landed implementation.
 
