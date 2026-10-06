@@ -6,6 +6,8 @@ The specification states the gateway's handling of a session's `CH-ATTACH` strea
 
 SPEC-1 states the mid-session failure outcome once, in §7.3 **Resume flow after pod failure**, and every other statement of it names its edge or cites that flow. On a pod serving concurrent sessions, a slot whose stream fails is handled as SPEC-4 states.
 
+The coordination lease `REG-COORDLEASE` has one lifecycle statement, the §10.1.1 **Lease lifecycle:** bullet that SPEC-1m stages. SPEC-2b, the §29.3, §29.6, §7.2, and §7.3 edits of SPEC-1l, the §28.5.1 `CH-ATTACH` **Exclusivity.** bullet (SPEC-2g), and the §28.3 `REG-COORDLEASE` row (SPEC-2h) cite it rather than restate when the lease is held. SPEC-1n states the outcome of a resume whose bind meets another replica's lease.
+
 ## Edge cases and accepted failure modes
 
 - **Abandoned turn.** A request that ends mid-turn stops waiting. The runtime's late reply to that turn is consumed by the gateway and is never delivered as a later message's reply. The spec text states only the lifetime rule; the correlation mechanism belongs to CODE-1.
@@ -15,12 +17,13 @@ SPEC-1 states the mid-session failure outcome once, in §7.3 **Resume flow after
 - **Hung runtime on a pod serving concurrent sessions.** Every open slot stream on the pod fails. The coordinating replica counts each failed slot toward the §5.2 whole-pod replacement trigger and requests the drain in the order that CODE-2 items 4 and 6 state. Below the threshold, each failed slot is released under the §5.2 per-slot cleanup disposition: a slot whose cleanup is not acknowledged clean is `leaked` and stays counted. A pod whose last slot releases cleanly takes the pool's occupancy-zero path, where §4.7 `ReportPodScrub` reports a hung runtime whose connection is open as live, so the pod serves again and the hang is found as the §5.2 **Runtime not live:** bullet states for a runtime that stops after the report. Failures that fall outside the trigger's rolling window do not accumulate, so at a low session arrival rate the pod can keep serving. This is accepted. SPEC-4 limits the retire-on-failure statements in §4.6.3, §5.2, §6.1, and §6.2 to `maxConcurrentSessions: 1`. This adopts the outcome of proposal 0079. The count is kept per gateway replica, which the summary lists as a defect this proposal does not stage.
 - **Session in `resume_pending` with no re-dispatch driver.** The outcome is the summary **Defects** entry **No driver moves `resume_pending` to `resuming` on a replacement pod.** The card keeps its existing replacement-pod re-attach sentence; the missing driver is filed by RECORDS-1.
 - **Launch-time retry paths.** The pre-running `starting → failed (retries exhausted, ...)` edge in §7.2 and the §6.2 pre-attached retry policy's **Exhaustion:** bullet describe launch-time retries that the §7.3 classifier does not govern. They stay unchanged.
+- **Resume racing another replica's lease.** A restore whose bind finds `REG-COORDLEASE` held by another replica answers `RESUME_FAILED`, as SPEC-1n states; CODE-2 item 8 lists where the tree reaches it. The §29.3 forward is unchanged.
 
 ## Staged edits
 
 Every table row this proposal edits is one physical line. The spec/28 cards and §28.6 are hard-wrapped, so match their anchors with line breaks ignored and keep their wrapping style in the replacement.
 
-### SPEC-1 · spec/07_session-lifecycle.md § 7.1, § 7.2, § 7.3; spec/06_warm-pod-model.md § 6.2; spec/08_recursive-delegation.md § 8.3, § 8.8, § 8.10; spec/15_external-api-surface.md § 15.4.3; spec/29_communication-scenarios.md § 29.3, § 29.6
+### SPEC-1 · spec/10_gateway-internals.md § 10.1.1; spec/07_session-lifecycle.md § 7.1, § 7.2, § 7.3; spec/06_warm-pod-model.md § 6.2; spec/08_recursive-delegation.md § 8.3, § 8.8, § 8.10; spec/15_external-api-surface.md § 15.1, § 15.4.3; spec/29_communication-scenarios.md § 29.2, § 29.3, § 29.6; spec/12_storage-architecture.md § 12.4
 
 **SPEC-1a. §7.2 Interactive Session Model, the **Session state machine:** block and the paragraph after it.** Replace the lines
 
@@ -166,15 +169,43 @@ In the **Expiry:** bullet, delete " (same behavior as terminal failure after ret
 
 **SPEC-1k. Bounded sweep.** After SPEC-1a to SPEC-1j, grep `spec/` for `retries exhausted`, `retry exhaustion`, `retries are exhausted`, and `ends the session`. Reconcile only a statement that gives the outcome of a mid-session (post-`running`) session failure. Leave unchanged the §7.2 `starting → failed (retries exhausted, or STARTING_TIMEOUT expired ...)` edge, the §6.2 pre-attached retry policy's **Exhaustion:** bullet, and every hit about checkpoint uploads, `CoordinatorFence`, credentials, or webhooks.
 
-**SPEC-1l. Coordination lease in `resume_pending` and `awaiting_client_action`: §29.6 **Preconditions.**, §29.3 **Off-holder matrix.**, and the §7.2 durable-inbox **Per-message TTL** row.** The §29.6 paragraph is hard-wrapped, so match with line breaks ignored and keep its wrapping style. Replace "The gateway replica that drives the restore holds the session's coordination lease `REG-COORDLEASE`, and" with "The gateway replica that drives the restore acquires the session's coordination lease `REG-COORDLEASE` when it binds the replacement pod, and".
+**SPEC-1l. Coordination lease in `resume_pending` and `awaiting_client_action`: §29.6 **Preconditions.**, §29.3 **Off-holder matrix.**, the §7.2 durable-inbox **Per-message TTL** row and default-mode **Crash recovery** row, the §12.4 durable-inbox key row, and §7.3 **Children behavior:**.** The §29.6 paragraph is hard-wrapped, so match with line breaks ignored and keep its wrapping style. Replace "The gateway replica that drives the restore holds the session's coordination lease `REG-COORDLEASE`, and" with "The gateway replica that drives the restore acquires the session's coordination lease `REG-COORDLEASE` when it binds the replacement pod ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**), and".
 
-In the §29.3 `POST /v1/sessions/{id}/terminate` row, replace "`starting`, `running`, `suspended`, `resume_pending`, and `awaiting_client_action`, the non-terminal states for which the specification establishes a coordinating replica holding `REG-COORDLEASE` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), §28.3)" with "`starting`, `running`, and `suspended`, the non-terminal states for which the specification establishes a coordinating replica holding `REG-COORDLEASE` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), §28.3), and `resume_pending` and `awaiting_client_action` while another replica holds it". In the same row, after "no off-holder condition arises there", append ". In `resume_pending` and `awaiting_client_action` while no replica holds `REG-COORDLEASE` (§28.5.1 `CH-ATTACH` **Degradation.**), no off-holder condition arises either, and the serving replica performs the termination sequence itself". The `DELETE /v1/sessions/{id}` row inherits both cells and is not edited.
+In the §29.3 **Off-holder matrix.** paragraph, after "holding the coordination lease `REG-COORDLEASE` (§28.3, [§10.1](10_gateway-internals.md#101-horizontal-scaling))." insert "For a session in `resume_pending` or `awaiting_client_action` that has no coordinating replica because no replica holds the lease ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**), no off-holder condition arises, and the serving replica performs the effect of a row whose required outcome is a forward." The paragraph is hard-wrapped, so match with line breaks ignored and keep its wrapping style.
 
-In the §29.3 `POST /v1/sessions/{id}/resume` row, replace "Forward to the coordinator, which performs the restore" with "When another replica holds `REG-COORDLEASE`, forward to the coordinator, which performs the restore". After "is not evidence that the descendant is orphaned. On an unreachable coordinator it fails closed", append ". When no replica holds it (§28.5.1 `CH-ATTACH` **Degradation.**), no off-holder condition arises, and the serving replica performs the restore and the traversal and acquires `REG-COORDLEASE` as §29.6 **Preconditions.** states".
+In the §29.3 `POST /v1/sessions/{id}/terminate` row, replace "the non-terminal states for which the specification establishes a coordinating replica holding `REG-COORDLEASE` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), §28.3)" with "the non-terminal states in which a replica can hold `REG-COORDLEASE`; in `resume_pending` and `awaiting_client_action` the row applies while a replica holds it ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**)". The matrix preamble states the outcome when no replica holds it. The `DELETE /v1/sessions/{id}` row inherits the cell and is not edited.
 
-In the §7.2 durable-inbox **Per-message TTL** row, delete " on the coordinating replica" from "A background goroutine on the coordinating replica evaluates expiry".
+In the §29.3 `POST /v1/sessions/{id}/resume` row, replace "Forward to the coordinator, which performs the restore" with "While a replica holds `REG-COORDLEASE`, forward to the coordinator, which performs the restore". The matrix preamble states the outcome when no replica holds it, and §29.6 step 4, as SPEC-1n edits it, states the outcome of a bind that meets another replica's lease.
 
-### SPEC-2 · spec/28_communication-channels.md § 28.5.1 `CH-ATTACH` card, § 28.5.3 `CH-MSGSOCK` card and **Exit Codes** table, § 28.6; spec/04_system-components.md § 4.7
+In the §29.3 row for the tool-use and elicitation resolution routes, after "holding that state is not evidence that the blocked call can be resolved locally" insert ". In `resume_pending` and `awaiting_client_action`, while no replica holds `REG-COORDLEASE`, no pod is blocked on the call, and the serving replica records the resolution in that durable state".
+
+In the §29.3 `GET /v1/sessions/{id}/events`, `Accept: application/json` row, after "reports an event history the session does not have. On an unreachable coordinator it fails closed" insert ". In `resume_pending` and `awaiting_client_action`, while no replica holds `REG-COORDLEASE`, no replica holds the session's buffer, and the serving replica serves the envelope from the shared session-event relay `CH-EVENTRELAY`, as the streaming row does".
+
+In the §7.2 durable-inbox **Per-message TTL** row, replace "A background goroutine on the coordinating replica evaluates expiry every 30 seconds and trims expired messages from the list head using `LRANGE` + `LTRIM`." with "A background goroutine evaluates expiry every 30 seconds and removes expired messages from the list head with one Redis script, which reads each head entry's `enqueued_at` and `per_message_ttl` and removes the entry only while it has expired.", and replace "On each expiry, the gateway emits" with "For each message the script removes, the gateway emits". In the `spec/12_storage-architecture.md` §12.4 `t:{tenant_id}:session:{session_id}:inbox` key row, replace "TTL trim via `LRANGE`+`LTRIM`" with "TTL trim via one atomic head-trim script".
+
+In the §7.2 default-mode inbox **Crash recovery** row, replace "When a new gateway replica takes over coordination (via lease reacquisition)," with "When a new gateway replica takes over coordination (via lease reacquisition, which includes the resume bind of a session whose lease was released, [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**),".
+
+In the §7.3 **`awaiting_client_action` semantics:** **Children behavior:** bullet, replace "if the coordinating gateway replica crashes while the parent is in `awaiting_client_action`" with "if the gateway replica that coordinated the parent crashes, or releases the parent's coordination lease ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**), while the parent is in `awaiting_client_action`".
+
+**SPEC-1m. §10.1.1 Stateless Replicas and Per-Session Coordination, **Per-session coordination:**, and the §29.3 and §29.2 sites that state no acquisition point.** After the **Generation counters:** bullet, insert
+
+```
+- **Lease lifecycle:** A gateway replica acquires a session's coordination lease `REG-COORDLEASE` ([Section 28.3](28_communication-channels.md#283-registers)) at three points: when it starts the session on its pod, before it commits the session to `running`; when it binds a replacement pod to the session on a resume; and when it adopts a session's lapsed lease, which is a coordinator takeover that runs the [§10.1.2](#1012-coordinator-handoff-protocol) sequence. The holder renews the lease while it holds the session's pod binding and, in a non-terminal state other than `resume_pending` and `awaiting_client_action`, while it holds the lease without a binding. The holder releases the lease when a stream failure moves the session to `resume_pending` or `awaiting_client_action` and the holder releases the session's binding ([Section 28.5.1](28_communication-channels.md#2851-gateway-to-pod) `CH-ATTACH` **Degradation.**), when it evicts a binding whose gateway-to-pod connection has died, when a bind whose running-commit fails rolls the binding back, and when [§10.1.2](#1012-coordinator-handoff-protocol) or [§10.1.5](#1015-stale-replica-behavior) requires it to relinquish or release the lease. User and tenant erasure deletes the lease ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)). A lease its holder no longer renews lapses at its expiry. A terminal session's lease is not renewed, lapses at its expiry, and is not acquired again. No replica adopts the lease of a session in `resume_pending` or `awaiting_client_action`, and no replica renews it there without a binding, so a session that a stream failure moved to either state has no holder until a resume binds a replacement pod. The session's coordinating replica is the holder of `REG-COORDLEASE`, and a session in `resume_pending` or `awaiting_client_action` that no replica holds has no coordinating replica.
+```
+
+In the same list, in the **Primary:** bullet, replace "If that replica dies, another picks up after TTL expiry." with "If that replica dies, the lease lapses after its TTL and is adopted as the **Lease lifecycle:** bullet states."
+
+In the §29.3 `POST /v1/sessions/{id}/terminate`, `POST /v1/sessions/{id}/start`, and `POST /v1/sessions/{id}/finalize` rows, replace each occurrence of "the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1)" with "no replica has yet acquired the coordination lease `REG-COORDLEASE`, which a replica acquires when it starts the session ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**)". The phrase occurs in those rows and nowhere else in `spec/29_communication-scenarios.md`. In the terminate row it is in the outcome cell, which SPEC-1l's state-column replacement does not touch.
+
+In §29.2 step 11, which is hard-wrapped, so match with line breaks ignored and keep its wrapping style, replace "The specification does not state when the replica creating a session acquires that session's coordination lease `REG-COORDLEASE`, and it does not state whether that replica announces" with "The replica that starts the session at step 21 acquires that session's coordination lease `REG-COORDLEASE` ([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**). The specification does not state whether that replica announces", and replace "state the coordinating replica as the holder of that lease, without a section stating the initial acquisition at session creation." with "state the coordinating replica as the holder of that lease." The step keeps its `unstated` tag for the fence question.
+
+**SPEC-1n. A resume whose bind meets another replica's coordination lease: the §15.1 `RESUME_FAILED` catalog row and §29.6 step 4.** Apply after SPEC-1l. §29.6 step 4 is the single statement of the outcome for every transient resume cause, and the catalog row names the cause and cites the step.
+
+In the §15.1 error catalog `RESUME_FAILED` row, replace "failed for a generic reason (pool or credential exhaustion, a Token Service outage, or a transient setup-time transport failure)." with "failed for a generic reason (pool or credential exhaustion, a Token Service outage, a transient setup-time transport failure, or the session's coordination lease `REG-COORDLEASE` held by another gateway replica when the gateway binds the replacement pod)." After "succeeds once the condition clears." insert " When another gateway replica's resume of the session has committed, the retry is refused with `INVALID_STATE_TRANSITION`. Step 4 of [§29.6](29_communication-scenarios.md#296-restore-and-resume) states the outcome of a bind that meets another replica's lease."
+
+In §29.6 step 4, which is hard-wrapped, so match with line breaks ignored and keep its wrapping style, replace "A pool or credential exhaustion, a Token Service outage, or a transient setup-time transport failure on this path is returned to the caller as `RESUME_FAILED` with `Retry-After` set, and the session row returns to `awaiting_client_action` so" with "A pool or credential exhaustion, a Token Service outage, a transient setup-time transport failure on this path, or the coordination lease `REG-COORDLEASE` held by another replica when the gateway binds the replacement pod is returned to the caller as `RESUME_FAILED` with `Retry-After` set, and the session row returns to `awaiting_client_action` unless another write has moved it on, so". SPEC-1n stages no edit to §29.6 **Preconditions.**.
+
+### SPEC-2 · spec/28_communication-channels.md § 28.3 `REG-COORDLEASE` row, § 28.5.1 `CH-ATTACH` card, § 28.5.3 `CH-MSGSOCK` card and **Exit Codes** table, § 28.6; spec/04_system-components.md § 4.7
 
 **SPEC-2a. The **Timing.** bullet.** After the sentence "The specification states no deadline for `Attach`.", insert
 
@@ -192,7 +223,8 @@ The adapter ends a session's stream with `DEADLINE_EXCEEDED` when the runtime mi
 `runtime_crash` whether or not a message is outstanding. The
 [§7.3](07_session-lifecycle.md#73-retry-and-resume) classifier selects the session's next state, and on that
 transition the replica releases the session's binding and, on a transition to `resume_pending` or
-`awaiting_client_action`, its coordination lease `REG-COORDLEASE`. A pod serving one session is released with the
+`awaiting_client_action`, its coordination lease `REG-COORDLEASE`
+([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**). A pod serving one session is released with the
 `failed` disposition ([§6.2](06_warm-pod-model.md#62-pod-state-machine) "Pod crash during an active
 session"), and on a pod serving concurrent sessions only the session's slot is released, which counts toward
 the whole-pod replacement trigger as the
@@ -239,6 +271,16 @@ and does not restart the agent. The gateway detects the failure on the session's
 ```
 adapter logs stderr; the gateway detects the failure on the session's `CH-ATTACH` stream (§28.5.1)
 ```
+
+**SPEC-2g. The `CH-ATTACH` **Exclusivity.** bullet.** Replace "One coordinating replica per session. The guard is" with
+
+```
+At most one coordinating replica per session, which holds and releases the lease at the points
+[§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:**
+states. The guard is
+```
+
+**SPEC-2h. §28.3 **Register-entry register**, the `REG-COORDLEASE` row.** Replace "One holder per tenant and session, on a compare-and-set with a 60 second expiry" with "At most one holder per tenant and session, on a compare-and-set with a 60 second expiry, acquired and released at the points [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Lease lifecycle:** states". The row stays one physical line.
 
 ### SPEC-3 · spec/28_communication-channels.md § 28.8 Failure and degradation matrix, `CH-ATTACH` and `CH-MSGSOCK` rows
 
@@ -301,6 +343,8 @@ SPEC-4 changes no other text in §4.6.3, §5.2, §6.1, or §6.2. The §6.2 **Pod
 - `spec/06_warm-pod-model.md` (SPEC-1, SPEC-4)
 - `spec/07_session-lifecycle.md` (SPEC-1)
 - `spec/08_recursive-delegation.md` (SPEC-1)
+- `spec/10_gateway-internals.md` (SPEC-1)
+- `spec/12_storage-architecture.md` (SPEC-1)
 - `spec/15_external-api-surface.md` (SPEC-1)
 - `spec/28_communication-channels.md` (SPEC-2, SPEC-3)
 - `spec/29_communication-scenarios.md` (SPEC-1)
