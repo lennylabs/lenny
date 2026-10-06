@@ -12,7 +12,7 @@ SPEC-1 states the mid-session failure outcome once, in §7.3 **Resume flow after
 - **Hung runtime between turns.** The held stream keeps the adapter's heartbeat running, so a runtime that hangs while no message is outstanding is detected and reported under SPEC-2b.
 - **Hang before the first message, or after an `UNAVAILABLE` end.** No stream is open, so no heartbeat runs. The next message delivery or the session watchdog detects the hang. This is accepted.
 - **Connection loss.** An `UNAVAILABLE` end is discarded without a report. The specification does not state how the gateway distinguishes a lost pod from a partitioned one on this channel, and the card records that.
-- **Hung runtime on a pod serving concurrent sessions.** Every open slot stream on the pod fails. Each failed slot counts toward the §5.2 whole-pod replacement trigger. A pod with fewer open slot streams than the trigger threshold is reused until the trigger fires or the slots end. This adopts proposal 0079 unchanged.
+- **Hung runtime on a pod serving concurrent sessions.** Every open slot stream on the pod fails. The coordinating replica counts each failed slot toward the §5.2 whole-pod replacement trigger and requests the drain in the order that CODE-2 items 4 and 6 state. Below the threshold, each failed slot is released under the §5.2 per-slot cleanup disposition: a slot whose cleanup is not acknowledged clean is `leaked` and stays counted. A pod whose last slot releases cleanly takes the pool's occupancy-zero path, where §4.7 `ReportPodScrub` reports a hung runtime whose connection is open as live, so the pod serves again and the hang is found as the §5.2 **Runtime not live:** bullet states for a runtime that stops after the report. Failures that fall outside the trigger's rolling window do not accumulate, so at a low session arrival rate the pod can keep serving. This is accepted. SPEC-4 limits the retire-on-failure statements in §4.6.3, §5.2, §6.1, and §6.2 to `maxConcurrentSessions: 1`. This adopts the outcome of proposal 0079. The count is kept per gateway replica, which the summary lists as a defect this proposal does not stage.
 - **Session in `resume_pending` with no re-dispatch driver.** The session waits out `maxResumeWindowSeconds` and then enters `awaiting_client_action`, unless the client resumes it. The card keeps its existing replacement-pod re-attach sentence; the missing driver is filed by RECORDS-1.
 - **Launch-time retry paths.** The pre-running `starting → failed (retries exhausted, ...)` edge in §7.2 and the §6.2 pre-attached retry policy's **Exhaustion:** bullet describe launch-time retries that the §7.3 classifier does not govern. They stay unchanged.
 
@@ -71,7 +71,7 @@ In the paragraph beginning "`input_required` is a **sub-state of `running`**", r
 **SPEC-1c. §6.2 Pod State Machine, **Pod crash during an active session.**, the **Retry exhaustion:** and **maxSessionRetries** bullets.** Replace the **Retry exhaustion:** bullet with
 
 ```
-- **Retry exhaustion:** When retries are exhausted or the failure is non-retryable, the session takes the next state that [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume flow after pod failure** selects. The failed pod is released from the pool and terminated, and the gateway returns a structured error to the client.
+- **Retry exhaustion:** When retries are exhausted or the failure is non-retryable, the session takes the next state that [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume flow after pod failure** selects, and the gateway returns a structured error to the client.
 ```
 
 In the **maxSessionRetries** bullet, replace "Setting it to `0` disables retries, so crashes always fail the session outright." with "Setting it to `0` disables automatic retries."
@@ -90,7 +90,7 @@ with
 
 In the transition block, replace the lines `input_required → resume_pending (pod crash / gRPC error while awaiting input, retryCount < maxRetries)` and `input_required → failed    (pod crash / gRPC error while awaiting input, retries exhausted)` with the three lines SPEC-1a gives for the same edges.
 
-**SPEC-1e. §8.8 TaskRecord and TaskResult Schema, the **Lenny canonical task state machine:** block and the **Recovery transitions are session-level, not task-level.** paragraph.** In the block, replace
+**SPEC-1e. §8.8 TaskRecord and TaskResult Schema, the **Lenny canonical task state machine:** block, the **Recovery transitions are session-level, not task-level.** paragraph, and the "On failure:" `TaskResult` example.** In the block, replace
 
 ```
                     → failed            (terminal — unrecoverable error or pod-crash retries exhausted)
@@ -120,7 +120,11 @@ In the paragraph, replace "When a pod crash or gRPC error occurs with `retryCoun
 on retry exhaustion the underlying session enters `awaiting_client_action` ([§7.3](07_session-lifecycle.md#73-retry-and-resume)), which external protocol clients see as `input_required` per the supplementary table below, and a non-retryable failure moves the task to `failed`.
 ```
 
-In the "On failure:" `TaskResult` example, replace `"category": "TRANSIENT"` with `"category": "PERMANENT"` and `"retriesExhausted": true` with `"retriesExhausted": false`.
+In the "On failure:" `TaskResult` example, replace `"retriesExhausted": true` with `"retriesExhausted": false`, and leave `"category": "TRANSIENT"` unchanged. After the example's closing fence, and before the paragraph that begins "`TaskResult.schemaVersion` follows", insert
+
+```
+The `error.category` field carries the [Section 16.3](16_observability.md#163-distributed-tracing) category of the error, which for a crash is `TRANSIENT`. It does not record whether the gateway retried the failure. `retriesExhausted` records whether the session's retry budget was spent, and the failure classification in the `child_failed` event ([Section 8.10](#810-delegation-tree-recovery)) records whether [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) classified the failure as retryable. In the example, the child's `retryPolicy` lists `runtime_crash` under `nonRetryableFailures`, so the child failed on its first crash without a retry.
+```
 
 **SPEC-1f. §8.10 Delegation Tree Recovery, **Parent pod failure with active children:**, step 5.** Replace "failure (retry exhaustion)" with
 
@@ -227,21 +231,55 @@ Land SPEC-3 in the same edit as SPEC-2. Replace the `CH-ATTACH` row with the lin
 
 In the `CH-MSGSOCK` row, replace "reports the failure to the gateway, and does not restart the agent; retry is handled by the gateway at the session level" with "and does not restart the agent; the gateway detects the failure on the session's `CH-ATTACH` stream (§28.5.1) and handles retry at the session level". The row stays one physical line.
 
-### SPEC-4 · spec/05_runtime-registry-and-pool-model.md § 5.2 Pool configuration and execution modes, **Slot failure and cleanup (`maxConcurrentSessions > 1`).**, **Failure isolation:** bullet
+### SPEC-4 · spec/05_runtime-registry-and-pool-model.md § 5.2 Pool configuration and execution modes, **Failure isolation:** bullet, **Recycle lifecycle (`recycle.enabled: true`).**, and the **Pod retirement policy (recycling pools).** paragraph that begins "A session that ends in failure or a crash also retires the pod"; spec/06_warm-pod-model.md § 6.1, **One-session-per-pod default and the recycle opt-in.**, and § 6.2, the per-slot sub-states scoped to concurrent occupancy, the recycle `claimed ──→ draining` edge, and **Pod crash during an active session.**; spec/04_system-components.md § 4.6.3, the `SandboxClaim.status.phase` `failed` bullet
 
-Append to the end of the bullet, after "and the gateway applies the slot retry policy below.":
+**SPEC-4a. §5.2, the **Failure isolation:** bullet.** Append to the end of the bullet, after "and the gateway applies the slot retry policy below.":
 
 ```
 A slot whose session's `CH-ATTACH` stream fails after the session has started follows the stream-failure rule of [Section 28.5.1](28_communication-channels.md#2851-gateway-to-pod). The gateway counts that slot as `failed` toward the **Whole-pod replacement trigger:** below, and the session's retry and exhaustion follow [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) in place of the other slot retry policy bullets. A runtime process that stops answering heartbeats ends every open `CH-ATTACH` stream on the pod.
 ```
 
-SPEC-4 changes no other text in §5.2 or §6.2. The §6.2 **Pod failure during active slots.** bullet covers a pod crash, node eviction, or OOM kill, and stays as it is.
+**SPEC-4b. §5.2, the **Pod retirement policy (recycling pools).** paragraph that begins "A session that ends in failure or a crash also retires the pod".** Replace "A session that ends in failure or a crash also retires the pod, regardless of recycle settings." with
+
+```
+On a pool with `maxConcurrentSessions: 1`, a session that ends in failure or a crash also retires the pod, regardless of recycle settings. On a pool with `maxConcurrentSessions > 1`, a failed session's slot is handled as the **Failure isolation:** bullet below states.
+```
+
+**SPEC-4c. §5.2, **Recycle lifecycle (`recycle.enabled: true`).**.** Replace "A session that ends in failure or a crash always retires its pod regardless of recycle settings." with
+
+```
+A session that ends in failure or a crash retires its pod as the **Pod retirement policy (recycling pools).** paragraph that begins "On a pool with `maxConcurrentSessions: 1`" states.
+```
+
+**SPEC-4d. §6.1 What a Pre-Warmed Pod Looks Like, **One-session-per-pod default and the recycle opt-in.**.** Replace "A session that ends in failure or a crash always retires its pod regardless of recycle settings." with
+
+```
+A session that ends in failure or a crash retires its pod as the **Pod retirement policy (recycling pools).** paragraph that begins "On a pool with `maxConcurrentSessions: 1`" in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states.
+```
+
+**SPEC-4e. §6.2 Pod State Machine, the per-slot sub-states scoped to concurrent occupancy.** In the line `running ──→ failed                    (non-retryable error: OOM, workspace validation, policy rejection)`, replace the parenthetical with `(non-retryable error: OOM, workspace validation, policy rejection; or a CH-ATTACH stream failure, see §5.2)`.
+
+**SPEC-4f. §4.6.3 CRD Field Ownership and Write Boundaries, the `SandboxClaim.status.phase` enumeration, the `failed` bullet.** Replace "or a failed or crashed session;" with "or a failed or crashed session on a pool with `maxConcurrentSessions: 1` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes));".
+
+**SPEC-4g. §6.2 Pod State Machine, the recycle `claimed ──→ draining` edge.** In the parenthetical that begins `(recycle disposition retires the pod:`, replace `a failed session;` with `a failed session on a maxConcurrentSessions: 1 pool (see §5.2);`, and rewrap the parenthetical's continuation lines at the block's existing indentation.
+
+**SPEC-4h. §6.2 Pod State Machine, **Pod crash during an active session.**.** Replace "The crashed pod is always retired through the drain path regardless of `recycle` settings: a pod that fails mid-session never re-enters the warm pool and never reaches `reserved`." with
+
+```
+The crashed pod is retired as the **Pod retirement policy (recycling pools).** paragraph that begins "On a pool with `maxConcurrentSessions: 1`" in [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states; a pod retired this way goes through the drain path, never re-enters the warm pool, and never reaches `reserved`.
+```
+
+In the paragraph after the bullets that begins "The `resume_pending` transition here", replace "the crashed pod is drained, a replacement is claimed," with "a replacement pod is claimed,".
+
+SPEC-1c edits the **Retry exhaustion:** and **maxSessionRetries** bullets of the same paragraph, and SPEC-4h's anchor sentence is outside both, so the two edits do not overlap.
+
+SPEC-4 changes no other text in §4.6.3, §5.2, §6.1, or §6.2. The §6.2 **Pod failure during active slots.** bullet covers a pod crash, node eviction, or OOM kill, and it stays as it is.
 
 ## Spec files touched
 
-- `spec/04_system-components.md` (SPEC-2)
+- `spec/04_system-components.md` (SPEC-2, SPEC-4)
 - `spec/05_runtime-registry-and-pool-model.md` (SPEC-4)
-- `spec/06_warm-pod-model.md` (SPEC-1)
+- `spec/06_warm-pod-model.md` (SPEC-1, SPEC-4)
 - `spec/07_session-lifecycle.md` (SPEC-1)
 - `spec/08_recursive-delegation.md` (SPEC-1)
 - `spec/15_external-api-surface.md` (SPEC-1)
