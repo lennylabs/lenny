@@ -8,13 +8,13 @@
       Tiers 0, 11. Depends on: S2
 - [ ] **S4 · docs** — DOCS-1. Lands the reader-doc edits that follow SPEC-1, SPEC-2, and SPEC-4.
       Tiers 0, 11. Depends on: S1, S2, S3
-- [ ] **S5 · code** — CODE-1. Lands the session-scoped stream, the reader, the turn token, and cancel-based eviction.
+- [ ] **S5 · code** — CODE-1. Lands the session-scoped stream, the reader, the turn token, cancel-based eviction, and eviction on end.
       Tiers 0, 1. Depends on: S2
 - [ ] **S6 · test** — TEST-1. Lands the step-1 tests.
       Tiers 0, 1, 2, 4, 5, 7a. Depends on: S5
 - [ ] **S7 · code** — CODE-2. Lands the release funnel, the slot accounting, the per-session slot-accounting lock, the release before a resume rebinds, and the hold of a resume whose bind meets another replica's lease, with their tests.
       Tiers 0, 1, 2, 7a. Depends on: S1, S2, S3, S6
-- [ ] **S8 · code** — CODE-3. Lands the deliverable with its tests.
+- [ ] **S8 · code** — CODE-3. Lands the injected stream-failure handler, the `runtime_crash` report on a bounded detached context, the report-timeout flag, and the path-6 delivery fallback, with their tests.
       Tiers 0, 1. Depends on: S1, S2, S7
 - [ ] **S9 · test** — TEST-2. Lands the step-2 tests.
       Tiers 0, 4, 5, 7a, 8, 11. Depends on: S4, S8
