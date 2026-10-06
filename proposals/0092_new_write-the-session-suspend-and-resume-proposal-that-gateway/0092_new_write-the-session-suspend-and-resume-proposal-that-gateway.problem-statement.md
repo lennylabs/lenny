@@ -118,7 +118,7 @@ Scope lens (verdict: revise)
 - Accepted: a general §29.3 forward carrier for non-message requests is out of scope; the lease lifecycle is decided so that resume needs no new carrier or keeps the retryable error.
 - Accepted: takeover of `starting` sessions moves to coordination work; only the held-pod `suspended` half stays.
 - Accepted: recycling of an `expired` session's pod moves to the recycling follow-up.
-- Accepted: the idle-suspension work depends on the driver and is ordered after it; a split into two proposals is left open.
+- Accepted: the idle-suspension work depends on the driver and is ordered after it; the proposal ships as one, because the driver also depends on the active-age check.
 - Accepted: 0091 RECORDS-1 item 4 is added to the closed findings, and the F-15.1.41 boundary is named.
 
 Impact lens (verdict: revise)
@@ -134,6 +134,6 @@ Alternatives lens (verdict: revise)
 
 - Refuted in part: after 0091 the session does not stall with nothing to move it on. The watchdog moves it to `awaiting_client_action` after 900 s, and `POST /resume` recovers it. The missing piece is the automatic §7.3 step 3b.
 - Confirmed: the driver is an implementation gap against existing spec text and reuses `resumeOnPod`.
-- Recorded: items 6 through 8 are owner product decisions that replace spec-conformant behavior; a split into a driver-and-lease proposal and an idle-suspension follow-on is a smaller alternative, left to the owner.
+- Recorded: items 6 through 8 are owner product decisions that replace spec-conformant behavior; a split into a driver-and-lease proposal and an idle-suspension follow-on was considered and rejected, because the driver depends on the active-age check.
 - Recorded: F-11.3.36's flag text and F-11.3.35's enforcement do not depend on the idle redesign; the proposal must state which suspensions the hold governs after idle suspension releases at once.
 - Confirmed: the lease acquisition and forward rules plus the driver are the part that 0091 depends on.

@@ -76,7 +76,7 @@
 
 ## Open decisions for human to make
 
-No entry is recorded yet; the review loops write this section. The drafting pass left one question for them to adjudicate: whether to ship this as one proposal or to split it into option A (the driver, lease, and retry work: SPEC-1 to SPEC-3, CODE-2 to CODE-5, DOCS-1a) and option B (active age and idle suspension: SPEC-4, SPEC-5, CODE-1, CODE-6, DOCS-1b). The owner made the decisions behind option B from tree descriptions that the validated problem refuted (that age already counts active time, and that podless suspension already exists). Option B's lifetime depends on CODE-1, and its podless route depends on CODE-4.
+No decision is open. The proposal ships as one: the resume driver (CODE-4) depends on the active-age check (CODE-1) and writes the idle-clock stamp (CODE-6), so the driver work and the idle-suspension work cannot land separately.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -96,8 +96,9 @@ No entry is recorded yet; the review loops write this section. The drafting pass
 | 0060 | Implemented | Widens the Sweeper adoption predicate it built and keeps its never-bound exclusion. | Nothing. The record stands. |
 | 0058 | Implemented | Its §7.2 path 6 pod-held resume-and-deliver now runs for any message to a held-pod `suspended` session, beyond `delivery: immediate`, and gains a podless branch. | Nothing. The record stands. |
 | 0081 | Implemented | Removes `RESUME_FAILED` from the slot-bind refusal envelope it specified in §4.7.1. | Nothing. The record stands. |
-| 0085 | Implemented | Removes `RESUME_FAILED` from the `SETUP_COMMAND_FAILED` fallback list it edited in §15.1. | Nothing. The record stands. |
+| 0085 | Draft (drafted 2026-09-27, not converged) | Removes the subject of its `POST /v1/sessions/{id}/resume` bullet, which routes recovery through the `RESUME_FAILED` client retry, and of the `SESSION_CREATION_FAILED`/`STARTING_FAILED`/`RESUME_FAILED` fallback text it stages for §15.1. This proposal deletes `RESUME_FAILED` and makes resume a SessionStore write that the resume driver acts on. Its create and start stop-condition work survives. | Rebase onto this proposal's resume model, and drop `RESUME_FAILED` from its anchors and recovery text. |
 | 0090 | Implemented | The resume driver relies on its runtime contract: `Resume` writes `session_start` on the new pod, and a released session receives `session_end`. | Nothing. |
+| 0077 | Draft (last commit 2026-08-19, not reviewed) | Its §10 relationship paragraph cites §6.2 for the statement that a root session parked in `suspended` may remain indefinitely, and weighs that workaround as evidence against building 0077. SPEC-5g bounds every suspended session with `gateway.maxSuspendedSessionSeconds` (default 604800 s) and adds `suspended → expired`, so the workaround becomes time-limited. No 0077 deliverable loses its subject. | Correct the premise in its §10 paragraph when it is next revised. |
 
 ## Deliverable index
 
