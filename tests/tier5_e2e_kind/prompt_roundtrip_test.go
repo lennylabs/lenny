@@ -37,13 +37,18 @@ const promptRoundtripTenant = "prompt-roundtrip-tenant"
 // stream proxy / 18. Client ↔ Gateway: Full interactive session
 // (prompts, responses, ...)"
 //
+// spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model)
+//
 // diagnosis: a failure means the gateway-to-pod bidirectional data path
 // is broken on a real cluster: either a client prompt never reaches the
 // runtime running in the claimed agent pod, or the runtime's output
 // never makes it back to the client through the synchronous message
 // response and the AttachSession event stream. This is the platform's
 // central guarantee (§6.3 / §15.1) and, unlike the in-process tier4
-// tests, exercises the real SandboxClaim-bound pod over the network.
+// tests, exercises the real SandboxClaim-bound pod over the network. A
+// failure on the second prompt alone means the session's Attach stream
+// ended with the request that delivered the first prompt, rather than
+// being held for the life of the session's binding.
 func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 	d := sessiondriver.New(t)
 
@@ -66,7 +71,10 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 // an already-provisioned tenant: it starts a session on the echo pool,
 // attaches the AttachSession event stream, sends a prompt, and asserts
 // the real pod's echoed output returns both in the synchronous
-// POST /messages response and over the bidirectional stream proxy. It is
+// POST /messages response and over the bidirectional stream proxy. It
+// then sends a second prompt on the same session and asserts its own echo,
+// because each POST /messages request ends when it returns and the
+// session's Attach stream must outlive the request that opened it. It is
 // the reusable core of TestPromptRoundTripsToRealPodAndReturnsContent so
 // the same journey can be replayed across auth modes
 // (prompt_journey_auth_modes_test.go) without duplicating the
@@ -130,6 +138,28 @@ func runEchoPromptJourney(ctx context.Context, t *testing.T, d *sessiondriver.Dr
 	// pod output ever returned. Requiring the echo prefix pins the
 	// assertion to the runtime's response travelling back across the
 	// stream proxy.
+	awaitEchoEvent(t, events, prompt)
+
+	// spec: §28.5.1 (CH-ATTACH Timing.) — the first prompt's request has
+	// returned, so its context has ended. A second prompt on the same
+	// session reaches the runtime over the stream the first one opened and
+	// returns its own echo.
+	const second = "pong"
+	msgResp, err = d.SendMessage(ctx, tenant, sess.ID, second)
+	if err != nil {
+		t.Fatalf("send second message %q: %v", second, err)
+	}
+	if msgResp.DeliveryReceipt.Status != "delivered" {
+		t.Fatalf("second delivery receipt status = %q, want delivered (body: %s)",
+			msgResp.DeliveryReceipt.Status, msgResp.Output)
+	}
+	assertOutputEchoes(t, "second POST /messages response", msgResp.Output, second)
+}
+
+// awaitEchoEvent waits for an events-stream frame carrying the runtime's
+// echoed output for prompt.
+func awaitEchoEvent(t *testing.T, events <-chan sessiondriver.Event, prompt string) {
+	t.Helper()
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	for {
@@ -145,6 +175,63 @@ func runEchoPromptJourney(ctx context.Context, t *testing.T, d *sessiondriver.Dr
 			}
 		case <-deadline.C:
 			t.Fatalf("timed out waiting for an events-stream frame carrying the runtime's echoed output for prompt %q", prompt)
+		}
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model), 5.2
+// (concurrent sessions)
+//
+// diagnosis: on a concurrent pool two sessions share one agent pod, each in
+// its own slot, and each holds its own Attach stream to the pod's adapter.
+// A failure on a session's second message means that session's stream
+// ended with the request that delivered its first message; a reply that
+// names the sibling's prompt means the gateway or the adapter routed a turn
+// to the wrong slot's stream.
+func TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1(t *testing.T) {
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
+	requirePoolReadyPods(t, d.Cluster(), concurrentPoolName, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	tenant := uniqueName("held-stream-concurrent")
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
+
+	var ids []string
+	pod := ""
+	for _, name := range []string{"A", "B"} {
+		sess, err := d.CreateAndStart(ctx, tenant, concurrentRuntimeRef)
+		if errors.Is(err, sessiondriver.ErrPoolNotReady) {
+			t.Skipf("precondition not met: concurrent pool not ready: %v", err)
+		}
+		if err != nil {
+			t.Fatalf("create session %s on %s: %v", name, concurrentRuntimeRef, err)
+		}
+		t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
+		if pod == "" {
+			pod = sess.PodAssignment
+		} else if sess.PodAssignment != pod {
+			t.Fatalf("session %s landed on pod %q, want the first session's pod %q; the pool did not "+
+				"multiplex both sessions onto one pod", name, sess.PodAssignment, pod)
+		}
+		ids = append(ids, sess.ID)
+	}
+
+	for round := 1; round <= 2; round++ {
+		for i, id := range ids {
+			prompt := fmt.Sprintf("slot-%d-round-%d", i, round)
+			resp, err := d.SendMessage(ctx, tenant, id, prompt)
+			if err != nil {
+				t.Fatalf("session %s round %d: send %q: %v", id, round, prompt, err)
+			}
+			if resp.DeliveryReceipt.Status != "delivered" {
+				t.Fatalf("session %s round %d: receipt %q, want delivered (body: %s)",
+					id, round, resp.DeliveryReceipt.Status, resp.Output)
+			}
+			assertOutputEchoes(t, fmt.Sprintf("session %s round %d", id, round), resp.Output, prompt)
 		}
 	}
 }

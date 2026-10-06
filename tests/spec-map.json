@@ -1845,7 +1845,33 @@
         "pkg/gateway/session/executor/podstream_internal_test.go::TestAbandonedTurnLateReplyNeverReachesTheNextTurn_spec_28_5_1",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestBetweenTurnApprovalIsGatedAndAnswered_spec_7_2",
         "pkg/gateway/session/executor/podstream_internal_test.go::TestApprovalGateErrorRelaysADeny_spec_7_2",
-        "pkg/gateway/session/executor/podstream_internal_test.go::TestEvictedConnRelaysNoVerdict_spec_7_2"
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestEvictedConnRelaysNoVerdict_spec_7_2",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestReleaseEndOfStreamIsSilent_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestSendWaitingOnAReplyReturnsWhenTheStreamEnds_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestStaleReaderLeavesTheReplacementCached_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedOpenReachesEveryWaiterAndIsRetried_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestOpenWithoutAdapterFails_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestSendWaitingForTheTokenHonorsItsContext_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteReleasesTheTurn_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestTurnOnAnEndedStreamFails_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestWaitForOpenHonorsTheCallerContext_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestAwaitReplyWithoutAReplyReturnsTheCause_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestReplyFollowedByStreamEndReachesTheSend_spec_28_5_1",
+        "tests/tier7a_load_local/held_attach_stream_race_test.go::TestHeldStreamSendEvictReleaseAndStreamEndRace_spec_28_5_1",
+        "tests/tier7a_load_local/held_attach_stream_race_test.go::TestApprovalRelayRacesATurnSend_spec_7_2",
+        "tests/tier7a_load_local/held_attach_stream_race_test.go::TestBlockedOpenDelaysNoOtherSessionAndEndsOnEvict_spec_28_5_1",
+        "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestRESTDirectDeliveryCarriesEveryMessageOnTheHeldStream_spec_28_5_1",
+        "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestResumeAndDeliverThenASecondMessageOnTheHeldStream_spec_7_2",
+        "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1",
+        "tests/tier4_integration/held_attach_stream_multi_turn_test.go::TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1",
+        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
+        "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1",
+        "tests/tier2_component/translators/openai_singleshot_disconnect_test.go::TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -6121,7 +6147,10 @@
         "tests/tier3_contract/adapter_jsonl/adapter_session_frames_test.go",
         "tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go",
         "tests/tier7a_load_local/session_frame_order_race_test.go",
-        "pkg/gateway/session/executor/podstream_internal_test.go::TestReaderDrainsUnsolicitedFramesBetweenTurns_spec_28_5_1"
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestReaderDrainsUnsolicitedFramesBetweenTurns_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1",
+        "pkg/gateway/session/executor/podstream_internal_test.go::TestReplyFollowedByStreamEndReachesTheSend_spec_28_5_1"
       ],
       "packages": [
         "pkg/adapter",

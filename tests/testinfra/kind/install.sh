@@ -731,12 +731,21 @@ bootstrap:
     # flow. Backs concurrent-echo-pool, whose sessionPolicy.
     # maxConcurrentSessions > 1 multiplexes simultaneous sessions onto
     # this runtime's single stdin/stdout dispatch loop keyed on sessionId.
+    # capabilities.injection.supported is true (§5.1) to match the Runtime
+    # CRD in agent-workload.yaml: each slot's echocore loop answers every
+    # inbound `message` frame, so the tier-5 harness can send several
+    # messages on each slot session.
     - name: echo-runtime-concurrent
       type: agent
       image: ${ECHO_CONCURRENT_IMAGE}
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
       labels:
         lenny.dev/e2e: echo-concurrent
     # §5.2 sequential-pod-reuse ("task mode") reference runtime. Reuses

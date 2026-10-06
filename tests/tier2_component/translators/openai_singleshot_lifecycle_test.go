@@ -213,8 +213,9 @@ func ssIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 }
 
 // ssAdapterDialer serves an adapter backed by rt over bufconn and returns a
-// DialAdapter func the binder uses to reach the pod's adapter.
-func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess) func(string) (*adapterclient.Client, error) {
+// DialAdapter func the binder uses to reach the pod's adapter. opts are
+// extra gRPC server options, such as an interceptor that observes a stream.
+func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess, opts ...grpc.ServerOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	srv := adapter.New("singleshot-test")
 	// Set the full §6.4 root layout so the per-slot materialization path
@@ -227,7 +228,7 @@ func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess) func(string) (*ada
 	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
 	srv.Runtime = rt
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
