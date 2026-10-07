@@ -699,7 +699,8 @@
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2",
         "tests/tier3_contract/gatewaycontrol_scrub/scrub_wire_test.go::TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2",
         "tests/tier4_integration/recycle_runtime_not_live_test.go::TestRecyclePathRuntimeNotLiveRetires_spec_5_2",
-        "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2"
+        "pkg/gateway/session/executor/subprocess_test.go::TestSubprocessExecutorServesNextSession_spec_5_2",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestChildEnvDropsTheSocketVariable_spec_4_7"
       ],
       "packages": [
         "pkg/adapter",
@@ -1473,7 +1474,7 @@
         "tests/tier5_e2e_kind/stream_failure_kind_test.go::TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
-        "cmd/runtimes/echo-concurrent/main_test.go::TestHeartbeatSilenceDirectiveStopsThePodsAcks"
+        "cmd/runtimes/echo-concurrent/main_test.go::TestEveryHeartbeatIsAckedWhateverASessionSends_spec_28_5_3"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -4119,7 +4120,11 @@
         "pkg/adapter/slotsession_test.go",
         "tests/tier3_contract/adapter_bind_attempt/...",
         "tests/tier10_conformance/slot_bind_attempt_conformance_test.go",
-        "pkg/gateway/runtime/adapterclient/client_test.go"
+        "pkg/gateway/runtime/adapterclient/client_test.go",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestSupervisePassesTheChildsExitCode_spec_15_4",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestSuperviseReportsAnUnstartableChild_spec_15_4",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestSuperviseSilencesTheChildsAcksAfterTheDirective_spec_28_5_3",
+        "tests/testinfra/heartbeatsilence/cmd/heartbeat-silence/main_test.go::TestExitCodeIsTheChilds_spec_15_4"
       ],
       "packages": [
         "cmd/runtimes/echo",
@@ -4175,7 +4180,8 @@
         "pkg/adapter/integrationlevel_test.go",
         "pkg/adapter/runtimegeneration_test.go",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "pkg/runtimekit/echocore/echocore_test.go::TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3"
       ],
       "packages": [
         "cmd/runtimes/streaming-echo"
@@ -6233,10 +6239,13 @@
         "pkg/gateway/session/executor/podstream_internal_test.go::TestReplyFollowedByStreamEndReachesTheSend_spec_28_5_1",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
-        "pkg/runtimekit/echocore/echocore_test.go::TestHeartbeatSilenceDirectiveStopsTheAcks",
-        "pkg/runtimekit/echocore/echocore_test.go::TestIsHeartbeatSilenceDirective",
-        "pkg/runtimekit/echocore/echocore_test.go::TestSessionEndIsLoggedWithItsSession",
-        "cmd/runtimes/echo-concurrent/main_test.go::TestHeartbeatSilenceDirectiveStopsThePodsAcks"
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestFilterDropsHeartbeatsOnlyAfterTheDirective_spec_28_5_3",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestFilterForwardsEverythingWithoutTheDirective_spec_28_5_3",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestFilterLogsSessionEnd_spec_28_5_3",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestFilterReturnsAWriteFailure_spec_28_5_3",
+        "tests/testinfra/heartbeatsilence/heartbeatsilence_test.go::TestSuperviseSilencesTheChildsAcksAfterTheDirective_spec_28_5_3",
+        "pkg/runtimekit/echocore/echocore_test.go::TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3",
+        "cmd/runtimes/echo-concurrent/main_test.go::TestEveryHeartbeatIsAckedWhateverASessionSends_spec_28_5_3"
       ],
       "packages": [
         "pkg/adapter",

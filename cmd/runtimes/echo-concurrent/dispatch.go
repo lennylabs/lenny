@@ -56,11 +56,6 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 64*1024), echocore.MaxFrameBytes)
 
-	// silent records that a session sent echocore.HeartbeatSilenceDirective.
-	// Heartbeats are pod-global, so from then on the pod answers none, and
-	// the adapter ends every slot's stream as for a runtime that hangs
-	// between turns. spec: §28.5.3 (CH-MSGSOCK Timing.).
-	silent := false
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -73,7 +68,6 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 		if err := json.Unmarshal(line, &env); err != nil {
 			return protocolError{msg: fmt.Sprintf("malformed JSONL on input: %v", err)}
 		}
-		silent = silent || echocore.IsHeartbeatSilenceDirective(line)
 
 		// A shutdown frame ends the loop for the whole pod. Forward it to
 		// every active session so each echocore loop exits cleanly, then
@@ -88,9 +82,6 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 		// per-session identifier, so the pod answers it once, unstamped,
 		// rather than routing it to a session.
 		if env.Type == "heartbeat" {
-			if silent {
-				continue
-			}
 			if err := d.writeFrame([]byte(`{"type":"heartbeat_ack"}`)); err != nil {
 				return fmt.Errorf("write heartbeat_ack: %w", err)
 			}

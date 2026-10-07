@@ -127,6 +127,19 @@ RUNTIME_IMAGES=(
   "lenny-runtime-echo-concurrent=runtimes/echo-concurrent"
 )
 
+# Test-only fixture images. Each entry is <image-base>=<base-image-base>:
+# tests/testinfra/heartbeatsilence/Dockerfile layers the heartbeat-silence
+# fixture on top of the named reference runtime image, so the reference
+# binary runs unchanged behind a filter that stops forwarding heartbeats
+# after the fixture's directive. Only the heartbeat-silence pools below
+# use these images; they back the tier-5 stream-failure cases in
+# tests/tier5_e2e_kind/stream_failure_kind_test.go.
+FIXTURE_IMAGES=(
+  "lenny-runtime-heartbeat-silence-echo=lenny-runtime-echo"
+  "lenny-runtime-heartbeat-silence-echo-concurrent=lenny-runtime-echo-concurrent"
+)
+FIXTURE_DOCKERFILE="${REPO_ROOT}/tests/testinfra/heartbeatsilence/Dockerfile"
+
 log() { printf '==> %s\n' "$*"; }
 
 require() {
@@ -202,6 +215,33 @@ build_image() {
   fi
 }
 
+# build_fixture_image <image-base> <base-image-base> builds a test-only
+# fixture image from FIXTURE_DOCKERFILE on top of the already-built
+# <base-image-base>:${TAG}, with the same skip and legacy-builder fallback
+# as build_image.
+build_fixture_image() {
+  local image="$1:${TAG}"
+  local base="$2:${TAG}"
+
+  if [[ "${LENNY_FORCE_BUILD:-}" != "1" ]] && docker image inspect "${image}" >/dev/null 2>&1; then
+    log "image ${image} already built; skipping (set LENNY_FORCE_BUILD=1 to rebuild)"
+    return 0
+  fi
+
+  log "building fixture ${image} on ${base}"
+  docker build -f "${FIXTURE_DOCKERFILE}" --build-arg "BASE_IMAGE=${base}" -t "${image}" "${REPO_ROOT}"
+
+  if ! docker image inspect "${image}" >/dev/null 2>&1; then
+    log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
+    DOCKER_BUILDKIT=0 docker build -f "${FIXTURE_DOCKERFILE}" --build-arg "BASE_IMAGE=${base}" -t "${image}" "${REPO_ROOT}"
+  fi
+
+  if ! docker image inspect "${image}" >/dev/null 2>&1; then
+    echo "error: image ${image} is still absent after both build attempts" >&2
+    exit 1
+  fi
+}
+
 if [[ "${LENNY_SKIP_BUILD:-}" == "1" ]]; then
   log "LENNY_SKIP_BUILD=1; skipping image build and load"
 else
@@ -210,6 +250,9 @@ else
   done
   for entry in "${RUNTIME_IMAGES[@]}"; do
     build_image "${entry%%=*}" "${entry#*=}"
+  done
+  for entry in "${FIXTURE_IMAGES[@]}"; do
+    build_fixture_image "${entry%%=*}" "${entry#*=}"
   done
 fi
 
@@ -302,7 +345,7 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   for binary in "${BINARIES[@]}"; do
     images+=("${binary}:${TAG}")
   done
-  for entry in "${RUNTIME_IMAGES[@]}"; do
+  for entry in "${RUNTIME_IMAGES[@]}" "${FIXTURE_IMAGES[@]}"; do
     images+=("${entry%%=*}:${TAG}")
   done
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
@@ -375,6 +418,8 @@ PRECONNECT_ECHO_IMAGE="$(resolve_digest "lenny-runtime-preconnect-echo:${TAG}")"
 CRED_SHELL_ECHO_IMAGE="$(resolve_digest "lenny-runtime-cred-shell-echo:${TAG}")"
 ELICITATION_ECHO_IMAGE="$(resolve_digest "lenny-runtime-elicitation-echo:${TAG}")"
 ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-echo-concurrent:${TAG}")"
+HEARTBEAT_SILENCE_ECHO_IMAGE="$(resolve_digest "lenny-runtime-heartbeat-silence-echo:${TAG}")"
+HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE="$(resolve_digest "lenny-runtime-heartbeat-silence-echo-concurrent:${TAG}")"
 log "echo runtime image pinned to ${ECHO_IMAGE}"
 
 # ---------------------------------------------------------------------
@@ -404,6 +449,8 @@ RUNTIME_DIGEST_REFS=(
   "${CRED_SHELL_ECHO_IMAGE}"
   "${ELICITATION_ECHO_IMAGE}"
   "${ECHO_CONCURRENT_IMAGE}"
+  "${HEARTBEAT_SILENCE_ECHO_IMAGE}"
+  "${HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE}"
 )
 for node in $(kind get nodes --name "${CLUSTER}"); do
   for ref in "${RUNTIME_DIGEST_REFS[@]}"; do
@@ -751,13 +798,23 @@ bootstrap:
     # §5.2 sequential-pod-reuse ("task mode") reference runtime. Reuses
     # ECHO_IMAGE under a distinct name so task-mode-echo-pool has a
     # runtimeRef no other pool shares (see agent-workload.yaml for the
-    # ErrAmbiguousPool rationale). capabilities.injection.supported is true
-    # (§5.1) to match the Runtime CRD in agent-workload.yaml: the echo loop
-    # answers every inbound `message` frame, so the tier-5 stream-failure
-    # case can send several messages on one task-mode session.
+    # ErrAmbiguousPool rationale).
     - name: echo-runtime-task-mode
       type: agent
       image: ${ECHO_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      labels:
+        lenny.dev/e2e: echo-task-mode
+    # Test-only heartbeat-silence fixture runtimes (see FIXTURE_IMAGES and
+    # agent-workload.yaml). They back only the heartbeat-silence pools
+    # below. capabilities.injection.supported is true (§5.1) to match the
+    # Runtime CRDs: the wrapped echo loops answer every inbound `message`
+    # frame, so a session can carry several messages.
+    - name: heartbeat-silence-echo-runtime
+      type: agent
+      image: ${HEARTBEAT_SILENCE_ECHO_IMAGE}
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard
@@ -767,7 +824,20 @@ bootstrap:
           supported: true
           modes: [immediate, queued]
       labels:
-        lenny.dev/e2e: echo-task-mode
+        lenny.dev/e2e: heartbeat-silence-echo
+    - name: heartbeat-silence-concurrent-runtime
+      type: agent
+      image: ${HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE}
+      integrationLevel: basic
+      executionMode: session
+      isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
+      labels:
+        lenny.dev/e2e: heartbeat-silence-concurrent
   pools:
     # §6.3 pod-warm arm: a standard/session pool backed by the sidecar
     # echo runtime. warmCount is 6 (not 1) so the §6.3 startup benchmark's
@@ -892,6 +962,39 @@ bootstrap:
         maxConcurrentSessions: 2
         acknowledgeProcessLevelIsolation: true
         cleanupTimeoutSeconds: 30
+    # §5.2 recycling pool with maxConcurrentSessions left at the default of
+    # 1, on the heartbeat-silence fixture. It mirrors task-mode-echo-pool so
+    # the tier-5 stream-failure case can show that a pod whose runtime
+    # stopped answering heartbeats is retired rather than recycled. warmCount
+    # is 2 for the PoolWarmingUp-race reason task-mode-echo-pool states.
+    - name: heartbeat-silence-recycle-pool
+      runtimeRef: heartbeat-silence-echo-runtime
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 2
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sessionPolicy:
+        acknowledgeProcessLevelIsolation: true
+        recycle:
+          enabled: true
+          acknowledgeBestEffortScrub: true
+          maxSessionsPerPod: 5
+        cleanupTimeoutSeconds: 30
+    # §5.2 concurrent-session pool on the heartbeat-silence fixture. It
+    # mirrors concurrent-echo-pool so the tier-5 stream-failure case can
+    # count failed slots toward the whole-pod replacement trigger.
+    - name: heartbeat-silence-concurrent-pool
+      runtimeRef: heartbeat-silence-concurrent-runtime
+      isolationProfile: standard
+      executionMode: session
+      warmCount: 2
+      allowStandardIsolation: true
+      dnsPolicy: cluster-default
+      sessionPolicy:
+        maxConcurrentSessions: 2
+        acknowledgeProcessLevelIsolation: true
+        cleanupTimeoutSeconds: 30
 EOF
 
 # §25.4 — "No anonymous access except /healthz." lenny-ops only
@@ -1003,6 +1106,8 @@ sed \
   -e "s|__CRED_SHELL_ECHO_IMAGE__|${CRED_SHELL_ECHO_IMAGE}|g" \
   -e "s|__ELICITATION_ECHO_IMAGE__|${ELICITATION_ECHO_IMAGE}|g" \
   -e "s|__ECHO_CONCURRENT_IMAGE__|${ECHO_CONCURRENT_IMAGE}|g" \
+  -e "s|__HEARTBEAT_SILENCE_ECHO_IMAGE__|${HEARTBEAT_SILENCE_ECHO_IMAGE}|g" \
+  -e "s|__HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE__|${HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE}|g" \
   "${AGENT_WORKLOAD_MANIFEST}" | kc apply -f -
 
 # The pools reach Postgres only after the post-install lenny-bootstrap Job

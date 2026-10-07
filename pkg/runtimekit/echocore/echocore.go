@@ -10,14 +10,6 @@
 // `heartbeat` is answered with `heartbeat_ack`, a `shutdown` triggers a
 // clean exit, unknown types are ignored, and inbound EOF exits cleanly.
 //
-// A message whose first text part is HeartbeatSilenceDirective is echoed
-// like any other, and the loop then stops answering heartbeats. It is the
-// end-to-end fixture for a runtime that hangs between turns: the adapter
-// treats the missed acks as a hung runtime and ends the session's stream
-// (§28.5.3 CH-MSGSOCK Timing.). A `session_end` is logged to stderr with
-// the session it names, so a test can read the frame's arrival from the
-// runtime's log.
-//
 // echocore reads an io.Reader and writes an io.Writer; it is indifferent
 // to the byte transport behind them. The sidecar reference runtime
 // (cmd/runtimes/echo) supplies a stdin/stdout or abstract-socket
@@ -44,26 +36,6 @@ type ProtocolError struct{ Msg string }
 // Error implements error.
 func (e ProtocolError) Error() string { return "protocol error: " + e.Msg }
 
-// HeartbeatSilenceDirective is the message text that makes the loop stop
-// answering heartbeats after it echoes the message. End-to-end tests send it
-// to stand in for a runtime that hangs between turns. spec: §28.5.3
-// (CH-MSGSOCK Timing.); §28.5.1 (CH-ATTACH Degradation.).
-const HeartbeatSilenceDirective = "lenny-e2e:stop-heartbeat-ack"
-
-// IsHeartbeatSilenceDirective reports whether line is a `message` frame
-// whose first text part is HeartbeatSilenceDirective. A frame that does not
-// parse is not the directive.
-func IsHeartbeatSilenceDirective(line []byte) bool {
-	var msg struct {
-		Type  string        `json:"type"`
-		Input []messagePart `json:"input"`
-	}
-	if err := json.Unmarshal(line, &msg); err != nil || msg.Type != "message" || len(msg.Input) == 0 {
-		return false
-	}
-	return msg.Input[0].Type == "text" && msg.Input[0].Inline == HeartbeatSilenceDirective
-}
-
 // MaxFrameBytes caps an inbound JSONL frame at the §28.5.3 MessagePart
 // hard limit; a larger frame is a protocol error.
 const MaxFrameBytes = 50 * 1024 * 1024
@@ -82,15 +54,13 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) err
 	defer cancel()
 
 	var seq atomic.Uint64
-	silent := false
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
 		var env struct {
-			Type      string `json:"type"`
-			SessionID string `json:"sessionId"`
+			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(line, &env); err != nil {
 			return ProtocolError{Msg: fmt.Sprintf("malformed JSONL on input: %v", err)}
@@ -100,18 +70,10 @@ func Run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) err
 			if err := handleMessage(w, line, &seq); err != nil {
 				return err
 			}
-			silent = silent || IsHeartbeatSilenceDirective(line)
 		case "heartbeat":
-			if silent {
-				continue
-			}
 			if err := w.write(heartbeatAck{Type: "heartbeat_ack"}); err != nil {
 				return fmt.Errorf("write heartbeat_ack: %w", err)
 			}
-		case "session_end":
-			// The loop keeps no per-session context, so session_end ends
-			// nothing; it is logged so its arrival is observable.
-			fmt.Fprintf(stderr, "echocore: session_end for session %s\n", env.SessionID)
 		case "shutdown":
 			return handleShutdown(w, line, cancel)
 		default:

@@ -107,62 +107,22 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 	}
 }
 
-// spec: 28.5.3 (Intra-pod), 28.5.1 (Gateway-to-pod)
-// The silence directive is echoed like any message, and every later
-// heartbeat goes unanswered, so the adapter's ack deadline elapses as for a
-// runtime that hangs between turns. A heartbeat before the directive is still
-// acked.
-func TestHeartbeatSilenceDirectiveStopsTheAcks(t *testing.T) {
-	directive := `{"type":"message","sessionId":"s1","input":[{"type":"text","inline":"` +
-		echocore.HeartbeatSilenceDirective + `"}]}`
-	in := `{"type":"heartbeat"}` + "\n" + directive + "\n" + `{"type":"heartbeat"}` + "\n" +
-		`{"type":"message","sessionId":"s1","input":[{"type":"text","inline":"after"}]}` + "\n" +
-		`{"type":"heartbeat"}` + "\n"
-	frames := runEcho(t, in)
-	if len(frames) != 3 {
-		t.Fatalf("got %d frames, want the first ack and two echoes: %v", len(frames), frames)
-	}
-	if !strings.Contains(frames[0], "heartbeat_ack") {
-		t.Errorf("frame 0 = %s, want the ack for the heartbeat before the directive", frames[0])
-	}
-	if !strings.Contains(frames[1], echocore.HeartbeatSilenceDirective) || !strings.Contains(frames[2], "after") {
-		t.Errorf("frames %v, want the directive and the later message echoed", frames[1:])
-	}
-}
-
-// spec: 28.5.3 (Intra-pod)
-// A message whose text is not exactly the directive, or a frame that is not a
-// message, is not the directive.
-func TestIsHeartbeatSilenceDirective(t *testing.T) {
-	for _, tc := range []struct {
-		line string
-		want bool
-	}{
-		{`{"type":"message","input":[{"type":"text","inline":"` + echocore.HeartbeatSilenceDirective + `"}]}`, true},
-		{`{"type":"message","input":[{"type":"text","inline":"hi"}]}`, false},
-		{`{"type":"message","input":[]}`, false},
-		{`{"type":"heartbeat"}`, false},
-		{`not json`, false},
-	} {
-		if got := echocore.IsHeartbeatSilenceDirective([]byte(tc.line)); got != tc.want {
-			t.Errorf("IsHeartbeatSilenceDirective(%s) = %v, want %v", tc.line, got, tc.want)
+// spec: 28.5.3 (Intra-pod), 15.4.3 (Runtime Integration Levels)
+// The reference loop acks every heartbeat whatever message text came before
+// it. The text below is the one the tier-5 heartbeat-silence fixture reacts
+// to; the fixture filters heartbeats in front of the runtime, so a client
+// that sends this text to a shipped echo runtime cannot stop its acks.
+func TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3(t *testing.T) {
+	in := `{"type":"heartbeat"}` + "\n" +
+		`{"type":"message","sessionId":"s1","input":[{"type":"text","inline":"lenny-e2e:stop-heartbeat-ack"}]}` + "\n" +
+		`{"type":"heartbeat"}` + "\n" + `{"type":"heartbeat"}` + "\n"
+	acks := 0
+	for _, f := range runEcho(t, in) {
+		if strings.Contains(f, `"heartbeat_ack"`) {
+			acks++
 		}
 	}
-}
-
-// spec: 28.5.3 (Intra-pod, Inbound: session_end)
-// A session_end ends nothing and writes no frame; its arrival is logged with
-// the session it names.
-func TestSessionEndIsLoggedWithItsSession(t *testing.T) {
-	var out, stderr bytes.Buffer
-	in := `{"type":"session_end","sessionId":"sess-42"}` + "\n" + `{"type":"heartbeat"}` + "\n"
-	if err := echocore.Run(context.Background(), strings.NewReader(in), &out, &stderr); err != nil {
-		t.Fatalf("echocore.Run: %v", err)
-	}
-	if !strings.Contains(stderr.String(), "session_end for session sess-42") {
-		t.Errorf("stderr = %q, want the session_end logged with its session", stderr.String())
-	}
-	if !strings.Contains(out.String(), "heartbeat_ack") || strings.Count(out.String(), "\n") != 1 {
-		t.Errorf("output = %q, want only the heartbeat ack", out.String())
+	if acks != 3 {
+		t.Fatalf("got %d heartbeat_ack frames, want one for each of the 3 heartbeats", acks)
 	}
 }

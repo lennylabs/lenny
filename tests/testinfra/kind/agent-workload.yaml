@@ -203,10 +203,7 @@ spec:
 # this overlay shares — podsession.ResolvePool rejects a (runtimeRef,
 # isolationProfile) pair matched by more than one pool with
 # ErrAmbiguousPool, and echo-pool-sidecar already claims
-# echo-runtime-sidecar at isolationProfile: standard.
-# capabilities.injection.supported is true (§5.1): the echo loop answers
-# every inbound `message` frame, so the tier-5 stream-failure case can send
-# several messages on one task-mode session. spec: §5.2.
+# echo-runtime-sidecar at isolationProfile: standard. spec: §5.2.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -214,6 +211,52 @@ metadata:
 spec:
   type: agent
   image: __ECHO_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+---
+# Test-only fixture runtimes for the tier-5 stream-failure cases
+# (tests/tier5_e2e_kind/stream_failure_kind_test.go). Each image layers the
+# tests/testinfra/heartbeatsilence fixture on top of a reference runtime
+# image: the fixture runs the reference binary unchanged as a child and
+# stops forwarding heartbeats once a session sends the fixture's directive,
+# so the adapter ends the session's stream as for a runtime that hangs
+# between turns. Only the heartbeat-silence pools in install.sh use these
+# runtimes, and the shipped echo runtimes ack every heartbeat.
+# heartbeat-silence-echo-runtime wraps cmd/runtimes/echo and backs a
+# recycling pool with maxConcurrentSessions: 1. capabilities.injection.
+# supported is true (§5.1): the echo loop answers every inbound `message`
+# frame, so a session can carry several messages.
+# spec: §28.5.1, §28.5.3, §5.2.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: heartbeat-silence-echo-runtime
+spec:
+  type: agent
+  image: __HEARTBEAT_SILENCE_ECHO_IMAGE__
+  integrationLevel: basic
+  executionMode: session
+  isolationProfile: standard
+  deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]
+---
+# heartbeat-silence-concurrent-runtime wraps cmd/runtimes/echo-concurrent
+# and backs a pool with maxConcurrentSessions: 2. Heartbeats are pod-global,
+# so one session's directive silences the acks for every slot on the pod.
+# spec: §28.5.1, §28.5.3, §5.2.
+apiVersion: lenny.dev/v1alpha1
+kind: Runtime
+metadata:
+  name: heartbeat-silence-concurrent-runtime
+spec:
+  type: agent
+  image: __HEARTBEAT_SILENCE_ECHO_CONCURRENT_IMAGE__
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard

@@ -5,9 +5,12 @@
 // Tier-5 e2e Kind tests for the gateway's handling of a CH-ATTACH stream that
 // fails because the runtime stopped answering heartbeats between turns.
 //
-// The echo reference runtimes stop acking heartbeats after they echo the
-// echocore silence directive. On a real agent pod the adapter's heartbeat
-// monitor then ends the session's stream with DEADLINE_EXCEEDED, and the
+// The cases run on dedicated pools whose runtime is the test-only
+// heartbeat-silence fixture (tests/testinfra/heartbeatsilence): an
+// unmodified echo reference runtime behind a filter that stops forwarding
+// heartbeats once a session sends the fixture's directive. The fixture also
+// logs every session_end it forwards. On a real agent pod the adapter's
+// heartbeat monitor then ends the session's stream with DEADLINE_EXCEEDED, and the
 // coordinating gateway replica reports the end as runtime_crash. On a pool
 // with maxConcurrentSessions: 1 the replica releases the pod with the failed
 // disposition, so a recycling pool retires the pod rather than recycling it,
@@ -38,7 +41,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
+	"github.com/lennylabs/lenny/tests/testinfra/heartbeatsilence"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
@@ -50,6 +53,16 @@ const (
 	streamFailureEscalation = 3 * time.Minute
 	// streamFailureResumeWindow is the session's maxResumeWindowSeconds.
 	streamFailureResumeWindow = 5
+
+	// silenceRecyclePoolName and silenceEchoRuntimeRef name the recycling
+	// pool with maxConcurrentSessions: 1 on the heartbeat-silence fixture
+	// that tests/testinfra/kind/install.sh installs.
+	silenceRecyclePoolName = "heartbeat-silence-recycle-pool"
+	silenceEchoRuntimeRef  = "heartbeat-silence-echo-runtime"
+	// silenceConcurrentPoolName and silenceConcurrentRuntimeRef name the
+	// pool with maxConcurrentSessions: 2 on the heartbeat-silence fixture.
+	silenceConcurrentPoolName   = "heartbeat-silence-concurrent-pool"
+	silenceConcurrentRuntimeRef = "heartbeat-silence-concurrent-runtime"
 )
 
 // syncBuffer is a bytes.Buffer safe for a writer goroutine and a reader.
@@ -93,11 +106,12 @@ func stopFollow(cmd *exec.Cmd) {
 	_ = cmd.Wait()
 }
 
-// sendSilenceDirective delivers the echocore silence directive and asserts
-// the runtime echoed it, so the turn completes before the acks stop.
+// sendSilenceDirective delivers the heartbeat-silence fixture's directive
+// and asserts the runtime echoed it, so the turn completes before the acks
+// stop.
 func sendSilenceDirective(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant, sessionID string) {
 	t.Helper()
-	resp, err := d.SendMessage(ctx, tenant, sessionID, echocore.HeartbeatSilenceDirective)
+	resp, err := d.SendMessage(ctx, tenant, sessionID, heartbeatsilence.Directive)
 	if err != nil {
 		t.Fatalf("send the silence directive on %s: %v", sessionID, err)
 	}
@@ -105,7 +119,7 @@ func sendSilenceDirective(ctx context.Context, t *testing.T, d *sessiondriver.Dr
 		t.Fatalf("silence directive on %s: receipt %q, want delivered (body %s)",
 			sessionID, resp.DeliveryReceipt.Status, resp.Output)
 	}
-	assertOutputEchoes(t, "silence directive on "+sessionID, resp.Output, echocore.HeartbeatSilenceDirective)
+	assertOutputEchoes(t, "silence directive on "+sessionID, resp.Output, heartbeatsilence.Directive)
 }
 
 // awaitPodRetired waits for the pod's claim to be deleted, which the failed
@@ -134,11 +148,11 @@ func awaitPodRetired(t *testing.T, c *kind.Cluster, pod string, timeout time.Dur
 	}
 }
 
-// awaitSessionEndLogged waits for the runtime's log to record the session_end
-// the adapter wrote for sessionID.
+// awaitSessionEndLogged waits for the fixture's log line recording the
+// session_end the adapter wrote to the runtime for sessionID.
 func awaitSessionEndLogged(t *testing.T, log *syncBuffer, sessionID string, timeout time.Duration) {
 	t.Helper()
-	want := "session_end for session " + sessionID
+	want := heartbeatsilence.SessionEndLogPrefix + sessionID
 	deadline := time.Now().Add(timeout)
 	for !strings.Contains(log.String(), want) {
 		if time.Now().After(deadline) {
@@ -161,7 +175,7 @@ func awaitSessionEndLogged(t *testing.T, log *syncBuffer, sessionID string, time
 func TestStreamFailureRetiresTheExclusivePodAndWaitsOutTheResumeWindow_spec_28_5_1(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
-	requirePoolReadyPods(t, c, taskModePoolName, 1)
+	requirePoolReadyPods(t, c, silenceRecyclePoolName, 1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -174,11 +188,11 @@ func TestStreamFailureRetiresTheExclusivePodAndWaitsOutTheResumeWindow_spec_28_5
 	// The session is created, finalized, and started in three steps,
 	// because POST /v1/sessions carries the retryPolicy the combined start
 	// body does not.
-	created, err := d.CreateSessionWithOptions(ctx, tenant, taskModeRuntimeRef, sessiondriver.StartOptions{
+	created, err := d.CreateSessionWithOptions(ctx, tenant, silenceEchoRuntimeRef, sessiondriver.StartOptions{
 		RetryPolicy: []byte(fmt.Sprintf(`{"maxResumeWindowSeconds":%d}`, streamFailureResumeWindow)),
 	})
 	if err != nil {
-		t.Fatalf("create session on %s: %v", taskModeRuntimeRef, err)
+		t.Fatalf("create session on %s: %v", silenceEchoRuntimeRef, err)
 	}
 	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, created.ID) })
 	if _, err := d.Finalize(ctx, tenant, created.ID); err != nil {
@@ -374,7 +388,7 @@ func settledSlotFailures(ctx context.Context, t *testing.T, d *sessiondriver.Dri
 // reported; a pod without a drain request means the trigger did not fire.
 func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 	c := kind.InstallLenny(t)
-	requirePoolReadyPods(t, c, concurrentPoolName, 1)
+	requirePoolReadyPods(t, c, silenceConcurrentPoolName, 1)
 	gateways := readyGatewayPods(t, c)
 	if len(gateways) == 0 {
 		t.Skip("precondition not met: no Ready gateway replica")
@@ -397,12 +411,12 @@ func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 	var ids []string
 	pod := ""
 	for _, name := range []string{"A", "B"} {
-		sess, err := d.CreateAndStart(ctx, tenant, concurrentRuntimeRef)
+		sess, err := d.CreateAndStart(ctx, tenant, silenceConcurrentRuntimeRef)
 		if errors.Is(err, sessiondriver.ErrPoolNotReady) {
 			t.Skipf("precondition not met: concurrent pool not ready: %v", err)
 		}
 		if err != nil {
-			t.Fatalf("create session %s on %s: %v", name, concurrentRuntimeRef, err)
+			t.Fatalf("create session %s on %s: %v", name, silenceConcurrentRuntimeRef, err)
 		}
 		t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
 		if pod == "" {

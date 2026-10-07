@@ -713,15 +713,16 @@ func TestToolResultForAnUnheldSessionIsDropped_spec_28_5_3(t *testing.T) {
 	}
 }
 
-// TestHeartbeatSilenceDirectiveStopsThePodsAcks asserts that once any
-// session sends the echocore silence directive, the pod answers no further
-// heartbeat. Heartbeats are pod-global, so every slot's stream reaches the
-// adapter's ack deadline together, as when the pod's one runtime hangs.
+// TestEveryHeartbeatIsAckedWhateverASessionSends_spec_28_5_3 asserts the
+// pod answers every heartbeat whatever text a session's message carries.
+// The text below is the one the tier-5 heartbeat-silence fixture reacts to;
+// the fixture filters heartbeats in front of this runtime, so a client that
+// sends this text to a shipped pod cannot stop the acks for every slot.
 // spec: §28.5.3 (CH-MSGSOCK Timing.); §5.2.
-func TestHeartbeatSilenceDirectiveStopsThePodsAcks(t *testing.T) {
+func TestEveryHeartbeatIsAckedWhateverASessionSends_spec_28_5_3(t *testing.T) {
 	in := `{"type":"heartbeat","ts":1}` + "\n" +
 		`{"type":"session_start","sessionId":"sess-01","startId":"st-1"}` + "\n" +
-		message("sess-01", echocore.HeartbeatSilenceDirective) +
+		message("sess-01", "lenny-e2e:stop-heartbeat-ack") +
 		`{"type":"heartbeat","ts":2}` + "\n" +
 		`{"type":"heartbeat","ts":3}` + "\n"
 	acks := 0
@@ -730,7 +731,7 @@ func TestHeartbeatSilenceDirectiveStopsThePodsAcks(t *testing.T) {
 			acks++
 		}
 	}
-	if acks != 1 {
-		t.Fatalf("got %d heartbeat_ack frames, want only the one before the directive", acks)
+	if acks != 3 {
+		t.Fatalf("got %d heartbeat_ack frames, want one for each of the 3 heartbeats", acks)
 	}
 }
