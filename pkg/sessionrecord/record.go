@@ -313,10 +313,11 @@ const maxCrashStderrBytes = 4096
 
 // RuntimeCrash synthesizes the §28.5.3 RUNTIME_CRASH error block from a
 // non-zero runtime exit code and the runtime's captured stderr. The §8.8
-// failure taxonomy classifies a runtime crash as TRANSIENT: the gateway
-// retries on a fresh pod, and only marks retriesExhausted after the
-// pod-crash retry budget is spent (a property the gateway sets later, not
-// at synthesis time). The stderr tail is trimmed of trailing whitespace
+// error.category of a runtime crash is TRANSIENT. The category does not
+// record whether the gateway retried the failure: the session's §7.3
+// retryPolicy decides that, and retriesExhausted records whether the
+// retry budget was spent (a property the gateway sets later, not at
+// synthesis time). The stderr tail is trimmed of trailing whitespace
 // and capped to the last maxCrashStderrBytes so the message stays bounded.
 // spec: §28.5.3 — "When the process exits non-zero without
 // emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error
