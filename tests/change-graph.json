@@ -357,6 +357,10 @@
       "chaos": ["tests/tier8_chaos/credential_rotation_ceiling_test.go"],
       "security": ["tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go"]
     },
+    "tests/testinfra/heartbeatsilence": {
+      "unit": ["tests/testinfra/heartbeatsilence/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/stream_failure_kind_test.go"]
+    },
     "tests/testinfra/runtimenonce": {
       "unit": ["pkg/adapter/...", "pkg/runtimekit/...", "sdks/runtime/go/..."],
       "contract": [

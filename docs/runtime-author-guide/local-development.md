@@ -343,7 +343,7 @@ docker compose exec agent cat /run/lenny/adapter-manifest.json | jq .
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Session hangs after your binary writes a response | stdout not flushed | Flush explicitly after every write (see your language's guidance in the [Adapter Contract](../reference/adapter-contract.md)) |
-| The session ends about 10 seconds after a `heartbeat` | Heartbeat wasn't acknowledged; a missed acknowledgment ends the session, and the runtime process receives no signal | Handle `heartbeat` by immediately writing `heartbeat_ack` |
+| The session leaves `running` about 10 seconds after a `heartbeat` | Heartbeat wasn't acknowledged; a missed acknowledgment ends that session's stream, the runtime process receives no signal, and the gateway handles the session as a runtime crash | Handle `heartbeat` by immediately writing `heartbeat_ack` |
 | `tool_result` never arrives | `tool_call` referenced an invalid tool | Stick to `read_file`, `write_file`, `list_dir`, `delete_file` at the Basic level |
 | MCP connection refused (Standard level) | You're on macOS with `make run`, where the host-side adapter has no Linux abstract Unix sockets | Use `lenny up` (the adapter runs in an in-cluster Linux pod) or `docker compose up` (the adapter runs in a Linux container) |
 | MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then; the intra-pod MCP servers are pod-wide and started at most once per pod, so a later session's manifest write does not re-arm a running server |

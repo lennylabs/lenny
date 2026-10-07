@@ -313,9 +313,9 @@ func DefaultNonRetryableFailures() []string {
 // FailureClassification is the closed enum produced by ClassifyFailure.
 // The §7.3 step branches on it: Retryable
 // flows into resume_pending and the auto-retry chain, NonRetryable
-// short-circuits to awaiting_client_action, and Unknown also short-
-// circuits to awaiting_client_action so an unclassified cause cannot
-// silently consume retry budget.
+// moves a running, input_required, or suspended session to failed, and
+// Unknown is non-retryable and also moves such a session to failed, so
+// an unclassified cause cannot silently consume retry budget.
 type FailureClassification int
 
 const (

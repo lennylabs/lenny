@@ -196,6 +196,7 @@ type gatewayFlags struct {
 	messagingMaxInboxSize                         *int
 	messagingMaxDLQSize                           *int
 	toolApprovalTimeout                           *time.Duration
+	streamFailureReportTimeout                    *time.Duration
 	treeArchiveCacheEntries                       *int
 	adapterTLSCert                                *string
 	adapterTLSKey                                 *string
@@ -853,6 +854,8 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§7.2 maxDLQSize: per-session dead-letter-queue capacity before the oldest entry is evicted with a message_dropped(dlq_overflow) receipt. Override via LENNY_MESSAGING_MAX_DLQ_SIZE.")
 	f.toolApprovalTimeout = flag.Duration("tool-approval-timeout", envDuration("LENNY_TOOL_APPROVAL_TIMEOUT", 0),
 		"§7.2 tool-use approval wait: how long a blocked tool_call(approvalRequired) waits for a POST /tool-use/{id}/approve|deny before the gateway treats it as a denial. Zero (default) blocks until the user resolves it or the request context is cancelled. Override via LENNY_TOOL_APPROVAL_TIMEOUT.")
+	f.streamFailureReportTimeout = flag.Duration("stream-failure-report-timeout", envDuration("LENNY_STREAM_FAILURE_REPORT_TIMEOUT", sessionserver.DefaultStreamFailureReportTimeout),
+		"§28.5.1 CH-ATTACH stream-failure report bound: operator-tunable time a runtime_crash report on a failed Attach stream has for the binding release, parent notification, and cascade beyond the workspace seal window (the report's deadline is this value plus the seal window). Default 30s. Override via LENNY_STREAM_FAILURE_REPORT_TIMEOUT.")
 	f.treeArchiveCacheEntries = flag.Int("tree-archive-cache-entries", envInt("LENNY_TREE_ARCHIVE_CACHE_ENTRIES", 128),
 		"§8.10 per-replica LRU cache size fronting the Postgres session_tree_archive (default 128 entries). Override via LENNY_TREE_ARCHIVE_CACHE_ENTRIES.")
 	f.adapterTLSCert = flag.String("adapter-tls-cert", os.Getenv("LENNY_ADAPTER_TLS_CERT"),

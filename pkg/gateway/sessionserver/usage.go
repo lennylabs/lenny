@@ -38,7 +38,8 @@ func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID stri
 // dispositionForState maps a session's terminal §6.2 state to the executor
 // Disposition that drives the pod disposition at release time: a clean
 // terminal (completed/cancelled/expired) recycles a recycling pod, while
-// `failed` always retires it. A non-terminal state (recordSessionCompleted is
+// `failed` retires a pod that serves one session and releases the slot of
+// a session on a concurrent pod (§5.2 Failure isolation). A non-terminal state (recordSessionCompleted is
 // only called on a terminal transition, so this is defensive) carries no
 // disposition and falls back to Close. spec: §6.2.
 func dispositionForState(st session.State) executor.Disposition {
@@ -702,23 +703,27 @@ func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore
 // parent's session stream when a delegated child reaches the `failed`
 // terminal state. The payload carries the child task id, the
 // transient/permanent failure classification, the coded error details
-// (failure class and reason), and whether the gateway's retry budget for
-// the child was exhausted — the four fields the spec enumerates — so the
-// parent agent can decide to re-spawn a replacement, continue with
-// partial results, or propagate the failure upward without polling or
-// re-issuing await_children.
+// (failure class and reason), and whether the child's retry budget was
+// exhausted, the fields §8.10 enumerates, so the parent agent can decide
+// to re-spawn a replacement, continue with partial results, or propagate
+// the failure upward without polling or re-issuing await_children.
 //
-// A child reaching `failed` after a transient (retryable) cause means
-// its per-child retry budget was exhausted; a permanent
-// (non-retryable / unknown / unclassified) cause short-circuits to
-// `failed` without consuming retries, so retries_exhausted is false in
-// that case. Only the `failed` terminal state injects the event — a
-// `cancelled` or `expired` child is a cascade / deadline outcome, not a
-// child failure the parent decides on. Best-effort: a nil event sink or
+// The classification and retries_exhausted are independent. The
+// classification records whether §7.3 classified the failure reason as
+// retryable. retries_exhausted records whether the row's RetryCount
+// reached the effective §7.3 retry budget, the same comparison the §8.8
+// TaskResult error block makes. A child with a non-retryable final
+// failure can still have spent its budget on earlier retryable failures,
+// and a child with a retryable final failure can have budget left, so
+// the event derives neither value from the other.
+//
+// Only the `failed` terminal state injects the event; a `cancelled` or
+// `expired` child is a cascade or deadline outcome rather than a child
+// failure the parent decides on. Best-effort: a nil event sink or
 // marshal error never fails the transition that triggered it.
 //
-// spec: §8.10;
-// §7.3. F-8.10.2.
+// spec: §8.10 (Delegation Tree Recovery);
+// §8.8 (TaskRecord and TaskResult Schema); §7.3. F-8.10.2.
 func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session) {
 	if s.events == nil || sess.ParentSessionID == "" || sess.State != session.StateFailed {
 		return
@@ -735,11 +740,13 @@ func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session)
 		FailureReason    string `json:"failure_reason,omitempty"`
 		RetriesExhausted bool   `json:"retries_exhausted"`
 	}{
-		ChildTaskID:      sess.ID,
-		Classification:   classification,
-		FailureClass:     string(sess.FailureClass),
-		FailureReason:    sess.FailureReason,
-		RetriesExhausted: transient,
+		ChildTaskID:    sess.ID,
+		Classification: classification,
+		FailureClass:   string(sess.FailureClass),
+		FailureReason:  sess.FailureReason,
+		// spec: §8.8 (TaskRecord and TaskResult Schema) — the spent
+		// budget, independent of the retryable classification above.
+		RetriesExhausted: sessionrecord.RetriesExhausted(sess.RetryCount, s.EffectiveMaxRetries(sess)),
 	})
 	if err != nil {
 		return
@@ -954,7 +961,7 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 	if sess.State == session.StateCompleted {
 		res.Output = s.buildTaskOutput(ctx, sess)
 	} else {
-		res.Error = taskErrorForSession(sess)
+		res.Error = taskErrorForSession(sess, s.EffectiveMaxRetries(sess))
 	}
 	if s.taskUsage != nil {
 		res.Usage = s.taskUsage.Usage(ctx, sess)
@@ -1021,21 +1028,18 @@ func isDeliverableArtifact(r artifactcatalog.Record) bool {
 // to the per-state CHILD_<STATE> literal when no FailureReason is set;
 // the category routes through the shared §15.2.1 classifier so the value
 // matches the REST and MCP error envelopes for the same code; and
-// retriesExhausted reports whether the gateway consumed the row's
-// automatic-recovery budget. This mirrors the mcptools row-only fallback
+// retriesExhausted reports whether the row's RetryCount reached
+// maxRetries, the effective §7.3 retry budget the caller resolves with
+// EffectiveMaxRetriesForRow. This mirrors the mcptools row-only fallback
 // so the await path sees identical error blocks whether it reads the
 // archived body or the live row.
 // spec: §8.8; §15.2.1. F-8.8.4.
-func taskErrorForSession(sess sessionstore.Session) *sessionrecord.Error {
+func taskErrorForSession(sess sessionstore.Session, maxRetries int) *sessionrecord.Error {
 	code := sess.FailureReason
 	if code == "" {
 		code = "CHILD_" + strings.ToUpper(string(sess.State))
 	}
 	cat, _ := errorclassify.Classify(code)
-	maxRetries := 0
-	if sess.RetryPolicy != nil {
-		maxRetries = sess.RetryPolicy.MaxRetries
-	}
 	return &sessionrecord.Error{
 		Code:             code,
 		Category:         string(cat),

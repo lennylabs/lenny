@@ -27,8 +27,9 @@ import (
 
 // spec: §7.2 path 6 — a `delivery: "immediate"` message to a
 // suspended, pod-held session atomically resumes and delivers; on a resume or a
-// post-resume delivery failure the coordinator fails closed to inbox buffering
-// (`queued`) so line 330's "the message is not silently dropped" holds.
+// post-resume delivery failure the coordinator fails closed to buffering
+// (`queued`) so the message is not silently dropped (§7.2 Message delivery
+// routing — seven paths, path 6).
 //
 // These are the handler-level fail-closed paths the resumeHeldPod primitive
 // tests (resume_held_pod_test.go) cannot reach: they drive the whole
@@ -72,20 +73,29 @@ func (s *updateFailStore) Update(context.Context, string, string, func(*sessions
 // inbox depth. It returns the server and the inbox so the caller can read depth.
 func inboxServer(t *testing.T, store sessionstore.Store, exec executor.Executor) (*sessionserver.Server, *sessioninbox.MemoryInbox) {
 	t.Helper()
+	srv, inbox, _ := inboxAndDLQServer(t, store, exec)
+	return srv, inbox
+}
+
+// inboxAndDLQServer is inboxServer that also returns the DLQ, so a test can
+// assert where a buffered message landed.
+func inboxAndDLQServer(t *testing.T, store sessionstore.Store, exec executor.Executor) (*sessionserver.Server, *sessioninbox.MemoryInbox, *sessioninbox.DLQ) {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
 	inbox := sessioninbox.NewMemoryInbox(10)
+	dlq := sessioninbox.NewDLQ(rc, 10)
 	coord := sessioninbox.NewCoordinator(sessioninbox.Config{
 		Inbox: inbox,
-		DLQ:   sessioninbox.NewDLQ(rc, 10),
+		DLQ:   dlq,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
 		Executor:    exec,
 		Transcripts: transcriptstore.NewMemory(),
 		Messaging:   coord,
 	})
-	return srv, inbox
+	return srv, inbox, dlq
 }
 
 func seedSuspendedSession(t *testing.T, store sessionstore.Store, id, pod string) {
@@ -117,7 +127,8 @@ func immediateMessage(text string) sessionserver.MessageRequest {
 // with a `queued` receipt and leaves the session running (its inbox drains on
 // the next ready_for_input) rather than dropping the message or returning a 500.
 //
-// spec: 7.2 (path 6 line 330 — the message is not silently dropped)
+// spec: 7.2 (Interactive Session Model; Message delivery routing — seven
+// paths, path 6: the message is not silently dropped)
 //
 // diagnosis: a failure means the coordinator did not fail closed after a
 // committed resume — a post-resume executor.Send error dropped the message,
@@ -157,7 +168,8 @@ func TestResumeAndDeliverPostResumeSendFailureBuffersQueuedSessionRunning(t *tes
 // receipt rather than dropping it. The router selected ActionResumeAndDeliver
 // because the row read suspended; the write failure then routes to the fallback.
 //
-// spec: 7.2 (path 6 line 330 — the message is not silently dropped)
+// spec: 7.2 (Interactive Session Model; Message delivery routing — seven
+// paths, path 6: the message is not silently dropped)
 //
 // diagnosis: a failure means a resumeHeldPod write error did not fail closed —
 // the handler dropped the message, returned a 5xx, or transitioned the row
@@ -278,4 +290,90 @@ func TestResumeAndDeliverHappyPathDeliversAndRuns(t *testing.T) {
 	if row.State != session.StateRunning {
 		t.Errorf("state = %q, want running (the atomic resume transitioned it)", row.State)
 	}
+}
+
+// reportingSendExecutor models a delivery whose stream fails: before Send
+// returns its error, the stream-failure report has already moved the row to
+// state, as the pod executor guarantees by reporting before a waiting Send
+// returns.
+type reportingSendExecutor struct {
+	store sessionstore.Store
+	state session.State
+}
+
+func (e *reportingSendExecutor) Send(ctx context.Context, sessionID string, _ []executor.Message) (executor.Response, error) {
+	if _, err := e.store.Update(ctx, "acme", sessionID, func(r *sessionstore.Session) error {
+		r.State = e.state
+		return nil
+	}); err != nil {
+		return executor.Response{}, err
+	}
+	return executor.Response{}, errors.New("podexec: send to pod: attach stream ended")
+}
+
+func (e *reportingSendExecutor) Close(context.Context, string) error { return nil }
+
+// spec: 7.2 (Interactive Session Model; Message delivery routing — seven
+// paths, paths 6 and 7; Dead-letter handling for inter-session messages),
+// 28.5.1 (Gateway-to-pod)
+// diagnosis: a path-6 delivery whose Send fails after the stream-failure
+// report moved the session out of running buffers by the state the row is in
+// now. A resume_pending row keeps the message in the DLQ with a queued
+// receipt; a failed row answers TARGET_TERMINAL and enqueues nothing. A
+// failure means the message went to the in-memory inbox of a session that is
+// recovering, where a coordinator crash loses it, or was queued for a
+// terminal session that will never consume it.
+func TestResumeAndDeliverSendFailureAfterReportUsesFreshState_spec_7_2(t *testing.T) {
+	t.Run("resume_pending buffers to the DLQ", func(t *testing.T) {
+		store := memstore.New()
+		seedSuspendedSession(t, store, "s-report-pending", "pod-1")
+		srv, inbox, dlq := inboxAndDLQServer(t, store, &reportingSendExecutor{store: store, state: session.StateResumePending})
+
+		rr := sendMessageRequest(t, srv.Handler(), "s-report-pending", immediateMessage("wake up"))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status %d, body=%s, want a 200 queued receipt", rr.Code, rr.Body.String())
+		}
+		var resp sessionserver.MessageResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp.DeliveryReceipt.Status != session.DeliveryStatusQueued {
+			t.Errorf("status = %q, want queued", resp.DeliveryReceipt.Status)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "s-report-pending"); n != 1 {
+			t.Errorf("DLQ depth = %d, want 1", n)
+		}
+		if n, _ := inbox.Len(context.Background(), "acme", "s-report-pending"); n != 0 {
+			t.Errorf("inbox depth = %d, want 0: a recovering session buffers to the DLQ", n)
+		}
+	})
+
+	t.Run("failed answers TARGET_TERMINAL", func(t *testing.T) {
+		store := memstore.New()
+		seedSuspendedSession(t, store, "s-report-failed", "pod-1")
+		srv, inbox, dlq := inboxAndDLQServer(t, store, &reportingSendExecutor{store: store, state: session.StateFailed})
+
+		rr := sendMessageRequest(t, srv.Handler(), "s-report-failed", immediateMessage("wake up"))
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("status %d, body=%s, want 409 TARGET_TERMINAL", rr.Code, rr.Body.String())
+		}
+		var env struct {
+			Error struct {
+				Code    string         `json:"code"`
+				Details map[string]any `json:"details"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if env.Error.Code != "TARGET_TERMINAL" {
+			t.Errorf("code = %q, want TARGET_TERMINAL", env.Error.Code)
+		}
+		if n, _ := dlq.Len(context.Background(), "acme", "s-report-failed"); n != 0 {
+			t.Errorf("DLQ depth = %d, want 0", n)
+		}
+		if n, _ := inbox.Len(context.Background(), "acme", "s-report-failed"); n != 0 {
+			t.Errorf("inbox depth = %d, want 0", n)
+		}
+	})
 }

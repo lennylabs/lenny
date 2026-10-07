@@ -152,6 +152,19 @@ SURFACE_OVERRIDES = {
                 "restore extracts into that session's own slot tree, so the per-slot "
                 "restore runs on every pod",
     },
+    # The reference cited the stream by line on the request-scoped open it
+    # recorded. The gateway now holds one stream per session for the life of its
+    # binding, opened by streamFor and owned by an attachConn with a single
+    # reader, so the override names the current surface on both ends.
+    "`Attach` content stream": {
+        "surface": "`pkg/gateway/session/executor/pod.go` `streamFor`, "
+                   "`pkg/gateway/session/executor/podstream.go` `attachConn`, "
+                   "handler `pkg/adapter/attach.go` `Server.Attach`",
+        "note": "the gateway opens one Attach stream per session on a context detached "
+                "from the opening request and keeps it across turns, with one reader "
+                "that hands each response to the turn holding the stream, until the "
+                "binding is released, the stream is evicted, or the stream ends",
+    },
 }
 
 # Mechanisms the frozen reference table still names whose capability the
@@ -287,6 +300,24 @@ EXPLICIT = [
         "note": "the rules are normative for any adapter implementation; cmd/lenny-compliance "
                 "drives a runtime binary over JSONL against a fake adapter and imports no "
                 "gRPC, so the project runs the clauses against its own adapter only",
+    },
+    # The §28.5.1 CH-ATTACH card owns the stream-failure rule, so the row
+    # anchors to the gateway-to-pod heading. The card's replacement-pod
+    # re-attach sentence carries no row: no driver moves resume_pending to
+    # resuming, and the validator accepts a deferral only for a declared R step,
+    # so BUILD-GAPS.md carries that gap until the driver is scheduled.
+    {
+        "claim": "Coordinating replica reports a CH-ATTACH stream failure as runtime_crash, "
+                 "releases the pod with the failed disposition, and does not redial Attach",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/session/executor/podstream.go` `endConn`, "
+                   "`pkg/gateway/sessionserver/stream_failure.go` `ReportAttachStreamFailure`, "
+                   "`pkg/gateway/sessionserver/failure.go` `applyFailureFromActive`",
+        "note": "endConn evicts the ended stream and hands its failure to the injected "
+                "handler, which confirms this replica still coordinates the session and "
+                "files a runtime_crash report that the failure funnel applies by releasing "
+                "the pod with the failed disposition, with no new Attach dialed",
     },
 ]
 

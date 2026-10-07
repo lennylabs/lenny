@@ -147,8 +147,7 @@ func main() {
 			writeJSON(resp)
 
 		case "heartbeat":
-			// Respond within 10 seconds; a missed ack ends the session, and the
-			// runtime process receives no signal
+			// Respond within 10 seconds.
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
 
 		case "shutdown":
@@ -469,7 +468,7 @@ func writeJSON(v interface{}) {
 
 2. **Tool calls are asynchronous within the stdin channel:** When you emit a `tool_call`, the result does not arrive on the next line. Other messages (heartbeats, additional user messages) may arrive first. Track pending tool calls by ID.
 
-3. **Heartbeats:** If you do not respond to a heartbeat within 10 seconds, the session ends, and the runtime process receives no signal. Always handle them in your main loop.
+3. **Heartbeats:** If the runtime does not respond to a heartbeat within 10 seconds, the adapter ends that session's stream and the gateway handles the session as a runtime crash. The runtime process receives no signal. Always handle them in your main loop.
 
 4. **Unknown messages are ignored:** The protocol is forward-compatible. New message types may be added in future versions. Your runtime must not crash on unrecognized types.
 

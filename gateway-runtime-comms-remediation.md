@@ -2442,8 +2442,8 @@ other while their code proceeds in parallel.
   - **Spec order.** Its spec steps land before proposal 0087's and proposal 0084's.
   Per-session platform and connector MCP connections belong to proposal 0084. Until 0084 lands, MCP tools
   are refused for a later session on a kept runtime, so proposal 0084 is also a release prerequisite.
-- [ ] Gateway stream-failure proposal (not yet written), implemented after proposal 0090 (owner decision,
-  2026-10-05). It closes BUILD-GAPS F-7.3.27 and F-7.3.28.
+- [x] Gateway stream-failure proposal (proposal 0091, implemented 2026-10-07, merge on `proposal-b`),
+  implemented after proposal 0090 (owner decision, 2026-10-05). It closes BUILD-GAPS F-7.3.27 and F-7.3.28.
   - **The defect.** The gateway does not react when an adapter `Attach` stream ends with an error, including
     the adapter's heartbeat-escalation `DeadlineExceeded`: the dead stream stays cached,
     `ReportSessionFailure` has no production caller, and the session holds its slot, runtime context, and

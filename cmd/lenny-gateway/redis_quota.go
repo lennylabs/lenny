@@ -233,7 +233,11 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// binds (Bindings.Bound over podRegistry), evicts and releases a bound
 		// session whose held gateway-to-pod channel has died (Bindings.ConnAlive
 		// over the BindResult adapter channel, Bindings.EvictBinding over
-		// podRegistry plus the executor's cached Attach stream), and on the
+		// podRegistry plus the executor's cached Attach stream), evicts without
+		// any lease write a bound session a peer replica has taken over (the
+		// lease is held elsewhere and coordination_generation has advanced past
+		// the generation this replica last renewed at; spec: §10.1.1, §10.1.5),
+		// and on the
 		// crash-takeover edge re-adopts the still-running pod through a
 		// fence-first re-adopt (Readopter over the Binder's ReadoptConnect entry
 		// point, the reused coordfence Fencer, and podRegistry.Put). Both seams

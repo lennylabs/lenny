@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
 // ErrSessionIDRequired is the §7.2 fail-closed dispatch invariant. It is
@@ -28,21 +26,32 @@ var ErrSessionIDRequired = errors.New("podexec: dispatch resolved no session ide
 // Send forwards message envelopes to the pod's runtime and collects the
 // agent's response, Close tears the pod down. The per-session pod
 // binding comes from the Registry, which the gateway's session-start
-// path populates. The Attach stream is opened lazily on the first Send
-// and held for the session's duration, because the adapter admits a
-// single content consumer per session.
+// path populates. The Attach stream is opened on the first Send and held
+// until the session's binding is released, on a context detached from the
+// delivering request, because the adapter admits a single content consumer
+// per session and a request's end must not end the stream. spec: §28.5.1
+// (CH-ATTACH Timing.).
 type PodExecutor struct {
 	registry *podsession.Registry
 	binder   *podsession.Binder
 
-	// approvals is the §7.2 tool-use approval authority. When set, a
-	// tool_call frame carrying approvalRequired:true blocks the
-	// in-flight Send until the user resolves it; nil preserves the
-	// prior behavior of skipping the frame. F-7.2.9, F-7.2.18.
+	// approvals is the §7.2 tool-use approval authority. When set, the
+	// stream's reader gates every tool_call frame carrying
+	// approvalRequired:true, whether or not a turn is in flight, and
+	// relays the verdict; nil preserves the prior behavior of skipping the
+	// frame. F-7.2.9, F-7.2.18.
 	approvals ApprovalGate
 
+	// onStreamFailure receives every end of a held stream that the gateway
+	// did not cause and that isReportedStreamFailure classifies as a stream
+	// failure, after the conn has left the cache. It is set at wiring time,
+	// before the first Send, and read without a lock, as approvals is. Nil
+	// reports nothing.
+	onStreamFailure func(tenantID, sessionID, sandboxName string, cause error)
+
+	// mu guards streams. It is taken before any attachConn mutex.
 	mu      sync.Mutex
-	streams map[string]*adapterclient.AttachStream
+	streams map[string]*attachConn
 }
 
 // NewPodExecutor returns a PodExecutor over the given registry and
@@ -52,7 +61,7 @@ func NewPodExecutor(registry *podsession.Registry, binder *podsession.Binder) *P
 	return &PodExecutor{
 		registry: registry,
 		binder:   binder,
-		streams:  make(map[string]*adapterclient.AttachStream),
+		streams:  make(map[string]*attachConn),
 	}
 }
 
@@ -65,24 +74,35 @@ func (e *PodExecutor) SetApprovalGate(g ApprovalGate) {
 	e.approvals = g
 }
 
+// SetStreamFailureHandler wires the handler that reports a held stream's
+// failure. The gateway calls it during wiring, before the first Send. The
+// reader calls h on its own goroutine, after the ended stream has left the
+// cache and before a Send waiting on that stream returns, with the tenant,
+// session, and sandbox of the binding the stream was opened on. Only a
+// DeadlineExceeded end (the adapter's heartbeat escalation) or an Internal
+// end reaches h; a clean end, an Unavailable end, and the gateway's own
+// evictions do not. A nil handler reports nothing.
+// spec: §28.5.1 (CH-ATTACH Degradation.).
+func (e *PodExecutor) SetStreamFailureHandler(h func(tenantID, sessionID, sandboxName string, cause error)) {
+	e.onStreamFailure = h
+}
+
 var (
 	_ Executor        = (*PodExecutor)(nil)
 	_ SessionReleaser = (*PodExecutor)(nil)
 )
 
-// Send delivers each message to the session's bound pod over its Attach
-// stream and returns the agent's response output parts.
+// Send delivers each message to the session's bound pod over its held
+// Attach stream and returns the agent's response output parts. Each message
+// is one turn: Send takes the stream's turn token, writes the envelope, and
+// waits for the reader to hand it the turn's `response`. When ctx ends
+// mid-turn, Send returns the context error and leaves the turn to the
+// reader, which consumes its late reply. spec: §28.5.1 (CH-ATTACH Timing.),
+// §28.5.3, §7.2.
 func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Message) (Response, error) {
-	stream, err := e.streamFor(ctx, sessionID)
+	conn, err := e.streamFor(ctx, sessionID)
 	if err != nil {
 		return Response{}, err
-	}
-	// The §7.2 KindToolUse interaction the approval gate records is keyed
-	// on the session's tenant; capture it from the live binding once so
-	// each approval-required frame on this Send carries it. spec: §7.2.
-	var tenantID string
-	if bind, ok := e.registry.Get(sessionID); ok {
-		tenantID = bind.TenantID
 	}
 	var out []MessagePart
 	var envAnn map[string]any
@@ -103,23 +123,23 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 		if err != nil {
 			return Response{}, err
 		}
-		if err := stream.Send(line); err != nil {
-			return Response{}, fmt.Errorf("podexec: send to pod: %w", err)
-		}
-		parts, ann, err := e.readAttachResponse(ctx, tenantID, sessionID, stream)
+		res, err := conn.runTurn(ctx, line)
 		if err != nil {
 			return Response{}, err
 		}
-		out = append(out, parts...)
-		envAnn = mergeAnnotations(envAnn, ann)
+		out = append(out, res.parts...)
+		envAnn = mergeAnnotations(envAnn, res.ann)
 	}
 	return Response{Parts: out, Annotations: envAnn}, nil
 }
 
-// streamFor returns the session's Attach stream, opening it on first
-// use. The lock is held across the open so a session never races two
-// streams into existence.
-func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapterclient.AttachStream, error) {
+// streamFor returns the session's held Attach stream, opening it on first
+// use. A cache miss caches a new conn under e.mu on a context detached from
+// ctx's cancellation, so the stream outlives the request that opened it, and
+// opens the stream on a separate goroutine so a slow open never holds e.mu.
+// Every caller waits for the open to complete or for its own ctx to end.
+// spec: §28.5.1 (CH-ATTACH Timing.).
+func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*attachConn, error) {
 	// spec: §7.2; §5.2 — the stream is addressed by the session
 	// identifier, which names the slot that session holds on the pod
 	// whatever the pool's concurrency. Fail closed on an empty one before
@@ -129,80 +149,62 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 		return nil, fmt.Errorf("podexec: %w", ErrSessionIDRequired)
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if s, ok := e.streams[sessionID]; ok {
-		return s, nil
-	}
-	bind, ok := e.registry.Get(sessionID)
+	c, ok := e.streams[sessionID]
 	if !ok {
-		return nil, fmt.Errorf("podexec: session %s is not bound to a pod", sessionID)
+		bind, bound := e.registry.Get(sessionID)
+		if !bound {
+			e.mu.Unlock()
+			return nil, fmt.Errorf("podexec: session %s is not bound to a pod", sessionID)
+		}
+		c = newAttachConn(ctx, bind)
+		e.streams[sessionID] = c
+		go e.openConn(c, bind.Adapter)
 	}
-	s, err := bind.Adapter.Attach(ctx, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("podexec: open attach stream: %w", err)
+	e.mu.Unlock()
+	if err := c.waitReady(ctx); err != nil {
+		return nil, err
 	}
-	e.streams[sessionID] = s
-	return s, nil
+	return c, nil
 }
 
-// EvictStream drops the session's cached Attach stream: it CloseSends the
-// stream and removes it from the executor's stream cache under the executor
-// lock, mirroring the teardown Release performs but leaving the pod running
-// and the binding untouched. It is the seam a coordination sweep calls when it
-// evicts a dead-connection binding so a subsequent same-replica re-adopt does
-// not keep serving over the stale cached stream. streamFor consults e.streams
-// before the registry, so without this eviction a re-adopt that republishes a
-// fresh BindResult would never Attach over the new binding. Evicting a session
-// with no cached stream is a no-op. spec: §4.7 (single content consumer per
-// session / Attach content stream), §4.6.1 (coordinating replica holds the
-// lease).
+// EvictStream ends the session's held Attach stream and removes it from the
+// cache: under the executor lock it marks the conn as closed by the gateway,
+// cancels the conn's context, and deletes the entry. Cancelling, rather than
+// half-closing, ends the stream on the adapter side too, and the mark keeps
+// the reader from treating the end as a stream failure. The pod and the
+// binding are untouched. Release and the coordination sweep's binding
+// eviction call it; streamFor consults the cache before the registry, so
+// without this eviction a re-adopt that republishes a fresh BindResult would
+// never Attach over the new binding. Evicting a session with no cached
+// stream is a no-op. spec: §28.5.1 (CH-ATTACH Timing.), §4.7, §4.6.1.
 func (e *PodExecutor) EvictStream(sessionID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if s, ok := e.streams[sessionID]; ok {
-		_ = s.CloseSend()
+	e.evictStreamLocked(sessionID)
+}
+
+// evictStreamLocked is EvictStream's body. The caller holds e.mu.
+func (e *PodExecutor) evictStreamLocked(sessionID string) {
+	if c, ok := e.streams[sessionID]; ok {
+		c.closedByGateway.Store(true)
+		c.cancel()
 		delete(e.streams, sessionID)
 	}
 }
 
-// readAttachResponse reads Attach frames until a `response` envelope and
-// returns its output parts. heartbeat_ack, status, and unparseable
-// frames are skipped. A `tool_call` frame carrying approvalRequired:true
-// is the §7.2 user-approval signal: when an ApprovalGate is
-// wired the executor records the interaction, publishes the
-// `tool_use_requested` SSE event, and blocks on the gate until the user
-// resolves the call, then relays the verdict to the runtime (approve →
-// the call is forwarded for execution; deny → a tool_result error is
-// written back). Without a gate the frame is skipped like any other
-// intermediate frame. F-7.2.9, F-7.2.18.
-func (e *PodExecutor) readAttachResponse(ctx context.Context, tenantID, sessionID string, stream *adapterclient.AttachStream) ([]MessagePart, map[string]any, error) {
-	for {
-		frame, err := stream.Recv()
-		if err == io.EOF {
-			return nil, nil, fmt.Errorf("podexec: runtime output ended before responding")
-		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("podexec: receive from pod: %w", err)
-		}
-		if e.approvals != nil {
-			handled, herr := e.maybeGateToolCall(ctx, tenantID, sessionID, frame, stream)
-			if herr != nil {
-				return nil, nil, herr
-			}
-			if handled {
-				continue
-			}
-		}
-		var env responseEnvelope
-		if err := json.Unmarshal(frame, &env); err != nil {
-			continue
-		}
-		if env.Type != "response" {
-			continue
-		}
-		parts, ann := ingestResponse(env)
-		return parts, ann, nil
-	}
+// unbind removes the session's binding from the registry and evicts its held
+// stream under one hold of e.mu. streamFor reads the registry under e.mu
+// before it caches a conn, so once unbind returns no Send can open a stream
+// over the removed binding. Evicting first and removing outside the lock
+// would leave a gap in which a Send reads the still-published binding and
+// caches a stream that outlives the release. spec: §28.5.1 (CH-ATTACH
+// Timing.), §7.2.
+func (e *PodExecutor) unbind(sessionID string) (*podsession.BindResult, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	bind, ok := e.registry.Remove(sessionID)
+	e.evictStreamLocked(sessionID)
+	return bind, ok
 }
 
 // toolCallFrame is the subset of the §28.5.3 tool_call frame the
@@ -226,63 +228,6 @@ type toolResultFrame struct {
 	ID      string            `json:"id"`
 	Content []wireMessagePart `json:"content"`
 	IsError bool              `json:"isError"`
-}
-
-// maybeGateToolCall inspects one frame. When it is a tool_call requiring
-// approval it drives the §7.2 approval handshake and returns handled=true
-// so the read loop continues; for any other frame it returns
-// handled=false and the caller resumes normal parsing. A gate error or a
-// failure to relay the verdict aborts the in-flight Send.
-func (e *PodExecutor) maybeGateToolCall(ctx context.Context, tenantID, sessionID string, frame []byte, stream *adapterclient.AttachStream) (bool, error) {
-	var call toolCallFrame
-	if err := json.Unmarshal(frame, &call); err != nil {
-		return false, nil
-	}
-	if call.Type != "tool_call" || !call.ApprovalRequired {
-		return false, nil
-	}
-	decision, err := e.approvals.AwaitApproval(ctx, tenantID, sessionID, PendingToolCall{
-		ID:        call.ID,
-		Name:      call.Name,
-		Arguments: call.Arguments,
-	})
-	if err != nil {
-		return false, fmt.Errorf("podexec: await tool-use approval: %w", err)
-	}
-	if decision.Approved {
-		// §7.2: an approval forwards the call. Re-send the tool_call with
-		// the approval flag cleared so the runtime executes it without
-		// re-entering the gate.
-		approved, mErr := json.Marshal(toolCallFrame{
-			Type:      "tool_call",
-			ID:        call.ID,
-			Name:      call.Name,
-			Arguments: call.Arguments,
-			SessionID: call.SessionID,
-		})
-		if mErr != nil {
-			return false, fmt.Errorf("podexec: encode approved tool_call: %w", mErr)
-		}
-		if sErr := stream.Send(approved); sErr != nil {
-			return false, fmt.Errorf("podexec: forward approved tool_call: %w", sErr)
-		}
-		return true, nil
-	}
-	// §7.2: a denial returns the tool a tool_result carrying
-	// isError:true and the deny reason.
-	denied, mErr := json.Marshal(toolResultFrame{
-		Type:    "tool_result",
-		ID:      call.ID,
-		Content: []wireMessagePart{{Type: "text", Inline: decision.Reason}},
-		IsError: true,
-	})
-	if mErr != nil {
-		return false, fmt.Errorf("podexec: encode deny tool_result: %w", mErr)
-	}
-	if sErr := stream.Send(denied); sErr != nil {
-		return false, fmt.Errorf("podexec: deliver deny tool_result: %w", sErr)
-	}
-	return true, nil
 }
 
 // Close removes the session's binding, closes its Attach stream, and
@@ -310,9 +255,8 @@ func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 // phase — the per-slot lifecycle tracks that — so it releases the slot
 // without a disposition.
 func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition Disposition) error {
-	e.EvictStream(sessionID)
-
-	bind, ok := e.registry.Remove(sessionID)
+	// The stream and the binding go together, before the binder runs.
+	bind, ok := e.unbind(sessionID)
 	if !ok {
 		return nil
 	}

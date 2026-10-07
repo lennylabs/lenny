@@ -4,10 +4,12 @@ package sessionserver
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -52,7 +54,10 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		// (handleResume applies no upstream holder gate), so publish no
 		// competing binding, skip fenceResumedPod, release the fresh pod
 		// claim startOnPod made, and fail the resume closed rather than
-		// double-bind.
+		// double-bind. A successful resume writes no generation, so the
+		// binding carries the generation of the row resumeOnPod received
+		// (spec: §10.1.1, §10.1.5).
+		stampBindingGeneration(result, row.CoordinationGeneration)
 		if berr := s.registerBinding(ctx, result); berr != nil {
 			s.rollbackBinding(ctx, result)
 			return "", berr
@@ -113,6 +118,9 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		s.rollbackBinding(ctx, result.Result)
 		return "", lerr
 	}
+	// spec: §10.1.1, §10.1.5 — stamp the generation of the row resumeOnPod
+	// received; a successful resume writes no generation.
+	stampBindingGeneration(result.Result, row.CoordinationGeneration)
 	s.podRegistry.Put(result.Result)
 	// spec: §4.2 — recovery_generation is incremented on each
 	// pod recovery. Persist the new pod assignment in the same update
@@ -127,6 +135,46 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		return "", ferr
 	}
 	return result.Mode, nil
+}
+
+// releaseThenResumeOnPod releases any earlier binding of the session and
+// then restores it onto a fresh pod. handleResume calls it after its
+// `resuming` write. A context error while it waits for the session's
+// slot-accounting lock is returned before any pod is claimed, on the same
+// failure exit as a resumeOnPod error.
+func (s *Server) releaseThenResumeOnPod(ctx context.Context, row sessionstore.Session) (string, error) {
+	if err := s.releaseEarlierBinding(ctx, row); err != nil {
+		return "", err
+	}
+	return s.resumeOnPod(ctx, row)
+}
+
+// releaseEarlierBinding releases, with the failed disposition, any binding
+// this replica still holds for the session before a `POST /resume` rebinds
+// it. Such a binding belongs to an earlier bind of the session, such as one
+// whose fence relinquished after its publish, and a resume that published a
+// new binding over it would leak its pod or slot. The release runs under the
+// session's slot-accounting lock, so a slot binding the failure funnel is
+// accounting is released only after the funnel has counted it and stamped any
+// drain. A release error is logged and the resume proceeds: the executor
+// evicts the stream and removes the registry entry before it calls the
+// binder, so the new bind does not overwrite a live entry. It writes no
+// coordination lease; the bind that follows acquires the lease, or renews this
+// replica's lease through the idempotent Acquire. The §8.10 tree-recovery
+// caller reaches resumeOnPod directly and runs no release.
+//
+// spec: §10.1.1 (one coordinating replica per session); §7.3 (retry and
+// resume); §5.2 (whole-pod replacement trigger).
+func (s *Server) releaseEarlierBinding(ctx context.Context, row sessionstore.Session) error {
+	unlock, err := s.slotAccountLocks.Lock(ctx, row.ID)
+	if err != nil {
+		return fmt.Errorf("sessionserver: wait for slot accounting of session %s: %w", row.ID, err)
+	}
+	defer unlock()
+	if rerr := releaseExecutor(ctx, s.executor, row.ID, executor.DispositionFailed); rerr != nil {
+		log.Printf("sessionserver: release earlier binding of session %s before resume: %v", row.ID, rerr)
+	}
+	return nil
 }
 
 // fenceResumedPod issues the §10.1 / §4.2 CoordinatorFence to the pod a

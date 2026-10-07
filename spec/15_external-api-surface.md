@@ -1713,7 +1713,7 @@ To lower the barrier for third-party runtime authors, the spec defines three int
 
 - stdin/stdout binary protocol only
 - Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout
-- Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds ends the session ([Section 28.5.3](28_communication-channels.md#2853-intra-pod))
+- Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds ends that session's stream, as the `CH-MSGSOCK` **Timing.** bullet in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states
 - Must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`
 - Handles `{type: "session_start"}` and `{type: "session_end"}`, and writes `{type: "session_started"}`, as the `CH-MSGSOCK` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states; a runtime that keeps no per-session context and opens no `CH-RUNTIMEOPS` connection ignores both and writes no `session_started`
 - Zero Lenny knowledge required beyond the above message types and, on a socket connection, the connection handshake ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1)

@@ -328,6 +328,23 @@ type ChildMaterializer interface {
 	MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error)
 }
 
+// RetryBudget resolves the effective §7.3 retry budget for a session
+// row: the per-session retryPolicy.maxRetries, else the deployer cap,
+// else the §7.3 default. *sessionserver.Server implements it.
+// spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
+type RetryBudget interface {
+	EffectiveMaxRetries(row sessionstore.Session) int
+}
+
+// maxRetriesFor resolves row's effective retry budget through b, falling
+// back to the cap-free resolution when no resolver is wired.
+func maxRetriesFor(b RetryBudget, row sessionstore.Session) int {
+	if b == nil {
+		return sessionserver.EffectiveMaxRetriesForRow(row, session.RetryPolicyCaps{})
+	}
+	return b.EffectiveMaxRetries(row)
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
@@ -491,6 +508,15 @@ type Deps struct {
 	// archived body already carries them). Optional — nil leaves the
 	// row-only result without rollups. spec: §8.8.
 	TaskUsage *resultrollup.Builder
+
+	// RetryBudget resolves a child row's effective §7.3 retry budget, the
+	// value the §8.8 TaskResult error block compares RetryCount against to
+	// report retriesExhausted. The gateway wires the session server so the
+	// await path uses the deployer caps the failure path enforces.
+	// Optional: nil resolves the budget without deployer caps (the row's
+	// retryPolicy.maxRetries, else the §7.3 default).
+	// spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
+	RetryBudget RetryBudget
 
 	// DeadlockTracker records the §8.8 await edges (which session awaits
 	// which children) so the subtree deadlock detector can decide whether
@@ -1836,14 +1862,15 @@ func callerTenantID(ctx context.Context, fallback string) string {
 // comes from the shared §15.2.1 classifier so the value matches the REST
 // and MCP error envelopes for the same code, and retriesExhausted
 // reports whether the gateway consumed the row's automatic-recovery
-// budget. Output is left nil here; a completed child's parts ride on the
+// budget, maxRetries, which the caller resolves through RetryBudget.
+// Output is left nil here; a completed child's parts ride on the
 // archived body.
 // spec: §8.8
 // (error: code, category, message, retriesExhausted). F-8.8.4.
-func toTaskResult(s sessionstore.Session) sessionrecord.Result {
+func toTaskResult(s sessionstore.Session, maxRetries int) sessionrecord.Result {
 	tr := sessionrecord.Result{SchemaVersion: sessionrecord.SchemaVersion, TaskID: s.ID, State: mcpStateForSession(s.State)}
 	if s.State != session.StateCompleted {
-		tr.Error = taskErrorForRow(s)
+		tr.Error = taskErrorForRow(s, maxRetries)
 	}
 	return tr
 }
@@ -1855,16 +1882,12 @@ func toTaskResult(s sessionstore.Session) sessionrecord.Result {
 // retryable) pair rather than an invented category — the §8.8 example's
 // RUNTIME_CRASH → TRANSIENT mapping is exactly this fallback.
 // spec: §8.8; §15.2.1. F-8.8.4.
-func taskErrorForRow(s sessionstore.Session) *sessionrecord.Error {
+func taskErrorForRow(s sessionstore.Session, maxRetries int) *sessionrecord.Error {
 	code := s.FailureReason
 	if code == "" {
 		code = "CHILD_" + strings.ToUpper(string(s.State))
 	}
 	cat, _ := errorclassify.Classify(code)
-	maxRetries := 0
-	if s.RetryPolicy != nil {
-		maxRetries = s.RetryPolicy.MaxRetries
-	}
 	return &sessionrecord.Error{
 		Code:             code,
 		Category:         string(cat),
@@ -1895,11 +1918,11 @@ type childOutcome struct {
 // gone — a child that settled and was reclaimed, or whose pod failed
 // while its resumed parent re-awaits it.
 func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
-	tenant, childID string,
+	budget RetryBudget, tenant, childID string,
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
-		oc := childOutcome{parentID: row.ParentSessionID, state: row.State, result: toTaskResult(row)}
+		oc := childOutcome{parentID: row.ParentSessionID, state: row.State, result: toTaskResult(row, maxRetriesFor(budget, row))}
 		if session.IsTerminal(row.State) {
 			// spec: §8.8 — stamp the usage / treeUsage rollups
 			// on the row-only projection so a terminal child resolved before
@@ -2004,7 +2027,7 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // from the §8.10 archive. F-8.8.12.
 // spec: §8.8
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
-	tenant string, childIDs []string, mode string,
+	budget RetryBudget, tenant string, childIDs []string, mode string,
 ) ([]sessionrecord.Result, bool, error) {
 	type settled struct {
 		at     time.Time
@@ -2014,7 +2037,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 	var terminal []settled
 	allTerminal := true
 	for i, cid := range childIDs {
-		oc, err := resolveChild(ctx, store, archive, usage, tenant, cid)
+		oc, err := resolveChild(ctx, store, archive, usage, budget, tenant, cid)
 		if err != nil {
 			return nil, false, err
 		}

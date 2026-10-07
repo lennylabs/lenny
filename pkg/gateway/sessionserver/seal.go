@@ -110,6 +110,14 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 		tracing.RecordError(span, tracing.CategorizeError(retErr, tracing.CategoryTransient))
 		span.End()
 	}()
+	// The clock-derived deadline below bounds the retries on the injected
+	// clock, which tests fake. This context bounds the window in real time
+	// as well, so a Seal call that never returns cannot hold the caller past
+	// it: on a stream-failure report's failed edge the release, the parent
+	// notification, and the cascade still run on the report's remaining
+	// time. spec: §7.1; §28.5.1 (CH-ATTACH Degradation.).
+	ctx, cancel := context.WithTimeout(ctx, s.sealMaxDuration)
+	defer cancel()
 	start := s.clock()
 	deadline := start.Add(s.sealMaxDuration)
 	backoff := sealBackoffInitial

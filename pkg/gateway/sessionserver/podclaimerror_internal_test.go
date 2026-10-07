@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
 // decodeErrorBody unpacks the §15.2 error envelope into its inner body
@@ -435,5 +436,44 @@ func TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2(t *testing.T) {
 				t.Errorf("details.retryable = %v, want false", details["retryable"])
 			}
 		})
+	}
+}
+
+// spec: §29.3 (Interactive message send), §29.6 (Restore and resume), §7.3
+// (Retry and Resume), §15.1 (REST API)
+// A resume whose bind meets another replica's coordination lease is a
+// transient failure: the row holds in awaiting_client_action, and the answer
+// is the retryable 503 RESUME_FAILED with Retry-After and no replica named in
+// the body. A failure means the row is demoted to terminal `failed` under a
+// retryable answer, so the client's retry is rejected against a terminal row.
+func TestResumeOnForeignLeaseIsTransient_spec_29_6(t *testing.T) {
+	for _, err := range []error{
+		leasestore.ErrHeld,
+		fmt.Errorf("sessionserver: acquire coordination lease: %w", leasestore.ErrHeld),
+	} {
+		if !isTransientPodClaimError(err) {
+			t.Errorf("isTransientPodClaimError(%v) = false, want true", err)
+		}
+		s := New(memstore.New(), Options{})
+		w := httptest.NewRecorder()
+		s.writePodClaimError(w, err, "RESUME_FAILED", "could not resume the session on a warm pod")
+		if w.Code != 503 {
+			t.Errorf("status = %d, want 503", w.Code)
+		}
+		body := decodeErrorBody(t, w.Body.Bytes())
+		if body["code"] != "RESUME_FAILED" {
+			t.Errorf("code = %v, want RESUME_FAILED", body["code"])
+		}
+		if body["retryable"] != true {
+			t.Errorf("retryable = %v, want true", body["retryable"])
+		}
+		if ra := w.Header().Get("Retry-After"); ra != "5" {
+			t.Errorf("Retry-After = %q, want 5", ra)
+		}
+		if d, ok := body["details"].(map[string]any); ok {
+			if _, named := d["coordinatingReplica"]; named {
+				t.Errorf("details name the coordinating replica: %v", d)
+			}
+		}
 	}
 }

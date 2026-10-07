@@ -154,29 +154,7 @@ The [Adapter Contract](../reference/adapter-contract.md#adapter-manifest) lists 
 
 ## Session States (From Attached)
 
-Once a session reaches `attached`, it enters the interactive session state machine:
-
-![Session state machine starting from attached. attached branches to completed, failed, resume_pending, suspended, and cancelled. resume_pending branches to resuming (which returns to attached) and awaiting_client_action (which transitions to expired). suspended branches to running (resume), completed, and resume_pending.](../assets/diagrams/session-states.svg)
-
-<!--
-ASCII fallback for the diagram above (session-states):
-
-                          attached
-                             |
-      +----------+-----------+-----------+------------+
-      v          v           v           v            v
-  completed   failed   resume_pending  suspended   cancelled
-                            |              |
-                       +----+----+    +----+----+-------+
-                       v         v    v         v       v
-                   resuming  awaiting  running  completed  resume_pending
-                       |     _client_  (resume)
-                       v      action
-                   attached     |
-                                v
-                              expired
--->
-
+Once a session reaches `attached`, it enters the interactive session state machine, which [State Machines](../reference/state-machines.md#session-phase-transitions-from-attached) diagrams.
 
 ### Key States
 
@@ -189,7 +167,7 @@ ASCII fallback for the diagram above (session-states):
 | `resuming` | Workspace is being restored onto a new pod. |
 | `awaiting_client_action` | Auto-retries exhausted. Client must decide: resume, terminate, or download artifacts. |
 | `completed` | Session finished normally. Terminal state. |
-| `failed` | Unrecoverable error or retries exhausted. Terminal state. |
+| `failed` | Non-retryable failure or other unrecoverable error. Terminal state. |
 | `cancelled` | Client or parent cancelled the session. Terminal state. |
 | `expired` | Budget, lease, or deadline exhausted. Terminal state. |
 
@@ -242,7 +220,7 @@ If `checkpoint_ready` is not received within `deadlineMs` (default 60 seconds), 
 
 ## Resume After Pod Failure
 
-When a pod fails (eviction, OOM, node failure), the gateway attempts automatic recovery:
+When a pod or its runtime fails, such as on a pod eviction, a node loss, or a runtime crash (including a runtime that stops answering heartbeats), the gateway attempts automatic recovery:
 
 1. Gateway detects the failure and classifies it (retryable vs. non-retryable).
 2. If retryable and `retryCount < maxRetries`:
@@ -252,7 +230,8 @@ When a pod fails (eviction, OOM, node failure), the gateway attempts automatic r
    - Replays the latest checkpoint.
    - Restores session state.
    - Resumes the session.
-3. If retries exhausted, session becomes `awaiting_client_action`.
+3. If retryable and retries are exhausted, the session becomes `awaiting_client_action`.
+4. If non-retryable, the session becomes `failed`.
 
 Your runtime does not need to implement any resume logic --- the adapter handles it. From your binary's perspective, the resumed session arrives as a new start: its `session_start` frame, followed by its first `message`.
 
@@ -412,7 +391,7 @@ The gateway drives the recycle boundary; your runtime sees only each session's m
 3. On a `preConnect` pool the SDK re-warm runs after a successful scrub (the pod projects `sdk_connecting`); on other pools the claim moves straight to `reserved`.
 4. The pod is held for its tenant in `reserved` for the hold TTL. A same-tenant session arriving within the window rebinds with no acquisition. On a pool that no longer keeps runtime processes across sessions, the next acquisition ends the hold instead of rebinding it. If the hold expires, the pod returns to `idle`.
 
-After `recycle.maxSessionsPerPod` sessions, when `recycle.maxPodUptimeSeconds` is exceeded, when a session ends in failure or a crash, or when your runtime process is not live at the recycle boundary, the pod drains and is replaced.
+After `recycle.maxSessionsPerPod` sessions, when `recycle.maxPodUptimeSeconds` is exceeded, when a session ends in failure or a crash on a pool with `maxConcurrentSessions: 1`, when the pod's failed and leaked slots reach the whole-pod replacement threshold on a pool with `maxConcurrentSessions > 1`, or when your runtime process is not live at the recycle boundary, the pod drains and is replaced.
 
 ---
 
@@ -441,7 +420,7 @@ The adapter implements the gRPC Health Checking Protocol. Your binary does not n
 
 1. Adapter sends `{"type":"heartbeat"}` on stdin.
 2. Your binary MUST respond with `{"type":"heartbeat_ack"}` within **10 seconds**.
-3. A missed acknowledgment ends the session, and your runtime process receives no signal.
+3. A missed acknowledgment ends that session's stream, and your runtime process receives no signal. The gateway handles the session as a runtime crash, as [Resume After Pod Failure](#resume-after-pod-failure) describes.
 
 The heartbeat handler should be immediate --- do not do heavy work before responding.
 
@@ -451,8 +430,9 @@ The heartbeat handler should be immediate --- do not do heavy work before respon
 
 Pods are terminated in the following cases:
 
-- Session completes or fails (session mode).
-- `recycle.maxSessionsPerPod` reached, or a session ends in failure or a crash (recycling pods).
+- Session completes or fails (default `sessionPolicy`: `maxConcurrentSessions: 1`, `recycle.enabled: false`).
+- `recycle.maxSessionsPerPod` reached, or a session ends in failure or a crash on a pool with `maxConcurrentSessions: 1` (recycling pods).
+- The pod's failed and leaked slots reach the whole-pod replacement threshold (pools with `maxConcurrentSessions > 1`).
 - `maxPodUptimeSeconds` exceeded.
 - Pool scaling down (surplus pods).
 - Node drain or eviction.

@@ -34,6 +34,10 @@ type fakeSlotBinder struct {
 	// releaseErr, when non-nil, makes ReleaseSlotReservation fail so the
 	// failed slot is not reclaimed — the §6.2 leak path.
 	releaseErr error
+
+	// drainErrs scripts DrainSandbox outcomes, one per call; a call past
+	// the end of the slice succeeds.
+	drainErrs []error
 }
 
 func (f *fakeSlotBinder) BindSlot(_ context.Context, _ podsession.SlotBindRequest) (*podsession.BindResult, error) {
@@ -63,7 +67,11 @@ func (f *fakeSlotBinder) ReleaseSlotReservation(_ context.Context, pod, slotID s
 }
 
 func (f *fakeSlotBinder) DrainSandbox(_ context.Context, pod string) error {
+	i := len(f.drained)
 	f.drained = append(f.drained, pod)
+	if i < len(f.drainErrs) {
+		return f.drainErrs[i]
+	}
 	return nil
 }
 
@@ -963,5 +971,54 @@ func TestSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 				t.Errorf("warmup-failure increments = %v, want %d", warmupFailures, wantEvents)
 			}
 		})
+	}
+}
+
+// spec: §5.2 (Concurrent-workspace slot retry policy, whole-pod replacement
+// trigger); §6.2 (pod state machine)
+// A drain that cannot be stamped clears the trip, so the pod's next single
+// accounted failure requests the drain again, and the replacement counter
+// counts the pod once, on the drain that succeeded. After that drain the pod
+// stays tripped: a leaked slot reported later is not counted and leaves the
+// leak gauge at zero. A failure means a pod whose drain failed is never
+// retired, a pod is replaced twice, or a drained pod's late leak republishes
+// the gauge.
+func TestSlotFailureAccountingRetriesDrainAfterError_spec_5_2(t *testing.T) {
+	f := newAccountingFixture()
+	f.binder.drainErrs = []error{errors.New("apiserver unavailable")}
+
+	f.account("pod-a", "sess-1", 4, false)
+	f.account("pod-a", "sess-2", 4, false)
+	if len(f.binder.drained) != 1 {
+		t.Fatalf("drained = %v, want one attempt at the threshold", f.binder.drained)
+	}
+	if len(f.repl) != 0 {
+		t.Fatalf("replacement counted %v on a failed drain, want none", f.repl)
+	}
+	if f.health.Tripped("pod-a") {
+		t.Fatal("pod stays tripped after its drain failed")
+	}
+
+	f.account("pod-a", "sess-3", 4, false)
+	if len(f.binder.drained) != 2 || f.binder.drained[1] != "pod-a" {
+		t.Fatalf("drained = %v, want the next single failure to re-request the drain", f.binder.drained)
+	}
+	if len(f.repl) != 1 {
+		t.Errorf("replacement counted %d times, want once on the successful drain", len(f.repl))
+	}
+	if !f.health.Tripped("pod-a") {
+		t.Fatal("pod not tripped after its drain succeeded")
+	}
+
+	gaugeBefore := len(f.leaks.sets)
+	f.account("pod-a", "sess-4", 4, true)
+	if len(f.leaks.sets) != gaugeBefore {
+		t.Errorf("leak gauge republished %v after the drain, want no publication", f.leaks.sets[gaugeBefore:])
+	}
+	if _, leaked := f.health.Counts("pod-a"); leaked != 0 {
+		t.Errorf("leaked count = %d after the drain, want 0", leaked)
+	}
+	if len(f.binder.drained) != 2 {
+		t.Errorf("drained = %v, want no third drain of a tripped pod", f.binder.drained)
 	}
 }

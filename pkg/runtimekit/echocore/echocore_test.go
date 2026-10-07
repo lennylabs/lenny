@@ -106,3 +106,23 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 		t.Errorf("EOF on empty input must be a clean exit, got %v", err)
 	}
 }
+
+// spec: 28.5.3 (Intra-pod), 15.4.3 (Runtime Integration Levels)
+// The reference loop acks every heartbeat whatever message text came before
+// it. The text below is the one the tier-5 heartbeat-silence fixture reacts
+// to; the fixture filters heartbeats in front of the runtime, so a client
+// that sends this text to a shipped echo runtime cannot stop its acks.
+func TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3(t *testing.T) {
+	in := `{"type":"heartbeat"}` + "\n" +
+		`{"type":"message","sessionId":"s1","input":[{"type":"text","inline":"lenny-e2e:stop-heartbeat-ack"}]}` + "\n" +
+		`{"type":"heartbeat"}` + "\n" + `{"type":"heartbeat"}` + "\n"
+	acks := 0
+	for _, f := range runEcho(t, in) {
+		if strings.Contains(f, `"heartbeat_ack"`) {
+			acks++
+		}
+	}
+	if acks != 3 {
+		t.Fatalf("got %d heartbeat_ack frames, want one for each of the 3 heartbeats", acks)
+	}
+}

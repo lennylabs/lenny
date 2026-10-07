@@ -110,11 +110,13 @@ type Binder struct {
 	// lenny_slot_assignment_conflict_total counter (labeled by pool).
 	// It is threaded into the per-BindSlot SlotClaimer. Nil is a no-op.
 	SlotConflict func(pool string)
-	// SlotFailure records a §5.2 concurrent-workspace slot bind
-	// failure after a slot was reserved, backing the
-	// lenny_slot_failure_total counter (labeled by error_type, pool, and
-	// k8s_pod_name). errorType names the bind stage that failed. Nil is a
-	// no-op.
+	// SlotFailure records a §5.2 concurrent-workspace slot failure,
+	// backing the lenny_slot_failure_total counter (labeled by error_type,
+	// pool, and k8s_pod_name). The binder calls it for a bind failure after
+	// a slot was reserved, with errorType naming the bind stage that
+	// failed. The gateway's failure funnel calls it for a slot whose
+	// session failed mid-session, with errorType set to the §7.3 failure
+	// reason or to `unknown`. Nil is a no-op.
 	SlotFailure func(errorType, pool, podName string)
 	// SlotReclaim records the outcome of a compensating Shutdown that
 	// reclaims a slot after a failed bind, backing the §16.1

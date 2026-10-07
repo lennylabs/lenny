@@ -25,6 +25,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`gateway/`](gateway/) | Boots `cmd/lenny-gateway` as a subprocess on a random port and returns the base URL. |
 | [`golden/`](golden/) | Golden-file roundtrip helpers with `-update` flag for accepting diffs. |
 | [`goleak/`](goleak/) | Wrapper around `go.uber.org/goleak` keyed on the test name; the canonical place to install per-test leak detection. |
+| [`heartbeatsilence/`](heartbeatsilence/) | Runtime fixture for a runtime that hangs between turns. It runs an unmodified reference runtime as a child and stops forwarding heartbeats after a directive message. Its `Dockerfile` layers it on a reference runtime image for the Tier 5 heartbeat-silence pools that `kind/install.sh` installs. |
 | [`helm/`](helm/) | Helm chart rendering and apply helpers. |
 | [`kind/`](kind/) | Kind cluster lifecycle for Tier 5 (cluster create, kubeconfig, kubectl apply, port-forward, teardown). |
 | [`load/`](load/) | k6 scenario runner and baseline diff utilities for Tier 7. |

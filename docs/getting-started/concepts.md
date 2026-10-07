@@ -38,21 +38,24 @@ stateDiagram-v2
     running --> suspended: Interrupt
     running --> input_required: Agent calls request_input
     running --> completed: Agent finishes
-    running --> failed: Crash / unrecoverable error
+    running --> failed: Non-retryable failure
     running --> cancelled: Client cancels
     running --> expired: Budget or deadline exhausted
-    running --> resume_pending: Pod failure (retries remain)
+    running --> resume_pending: Retryable failure (retries remain)
+    running --> awaiting_client_action: Retryable failure (retries exhausted)
     input_required --> running: Input provided
     input_required --> cancelled: Parent cancels
     input_required --> expired: Deadline reached
-    input_required --> resume_pending: Pod failure (retries remain)
-    input_required --> failed: Retries exhausted
+    input_required --> resume_pending: Retryable failure (retries remain)
+    input_required --> awaiting_client_action: Retryable failure (retries exhausted)
+    input_required --> failed: Non-retryable failure
     suspended --> running: Resume
     suspended --> completed: Terminate
     suspended --> cancelled: Client cancels
     suspended --> expired: Lease expiry
-    suspended --> resume_pending: Pod failure while suspended
-    suspended --> failed: Budget keys expired
+    suspended --> resume_pending: Retryable failure, pod still held (retries remain)
+    suspended --> awaiting_client_action: Retryable failure, pod still held (retries exhausted)
+    suspended --> failed: Non-retryable failure or budget keys expired
     resume_pending --> resuming: Pod allocated
     resume_pending --> awaiting_client_action: Resume window elapsed
     resuming --> running: Checkpoint restored
@@ -74,15 +77,15 @@ stateDiagram-v2
 
 **suspended** -- The session has been interrupted (by the client, by an interrupt signal, or by the agent itself). The pod is still held for a configurable duration (`maxSuspendedPodHoldSeconds`), allowing a fast resume without re-claiming a pod. If the hold duration elapses, the pod is released and a resume transitions through `resume_pending`.
 
-**resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a pod crash (when retries remain) or after a suspended session's pod hold expires. The gateway attempts to claim a new warm pod and restore the session from the last checkpoint.
+**resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a retryable pod or runtime failure while retries remain, or after a suspended session's pod hold expires. The gateway attempts to claim a new warm pod and restore the session from the last checkpoint.
 
 **resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the `Resume` RPC restores the session from the checkpoint into the runtime process the new pod started with.
 
-**awaiting_client_action** -- The resume window (`maxResumeWindowSeconds`) has elapsed without a pod becoming available. The session is waiting for the client to take action (retry, cancel, or wait longer).
+**awaiting_client_action** -- Automatic recovery has stopped. Either the session's automatic retries were exhausted after a pod or runtime failure, or the resume window (`maxResumeWindowSeconds`) elapsed without a pod becoming available. The session is waiting for the client to take action (retry, cancel, or wait longer).
 
 **completed** -- The agent has finished its work normally. The workspace has been sealed (exported to durable storage). This is a terminal state.
 
-**failed** -- The session encountered an unrecoverable error: the runtime crashed and retries were exhausted, an internal error occurred, or all credential keys expired. This is a terminal state.
+**failed** -- The session encountered an unrecoverable error: a non-retryable failure occurred, an internal error occurred, or all credential keys expired. This is a terminal state.
 
 **cancelled** -- The client or a parent session explicitly cancelled the session. This is a terminal state.
 
@@ -131,7 +134,7 @@ The floor: enough to get a custom runtime working with a small Lenny-specific pr
 - **Input:** reads `{type: "message"}` objects from stdin.
 - **Sessions:** one long-lived process serves every session on the pod. A `{type: "session_start"}` frame opens each session and carries its own context, such as its credential file path, and a `{type: "session_end"}` frame releases it. A runtime that keeps no per-session context may ignore both.
 - **Output:** writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
-- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds. A missed acknowledgment ends the session, and the runtime process receives no signal.
+- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds. A missed acknowledgment ends that session's stream, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy.
 - **Shutdown:** must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
 - **Connection handshake:** when the runtime dials the message channel as a socket rather than reading stdin, it waits for the adapter manifest and sends the manifest's `mcpNonce` as its first line, `{"_lennyNonce": "..."}`. It answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the adapter closes the connection before that frame. See the [Adapter Contract](../reference/adapter-contract.md#connection-handshake).
 - **No MCP, no checkpointing, no lifecycle signals.**

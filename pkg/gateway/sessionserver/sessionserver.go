@@ -223,6 +223,12 @@ type Server struct {
 	// through to DefaultWorkspaceSealMaxDuration (300s).
 	// spec: §7.1.
 	sealMaxDuration time.Duration
+	// streamFailureReportTimeout bounds a CH-ATTACH stream-failure report
+	// beyond the seal window: the report's detached context lasts this long
+	// plus sealMaxDuration. A non-positive value falls through to
+	// DefaultStreamFailureReportTimeout. spec: §28.5.1 (CH-ATTACH
+	// Degradation.).
+	streamFailureReportTimeout time.Duration
 	// sealSleep waits d before the next seal retry, returning false when
 	// ctx is cancelled first. Nil selects a context-aware time.Sleep; the
 	// seam lets tests drive the backoff loop without real delays.
@@ -373,6 +379,12 @@ type Server struct {
 	// the pod's leaked slots, which remain counted in active_slots until the
 	// pod terminates. Nil disables the emission.
 	slotLeakGauge func(pod, pool string, leaked int)
+	// slotAccountLocks orders, per session, the failure funnel's slot
+	// accounting before a same-replica resume releases the session's earlier
+	// binding, so a drain the accounting requests is stamped before the
+	// release can reach the occupancy-zero recycle edge. The zero value is
+	// ready to use. spec: §5.2 "whole-pod replacement trigger".
+	slotAccountLocks sessionLocks
 	// observeStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.
@@ -1035,6 +1047,16 @@ type Options struct {
 	// spec: §7.1.
 	WorkspaceSealMaxDuration time.Duration
 
+	// StreamFailureReportTimeout bounds the work a CH-ATTACH stream-failure
+	// report does beyond the workspace seal: the report runs on a context
+	// detached from any request whose deadline is this value plus
+	// WorkspaceSealMaxDuration, so a seal that never returns still leaves
+	// this much time for the binding release, the parent notification, and
+	// the cascade. Operator-tunable; a non-positive value selects
+	// DefaultStreamFailureReportTimeout. spec: §28.5.1 (CH-ATTACH
+	// Degradation.).
+	StreamFailureReportTimeout time.Duration
+
 	// ObserveWorkspaceSealDuration, when set, records the §7.1
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram.
 	// outcome is "success" or "timeout". Nil disables the emission.
@@ -1513,6 +1535,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		evalPerTenantPerMin:        resolveEvalLimit(opts.EvalPerTenantPerMinute, DefaultEvalPerTenantPerMin),
 		sealer:                     opts.Sealer,
 		sealMaxDuration:            opts.WorkspaceSealMaxDuration,
+		streamFailureReportTimeout: opts.StreamFailureReportTimeout,
 		sealSleep:                  opts.SealSleep,
 		observeSealDuration:        opts.ObserveWorkspaceSealDuration,
 		recordSessionTerminal:      opts.RecordSessionTerminal,
@@ -1606,6 +1629,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.sealMaxDuration <= 0 {
 		// spec: §7.1 — maxWorkspaceSealDurationSeconds default 300s.
 		s.sealMaxDuration = DefaultWorkspaceSealMaxDuration
+	}
+	if s.streamFailureReportTimeout <= 0 {
+		s.streamFailureReportTimeout = DefaultStreamFailureReportTimeout
 	}
 	if s.sealSleep == nil {
 		s.sealSleep = sleepWithContext

@@ -276,8 +276,7 @@ def main():
             handle_tool_result(msg)
 
         elif msg_type == "heartbeat":
-            # Respond immediately. A missed ack within 10 seconds ends the session;
-            # the runtime process receives no signal.
+            # Respond immediately, within 10 seconds.
             write_json({"type": "heartbeat_ack"})
 
         elif msg_type == "shutdown":

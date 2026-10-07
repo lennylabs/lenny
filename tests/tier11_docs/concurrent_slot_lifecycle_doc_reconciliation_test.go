@@ -88,7 +88,9 @@ func TestLeakedSlotCountingLifetimeAgrees_F5231(t *testing.T) {
 
 	// §5.2 whole-pod replacement trigger bullet: same lifetime split.
 	s52 := specSection(t, filepath.Join(specDir, "05_runtime-registry-and-pool-model.md"), "### 5.2 ")
-	triggerLine := requireLine(t, s52, "Whole-pod replacement trigger")
+	// Anchor on the bullet's own label: the **Failure isolation:** bullet
+	// above it also names the trigger, and a bare-name match lands there.
+	triggerLine := requireLine(t, s52, "- **Whole-pod replacement trigger:**")
 	requireAllContain(t, "§5.2 whole-pod replacement trigger", triggerLine, []string{
 		"counted within a rolling 5-minute window",
 		"counted persistently for as long as the slots remain leaked",

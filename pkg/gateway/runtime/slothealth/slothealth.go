@@ -68,6 +68,15 @@ type Tracker struct {
 	// persistently for as long as the slot remains leaked); §5.2 (pool
 	// configuration and execution modes).
 	leaked map[string]map[string]struct{}
+	// tripped is the set of pods whose combined count has crossed the
+	// unhealthy threshold and whose drain this tracker has requested. The
+	// mark makes the whole-pod replacement trigger fire once per pod: a
+	// failure accounted while the mark is set is not counted and requests no
+	// second drain. Forget leaves the mark in place, so a drained pod keeps
+	// it for the tracker's lifetime; sandbox names come from GenerateName
+	// and are never reused, so the set is bounded by the pods this replica
+	// drained. spec: §5.2 (whole-pod replacement trigger).
+	tripped map[string]struct{}
 }
 
 // Option configures a Tracker.
@@ -86,7 +95,7 @@ func WithClock(now func() time.Time) Option {
 // New builds a Tracker. Without options it uses the §5.2 5-minute window
 // and the wall clock.
 func New(opts ...Option) *Tracker {
-	t := &Tracker{window: DefaultWindow, now: time.Now, events: map[string][]event{}, leaked: map[string]map[string]struct{}{}}
+	t := &Tracker{window: DefaultWindow, now: time.Now, events: map[string][]event{}, leaked: map[string]map[string]struct{}{}, tripped: map[string]struct{}{}}
 	for _, o := range opts {
 		o(t)
 	}
@@ -148,6 +157,47 @@ func (t *Tracker) Unhealthy(pod string, maxConcurrent int32) bool {
 	return t.countsLocked(pod) >= UnhealthyThreshold(maxConcurrent)
 }
 
+// Trip marks pod as tripped and returns true when the pod is not already
+// marked and its rolling-window failures plus persistent leaks have reached
+// ceil(maxConcurrent/2). It returns false, and changes nothing, when the pod
+// is already marked or is below the threshold. The counts are left as they
+// are, so a caller that fails to act on the trip can Untrip and trip again
+// on the pod's next accounted failure.
+//
+// spec: §5.2 (whole-pod replacement trigger); §6.2 (claimed → draining on
+// the unhealthy-slot threshold).
+func (t *Tracker) Trip(pod string, maxConcurrent int32) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.tripped[pod]; ok {
+		return false
+	}
+	if t.countsLocked(pod) < UnhealthyThreshold(maxConcurrent) {
+		return false
+	}
+	t.tripped[pod] = struct{}{}
+	return true
+}
+
+// Tripped reports whether Trip has marked pod and no Untrip has cleared the
+// mark since. spec: §5.2 (whole-pod replacement trigger).
+func (t *Tracker) Tripped(pod string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.tripped[pod]
+	return ok
+}
+
+// Untrip clears pod's trip mark and leaves its counts in place. The gateway
+// calls it when the drain a trip requested could not be stamped, so the pod's
+// next accounted failure trips again and re-requests the drain.
+// spec: §5.2 (whole-pod replacement trigger).
+func (t *Tracker) Untrip(pod string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.tripped, pod)
+}
+
 // Counts returns the in-window failed slot count and the persistent leaked
 // slot count for pod. Expired failure events are pruned as a side effect.
 func (t *Tracker) Counts(pod string) (failed, leaked int) {
@@ -177,6 +227,7 @@ func (t *Tracker) countsLocked(pod string) int {
 }
 
 // Forget drops all recorded failures and the persistent leak count for pod.
+// It leaves a trip mark in place, so a drained pod is not tripped twice.
 // The gateway calls it once a pod has been drained for replacement so a
 // later pod reusing the name (or a pod that recovered) starts from a clean
 // slate. The pod's leaked slots are reclaimed with the terminated pod, so
