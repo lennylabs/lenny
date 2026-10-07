@@ -65,19 +65,79 @@ func TestEmitChildFailedInjectsEventOnParentStream_spec_8_10_1082(t *testing.T) 
 	if ev["child_task_id"] != "child" {
 		t.Errorf("child_task_id = %v, want child", ev["child_task_id"])
 	}
-	// pod_evicted is retryable: a child reaching `failed` exhausted its
-	// retry budget, so classification is transient and retries_exhausted.
+	// pod_evicted is retryable, so the classification is transient. The
+	// child's RetryCount is 0, so its retry budget is unspent and
+	// retries_exhausted is false: the retryable classification does not
+	// imply a spent budget. spec: §8.8 (TaskRecord and TaskResult Schema).
 	if ev["classification"] != "transient" {
 		t.Errorf("classification = %v, want transient", ev["classification"])
 	}
-	if ev["retries_exhausted"] != true {
-		t.Errorf("retries_exhausted = %v, want true", ev["retries_exhausted"])
+	if ev["retries_exhausted"] != false {
+		t.Errorf("retries_exhausted = %v, want false for RetryCount 0", ev["retries_exhausted"])
 	}
 	if ev["failure_reason"] != string(session.FailurePodEvicted) {
 		t.Errorf("failure_reason = %v, want pod_evicted", ev["failure_reason"])
 	}
 	if ev["failure_class"] != string(session.FailureClassRuntime) {
 		t.Errorf("failure_class = %v, want %s", ev["failure_class"], session.FailureClassRuntime)
+	}
+}
+
+// TestEmitChildFailedRetriesExhaustedFromSpentBudget_spec_8_8 pins
+// retries_exhausted to the spent retry budget: the row's RetryCount
+// compared with the effective §7.3 budget (the per-session
+// retryPolicy.maxRetries, else the deployer cap, else the default). The
+// classification is reported separately and does not decide the value.
+// spec: §8.8 (TaskRecord and TaskResult Schema), §8.10 (Delegation Tree
+// Recovery), §7.3 (Retry and Resume).
+func TestEmitChildFailedRetriesExhaustedFromSpentBudget_spec_8_8(t *testing.T) {
+	cases := []struct {
+		name               string
+		reason             session.FailureReason
+		retryCount         int64
+		policyMaxRetries   int
+		capMaxRetries      int
+		wantClassification string
+		wantExhausted      bool
+	}{
+		{"retryable, per-session budget spent", session.FailurePodEvicted, 2, 2, 0, "transient", true},
+		{"retryable, per-session budget left", session.FailurePodEvicted, 1, 2, 0, "transient", false},
+		{"non-retryable after a spent budget", session.FailureSetupCommandFailed, 3, 3, 0, "permanent", true},
+		{"retryable, deployer cap spent", session.FailurePodEvicted, 1, 0, 1, "transient", true},
+		{"retryable, default budget left", session.FailurePodEvicted, 1, 0, 0, "transient", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			bus := sessionevents.NewBus(0)
+			srv := New(store, Options{Events: bus, RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries}})
+			now := time.Now()
+			mustCreate(t, store, sessionstore.Session{ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
+			child := sessionstore.Session{
+				ID: "c", TenantID: "acme", State: session.StateFailed,
+				ParentSessionID: "p",
+				FailureReason:   string(tc.reason),
+				RetryCount:      tc.retryCount,
+				CreatedAt:       now, UpdatedAt: now,
+			}
+			if tc.policyMaxRetries > 0 {
+				child.RetryPolicy = &session.RetryPolicy{MaxRetries: tc.policyMaxRetries}
+			}
+			mustCreate(t, store, child)
+
+			srv.recordSessionCompleted(context.Background(), session.StateRunning, child)
+
+			ev := childFailedEvent(t, bus, "p")
+			if ev == nil {
+				t.Fatal("no child_failed event on the parent stream after a child failed")
+			}
+			if ev["classification"] != tc.wantClassification {
+				t.Errorf("classification = %v, want %s", ev["classification"], tc.wantClassification)
+			}
+			if ev["retries_exhausted"] != tc.wantExhausted {
+				t.Errorf("retries_exhausted = %v, want %v (RetryCount %d)", ev["retries_exhausted"], tc.wantExhausted, tc.retryCount)
+			}
+		})
 	}
 }
 
@@ -105,8 +165,8 @@ func TestEmitChildFailedPermanentForNonRetryable_spec_8_10_1082(t *testing.T) {
 	if ev["classification"] != "permanent" {
 		t.Errorf("classification = %v, want permanent", ev["classification"])
 	}
-	// A permanent cause short-circuits to failed without consuming the
-	// retry budget, so retries_exhausted is false.
+	// The child's RetryCount is 0, so its retry budget is unspent and
+	// retries_exhausted is false.
 	if ev["retries_exhausted"] != false {
 		t.Errorf("retries_exhausted = %v, want false", ev["retries_exhausted"])
 	}

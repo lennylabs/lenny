@@ -275,9 +275,13 @@ func (w *gatewayWiring) buildMCPSurface(
 		// spec: §6.2 — keep a parent blocked in await_children
 		// non-idle so the §11.3 watchdog does not reap it while it waits
 		// on slow children. F-11.3.7.
-		ActivityStamper:    activityStamper,
-		TreeArchive:        w.treeArchive,
-		TaskUsage:          taskUsageBuilder,
+		ActivityStamper: activityStamper,
+		TreeArchive:     w.treeArchive,
+		TaskUsage:       taskUsageBuilder,
+		// spec: §8.8 (TaskRecord and TaskResult Schema) — resolve
+		// retriesExhausted against the deployer retry caps the session
+		// server's failure path enforces.
+		RetryBudget:        sessionSrv,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
 		ElicitationMetrics: gwMetrics,

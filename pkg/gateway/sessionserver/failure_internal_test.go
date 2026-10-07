@@ -317,7 +317,7 @@ func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries 
 func (f *funnelFixture) report(ctx context.Context, snap sessionstore.Session, reason string) (FailureDisposition, error) {
 	classification := session.ClassifyFailure(reason, snap.RetryPolicy)
 	return f.srv.applyFailureFromActive(ctx, snap, FailureReport{TenantID: "acme", SessionID: snap.ID, Reason: reason},
-		classification, effectiveMaxRetriesForRow(snap, f.srv.retryPolicyCaps))
+		classification, EffectiveMaxRetriesForRow(snap, f.srv.retryPolicyCaps))
 }
 
 func (f *funnelFixture) failureLabels() []string {

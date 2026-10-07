@@ -147,7 +147,7 @@ func (s *Server) ReportSessionFailure(ctx context.Context, rep FailureReport) (F
 	classification := session.ClassifyFailure(rep.Reason, row.RetryPolicy)
 	disp.Classification = classification
 
-	maxRetries := effectiveMaxRetriesForRow(row, s.retryPolicyCaps)
+	maxRetries := EffectiveMaxRetriesForRow(row, s.retryPolicyCaps)
 	disp.MaxRetries = maxRetries
 
 	switch row.State {
@@ -479,14 +479,17 @@ func failureClassForReason(reason string) session.FailureClass {
 	}
 }
 
-// effectiveMaxRetriesForRow resolves the §7.3 retry budget for a row.
+// EffectiveMaxRetriesForRow resolves the §7.3 retry budget for a row.
 // The per-session retryPolicy.maxRetries wins when set; otherwise the
 // deployer cap; otherwise the §7.3 worked-example default. Mirrors the
 // watchdog's effectiveMaxRetries semantics so the resuming-watchdog
-// branch and the failure-reporting branch use the same budget.
+// branch and the failure-reporting branch use the same budget. It is
+// exported so every surface that reports retriesExhausted (the §8.8
+// TaskResult error block and the §8.10 child_failed event) compares the
+// row's RetryCount against the same budget the failure path enforced.
 //
 // spec: §7.3; F-6.2.14.
-func effectiveMaxRetriesForRow(row sessionstore.Session, caps session.RetryPolicyCaps) int {
+func EffectiveMaxRetriesForRow(row sessionstore.Session, caps session.RetryPolicyCaps) int {
 	if row.RetryPolicy != nil && row.RetryPolicy.MaxRetries > 0 {
 		return row.RetryPolicy.MaxRetries
 	}
@@ -494,4 +497,14 @@ func effectiveMaxRetriesForRow(row sessionstore.Session, caps session.RetryPolic
 		return caps.MaxRetries
 	}
 	return watchdog.DefaultMaxRetries
+}
+
+// EffectiveMaxRetries resolves a row's §7.3 retry budget against this
+// server's deployer caps. It lets a surface outside this package, such
+// as the MCP await path, report retriesExhausted against the budget the
+// failure path enforces without holding its own copy of the caps.
+//
+// spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
+func (s *Server) EffectiveMaxRetries(row sessionstore.Session) int {
+	return EffectiveMaxRetriesForRow(row, s.retryPolicyCaps)
 }

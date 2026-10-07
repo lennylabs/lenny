@@ -256,3 +256,44 @@ func archivedSchemaVersion(t *testing.T, archive treearchive.Store, nodeID strin
 	}
 	return res.SchemaVersion
 }
+
+// TestMaterializeTaskResultRetriesExhaustedUsesEffectiveBudget_spec_8_8
+// pins the §8.8 retriesExhausted flag to the effective §7.3 retry budget
+// when the row carries no per-session retryPolicy: the deployer cap,
+// else the §7.3 default. One completed retry against a default budget of
+// two leaves the budget unspent; the same retry against a deployer cap
+// of one spends it.
+// spec: §8.8 (TaskRecord and TaskResult Schema), §7.3 (Retry and Resume).
+func TestMaterializeTaskResultRetriesExhaustedUsesEffectiveBudget_spec_8_8(t *testing.T) {
+	cases := []struct {
+		name          string
+		capMaxRetries int
+		retryCount    int64
+		want          bool
+	}{
+		{"default budget left", 0, 1, false},
+		{"default budget spent", 0, 2, true},
+		{"deployer cap spent", 1, 1, true},
+		{"deployer cap left", 3, 2, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := New(memstore.New(), Options{
+				Clock:           taskResultClock,
+				RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries},
+			})
+			sess := sessionstore.Session{
+				ID: "sess_c", TenantID: "acme", State: session.StateFailed,
+				FailureReason: string(session.FailurePodEvicted), RetryCount: tc.retryCount,
+			}
+			res := srv.materializeTaskResult(context.Background(), sess, 0)
+			if res.Error == nil {
+				t.Fatal("error = nil, want a populated error block")
+			}
+			if res.Error.RetriesExhausted != tc.want {
+				t.Errorf("retriesExhausted = %v, want %v (RetryCount %d, cap %d)",
+					res.Error.RetriesExhausted, tc.want, tc.retryCount, tc.capMaxRetries)
+			}
+		})
+	}
+}

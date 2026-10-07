@@ -826,7 +826,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		// child whose live row is gone is resolved from the §8.10
 		// archive so a resumed parent can still re-await it.
 		for _, cid := range in.ChildIDs {
-			oc, err := resolveChild(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, tenant, cid)
+			oc, err := resolveChild(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, deps.RetryBudget, tenant, cid)
 			if err != nil {
 				return mcp.ToolResult{}, err
 			}
@@ -863,7 +863,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			if deps.ActivityStamper != nil {
 				deps.ActivityStamper.Stamp(tenant, in.SessionID)
 			}
-			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, tenant, in.ChildIDs, mode)
+			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, deps.RetryBudget, tenant, in.ChildIDs, mode)
 			if err != nil {
 				obstracing.RecordError(span, err)
 				return mcp.ToolResult{}, err
