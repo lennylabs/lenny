@@ -2476,7 +2476,10 @@
         "pkg/gateway/sessionserver/stream_failure_test.go::TestStreamFailureCoordinationCheckKeepsOwnBinding_spec_10_1_5",
         "pkg/gateway/sessionserver/binding_generation_test.go::TestPublishedBindingCarriesRowGeneration_spec_10_1_1",
         "cmd/lenny-gateway/coordination_seams_test.go::TestReadoptPublishesHandoffGeneration_spec_10_1_5",
-        "tests/tier7a_load_local/stale_generation_report_race_test.go::TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5"
+        "tests/tier7a_load_local/stale_generation_report_race_test.go::TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5",
+        "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5",
+        "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRecordsHandoffGenerationOnTakeover_spec_10_1_5",
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -2561,7 +2564,10 @@
         "pkg/gateway/sessionserver/stream_failure_test.go::TestStreamFailureCoordinationCheckKeepsOwnBinding_spec_10_1_5",
         "pkg/gateway/sessionserver/binding_generation_test.go::TestPublishedBindingCarriesRowGeneration_spec_10_1_1",
         "cmd/lenny-gateway/coordination_seams_test.go::TestReadoptPublishesHandoffGeneration_spec_10_1_5",
-        "tests/tier7a_load_local/stale_generation_report_race_test.go::TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5"
+        "tests/tier7a_load_local/stale_generation_report_race_test.go::TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5",
+        "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5",
+        "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRecordsHandoffGenerationOnTakeover_spec_10_1_5",
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
       ],
       "packages": [
         "pkg/gateway"

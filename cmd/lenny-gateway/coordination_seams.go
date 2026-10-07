@@ -16,9 +16,14 @@ import (
 // executor to the coordination.BindingRegistry the §10.1 lease Sweeper
 // consumes. It keeps the coordination lease co-located with the live pod
 // binding: the Sweeper renews the lease only for the sessions this replica
-// binds, and on a bound session whose held gateway-to-pod channel has died it
-// evicts the binding and releases the lease so a subsequent sweep re-adopts
-// the still-running pod before its §10.1 hold-state self-termination.
+// binds. It evicts a bound session's binding on two triggers. On a bound
+// session whose held gateway-to-pod channel has died it evicts the binding and
+// releases the lease so a subsequent sweep re-adopts the still-running pod
+// before its §10.1 hold-state self-termination. On a bound session a peer
+// replica has taken over (the lease is held elsewhere and the row's
+// coordination_generation has advanced past the generation this replica last
+// renewed at) it evicts the binding and writes no lease, so this replica stops
+// coordinating a session it no longer owns.
 //
 // The collaborators (the podsession registry and the executor) are constructed
 // in later composition-root build steps than the Sweeper, so this adapter reads
@@ -27,8 +32,9 @@ import (
 // root is wired, so both are populated by the first sweep.
 //
 // spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
-// coordination lease; hold state on connection loss), §4.7 (single content
-// consumer per session / Attach content stream).
+// coordination lease; hold state on connection loss), §10.1.1, §10.1.5 (a
+// replica that is no longer the coordinator discards its cached streams), §4.7
+// (single content consumer per session / Attach content stream).
 type coordinationBindings struct {
 	w *gatewayWiring
 }

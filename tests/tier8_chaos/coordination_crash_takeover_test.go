@@ -16,9 +16,10 @@
 // holds the connection so an idle taken-over session stays coordinated, that a
 // dead held connection is evicted and re-adopted and re-fenced before the pod's
 // hold-state self-termination, that a terminal fence failure relinquishes and
-// backs off without climbing the generation on every sweep, and that a stale
+// backs off without climbing the generation on every sweep, that a stale
 // prior coordinator's RPC is rejected by the generation fence after the
-// takeover.
+// takeover, and that a prior coordinator that stalled rather than crashed
+// evicts its binding and stream on its next sweep.
 package tier8_chaos_test
 
 import (
@@ -65,13 +66,15 @@ func waitForLapse(t *testing.T, leases leasestore.LeaseStore, tenant, sessID str
 // spec: §10.1 (coordinator failover; CoordinatorFence; hold state on
 // connection loss; relinquish-and-backoff; hold-state timeout), §4.6.1
 // (coordinating replica holds the lease), §4.7 (single content consumer /
-// Attach content stream), §4.2.
+// Attach content stream), §4.2, §10.1.1 (Stateless Replicas and Per-Session
+// Coordination), §10.1.5 (Stale Replica Behavior).
 //
 // diagnosis: a failure means the survivor did not recover the coordinator role
 // on a real replica crash — the lapsed lease was not adopted and re-fenced, a
 // dead held connection pinned the lease so the pod would self-terminate in hold
 // state, a terminal fence failure climbed the generation on every sweep, or a
-// stale coordinator was not fenced out after the takeover.
+// stale coordinator was not fenced out after the takeover, or a stale
+// coordinator kept its binding and stream after a peer took its lease over.
 func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	leases := leasestore.New(rd.Client)
@@ -164,6 +167,34 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		// rejected now that the generation advanced to 2.
 		if !pod.StaleRPCRejected(ctx, sessID, 1) {
 			t.Errorf("stale coordinator RPC at generation 1 was not fenced out after the takeover")
+		}
+
+		// replica-1 is still bound with a live channel: it models a replica
+		// that stalled past its TTL rather than one that crashed. Its next
+		// sweep meets replica-2's lease at a generation past the one it last
+		// renewed at, so it evicts its binding and stream and writes no lease
+		// or session row. spec: §10.1.1, §10.1.5.
+		if held, err := coordinator.Sweeper.Sweep(ctx); err != nil || held != 0 {
+			t.Fatalf("stalled coordinator Sweep: held=%d err=%v, want 0 and nil", held, err)
+		}
+		if n := coordinator.Bindings.Evicted(sessID); n != 1 {
+			t.Errorf("stalled coordinator evictions = %d, want 1", n)
+		}
+		if coordinator.Bindings.Bound(sessID) {
+			t.Errorf("stalled coordinator still bound after the peer takeover")
+		}
+		if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-2" {
+			t.Errorf("lease holder after the stalled sweep = %+v err=%v, want replica-2", lease, err)
+		}
+		if !survivor.Bindings.Bound(sessID) {
+			t.Errorf("survivor lost its binding after the stalled coordinator's sweep")
+		}
+		got, _ = sessions.Get(ctx, tenant, sessID)
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("coordination_generation after the stalled sweep = %d, want 2", got.CoordinationGeneration)
+		}
+		if pod.LastFenced(sessID) != 2 {
+			t.Errorf("pod fenced generation after the stalled sweep = %d, want 2", pod.LastFenced(sessID))
 		}
 	})
 
