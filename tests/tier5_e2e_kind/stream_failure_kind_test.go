@@ -15,7 +15,9 @@
 // classifier moves to resume_pending reaches awaiting_client_action when its
 // maxResumeWindowSeconds elapses. On a concurrent pool each failed slot is
 // counted toward the whole-pod replacement trigger, and the pod is drained at
-// ceil(maxConcurrentSessions / 2) failed slots.
+// ceil(maxConcurrentSessions / 2) failed slots. The drain deletes the pod, so a
+// sibling slot whose own heartbeat deadline has not yet passed loses its stream
+// to the pod's deletion rather than to a reported failure.
 //
 // Each escalation takes up to the adapter's heartbeat interval plus its ack
 // timeout (30 s + 10 s by default), so each case allows several minutes.
@@ -283,17 +285,93 @@ func awaitPodDrainRequested(t *testing.T, c *kind.Cluster, pod string, timeout t
 	}
 }
 
+// awaitAnySessionReported waits until at least one of the sessions has left
+// running for a state the stream-failure report writes, and fails when none
+// has within timeout.
+func awaitAnySessionReported(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant string, ids []string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for len(reportedSessions(ctx, d, tenant, ids)) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("no session of %v left running within %s: the slot's stream failure was not reported", ids, timeout)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// reportedSessions returns the sessions whose row is in a state the
+// stream-failure report writes: resume_pending, or awaiting_client_action
+// once the resume window has elapsed. A session the driver cannot read is
+// left out.
+func reportedSessions(ctx context.Context, d *sessiondriver.Driver, tenant string, ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		s, err := d.GetSession(ctx, tenant, id)
+		if err != nil {
+			continue
+		}
+		if s.State == "resume_pending" || s.State == "awaiting_client_action" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// awaitPodGone waits for the pod to be deleted, which the WarmPoolController
+// does once the drain request moves the pod's Sandbox to draining.
+func awaitPodGone(t *testing.T, c *kind.Cluster, pod string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		name, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pod", pod, "--ignore-not-found", "-o", "name")
+		if err == nil && strings.TrimSpace(name) == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pod %s still present %s after its drain request", pod, timeout)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// settledSlotFailures returns the reported sessions and the rise in the pod's
+// lenny_slot_failure_total once two readings taken a few seconds apart agree,
+// so a report still in flight when the pod went away is counted on both sides.
+func settledSlotFailures(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant, pod string, ids []string, before float64) ([]string, float64) {
+	t.Helper()
+	read := func() ([]string, float64) {
+		return reportedSessions(ctx, d, tenant, ids), slotFailureCount(t, d, pod) - before
+	}
+	prevIDs, prevCount := read()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		time.Sleep(3 * time.Second)
+		gotIDs, gotCount := read()
+		if len(gotIDs) == len(prevIDs) && gotCount == prevCount {
+			return gotIDs, gotCount
+		}
+		if time.Now().After(deadline) {
+			return gotIDs, gotCount
+		}
+		prevIDs, prevCount = gotIDs, gotCount
+	}
+}
+
 // spec: 5.2 (Pool Configuration and Execution Modes), 28.5.1
-// (Gateway-to-pod), 7.3 (Retry and Resume)
+// (Gateway-to-pod), 7.3 (Retry and Resume), 6.2 (Pod State Machine)
 // diagnosis: on a concurrent pool whose one runtime stopped answering
-// heartbeats, a slot's stream failure was not counted toward the whole-pod
-// replacement trigger, or the pod was not drained once
+// heartbeats, a slot's reported stream failure was not counted toward the
+// whole-pod replacement trigger, or the pod was not drained once
 // ceil(maxConcurrentSessions / 2) slots had failed. Every create and delivery
 // in the case goes through one gateway replica, because each replica keeps
 // its own slot-health ledger; the case asserts that before it stops the acks.
-// A slot-failure count below the number of failed slots means a slot's report
-// skipped the accounting; a pod without a drain request means the trigger did
-// not fire.
+// The pool sets maxConcurrentSessions: 2, so the trigger fires on the first
+// failed slot and the drain deletes the pod, which can end the sibling slot's
+// stream before its own heartbeat deadline; that end is a pod loss and is not
+// reported. A slot-failure count that differs from the number of sessions the
+// report moved out of running means a report skipped the accounting or a slot
+// was counted twice; no reported session means the escalation was not
+// reported; a pod without a drain request means the trigger did not fire.
 func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 	c := kind.InstallLenny(t)
 	requirePoolReadyPods(t, c, concurrentPoolName, 1)
@@ -341,17 +419,22 @@ func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 	requireCoordinatedBy(t, c, gatewayPod, ids)
 	before := slotFailureCount(t, d, pod)
 
+	// The silence is pod-wide, so whichever slot's heartbeat deadline passes
+	// first is escalated and reported.
 	sendSilenceDirective(ctx, t, d, tenant, ids[0])
-	for _, id := range ids {
-		if got, ok := d.WaitForState(ctx, tenant, id, streamFailureEscalation, "resume_pending", "awaiting_client_action"); !ok {
-			t.Fatalf("session %s state = %+v, want resume_pending once its slot's stream failure is reported", id, got)
-		}
-	}
-	if got := slotFailureCount(t, d, pod) - before; got != float64(len(ids)) {
-		t.Errorf("lenny_slot_failure_total for pod %s rose by %g, want %d: each failed slot is counted", pod, got, len(ids))
-	}
+	awaitAnySessionReported(ctx, t, d, tenant, ids, streamFailureEscalation)
+
 	// maxConcurrentSessions is 2, so the trigger fires at ceil(2 / 2) = 1
-	// failed slot, and both slots fail together because the pod's one
-	// runtime stopped acking.
+	// failed slot.
 	awaitPodDrainRequested(t, c, pod, 2*time.Minute)
+	awaitPodGone(t, c, pod, 3*time.Minute)
+
+	reported, rise := settledSlotFailures(ctx, t, d, tenant, pod, ids, before)
+	if len(reported) == 0 {
+		t.Fatalf("no session of %v is in resume_pending or awaiting_client_action after the pod drained", ids)
+	}
+	if rise != float64(len(reported)) {
+		t.Errorf("lenny_slot_failure_total for pod %s rose by %g, want %d: each reported slot failure (%v) is counted once",
+			pod, rise, len(reported), reported)
+	}
 }
