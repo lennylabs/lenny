@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: Line break position in the recycle-lifecycle diagram footer
+## Accepted: Line break position in the recycle-lifecycle diagram footer
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S4 (Land DOCS-1: reader docs follow SPEC-1, SPEC-2, and SPEC-4).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader who compares the diagram with DOCS-1 edit 20 and assumes the break falls between the two sentences would treat the landed footer as a misapplied edit. The wording is unchanged. Only the break position and the resulting canvas height of 364 differ from that reading.
 
-## Proposed: File placement of the binding-generation publish-site test
+## Accepted: File placement of the binding-generation publish-site test
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S8 (CODE-3: stream-failure handler, generation stamp, coordination check, runtime_crash report, report timeout, and path-6 fallback).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader who looks for `TestPublishedBindingCarriesRowGeneration_spec_10_1_1` in `stream_failure_test.go`, as the proposal lists it, would conclude the test is missing. The test exists in `binding_generation_test.go`.
 
-## Proposed: Shared outcome helpers in deliverMessageBatch
+## Accepted: Shared outcome helpers in deliverMessageBatch
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S8 (CODE-3: stream-failure handler, generation stamp, coordination check, runtime_crash report, report timeout, and path-6 fallback).
 
@@ -44,7 +44,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader who compares the diff with CODE-3 item 6 would see edits to the resume-failure, `ActionBufferInbox`, `ActionBufferDLQ`, and `ActionRejectTerminal` cases and treat them as unscoped behavior changes. Those cases were refactored onto the shared helpers, and their receipts are unchanged.
 
-## Proposed: retries_exhausted derived from the retryable classification in usage.go
+## Accepted: retries_exhausted derived from the retryable classification in usage.go
 
 **Status:** resolved
 
@@ -60,7 +60,7 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of `pkg/gateway/sessionserver/usage.go` takes the old contract, in which `retries_exhausted` equals a transient classification, as the current one.
 
-## Proposed: child_failed fixture asserts retries_exhausted true with an unspent budget
+## Accepted: child_failed fixture asserts retries_exhausted true with an unspent budget
 
 **Status:** resolved
 
