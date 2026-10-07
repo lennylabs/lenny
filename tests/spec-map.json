@@ -1644,7 +1644,8 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1",
         "pkg/sandbox/podscrub/podscrub_test.go::TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2",
-        "tests/tier2_component/slotrelease/failed_release_retires_test.go::TestFailedReleaseRetiresRecyclingSessionPod_spec_6_2"
+        "tests/tier2_component/slotrelease/failed_release_retires_test.go::TestFailedReleaseRetiresRecyclingSessionPod_spec_6_2",
+        "pkg/gateway/sessionserver/slotretry_test.go::TestSlotFailureAccountingRetriesDrainAfterError_spec_5_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1880,7 +1881,8 @@
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1",
         "tests/tier2_component/translators/openai_singleshot_disconnect_test.go::TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1",
-        "pkg/gateway/sessionserver/failure_test.go::TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F_7_1_14"
+        "pkg/gateway/sessionserver/failure_test.go::TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F_7_1_14",
+        "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorKeepsNewerState_spec_7_3"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -1919,7 +1921,8 @@
         "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelReleasesOnlyTheReportedBinding_spec_7_3",
         "pkg/gateway/sessionserver/failure_internal_test.go::TestFailureFunnelWithoutPodRegistry_spec_7_3",
         "pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go::TestHoldOrFailOnResumeErrorKeepsNewerState_spec_7_3",
-        "tests/tier7a_load_local/failure_funnel_race_test.go::TestFailureFunnelRacesSameReplicaResume_spec_7_3"
+        "tests/tier7a_load_local/failure_funnel_race_test.go::TestFailureFunnelRacesSameReplicaResume_spec_7_3",
+        "pkg/gateway/sessionserver/podclaimerror_internal_test.go::TestResumeOnForeignLeaseIsTransient_spec_29_6"
       ],
       "packages": [
         "pkg/session/resume",

@@ -205,7 +205,7 @@ func TestConcurrentSlotSessionsEachCarryTwoMessages_spec_28_5_1(t *testing.T) {
 	for _, name := range []string{"A", "B"} {
 		sess, err := d.CreateAndStart(ctx, tenant, concurrentRuntimeRef)
 		if errors.Is(err, sessiondriver.ErrPoolNotReady) {
-			t.Skipf("precondition not met: concurrent pool not ready: %v", err)
+			t.Skipf("blocked: concurrent pool not ready, no pair of slot sessions to drive: %v", err)
 		}
 		if err != nil {
 			t.Fatalf("create session %s on %s: %v", name, concurrentRuntimeRef, err)
