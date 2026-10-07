@@ -165,10 +165,18 @@ var closedStreamFindings = []closedStreamFinding{
 // citedTestFile matches a backticked repository path to a Go test file.
 var citedTestFile = regexp.MustCompile("`((?:pkg|tests|cmd)/[\\w./-]+_test\\.go)`")
 
+// proposalStepLabel matches a numbered build step such as "step-1" or
+// "step 2". The proposal numbers its own build sequence, and the specification
+// does not, so a closure record that groups its evidence by such a label names
+// something a BUILD-GAPS.md reader cannot look up.
+var proposalStepLabel = regexp.MustCompile(`(?i)\bstep[- ]\d+\b`)
+
 // diagnosis: a closed CH-ATTACH stream finding no longer matches the tree.
 // Either the code that closed it was removed, so the finding must be reopened,
 // or its resolution cites a test file that no longer exists, so the evidence
-// cannot be rerun; update the resolution to name the current test file.
+// cannot be rerun; update the resolution to name the current test file. A
+// resolution that names a proposal's numbered build step is rewritten to
+// describe the commits it groups instead.
 func TestClosedStreamFindingsCiteLandedCodeAndTests_spec_7_3(t *testing.T) {
 	root := repoRoot(t)
 	findings := buildGapsFindingsByID(t, root)
@@ -183,6 +191,9 @@ func TestClosedStreamFindingsCiteLandedCodeAndTests_spec_7_3(t *testing.T) {
 			}
 			if !strings.Contains(f.body, "**Resolution") {
 				t.Errorf("BUILD-GAPS.md:%d %s\n  is closed with no resolution note", f.line, f.heading)
+			}
+			if label := proposalStepLabel.FindString(f.body); label != "" {
+				t.Errorf("BUILD-GAPS.md:%d %s\n  names the proposal-internal label %q; describe the commits it groups instead", f.line, f.heading, label)
 			}
 			cited := citedTestFile.FindAllStringSubmatch(f.body, -1)
 			if len(cited) == 0 {
@@ -336,6 +347,12 @@ func TestStreamFailureRecordProbes_spec_28_5_1(t *testing.T) {
 	}
 	if isRunningPodAdoptsOnly.MatchString("func isRunningPod(row sessionstore.Session) bool {\n\treturn (row.State == session.StateRunning || row.State == session.StateInputRequired || row.State == session.StateSuspended) && row.PodAssignment != \"\"\n}") {
 		t.Error("isRunningPodAdoptsOnly matches a predicate that also adopts suspended rows")
+	}
+	if !proposalStepLabel.MatchString("and, from the step-2 test commits (cd554fe18)") || !proposalStepLabel.MatchString("Step 1 test commits") {
+		t.Error("proposalStepLabel misses a numbered build-step label")
+	}
+	if proposalStepLabel.MatchString("and, from the stream-failure test commits (cd554fe18)") {
+		t.Error("proposalStepLabel matches a resolution with no build-step label")
 	}
 	if !streamFailurePlanItem.MatchString("- [x] Gateway stream-failure proposal (proposal 0091, implemented 2026-10-07, merge on `proposal-b`),\n") {
 		t.Error("streamFailurePlanItem misses a ticked item")
