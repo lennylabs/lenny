@@ -276,27 +276,95 @@ func requireCoordinatedBy(t *testing.T, c *kind.Cluster, gatewayPod string, sess
 	}
 }
 
-// awaitPodDrainRequested waits for the pod to carry the §5.2 drain-request
-// annotation the replacement trigger stamps, or to be gone.
-func awaitPodDrainRequested(t *testing.T, c *kind.Cluster, pod string, timeout time.Duration) {
+// podDrainWatch records every state of one agent pod that a `kubectl get -w`
+// watch reports, one line per event, so the drain-request stamp is observed
+// even when the pod is deleted between two polls. Each line is the pod's
+// lenny.dev/drain-request annotation and its deletionTimestamp, separated by
+// podDrainWatchSep.
+type podDrainWatch struct {
+	pod string
+	out *syncBuffer
+}
+
+const podDrainWatchSep = "|"
+
+// watchPodDrainRequest starts the watch on pod. Start it before the failure
+// that should trip the replacement trigger, so the event that stamps the
+// annotation is delivered to the watch rather than missed.
+func watchPodDrainRequest(t *testing.T, c *kind.Cluster, pod string) *podDrainWatch {
+	t.Helper()
+	w := &podDrainWatch{pod: pod, out: &syncBuffer{}}
+	cmd := c.Kubectl("-n", executionModesNamespace, "get", "pod", pod, "--watch",
+		"-o", `jsonpath={.metadata.annotations.lenny\.dev/drain-request}`+podDrainWatchSep+
+			`{.metadata.deletionTimestamp}{"\n"}`)
+	cmd.Stdout = w.out
+	cmd.Stderr = &syncBuffer{}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("watch pod %s: %v", pod, err)
+	}
+	t.Cleanup(func() { stopFollow(cmd) })
+	return w
+}
+
+// drainEvidence classifies the events seen so far. stamped is true once an
+// event carried the drain-request stamp while the pod was not yet being
+// deleted, which is the §5.2 replacement trigger acting before the
+// WarmPoolController deletes the pod. deletedFirst is true when an event
+// shows the pod being deleted before any event carried the stamp, which is
+// a release that retired the pod without the trigger.
+func (w *podDrainWatch) drainEvidence() (stamped, deletedFirst bool) {
+	for _, line := range strings.Split(w.out.String(), "\n") {
+		stamp, deletion, ok := strings.Cut(strings.TrimSpace(line), podDrainWatchSep)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(stamp) != "" && strings.TrimSpace(deletion) == "" {
+			return true, false
+		}
+		if strings.TrimSpace(deletion) != "" {
+			return false, true
+		}
+	}
+	return false, false
+}
+
+// awaitPodDrainRequested waits for the watch to report the pod carrying the
+// §5.2 drain-request stamp before any deletion of the pod. It fails when the
+// pod is deleted, or is gone, before the stamp was seen: a pod removed without
+// the stamp was retired by a per-slot release rather than drained by the
+// whole-pod replacement trigger.
+func awaitPodDrainRequested(t *testing.T, c *kind.Cluster, w *podDrainWatch, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		name, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pod", pod, "--ignore-not-found", "-o", "name")
-		if err == nil && strings.TrimSpace(name) == "" {
+		stamped, deletedFirst := w.drainEvidence()
+		if stamped {
 			return
 		}
-		stamp, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pod", pod,
-			"-o", `jsonpath={.metadata.annotations.lenny\.dev/drain-request}`)
-		if err == nil && strings.TrimSpace(stamp) != "" {
-			return
+		if deletedFirst || podGone(t, c, w.pod) {
+			// A gone pod's final events may still be in flight to the
+			// watch, so read it once more before failing.
+			time.Sleep(2 * time.Second)
+			if stamped, _ = w.drainEvidence(); stamped {
+				return
+			}
+			t.Fatalf("pod %s was deleted without the lenny.dev/drain-request stamp: the failed slot retired the "+
+				"concurrent pod instead of counting toward the whole-pod replacement trigger; watched states:\n%s",
+				w.pod, w.out.String())
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("pod %s carries no drain request after %s: the failed slots did not trip the whole-pod "+
-				"replacement trigger", pod, timeout)
+				"replacement trigger; watched states:\n%s", w.pod, timeout, w.out.String())
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+// podGone reports whether the pod no longer exists.
+func podGone(t *testing.T, c *kind.Cluster, pod string) bool {
+	t.Helper()
+	name, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pod", pod, "--ignore-not-found", "-o", "name")
+	return err == nil && strings.TrimSpace(name) == ""
 }
 
 // awaitAnySessionReported waits until at least one of the sessions has left
@@ -337,8 +405,7 @@ func awaitPodGone(t *testing.T, c *kind.Cluster, pod string, timeout time.Durati
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		name, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pod", pod, "--ignore-not-found", "-o", "name")
-		if err == nil && strings.TrimSpace(name) == "" {
+		if podGone(t, c, pod) {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -385,7 +452,9 @@ func settledSlotFailures(ctx context.Context, t *testing.T, d *sessiondriver.Dri
 // reported. A slot-failure count that differs from the number of sessions the
 // report moved out of running means a report skipped the accounting or a slot
 // was counted twice; no reported session means the escalation was not
-// reported; a pod without a drain request means the trigger did not fire.
+// reported; a pod deleted, or never drain-requested, without the
+// lenny.dev/drain-request stamp observed first means a failed slot retired the
+// pod directly or the trigger did not fire.
 func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 	c := kind.InstallLenny(t)
 	requirePoolReadyPods(t, c, silenceConcurrentPoolName, 1)
@@ -432,6 +501,9 @@ func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 	}
 	requireCoordinatedBy(t, c, gatewayPod, ids)
 	before := slotFailureCount(t, d, pod)
+	// The watch starts before the acks stop, so the event that stamps the
+	// drain request is observed even when the pod is deleted soon after.
+	drain := watchPodDrainRequest(t, c, pod)
 
 	// The silence is pod-wide, so whichever slot's heartbeat deadline passes
 	// first is escalated and reported.
@@ -440,7 +512,7 @@ func TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2(t *testing.T) {
 
 	// maxConcurrentSessions is 2, so the trigger fires at ceil(2 / 2) = 1
 	// failed slot.
-	awaitPodDrainRequested(t, c, pod, 2*time.Minute)
+	awaitPodDrainRequested(t, c, drain, 2*time.Minute)
 	awaitPodGone(t, c, pod, 3*time.Minute)
 
 	reported, rise := settledSlotFailures(ctx, t, d, tenant, pod, ids, before)
