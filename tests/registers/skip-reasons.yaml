@@ -1276,6 +1276,21 @@ sites:
       site: 2
       call: Skipf
       reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.'
+    - path: tests/tier5_e2e_kind/stream_failure_kind_test.go
+      function: requireCoordinatedBy
+      site: 1
+      call: Skip
+      reason: 'precondition not met: the e2e Postgres pod is not running'
+    - path: tests/tier5_e2e_kind/stream_failure_kind_test.go
+      function: TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2
+      site: 1
+      call: Skip
+      reason: 'precondition not met: no Ready gateway replica'
+    - path: tests/tier5_e2e_kind/stream_failure_kind_test.go
+      function: TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2
+      site: 2
+      call: Skipf
+      reason: 'precondition not met: concurrent pool not ready: %v'
     - path: tests/tier6_e2e_cloud/agent_objectstore_egress_test.go
       function: requireAgentNamespace
       site: 1
