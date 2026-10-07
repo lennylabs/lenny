@@ -106,3 +106,63 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 		t.Errorf("EOF on empty input must be a clean exit, got %v", err)
 	}
 }
+
+// spec: 28.5.3 (Intra-pod), 28.5.1 (Gateway-to-pod)
+// The silence directive is echoed like any message, and every later
+// heartbeat goes unanswered, so the adapter's ack deadline elapses as for a
+// runtime that hangs between turns. A heartbeat before the directive is still
+// acked.
+func TestHeartbeatSilenceDirectiveStopsTheAcks(t *testing.T) {
+	directive := `{"type":"message","sessionId":"s1","input":[{"type":"text","inline":"` +
+		echocore.HeartbeatSilenceDirective + `"}]}`
+	in := `{"type":"heartbeat"}` + "\n" + directive + "\n" + `{"type":"heartbeat"}` + "\n" +
+		`{"type":"message","sessionId":"s1","input":[{"type":"text","inline":"after"}]}` + "\n" +
+		`{"type":"heartbeat"}` + "\n"
+	frames := runEcho(t, in)
+	if len(frames) != 3 {
+		t.Fatalf("got %d frames, want the first ack and two echoes: %v", len(frames), frames)
+	}
+	if !strings.Contains(frames[0], "heartbeat_ack") {
+		t.Errorf("frame 0 = %s, want the ack for the heartbeat before the directive", frames[0])
+	}
+	if !strings.Contains(frames[1], echocore.HeartbeatSilenceDirective) || !strings.Contains(frames[2], "after") {
+		t.Errorf("frames %v, want the directive and the later message echoed", frames[1:])
+	}
+}
+
+// spec: 28.5.3 (Intra-pod)
+// A message whose text is not exactly the directive, or a frame that is not a
+// message, is not the directive.
+func TestIsHeartbeatSilenceDirective(t *testing.T) {
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{`{"type":"message","input":[{"type":"text","inline":"` + echocore.HeartbeatSilenceDirective + `"}]}`, true},
+		{`{"type":"message","input":[{"type":"text","inline":"hi"}]}`, false},
+		{`{"type":"message","input":[]}`, false},
+		{`{"type":"heartbeat"}`, false},
+		{`not json`, false},
+	} {
+		if got := echocore.IsHeartbeatSilenceDirective([]byte(tc.line)); got != tc.want {
+			t.Errorf("IsHeartbeatSilenceDirective(%s) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
+// spec: 28.5.3 (Intra-pod, Inbound: session_end)
+// A session_end ends nothing and writes no frame; its arrival is logged with
+// the session it names.
+func TestSessionEndIsLoggedWithItsSession(t *testing.T) {
+	var out, stderr bytes.Buffer
+	in := `{"type":"session_end","sessionId":"sess-42"}` + "\n" + `{"type":"heartbeat"}` + "\n"
+	if err := echocore.Run(context.Background(), strings.NewReader(in), &out, &stderr); err != nil {
+		t.Fatalf("echocore.Run: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "session_end for session sess-42") {
+		t.Errorf("stderr = %q, want the session_end logged with its session", stderr.String())
+	}
+	if !strings.Contains(out.String(), "heartbeat_ack") || strings.Count(out.String(), "\n") != 1 {
+		t.Errorf("output = %q, want only the heartbeat ack", out.String())
+	}
+}

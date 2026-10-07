@@ -367,6 +367,14 @@ func (d *Driver) AllowSessionsWithNoEnvironment(ctx context.Context, tenantID st
 // Use CreateAndStart for the convenience POST /v1/sessions/start path
 // when a test does not need the explicit two-step lifecycle.
 func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string) (*Session, error) {
+	return d.CreateSessionWithOptions(ctx, tenantID, runtimeRef, StartOptions{})
+}
+
+// CreateSessionWithOptions behaves like CreateSession with the optional body
+// fields opts sets. A test that needs a field POST /v1/sessions/start does
+// not carry, such as retryPolicy, creates the session here and starts it
+// with Start.
+func (d *Driver) CreateSessionWithOptions(ctx context.Context, tenantID, runtimeRef string, opts StartOptions) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
@@ -376,9 +384,12 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
-	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
+	body, err := json.Marshal(startBody(runtimeRef, opts))
+	if err != nil {
+		return nil, fmt.Errorf("encode create body: %w", err)
+	}
 	res, err := d.doSessionRequest(ctx, http.MethodPost, "/v1/sessions",
-		tenantAdmin(tenantID), strings.NewReader(body))
+		tenantAdmin(tenantID), strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -423,6 +434,40 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 // distroless runtime image (the adapter, not the caller, owns
 // the slot tree, so this is the only write path a client has).
 func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRef string, workspacePlan json.RawMessage) (*Session, error) {
+	return d.CreateAndStartWithOptions(ctx, tenantID, runtimeRef, StartOptions{WorkspacePlan: workspacePlan})
+}
+
+// StartOptions carries the optional session-creation body fields a test
+// sets. A nil field is omitted from the body.
+type StartOptions struct {
+	// WorkspacePlan is the §14 WorkspacePlan, as raw JSON.
+	WorkspacePlan json.RawMessage
+	// RetryPolicy is the §7.3 per-session retryPolicy, as raw JSON, for
+	// example `{"maxResumeWindowSeconds":5}`.
+	RetryPolicy json.RawMessage
+}
+
+// sessionBody is the session-creation body the driver sends.
+type sessionBody struct {
+	RuntimeRef       string          `json:"runtimeRef"`
+	IsolationProfile string          `json:"isolationProfile"`
+	WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
+	RetryPolicy      json.RawMessage `json:"retryPolicy,omitempty"`
+}
+
+// startBody builds the creation body for runtimeRef under the standard
+// isolation profile the e2e SandboxTemplates carry.
+func startBody(runtimeRef string, opts StartOptions) sessionBody {
+	return sessionBody{
+		RuntimeRef: runtimeRef, IsolationProfile: "standard",
+		WorkspacePlan: opts.WorkspacePlan, RetryPolicy: opts.RetryPolicy,
+	}
+}
+
+// CreateAndStartWithOptions behaves like CreateAndStart with the optional
+// body fields opts sets, and retries a transient pool-not-ready 503 the same
+// way.
+func (d *Driver) CreateAndStartWithOptions(ctx context.Context, tenantID, runtimeRef string, opts StartOptions) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
@@ -432,12 +477,7 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
-	req := struct {
-		RuntimeRef       string          `json:"runtimeRef"`
-		IsolationProfile string          `json:"isolationProfile"`
-		WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
-	}{RuntimeRef: runtimeRef, IsolationProfile: "standard", WorkspacePlan: workspacePlan}
-	bodyBytes, err := json.Marshal(req)
+	bodyBytes, err := json.Marshal(startBody(runtimeRef, opts))
 	if err != nil {
 		return nil, fmt.Errorf("encode create-and-start body: %w", err)
 	}
@@ -551,17 +591,29 @@ func retryAfterBackoff(header string) time.Duration {
 // explicitly stage the create → start two-step lifecycle (a derive +
 // start sequence, for example).
 func (d *Driver) Start(ctx context.Context, tenantID, sessionID string) (*Session, error) {
-	path := "/v1/sessions/" + sessionID + "/start"
+	return d.sessionStep(ctx, tenantID, sessionID, "start")
+}
+
+// Finalize issues POST /v1/sessions/{id}/finalize, the §15.1 preparation
+// barrier that moves a created session to ready, and returns the session.
+func (d *Driver) Finalize(ctx context.Context, tenantID, sessionID string) (*Session, error) {
+	return d.sessionStep(ctx, tenantID, sessionID, "finalize")
+}
+
+// sessionStep posts an empty body to /v1/sessions/{id}/{step} and decodes
+// the 200 session response.
+func (d *Driver) sessionStep(ctx context.Context, tenantID, sessionID, step string) (*Session, error) {
+	path := "/v1/sessions/" + sessionID + "/" + step
 	res, err := d.doSessionRequest(ctx, http.MethodPost, path,
 		tenantAdmin(tenantID), nil)
 	if err != nil {
-		return nil, fmt.Errorf("start session %q: %w", sessionID, err)
+		return nil, fmt.Errorf("%s session %q: %w", step, sessionID, err)
 	}
 	defer res.Body.Close()
 	rb, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("start session %q: status %d, body %s",
-			sessionID, res.StatusCode, string(rb))
+		return nil, fmt.Errorf("%s session %q: status %d, body %s",
+			step, sessionID, res.StatusCode, string(rb))
 	}
 	var s Session
 	if err := json.Unmarshal(rb, &s); err != nil {

@@ -203,7 +203,10 @@ spec:
 # this overlay shares — podsession.ResolvePool rejects a (runtimeRef,
 # isolationProfile) pair matched by more than one pool with
 # ErrAmbiguousPool, and echo-pool-sidecar already claims
-# echo-runtime-sidecar at isolationProfile: standard. spec: §5.2.
+# echo-runtime-sidecar at isolationProfile: standard.
+# capabilities.injection.supported is true (§5.1): the echo loop answers
+# every inbound `message` frame, so the tier-5 stream-failure case can send
+# several messages on one task-mode session. spec: §5.2.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -215,3 +218,8 @@ spec:
   executionMode: session
   isolationProfile: standard
   deploymentModel: sidecar
+  capabilities:
+    interaction: multi_turn
+    injection:
+      supported: true
+      modes: [immediate, queued]

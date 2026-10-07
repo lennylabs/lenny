@@ -751,13 +751,21 @@ bootstrap:
     # §5.2 sequential-pod-reuse ("task mode") reference runtime. Reuses
     # ECHO_IMAGE under a distinct name so task-mode-echo-pool has a
     # runtimeRef no other pool shares (see agent-workload.yaml for the
-    # ErrAmbiguousPool rationale).
+    # ErrAmbiguousPool rationale). capabilities.injection.supported is true
+    # (§5.1) to match the Runtime CRD in agent-workload.yaml: the echo loop
+    # answers every inbound `message` frame, so the tier-5 stream-failure
+    # case can send several messages on one task-mode session.
     - name: echo-runtime-task-mode
       type: agent
       image: ${ECHO_IMAGE}
       integrationLevel: basic
       executionMode: session
       isolationProfile: standard
+      capabilities:
+        interaction: multi_turn
+        injection:
+          supported: true
+          modes: [immediate, queued]
       labels:
         lenny.dev/e2e: echo-task-mode
   pools:

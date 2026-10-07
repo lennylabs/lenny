@@ -712,3 +712,25 @@ func TestToolResultForAnUnheldSessionIsDropped_spec_28_5_3(t *testing.T) {
 		t.Fatalf("stderr %q, want a diagnostic for the dropped tool_result", stderr)
 	}
 }
+
+// TestHeartbeatSilenceDirectiveStopsThePodsAcks asserts that once any
+// session sends the echocore silence directive, the pod answers no further
+// heartbeat. Heartbeats are pod-global, so every slot's stream reaches the
+// adapter's ack deadline together, as when the pod's one runtime hangs.
+// spec: §28.5.3 (CH-MSGSOCK Timing.); §5.2.
+func TestHeartbeatSilenceDirectiveStopsThePodsAcks(t *testing.T) {
+	in := `{"type":"heartbeat","ts":1}` + "\n" +
+		`{"type":"session_start","sessionId":"sess-01","startId":"st-1"}` + "\n" +
+		message("sess-01", echocore.HeartbeatSilenceDirective) +
+		`{"type":"heartbeat","ts":2}` + "\n" +
+		`{"type":"heartbeat","ts":3}` + "\n"
+	acks := 0
+	for _, f := range drive(t, in) {
+		if f.Type == "heartbeat_ack" {
+			acks++
+		}
+	}
+	if acks != 1 {
+		t.Fatalf("got %d heartbeat_ack frames, want only the one before the directive", acks)
+	}
+}
