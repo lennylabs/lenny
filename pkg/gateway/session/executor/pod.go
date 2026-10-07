@@ -42,9 +42,12 @@ type PodExecutor struct {
 	// frame. F-7.2.9, F-7.2.18.
 	approvals ApprovalGate
 
-	// onStreamEnd observes every end of a held stream that the gateway did
-	// not cause, after the conn has left the cache. Nil observes nothing.
-	onStreamEnd func(tenantID, sessionID, sandboxName string, err error)
+	// onStreamFailure receives every end of a held stream that the gateway
+	// did not cause and that isReportedStreamFailure classifies as a stream
+	// failure, after the conn has left the cache. It is set at wiring time,
+	// before the first Send, and read without a lock, as approvals is. Nil
+	// reports nothing.
+	onStreamFailure func(tenantID, sessionID, sandboxName string, cause error)
 
 	// mu guards streams. It is taken before any attachConn mutex.
 	mu      sync.Mutex
@@ -69,6 +72,19 @@ func NewPodExecutor(registry *podsession.Registry, binder *podsession.Binder) *P
 // spec: §7.2. F-7.2.9, F-7.2.18.
 func (e *PodExecutor) SetApprovalGate(g ApprovalGate) {
 	e.approvals = g
+}
+
+// SetStreamFailureHandler wires the handler that reports a held stream's
+// failure. The gateway calls it during wiring, before the first Send. The
+// reader calls h on its own goroutine, after the ended stream has left the
+// cache and before a Send waiting on that stream returns, with the tenant,
+// session, and sandbox of the binding the stream was opened on. Only a
+// DeadlineExceeded end (the adapter's heartbeat escalation) or an Internal
+// end reaches h; a clean end, an Unavailable end, and the gateway's own
+// evictions do not. A nil handler reports nothing.
+// spec: §28.5.1 (CH-ATTACH Degradation.).
+func (e *PodExecutor) SetStreamFailureHandler(h func(tenantID, sessionID, sandboxName string, cause error)) {
+	e.onStreamFailure = h
 }
 
 var (

@@ -526,6 +526,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	// and this replica holds the lease, stranding a committed running session
 	// with a held lease but no binding, the lease-without-binding decoupling
 	// co-location removes. spec: §4.6.1, §10.1.
+	stampBindingGeneration(bound, createdRowGeneration(row.CoordinationGeneration))
 	s.publishBinding(r.Context(), bound)
 	// spec: §14 — publish parse-time
 	// `workspace_plan_unknown_source_type` / `workspace_plan_path_collision`

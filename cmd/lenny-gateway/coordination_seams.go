@@ -147,17 +147,18 @@ type coordinationReadopter struct {
 }
 
 // ReadoptAndFence re-establishes the serving binding on this replica after the
-// Sweeper's crash-takeover Acquire. The generation the Sweeper bumped is
-// re-read by the Fencer from the session row, so this method does not thread it
-// through; it names the parameter to satisfy the coordination.Readopter
-// contract. A nil collaborator fails closed so the Sweeper publishes no binding
-// it cannot back and a peer replica that has the seams re-adopts the pod.
+// Sweeper's crash-takeover Acquire. The Fencer re-reads the generation the
+// Sweeper bumped from the session row; generation, the value RecordHandoff
+// returned, is stamped on the published binding so a later stream-failure
+// report can tell whether a peer has since taken the session over. A nil
+// collaborator fails closed so the Sweeper publishes no binding it cannot
+// back and a peer replica that has the seams re-adopts the pod.
+// spec: §10.1.1, §10.1.5.
 func (r coordinationReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
-	_ = generation
 	if r.w.podBinder == nil || r.w.podRegistry == nil || r.w.coordFencer == nil || r.w.sessions == nil || r.w.coordLeaseStore == nil {
 		return nil, fmt.Errorf("gateway: crash-takeover re-adopt seams not wired for session %s", sessionID)
 	}
-	return readoptAndFence(ctx, r.w.podBinder, r.w.coordFencer, r.w.podRegistry, r.w.sessions, r.w.coordLeaseStore, tenantID, sessionID, r.w.replica)
+	return readoptAndFence(ctx, r.w.podBinder, r.w.coordFencer, r.w.podRegistry, r.w.sessions, r.w.coordLeaseStore, tenantID, sessionID, r.w.replica, generation)
 }
 
 // releaseAfterReadoptFailure relinquishes the coordination lease the Sweeper
@@ -194,7 +195,10 @@ func releaseAfterReadoptFailure(ctx context.Context, releaser leaseReleaser, ten
 // honors the §10.1 precondition that no operational RPC (the executor's first
 // Attach) reaches the pod until the fence acknowledges; the held connection
 // keeps the pod continuously coordinated so it does not re-enter hold state.
-// spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3, §4.7.
+// The published binding carries generation, the coordination_generation the
+// takeover's RecordHandoff wrote.
+// spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3,
+// §4.7, §10.1.5.
 func readoptAndFence(
 	ctx context.Context,
 	dialer readoptDialer,
@@ -203,6 +207,7 @@ func readoptAndFence(
 	sessions sandboxNameReader,
 	releaser leaseReleaser,
 	tenantID, sessionID, holder string,
+	generation int64,
 ) (func(), error) {
 	row, err := sessions.Get(ctx, tenantID, sessionID)
 	if err != nil {
@@ -245,6 +250,8 @@ func readoptAndFence(
 		SandboxName: row.PodAssignment,
 		PodIP:       sb.Status.PodIP,
 		Adapter:     adapter,
+
+		CoordinationGeneration: generation,
 	}
 	return func() { registry.Put(bind) }, nil
 }

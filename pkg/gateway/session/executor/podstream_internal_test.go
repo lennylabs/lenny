@@ -317,16 +317,16 @@ func TestAbandonedTurnLateReplyNeverReachesTheNextTurn_spec_28_5_1(t *testing.T)
 
 // spec: 28.5.1 (Gateway-to-pod)
 // EvictStream cancels the stream (the adapter observes the end) and removes
-// the entry, and no stream-end observation follows a gateway-caused end.
+// the entry, and no stream-failure report follows a gateway-caused end.
 func TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1(t *testing.T) {
 	e, a, _ := newScriptedExecutor(t)
 	var observed []error
 	var mu sync.Mutex
-	e.onStreamEnd = func(_, _, _ string, err error) {
+	e.SetStreamFailureHandler(func(_, _, _ string, err error) {
 		mu.Lock()
 		observed = append(observed, err)
 		mu.Unlock()
-	}
+	})
 	r := sendAsync(context.Background(), e, "open")
 	ss := a.nextStream(t)
 	ss.expectFrame(t)
@@ -343,7 +343,7 @@ func TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(observed) != 0 {
-		t.Errorf("a gateway-caused end reached the stream-end observer: %v", observed)
+		t.Errorf("a gateway-caused end reached the stream-failure handler: %v", observed)
 	}
 }
 
@@ -353,7 +353,7 @@ func TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1(t *testing.T) {
 func TestReleaseEndOfStreamIsSilent_spec_28_5_1(t *testing.T) {
 	e, a, reg := newScriptedExecutor(t)
 	called := make(chan struct{}, 1)
-	e.onStreamEnd = func(_, _, _ string, _ error) { called <- struct{}{} }
+	e.SetStreamFailureHandler(func(_, _, _ string, _ error) { called <- struct{}{} })
 	r := sendAsync(context.Background(), e, "open")
 	ss := a.nextStream(t)
 	ss.expectFrame(t)
@@ -370,14 +370,15 @@ func TestReleaseEndOfStreamIsSilent_spec_28_5_1(t *testing.T) {
 	awaitClosed(t, conn.done, "reader exit after Release")
 	select {
 	case <-called:
-		t.Error("a Release end reached the stream-end observer")
+		t.Error("a Release end reached the stream-failure handler")
 	default:
 	}
 }
 
 // spec: 28.5.1 (Gateway-to-pod)
-// A stream that ends on its own leaves the cache, the end is observed with
-// the binding's identity and the status, and the next Send re-Attaches.
+// A stream that ends on its own leaves the cache, a DeadlineExceeded end
+// reaches the stream-failure handler with the binding's identity and the
+// status, and the next Send re-Attaches.
 func TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1(t *testing.T) {
 	e, a, _ := newScriptedExecutor(t)
 	type end struct {
@@ -385,9 +386,9 @@ func TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1(t *testing.T) {
 		code                     codes.Code
 	}
 	ends := make(chan end, 1)
-	e.onStreamEnd = func(tenant, session, sandbox string, err error) {
+	e.SetStreamFailureHandler(func(tenant, session, sandbox string, err error) {
 		ends <- end{tenant, session, sandbox, status.Code(err)}
-	}
+	})
 	r := sendAsync(context.Background(), e, "open")
 	ss := a.nextStream(t)
 	ss.expectFrame(t)
@@ -810,17 +811,17 @@ func TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1(t *tes
 
 // spec: 28.5.1 (Gateway-to-pod)
 // A Send that still holds a conn whose stream has ended, and whose write
-// therefore fails, returns only after the stream-end observer has run, so a
+// therefore fails, returns only after the stream-failure handler has run, so a
 // caller never sees a delivery failure before the end is classified. When
 // the caller's context ends first, the Send returns the context error.
 func TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1(t *testing.T) {
 	e, a, _ := newScriptedExecutor(t)
 	entered := make(chan struct{})
 	unblock := make(chan struct{})
-	e.onStreamEnd = func(_, _, _ string, _ error) {
+	e.SetStreamFailureHandler(func(_, _, _ string, _ error) {
 		close(entered)
 		<-unblock
-	}
+	})
 	r := sendAsync(context.Background(), e, "open")
 	ss := a.nextStream(t)
 	ss.expectFrame(t)
@@ -829,7 +830,7 @@ func TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1(t *testing.T) {
 	conn := e.cachedConn("sess-1")
 
 	ss.end <- status.Error(codes.Internal, "runtime exited")
-	awaitClosed(t, entered, "the stream-end observer starting")
+	awaitClosed(t, entered, "the stream-failure handler starting")
 
 	// The stream has finished, so the write fails; done is still open while
 	// the observer runs, so the token is free and the write is attempted.
@@ -847,7 +848,7 @@ func TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1(t *testing.T) {
 	}()
 	select {
 	case res := <-got:
-		t.Fatalf("runTurn returned %v while the stream-end observer was still running", res.err)
+		t.Fatalf("runTurn returned %v while the stream-failure handler was still running", res.err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(unblock)
@@ -857,7 +858,7 @@ func TestFailedWriteWaitsForTheStreamEndObserver_spec_28_5_1(t *testing.T) {
 			t.Fatalf("runTurn after the observer = %v, want the wrapped stream-ended error", res.err)
 		}
 	case <-time.After(streamTestTimeout):
-		t.Fatal("runTurn never returned after the stream-end observer finished")
+		t.Fatal("runTurn never returned after the stream-failure handler finished")
 	}
 }
 
@@ -1079,5 +1080,198 @@ func TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1(t *testing.T) {
 	}
 	if n := leaked.Load(); n > 0 {
 		t.Fatalf("%d of %d Releases reached the binder with a stream still cached: a Send reopened a stream over the binding Release was removing", n, iterations)
+	}
+}
+
+// failureRecorder records the stream-failure handler's calls in order with
+// the events a test appends, so a test can assert both the calls and when
+// they ran relative to a Send's return.
+type failureRecorder struct {
+	mu     sync.Mutex
+	codes  []codes.Code
+	events []string
+}
+
+func (r *failureRecorder) handler(_, _, _ string, cause error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.codes = append(r.codes, status.Code(cause))
+	r.events = append(r.events, "handler")
+}
+
+func (r *failureRecorder) note(event string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+}
+
+func (r *failureRecorder) snapshot() ([]codes.Code, []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]codes.Code(nil), r.codes...), append([]string(nil), r.events...)
+}
+
+// openHeldStream opens the session's stream with one answered round trip
+// and returns the adapter side of it.
+func openHeldStream(t *testing.T, e *PodExecutor, a *scriptedAdapter) *scriptedStream {
+	t.Helper()
+	r := sendAsync(context.Background(), e, "open")
+	ss := a.nextStream(t)
+	ss.expectFrame(t)
+	ss.pushFrame(t, reply("ok"))
+	if res := awaitSend(t, r); res.err != nil {
+		t.Fatalf("opening Send: %v", res.err)
+	}
+	return ss
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume)
+// Only a DeadlineExceeded end (the adapter's heartbeat escalation) or an
+// Internal end reaches the stream-failure handler. A clean end, an
+// Unavailable transport loss, a FailedPrecondition ordering race, and an
+// InvalidArgument end each evict the stream without a report. Every case
+// leaves the cache empty, so the next delivery re-Attaches.
+func TestStreamEndClassificationReportsOnlyDeadlineExceededAndInternal_spec_28_5_1(t *testing.T) {
+	cases := []struct {
+		name   string
+		end    error
+		report bool
+	}{
+		{"deadline exceeded", status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline"), true},
+		{"internal", status.Error(codes.Internal, "deliver message to runtime"), true},
+		{"clean end", nil, false},
+		{"unavailable", status.Error(codes.Unavailable, "coordinator_hold"), false},
+		{"failed precondition", status.Error(codes.FailedPrecondition, "session_start not yet acknowledged"), false},
+		{"invalid argument", status.Error(codes.InvalidArgument, "malformed envelope"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e, a, _ := newScriptedExecutor(t)
+			rec := &failureRecorder{}
+			e.SetStreamFailureHandler(rec.handler)
+			ss := openHeldStream(t, e, a)
+			conn := e.cachedConn("sess-1")
+
+			ss.end <- tc.end
+			awaitClosed(t, conn.done, "reader exit on stream end")
+			if e.cachedConn("sess-1") != nil {
+				t.Fatal("an ended stream stayed cached")
+			}
+			got, _ := rec.snapshot()
+			want := 0
+			if tc.report {
+				want = 1
+			}
+			if len(got) != want {
+				t.Fatalf("handler calls = %v, want %d", got, want)
+			}
+			if tc.report && got[0] != status.Code(tc.end) {
+				t.Errorf("handler cause code = %v, want %v", got[0], status.Code(tc.end))
+			}
+		})
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model)
+// A DeadlineExceeded end that arrives while the reader waits in the approval
+// gate is reported once after the gate returns, even though the verdict's
+// relay write meets the ended stream.
+func TestStreamEndDuringApprovalGateIsReportedOnce_spec_28_5_1(t *testing.T) {
+	e, a, _ := newScriptedExecutor(t)
+	rec := &failureRecorder{}
+	e.SetStreamFailureHandler(rec.handler)
+	inGate := make(chan struct{})
+	release := make(chan struct{})
+	e.SetApprovalGate(gateFunc(func(context.Context, string, string, PendingToolCall) (ApprovalDecision, error) {
+		close(inGate)
+		<-release
+		return ApprovalDecision{Approved: true}, nil
+	}))
+	pending := sendAsync(context.Background(), e, "deploy")
+	ss := a.nextStream(t)
+	ss.expectFrame(t)
+	ss.pushFrame(t, approvalCall)
+	awaitClosed(t, inGate, "reader entering the gate")
+	conn := e.cachedConn("sess-1")
+
+	ss.end <- status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline")
+	awaitClosed(t, ss.ctxDone, "adapter ending the stream")
+	close(release)
+	awaitClosed(t, conn.done, "reader exit after the gate")
+	if r := awaitSend(t, pending); !errors.Is(r.err, errStreamEnded) {
+		t.Fatalf("waiting Send = %+v, want the wrapped stream-ended error", r)
+	}
+	if got, _ := rec.snapshot(); len(got) != 1 || got[0] != codes.DeadlineExceeded {
+		t.Fatalf("handler calls = %v, want one DeadlineExceeded", got)
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume)
+// A runtime that exits cleanly is not reported, and a crashed runtime is
+// reported on the next delivery: that delivery's re-Attach ends Internal,
+// the handler runs once, and the delivery returns the stream-ended error.
+func TestCrashedRuntimeIsReportedOnTheNextReattach_spec_28_5_1(t *testing.T) {
+	e, a, _ := newScriptedExecutor(t)
+	rec := &failureRecorder{}
+	e.SetStreamFailureHandler(rec.handler)
+	ss := openHeldStream(t, e, a)
+	conn := e.cachedConn("sess-1")
+	ss.end <- nil
+	awaitClosed(t, conn.done, "reader exit on the clean end")
+	if got, _ := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("a clean end was reported: %v", got)
+	}
+
+	next := sendAsync(context.Background(), e, "again")
+	reopened := a.nextStream(t)
+	reopened.expectFrame(t)
+	reopened.end <- status.Error(codes.Internal, "runtime process exited")
+	if r := awaitSend(t, next); !errors.Is(r.err, errStreamEnded) {
+		t.Fatalf("Send over the crashed runtime = %+v, want the wrapped stream-ended error", r)
+	}
+	if got, _ := rec.snapshot(); len(got) != 1 || got[0] != codes.Internal {
+		t.Fatalf("handler calls = %v, want one Internal", got)
+	}
+}
+
+// spec: 28.5.1 (Gateway-to-pod), 7.3 (Retry and Resume)
+// A caller that releases the binding as soon as its Send returns still gets
+// exactly one report, and the report returns before the Send does. The
+// ordering is the discriminating assertion: a handler that ran after done
+// closed would let the caller's Release race the report.
+func TestStreamFailureReportPrecedesSendReturnAndRelease_spec_28_5_1(t *testing.T) {
+	e, a, reg := newScriptedExecutor(t)
+	rec := &failureRecorder{}
+	e.SetStreamFailureHandler(rec.handler)
+	ss := openHeldStream(t, e, a)
+
+	returned := make(chan error, 1)
+	go func() {
+		_, err := e.Send(context.Background(), "sess-1", []Message{{Role: "user", Content: "hang"}})
+		rec.note("send returned")
+		// The binding is removed first so Release stops after the eviction
+		// and needs no binder.
+		reg.Remove("sess-1")
+		if rerr := e.Release(context.Background(), "sess-1", ""); rerr != nil {
+			t.Errorf("Release: %v", rerr)
+		}
+		returned <- err
+	}()
+	ss.expectFrame(t)
+	ss.end <- status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline")
+	select {
+	case err := <-returned:
+		if !errors.Is(err, errStreamEnded) {
+			t.Fatalf("Send = %v, want the wrapped stream-ended error", err)
+		}
+	case <-time.After(streamTestTimeout):
+		t.Fatal("Send did not return")
+	}
+	got, events := rec.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("handler calls = %v, want exactly one", got)
+	}
+	if len(events) != 2 || events[0] != "handler" || events[1] != "send returned" {
+		t.Fatalf("events = %v, want the report before the Send returned", events)
 	}
 }

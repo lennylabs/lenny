@@ -349,6 +349,9 @@ func (w *gatewayWiring) buildSessionServer(
 		// §7.1 — seal-and-export retry window + outcome histogram.
 		WorkspaceSealMaxDuration:     time.Duration(*workspaceSealMaxDurationSeconds) * time.Second,
 		ObserveWorkspaceSealDuration: gwMetrics.ObserveWorkspaceSealDuration,
+		// §28.5.1 — the CH-ATTACH stream-failure report's bound beyond the
+		// seal window.
+		StreamFailureReportTimeout: *f.streamFailureReportTimeout,
 		// §10.7, §16.1 — variant-labelled
 		// rollback-trigger metric family emitted at terminal session
 		// transition and at each built-in eval submission.

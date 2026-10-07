@@ -79,6 +79,26 @@ func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResu
 	s.publishWorkspaceWarnings(result)
 }
 
+// stampBindingGeneration records on bind the session row's
+// coordination_generation under which this replica publishes it, ahead of
+// the publish. A nil bind (a claimless session) is left alone.
+// spec: §10.1.1, §10.1.5.
+func stampBindingGeneration(bind *podsession.BindResult, generation int64) {
+	if bind != nil {
+		bind.CoordinationGeneration = generation
+	}
+}
+
+// createdRowGeneration is the coordination_generation a row passed to
+// store.Create carries once created: both stores raise a zero generation to
+// 1 at create, so a zero input reads as 1. spec: §10.1.1.
+func createdRowGeneration(generation int64) int64 {
+	if generation == 0 {
+		return 1
+	}
+	return generation
+}
+
 // persistPodAssignment writes the bound pod's SandboxName back to the
 // session row so a fresh gateway replica can pick up the binding from
 // Postgres after a coordinator handoff. Best-effort: an update failure

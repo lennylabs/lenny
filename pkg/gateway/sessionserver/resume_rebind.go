@@ -54,7 +54,10 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		// (handleResume applies no upstream holder gate), so publish no
 		// competing binding, skip fenceResumedPod, release the fresh pod
 		// claim startOnPod made, and fail the resume closed rather than
-		// double-bind.
+		// double-bind. A successful resume writes no generation, so the
+		// binding carries the generation of the row resumeOnPod received
+		// (spec: §10.1.1, §10.1.5).
+		stampBindingGeneration(result, row.CoordinationGeneration)
 		if berr := s.registerBinding(ctx, result); berr != nil {
 			s.rollbackBinding(ctx, result)
 			return "", berr
@@ -115,6 +118,9 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		s.rollbackBinding(ctx, result.Result)
 		return "", lerr
 	}
+	// spec: §10.1.1, §10.1.5 — stamp the generation of the row resumeOnPod
+	// received; a successful resume writes no generation.
+	stampBindingGeneration(result.Result, row.CoordinationGeneration)
 	s.podRegistry.Put(result.Result)
 	// spec: §4.2 — recovery_generation is incremented on each
 	// pod recovery. Persist the new pod assignment in the same update

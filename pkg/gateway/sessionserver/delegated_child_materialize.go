@@ -203,6 +203,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 	// error skip the publish while the row is already committed to running and
 	// this replica holds the lease, stranding a committed running child with a
 	// held lease but no binding. spec: §4.6.1, §10.1.
+	stampBindingGeneration(bound, updated.CoordinationGeneration)
 	s.publishBinding(ctx, bound)
 	return session.StateRunning, nil
 }

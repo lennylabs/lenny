@@ -33,6 +33,7 @@ import (
 	"os"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 )
 
@@ -183,6 +184,13 @@ func runGateway(f *gatewayFlags) {
 	// over-budget session releases its pod and emits its terminal audit /
 	// billing / SSE signals exactly once.
 	w.budgetTerminator.onTerminal = sessionSrv.OnSessionTerminal
+	// spec: §28.5.1 (CH-ATTACH Degradation.) — the pod executor's reader
+	// reports a held Attach stream's failure through the §7.3 classifier as
+	// runtime_crash, after the session server confirms this replica still
+	// coordinates the session. The handler is set before any Send runs.
+	if pe, ok := w.exec.(*executor.PodExecutor); ok {
+		pe.SetStreamFailureHandler(sessionSrv.ReportAttachStreamFailure)
+	}
 
 	// §4.9 end-user credential surface (translators, credential store/server,
 	// the pre-authorized user-source materializer, the §4.9.1 KMS-rotation

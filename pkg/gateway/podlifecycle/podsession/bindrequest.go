@@ -166,6 +166,16 @@ type BindResult struct {
 	// (whole-pod scrub trigger), §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
+	// CoordinationGeneration is the session row's coordination_generation
+	// when this replica published the binding: a generation at which this
+	// replica held the session's coordination lease. Binder results leave it
+	// zero, and each site that publishes a binding into the Registry stamps
+	// it first. A stream-failure report compares it with the row's current
+	// generation, so a replica whose session a peer has since taken over
+	// evicts the binding instead of reporting, and a zero stamp counts as
+	// superseded. spec: §10.1.1 (Stateless Replicas and Per-Session
+	// Coordination), §10.1.5 (Stale Replica Behavior).
+	CoordinationGeneration int64
 	// Adapter is the live connection to the pod's adapter. The caller
 	// owns it and closes it when the session ends.
 	Adapter *adapterclient.Client

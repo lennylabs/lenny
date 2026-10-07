@@ -214,7 +214,7 @@ func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
 	if err != nil {
 		t.Fatalf("readoptAndFence returned error on fence ack: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a terminal fence failure")
 	}
@@ -294,7 +294,7 @@ func TestReadoptAndFenceReleasesLeaseOnNonRelinquishFenceFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a non-relinquish fence failure")
 	}
@@ -330,7 +330,7 @@ func TestReadoptAndFenceSurfacesReleaseFailureOnNonRelinquishFence(t *testing.T)
 	rel := &recordingReleaser{err: errors.New("redis unavailable")}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error when the lease release failed")
 	}
@@ -361,7 +361,7 @@ func TestReadoptAndFenceReleasesLeaseOnDialFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a dial failure")
 	}
@@ -398,7 +398,7 @@ func TestReadoptAndFenceReleasesLeaseOnSessionReadFailure(t *testing.T) {
 	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{err: errors.New("session row read failed")}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A", 2)
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a session-row read failure")
 	}
@@ -431,5 +431,33 @@ func TestReadoptAndFenceReturnsErrorWhenSeamsUnwired(t *testing.T) {
 	}
 	if publish != nil {
 		t.Fatal("ReadoptAndFence returned a publish callback with no seams wired")
+	}
+}
+
+// TestReadoptPublishesHandoffGeneration_spec_10_1_5 pins the generation stamp
+// on the crash-takeover binding: the binding the publish callback places in
+// the registry carries the coordination_generation the takeover's
+// RecordHandoff returned, so a later stream-failure report on this replica
+// compares against the generation it took the session over at. A zero stamp
+// would make every report on a re-adopted binding read as superseded.
+//
+// spec: 10.1.5 (Stale Replica Behavior), 10.1.1 (Stateless Replicas and
+// Per-Session Coordination)
+func TestReadoptPublishesHandoffGeneration_spec_10_1_5(t *testing.T) {
+	adapterConn := dialSeamsAdapter(t)
+	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
+	pub := &recordingPublisher{}
+	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1", CoordinationGeneration: 6}}
+
+	publish, err := readoptAndFence(context.Background(), dialer, &fakeReadoptFencer{}, pub, sessions, &recordingReleaser{}, "acme", "s1", "replica-A", 7)
+	if err != nil {
+		t.Fatalf("readoptAndFence: %v", err)
+	}
+	publish()
+	if len(pub.published) != 1 {
+		t.Fatalf("published %d bindings, want 1", len(pub.published))
+	}
+	if got := pub.published[0].CoordinationGeneration; got != 7 {
+		t.Fatalf("published binding generation = %d, want the handoff generation 7", got)
 	}
 }

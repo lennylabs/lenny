@@ -11,6 +11,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
@@ -210,10 +213,10 @@ func (c *attachConn) runTurn(ctx context.Context, envelope []byte) (turnResult, 
 // or ctx has ended. A write error on an opened conn means the stream has
 // ended, and the reader then always runs endConn and closes done. Waiting
 // for done keeps a Send from returning a delivery failure while the
-// stream-end observer is still classifying the end, so a caller that
-// re-reads the session after the error sees the state the observer
-// recorded, and a retried delivery cannot open a new stream over a binding
-// the observer is about to release. spec: §28.5.1 (CH-ATTACH Timing.).
+// stream-failure handler is still reporting the end, so a caller that
+// re-reads the session after the error sees the state the report recorded,
+// and a retried delivery cannot open a new stream over a binding the report
+// is about to release. spec: §28.5.1 (CH-ATTACH Timing.).
 func (c *attachConn) awaitEndAfterWriteError(ctx context.Context, sendErr error) error {
 	select {
 	case <-c.done:
@@ -315,9 +318,10 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 
 // endConn runs once when the conn's stream ends. A gateway-caused end
 // (EvictStream or Release) only closes done. Any other end removes the conn
-// from the cache when it is still the cached conn, hands the end to the
-// stream-end observer, and then cancels and closes done, so a Send waiting
-// on the conn returns only after the observer has run.
+// from the cache when it is still the cached conn, hands an end that
+// isReportedStreamFailure classifies as a failure to the stream-failure
+// handler, and then cancels and closes done, so a Send waiting on the conn
+// returns only after the handler has run.
 //
 // closedByGateway is read under e.mu because EvictStream sets it under e.mu:
 // an end that races an eviction is attributed to the eviction.
@@ -335,15 +339,35 @@ func (e *PodExecutor) endConn(c *attachConn, err error) {
 	}
 	e.mu.Unlock()
 
-	// The stream-failure classification attaches here. It runs after the
-	// conn has left the cache, so a delivery that arrives during it opens a
-	// new stream rather than reusing this one.
-	if e.onStreamEnd != nil {
-		e.onStreamEnd(c.tenantID, c.sessionID, c.sandboxName, err)
+	// The handler runs after the conn has left the cache, so a delivery that
+	// arrives during it opens a new stream rather than reusing this one, and
+	// before done closes, so a Send waiting on this conn returns only after
+	// the failure has been reported.
+	if e.onStreamFailure != nil && isReportedStreamFailure(err) {
+		e.onStreamFailure(c.tenantID, c.sessionID, c.sandboxName, err)
 	}
 
 	c.cancel()
 	close(c.done)
+}
+
+// isReportedStreamFailure classifies a stream end that the gateway did not
+// cause by its gRPC status code. DeadlineExceeded is the adapter's heartbeat
+// escalation for a runtime that stopped answering, and Internal is a runtime
+// or adapter fault; both are reported. A clean end (io.EOF) is normal
+// completion, FailedPrecondition can be a retryable ordering race before
+// session_start, InvalidArgument is a malformed frame, and Unavailable is a
+// transport loss the coordination Sweeper owns, so none of these, nor any
+// other code, is reported. The status code is the discriminator; the
+// connection's liveness is not, because a dropped channel can read idle.
+// spec: §28.5.1 (CH-ATTACH Degradation.).
+func isReportedStreamFailure(err error) bool {
+	switch status.Code(err) {
+	case codes.DeadlineExceeded, codes.Internal:
+		return true
+	default:
+		return false
+	}
 }
 
 // maybeGateToolCall inspects one frame. When it is a tool_call requiring

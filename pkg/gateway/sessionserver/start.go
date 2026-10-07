@@ -83,7 +83,9 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		// registerBinding precedes the running-commit. On ErrHeld a live
 		// foreign holder still coordinates this session, so publish nothing,
 		// release this replica's freshly launched pod, and fail the start
-		// closed rather than double-bind.
+		// closed rather than double-bind. The binding carries the generation
+		// of the row read above (spec: §10.1.1, §10.1.5).
+		stampBindingGeneration(result, row.CoordinationGeneration)
 		if err := s.registerBinding(r.Context(), result); err != nil {
 			s.rollbackBinding(r.Context(), result)
 			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")

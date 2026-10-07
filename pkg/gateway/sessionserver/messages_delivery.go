@@ -3,6 +3,7 @@
 package sessionserver
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -118,8 +119,8 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 	// pod-held session takes path 6: the coordinating replica atomically
 	// resumes the session (suspended → running via resumeHeldPod) and
 	// delivers the message, returning `delivered`, and fails closed to
-	// inbox buffering (`queued`) on a resume or delivery failure so the
-	// message is never dropped (line 330). The pod-adapter `ready_for_input`
+	// buffering on a resume or delivery failure so the message is never
+	// dropped (§7.2 Message delivery routing — seven paths, path 6). The pod-adapter `ready_for_input`
 	// signal that distinguishes path 2 from path 5 (runtime-busy), the
 	// path-4 in-flight-tool interrupt, the cross-replica `ForwardMessage`,
 	// and the concurrent-workspace per-slot inbox are gated on the
@@ -169,13 +170,14 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 		// guarding a still-suspended row inside its store.Update mutator so
 		// the check and the write are atomic (every `suspended` row is
 		// pod-held while the §6.2 release sweep is unbuilt). Fail closed to
-		// inbox buffering (`queued`) on a resume or delivery failure so the
-		// message is never dropped (line 330).
+		// buffering on a resume or delivery failure so the message is never
+		// dropped (§7.2 Message delivery routing — seven paths, path 6).
 		if err := s.resumeHeldPod(r.Context(), tenantID, row.ID); err != nil {
 			// Resume did not happen: leave the row suspended and buffer the
 			// message. bufferIncomingMessages yields the `queued` receipt
-			// the ActionBufferInbox case produces (line 330: the message is
-			// not silently dropped).
+			// the ActionBufferInbox case produces, so the message is not
+			// silently dropped (§7.2 Message delivery routing — seven paths,
+			// path 6).
 			//
 			// spec: §16.3 error taxonomy — the taxonomy defines only
 			// TRANSIENT, PERMANENT, POLICY, and UPSTREAM. A resume fault is
@@ -189,40 +191,15 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 			// tags a store-write failure TRANSIENT (create.go persist-failure
 			// path).
 			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
-			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
-			if berr != nil {
-				outcome.status = session.DeliveryStatusError
-				outcome.reason = session.DeliveryReasonInboxUnavailable
-				break
-			}
-			outcome.status = session.DeliveryStatusQueued
-			outcome.queueDepth = depth
-			if dropped {
-				outcome.status = session.DeliveryStatusDropped
-				outcome.reason = session.DeliveryReasonInboxOverflow
-			}
-			break
+			return s.bufferOutcome(r.Context(), row, req, deliverIdx, bufferTargetInbox), true
 		}
-		// The session is running. Deliver to the runtime; on a delivery
-		// failure buffer to the inbox (`queued`) while leaving the session
-		// running (its inbox drains on the next ready_for_input) rather than
-		// returning a 500, so the message is preserved (line 330).
+		// The session is running. Deliver to the runtime; a delivery failure
+		// buffers the message by the state the row is in afterwards rather
+		// than returning a 500, so the message is preserved.
 		o, err := s.executor.Send(r.Context(), row.ID, msgs)
 		if err != nil {
 			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
-			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
-			if berr != nil {
-				outcome.status = session.DeliveryStatusError
-				outcome.reason = session.DeliveryReasonInboxUnavailable
-				break
-			}
-			outcome.status = session.DeliveryStatusQueued
-			outcome.queueDepth = depth
-			if dropped {
-				outcome.status = session.DeliveryStatusDropped
-				outcome.reason = session.DeliveryReasonInboxOverflow
-			}
-			break
+			return s.bufferAfterResumedSendFailure(w, r, row, req, deliverIdx)
 		}
 		out, ok := s.recordDeliveredResponse(w, r, tenantID, row, msgs, o)
 		if !ok {
@@ -232,50 +209,14 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 		outcome.status = session.DeliveryStatusDelivered
 
 	case messagerouting.ActionBufferInbox:
-		dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
-		if berr != nil {
-			// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
-			// receipt) — an inbox-enqueue failure surfaces as a 200
-			// `delivery_receipt` with `status:"error"`/`reason:
-			// "inbox_unavailable"`, matching the MCP send_message receipt
-			// form (mcptools.buildSendMessageReceiptStatusReason). §15.4
-			// defines `inbox_unavailable` strictly as a receipt status/
-			// reason, and `INBOX_UNAVAILABLE` is in neither the §15.1
-			// catalog nor openapi.json, so the prior 503 envelope was the
-			// non-conforming side. F-MS4.
-			outcome.status = session.DeliveryStatusError
-			outcome.reason = session.DeliveryReasonInboxUnavailable
-			break
-		}
-		outcome.status = session.DeliveryStatusQueued
-		outcome.queueDepth = depth
-		if dropped {
-			outcome.status = session.DeliveryStatusDropped
-			outcome.reason = session.DeliveryReasonInboxOverflow
-		}
+		return s.bufferOutcome(r.Context(), row, req, deliverIdx, bufferTargetInbox), true
 
 	case messagerouting.ActionBufferDLQ:
-		dropped, _, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetDLQ, 0)
-		if berr != nil {
-			// spec: §15.2.1 (REST/MCP parity), §15.4 (inbox_unavailable
-			// receipt) — a DLQ-enqueue failure surfaces as the same 200
-			// error/inbox_unavailable receipt as the inbox path above,
-			// keeping the REST and MCP contracts in lockstep. F-MS4.
-			outcome.status = session.DeliveryStatusError
-			outcome.reason = session.DeliveryReasonInboxUnavailable
-			break
-		}
-		outcome.status = session.DeliveryStatusQueued
-		if dropped {
-			outcome.status = session.DeliveryStatusDropped
-			outcome.reason = session.DeliveryReasonDLQOverflow
-		}
+		return s.bufferOutcome(r.Context(), row, req, deliverIdx, bufferTargetDLQ), true
 
 	case messagerouting.ActionRejectTerminal:
 		// spec: §7.2 dead-letter table terminal row.
-		s.writeError(w, http.StatusConflict, "TARGET_TERMINAL",
-			"target session is in terminal state "+string(row.State),
-			map[string]any{"targetState": string(row.State)})
+		s.writeTargetTerminal(w, row.State)
 		return deliveryOutcome{}, false
 
 	case messagerouting.ActionRejectNotReady:
@@ -288,6 +229,70 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 		return deliveryOutcome{}, false
 	}
 	return outcome, true
+}
+
+// bufferAfterResumedSendFailure buffers a path-6 batch whose delivery failed
+// after the session was resumed. A stream failure reports the session before
+// the failed Send returns, so the row read before the resume is stale: the
+// row is re-read and the §7.2 path 7 rows are applied to the state it is in
+// now. A recovering row (resume_pending or awaiting_client_action) buffers to
+// the DLQ, a terminal row answers TARGET_TERMINAL and enqueues nothing, and
+// any other state, or a re-read error, buffers to the inbox as before, where
+// it drains on the next ready_for_input.
+//
+// spec: §7.2 (Message delivery routing — seven paths, paths 6 and 7;
+// Dead-letter handling for inter-session messages); §28.5.1 (CH-ATTACH
+// Degradation.).
+func (s *Server) bufferAfterResumedSendFailure(w http.ResponseWriter, r *http.Request, row sessionstore.Session,
+	req MessageRequest, deliverIdx []int,
+) (deliveryOutcome, bool) {
+	fresh, err := s.store.Get(r.Context(), row.TenantID, row.ID)
+	if err != nil {
+		return s.bufferOutcome(r.Context(), row, req, deliverIdx, bufferTargetInbox), true
+	}
+	switch messagerouting.Classify(fresh.State, false, false, messagerouting.SourceExternal).Action {
+	case messagerouting.ActionBufferDLQ:
+		return s.bufferOutcome(r.Context(), fresh, req, deliverIdx, bufferTargetDLQ), true
+	case messagerouting.ActionRejectTerminal:
+		s.writeTargetTerminal(w, fresh.State)
+		return deliveryOutcome{}, false
+	default:
+		return s.bufferOutcome(r.Context(), row, req, deliverIdx, bufferTargetInbox), true
+	}
+}
+
+// bufferOutcome buffers the batch's delivered-path messages to target and
+// returns the receipt outcome: queued, dropped on overflow, or
+// error/inbox_unavailable when the enqueue fails. An enqueue failure is a 200
+// delivery_receipt rather than an error envelope, matching the MCP
+// send_message receipt, because §15.4 defines inbox_unavailable only as a
+// receipt status and reason. The DLQ receipt carries no queue depth.
+// spec: §7.2; §15.2.1 (REST/MCP parity); §15.4 (delivery_receipt). F-MS4.
+func (s *Server) bufferOutcome(ctx context.Context, row sessionstore.Session, req MessageRequest,
+	deliverIdx []int, target bufferTarget,
+) deliveryOutcome {
+	dropped, depth, err := s.bufferIncomingMessages(ctx, row, req.Messages, deliverIdx, target, 0)
+	if err != nil {
+		return deliveryOutcome{status: session.DeliveryStatusError, reason: session.DeliveryReasonInboxUnavailable}
+	}
+	if target == bufferTargetDLQ {
+		if dropped {
+			return deliveryOutcome{status: session.DeliveryStatusDropped, reason: session.DeliveryReasonDLQOverflow}
+		}
+		return deliveryOutcome{status: session.DeliveryStatusQueued}
+	}
+	if dropped {
+		return deliveryOutcome{status: session.DeliveryStatusDropped, reason: session.DeliveryReasonInboxOverflow, queueDepth: depth}
+	}
+	return deliveryOutcome{status: session.DeliveryStatusQueued, queueDepth: depth}
+}
+
+// writeTargetTerminal answers a message to a terminal session with the §7.2
+// dead-letter table's TARGET_TERMINAL error.
+func (s *Server) writeTargetTerminal(w http.ResponseWriter, state session.State) {
+	s.writeError(w, http.StatusConflict, "TARGET_TERMINAL",
+		"target session is in terminal state "+string(state),
+		map[string]any{"targetState": string(state)})
 }
 
 // recordDeliveredResponse records and publishes a delivered executor response:
