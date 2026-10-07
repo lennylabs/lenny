@@ -1961,7 +1961,11 @@
         "tests/tier5_e2e_kind/stream_failure_kind_test.go::TestStreamFailureRetiresTheExclusivePodAndWaitsOutTheResumeWindow_spec_28_5_1",
         "tests/tier5_e2e_kind/stream_failure_kind_test.go::TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureClaimRowsNameDeclaredSymbols_spec_28_5_1",
+        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestClosedStreamFindingsCiteLandedCodeAndTests_spec_7_3",
+        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestRemediationPlanRecordsTheStreamFailureProposal_spec_28_5_1",
+        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureRecordProbes_spec_28_5_1"
       ],
       "packages": [
         "pkg/session/resume",
@@ -2479,7 +2483,8 @@
         "tests/tier7a_load_local/stale_generation_report_race_test.go::TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5",
         "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepEvictsBindingWhenPeerHoldsLease_spec_10_1_5",
         "pkg/gateway/coordination/coordination/coordination_scoping_test.go::TestSweepRecordsHandoffGenerationOnTakeover_spec_10_1_5",
-        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
+        "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1",
+        "tests/tier11_docs/build_gaps_stream_failure_records_currency_test.go::TestFiledStreamFindingsMatchTheTree_spec_10_1_1"
       ],
       "packages": [
         "pkg/gateway"

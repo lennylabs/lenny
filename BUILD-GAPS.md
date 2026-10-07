@@ -4300,6 +4300,23 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Gap:** None. This entry records the reversal so a reader of proposal 0073 finds where its SCHEMA-1 statement stopped holding. Proposal 0073 is a landed record and is not edited.
 **Resolution:** Recorded on application of proposal 0079, which states the reversal in its own text.
 
+### - [ ] F-5.2.45 — The slot-health ledger is kept per gateway replica, so the whole-pod replacement trigger can be missed [Medium] — OPEN
+
+**Spec:** §5.2 **Whole-pod replacement trigger:** (a pod whose failed and leaked slots reach `ceil(maxConcurrentSessions / 2)` within the rolling window is drained) and **Failure isolation:**.
+**Evidence:**
+- `slothealth.Tracker` is an in-memory value that each gateway replica builds for itself in `cmd/lenny-gateway/sessiondeps.go` (`slothealth.New`). A replica counts only the slot failures and leaks of the sessions it coordinates and the scrub reports it receives.
+- The split applies to the bind-path accounting, the scrub-report drain ledger, and the failure funnel that proposal 0091 added to `applyFailureFromActive` (`pkg/gateway/sessionserver/failure.go`).
+- Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **Per-replica slot-health ledger.**), filed 2026-10-07.
+**Gap:** With more than one gateway replica, the failed and leaked slots of one pod are split across replicas, so the pod can pass the threshold while no replica's count reaches it, and the pod keeps serving. `lenny_slot_failure_total` summed per `k8s_pod_name` across replicas is the signal that shows a pod past the threshold that no replica drained.
+**Suggested resolution:** Keep the ledger in a store shared by the replicas, or route every slot-failure report for a pod to one replica, and add a tier-4 test with two replicas that each see half of a pod's threshold and assert the drain.
+
+### - [ ] F-5.2.46 — A hung sidecar runtime on a concurrent recycling pool passes the occupancy-zero scrub while its failed slots stay below the whole-pod replacement trigger [Medium] — OPEN
+
+**Spec:** §5.2 **Failure isolation:**, **Whole-pod replacement trigger:**, and **Runtime not live:**, and §4.7 `ReportPodScrub`.
+**Evidence:** When a sidecar runtime on a pod serving concurrent sessions stops answering, every open slot stream on the pod fails, and the coordinating replica counts each failed slot toward the trigger. Below the threshold, each failed slot is released under the §5.2 per-slot cleanup disposition. A pod whose last slot releases cleanly takes the pool's occupancy-zero path, where `ReportPodScrub` reports a hung runtime whose connection is open as live, so the pod serves again. Failures that fall outside the trigger's rolling window do not accumulate. Recorded by proposal 0091, which accepts the outcome (0091 spec changes, **Hung runtime on a pod serving concurrent sessions.**), filed 2026-10-07.
+**Gap:** At a low session arrival rate, a pod whose runtime hung keeps serving new sessions, and each one fails on its first turn.
+**Suggested resolution:** Owned by proposal 0087 part 1, whose periodic `CH-SUPERVISE` liveness ping marks a pod whose runtime stops answering as not live.
+
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
 
@@ -7013,6 +7030,30 @@ The largest gap surface is the inter-session messaging fabric (inbox, DLQ, routi
 
 ---
 
+### - [ ] F-7.2.26 — A direct entry to `awaiting_client_action` drains no inbox [Medium] — OPEN
+
+**Spec:** §7.2 durable-inbox rows and the `running → awaiting_client_action` and `input_required → awaiting_client_action` edges for an exhausted retry budget or a non-retryable failure, which proposal 0091 states.
+**Evidence:** `transitionToAwaitingClientAction` (`pkg/gateway/sessionserver/failure.go`) runs neither the terminal inbox drain nor `migrateInboxOnResumePending` on these direct edges. Every live exit from `awaiting_client_action` already drains. §7.2 documents the default-mode inbox loss on a coordinator crash as a known window. Recorded by proposal 0091 (owner-delegate answer to its open decision on the inbox, 2026-10-06), filed 2026-10-07.
+**Gap:** Messages buffered in the in-memory inbox when a session enters `awaiting_client_action` directly stay in the coordinating replica's memory, so a crash of that replica before the session leaves the state loses them.
+**Suggested resolution:** Decide in §7.2, through the proposal pipeline, whether a direct entry to `awaiting_client_action` migrates the inbox as the `resume_pending` entry does, then implement it in `transitionToAwaitingClientAction` with a tier-4 test that a message buffered before the edge survives it.
+
+### - [ ] F-7.2.27 — `POST /v1/sessions/{id}/resume` writes `resuming` before it claims a pod and never writes `resume_pending` [Medium] — OPEN
+
+**Spec:** §7.2 (`awaiting_client_action → resume_pending` on `POST /resume`, and `resume_pending → resuming` only when a pod is allocated within `maxResumeWindowSeconds`) and §29.6 step 3, which states the same order.
+**Evidence:**
+- `handleResume` (`pkg/gateway/sessionserver/resume.go`) writes `resuming` before `releaseThenResumeOnPod` claims a replacement pod, so the row moves from `awaiting_client_action` straight to `resuming`. The resolution of F-7.3.8 added the pre-claim write so that the §7.2 mid-resume terminal-collapse edges are reachable.
+- Proposal 0091 depends on the current order. Its release of an earlier binding before a resume rebinds (`releaseEarlierBinding` in `pkg/gateway/sessionserver/resume_rebind.go`) runs after the `resuming` write, and the hold on a resume that meets another replica's lease (`holdOrFailOnResumeError`) writes `awaiting_client_action` only over a `resuming` row.
+- F-15.1.41 records the non-transient demotion to `failed` on the same exit. Filed by proposal 0091 (owner-delegate answer, 2026-10-06), 2026-10-07.
+**Gap:** The code and §7.2 and §29.6 disagree on the state a resume holds while it claims a pod, so an observer of the row during the claim sees a state the specification does not give it.
+**Suggested resolution:** Choose between moving the code to the specified order and amending §7.2 and §29.6 to the shipped order. Owned by the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2, which builds the `resume_pending → resuming` driver (F-7.3.29). Either choice keeps the release-before-rebind and the hold guard ordered after the state the resume writes.
+
+### - [ ] F-7.2.28 — An embedded runtime's `Interrupt` ends the session's runtime loop [Medium] — OPEN
+
+**Spec:** §7.2 `running → suspended` on an acknowledged interrupt and `suspended → running` with the pod still held (`resume_session` or `POST /v1/sessions/{id}/messages` with `delivery: immediate`).
+**Evidence:** `InProcessRuntime.Interrupt` (`pkg/adapter/embedded.go`) closes the loop's inbound pipe, which the loop reads as stdin EOF and exits, and `InProcessRuntime.Start` does not relaunch the loop for the bound session. A delivery that resumes an interrupted embedded session on its held pod therefore reaches no runtime. Since proposal 0091, that delivery's re-`Attach` ends `INTERNAL` and the gateway reports it as `runtime_crash`. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **Embedded `Interrupt` ends the session's runtime loop.**), filed 2026-10-07.
+**Gap:** An interrupted session on the embedded transport cannot resume on its held pod, and its resume is counted as a runtime crash.
+**Suggested resolution:** Make the embedded interrupt pause the loop rather than end it, or relaunch the loop on the `suspended → running` edge. Add a tier-1 adapter test that a session interrupted on an `InProcessRuntime` answers a later message, and a tier-4 test of the same edge through the gateway.
+
 ## §7.3 Retry and Resume <a id="7.3"></a>
 Spec: `spec/07_session-lifecycle.md` lines 375–427.
 
@@ -7336,7 +7377,7 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 
 ---
 
-### - [ ] F-7.3.27 — The gateway does not react when an adapter `Attach` stream ends with an error, so the session holds its slot and pod until terminate or the watchdog [High] — OPEN
+### - [x] F-7.3.27 — The gateway does not react when an adapter `Attach` stream ends with an error, so the session holds its slot and pod until terminate or the watchdog [High] — CLOSED
 
 **Spec:** §28.6 `CH-ATTACH` failure row (a gRPC error on the stream while the session is `running` moves it to `resume_pending` or `awaiting_client_action`), §7.2 and §7.3 (the `running → resume_pending` edge and the retry policy), §6.2 **Pod crash during an active session** (a pod with an unrecoverable gRPC error is retired through the drain path, whatever the recycle setting), and §5.2 slot failure and cleanup on concurrent pools.
 **Evidence:**
@@ -7347,14 +7388,41 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 - Found by the 2026-10-05 investigation for proposal 0090, filed 2026-10-05.
 **Gap:** After any `Attach` stream error, including the adapter's heartbeat-escalation `DeadlineExceeded`, the session keeps its slot, runtime context, workspace, and SandboxClaim until a client or parent terminate, or the watchdog's idle or max-age sweep (up to `maxSessionAgeSeconds`, 7200 s by default). The orphan claim GC does not reclaim it because the row stays `running`. On recycling pools the eventual release has disposition `expired`, so a pod whose runtime hung is scrubbed and reused rather than retired. A watchdog release on a replica that does not hold the binding is a no-op. With proposal 0090's kept runtime, no `session_end` is written until that late release.
 **Suggested resolution:** A gateway stream-failure proposal, scheduled in `gateway-runtime-comms-remediation.md` §10.2 after proposal 0090. Evict the dead stream and return a typed stream-ended error; call `ReportSessionFailure` from the message paths; release the old binding with `Shutdown` (disposition `failed`) on the `resume_pending` and `awaiting_client_action` edges; release any prior binding before a resume rebinds. Settle in the spec whether a heartbeat-escalation stream end is `runtime_crash`, and whether a hung runtime on a concurrent pod fails only its slot or retires the pod (§5.2 slots fail independently; §4.7.10 keeps one runtime process for the pod).
+**Resolution (4e5c2be70, 12a1319bd, 487d4780d):** Closed by proposal 0091 (`proposals/0091_fix_write-the-gateway-stream-failure-proposal-that-gateway-runti/`). The pod executor evicts an ended `Attach` stream in `endConn` (`pkg/gateway/session/executor/podstream.go`) and hands an end with `DeadlineExceeded` or `Internal` to the injected stream-failure handler before a waiting `Send` returns. The handler, `ReportAttachStreamFailure` (`pkg/gateway/sessionserver/stream_failure.go`), drops the report when the binding was superseded or a peer has taken the session over, and otherwise files a `runtime_crash` report through `ReportSessionFailure` on a context detached from the request and bounded by `--stream-failure-report-timeout` plus the seal window. The failure funnel, `applyFailureFromActive` (`pkg/gateway/sessionserver/failure.go`), releases the pod with the `failed` disposition on the `resume_pending` and `awaiting_client_action` edges, so a recycling pool retires a pod whose runtime hung, and on a concurrent pool it counts the failed slot toward the §5.2 whole-pod replacement trigger before the release. A resume releases any earlier binding before it rebinds (`releaseEarlierBinding` in `pkg/gateway/sessionserver/resume_rebind.go`). The specification settles the two questions this finding raised: a heartbeat-escalation stream end is `runtime_crash`, and a failed slot on a concurrent pod follows the §5.2 **Failure isolation:** bullet while retire-on-failure applies to `maxConcurrentSessions: 1`. Tests: `TestStreamEndClassificationReportsOnlyDeadlineExceededAndInternal_spec_28_5_1`, `TestStreamEndDuringApprovalGateIsReportedOnce_spec_28_5_1`, `TestCrashedRuntimeIsReportedOnTheNextReattach_spec_28_5_1`, and `TestStreamFailureReportPrecedesSendReturnAndRelease_spec_28_5_1` in `pkg/gateway/session/executor/podstream_internal_test.go`; `pkg/gateway/sessionserver/stream_failure_test.go`, `binding_generation_test.go`, `failure_test.go`, `failure_internal_test.go`, `resume_rebind_test.go`, and `slotretry_test.go`; and, from the step-2 test commits (cd554fe18, 1e31e8130, 61df3a775, 1f21e9e0f), `tests/tier4_integration/stream_failure_report_test.go`, `tests/tier5_e2e_kind/stream_failure_kind_test.go`, `tests/tier7a_load_local/stream_failure_report_race_test.go`, `tests/tier7a_load_local/failure_funnel_race_test.go`, `tests/tier7a_load_local/stale_generation_report_race_test.go`, `tests/tier8_chaos/stream_failure_chaos_test.go`, `tests/tier2_component/slotrelease/failed_release_retires_test.go`, and `tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go`. Proposal 0091 filed the residuals it does not stage: the release on a replica that holds no binding (F-10.1.21), the missing `resume_pending → resuming` driver (F-7.3.29), and the per-replica slot-health ledger (F-5.2.45).
 
-### - [ ] F-7.3.28 — The gateway may open the cached `Attach` stream with the first request's context, so the stream ends when that request returns [Critical] — OPEN
+### - [x] F-7.3.28 — The gateway may open the cached `Attach` stream with the first request's context, so the stream ends when that request returns [Critical] — CLOSED
 
 **Spec:** §28.6 `CH-ATTACH` (one long-lived stream per session) and §7.2.
 **Evidence:** `PodExecutor.streamFor` opens the stream with the first `Send`'s context (`pkg/gateway/session/executor/pod.go`), which is `r.Context()` on the REST path, and `adapterclient.Attach` documents that the stream is closed by cancelling that context (`pkg/gateway/runtime/adapterclient/client.go`). Not reproduced; existing tests pass, so a later context may keep it alive. Found by the same 2026-10-05 investigation, filed 2026-10-05.
 **Gap:** If confirmed, every session's cached stream dies when its first request returns, and every later message takes the F-7.3.27 failure path.
 **Confirmed (2026-10-06):** A tier-1 repro against a real adapter gRPC server (bufconn) fails on the second `Send` with `podexec: send to pod: EOF` after the first request's context is cancelled. REST direct delivery, MCP `send_message`, and `delegate_task` follow-ups are affected; the single-shot translators are not. Existing multi-message tests use contexts that are never cancelled (`context.Background()`, or `httptest.NewRequest` plus `ServeHTTP`). Evidence and the repro are recorded in `scratchpad/gateway-stream-failure/f-7.3.28-verification.md` on the machine that ran it.
 **Suggested resolution:** Verify first, with a tier-4 test that sends two messages in separate requests on one session. If confirmed, open the stream on a session-scoped context. Owned by the same gateway stream-failure proposal, which checks this first.
+**Resolution (beae9a921, bd0491dd4, a5ff6f3fe, 70f7423a2):** Closed by proposal 0091 (`proposals/0091_fix_write-the-gateway-stream-failure-proposal-that-gateway-runti/`). `PodExecutor.streamFor` (`pkg/gateway/session/executor/pod.go`) opens the session's `Attach` stream on a context detached from the delivering request's cancellation and caches it as an `attachConn` (`pkg/gateway/session/executor/podstream.go`) that holds the stream for the life of the binding. One reader goroutine per stream hands each response to the turn that holds the stream's turn token. `EvictStream` and `Release` end the stream by cancelling its context, and `Release` unbinds and evicts under one executor lock (5b1cc9e0e). Tests: `TestHeldAttachStreamOutlivesTheDeliveringRequest_spec_28_5_1`, `TestAbandonedTurnLateReplyNeverReachesTheNextTurn_spec_28_5_1`, `TestEvictStreamCancelsTheStreamAndIsSilent_spec_28_5_1`, `TestReleaseEndOfStreamIsSilent_spec_28_5_1`, `TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1`, `TestCompletedReplyWinsOverAConcurrentStreamEnd_spec_28_5_1`, `TestFailedWriteAfterReaderCompletedTheTurnLeavesTheToken_spec_28_5_1`, and `TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1` with the other cases in `pkg/gateway/session/executor/podstream_internal_test.go`; and, from the step-1 test commits (a2f1eccde, bd661a68f), `tests/tier4_integration/held_attach_stream_multi_turn_test.go`, `tests/tier7a_load_local/held_attach_stream_race_test.go`, `tests/tier5_e2e_kind/prompt_roundtrip_test.go`, and `tests/tier2_component/translators/openai_singleshot_disconnect_test.go`.
+
+### - [ ] F-7.3.29 — No driver moves a `resume_pending` session to `resuming` on a replacement pod [High] — OPEN
+
+**Spec:** §7.3 **Resume flow after pod failure** (a session in `resume_pending` is resumed on a replacement pod within `maxResumeWindowSeconds`), §7.2 (`resume_pending → resuming` when a pod is allocated), §29.6, and the §28.5.1 `CH-ATTACH` **Degradation.** sentence that the gateway re-attaches the session on the replacement pod.
+**Evidence:**
+- No gateway code claims a replacement pod for a session in `resume_pending` or writes `resuming` from it. The only writer of `resuming` is `handleResume` (`pkg/gateway/sessionserver/resume.go`), which serves a client's `POST /v1/sessions/{id}/resume` from `awaiting_client_action`.
+- Proposal 0091 moves a session to `resume_pending` on a reported `CH-ATTACH` stream failure (`ReportAttachStreamFailure` in `pkg/gateway/sessionserver/stream_failure.go` into `applyFailureFromActive` in `pkg/gateway/sessionserver/failure.go`). Such a session waits out `maxResumeWindowSeconds` and then enters `awaiting_client_action`, unless the client terminates or deletes it first.
+- The §28.5.1 replacement-pod re-attach sentence has no row in `tests/claim-map.json`. The claim-register validator accepts a `deferral_id` only when it names an R step that the remediation plan declares, and no R step covers re-dispatch, so proposal 0091 added no `ABSENT` row.
+- Filed by proposal 0091 (`proposals/0091_fix_write-the-gateway-stream-failure-proposal-that-gateway-runti/`), 2026-10-07.
+**Gap:** Automatic retry after a pod failure never runs. Every retryable failure ends in `awaiting_client_action` after the resume window, and only a client resume continues the session.
+**Suggested resolution:** Build the `resume_pending → resuming` driver in the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2. This finding owns adding the claim row for the §28.5.1 re-attach sentence, together with an R step for the driver, when the driver is scheduled.
+
+### - [ ] F-7.3.30 — Two settings bound the same session retries [Medium] — OPEN
+
+**Spec:** §6.2 `sessionPolicy.maxSessionRetries` and §7.3 `retryPolicy.maxRetries`.
+**Evidence:** Both settings bound the number of automatic retries of one session, and neither section states which governs when both are set or how the two counts relate. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **Defects in the shipped tree that this proposal does not stage**, **Two retry budgets.**), filed 2026-10-07. Stream-failure handling does not depend on which budget governs.
+**Gap:** A deployer cannot tell which limit ends automatic retry, and the resume driver of F-7.3.29 has no single budget to spend.
+**Suggested resolution:** Reconcile the two settings in the specification through the proposal pipeline. Owned by the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2, whose resume driver spends the budget.
+
+### - [ ] F-7.3.31 — `retryPolicy.mode: client_only` is served but unspecified [Low] — OPEN
+
+**Spec:** §7.3 defines `retryPolicy` and its fields. No section of `spec/` defines a `mode` field or a `client_only` value.
+**Evidence:** `RetryModeClientOnly` in `pkg/api/v1/session/retry_policy.go` disables automatic retry so that every failure surfaces to the client, and the `retryPolicy.mode` enum in `pkg/gateway/externalapi/openapi/openapi.json` publishes `auto_then_client` and `client_only`. Filed by proposal 0091, 2026-10-07.
+**Gap:** The public API accepts a retry mode whose behavior the specification does not state, so a client cannot rely on it and a reviewer cannot verify it.
+**Suggested resolution:** Specify `retryPolicy.mode` and both values in §7.3 through the proposal pipeline, or remove the field from the API and the code.
 
 ## §7.4 Upload Safety <a id="7.4"></a>
 Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload handler, archive extraction, mid-session uploads, uploadToken auth, storage-quota integration, audit/observability hooks.
@@ -13202,6 +13270,56 @@ DEFERRED because this wiring depends on cluster-resident primitives (per-pod ada
 **Evidence:** `onHoldTimeout` terminates the pod's sessions and returns without exiting (`pkg/adapter/holdstate.go`). No gateway code consumes `AdapterTerminating`; the runtime container runs under `RestartPolicyNever`, so the orphan-session reconciler never sees a terminated pod after a hold timeout. Proposal 0079 adds a pod-scope teardown at the timeout but not a gateway consumer. Recorded by proposal 0079's review as a defect in the shipped tree that 0079 does not stage (0079 summary, **Defects in the shipped tree**, and spec-changes §9.1), filed 2026-10-02.
 **Gap:** The gateway does not learn of the hold timeout.
 **Suggested resolution:** Consume `AdapterTerminating` at the gateway once the adapter-to-gateway direction exists. Scheduled with remediation step R12 (`gateway-runtime-comms-remediation.md` §10.1).
+
+### - [ ] F-10.1.21 — A pod release on a replica that does not hold the session's in-memory binding is a no-op [High] — OPEN
+
+**Spec:** §10.1.1 (one coordinating replica per session) and the §6.2 release of a session's pod on every terminal transition.
+**Evidence:** `PodExecutor.Release` (`pkg/gateway/session/executor/pod.go`) returns nil without calling the binder when `unbind` finds no binding in the replica's own registry. The watchdog's idle and max-age sweeps and a terminate can run on any replica, so a release issued away from the coordinating replica neither drains the pod nor releases the slot. F-7.3.27 recorded the watchdog case. Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **A release on a replica that does not hold the in-memory binding is a no-op.**), filed 2026-10-07. Proposal 0091 forwards no release between replicas; a binding that a peer has taken over is evicted by the coordination Sweeper.
+**Gap:** A session that ends on a replica other than its coordinator keeps its pod or slot, claim, and workspace until the coordinating replica's own release, or indefinitely when that replica holds no binding either.
+**Suggested resolution:** Forward a release to the replica that holds the binding, or release from the persisted pod assignment when no local binding exists, and add a tier-4 test with two replicas in which the watchdog on the non-coordinating replica ends a session and the pod is released.
+
+### - [ ] F-10.1.22 — No `coordination_generation` stamp or check on `CH-ATTACH` frames [High] — OPEN
+
+**Spec:** §10.1.1 (pods validate the coordination generation on every gateway-to-pod RPC), §10.1.2 (the generation compare-and-swap on handoff), §10.1.5 (a replica that is no longer the coordinator stops its RPCs), and the `AttachRequest` comment in `schemas/lenny-adapter.proto`, which carries `coordination_generation` on every frame.
+**Evidence:**
+- `adapterclient.Client.Attach` and `AttachStream.Send` (`pkg/gateway/runtime/adapterclient/client.go`) leave `coordination_generation` at zero on every `AttachRequest`.
+- `Server.Attach` (`pkg/adapter/attach.go`) never reads the field. The adapter compares the generation only on `CoordinatorFence` and `CheckpointBarrier`.
+- After a gap-of-1 fence from a new coordinator, a stale replica's open `Attach` stream keeps running, because only a per-frame generation check would reject its frames. Proposal 0091's coordination check before a stream-failure report and its Sweeper eviction of a binding a peer has taken over narrow the window on the gateway side and do not close it.
+- Recorded by proposal 0091 as a defect in the shipped tree that it does not stage (0091 summary, **No `coordination_generation` on `CH-ATTACH` frames.**), filed 2026-10-07.
+**Gap:** A stale coordinator can keep delivering client messages to a pod that a new coordinator has fenced, which is the split-brain the generation fence exists to prevent.
+**Suggested resolution:** Stamp the binding's generation on every `AttachRequest` and have `Server.Attach` reject a frame whose generation is below the last fenced value. Add a tier-3 contract test for the rejection and a tier-7a test of a stale replica's frames after a fence.
+
+### - [ ] F-10.1.23 — No gateway reaction to whole-pod connection loss on a concurrent pod [Medium] — OPEN
+
+**Spec:** §10.1.4 **Whole-pod connection loss when `maxConcurrentSessions > 1`.** (every active slot moves to `resume_pending` and the whole-pod replacement trigger fires).
+**Evidence:** No gateway code does either. On a dead channel the dead-connection branch of the coordination Sweeper's `Sweep` (`pkg/gateway/coordination/coordination/coordination.go`) only evicts each session's binding and releases its coordination lease. F-10.1.17 was closed by verification without a code path. Proposal 0091 cites the paragraph in §28.5.1 and §28.8 and adds no reaction. Filed by proposal 0091, 2026-10-07.
+**Gap:** After a concurrent pod's connection is lost, its sessions stay in `running` with no binding and the pod is not replaced.
+**Suggested resolution:** On a dead channel to a concurrent pod, report each active slot through the failure funnel and request the whole-pod drain, and add a tier-8 test that drops a concurrent pod's connection and asserts both outcomes.
+
+### - [ ] F-10.1.24 — A coordinating replica cannot end a hold over a recovered channel [Medium] — OPEN
+
+**Spec:** §10.1.4 **Hold state semantics:** and **Hold state timeout:** (the adapter ends a hold only on a fence from a new coordinator).
+**Evidence:** When the gateway's channel to a pod reconnects before a coordination sweep reads it dead, the coordinating replica keeps its binding and lease, and the adapter rejects its next `Attach` with `UNAVAILABLE` and a `coordinator_hold` detail (`pkg/adapter/holdstate.go`). Proposal 0091 keeps the binding and the lease on that end. No path sends the fence that ends the hold, so the session ends at `coordinatorHoldTimeoutSeconds`. The defect predates proposal 0091, which records it (0091 summary, **A coordinating replica cannot end a hold over a recovered channel.**), filed 2026-10-07.
+**Gap:** A transient connection loss that recovers inside the sweep interval ends the session.
+**Suggested resolution:** Let the current coordinator re-fence the pod at its own generation when it meets `coordinator_hold`, or specify another way for a coordinator to end a hold, through the proposal pipeline. Add a tier-8 test that recovers the channel inside the sweep interval and asserts the session's next message is delivered.
+
+### - [ ] F-10.1.25 — The coordination lease in `resume_pending` and `awaiting_client_action`, and the §29.3 forward of `POST /v1/sessions/{id}/resume` [High] — OPEN
+
+**Spec:** §10.1.1 **Primary:** (when the coordinating replica dies, another replica picks up the lease after TTL expiry), §10.1.2 (the generation compare-and-swap), §29.3 **Off-holder matrix.** (a request that reaches a replica other than the lease holder is forwarded to the coordinator, or refused with `TARGET_NOT_READY` when the coordinator is unreachable), and §29.6.
+**Evidence:**
+- After a failure edge, the coordinating replica keeps `REG-COORDLEASE` without a binding, and the Sweeper renews it there. No replica adopts a lapsed lease in either state, because the Sweeper adopts only for a `running` or `input_required` session with a pod assignment (`isRunningPod` in `pkg/gateway/coordination/coordination/coordination.go`). The specification states no point at which the lease is acquired or released in those states, so the §10.1.1 **Primary:** pickup is unmet there.
+- `handleResume` (`pkg/gateway/sessionserver/resume.go`) reads no lease holder before it claims a pod. A resume served by another replica claims a pod, meets `leasestore.ErrHeld` at bind, and answers the retryable `RESUME_FAILED` with the row held in `awaiting_client_action`. The specification names no carrier for the §29.3 forward.
+- A resume bind that acquires a lapsed lease fences at the current `coordination_generation` without the §10.1.2 compare-and-swap.
+- Recorded by proposal 0091, which keeps the lease with the coordinator (owner decision, 2026-10-06), filed 2026-10-07.
+**Gap:** A resume routed away from the coordinating replica fails until it reaches the holder or the lease lapses, and a session whose coordinator dies in a recovering state is picked up by no replica.
+**Suggested resolution:** Owned by the session suspend-and-resume item of `gateway-runtime-comms-remediation.md` §10.2, which designs the lease lifecycle in the recovering states and the §29.3 forward together with the resume driver (F-7.3.29).
+
+### - [ ] F-10.1.26 — No replica takes over a `starting` session, or a `suspended` session whose pod is still held, after its coordinating replica dies [Medium] — OPEN
+
+**Spec:** §10.1.1 **Primary:** (when the coordinating replica dies, another picks up after TTL expiry), §10.1.7 (every inherited session triggers a coordinator handoff), and §6.2 (`suspended → running (resume_session — no new content; pod still held)`).
+**Evidence:** The coordination Sweeper adopts a lapsed lease only for a `running` or `input_required` session with a pod assignment (`isRunningPod` in `pkg/gateway/coordination/coordination/coordination.go`). The `isRunningPod` doc comment treats a `suspended` row as never bound, although §6.2 lets a `suspended` session keep its pod. Recorded by proposal 0091 (owner-delegate answer, 2026-10-06), which writes no lease, filed 2026-10-07.
+**Gap:** A `starting` session, or a `suspended` session that still holds its pod, whose coordinating replica dies is coordinated by no replica, and its pod stays held until the watchdog.
+**Suggested resolution:** Owned by the session suspend-and-resume proposal in §10.2 of `gateway-runtime-comms-remediation.md`. Extend adoption to these states with a handoff that re-adopts the held pod, and add a tier-8 test that kills the coordinating replica of a `suspended` session with a held pod.
 
 ## §10.2 Authentication <a id="10.2"></a>
 Spec: `spec/10_gateway-internals.md` lines 183–300.
