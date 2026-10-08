@@ -2,19 +2,19 @@
 
 Every step lands after proposal 0091 is implemented.
 
-- [ ] **S1 · spec** — SPEC-1. Lands the §7.3 resume driver, step 3e, the retry accounting, and the `maxSessionRetries` deletions.
+- [ ] **S1 · spec** — SPEC-1. Lands the §7.3 resume driver, step 3e, the retry accounting, the `maxSessionRetries` deletions, the SPEC-1e §7.2 pre-attach collapse keyed on the `resume_pending → resuming` write, and the SPEC-1f §4.2 and §10.1.1 `coordination_generation` increment.
       Tiers 0, 11. Depends on: —
-- [ ] **S2 · spec** — SPEC-2. Lands the §10.1.1 lease and adoption rule and the §10.1.2 step 2 skip.
+- [ ] **S2 · spec** — SPEC-2. Lands the §10.1.1 lease and adoption rule, the §10.1.2 step 2 skip, and the SPEC-2c citations of §10.1.2 in §28.5.1, §28.6, §28.8, §29.4, and §29.5.
       Tiers 0, 11. Depends on: S1
 - [ ] **S3 · spec** — SPEC-3. Lands the `POST /resume` rows, the `RESUME_FAILED` deletion, and the §29.3 and §29.6 edits.
       Tiers 0, 11. Depends on: S1, S2
 - [ ] **S4 · spec** — SPEC-4. Lands the §5.2 `maxSessionAgeSeconds` comment.
       Tiers 0, 11. Depends on: —
-- [ ] **S5 · spec** — SPEC-5. Lands idle suspension, the suspension release, the suspended-session lifetime, resume on any message, and the TTL rule.
+- [ ] **S5 · spec** — SPEC-5. Lands idle suspension, the suspension release, the suspended-session lifetime, resume on any message through the session's DLQ, the SPEC-5z DLQ expiry and terminal drain for a `suspended` session, and the TTL rule.
       Tiers 0, 11. Depends on: S1, S3, S4
-- [ ] **S6 · docs** — DOCS-1a. Lands the reader pages for the driver, the lease, and the retry budget.
+- [ ] **S6 · docs** — DOCS-1a. Lands the reader pages for the driver, the lease, the retry budget, and the `coordination_generation` increment.
       Tiers 0, 11. Depends on: S1, S2, S3
-- [ ] **S7 · code** — CODE-2. Lands the single retry budget with its tests.
+- [ ] **S7 · code** — CODE-2. Lands the retry accounting with its tests.
       Tiers 0, 1, 2, 3. Depends on: S1
 - [ ] **S8 · code** — CODE-3. Lands the post-claim callback on every binder path with its tests.
       Tiers 0, 1. Depends on: S1
@@ -22,11 +22,11 @@ Every step lands after proposal 0091 is implemented.
       Tiers 0, 1, 8. Depends on: S2
 - [ ] **S10 · code** — CODE-1. Lands the active-age column, accrual, and sweeps with their tests.
       Tiers 0, 1, 4. Depends on: S4
-- [ ] **S11 · code** — CODE-4. Lands the resume driver, the store-only `POST /resume`, buffered delivery, and tree-recovery routing with their tests.
+- [ ] **S11 · code** — CODE-4. Lands the resume driver with its `resuming` incarnation guard, the store-only `POST /resume`, buffered delivery, the `sweepResuming` guard, and tree-recovery routing with their tests.
       Tiers 0, 1, 3, 4, 7a. Depends on: S1, S2, S3, S7, S8, S9, S10
-- [ ] **S12 · code** — CODE-6. Lands the suspension release, idle suspension, the suspended-session lifetime, podless message routing, the flags, and the chart values with their tests.
-      Tiers 0, 1, 5, 7a. Depends on: S5, S10, S11
-- [ ] **S13 · docs** — DOCS-1b. Lands the reader pages for active age and idle suspension.
+- [ ] **S12 · code** — CODE-6. Lands the suspension release, idle suspension, the suspended-session lifetime, suspended-session message routing through the DLQ, the DLQ expiry sweep of `suspended` rows, the `deadline_approaching` trigger carriers, the flags, and the chart values with their tests.
+      Tiers 0, 1, 3, 5, 7a. Depends on: S5, S10, S11
+- [ ] **S13 · docs** — DOCS-1b. Lands the reader pages for active age, idle suspension, suspended-session message delivery, and the `deadline_approaching` trigger values.
       Tiers 0, 11. Depends on: S4, S5
 - [ ] **S14 · test** — TEST-1. Lands the tests at tier 2 and above and the tier-0 and tier-11 checks.
       Tiers 0, 2, 3, 4, 5, 7a, 8, 11. Depends on: S6, S11, S12, S13
