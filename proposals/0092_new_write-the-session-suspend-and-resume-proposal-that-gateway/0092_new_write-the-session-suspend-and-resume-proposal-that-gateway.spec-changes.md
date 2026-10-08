@@ -2,7 +2,7 @@
 
 ## Design (as the spec must state it)
 
-The specification names one actor that writes `resume_pending → resuming`: the resume driver, which runs on the session's coordinating replica. SPEC-1 states it in §7.3 under **Resume driver.**, together with the snapshotless rebuild rule (step 3e) and the retry accounting. Every other route into recovery, which is a failure edge, the `resuming` watchdog, `POST /v1/sessions/{id}/resume`, and a message or `resume_session` call to a podless `suspended` session, writes `resume_pending` to the session row and leaves the restore to the driver. Each `resume_pending → resuming` write increments `coordination_generation` and so starts one `resuming` incarnation, and every exit from `resuming` takes effect only on the incarnation it acts on (SPEC-1b **Exits from `resuming`.**). SPEC-1f states the increment where §4.2 and §10.1.1 state the counter's progression. `sessionPolicy.maxSessionRetries` is deleted.
+The specification names one actor that writes `resume_pending → resuming`: the resume driver, which runs on the session's coordinating replica. SPEC-1 states it in §7.3 under **Resume driver.**, together with the snapshotless rebuild rule (step 3e) and the retry accounting. Every other route into recovery, which is a failure edge, the `resuming` watchdog, `POST /v1/sessions/{id}/resume`, and a message or `resume_session` call to a podless `suspended` session, writes `resume_pending` to the session row and leaves the restore to the driver. Each `resume_pending → resuming` write increments `coordination_generation` and so starts one `resuming` incarnation, and every exit from `resuming` takes effect only on the incarnation it acts on (SPEC-1b **Exits from `resuming`.**). SPEC-1f states the increment in §10.1.1 **Generation counters:**, states in §10.1.5 how a replica that lost the lease of a podless session stops, and rewords the derive-failure fence in §7.1 and §16.1, which reads the counter. `sessionPolicy.maxSessionRetries` is deleted.
 
 SPEC-2 states when `REG-COORDLEASE` is kept and adopted in the recovering and suspended states. SPEC-2a states which states keep the lease and which a peer adopts after it lapses, and SPEC-2b states the handoff step that an adopter of a podless session skips.
 
@@ -10,7 +10,7 @@ SPEC-3 makes `POST /v1/sessions/{id}/resume` the REST counterpart of `resume_ses
 
 SPEC-4 corrects the §5.2 comment that calls `maxSessionAgeSeconds` a wall-clock cap. The §6.2 active-time pause table and its evaluation paragraph stay as they are.
 
-SPEC-5 states idle suspension, the suspension reason, the release disposition and its meaning on a concurrent pod, the suspended-session lifetime, resume on any message with every undelivered message to a `suspended` session held in its DLQ (SPEC-5i, SPEC-5z), and the budget-key TTL rule that keeps §8.3 consistent with that lifetime.
+SPEC-5 states idle suspension, the suspension reason, the release disposition and its meaning on a concurrent pod, the suspended-session lifetime, idle suspension made atomic with message delivery (SPEC-5f), resume on any message with every message to a `suspended` session that is not delivered synchronously held in its DLQ and resumed by the coordinating replica (SPEC-5i, SPEC-5i2, SPEC-5z), and the budget-key TTL rule that keeps §8.3 consistent with that lifetime.
 
 ## Edge cases and accepted failure modes
 
@@ -22,14 +22,14 @@ SPEC-5 states idle suspension, the suspension reason, the release disposition an
 - **`input_required` with an absent client.** The idle clock is not evaluated in `input_required`, so such a session keeps its pod until `maxSessionAge` expires it or the `lenny/request_input` call expires. SPEC-5 states this in the idle table.
 - **A runtime that hangs mid-turn.** A turn is in flight, so the idle clock never suspends it. The `CH-ATTACH` stream-failure rule that proposal 0091 lands detects the hang.
 - **A root session that cycles between `awaiting_client_action` and `resume_pending` without entering `suspended`.** A root that a client keeps resuming without a successful restore, and that stays outside `suspended` for longer than `delegation.budgetKeyTTLSeconds` since the last re-arm, meets `BUDGET_KEYS_EXPIRED` (SPEC-5o). This is accepted.
-- **Off-holder message or `/resume` to a held-pod `suspended` session.** The §29.3 off-holder matrix requires a forward to the coordinator, and no inter-replica carrier for it exists. The summary **Defects** entry records the residual.
-- **A message to a held-pod `suspended` session whose resume is not performed.** It waits in the session's DLQ until the next resume, its TTL, or a terminal transition. SPEC-5i **Pod still held:** states where it waits and when it is delivered, and SPEC-5z states its expiry and terminal outcomes.
+- **Off-holder `/resume` to a held-pod `suspended` session.** The §29.3 off-holder matrix requires a forward to the coordinator, and no inter-replica carrier for it exists, so the serving replica writes nothing and fails closed as the matrix states for an unreachable coordinator (CODE-4 item 8). The summary **Defects** entry records the residual. A message to such a session needs no forward (SPEC-5i **Held messages.** and **Backlog resume.**).
+- **A message held in a session's DLQ.** SPEC-5i delivery path 6 and SPEC-5z state its outcomes.
 
 ## Staged edits
 
 Proposal 0091 lands before this proposal and edits several of the passages below. Where it does, the anchor quoted here is the text after 0091's edit, and the edit names the 0091 deliverable that produced it. Every table row this proposal edits or adds is one physical line. The spec/29 prose is hard-wrapped, so match its anchors with line breaks ignored and keep its wrapping style in the replacement.
 
-### SPEC-1 · spec/07_session-lifecycle.md § 7.2, § 7.3; spec/06_warm-pod-model.md § 6.2; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/04_system-components.md § 4.2; spec/10_gateway-internals.md § 10.1.1, § 10.1.5; spec/29_communication-scenarios.md § 29.8
+### SPEC-1 · spec/07_session-lifecycle.md § 7.1, § 7.2, § 7.3; spec/06_warm-pod-model.md § 6.2; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/04_system-components.md § 4.2; spec/10_gateway-internals.md § 10.1.1, § 10.1.5; spec/29_communication-scenarios.md § 29.8; spec/16_observability.md § 16.1
 
 **SPEC-1a. §7.3 Retry and Resume, **Resume flow after pod failure:**, steps 3b and 3e.** Replace the line
 
@@ -61,7 +61,7 @@ with
 **SPEC-1b. §7.3, after the paragraph that begins "A step in this flow that fails after the gateway has issued its first pod-side RPC".** Insert
 
 ```
-**Resume driver.** The resume driver is the gateway component that writes `resume_pending → resuming`, and no other component does. It runs on the session's coordinating replica, which is the replica holding the coordination lease `REG-COORDLEASE` ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)), and it attempts the restore of every `resume_pending` session that replica coordinates while the session's `maxResumeWindowSeconds` window is open. Every route into recovery writes `resume_pending` to the session row and leaves the restore to the driver: a failure edge of this flow, the `resuming` watchdog ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), `POST /v1/sessions/{id}/resume` ([Section 15.1](15_external-api-surface.md#151-rest-api)), and a message or a `resume_session` call addressed to a `suspended` session whose pod was released ([Section 7.2](#72-interactive-session-model) delivery path 6). Each attempt that writes `resume_pending → resuming` starts one `resuming` incarnation of the session, identified by the `coordination_generation` value that write produces. The write increments `coordination_generation` by one, and it takes effect only while the row is in `resume_pending` and carries the `coordination_generation` the attempt read while it held the lease. Because `coordination_generation` never decreases and every entry into `resuming` advances it, no two incarnations of a session share a value, and of several attempts that read the same value, at most one enters `resuming`. An attempt whose entry write does not take effect writes nothing and releases the pod it claimed. An attempt proceeds in this order:
+**Resume driver.** The resume driver is the gateway component that writes `resume_pending → resuming`, and no other component does. It runs on the session's coordinating replica, which is the replica holding the coordination lease `REG-COORDLEASE` ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)), and it attempts the restore of every `resume_pending` session that replica coordinates while the session's `maxResumeWindowSeconds` window is open. Every route into recovery writes `resume_pending` to the session row and leaves the restore to the driver: a failure edge of this flow, the `resuming` watchdog ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine)), `POST /v1/sessions/{id}/resume` ([Section 15.1](15_external-api-surface.md#151-rest-api)), and a message or a `resume_session` call addressed to a `suspended` session whose pod was released ([Section 7.2](#72-interactive-session-model) delivery path 6). Each attempt that writes `resume_pending → resuming` starts one `resuming` incarnation of the session, identified by the `coordination_generation` value that write produces. The write increments `coordination_generation` by one, and it takes effect only while the row is in `resume_pending` and carries the `coordination_generation` the attempt read before it confirmed that it holds the lease. Because `coordination_generation` never decreases and every entry into `resuming` advances it, no two incarnations of a session share a value, and of several attempts that read the same value, at most one enters `resuming`. An attempt whose entry write does not take effect writes nothing and releases the pod it claimed. An attempt proceeds in this order:
 
 1. The driver claims a replacement pod (step 3b). A claim that fails writes nothing to the session row. The session stays in `resume_pending`, the driver attempts again later, and step 3c bounds the wait.
 2. Once the pod is claimed, and before the first RPC to the pod, the driver writes `resume_pending → resuming` and increments `coordination_generation`, under the condition the paragraph above states.
@@ -98,7 +98,7 @@ Delete the **maxSessionRetries** bullet, which after 0091 SPEC-1c reads
 3. In the **Pre-attach terminal collapse** paragraph, replace "**before** a replacement pod is claimed — i.e., while the session is still in `resume_pending` and has not transitioned into the internal `resuming` state" with "while the session is still in `resume_pending`, before it transitions into the internal `resuming` state", and replace "the session has not yet acquired a replacement pod, no restoration RPCs are in flight" with "no restoration RPC has been issued".
 4. In the **No snapshot-close sequence.** bullet, replace "and no half-claimed replacement pod to release." with "; a replacement pod the resume driver has already claimed is released by the driver ([§7.3](#73-retry-and-resume) **Resume driver.**)."
 
-**SPEC-1f. The `coordination_generation` increment on entry to `resuming`, in §4.2, §10.1.1, §10.1.5, and §29.8.**
+**SPEC-1f. The `coordination_generation` increment on entry to `resuming`, and the statements that read the counter, in §4.2, §7.1, §10.1.1, §10.1.5, §16.1, and §29.8.**
 
 1. §4.2 Session Manager, the session-records bullet. Replace
 
@@ -109,7 +109,7 @@ Delete the **maxSessionRetries** bullet, which after 0091 SPEC-1c reads
    with
 
    ```
-   **`coordination_generation`** is incremented on coordinator handoff across gateway replicas and on every `resume_pending → resuming` transition (internal only, used for split-brain fencing); it tracks which gateway replica is the authoritative coordinator and which resume attempt is current ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**). A newly created session row carries `coordination_generation = 1`, and each coordinator handoff ([§10.1.2](10_gateway-internals.md#1012-coordinator-handoff-protocol) step 1's compare-and-swap) and each `resume_pending → resuming` transition advances it by one.
+   **`coordination_generation`** (internal only, used for split-brain fencing) tracks which gateway replica is the authoritative coordinator and which resume attempt is current ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**). See [§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Generation counters:**.
    ```
 
 2. §10.1.1 Stateless Replicas and Per-Session Coordination, the **Generation counters:** bullet. Replace
@@ -126,14 +126,24 @@ Delete the **maxSessionRetries** bullet, which after 0091 SPEC-1c reads
 
 3. §10.1.5 Stale Replica Behavior, the **Stale replica behavior:** paragraph. Replace "receives a generation-stale rejection (from a pod or from a failed Postgres CAS on the session row), it must:" with "receives a generation-stale rejection from a pod, it must:".
 
+   In §10.1.5, after item 4 of the numbered list that follows that sentence, insert the paragraph
+
+   ```
+   **Session with no bound pod.** A replica that has lost the coordination lease of a session with no bound pod receives no rejection from a pod, and it holds no stream, pending tool call, or buffered event for the session. Every action it takes as the session's coordinator, including renewing the lease and running the resume driver ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**), requires it to hold the lease, so it stops once another replica holds the lease. A driver attempt that confirmed the lease before the lease changed hands is settled by `coordination_generation`. The attempt read the session row before it confirmed the lease, so when the acquiring replica's [§10.1.2](#1012-coordinator-handoff-protocol) step 1 compare-and-swap lands first, the attempt's `resume_pending → resuming` write does not take effect.
+   ```
+
 4. §29.8 Coordinator handoff and crash takeover, step 10. Replace "receives a generation-stale rejection for the session, from the pod or from a failed compare-and-swap on the session row:" with "receives a generation-stale rejection for the session from the pod:". Match with line breaks ignored and keep the step's hard wrapping.
+
+5. §7.1 Normal Flow, derive rule 2. Replace "If a replacement coordinator has already incremented `coordination_generation` (e.g., after a replica crash or Postgres failover mid-copy), the stale replica's INSERT is rejected and no orphan `failed` row becomes visible." with "If `coordination_generation` has advanced since derive admission, because a replacement coordinator incremented it (e.g., after a replica crash or Postgres failover mid-copy) or because the source session entered `resuming` ([§7.3](#73-retry-and-resume) **Resume driver.**), the INSERT is rejected and no `failed` row becomes visible."
+
+6. §16.1 Metrics, the `lenny_session_derive_failure_audit_total` row. Replace "`fenced` counts CAS-rejected writes where a replacement coordinator had already advanced `coordination_generation`." with "`fenced` counts CAS-rejected writes where the source session's `coordination_generation` had advanced since derive admission, through a coordinator handoff or the source's entry into `resuming`." The row stays one physical line.
 
 ### SPEC-2 · spec/10_gateway-internals.md § 10.1.1 **Per-session coordination:** and § 10.1.2; spec/28_communication-channels.md § 28.5.1, § 28.6, § 28.8; spec/29_communication-scenarios.md § 29.4, § 29.5
 
 **SPEC-2a. §10.1.1 Stateless Replicas and Per-Session Coordination, the **Primary:** bullet.** After "If that replica dies, another picks up after TTL expiry." append, in the same bullet
 
 ```
- Releasing a session's pod binding does not release its lease. The coordinating replica keeps renewing the lease in every non-terminal state except `created`, `finalizing`, and `ready`, for which [§29.3](29_communication-scenarios.md#293-interactive-message-send) establishes no coordinating replica. When the lease lapses, another replica adopts any session in `running`, `input_required`, `suspended`, `resume_pending`, or `awaiting_client_action`. The adopter runs the [§10.1.2](#1012-coordinator-handoff-protocol) handoff protocol. A `resume_pending` session adopted this way is restored by the adopter's [§7.3](07_session-lifecycle.md#73-retry-and-resume) resume driver. A `resuming` session is not adopted: every replica evaluates the `resuming` watchdog ([§6.2](06_warm-pod-model.md#62-pod-state-machine)) from the session row, and the watchdog moves the session to `resume_pending` or `awaiting_client_action`, where it is adopted. Adoption of a `starting` session is not stated.
+ Releasing a session's pod binding does not release its lease. The coordinating replica keeps renewing the lease in every non-terminal state except `created`, `finalizing`, and `ready`, for which [§29.3](29_communication-scenarios.md#293-interactive-message-send) establishes no coordinating replica. When the lease lapses, another replica adopts any session in `running`, `input_required`, `suspended`, `resume_pending`, or `awaiting_client_action`. The adopter runs the [§10.1.2](#1012-coordinator-handoff-protocol) handoff protocol, and its step 0 read is the read that finds the session in one of those states. A `resume_pending` session adopted this way is restored by the adopter's [§7.3](07_session-lifecycle.md#73-retry-and-resume) resume driver. A `resuming` session is not adopted: every replica evaluates the `resuming` watchdog ([§6.2](06_warm-pod-model.md#62-pod-state-machine)) from the session row, and the watchdog moves the session to `resume_pending` or `awaiting_client_action`, where it is adopted. Adoption of a `starting` session is not stated.
 ```
 
 **SPEC-2b. §10.1.2 Coordinator Handoff Protocol, step 2.** Replace
@@ -253,9 +263,9 @@ with
 
 ```
 built-in adapter row addresses no pre-existing session and so has no holder to forward to, the
-`POST /v1/sessions/{id}/resume` row for `awaiting_client_action` and the message-send and
-`POST /v1/sessions/{id}/resume` rows for a `suspended` session whose pod was released are served on the
-serving replica without a forward, and the store-only row requires no forwarding at all.
+`POST /v1/sessions/{id}/resume` rows for `awaiting_client_action` and for a `suspended` session whose
+pod was released and the `suspended` message-send rows are served on the serving replica without a
+forward, and the store-only row requires no forwarding at all.
 ```
 
 The list of forwarding rows ("the interrupt, terminate, delete, resume, interaction-resolution, upload, and events JSON rows below") keeps "resume", because the held-pod `suspended` resume row forwards.
@@ -345,7 +355,7 @@ with
 
 The §6.2 paragraph after the **`maxSessionAge` timer behavior across states:** table is not edited.
 
-### SPEC-5 · spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.2, § 7.3; spec/15_external-api-surface.md § 15.1, § 15.4; spec/29_communication-scenarios.md § 29, § 29.3, § 29.4; spec/28_communication-channels.md § 28.5.3, § 28.5.4; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/11_policy-and-controls.md § 11.3; spec/08_recursive-delegation.md § 8.3, § 8.8; spec/09_mcp-integration.md § 9.2; spec/16_observability.md § 16.1; spec/14_workspace-plan-schema.md; spec/17_deployment-topology.md § 17.8.1; spec/27_web-playground.md § 27.6
+### SPEC-5 · spec/06_warm-pod-model.md § 6.2; spec/07_session-lifecycle.md § 7.2, § 7.3; spec/15_external-api-surface.md § 15.1, § 15.4; spec/29_communication-scenarios.md § 29, § 29.3, § 29.4; spec/28_communication-channels.md § 28.5.3, § 28.5.4; spec/05_runtime-registry-and-pool-model.md § 5.2; spec/11_policy-and-controls.md § 11.3; spec/08_recursive-delegation.md § 8.3, § 8.8; spec/09_mcp-integration.md § 9.2; spec/16_observability.md § 16.1; spec/14_workspace-plan-schema.md; spec/17_deployment-topology.md § 17.8.1; spec/27_web-playground.md § 27.6; spec/10_gateway-internals.md § 10.1, § 10.1.5
 
 **SPEC-5a. §6.2, the **`suspended` state:** transition block, the paragraph after it, and the `suspended` row of the `maxSessionAge` timer table.** After the line `running → suspended   (interrupt_request timeout — deadlineMs elapsed without interrupt_acknowledged; adapter forces suspended, RPC returns INTERRUPT_TIMEOUT)` insert
 
@@ -403,7 +413,9 @@ Once the pod is released, `resume_session`, `POST /v1/sessions/{id}/resume`, and
 `perChildMaxAge` (wall-clock) and the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` continue ticking — if either fires while suspended-without-pod, the session transitions directly to `expired` (no pod to release; checkpoint already happened).
 ```
 
-**SPEC-5e. §6.2, **`maxClientIdleSeconds` clock behavior across states.**, the intro, the qualifying-event bullets, and the clock table.** In the intro, replace "it terminates a session after continuous client inactivity and replaces" with "it suspends a session after continuous inactivity and replaces". In the agent-work bullet, replace "so an autonomously working session is never idle-terminated" with "so an autonomously working session is never idle-suspended". In the direct-mode bullet, replace "so a hung or wedged pod that emits no tokens still idle-terminates" with "so a wedged pod that emits no tokens between turns is still idle-suspended". In the `lenny/await_children` bullet, replace "is not falsely expired as idle" with "is not falsely idle-suspended". Replace the clock table rows `running`, `input_required`, `awaiting_client_action`, and `suspended` with
+**SPEC-5d2. §6.2 **Pod failure while `suspended` (pod still held):**; §10.1 **Orphan session reconciliation:**.** In §6.2, delete " (i.e., before `maxSuspendedPodHoldSeconds` fires)". In §10.1, replace "(podless suspension after `maxSuspendedPodHoldSeconds`; see [§6.2](06_warm-pod-model.md#62-pod-state-machine))" with "(see [§6.2](06_warm-pod-model.md#62-pod-state-machine))".
+
+**SPEC-5e. §6.2, **`maxClientIdleSeconds` clock behavior across states.**, the intro, the qualifying-event bullets, and the clock table.** In the intro, replace "it terminates a session after continuous client inactivity and replaces" with "it suspends a session after continuous inactivity and replaces", and replace "The `last_agent_activity_at` timestamp is updated in Postgres on each qualifying event." with "The `last_agent_activity_at` timestamp is updated in Postgres on each qualifying event and on each entry to `running` from a state where the clock is paused." In the agent-work bullet, replace "so an autonomously working session is never idle-terminated" with "so an autonomously working session is never idle-suspended". In the direct-mode bullet, replace "so a hung or wedged pod that emits no tokens still idle-terminates" with "so a wedged pod that emits no tokens between turns is still idle-suspended". In the `lenny/await_children` bullet, replace "is not falsely expired as idle" with "is not falsely idle-suspended". Replace the clock table rows `running`, `input_required`, `awaiting_client_action`, and `suspended` with
 
 ```
 | `running`                | **Active.** Resets on every qualifying event (see list above); see "Idle suspension" below. |
@@ -421,7 +433,7 @@ The default value is 900 seconds (15 minutes), and the effective per-session val
 The **Origin-scoped override:** text that follows is unchanged. After the paragraph, insert
 
 ```
-**Idle suspension.** When the `maxClientIdleSeconds` clock fires for a `running` session whose runtime has no turn in flight, which means no message delivered to it is still being processed, the gateway writes `running → suspended` with the suspension reason `Idle` and releases the session's pod or slot at once through the graceful release above, with a hold of zero. Any message, a `resume_session` call, or `POST /v1/sessions/{id}/resume` resumes the session ([§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6).
+**Idle suspension.** When the `maxClientIdleSeconds` clock fires for a `running` session whose runtime has no turn in flight, which means no message delivered to it is still being processed, the gateway writes `running → suspended` with the suspension reason `Idle` and releases the session's pod or slot at once through the graceful release above, with a hold of zero. The gateway makes this write atomic with message delivery. Before it hands a message to the runtime, the gateway records the delivery as a qualifying event on the session row in the same write that checks the session's state, and it refuses the delivery when the session is `suspended`. The `running → suspended` write takes effect only while `last_agent_activity_at` is unchanged since the gateway found the session idle. A delivery recorded before that write therefore prevents the suspension. A delivery refused after that write has not reached the runtime, and the gateway routes it by [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6. Any message, a `resume_session` call, or `POST /v1/sessions/{id}/resume` resumes the session ([§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6).
 ```
 
 **SPEC-5g. §6.2, **`suspended → expired` trigger mechanism:**.** Replace the paragraph with
@@ -461,17 +473,25 @@ suspended → expired        (gateway.maxSuspendedSessionSeconds elapsed since e
 **SPEC-5i. §7.2, **Message delivery routing**, delivery path 6.** Replace the path from "6. **Target session is `suspended`**" through the end of the paragraph that ends "its `delivery: immediate` resume rows restate the rule stated here and cite this section as its owner." with
 
 ```
-6. **Target session is `suspended`** → the message resumes the session, whatever its `delivery` value. How it resumes depends on whether the session still holds a pod (see [§6.2](06_warm-pod-model.md#62-pod-state-machine) "Graceful pod release during extended suspension"):
-   - **Pod still held:** The coordinating replica atomically resumes the session (`suspended → running`), delivers the buffered messages in FIFO order, and then delivers the message to the runtime's stdin pipe once the runtime reports `ready_for_input`. For a message sent through `POST /v1/sessions/{id}/messages`, the delivery receipt is `delivered` when the message reaches the runtime in this sequence. When the resume is not performed while the session still holds its pod, because the coordinating replica is unreachable or the `running` write does not commit, the message is enqueued in the session's DLQ as the recovering-state row of the dead-letter table below states, the session stays `suspended`, and the delivery receipt is `queued`. The next resume of the session delivers it. When the pod is released before the `running` write, the message takes the pod-released branch below.
-   - **Pod released (podless suspension):** The serving replica enqueues the message in the session's DLQ as the recovering-state row of the dead-letter table below states, then writes `suspended → resume_pending`, which needs no forward. The coordinating replica's resume driver ([§7.3](#73-retry-and-resume)) acquires a new pod and restores the workspace from checkpoint, then delivers the buffered messages in FIFO order. The delivery receipt is `queued`.
+6. **Target session is `suspended`** → the message resumes the session, whatever its `delivery` value and whichever source sent it: an external client through `POST /v1/sessions/{id}/messages` or another session through `lenny/send_message`. The session row records whether the session still holds a pod ([§6.2](06_warm-pod-model.md#62-pod-state-machine) "Graceful pod release during extended suspension"). Every `suspended → running` write, whether a message or a resume call triggers it, takes effect only while the session is `suspended` and its row names a pod. The session's DLQ, as the recovering-state row of the dead-letter table below defines it, holds every message to a `suspended` session that is not delivered synchronously.
+   - **Synchronous delivery.** A message sent through `POST /v1/sessions/{id}/messages` and served by the session's coordinating replica while the session row names a pod is delivered synchronously. The coordinating replica writes `suspended → running`, performs the drain that **Delivery after a commit to `running`.** below states, and then delivers the message to the runtime's stdin pipe once the runtime reports `ready_for_input`. The delivery receipt is `delivered`. When the delivery of the message fails after the `running` write, the gateway re-reads the session and routes the message by the path for the state the session is then in. When the `running` write does not take effect, the message is enqueued in the session's DLQ with the receipt `queued`, and **Backlog resume.** resumes the session.
+   - **Held messages.** Every other message to a `suspended` session is enqueued in the session's DLQ and receives the delivery receipt `queued`, or `dropped` with `reason: "dlq_overflow"` when the enqueue evicts an entry. The enqueue precedes every state write the message triggers. After the enqueue, the serving replica requests the resume. When the session row names no pod, the serving replica writes `suspended → resume_pending`, which any replica may write, and the resume driver ([§7.3](#73-retry-and-resume)) restores the session. When the row names a pod and the serving replica is the coordinating replica, that replica writes `suspended → running` and performs the drain. When the row names a pod and the serving replica is not the coordinating replica, the serving replica writes nothing. A replica does not forward a message for a `suspended` session to the coordinating replica, so a held message is never also forwarded.
+   - **Backlog resume.** Each time the coordinating replica evaluates the suspension timers of a `suspended` session it coordinates ([§6.2](06_warm-pod-model.md#62-pod-state-machine)), it resumes the session as **Held messages.** states when the session's DLQ holds a message. This resumes a session whose message was held by another replica, whose `running` write did not take effect, or whose resume request failed.
+   - **Enqueue after a drain.** After an enqueue under this path or under the recovering-state row of the dead-letter table, the serving replica re-reads the session. When the session is `running`, `input_required`, or terminal, a drain may already have run: the one that followed its last commit to `running`, or the terminal DLQ drain ([§7.3](#73-retry-and-resume)). The replica therefore removes the message from the DLQ. When the removal finds the message, the gateway routes it by the path for the session's current state. When the removal does not find it, a drain has taken it. A held message is taken by at most one drain or by its own routing.
+   - **Delivery after a commit to `running`.** Every write that commits a session to `running` from `suspended` or from `resuming` is followed, on the replica that wrote it, by a drain of the session's held messages: first the session inbox in FIFO order, removing each entry only after its delivery as the durable-inbox Explicit ACK row states, then the DLQ in score order. The drain expires every DLQ entry whose TTL has elapsed, as the recovering-state row states, and delivers no such entry. A drain that completes delivers every held message before any message the replica accepts for the session after the commit. When a delivery fails, the drain stops and returns to the DLQ, with their original scores, the DLQ entry whose delivery failed and the entries it has not yet attempted. A DLQ entry that a stopped drain returns stays in the DLQ of the `running` session until the drain after the session's next commit to `running` delivers or expires it, or the terminal DLQ drain ([§7.3](#73-retry-and-resume)) expires it.
 
-   Both branches apply to all message sources: external client (`POST /v1/sessions/{id}/messages`) and inter-session via `lenny/send_message`. A `lenny/send_message` is enqueued in the session's DLQ before the resume on either branch and receives the delivery receipt `queued`. The resume delivers it among the buffered messages. A `resume_session` call and `POST /v1/sessions/{id}/resume` take the same two branches, carry no message of their own, and deliver the buffered messages in the same order. **Coordinator routing for a suspended-session resume:** The pod-held `suspended → running` transition requires a Postgres state write and a resume RPC to the pod, both of which must be performed by the session's coordinating gateway replica. When such a message lands on a non-coordinator replica, that replica forwards the message to the session's coordinator (identified via the coordination lease in Redis/Postgres), and the coordinator executes the atomic resume-and-deliver sequence. If the coordinator is unreachable (for example, crashed or partitioned), the forwarding replica takes the case of the pod-held branch above in which the resume is not performed. The forwarding replica does not buffer the message in its own session inbox, which the coordinating replica does not read under `durableInbox: false`. The coordinator forwarding mechanism reuses the same internal gRPC `ForwardMessage` RPC used for all cross-replica message routing (see [Section 10.1](10_gateway-internals.md#101-horizontal-scaling) per-session coordination). The off-holder matrix in [Section 29.3](29_communication-scenarios.md#293-interactive-message-send) states the required outcome for the other session-scoped client routes its rows name when they are served by a replica that is not the session's coordinating replica; its `suspended` message rows cite this section as their owner.
+   A `resume_session` call and `POST /v1/sessions/{id}/resume` resume a `suspended` session as [Section 15.1](15_external-api-surface.md#151-rest-api) states, carry no message of their own, and are followed by the same drain. The off-holder matrix in [Section 29.3](29_communication-scenarios.md#293-interactive-message-send) states the required outcome for the other session-scoped client routes its rows name when they are served by a replica that is not the session's coordinating replica; its `suspended` message rows cite this section as their owner.
 ```
+
+**SPEC-5i2. Companion statements of delivery path 6 in §7.3 and §10.1.5.** SPEC-1 lands before SPEC-5i introduces the delivery path 6 passages these two statements point at, so they land with SPEC-5.
+
+1. §7.3 Retry and Resume, the **Resume driver.** numbered list, item 4. Replace "It then delivers, in FIFO order, the messages held in the session inbox and then those in the session's DLQ ([Section 7.2](#72-interactive-session-model)), before any message that arrives after the transition." with "It then drains the session's held messages as [Section 7.2](#72-interactive-session-model) delivery path 6 **Delivery after a commit to `running`.** states."
+2. §10.1.5 Stale Replica Behavior, the **Session with no bound pod.** paragraph. Replace "including renewing the lease and running the resume driver ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**), requires it to hold the lease" with "including renewing the lease, running the resume driver ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**), and the backlog resume ([§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 **Backlog resume.**), requires it to hold the lease".
 
 **SPEC-5j. §15.1, the precondition table row `POST /v1/sessions/{id}/messages`.** Replace the transition cell "`running` (if `suspended` with `delivery: immediate`, atomically resumes and delivers); no state change for other states" with
 
 ```
-`suspended` → `running` when the pod is held, `suspended` → `resume_pending` when it was released, for any `delivery` value; no state change for other states
+`suspended` → `running` or `resume_pending` as [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 states, for any `delivery` value; no state change for other states
 ```
 
 **SPEC-5k. §15.4 Runtime Adapter Specification, the **`delivery`** table.** In the `"immediate"` row, delete "If session is `suspended`, the gateway atomically resumes (`suspended → running`) then delivers. ". In the `"queued"` row, replace "Delivered in FIFO order when the runtime next enters `ready_for_input`. Receipt: `queued`." with "Delivered in FIFO order when the runtime next enters `ready_for_input`. Receipt: `queued`, except for a `suspended` target (see below the table)." After the table's last row and before "No other values are valid.", insert
@@ -505,9 +525,9 @@ and the message carries `delivery: "immediate"` against a `suspended`
 with
 
 ```
-and the message targets a `suspended` session whose pod is still
-   held, §7.2 requires the serving replica to forward the message to the coordinator and states the
-   fallback when the coordinator is unreachable
+and the message targets a `suspended`
+   session, the serving replica holds the message in the session's DLQ and forwards nothing, as §7.2
+   delivery path 6 states
 ```
 
 In the **Off-holder matrix.** lead paragraph, replace
@@ -522,8 +542,7 @@ with
 ```
 When the coordinator is unreachable on one of those rows, a message send to a `running` or
 `input_required` session falls back to inbox buffering with a `queued` delivery receipt so the message is
-not dropped, a message send to a `suspended` session takes the fallback
-[§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 states, and every other forwarding
+not dropped, and every other forwarding
 ```
 
 Match the anchor with line breaks ignored and keep the paragraph's hard wrapping. SPEC-3i edits a different sentence of the same lead paragraphs.
@@ -531,14 +550,13 @@ Match the anchor with line breaks ignored and keep the paragraph's hard wrapping
 Replace the matrix row `POST /v1/sessions/{id}/messages` carrying `delivery: immediate` | `suspended` with
 
 ```
-| `POST /v1/sessions/{id}/messages`, any `delivery` value | `suspended`, pod still held | Forward to the coordinator; [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 **Coordinator routing for a suspended-session resume:** states the coordinator's action and the unreachable-coordinator fallback | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
-| `POST /v1/sessions/{id}/messages`, any `delivery` value | `suspended`, pod released | No forwarding is required; the serving replica takes the pod-released branch of [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| `POST /v1/sessions/{id}/messages`, any `delivery` value | `suspended` | No forwarding is required; the serving replica takes [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6, which states each outcome by whether the serving replica coordinates the session and whether the session holds a pod | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
 ```
 
 Replace the matrix row `The MCP tool surface, `lenny/send_message` carrying `delivery: immediate`` | `suspended` with
 
 ```
-| The MCP tool surface, `lenny/send_message`, any `delivery` value | `suspended` | The same requirement as the `suspended` message-send rows, which §7.2 states for both of its message sources | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| The MCP tool surface, `lenny/send_message`, any `delivery` value | `suspended` | No forwarding is required; the serving replica takes [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6, which states both message sources | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
 ```
 
 **SPEC-5m. §5.2, the `sessionPolicy` YAML block and the **`maxClientIdleSeconds`** paragraph.** Replace the line
@@ -649,11 +667,14 @@ The §28.3 `ABSENT` sentence and the card sentence that follow are unchanged.
 
 **SPEC-5y. §29.4 Interrupt, terminate, and delete, steps 9 and 10.** Keep each step's wrapping. In step 9, replace "until the client acts" with "until the client acts or the suspended-session lifetime expires it". In step 10, replace "of `maxSessionAge` or of the client idle clock" with "of `maxSessionAge` or of the suspended-session lifetime".
 
-**SPEC-5z. §7.2 **Message delivery routing**, the `message_expired` reason sentence; §7.3 **`awaiting_client_action` semantics:**, the **DLQ drain on terminal transition:** bullet; §15.4, the `message_expired` event `reason` table.** A `suspended` session's DLQ holds messages under §7.2 delivery path 6, so each statement that scopes the DLQ to the recovering states also names `suspended`.
+**SPEC-5z. §7.2 **Message delivery routing**, the `message_expired` reason sentence, the dead-letter table, and the durable-inbox Per-message TTL row; §7.3 **`awaiting_client_action` semantics:**, the **DLQ drain on terminal transition:** bullet; §15.4, the `message_expired` event `reason` table, its `dlq_ttl_expired` and `durable_inbox_ttl_expired` rows.** A `suspended` session's DLQ holds messages under §7.2 delivery path 6, and a message to a `resuming` session is held in its DLQ, so every enumeration of the recovering states, including the two that state the durable-inbox trimmer's activation, names `resuming`.
 
-1. In §7.2, replace "`dlq_ttl_expired` (pre-terminal DLQ TTL elapsed while the target was in a recovering state)" with "`dlq_ttl_expired` (pre-terminal DLQ TTL elapsed while the target was in a recovering state or `suspended`)".
-2. In §7.3, the **DLQ drain on terminal transition:** bullet, replace "(messages enqueued while in `resume_pending` or `awaiting_client_action`)" with "(messages enqueued while in `resume_pending`, `awaiting_client_action`, or `suspended`)".
-3. In §15.4, the `dlq_ttl_expired` row of the `message_expired` event `reason` table, replace "Pre-terminal DLQ TTL elapsed while the target session remained in a recovering state (`resume_pending` or `awaiting_client_action`) and no resume occurred before the TTL boundary." with "Pre-terminal DLQ TTL elapsed while the target session remained in a recovering state (`resume_pending` or `awaiting_client_action`) or in `suspended`, and no resume occurred before the TTL boundary." The row stays one physical line.
+1. In §7.2, replace "`dlq_ttl_expired` (pre-terminal DLQ TTL elapsed while the target was in a recovering state)" with "`dlq_ttl_expired` (pre-terminal DLQ TTL elapsed before the message was delivered)".
+2. In §7.3, the **DLQ drain on terminal transition:** bullet, replace "(messages enqueued while in `resume_pending` or `awaiting_client_action`)" with "(messages enqueued while in `resume_pending`, `resuming`, `awaiting_client_action`, or `suspended`)".
+3. In §15.4, the `dlq_ttl_expired` row of the `message_expired` event `reason` table, replace "Pre-terminal DLQ TTL elapsed while the target session remained in a recovering state (`resume_pending` or `awaiting_client_action`) and no resume occurred before the TTL boundary." with "Pre-terminal DLQ TTL elapsed before the message was delivered." The row stays one physical line.
+4. In §7.2, the dead-letter table, replace the Target-state cell "Recovering (`resume_pending`, `awaiting_client_action`)" with "Recovering (`resume_pending`, `resuming`, `awaiting_client_action`)", and replace "If the target resumes before TTL expiry, queued messages are delivered in FIFO order." with "If the target resumes before TTL expiry, queued messages are delivered as delivery path 6 **Delivery after a commit to `running`.** states." The row stays one physical line.
+5. In §7.2, the durable-inbox Per-message TTL row, replace "a recovering state (`resume_pending` or `awaiting_client_action`)" with "a recovering state (`resume_pending`, `resuming`, or `awaiting_client_action`)". The row stays one physical line.
+6. In §15.4, the `durable_inbox_ttl_expired` row of the `message_expired` event `reason` table, replace "activates only during `resume_pending` / `awaiting_client_action`" with "activates only during `resume_pending`, `resuming`, or `awaiting_client_action`". The row stays one physical line.
 
 **SPEC-5u. Bounded sweep.** After the other SPEC-5 edits, grep `spec/` for `delivery: immediate`, `delivery:immediate`, `delivery: "immediate"`, `maxIdleTimeSeconds`, `idle-terminat`, and `remain indefinitely`. Reconcile only a statement that conditions the resume of a `suspended` session on `delivery: immediate`, gives `maxClientIdleSeconds` an expiry outcome or a default other than 900 seconds, or lets a root `suspended` session persist without bound. Leave unchanged every statement about `delivery: immediate` interrupting a `running` session and the `input_required` exception.
 
@@ -661,15 +682,15 @@ The §28.3 `ABSENT` sentence and the card sentence that follow are unchanged.
 
 - `spec/04_system-components.md` (SPEC-1f, SPEC-3g)
 - `spec/05_runtime-registry-and-pool-model.md` (SPEC-1d, SPEC-3h, SPEC-4a, SPEC-5m)
-- `spec/06_warm-pod-model.md` (SPEC-1c, SPEC-5a to SPEC-5g)
-- `spec/07_session-lifecycle.md` (SPEC-1a, SPEC-1b, SPEC-1e, SPEC-3f, SPEC-5h, SPEC-5i, SPEC-5z)
+- `spec/06_warm-pod-model.md` (SPEC-1c, SPEC-5a to SPEC-5g, SPEC-5d2)
+- `spec/07_session-lifecycle.md` (SPEC-1a, SPEC-1b, SPEC-1e, SPEC-1f, SPEC-3f, SPEC-5h, SPEC-5i, SPEC-5i2, SPEC-5z)
 - `spec/08_recursive-delegation.md` (SPEC-5o, SPEC-5w)
 - `spec/09_mcp-integration.md` (SPEC-5p)
-- `spec/10_gateway-internals.md` (SPEC-1f, SPEC-2a, SPEC-2b)
+- `spec/10_gateway-internals.md` (SPEC-1f, SPEC-2a, SPEC-2b, SPEC-5d2, SPEC-5i2)
 - `spec/11_policy-and-controls.md` (SPEC-5n)
 - `spec/14_workspace-plan-schema.md` (SPEC-5r)
 - `spec/15_external-api-surface.md` (SPEC-3a to SPEC-3e, SPEC-5j, SPEC-5k, SPEC-5z)
-- `spec/16_observability.md` (SPEC-5q)
+- `spec/16_observability.md` (SPEC-1f, SPEC-5q)
 - `spec/17_deployment-topology.md` (SPEC-5s)
 - `spec/27_web-playground.md` (SPEC-5t)
 - `spec/28_communication-channels.md` (SPEC-2c, SPEC-5v, SPEC-5x)
