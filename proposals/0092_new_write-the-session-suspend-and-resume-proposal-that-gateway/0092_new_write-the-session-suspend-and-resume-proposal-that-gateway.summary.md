@@ -30,7 +30,7 @@
 15. Each `resume_pending → resuming` write increments `coordination_generation`, so the state `resuming` and that value name one incarnation of the restore. The driver's commit, its failure report, and the `resuming` watchdog each take effect only on the incarnation they act on, and the attempt that claimed the replacement pod is the only component that releases it. The post-exit generation bump in `applyFailureFromResuming` is deleted. SPEC-1b **Exits from `resuming`.** states the rule, and SPEC-1f states the increment in §4.2 and §10.1.1.
 
 **Watch out for.**
-- This proposal lands after 0091. CODE-4, CODE-5, and CODE-6 edit code that 0091 adds or rewrites, and the SPEC anchors quote text after 0091's edits.
+- CODE-4, CODE-5, and CODE-6 edit code that 0091 added or rewrote, and the SPEC anchors quote text after 0091's edits.
 - `resumeOnPod` must stop publishing the binding, writing `PodAssignment`, and fencing. Leaving any of them before the `resuming → running` commit lets a lost commit leave a published binding behind (CODE-4 item 4).
 - The snapshotless rebuild on a concurrent pool goes through `BindSlot`, never `Bind`. A hook wired only into `Bind` leaves those sessions in `resume_pending` forever.
 - A slot retry calls the post-claim hook again. Without the per-attempt flag, the second call fails the compare-and-swap and aborts a valid restore.
@@ -98,7 +98,7 @@ No decision is open. The proposal ships as one: the resume driver (CODE-4) depen
 
 | Proposal | Status | What this change does to it | What it must do |
 |:--|:--|:--|:--|
-| 0091 | Approved, not implemented | Lands after it. Deletes the `ErrHeld` hold in `holdOrFailOnResumeError` that its CODE-2 item 8 adds and the retryable `RESUME_FAILED` answer it keeps. Edits the `Sweep` loop its CODE-5 rewrites, reads the turn token its CODE-1 adds, and quotes the §6.2 and §7.3 text its SPEC-1 writes. Closes or narrows the findings its RECORDS-1 items 4, 10, 11, 16, and 17 file. | Nothing. It lands first, and its record stands. |
+| 0091 | Implemented (approved 2026-10-06, implemented 2026-10-07) | Retires part of what it landed. CODE-4 deletes `holdOrFailOnResumeError`, including the `ErrHeld` hold added by its CODE-2 item 8, and the retryable `RESUME_FAILED` answer that it keeps. CODE-5 edits the `Sweep` loop its CODE-5 rewrote, and CODE-6 reads the turn token its CODE-1 added. The staging quotes the §6.2 and §7.3 text its SPEC-1 wrote, and it closes or narrows the findings filed by its RECORDS-1 items 4, 10, 11, 16, and 17. | Nothing. Its record stands, and this proposal records the retirement in its own text. |
 | 0060 | Implemented | Widens the Sweeper adoption predicate it built and keeps its never-bound exclusion. | Nothing. The record stands. |
 | 0058 | Implemented | Its §7.2 path 6 pod-held resume-and-deliver now runs for any message to a held-pod `suspended` session, beyond `delivery: immediate`, and gains a podless branch. | Nothing. The record stands. |
 | 0081 | Implemented | Removes `RESUME_FAILED` from the slot-bind refusal envelope it specified in §4.7.1. | Nothing. The record stands. |
