@@ -5,26 +5,26 @@
 **Problem statement.** After proposal 0091 lands, every pod or `Attach` stream failure leaves a session in `resume_pending`, and nothing moves it on to `running`: the restore code exists, but no component triggers it, and a client's `POST /v1/sessions/{id}/resume` served by a replica other than the lease holder fails. A coordinator that dies in a recovering or held-pod suspended state leaves the session without an owner. Two retry budgets exist, and one recovered crash spends two units of the one that is read. Session age runs on wall-clock time where the spec requires active time. A suspended session never releases its pod, the idle flag is misnamed and misdocumented, and `lenny/resume_session` cannot resume a suspended session. The owner decided that an idle session is suspended and its pod released at once, that any message resumes a suspended session, and that a suspended session lives at most 7 days.
 
 **What changes.**
-- Session server and watchdog: a resume driver that is the only path out of `resume_pending`, a store-only `POST /resume` that also admits `suspended`, FIFO delivery of buffered messages after a restore, and the deletion of `RESUME_FAILED` (CODE-4, SPEC-1, SPEC-3).
+- Session server and watchdog: a resume driver that is the only writer of `resume_pending → resuming`, a store-only `POST /resume` that also admits `suspended`, FIFO delivery of buffered messages after a restore, and the deletion of `RESUME_FAILED` (CODE-4, SPEC-1, SPEC-3).
 - Binder: a post-claim callback, so `resuming` is written after the claim and before the first RPC to the pod (CODE-3).
-- Coordination Sweeper: adoption of every ever-bound non-terminal session, with the fence only when a pod is held (CODE-5, SPEC-2).
-- Retry accounting: `retryPolicy.maxRetries` is the only budget, spent once per failure edge (CODE-2, SPEC-1).
+- Coordination Sweeper: adoption of the states SPEC-2a lists, with the fence only when a pod is held (CODE-5, SPEC-2).
+- Retry accounting: `retryCount` is spent once per failure edge, and `sessionPolicy.maxSessionRetries` is deleted (CODE-2, SPEC-1).
 - Session store and watchdog: active-time session age in `accumulated_session_age_seconds` (CODE-1, SPEC-4).
 - Watchdog and session server: idle suspension, the suspension release, the 7-day suspended-session lifetime, resume on any message, and the renamed and corrected flags (CODE-6, SPEC-5).
 
 **Decisions.**
-1. The resume driver is the only code that moves a session out of `resume_pending`. It hooks `sweepResumePending` and runs on the lease holder, or on every replica in dev mode. Every route into recovery is a guarded store write into `resume_pending`, which reuses the §7.2 `awaiting_client_action → resume_pending` edge and the §29.6 step 3 write and needs no inter-replica forward.
-2. `resuming` is written after the claim, through the binder's post-claim callback. A pre-claim failure writes nothing, so the `UpdatedAt`-anchored `maxResumeWindowSeconds` window keeps its meaning, §7.2 "pod allocated" and the pre-claim `resume_pending → cancelled` rule stay true, and no state edge or field is added.
+1. The resume driver is the only code that writes `resume_pending → resuming`. It hooks `sweepResumePending` and runs on the lease holder, or on every replica in dev mode. Every route into recovery is a guarded store write into `resume_pending`, which reuses the §7.2 `awaiting_client_action → resume_pending` edge and the §29.6 step 3 write and needs no inter-replica forward.
+2. `resuming` is written after the claim, through the binder's post-claim callback. A pre-claim failure writes nothing, so the `UpdatedAt`-anchored `maxResumeWindowSeconds` window keeps its meaning, §7.2 "pod allocated" stays true, and no state edge or field is added.
 3. A post-claim failure goes through `ReportSessionFailure` and `applyFailureFromResuming`, which already implement the §6.2 `resuming` exits and never write `failed`. `holdOrFailOnResumeError` is deleted, which closes F-15.1.41 here.
 4. `POST /v1/sessions/{id}/resume` admits `awaiting_client_action` and `suspended`. The podless sources are store writes any replica serves; held-pod `suspended` follows §7.2 delivery path 6 through the coordinator, so the held-pod resume edge keeps one implementation. `RESUME_FAILED` has no producer left and is deleted.
-5. A lapsed lease is adopted for every ever-bound non-terminal state except `starting`, with the fence only when a pod is held. The §29.3 terminate, delete, resolution, and events rows need a holder in `awaiting_client_action` and podless `suspended`, and adopting a podless row costs only a generation compare-and-swap and a renew.
-6. `retryPolicy.maxRetries` is the only retry budget, spent only on a failure edge into `resume_pending`. `sessionPolicy.maxSessionRetries` has no reader, and the second increment in `bumpRecoveryGeneration` would turn the default budget of 2 into one automatic recovery.
+5. A lapsed lease is adopted for the states SPEC-2a lists, with the fence only when a pod is held. The §29.3 terminate, delete, resolution, and events rows need a holder in `awaiting_client_action` and podless `suspended`, and adopting a podless row costs only a generation compare-and-swap and a renew. `resuming` is left to its watchdog, and a stale driver's attempt stops on the SPEC-1b write condition.
+6. `retryPolicy.maxRetries` is spent only on a failure edge into `resume_pending`, and `sessionPolicy.maxSessionRetries` is deleted. `sessionPolicy.maxSessionRetries` has no reader, and the second increment in `bumpRecoveryGeneration` would turn the default budget of 2 into one automatic recovery.
 7. Active age uses the single column the spec names, accrued in `Store.Update` from the strictly advancing `UpdatedAt`. The §6.2 evaluation on entry to `running` stays normative.
 8. The suspension release reuses the §6.2 graceful release in the order checkpoint, clear binding, release, with the pool's normal session-end disposition and only the slot on a concurrent pod. Clearing the binding first means a crash leaves an orphan claim, never a row naming a released pod.
 9. `maxSuspendedPodHoldSeconds` governs interrupt suspensions only. An idle suspension, recorded with the suspension reason `Idle`, has a hold of zero.
 10. Idle means a `running` session with no turn in flight and no qualifying event for `maxClientIdleSeconds` (default 900 s). The clock is not evaluated in `input_required`, where a turn is in flight, and is paused in `awaiting_client_action`, which holds no pod.
 11. Any message to a `suspended` session resumes it. On a podless session the serving replica writes `resume_pending` and buffers the message, and the driver delivers buffered messages in FIFO order after the restore, without which the triggering message is lost.
-12. A suspended session expires `gateway.maxSuspendedSessionSeconds` (default 604800 s) after its entry to `suspended`, reusing the `max_idle_time` expiry reason. The budget-key TTL default rises to 691200 s, must exceed that lifetime, and is re-armed when a root leaves `suspended`, because a TTL set once at tree creation fires during a later suspension of a cycling session.
+12. A suspended session expires `gateway.maxSuspendedSessionSeconds` (default 604800 s) after its entry to `suspended`, reusing the `max_idle_time` expiry reason. The budget-key TTL default rises to 691200 s, must exceed that lifetime, and is re-armed when a root enters or leaves `suspended` (SPEC-5o).
 13. `ReattachNode` routes a `resume_pending` descendant through the driver and skips a `resuming` one, so tree recovery and the driver cannot claim two pods for one session.
 14. §7.3 step 3e states the snapshotless rebuild, `--max-idle-time-seconds` is renamed `--max-client-idle-seconds`, and the hold flag's help is corrected.
 
@@ -41,7 +41,7 @@
 
 - A session in `resume_pending` reaches `running` on a replacement pod with no client action, on whichever replica holds its lease.
 - A `POST /v1/sessions/{id}/resume` or `lenny/resume_session` call succeeds on any replica, from `awaiting_client_action` and from `suspended`.
-- A coordinator's death in any ever-bound non-terminal state other than `starting` leaves the session with a new owner.
+- A coordinator's death in a state SPEC-2a adopts leaves the session with a new owner.
 - One recovered crash spends one retry.
 - Session age counts only active time.
 - An idle session releases its pod or slot, a suspended session resumes on any message, and a suspended session expires after its lifetime.
@@ -62,7 +62,7 @@
 - A `resume_pending_since` column or any other new window anchor.
 - An immediate `resume_pending → awaiting_client_action` on a non-retryable pre-claim error. A pre-claim error writes nothing, and the window ends it.
 - Extra driver triggers from the failure funnel, from `POST /resume`, or from the podless message path, and an inline resume attempt in the message path. The 5 s tick covers every entry, and an inline attempt blocks the request.
-- A generation-guarded commit with publish-after-commit plus a lock around classify and send as a separate design. CODE-4 takes the publish-after-commit order and one per-session delivery lock.
+- A lock around classify and send separate from the publish-after-commit order. CODE-4 takes the publish-after-commit order and one per-session delivery lock.
 - Keeping `sessionPolicy.maxSessionRetries` as a per-pool cap or reconciling it through `min()`, and deleting `--retry-max-retries`, which is the deployer cap and default for `retryPolicy.maxRetries`.
 - A second age column. Incremental accrual on the strictly advancing `UpdatedAt` is exact.
 - Deleting `maxSuspendedPodHoldSeconds` and running the idle clock in pod-held `suspended`. The owner asked to enforce the existing release, and interrupt pause-and-decide keeps its held pod.
@@ -81,7 +81,7 @@ No decision is open. The proposal ships as one: the resume driver (CODE-4) depen
 ## Defects in the shipped tree that this proposal does not stage
 
 - **A snapshotless rebuild reports `resumeMode: full`.** `classifyResume` returns `full` for a resume with no checkpoint, which §7.2 defines as a full restore from a checkpoint. A new mode is out of scope; RECORDS-1 files it.
-- **Off-holder resume of a held-pod `suspended` session.** A message or `POST /resume` served by a replica other than the coordinator runs `resumeHeldPod` locally with no §7.2 path 6 forward, and every message now takes that route. The forward carrier is out of scope; RECORDS-1 files it.
+- **Off-holder resume of a held-pod `suspended` session.** A message or `POST /resume` served by a replica other than the coordinator runs `resumeHeldPod` locally with no forward to the coordinator, and every message now takes that route. The forward carrier is out of scope; RECORDS-1 files it.
 - **`nodeNeedsRecovery` reads the local pod registry.** The root's lease holder can judge a descendant bound on a peer replica orphaned. It predates this proposal; RECORDS-1 files it.
 - **Delegation budget keys carry no TTL.** No code passes `delegation.budgetKeyTTLSeconds`, and no chart value carries it, so the SPEC-5 TTL default and re-arm have no carrier. Building the budget-key TTL is out of scope; RECORDS-1 files it.
 - **No tenant cap for `maxSuspendedPodHoldSeconds`.** No tenant-configuration field carries it, so only the deploy-wide value applies. RECORDS-1 files it.
@@ -102,16 +102,16 @@ No decision is open. The proposal ships as one: the resume driver (CODE-4) depen
 
 ## Deliverable index
 
-- SPEC-1 — `spec/07_session-lifecycle.md`, `spec/06_warm-pod-model.md`, `spec/05_runtime-registry-and-pool-model.md` — state the resume driver, the snapshotless rebuild, and the retry accounting in §7.3, and delete `maxSessionRetries`.
-- SPEC-2 — `spec/10_gateway-internals.md` — state lease renewal and adoption after the first bind in §10.1.1, and the no-pod skip in §10.1.2 step 2.
+- SPEC-1 — `spec/07_session-lifecycle.md`, `spec/06_warm-pod-model.md`, `spec/05_runtime-registry-and-pool-model.md` — state the resume driver, the snapshotless rebuild, and the retry accounting in §7.3, delete `maxSessionRetries`, and key the §7.2 pre-attach collapse on the `resume_pending → resuming` write.
+- SPEC-2 — `spec/10_gateway-internals.md`, `spec/28_communication-channels.md`, `spec/29_communication-scenarios.md` — state lease renewal and adoption in §10.1.1, and the no-pod skip in §10.1.2 step 2; cite §10.1.2 from the §28 and §29 fence-precondition sites.
 - SPEC-3 — `spec/15_external-api-surface.md`, `spec/07_session-lifecycle.md`, `spec/04_system-components.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/29_communication-scenarios.md` — make `POST /resume` a store write that admits `suspended`, delete `RESUME_FAILED`, and update the §29.3 and §29.6 rows and steps.
 - SPEC-4 — `spec/05_runtime-registry-and-pool-model.md` — correct the `maxSessionAgeSeconds` comment to active time.
-- SPEC-5 — `spec/06_warm-pod-model.md`, `spec/07_session-lifecycle.md`, `spec/15_external-api-surface.md`, `spec/29_communication-scenarios.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/11_policy-and-controls.md`, `spec/08_recursive-delegation.md`, `spec/09_mcp-integration.md`, `spec/16_observability.md`, `spec/14_workspace-plan-schema.md`, `spec/17_deployment-topology.md`, `spec/27_web-playground.md` — state idle suspension, the suspension release, the suspended-session lifetime, resume on any message, and the budget-key TTL rule.
+- SPEC-5 — `spec/06_warm-pod-model.md`, `spec/07_session-lifecycle.md`, `spec/15_external-api-surface.md`, `spec/29_communication-scenarios.md`, `spec/28_communication-channels.md`, `spec/05_runtime-registry-and-pool-model.md`, `spec/11_policy-and-controls.md`, `spec/08_recursive-delegation.md`, `spec/09_mcp-integration.md`, `spec/16_observability.md`, `spec/14_workspace-plan-schema.md`, `spec/17_deployment-topology.md`, `spec/27_web-playground.md` — state idle suspension, the suspension release, the suspended-session lifetime, resume on any message, and the budget-key TTL rule.
 - CODE-1 — `migrations/0182_sessions_accumulated_session_age.*.sql`, `pkg/gateway/session/sessionstore/`, `pkg/gateway/runtime/watchdog/watchdog.go`, `pkg/gateway/sessionserver/resume_held_pod.go` — accrue and enforce active session age.
-- CODE-2 — `pkg/gateway/sessionserver/session_generation.go`, `pkg/gateway/runtime/runtimestore/runtimestore.go`, `pkg/gateway/externalapi/admin/runtimes.go`, `pkg/gateway/externalapi/openapi/openapi.json`, `pkg/ops/mcp/generated_tools.go` — one retry budget.
+- CODE-2 — `pkg/gateway/sessionserver/session_generation.go`, `pkg/gateway/runtime/runtimestore/runtimestore.go`, `pkg/gateway/externalapi/admin/runtimes.go`, `pkg/gateway/externalapi/openapi/openapi.json`, `pkg/ops/mcp/generated_tools.go` — the retry accounting.
 - CODE-3 — `pkg/gateway/podlifecycle/podsession/`, `pkg/gateway/sessionserver/pod_launch.go`, `slot_bind.go`, `resume_rebind.go` — the post-claim callback on every binder path.
 - CODE-4 — `pkg/gateway/sessionserver/resume_driver.go` and the session-server, watchdog, session API, inbox, error-classification, flag, and SDK files the deliverable names — the resume driver, the store-only `POST /resume`, buffered delivery, and tree-recovery routing.
-- CODE-5 — `pkg/gateway/coordination/coordination/coordination.go` — adoption of every ever-bound non-terminal session.
+- CODE-5 — `pkg/gateway/coordination/coordination/coordination.go` — adoption of the states SPEC-2a lists.
 - CODE-6 — `pkg/gateway/runtime/watchdog/watchdog.go`, `pkg/gateway/sessionserver/suspend_release.go` and the session-server, executor, routing, idle-resolver, flag, and chart files the deliverable names — the suspension release, idle suspension, the suspended-session lifetime, podless message routing, and the flags.
 - DOCS-1a — the reader pages the deliverable names under `docs/` — reader documentation for the driver, the lease, and the retry budget.
 - DOCS-1b — the reader pages the deliverable names under `docs/` — reader documentation for active age and idle suspension.

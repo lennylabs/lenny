@@ -30,7 +30,7 @@ Targets: `migrations/0182_sessions_accumulated_session_age.up.sql` and `.down.sq
    - `resumeHeldPod` refuses, with an error the message path already treats as a failed resume, a row whose `ActiveAge` exceeds the effective cap.
    **IMPLEMENTOR'S CHOICE:** how `resumeHeldPod` obtains the effective cap. The constraint is that it returns the value `effectiveAgeCap` returns for the same row, from one shared resolver rather than a second copy of the min-wins logic.
 
-### CODE-2 · One retry budget
+### CODE-2 · Retry accounting
 
 Targets: `pkg/gateway/sessionserver/session_generation.go`; `pkg/gateway/runtime/runtimestore/runtimestore.go`; `pkg/gateway/externalapi/admin/runtimes.go`; `pkg/gateway/externalapi/openapi/openapi.json`; the generated `pkg/ops/mcp/generated_tools.go`.
 
@@ -66,20 +66,20 @@ Targets: `pkg/gateway/runtime/watchdog/watchdog.go`; new `pkg/gateway/sessionser
    1. Re-read the row and return unless it is `resume_pending`.
    2. Arm the attempt deadline with `time.AfterFunc` for the time left in the window (`UpdatedAt + maxResumeWindowSeconds - now`, resolved as `sweepResumePending` resolves it), cancelling the attempt context when it fires.
    3. Call `acquireCoordinationLease` once. `ErrHeld` or any other error ends the attempt with no write. The acquires inside `registerBinding` and in the checkpoint branch of `resumeOnPod` stay as idempotent self-renews.
-   4. Call `resumeOnPod(ctx, row, onClaimed)`. The `onClaimed` hook is a store `Update` that sets `State = resuming` only when `r.State == resume_pending` and otherwise returns `errResumeSuperseded`. A per-attempt flag makes a second invocation in the same attempt a no-op that returns nil, so a slot retry after a post-hook failure does not misfire. When the write succeeds, the hook resets the deadline timer to `MaxResumingSeconds`, which matches the `sweepResuming` anchor.
+   4. Call `resumeOnPod(ctx, row, onClaimed)`. The `onClaimed` hook is a store `Update` that sets `State = resuming` only when `r.State == resume_pending` and `r.CoordinationGeneration` equals the value item 3.1 read, and otherwise returns `errResumeSuperseded`. A per-attempt flag makes a second invocation in the same attempt a no-op that returns nil, so a slot retry after a post-hook failure does not misfire. When the write succeeds, the hook resets the deadline timer to `MaxResumingSeconds`, which matches the `sweepResuming` anchor.
    5. When the hook never ran, the failure is a pre-claim failure. Record the next-attempt time as `now + backoff + jitter`, where the jitter is uniform in `[0, backoff/2)`, and write nothing.
    6. When the hook returned `errResumeSuperseded`, stop. The binder has already released the claim.
-   7. When the hook ran and a later step failed, report through `ReportSessionFailure`, which routes a `resuming` row to `applyFailureFromResuming`. A setup-command failure that arrives as `FailedPrecondition` is reported as `setup_command_failed`, and every other post-claim error as `runtime_crash`. Increment `lenny_session_resume_attempts_total{outcome="failure"}`.
+   7. When the hook ran and a later step failed, report through `ReportSessionFailure`, which routes a `resuming` row to `applyFailureFromResuming`. The report carries the generation item 3.1 read in a new optional `FailureReport.ExpectedCoordinationGeneration`; when it is set, the store `Update` in `transitionToResumePending` and `transitionToAwaitingClientAction` also requires `r.CoordinationGeneration` to equal it and otherwise takes the existing `errReportConflict` no-op, so a superseded attempt writes nothing, spends no retry, and bumps no generation. Reports from other reporters leave it unset. A setup-command failure that arrives as `FailedPrecondition` is reported as `setup_command_failed`, and every other post-claim error as `runtime_crash`. Increment `lenny_session_resume_attempts_total{outcome="failure"}`.
    8. On success, call `completeResume`.
 4. **`resumeOnPod` publishes nothing.** Both branches return the `BindResult` and the adapter-reported mode without calling `registerBinding`, `podRegistry.Put`, `bumpRecoveryGeneration`, or `fenceResumedPod`. `completeResume` performs those steps after the commit. This keeps a lost commit from leaving a published binding or a `PodAssignment` behind.
 5. **`completeResume`**, in this order:
    1. Take the per-session delivery lock.
-   2. One store `Update` guarded on `State == resuming`: write `running` through `transitionResume`, increment `RecoveryGeneration`, set `PodAssignment` to the result's sandbox, and stamp `LastAgentActivityAt = now` (CODE-6 item 8). Both branches bump `recovery_generation`; the snapshotless branch did not before.
+   2. One store `Update` guarded on `State == resuming` and the generation item 3.1 read: write `running` through `transitionResume`, increment `RecoveryGeneration`, set `PodAssignment` to the result's sandbox, and stamp `LastAgentActivityAt = now` (CODE-6 item 8). Both branches bump `recovery_generation`; the snapshotless branch did not before.
    3. When the guard fails, release the pod through the binder's post-RPC failure release, which runs the §7.1 pod-side reclaim and deletes the claim, then publish nothing, write nothing, release the lock, and stop. **IMPLEMENTOR'S CHOICE:** whether the binder exports `failResume` or wraps it as a new `Binder` method. The constraint is that the release runs the pod-side reclaim on the connection the attempt holds before the claim is deleted.
    4. Publish the binding: `registerBinding` for the rebuild branch, `podRegistry.Put` for the checkpoint branch. Then call `fenceResumedPod`.
    5. Run the tail that `handleResume` runs today after its commit, moved here unchanged: the success counter, the `session.resumed` audit row, `emitStatusChange`, `clearInboxOnResume`, the partial-manifest cleanup, `classifyResumeWithAdapter`, `emitResumedEvent`, `emitChildrenReattached`, and `recoverDelegationTree`.
    6. Call `deliverBuffered`, then release the lock.
-6. **`deliverBuffered`.** `sessioninbox` gains `DrainForResume(ctx, tenantID, sessionID)`, which returns the durable-inbox entries first and then the DLQ entries in score order. Durable-inbox entries were buffered before the session left the active states, and DLQ entries arrived during recovery, so this order is FIFO. Each drained message goes through the existing §7.2 delivery classifier: delivered when the runtime is idle, otherwise buffered in the inbox. A drained message is never sent as a raw executor turn while a turn is in flight. Cite `// spec: §7.2 (recovering-state DLQ FIFO delivery)`.
+6. **`deliverBuffered`.** `sessioninbox` gains `DrainForResume(ctx, tenantID, sessionID)`, which returns the session-inbox entries first, read through the coordinator's inbox in either `messaging.durableInbox` mode, and then the DLQ entries in score order. Session-inbox entries were buffered before the session left the active states, and DLQ entries arrived during recovery, so this order is FIFO. Each drained message goes through the existing §7.2 delivery classifier: delivered when the runtime is idle, otherwise buffered in the inbox. A drained message is never sent as a raw executor turn while a turn is in flight. Cite `// spec: §7.2 (recovering-state DLQ FIFO delivery)`.
 7. **Message path lock.** The message path takes the per-session delivery lock around its classify-and-send when this replica holds the session's lease.
 8. **Store-only `POST /resume`.** `EndpointResume` admits `StateAwaitingClientAction` and `StateSuspended`. `handleResume` becomes:
    - from `awaiting_client_action`, or from `suspended` with an empty `PodAssignment`: call `enterResumePending`, then answer `200` with the updated row;
@@ -92,19 +92,19 @@ Targets: `pkg/gateway/runtime/watchdog/watchdog.go`; new `pkg/gateway/sessionser
 13. **SDK.** Rewrite the `Resume` doc comment in `sdks/client/go/lenny/client.go`: the call returns the session in its new state, and the restore's outcome arrives on the event stream.
 14. **Lease gate dependency.** `DriveResume`'s lease gate relies on 0091 replacing the Sweeper's dead-connection lease release with keep-and-renew. Where the lease lapses anyway, CODE-5 adopts the `resume_pending` row, which adds up to one Sweeper period of delay.
 
-### CODE-5 · Sweeper adoption of every ever-bound non-terminal session
+### CODE-5 · Sweeper adoption of the SPEC-2a states
 
 Target: `pkg/gateway/coordination/coordination/coordination.go`, in the 0091 version of `Sweep`. Locate edits by function and quoted text.
 
 1. **Predicate.** Replace `isRunningPod` with two predicates.
-   - `everBound(row)`: the row is non-terminal and its state is `running`, `input_required`, `suspended`, `resume_pending`, or `awaiting_client_action`. `created`, `finalizing`, `ready`, and `starting` are excluded.
+   - `adoptedState(row)`: the row's state is one that SPEC-2a lists as adopted.
    - `podHeld(row)`: the state is `running`, `input_required`, or `suspended`, and `PodAssignment != ""`.
-   Set `adoptable := leaseUnheld && everBound(row) && !inAdoptionBackoff`. The never-bound exclusion of implemented proposal 0060 holds, because every state `everBound` admits is reachable only after a bind. A `resume_pending` or `awaiting_client_action` row is never re-adopted onto a pod, whatever its `PodAssignment` says, because that pod failed.
+   Set `adoptable := leaseUnheld && adoptedState(row) && !inAdoptionBackoff`. The never-bound exclusion of implemented proposal 0060 holds, because every state `adoptedState` admits is reachable only after a bind. A `resume_pending` or `awaiting_client_action` row is never re-adopted onto a pod, whatever its `PodAssignment` says, because that pod failed.
 2. **Takeover branch.** After a non-zero `RecordHandoff`:
    - when `podHeld(row)`, run `readoptAndFence` and `publish` as today;
    - otherwise skip both, and still call `clearAdoptionBackoff`, `upsertMirror` with the `RecordHandoff` generation, and `held++`.
    On both branches, record the `RecordHandoff` result, never `row.CoordinationGeneration`, in 0091's per-session generation map. When the resume driver later publishes a replacement pod's binding on the adopting replica, the binding's `BindResult.CoordinationGeneration` comes from the post-handoff row through 0091's publish-site rule. A zero `RecordHandoff` keeps the existing release-and-continue path.
-3. **Comments.** Rewrite the doc comment of the replaced predicate, the `Sweep` doc comment, and the comment above `eligible`. Each states that adoption covers `running`, `input_required`, `suspended`, `resume_pending`, and `awaiting_client_action` rows, that a row with a held pod is re-fenced, and that `created`, `finalizing`, `ready`, and `starting` rows are not adopted. Cite `// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.2 (Coordinator Handoff Protocol)`.
+3. **Comments.** Rewrite the doc comment of the replaced predicate, the `Sweep` doc comment, and the comment above `eligible`. Each names the adopted states and states that a row with a held pod is re-fenced. Cite `// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination), §10.1.2 (Coordinator Handoff Protocol)`.
 
 ### CODE-6 · Suspension release, idle suspension, suspended lifetime, message routing, and flags
 
@@ -149,7 +149,7 @@ Lands with SPEC-1, SPEC-2, and SPEC-3. Targets:
 - `docs/operator-guide/configuration.md` and `docs/reference/execution-modes.md`: delete the `maxSessionRetries` line from the `sessionPolicy` examples.
 - `docs/runtime-author-guide/runtime-configuration.md` and `docs/runtime-author-guide/publishing.md`: delete `maxSessionRetries` where they list `sessionPolicy` members.
 
-Content: `retryPolicy.maxRetries` is the only retry budget. On the client guide and the API pages only, describe automatic recovery first and present `POST /v1/sessions/{id}/resume` as the client override, which returns the session in its new state while the restore's outcome arrives on the event stream.
+Content: State the retry accounting that SPEC-1b **Retry accounting.** gives. On the client guide and the API pages only, describe automatic recovery first and present `POST /v1/sessions/{id}/resume` as the client override, which returns the session in its new state while the restore's outcome arrives on the event stream.
 
 ### DOCS-1b · Reader documentation for active age and idle suspension
 
@@ -212,8 +212,8 @@ Every test carries a `// spec:` annotation naming the section and heading it exe
 ### Tests that land with CODE-4
 
 - Tier 1, watchdog: `ResumeDriver` is called only for rows inside the window, and the expiry branch is unchanged.
-- Tier 1, driver: a non-holder does nothing; a lease read error does nothing; a session already in flight is not started twice; a pre-claim failure writes nothing, sets the next-attempt time, and the window still elapses to `awaiting_client_action`; a `resume_pending → cancelled` write before the hook makes the hook return `errResumeSuperseded` and the claim is released; a post-claim failure takes the `applyFailureFromResuming` exits, with a setup `FailedPrecondition` landing in `awaiting_client_action` as `setup_command_failed`; a lost commit publishes no binding, writes no `PodAssignment`, and releases the pod with the pod-side reclaim; the deadline before the claim is the remaining window, and after the hook it is `MaxResumingSeconds`.
-- Tier 1: buffered delivery returns durable-inbox entries before DLQ entries and sends no drained message while a turn is in flight. `// spec: §7.2 (Interactive Session Model)`.
+- Tier 1, driver: a non-holder does nothing; a lease read error does nothing; a session already in flight is not started twice; a pre-claim failure writes nothing, sets the next-attempt time, and the window still elapses to `awaiting_client_action`; a `resume_pending → cancelled` write before the hook makes the hook return `errResumeSuperseded` and the claim is released; a `RecordHandoff` bump after the item 3.1 read makes the hook return `errResumeSuperseded` and release the claim, and a bump between the hook and the commit makes the commit release the pod and publish nothing; a bump before a post-claim failure makes the report write nothing; a post-claim failure takes the `applyFailureFromResuming` exits, with a setup `FailedPrecondition` landing in `awaiting_client_action` as `setup_command_failed`; a lost commit publishes no binding, writes no `PodAssignment`, and releases the pod with the pod-side reclaim; the deadline before the claim is the remaining window, and after the hook it is `MaxResumingSeconds`.
+- Tier 1: buffered delivery returns session-inbox entries, in-memory and durable, before DLQ entries and sends no drained message while a turn is in flight. `// spec: §7.2 (Interactive Session Model)`.
 - Tier 1, `pkg/api/v1/session/session_test.go`: `EndpointResume` admits `suspended` and `awaiting_client_action` and rejects the others. Update the cases that assert the `suspended` exclusion.
 - Tier 1: `handleResume` from `awaiting_client_action` and from podless `suspended` writes `resume_pending`, returns `200`, and claims no pod; from held-pod `suspended` it returns `200` with `running`.
 - Tier 1: `ReattachNode` routes a `resume_pending` node through `DriveResume` and skips a `resuming` node.
@@ -221,7 +221,7 @@ Every test carries a `// spec:` annotation naming the section and heading it exe
 
 ### Tests that land with CODE-5
 
-- Tier 1: the predicate adopts each of `running`, `input_required`, `suspended`, `resume_pending`, and `awaiting_client_action` with a lapsed lease, and never `created`, `finalizing`, `ready`, or `starting`. A podless row (`resume_pending`, `awaiting_client_action`, or `suspended` with no `PodAssignment`) gets exactly one generation bump and no readopt; a held-pod `suspended` row is re-fenced. `// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination)`.
+- Tier 1: the predicate adopts each state SPEC-2a lists with a lapsed lease, and no other non-terminal state. A podless row (`resume_pending`, `awaiting_client_action`, or `suspended` with no `PodAssignment`) gets exactly one generation bump and no readopt; a held-pod `suspended` row is re-fenced. `// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination)`.
 - Tier 1: the dead-connection branch releases the lease of a bound session already in `resume_pending`, and a later sweep adopts the row with exactly one generation bump and no readopt.
 - Tier 1: the per-session generation map records the `RecordHandoff` value on the podless takeover edge.
 
