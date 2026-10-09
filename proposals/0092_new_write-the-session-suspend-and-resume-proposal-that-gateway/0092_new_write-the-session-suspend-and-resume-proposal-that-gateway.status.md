@@ -15,4 +15,4 @@ implemented-by:
 
 ## Review history
 
-An adversarial review run was conducted on 2026-10-09. The specification loop ran 6 rounds and converged. The non-specification loop ran 8 rounds and did not converge. The run performed 1 full-pool sweep and fixed 51 findings. Because the non-specification loop did not converge, findings it had not closed remain open.
+An adversarial review run was conducted on 2026-10-09. The specification loop ran 4 rounds and converged. The non-specification loop was not run. The run performed 1 full-pool sweep and fixed 10 findings. The run did not converge overall.
