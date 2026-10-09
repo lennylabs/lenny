@@ -23,7 +23,6 @@ SPEC-5 states idle suspension, the suspension reason, the release disposition an
 - **Adoption of `starting`.** SPEC-2 leaves it unstated. The summary **Defects** entry records the residual.
 - **`input_required` with an absent client.** The idle clock is not evaluated in `input_required`, so such a session keeps its pod until `maxSessionAge` expires it or the `lenny/request_input` call expires. SPEC-5 states this in the idle table.
 - **A runtime that hangs mid-turn.** A turn is in flight, so the idle clock never suspends it. The `CH-ATTACH` stream-failure rule that proposal 0091 lands detects the hang.
-- **A root session that cycles between `awaiting_client_action` and `resume_pending` without entering `suspended`.** A root that a client keeps resuming without a successful restore, and that stays outside `suspended` for longer than `delegation.budgetKeyTTLSeconds` since the last re-arm, meets `BUDGET_KEYS_EXPIRED` (SPEC-5o). This is accepted.
 - **Off-holder `/resume` to a held-pod `suspended` session.** CODE-4 item 8 states the outcome, and the summary **Defects** entry records the residual.
 - **A message held in a session's DLQ.** SPEC-5i delivery path 6 and SPEC-5z state its outcomes.
 - **A failed inbox migration at the suspension release.** SPEC-5z item 11 states the outcome.
@@ -658,7 +657,7 @@ with
 Replace the sentence "The TTL is deliberately generous — it must never fire during normal operation, including sessions that spend extended time in `suspended` state (where `maxSessionAge` is paused and the session may persist indefinitely after pod release; see [§6.2](06_warm-pod-model.md#62-pod-state-machine) `maxSuspendedPodHoldSeconds`)." with
 
 ```
-`delegation.budgetKeyTTLSeconds` must exceed the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` ([§6.2](06_warm-pod-model.md#62-pod-state-machine)), and when a root session that has a delegation tree enters or leaves `suspended`, the gateway re-arms the TTL of every budget key of that root's tree to `delegation.budgetKeyTTLSeconds`. A root that spends longer than the TTL outside `suspended` since the last re-arm meets `BUDGET_KEYS_EXPIRED`.
+`delegation.budgetKeyTTLSeconds` must exceed the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` ([§6.2](06_warm-pod-model.md#62-pod-state-machine)), and when a root session that has a delegation tree enters or leaves `suspended` or leaves `awaiting_client_action` for `resume_pending`, the gateway re-arms the TTL of every budget key of that root's tree to `delegation.budgetKeyTTLSeconds`. A root that spends longer than the TTL outside `suspended` since the last re-arm meets `BUDGET_KEYS_EXPIRED`.
 ```
 
 **SPEC-5p. §9.2 Elicitation Chain, the **Idle clock:** item.** Replace the item's text after "**Idle clock:**" with
