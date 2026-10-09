@@ -55,10 +55,11 @@ Replace the line
 with
 
 ```
-   e. Replay latest workspace checkpoint. A session that has no checkpoint is rebuilt instead: the gateway
-      materializes the workspace on the replacement pod from the session's stored workspace plan, runs the
-      plan's setup commands, and starts the runtime with no carried conversation state, and steps 3f and 3g
-      do not apply
+   e. Replay latest workspace checkpoint. A session that has neither a checkpoint nor a
+      [Section 4.4.5](04_system-components.md#445-checkpoint-storage-failure-and-eviction-fallback) minimal
+      state record is rebuilt instead: the gateway materializes the workspace on the replacement pod from the
+      session's stored workspace plan, runs the plan's setup commands, and starts the runtime with no carried
+      conversation state, and steps 3f and 3g do not apply
 ```
 
 **SPEC-1a2. §28.5.1 Gateway-to-pod, the `CH-ATTACH` **Degradation.** bullet.** Match with line breaks ignored and keep the hard wrapping. Replace "is re-attached on a replacement pod from its last checkpoint when" with "is restored onto a replacement pod by the resume driver when".
@@ -81,7 +82,7 @@ with
 **SPEC-1c. §6.2 Pod State Machine, **Pod crash during an active session.**, the **Retry policy:** and **maxSessionRetries** bullets, and **`resuming` failure transitions:**.** Replace the **Retry policy:** bullet with
 
 ```
-- **Retry policy:** A retryable failure with `retryCount < retryPolicy.maxRetries` moves the session to `resume_pending`, and the resume driver ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**) claims a fresh pod from the warm pool and restores the session onto it. Where a session checkpoint exists, the replacement pod's workspace is restored from the latest checkpoint; otherwise it is rebuilt as step 3e of the [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) resume flow states. Nothing is carried over directly from the crashed pod.
+- **Retry policy:** A retryable failure with `retryCount < retryPolicy.maxRetries` moves the session to `resume_pending`, and the resume driver ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**) claims a fresh pod from the warm pool and restores the session onto it as the [Section 7.3](07_session-lifecycle.md#73-retry-and-resume) resume flow states. Nothing is carried over directly from the crashed pod.
 ```
 
 Delete the **maxSessionRetries** bullet, which after 0091 SPEC-1c reads
