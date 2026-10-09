@@ -2,7 +2,7 @@
 
 Every step lands after proposal 0091 is implemented.
 
-- [ ] **S1 · spec** — SPEC-1. Lands every SPEC-1 edit, SPEC-1a through SPEC-1g2.
+- [ ] **S1 · spec** — SPEC-1. Lands every SPEC-1 edit, SPEC-1a through SPEC-1g3.
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-2. Lands every SPEC-2 edit, SPEC-2a through SPEC-2d.
       Tiers 0, 11. Depends on: S1
@@ -10,7 +10,7 @@ Every step lands after proposal 0091 is implemented.
       Tiers 0, 11. Depends on: S1, S2
 - [ ] **S4 · spec** — SPEC-4. Lands the SPEC-4a edit.
       Tiers 0, 11. Depends on: —
-- [ ] **S5 · spec** — SPEC-5. Lands every SPEC-5 edit, SPEC-5a through SPEC-5z, with the SPEC-5u sweep last.
+- [ ] **S5 · spec** — SPEC-5. Lands every SPEC-5 edit, SPEC-5a through SPEC-5aa, with the SPEC-5u sweep last.
       Tiers 0, 11. Depends on: S1, S3, S4
 - [ ] **S6 · test** — TEST-0. Lands the `spec_28_register_writers_test.go` and `off_holder_matrix_stated_outcome_test.go` updates.
       Tiers 0, 11. Depends on: S2, S5
@@ -24,9 +24,9 @@ Every step lands after proposal 0091 is implemented.
       Tiers 0, 1, 2, 8, 11. Depends on: S1, S2
 - [ ] **S11 · code** — CODE-1. Lands the active-age column, accrual, and sweeps with their tests.
       Tiers 0, 1, 2. Depends on: S4
-- [ ] **S12 · code** — CODE-4. Lands the resume driver with its `resuming` incarnation guard, the store-only `POST /resume`, the held-message enqueue and the delivery of held messages, the `sweepResuming` guard, tree-recovery routing, the derive-failure fence comment, the removal of the durable-inbox `EXPIRE`, the credential assignment on the checkpoint resume, the held-message delivery at `POST /start`, the failure-funnel release under the slot-accounting lock, the renewal stop for a released lease, and the `--max-resuming-seconds` help with their tests.
+- [ ] **S12 · code** — CODE-4. Lands the resume driver with its `resuming` incarnation guard, the store-only `POST /resume`, the held-message enqueue and the delivery of held messages, the `sweepResuming` guard, tree-recovery routing, the derive-failure fence comment, the removal of the durable-inbox `EXPIRE`, the credential assignment on the checkpoint resume, the held-message delivery at `POST /start`, the failure-funnel release under the slot-accounting lock, the renewal stop for a released lease, the generation-scoped pod-release lease return, and the `--max-resuming-seconds` help with their tests.
       Tiers 0, 1, 2, 3, 4, 5, 7a. Depends on: S1, S2, S3, S5, S8, S9, S10, S11
-- [ ] **S13 · code** — CODE-6. Lands the suspension release, idle suspension, the suspended-session lifetime, suspended-session message routing through the DLQ, the held-message delivery before each path-2 message and after a delegated child's task input, the backlog resume with the backlog check at release, the freshness-gauge correction, the delivery admission write, the DLQ expiry sweep of `resuming` rows, the `deadline_approaching` trigger carriers, the budget-key TTL and re-arm, the flags, and the chart values with their tests.
+- [ ] **S13 · code** — CODE-6. Lands the suspension release, idle suspension, the suspended-session lifetime, suspended-session message routing through the DLQ, the held-message delivery before each path-2 message and after a delegated child's task input, the backlog resume with the backlog check at release, the freshness-gauge correction, the delivery admission write, the DLQ expiry sweep of `resuming` rows, the `deadline_approaching` trigger carriers, the budget-key TTL and re-arm, the gateway leader's backlog re-check and its index migration, the user-erasure step for the session DLQ and durable inbox, the flags, and the chart values with their tests.
       Tiers 0, 1, 2, 3, 5, 7a, 11. Depends on: S5, S11, S12
 - [ ] **S14 · docs** — DOCS-1b. Lands every other reader page whole: the state machines, the session lifecycle, configuration, concepts, and the runtime-author pages.
       Tiers 0, 11. Depends on: S1, S2, S3, S4, S5
