@@ -323,7 +323,7 @@ The list of forwarding rows, as SPEC-2d item 1 leaves it, keeps "resume", becaus
 
 ```
 | `POST /v1/sessions/{id}/resume` | `awaiting_client_action` | No forwarding is required; the serving replica writes the [§15.1](15_external-api-surface.md#151-rest-api) transition and the coordinating replica's resume driver performs the restore and the delegation-tree traversal ([§7.3](07_session-lifecycle.md#73-retry-and-resume), [§8.10](08_recursive-delegation.md#810-delegation-tree-recovery)). The serving replica does not run the traversal, because its view of a descendant held by another replica is not evidence that the descendant is orphaned | §29 |
-| `POST /v1/sessions/{id}/resume` | `suspended`, pod released | The same outcome as the `awaiting_client_action` row | §29 |
+| `POST /v1/sessions/{id}/resume` | `suspended`, pod released | The same outcome as the `awaiting_client_action` row when the [Section 11.1](11_policy-and-controls.md#111-admission-and-fairness) resume admission check admits the write, and otherwise the [§15.1](15_external-api-surface.md#151-rest-api) refusal | §29 |
 | `POST /v1/sessions/{id}/resume` | `suspended`, pod still held | Forward to the coordinator, which applies [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6: when the [Section 11.1](11_policy-and-controls.md#111-admission-and-fairness) resume admission check admits the write, it writes `suspended → running` and delivers the held messages, and otherwise the call returns `429 QUOTA_EXCEEDED` and the session stays `suspended`. The serving replica writes no state transition of its own. On an unreachable coordinator it fails closed | §29 |
 ```
 
