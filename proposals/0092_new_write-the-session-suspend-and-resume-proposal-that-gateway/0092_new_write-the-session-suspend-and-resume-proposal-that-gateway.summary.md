@@ -80,6 +80,7 @@
 - `ResumeBacklog` returns false when the cap check refuses. Returning true would skip the release on every tick while the cap stays full, so an interrupt suspension would keep its pod until a slot frees or its lifetime ends (CODE-7 item 5).
 - `CountActiveSessionsGlobal` is also the denominator of the §16.5 session-availability ratio, which therefore stops counting `suspended` sessions (CODE-7 item 1, Decision 32).
 - `ExpireRaisedBy` keys on the raiser rather than the resolver, and the release calls it only after step 4's pod release, under the same `slotAccountLocks` hold (CODE-6 items 19.1 and 19.3).
+- `lenny_session_resume_attempts_total` has one recorder, the deferred `recordResumeAttempt` of each `attemptResume` (CODE-4 item 25). A counter call added at a commit, relinquish, or report site counts a commit that landed at `G` after a store error and was then relinquished twice.
 - `isCredentialRejection` is a positive list. Classifying every `*CredentialAssignmentError` as a rejection would make an exhausted pool or a Token Service outage non-retryable (CODE-4 item 3.7).
 
 ## Goals
