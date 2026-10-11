@@ -153,7 +153,7 @@ Spec: SPEC-1b (**Resume driver.**, **Exits from `resuming`.**, **Retry accountin
    3. Guard miss. Invariant: a commit that did not land releases exactly the attempt's pod and the leases the attempt minted, publishes nothing, and writes nothing. A commit that landed but returned an error is handled as landed.
       - **Landed test.** The miss followed a store error, and the guard's row is in a state `podHeld` admits (CODE-5 item 1) and names the result's sandbox. A concurrent pool's `PodAssignment` names the shared pod, so a miss with no store error never reads as landed.
       - **Landed at `G`.** Run step 4 and step 5's success counter and `session.resumed` audit row. Run the rest of step 5 and step 6 only when the row is `running`.
-      - **Landed above `G`.** A takeover re-adopted the pod (CODE-5 item 2). Publish nothing and release nothing.
+      - **Landed above `G`.** A takeover re-adopted the pod (CODE-5 item 2). Run only step 5's success counter and `session.resumed` audit row, and publish and release nothing.
       - **Not landed.** Call `podBinder.ReleaseUncommitted(ctx, result)` and increment `lenny_session_resume_attempts_total{outcome="failure"}` once.
       - In every case, release the lock and stop.
       - `ReleaseUncommitted(ctx context.Context, result *BindResult) error` is new in `release.go`. It runs the credential-free teardown that `Release(ctx, result, "failed")` runs, or `ReleaseSlot` on a slot pool, and then `releaseAttemptCredentials(result.MintedLeaseIDs)`. Split `Release` and `ReleaseSlot` into a credential release and a credential-free teardown that all three share.

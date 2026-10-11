@@ -141,22 +141,7 @@
 
 ## Open decisions for human to make
 
-Decisions 16 and 27 to 34 record the answers given on 2026-10-11 under the owner's standing delegation of 2026-10-09. The 2026-10-11 redesign runs applied a default to each question below and routed the question to the owner.
-
-- **OD-R2. Delegated answers in place of the owner's.** Question: on 2026-10-11 the launching session answered the five questions that had been put to the owner (OD-N1 to OD-N5) under the owner's standing delegation of 2026-10-09, rather than leaving them for the owner. Do those delegated answers stand?
-  - The answers: the runtime SDKs' busy hold is specified in §15.7 (Decision 31, OD-N1); Decisions 16, 28, 29, and 30 and the failure-edge half of Decision 27 are confirmed (OD-N2); the §16.5 session-availability SLI counts the same sessions as the concurrent-session count, so it excludes `suspended` sessions (Decision 32, OD-N3); a session's pending `lenny/request_elicitation` elicitations expire when it leaves its pod (Decision 33, OD-E1, which a later redesign substituted for the first answer to OD-N4); and a credential rejection that recurs on every restore attempt is the non-retryable `credential_rejected` (Decision 34, OD-N5).
-  - Staged: yes, applied as the default. Every answer above is staged as its Decision states.
-  - Option no: OD-N1 to OD-N5 return to the owner as open questions, and the redesign reverts the staged edits it made for those answers.
-  - Recommendation: the redesign derived none beyond the applied default. The open-decisions-and-impact-review phase supplies it.
-- **OD-R3. Local-development docs line for idle expiry without a pod binder.** Question: should DOCS-1b add a line to `docs/runtime-author-guide/local-development.md` stating that, in the `make run` and `docker compose up` modes, a session left idle past its idle timeout expires with `max_idle_time` rather than being idle-suspended?
-  - Ground: `make run` starts the gateway without `--agent-namespace`, so the gateway wires no pod binder and, under CODE-6 item 5 and Decision 30, expires an idle session rather than suspending it. No page under `docs/` states this, and §17.4 describes Source Mode as running a runtime adapter.
-  - Staged: keep, applied as the default. DOCS-1b carries the `local-development.md` bullet, and CODE-6 item 5 names it.
-  - Option drop: delete the DOCS-1b `local-development.md` bullet and the CODE-6 item 5 clause that names it, and record the subject as not to be refiled.
-  - Recommendation: the redesign derived none beyond the applied default. The open-decisions-and-impact-review phase supplies it.
-- **OD-1. Migration number of the counted-session index.** Question: the elicitation-expiry redesign deleted the `interactions` migration that had taken number 0184. Should CODE-7's counted-session index migration take 0184, so the migration numbers stay contiguous, or keep 0185 and leave 0184 unused?
-  - Staged: 0184, applied as the default (option A).
-  - Option B: CODE-7 keeps 0185, and the 0185-to-0184 replacement in non-spec-changes.md, this summary, and the review log is reversed.
-  - Recommendation: the redesign derived none beyond the applied default. The open-decisions-and-impact-review phase supplies it.
+Decisions 16 and 27 to 34 record the answers given on 2026-10-11 under the owner's standing delegation of 2026-10-09. No decision is open.
 
 ## Defects in the shipped tree that this proposal does not stage
 

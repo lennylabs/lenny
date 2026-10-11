@@ -713,7 +713,7 @@ In spec/09_mcp-integration.md §9.2, after **Elicitation Timeout Semantics:** it
 the `max_idle_time` series counts sessions that cannot be idle-suspended and were expired under the `maxClientIdleSeconds` bound, and `suspended` sessions that reached the suspended-session lifetime `gateway.maxSuspendedSessionSeconds` ([§6.2](06_warm-pod-model.md#62-pod-state-machine))
 ```
 
-In the `lenny_session_resume_attempts_total` row, replace "every session resume attempt after pod loss or gateway crash per the retry-and-resume path in [§7.3](07_session-lifecycle.md#73-retry-and-resume)" with "every resume driver attempt whose `resume_pending → resuming` write took effect ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.** item 2)".
+In the `lenny_session_resume_attempts_total` row, replace "every session resume attempt after pod loss or gateway crash per the retry-and-resume path in [§7.3](07_session-lifecycle.md#73-retry-and-resume)" with "every resume driver attempt whose `resume_pending → resuming` write succeeds ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.** item 2) and that then observes its `resuming → running` commit take effect (item 4, `success`), reports a failure (item 3, `failure`), or observes that commit not take effect (`failure`)".
 
 In the `lenny_session_pod_released_during_suspension_total` row, replace "increments when `maxSuspendedPodHoldSeconds` fires and pod is successfully released" with "increments when a suspended session's pod hold ends and the pod or slot is successfully released".
 
