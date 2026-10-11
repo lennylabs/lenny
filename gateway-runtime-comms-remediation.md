@@ -1557,48 +1557,75 @@ subsystem be built alongside the largest existing-code chain.
 
 **Closes:** 6b.10 and the routing layer of 6c.2.
 
-**Scope.** `spec/07_session-lifecycle.md:330` states that a `delivery: immediate` message landing on a
+**Scope.** `spec/07_session-lifecycle.md` states that a `delivery: immediate` message landing on a
 non-coordinator replica is forwarded to the coordinator, and that an unreachable coordinator degrades to
-inbox buffering with a `queued` receipt. Neither branch exists. Build `ForwardMessage` on R18's transport,
-route by the coordinator recorded in `REG-COORDMIRROR`, and degrade to the inbox that R20 made
-redeliverable. R19 is the successor R10's interim typed refusal names.
+inbox buffering with a `queued` receipt. Neither branch exists. Build `ForwardMessage` on R18's transport
+and route by the coordinator recorded in `REG-COORDMIRROR`.
 
-**Dependencies.** R18 (the transport), R13 (the mirror must carry a resolvable coordinator and address),
-R20 (an inbox degrade path that drops messages is not a degrade path), and R7.
+**Re-derived against proposal 0092 (2026-10-11).** Proposal 0092 makes the session DLQ the only custody
+for a message that is not delivered synchronously (§7.2 delivery path 6) and delivers held messages
+level-triggered by the coordinating replica. It builds no inter-replica transport. R19 changes as follows:
+
+- The unreachable-coordinator branch degrades to a DLQ enqueue under the path-6 custody rule, rather than
+  to the serving replica's inbox. Proposal 0092 records the inbox fallback on the §29.3 off-holder
+  `running` and `input_required` message rows as a defect it does not stage; R19 owns it, and its first
+  spec step rewrites that §7.2 sentence to the DLQ.
+- A message to a `suspended` session needs no forward: path 6 enqueues it and requests the resume from any
+  replica. R19 forwards only to a coordinator that holds a live binding.
+- R19 also carries the §29.3 forward of a `POST /resume` (and of a message-triggered resume) of a
+  `suspended` session that still holds its pod, served by a replica other than the coordinator. Proposal
+  0092 refuses that case with `TARGET_NOT_READY`, HTTP 409, until this transport exists.
+- A forward that fails after the coordinator accepted the frame must not deliver twice; the adapter's
+  `delivered_message_ids` suppression (R20) is the backstop.
+
+**Dependencies.** Proposal 0092, R18 (the transport), R13 (the mirror must carry a resolvable coordinator
+and address), R20 (duplicate suppression), and R7.
 
 **Parallel with.** R17 and R21.
 
 **Risk.** Forwarding introduces a second hop on the hottest path in the product. The latency budget and
 circuit-breaking belong in the §28 card.
 
-**Size.** L.
+**Size.** M (the inbox degrade and the suspended-session routing moved to proposal 0092).
 
 ### R20. Message-plane durability and cross-replica input wait
 
 **Closes:** 6c.3, 6c.4, and the consumer-and-timeout third of 6b.11.
 
-**Scope.** The session inbox is write-only: the only two callers of `inbox.Drain` are `MigrateInboxToDLQ`
-(`pkg/gateway/session/sessioninbox/coordinator.go:121`) and `DrainOnTerminal` (`:201`), so every 200
-response carrying a `queued` receipt is a terminal drop rather than a deferral. Build redelivery.
-Separately, tool approval polls a shared Postgres-backed store every 25 milliseconds so a resolution
-landing on a non-coordinator wakes the blocked executor, and the request-input half has no shared store at
-all; give `inputwait` the same treatment. Add the `ready_for_input` consumer and the configurable
-30-second `delivered` receipt timeout that `spec/07:320` defines.
+**Re-derived against proposal 0092 (2026-10-11).** Proposal 0092 builds held-message delivery: the
+coordinating replica delivers the older of the inbox and DLQ heads, under the per-session delivery lock,
+after every commit to `running` and before each message it delivers, with removal after delivery
+(at-least-once). That closes the redelivery half of 6c.3: the inbox is no longer write-only, and a
+`queued` receipt is a deferral rather than a drop. R20 keeps the rest:
 
-**A verbatim in-repo template exists** for the cross-replica case:
-`tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go`, including its `approvalTimeout` and
-`wakeBudget` structure. 8.5's elicitation question folds in as a third case.
+- **Cross-replica input wait.** Tool approval polls a shared Postgres-backed store every 25 milliseconds
+  so a resolution landing on a non-coordinator wakes the blocked executor; the request-input half has no
+  shared store. Give `inputwait` the same treatment. 8.5's elicitation question folds in as a third case.
+  A verbatim in-repo template exists: `tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go`,
+  including its `approvalTimeout` and `wakeBudget` structure.
+- **The `ready_for_input` consumer and the `delivered` receipt timeout** (configurable, 30 seconds) that
+  §7.2 defines, with R15's `ready_for_input` frame.
+- **Duplicate suppression.** The §7.2 Explicit ACK row requires the adapter to keep a
+  `delivered_message_ids` set and suppress a redelivered message. No code implements it, and proposal
+  0092's at-least-once held-message delivery files it as a defect. R20 builds it, and the §28 card states
+  the resulting delivery semantics with a test that pins them.
+- **Durable-inbox trimmer.** The §7.2 per-message TTL row requires a trimmer that expires durable inbox
+  entries in a recovering state and emits `message_expired` with reason `durable_inbox_ttl_expired`. No
+  code implements it; proposal 0092 files it. R20 builds it, consistent with 0092's rule that a durable
+  inbox key carries no `EXPIRE`.
+- **`inbox_cleared` at adoption.** No code emits the event the §7.2 crash-recovery row requires; proposal
+  0092 files it. R20 emits it.
 
-**Dependencies.** R4's 8.5 answer before the design commits, because a negative answer means a second
-cross-replica store rather than a reuse. R5 (the `messages.go` and `interactions.go` split), R7, and R15
-(the `ready_for_input` frame).
+**Dependencies.** Proposal 0092 (held-message delivery and the DLQ custody rule). R4's 8.5 answer before
+the design commits, because a negative answer means a second cross-replica store rather than a reuse. R5
+(the `messages.go` and `interactions.go` split), R7, and R15 (the `ready_for_input` frame).
 
 **Parallel with.** R11, R13, and R14. Sequenced against R10b on the shared handler files.
 
-**Risk.** Redelivery introduces duplicate-delivery semantics that the §28 card must state and a test must
-pin.
+**Risk.** Duplicate suppression must cover a message delivered once before a crash and again by the
+held-message delivery after a restore; the suppression set's lifetime has to survive that restore.
 
-**Size.** L.
+**Size.** M (redelivery moved to proposal 0092).
 
 ### R21. The off-holder eviction leg
 
@@ -2471,16 +2498,21 @@ other while their code proceeds in parallel.
     filed: the per-frame `coordination_generation` check on `CH-ATTACH`, two retry budgets, the embedded
     `Interrupt`, the hung-runtime scrub residual (assigned to proposal 0087 part 1's `CH-SUPERVISE`
     liveness ping), and the undocumented `retryPolicy.mode: client_only`.
-- [ ] Session suspend-and-resume proposal (not yet written), after proposal 0091 and before proposal 0087
-  part 1 (owner decision, 2026-10-06). It is a release prerequisite: without a resume driver, the failure
+- [ ] Session suspend-and-resume proposal (proposal 0092, in review), after proposal 0091 and before
+  proposal 0087 part 1 (owner decision, 2026-10-06). It stays one proposal (owner decision, 2026-10-10).
+  After it is implemented, the next steps are R4, then a BUILD-GAPS fix for the credential fail-open that
+  proposal 0092 files (`resolveCredentialPools` returns no provider when the tenant or runtime lookup fails),
+  then proposal 0087 part 1 (owner decision, 2026-10-11). It is a release prerequisite: without a resume driver, the failure
   handling of proposal 0091 ends in `resume_pending` with nothing to move the session on, and an idle
   session holds its pod or slot for up to two hours before it ends for good.
   - **Resume driver.** Nothing in the tree moves a session from `resume_pending` to `resuming`, claims a
     replacement pod, and restores the checkpoint (§7.3 **Resume flow after pod failure**, §29.6). This
     proposal builds that path, which both failure recovery and idle suspension use.
-  - **Idle definition (owner decision).** A session is idle when no turn is in flight and nothing passes
-    in either direction between client and runtime. Runtime output to the client counts as activity, and
-    so does a client message. A long silent turn, such as a tool call with no output, is not idle.
+  - **Idle definition (owner decision, amended 2026-10-10).** Idleness is the lack of any activity in
+    either direction between client and runtime. A runtime reports work in progress (a turn, a tool call,
+    background work, or waiting on children) with a `busy` field on `heartbeat_ack`, and that report
+    counts as activity, as do in-flight platform and connector tool calls. The original turn-count design
+    was dropped because it assumed one response per message.
   - **Idle leads to suspension, not expiry (owner decision).** When the idle window ends, the session is
     suspended with an immediate checkpoint, and its pod or slot is released at once rather than after
     `maxSuspendedPodHoldSeconds`. Default idle window: 15 minutes, operator-tunable. Today
@@ -2491,6 +2523,9 @@ other while their code proceeds in parallel.
     lifetime, 7 days by default. Today a podless suspended root session has both clocks paused and
     can stay suspended forever.
   - **`maxSessionAgeSeconds`.** Unchanged at 7200 s; it continues to count only active time.
+  - **Concurrent-session caps (owner decision, 2026-10-10).** A `suspended` session does not count toward
+    the tenant, per-user, per-runtime, or global concurrent-session caps. A resume that would exceed a cap
+    is refused with the existing quota error, and the session stays suspended.
   - **Coordination lease in the recovering states (owner decision, 2026-10-06).** This proposal also owns
     the `REG-COORDLEASE` lifecycle in `resume_pending` and `awaiting_client_action`: when and by whom the
     lease is acquired, adopted, or released there (§29.2 step 11 notes that the spec states no
