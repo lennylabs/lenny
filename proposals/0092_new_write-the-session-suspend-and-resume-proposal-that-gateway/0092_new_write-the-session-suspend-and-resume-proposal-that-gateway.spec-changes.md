@@ -157,9 +157,9 @@ In **`resuming` failure transitions:**, replace the bullet label "**Pod crash or
 
 4. §29.8 Coordinator handoff and crash takeover, step 10. Replace "receives a generation-stale rejection for the session, from the pod or from a failed compare-and-swap on the session row:" with "receives a generation-stale rejection for the session from the pod:". Match with line breaks ignored and keep the step's hard wrapping.
 
-5. §7.1 Normal Flow, derive rule 2. Replace "If a replacement coordinator has already incremented `coordination_generation` (e.g., after a replica crash or Postgres failover mid-copy), the stale replica's INSERT is rejected and no orphan `failed` row becomes visible." with "If `coordination_generation` has advanced since derive admission, because a replacement coordinator incremented it (e.g., after a replica crash or Postgres failover mid-copy) or because the source session entered `resuming` ([§7.3](#73-retry-and-resume) **Resume driver.**), the INSERT is rejected and no `failed` row becomes visible."
+5. §7.1 Normal Flow, derive rule 2. Replace "If a replacement coordinator has already incremented `coordination_generation` (e.g., after a replica crash or Postgres failover mid-copy), the stale replica's INSERT is rejected and no orphan `failed` row becomes visible." with "If `coordination_generation` has advanced since derive admission, the INSERT is rejected and no `failed` row becomes visible."
 
-6. §16.1 Metrics, the `lenny_session_derive_failure_audit_total` row. Replace "`fenced` counts CAS-rejected writes where a replacement coordinator had already advanced `coordination_generation`." with "`fenced` counts CAS-rejected writes where the source session's `coordination_generation` had advanced since derive admission, through a coordinator handoff or the source's entry into `resuming`." The row stays one physical line.
+6. §16.1 Metrics, the `lenny_session_derive_failure_audit_total` row. Replace "`fenced` counts CAS-rejected writes where a replacement coordinator had already advanced `coordination_generation`." with "`fenced` counts CAS-rejected writes where the source session's `coordination_generation` had advanced since derive admission." The row stays one physical line.
 
 **SPEC-1g. §7.3, after the **Retry accounting.** paragraph that SPEC-1b inserts.** Insert
 
