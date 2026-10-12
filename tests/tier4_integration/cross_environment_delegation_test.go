@@ -520,11 +520,11 @@ func (a *poolRecordingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 	}, nil
 }
 
-func (a *poolRecordingAssigner) ReleaseSession(string) {}
+func (a *poolRecordingAssigner) ReleaseSession(string) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*poolRecordingAssigner) Release(string) {}
+func (*poolRecordingAssigner) Release(string) error { return nil }
 
 func (a *poolRecordingAssigner) assignedPools() []string {
 	a.mu.Lock()

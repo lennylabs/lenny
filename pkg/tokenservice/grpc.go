@@ -154,7 +154,9 @@ func (s *GRPCServer) RotateCredentials(ctx context.Context, req *tokensv1.Rotate
 		return nil, status.Errorf(codes.InvalidArgument,
 			"user-backed lease rotation is gateway-local, not a Token Service path (lease source: %q)", old.Source)
 	}
-	s.assign.Release(req.LeaseId)
+	if err := s.assign.Release(req.LeaseId); err != nil {
+		return nil, status.Errorf(codes.Internal, "release lease %q before rotation: %v", req.LeaseId, err)
+	}
 	// §13.3: rotation revokes the previous lease's lease
 	// token. Emit token.revoked so SIEM has a revocation receipt; the
 	// §4.9 rotationTrigger is recorded as the revocation reason so the
@@ -200,7 +202,9 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 	if _, ok := s.leases.GetByID(req.LeaseId); !ok {
 		return nil, status.Errorf(codes.NotFound, "lease %q not found", req.LeaseId)
 	}
-	s.assign.Release(req.LeaseId)
+	if err := s.assign.Release(req.LeaseId); err != nil {
+		return nil, status.Errorf(codes.Internal, "release lease %q: %v", req.LeaseId, err)
+	}
 	// §13.3: emit `token.revoked` for every successful
 	// revocation so SIEM has a revocation receipt and operators can
 	// reconstruct when a lease token was deactivated.

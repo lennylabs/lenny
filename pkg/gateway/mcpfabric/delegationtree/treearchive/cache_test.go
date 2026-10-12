@@ -29,6 +29,11 @@ type countingStore struct {
 
 func newCountingStore() *countingStore { return &countingStore{inner: NewMemory()} }
 
+func (c *countingStore) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	c.deletes++
+	return c.inner.DeleteByTenant(ctx, tenantID)
+}
+
 func (c *countingStore) DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error) {
 	c.deletes++
 	return c.inner.DeleteBySession(ctx, tenantID, rootSessionID)

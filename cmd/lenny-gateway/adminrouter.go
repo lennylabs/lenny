@@ -167,6 +167,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	billingApproverWebhookURL := f.billingApproverWebhookURL
 	billingDualControlThreshold := f.billingDualControlThreshold
 	legalHoldEscrowBucket := f.legalHoldEscrowBucket
+	tenantDeletionInterval := f.tenantDeletionInterval
 	minioBucket := f.minioBucket
 	minioUseSSL := f.minioUseSSL
 	opsServiceURL := f.opsServiceURL
@@ -742,37 +743,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// Postgres advisory lock keeps the destructive loop on one replica.
 	// spec: §12.8. F-12.8.1, F-24.10.3.
 	{
-		var tenantErasers []namedTenantEraser
-		if w.erasureLeaseStore != nil {
-			tenantErasers = append(tenantErasers, namedTenantEraser{"leases", w.erasureLeaseStore.DeleteByTenant})
-		}
-		// §12.8 Phase 4 quota erasure spans the whole §12.2 QuotaStore role:
-		// Redis counter, Postgres token_usage_checkpoint, and the in-memory
-		// fail-open accumulator.
-		if quotaEraser := buildQuotaEraser(quotaCounter, w.pgPool, quotaFailOpenAccum); quotaEraser != nil {
-			tenantErasers = append(tenantErasers, namedTenantEraser{"quota", quotaEraser.DeleteByTenant})
-		}
-		if w.memories != nil {
-			mem := w.memories
-			tenantErasers = append(tenantErasers, namedTenantEraser{"memory", func(ctx context.Context, tenantID string) (int, error) {
-				return 0, mem.DeleteByTenant(ctx, tenantID)
-			}})
-		}
-		tenantErasers = append(
-			tenantErasers,
-			namedTenantEraser{"eval_results", w.evals.DeleteByTenant},
-			namedTenantEraser{"interactions", w.interactions.DeleteByTenant},
-			// SessionStore is the FK parent of the session-keyed stores
-			// above, so it is erased after them (§12.8 Phase 4 order).
-			namedTenantEraser{"sessions", w.sessions.DeleteByTenant},
-		)
-		if w.pgPool != nil {
-			tenantErasers = append(tenantErasers,
-				namedTenantEraser{"tokens", issuedtokenstore.New(w.pgPool).DeleteByTenant})
-		}
-		tenantErasers = append(tenantErasers,
-			namedTenantEraser{"credential_pool", credentialPools.DeleteByTenant})
-
+		tenantErasers := w.buildTenantErasers(quotaCounter, quotaFailOpenAccum, credentialPools)
 		deletionReconciler := &tenantdeletion.Reconciler{
 			Jobs:     tenantdeletion.NewMemory(),
 			Eraser:   &tenantEraser{erasers: tenantErasers},
@@ -848,7 +819,7 @@ func (w *gatewayWiring) buildAdminRouter(
 				reconciler: deletionReconciler,
 				tenants:    w.tenants,
 				clock:      clockinject.Now,
-				interval:   30 * time.Second,
+				interval:   *tenantDeletionInterval,
 				pool:       w.pgPool,
 			}
 			go runner.Start(context.Background())

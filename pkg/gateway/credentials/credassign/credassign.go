@@ -49,12 +49,15 @@ type Assigner interface {
 	// without re-deriving the wire form from raw fields.
 	ProtoLeaseByID(leaseID string) (*adapterv1.CredentialLease, error)
 	// Release frees the credential session slot a lease held and removes
-	// the lease record. It is a no-op for an unknown lease id.
-	Release(leaseID string)
+	// the lease record. It is a no-op for an unknown lease id. A non-nil
+	// error reports that the slot may still be held by the authoritative
+	// store; the local lease record is removed either way.
+	Release(leaseID string) error
 	// ReleaseSession releases every lease the session holds back to its
 	// pool. It is the §7.1 step 23 session-teardown release. A session
-	// with no leases is a no-op.
-	ReleaseSession(sessionID string)
+	// with no leases is a no-op. Every lease is attempted, and the
+	// returned error joins each failed release.
+	ReleaseSession(sessionID string) error
 	// OnAssigned registers an observer the assigner invokes after every
 	// successful Assign. The §4.9 Proactive Lease Renewal worker
 	// registers here so each minted lease is tracked for renewal.
@@ -376,11 +379,13 @@ func poolUtilizationLocked(ps *poolState) float64 {
 // the lease from the credential-lease store. The cached upstream
 // credential is left in place because other leases on the same pool
 // credential continue to need it. Release is a no-op for an unknown
-// lease ID.
-func (s *Service) Release(leaseID string) {
+// lease ID. The in-process store cannot fail, so the error is always
+// nil; it exists to satisfy Assigner.
+func (s *Service) Release(leaseID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.releaseLocked(leaseID)
+	return nil
 }
 
 // ReleaseSession releases every §4.9 credential lease the service holds
@@ -397,15 +402,16 @@ func (s *Service) Release(leaseID string) {
 // counter stays incremented after every session ends, so under sustained
 // load `select.go` eventually reports `ErrPoolExhausted` for credentials
 // that are in fact idle.
-func (s *Service) ReleaseSession(sessionID string) {
+func (s *Service) ReleaseSession(sessionID string) error {
 	if sessionID == "" {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, lease := range s.leases.LeasesBySession([]string{sessionID}) {
 		s.releaseLocked(lease.LeaseID)
 	}
+	return nil
 }
 
 // releaseLocked frees the credential session slot a single lease held and

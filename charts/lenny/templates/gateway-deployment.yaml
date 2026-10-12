@@ -484,6 +484,16 @@ spec:
             # reverse-proxies /v1/oauth/* to the Token Service's HTTP
             # listener so the Token Service is the sole minter.
             - --token-service-http-url=http://lenny-token-service.{{ .Release.Namespace }}.svc:{{ .Values.tokenService.httpPort }}
+            {{- if ne .Values.tenancy.mode "multi" }}
+            # §4.2 / §4.3: the fallback tenant the gateway carries on a
+            # Token Service request whose lease names none. A single-tenant
+            # deployment assigns every request to the built-in `default`
+            # tenant, so a lease release (RevokeCredentials) must carry it;
+            # an empty tenant is rejected and the pool slot is never freed.
+            # A multi-tenant deployment renders no fallback because every
+            # lease carries its own tenant.
+            - --token-service-tenant=default
+            {{- end }}
             {{- else }}
             # spec: §17.4 dev profile — tokenService.enabled is false, so the
             # gateway dials no Token Service. With no --token-service-grpc-addr

@@ -1318,13 +1318,14 @@ func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*ada
 	}, nil
 }
 
-func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
+func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*recordingLeaseAssigner) Release(string) {}
+func (*recordingLeaseAssigner) Release(string) error { return nil }
 
 // spec: §7.1 step 23 (lease release: a finalize failure after
 // AssignCredentials succeeded reclaims the pod and revokes the lease),

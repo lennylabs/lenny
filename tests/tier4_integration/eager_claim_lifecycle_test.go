@@ -118,15 +118,16 @@ func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv
 	}, nil
 }
 
-func (a *recordingAssigner) ReleaseSession(sessionID string) {
+func (a *recordingAssigner) ReleaseSession(sessionID string) error {
 	a.mu.Lock()
 	a.released = append(a.released, sessionID)
 	a.mu.Unlock()
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*recordingAssigner) Release(string) {}
+func (*recordingAssigner) Release(string) error { return nil }
 
 func (a *recordingAssigner) assignCount() int {
 	a.mu.Lock()

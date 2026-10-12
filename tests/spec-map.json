@@ -217,7 +217,11 @@
         "tests/tier4_integration/oauth_token_proxy_test.go::TestOAuthTokenSurfaceUnmountedWithoutProxy",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS",
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore",
-        "tests/tier6_e2e_cloud/aws_resources_test.go"
+        "tests/tier6_e2e_cloud/aws_resources_test.go",
+        "tests/tier3_contract/tokenservice_release/release_contract_test.go",
+        "pkg/gateway/credentials/credassign/client_classify_internal_test.go",
+        "pkg/gateway/credentials/credassign/client_release_breaker_test.go",
+        "tests/tier0_static/token_service_tenant_render_test.go"
       ],
       "packages": [
         "pkg/token",
@@ -1138,7 +1142,8 @@
         "pkg/gateway/sessionserver/start_preclaim_internal_test.go",
         "pkg/adapter/slotsession_test.go",
         "tests/tier9_security/credential_rotation_cotenant_inflight_gate_test.go",
-        "tests/tier9_security/slot_credential_reclaim_fence_test.go"
+        "tests/tier9_security/slot_credential_reclaim_fence_test.go",
+        "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestExhaustedPoolDoesNotOpenBreaker_spec_4_3"
       ],
       "packages": [
         "pkg/credential",
@@ -1832,7 +1837,9 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensatesWhenTheCallerContextExpired_spec_7_1",
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestResumeCompensationOutcomeReachesTheReclaimHook_spec_7_1",
         "pkg/gateway/sessionserver/slotretry_test.go::TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1",
-        "pkg/gateway/sessionserver/stream_failure_test.go::TestStreamFailureNonRetryableReleasesOnLiveContext_spec_28_5_1"
+        "pkg/gateway/sessionserver/stream_failure_test.go::TestStreamFailureNonRetryableReleasesOnLiveContext_spec_28_5_1",
+        "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestReleaseFreesTokenServiceLeaseEveryTenancyConfig_spec_7_1",
+        "pkg/gateway/podlifecycle/podsession/credentiallease_release_internal_test.go"
       ],
       "packages": [
         "pkg/session"
@@ -2173,7 +2180,10 @@
         "tests/tier8_chaos/token_service_unavailability_guard_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
-        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated"
+        "tests/tier11_docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
+        "pkg/api/v1/session/task_error_code_test.go",
+        "pkg/gateway/sessionserver/task_error_code_internal_test.go",
+        "pkg/gateway/mcpfabric/mcptools/task_error_code_internal_test.go"
       ],
       "packages": [
         "pkg/session/state"
@@ -3366,7 +3376,10 @@
         "tests/tier2_component/legalholdreconciler/reconciler_test.go",
         "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
         "pkg/gateway/checkpoint/checkpointretention/checkpointretention_test.go",
-        "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go"
+        "pkg/gateway/checkpoint/partialmanifeststore/partialmanifeststore_test.go",
+        "tests/tier4_integration/tenant_deletion_phase4_test.go",
+        "pkg/gateway/storage/erasure/tenant_order_test.go",
+        "pkg/gateway/mcpfabric/delegationtree/treearchive/erasure_tenant_test.go"
       ],
       "packages": [
         "pkg/store",

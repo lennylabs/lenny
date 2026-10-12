@@ -77,11 +77,11 @@ func (a *leaseCountingAssigner) AssignProto(pool, _, _, _ string) (*adapterv1.Cr
 		Payload: []byte(`{"deliveryMode":"proxy","materializedConfig":{"proxyUrl":"https://p/v1","leaseToken":"lt"}}`),
 	}, nil
 }
-func (a *leaseCountingAssigner) ReleaseSession(string) {}
+func (a *leaseCountingAssigner) ReleaseSession(string) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*leaseCountingAssigner) Release(string) {}
+func (*leaseCountingAssigner) Release(string) error { return nil }
 
 func (a *leaseCountingAssigner) count() int {
 	a.mu.Lock()

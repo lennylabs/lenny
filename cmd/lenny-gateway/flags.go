@@ -335,6 +335,7 @@ type gatewayFlags struct {
 	poolerMode                                    *string
 	legalHoldEscrowBucket                         *string
 	legalHoldEscrowEndpoint                       *string
+	tenantDeletionInterval                        *time.Duration
 
 	// externalInterceptors collects each repeatable --external-interceptor
 	// value (§4.8 external RequestInterceptor registration). It is appended
@@ -877,7 +878,7 @@ func (f *gatewayFlags) registerSessionFlags() {
 	f.mtlsCurrentCAID = flag.String("mtls-current-ca-id", os.Getenv("LENNY_MTLS_CURRENT_CA_ID"),
 		"§10.3 id of the cluster-internal CA that currently signs control-plane leaves (the chart's mtls.currentCAID, default lenny-mtls-ca when mtls.enabled). When set, the gateway serves the durable /v1/admin/ca-rotation procedure (begin/promote/retire) so an operator rotation is audited, overlap-window enforced, and resumable across restarts. Empty disables the CA-rotation admin surface (mTLS PKI disabled).")
 	f.tokenServiceTenant = flag.String("token-service-tenant", os.Getenv("LENNY_TOKEN_SERVICE_TENANT"),
-		"tenant id the gateway carries on every §4.3 Token Service request. The Token Service applies §4.2 RLS against this id. Empty disables tenant binding (dev mode).")
+		"fallback tenant id the gateway carries on a §4.3 Token Service request whose lease or session names no tenant of its own. The Token Service applies §4.2 RLS against this id. Empty resolves to the built-in `default` tenant under --tenancy-mode=single and stays empty under --tenancy-mode=multi, where every lease carries its own tenant.")
 	f.elicitationFloor = flag.String("elicitation-content-integrity-floor", os.Getenv("LENNY_ELICITATION_CONTENT_INTEGRITY_FLOOR"),
 		"§9.2 platform-wide elicitation content-integrity floor (off | detect-only | enforce). The §15.1 admin GET endpoint reports the resolved effective mode as max(floor, tenantStored). A PUT below the floor is rejected with ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR. Empty defaults to `off` (no floor). This value seeds the floor at startup; the §17.2 phase-stamp ConfigMap reconcile then keeps it live.")
 	f.elicitationFloorConfigMap = flag.String("elicitation-floor-configmap-name", envOr("LENNY_ELICITATION_FLOOR_CONFIGMAP", elicitationfloor.DefaultConfigMapName),
@@ -1306,4 +1307,10 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§12.8 single-region legal-hold escrow bucket name. Empty disables the force-delete override (it fails closed with LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE).")
 	f.legalHoldEscrowEndpoint = flag.String("legal-hold-escrow-endpoint", os.Getenv("LENNY_LEGAL_HOLD_ESCROW_ENDPOINT"),
 		"§12.8 legal-hold escrow bucket endpoint (S3-compatible).")
+	// The tick of the gateway-hosted §12.8 tenant-deletion runner. Each
+	// tick advances every in-flight deletion by one phase. The
+	// specification fixes no cadence, so the 30s default is
+	// operator-tunable.
+	f.tenantDeletionInterval = flag.Duration("tenant-deletion-interval", envDuration("LENNY_TENANT_DELETION_INTERVAL", 30*time.Second),
+		"§12.8 tenant-deletion runner tick. Each tick advances every in-flight tenant deletion by one phase. Default 30s. Override via LENNY_TENANT_DELETION_INTERVAL.")
 }

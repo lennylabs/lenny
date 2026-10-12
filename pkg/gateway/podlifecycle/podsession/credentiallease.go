@@ -5,6 +5,7 @@ package podsession
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -29,13 +30,16 @@ type CredentialAssigner interface {
 	// holds back to its pool. It is the §7.1 step 23 teardown the binder
 	// runs when a session's pod is released, so a completed session's
 	// pool slots are returned rather than leaking. A session with no
-	// leases is a no-op. spec: §7.1.
-	ReleaseSession(sessionID string)
+	// leases is a no-op. A non-nil error reports a lease the
+	// authoritative store may still hold. spec: §7.1.
+	ReleaseSession(sessionID string) error
 	// Release releases the one §4.9 credential lease leaseID names back to
 	// its pool. A failed bind attempt calls it for each lease it minted, so
 	// the release never reaches a lease a successor attempt for the same
-	// session minted. An unknown lease is a no-op. spec: §7.1, §4.9.
-	Release(leaseID string)
+	// session minted. An unknown lease is a no-op. A non-nil error
+	// reports a lease the authoritative store may still hold.
+	// spec: §7.1, §4.9.
+	Release(leaseID string) error
 }
 
 // UserCredentialAssigner materializes a session's §4.9 user-source
@@ -136,9 +140,18 @@ func (b *Binder) assignCredentials(ctx context.Context, cl *adapterclient.Client
 // their pool at teardown (§7.1 step 23). It is a no-op when the binder
 // has no credential service, mirroring assignCredentials so a deployment
 // without credential pools tears down cleanly.
+//
+// A failed release is logged with the session and the cause. Teardown
+// continues, because the pod and the session's terminal state do not
+// depend on the Token Service, but the failure means a pool slot may
+// still be held, so it is never dropped silently.
+//
+// spec: §7.1 (Normal Flow, step 23).
 func (b *Binder) releaseCredentials(sessionID string) {
 	if b.Credentials == nil {
 		return
 	}
-	b.Credentials.ReleaseSession(sessionID)
+	if err := b.Credentials.ReleaseSession(sessionID); err != nil {
+		log.Printf("podsession: release credential leases for session %s: %v", sessionID, err)
+	}
 }

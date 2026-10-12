@@ -133,11 +133,11 @@ type materializeRaceAssigner struct{}
 func (materializeRaceAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
-func (materializeRaceAssigner) ReleaseSession(string) {}
+func (materializeRaceAssigner) ReleaseSession(string) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (materializeRaceAssigner) Release(string) {}
+func (materializeRaceAssigner) Release(string) error { return nil }
 
 // materializeCluster boots one envtest control plane and seeds the three warm
 // pools the sub-tests claim from: an assignable pool with an idle pod, an

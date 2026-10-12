@@ -77,7 +77,9 @@ func TestReleaseObservesLeaseDuration_spec_16_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	svc.Release(lease.LeaseID)
+	if err := svc.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	if len(m.durations) != 1 {
 		t.Fatalf("durations = %d, want 1", len(m.durations))
@@ -118,7 +120,9 @@ func TestPoolUtilizationTracksInUseCredentials_spec_16_1(t *testing.T) {
 	if m.utilization["claude-prod"] != 1.0 {
 		t.Errorf("after 2 assigns utilization = %v, want 1.0", m.utilization["claude-prod"])
 	}
-	svc.Release(l1.LeaseID)
+	if err := svc.Release(l1.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 	if m.utilization["claude-prod"] != 0.5 {
 		t.Errorf("after release utilization = %v, want 0.5", m.utilization["claude-prod"])
 	}
@@ -133,5 +137,7 @@ func TestNilMetricsIsNoOp_spec_16_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assign with nil metrics: %v", err)
 	}
-	svc.Release(lease.LeaseID)
+	if err := svc.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 }

@@ -30,13 +30,14 @@ func (a *reclaimRecordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.Cr
 	return nil, nil
 }
 
-func (a *reclaimRecordingAssigner) ReleaseSession(sessionID string) {
+func (a *reclaimRecordingAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*reclaimRecordingAssigner) Release(string) {}
+func (*reclaimRecordingAssigner) Release(string) error { return nil }
 
 // reclaimTestServer builds a white-box Server wired with a fake-client binder
 // (holding a seeded per-pod SandboxClaim for podName), a live registry, and a

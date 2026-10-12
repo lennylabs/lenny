@@ -703,8 +703,10 @@ func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore
 // parent's session stream when a delegated child reaches the `failed`
 // terminal state. The payload carries the child task id, the
 // transient/permanent failure classification, the coded error details
-// (failure class and reason), and whether the child's retry budget was
-// exhausted, the fields §8.10 enumerates, so the parent agent can decide
+// (failure class and reason, and the §8.8 error code, category, message,
+// and retryable flag the child's TaskResult carries for the same
+// failure), and whether the child's retry budget was exhausted, the
+// fields §8.10 enumerates, so the parent agent can decide
 // to re-spawn a replacement, continue with partial results, or propagate
 // the failure upward without polling or re-issuing await_children.
 //
@@ -733,17 +735,33 @@ func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session)
 	if transient {
 		classification = "transient"
 	}
+	// spec: §8.10, §8.8, §15.2 — the error details carry the code and
+	// category the child's TaskResult error block reports for the same
+	// failure, so a parent reading child_failed sees DEADLOCK_TIMEOUT
+	// rather than the stored reason. The code, category, message, and
+	// retryable keys are the shared error taxonomy the MCP
+	// notifications/lenny/error frame projects this event into.
+	code := session.TaskErrorCode(sess.FailureReason, sess.State)
+	category, retryable := errorclassify.Classify(code)
 	data, err := json.Marshal(struct {
 		ChildTaskID      string `json:"child_task_id"`
 		Classification   string `json:"classification"`
 		FailureClass     string `json:"failure_class,omitempty"`
 		FailureReason    string `json:"failure_reason,omitempty"`
+		Code             string `json:"code"`
+		Category         string `json:"category"`
+		Message          string `json:"message"`
+		Retryable        bool   `json:"retryable"`
 		RetriesExhausted bool   `json:"retries_exhausted"`
 	}{
 		ChildTaskID:    sess.ID,
 		Classification: classification,
 		FailureClass:   string(sess.FailureClass),
 		FailureReason:  sess.FailureReason,
+		Code:           code,
+		Category:       string(category),
+		Message:        "child session ended in state " + string(sess.State),
+		Retryable:      retryable,
 		// spec: §8.8 (TaskRecord and TaskResult Schema) — the spent
 		// budget, independent of the retryable classification above.
 		RetriesExhausted: sessionrecord.RetriesExhausted(sess.RetryCount, s.EffectiveMaxRetries(sess)),
@@ -1035,10 +1053,9 @@ func isDeliverableArtifact(r artifactcatalog.Record) bool {
 // archived body or the live row.
 // spec: §8.8; §15.2.1. F-8.8.4.
 func taskErrorForSession(sess sessionstore.Session, maxRetries int) *sessionrecord.Error {
-	code := sess.FailureReason
-	if code == "" {
-		code = "CHILD_" + strings.ToUpper(string(sess.State))
-	}
+	// spec: §8.8 — the stored reason maps to its catalog code, such as
+	// deadlock_timeout to DEADLOCK_TIMEOUT. F-8.8.6.
+	code := session.TaskErrorCode(sess.FailureReason, sess.State)
 	cat, _ := errorclassify.Classify(code)
 	return &sessionrecord.Error{
 		Code:             code,

@@ -16,6 +16,7 @@ package pgstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -224,6 +225,35 @@ func (s *Store) DeleteBySession(ctx context.Context, tenantID, rootSessionID str
 	})
 	if err != nil {
 		return 0, err
+	}
+	return deleted, nil
+}
+
+// DeleteByTenant removes every archived node within tenantID and returns
+// the count removed. It is the session_tree_archive step of §12.8 tenant
+// deletion Phase 4: the migration 0100 FK root_session_id → sessions(id)
+// carries no ON DELETE action, so the tenant's archive rows MUST be
+// erased before the SessionStore step or the sessions delete violates
+// the constraint. The RLS guard scopes the delete to tenantID, and an
+// empty tenantID is rejected rather than read as "every tenant".
+//
+// spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("treearchive: DeleteByTenant requires a non-empty tenant id")
+	}
+	var deleted int
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM session_tree_archive WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("treearchive: delete archive rows of tenant %s: %w", tenantID, err)
 	}
 	return deleted, nil
 }

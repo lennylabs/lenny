@@ -24,6 +24,9 @@ var canonicalRank = map[string]int{
 	"billing_buffer":       50,  // step 5
 	"quota":                60,  // step 6
 	"artifacts":            70,  // step 7 (ArtifactStore, MinIO)
+	"checkpoint_manifests": 71,  // step 7 family (ArtifactStore checkpoints: checkpoint_manifest)
+	"checkpoint_retention": 72,  // step 7 family (ArtifactStore checkpoints: session_checkpoints)
+	"checkpoint_meta":      73,  // step 7 family (ArtifactStore checkpoints: session_checkpoint_meta)
 	"transcripts":          75,  // step 7 family (session transcripts)
 	"interactions":         78,  // session interaction records (FK child of sessions)
 	"memory":               80,  // step 8
@@ -110,6 +113,39 @@ func ValidateOrder(cfg Config) error {
 				child, canonicalRank[child], parent, canonicalRank[parent],
 			)
 		}
+	}
+	return nil
+}
+
+// ValidateTenantOrder checks that a §12.8 tenant-deletion Phase 4
+// eraser sequence runs in dependency order before any store is erased.
+// Phase 4 runs DeleteByTenant on each store in the order given, so the
+// names must be known to canonicalRank, appear once each, and run in
+// strictly increasing rank. Strict rank order also satisfies every
+// fkMustPrecede edge, which the gateway relies on: a foreign-key child
+// such as session_tree_archive erased after SessionStore makes the
+// sessions delete fail and leaves the deletion stuck in Phase 4.
+//
+// spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
+func ValidateTenantOrder(names []string) error {
+	seen := map[string]bool{}
+	prev, prevName := -1, ""
+	for _, name := range names {
+		rank, ok := canonicalRank[name]
+		if !ok {
+			return fmt.Errorf("erasure: tenant eraser %q has no §12.8 dependency rank; add it to canonicalRank", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("erasure: tenant eraser %q wired into more than one slot", name)
+		}
+		seen[name] = true
+		if rank <= prev {
+			return fmt.Errorf(
+				"erasure: §12.8 tenant Phase 4 order violation — %q (rank %d) is wired after %q (rank %d)",
+				name, rank, prevName, prev,
+			)
+		}
+		prev, prevName = rank, name
 	}
 	return nil
 }

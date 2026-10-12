@@ -118,11 +118,11 @@ func (a *materializeLeaseCounter) AssignProto(pool, sessionID, _, tenantID strin
 	}, nil
 }
 
-func (a *materializeLeaseCounter) ReleaseSession(string) {}
+func (a *materializeLeaseCounter) ReleaseSession(string) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*materializeLeaseCounter) Release(string) {}
+func (*materializeLeaseCounter) Release(string) error { return nil }
 
 func (a *materializeLeaseCounter) count() int {
 	a.mu.Lock()
