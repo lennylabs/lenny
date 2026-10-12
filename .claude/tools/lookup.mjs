@@ -15,15 +15,16 @@
 //   lookup.mjs --json '<request>'        or        lookup.mjs < request.json
 //   lookup.mjs --warm [scope ...]        embed every passage in the scopes (default: spec)
 //
-// Request (every field optional except that one of exact, meaning, sections is given):
+// Request (every field optional except that one of exact, meaning, sections, lines is given):
 //   {
 //     "scope":    ["spec"],             // any of: spec docs pkg cmd sdks charts schemas tests proposals
 //     "paths":    ["spec/07_session-lifecycle.md"],   // narrows the scope to these files or directories
 //     "exact":    ["maxSessionRetries", {"pattern": "idle[- ]terminat", "regex": true, "ignoreCase": true}],
 //     "meaning":  [{"query": "an idle session is terminated", "context": "checking for restatements"}],
 //     "sections": ["7.2", "28.5.3"],    // spec sections to return whole, by number
+//     "lines":    ["spec/07_session-lifecycle.md:430-446"],   // line ranges to return verbatim
 //     "context":  "what the caller is trying to establish",   // narrows which exact hits print in full
-//     "maxChars": 24000,                // output budget
+//     "maxChars": 24000,                // output budget, capped at 26000
 //     "exhaustive": true,               // meaning: judge every passage in scope. Default: only when the
 //                                       // scope holds 3,000 passages or fewer; false forces a shortlist
 //     "format": "text"                  // "json" returns every judged candidate, for tuning
@@ -66,6 +67,7 @@ const SCOPES = {
 const CODE_EXT = /\.(go|proto|ya?ml|json|tpl|ts|py|sh|sql|md)$/;
 const SKIP_DIR = new Set(["node_modules", ".git", "vendor", "testdata", "dist", "bin"]);
 const MAX_FILE_BYTES = 6_000_000;
+const MAX_BUDGET = 26000;
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 const JEV_MODEL = process.env.LOOKUP_JEV_MODEL || "jev-latest";
 const JEV_CONCURRENCY = Number(process.env.LOOKUP_JEV_CONCURRENCY) || 32;
@@ -445,9 +447,16 @@ async function main() {
   const exact = Array.isArray(req.exact) ? req.exact : [];
   const meaning = (Array.isArray(req.meaning) ? req.meaning : []).map((m) => (typeof m === "string" ? { query: m } : m));
   const sections = Array.isArray(req.sections) ? req.sections.map(String) : [];
-  if (!req.warm && !exact.length && !meaning.length && !sections.length) usage("give at least one of exact, meaning, sections");
+  if (!req.warm && !exact.length && !meaning.length && !sections.length && !(Array.isArray(req.lines) && req.lines.length))
+    usage("give at least one of exact, meaning, sections, lines");
   const key = typesafeKey();
-  const budget = Number(req.maxChars) > 0 ? Number(req.maxChars) : 24000;
+  const lineReqs = Array.isArray(req.lines) ? req.lines.map(String) : [];
+  // The harness that runs this tool for an agent saves any output past roughly
+  // 30,000 characters to a file, and the agent then spends turns reading the file
+  // back. The budget is capped below that, whatever the caller asks for; what does
+  // not fit is listed by location and can be fetched with "lines".
+  const asked = Number(req.maxChars) > 0 ? Number(req.maxChars) : 24000;
+  const budget = Math.min(asked, MAX_BUDGET);
   const root = repoRoot();
   const files = collectFiles(root, req);
 
@@ -490,6 +499,39 @@ async function main() {
   let base = 0;
   const fits = (s) => used + s.length < base + ((budget - base) * (done + 1)) / lookups;
   emit(`# lookup over ${files.length} file(s) under: ${(req.scope && req.scope.length ? req.scope : ["spec"]).join(", ")}${req.paths ? " (paths: " + req.paths.join(", ") + ")" : ""}`);
+
+  if (asked > MAX_BUDGET) emit(`Output is capped at ${MAX_BUDGET} characters (maxChars ${asked} asked). Passages that do not fit are listed by location; fetch them with "lines".`);
+  // "lines" returns named line ranges verbatim: the follow-up for a passage that
+  // an earlier call listed without text, several ranges to a call.
+  for (const spec of lineReqs) {
+    const m = /^(.+?):(\d+)(?:-(\d+))?$/.exec(spec.trim());
+    if (!m) {
+      emit(`\n## lines ${spec}: expected "path:from-to"`);
+      continue;
+    }
+    const from = Number(m[2]);
+    const to = Math.max(from, Number(m[3] || m[2]));
+    let t = texts.get(m[1]);
+    if (t === undefined) {
+      try {
+        t = readFileSync(join(root, m[1]), "utf8");
+      } catch {
+        emit(`\n## lines ${spec}: no such file`);
+        continue;
+      }
+    }
+    const ls = t.split("\n");
+    const body = ls.slice(from - 1, to).join("\n");
+    const bl = blocksOf.get(m[1]) || (m[1].endsWith(".md") ? mdBlocks(m[1], t) : []);
+    const h = [...bl].reverse().find((b) => b.isHeading && b.from <= from);
+    emit(`\n## lines ${m[1]}:${from}-${Math.min(to, ls.length)}${h ? `  [${h.heading}]` : ""}`);
+    const room = Math.floor(budget - used - 200);
+    if (body.length <= room) emit(body);
+    else {
+      emit(body.slice(0, Math.max(0, room)));
+      emit(`[truncated: ${body.length - Math.max(0, room)} characters not shown; ask for fewer lines per call.]`);
+    }
+  }
 
   if (sections.length) {
     for (const s of sections) {

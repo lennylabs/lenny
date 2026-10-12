@@ -89,6 +89,14 @@ try {
   r = run({ exact: ["MaxIdle"], paths: ["pkg/gw/limits.go"] });
   check("paths reaches a single file outside the named scopes", /2 occurrence\(s\)/.test(r.stdout) && r.stdout.includes("pkg/gw/limits.go"), r.stdout);
 
+  r = run({ lines: ["spec/07_sessions.md:16-17", "pkg/gw/limits.go:4", "spec/none.md:1-2", "garbage"] });
+  check("lines returns a range verbatim under its heading", r.stdout.includes("## lines spec/07_sessions.md:16-17  [7.2 Resume]") && r.stdout.includes("Resume is unrelated text."), r.stdout);
+  check("lines reads a file outside the scope", r.stdout.includes("const MaxIdle = 900"));
+  check("lines reports a missing file and a malformed entry", r.stdout.includes("no such file") && r.stdout.includes('expected "path:from-to"'));
+
+  r = run({ exact: ["maxIdle"], maxChars: 900000 });
+  check("an oversized budget is capped and the cap is stated", r.stdout.includes("Output is capped at 26000 characters"));
+
   r = run({});
   check("an empty request is a usage error", r.status === 2);
   r = run({ exact: ["x"], scope: ["nope"] });
