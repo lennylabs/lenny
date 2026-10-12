@@ -246,6 +246,12 @@ entries:
     reason: |-
       an agent workflow driver, which no test tier is selected from
   - member: |-
+      .claude/workflows/mechanism-table-converge.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
       .claude/workflows/migrate-proposal.js
     class: change-graph-coverage
     disposition: excluded
