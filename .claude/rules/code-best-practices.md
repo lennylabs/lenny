@@ -1,3 +1,11 @@
+---
+paths:
+  - "pkg/**"
+  - "cmd/**"
+  - "sdks/**"
+  - "migrations/**"
+---
+
 # Code best practices
 
 Project-wide rules for the Go code in this repository. They apply to every change under `pkg/`, `cmd/`, `sdks/`, and `migrations/`, and to any agent or workflow that writes or modifies code here. They complement the linter rather than restate it.

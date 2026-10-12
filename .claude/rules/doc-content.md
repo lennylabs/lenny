@@ -1,3 +1,8 @@
+---
+paths:
+  - "docs/**/*.md"
+---
+
 # Documentation content and structure
 
 Project-wide rules for what Lenny's reader-facing documentation says and how each page is organized. They apply to every `.md` file under `docs/` and to any agent or workflow that writes or edits documentation. They complement `doc-style.md`, which governs prose mechanics, and `doc-diagram-style.md`, which governs diagrams. Where `doc-style.md` says how a sentence should read, this file says what a page should contain and how it should be arranged.

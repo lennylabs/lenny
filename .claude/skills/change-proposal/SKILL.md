@@ -125,6 +125,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `startPhase` | launch | `validate` | the first phase to run: `validate`, `draft`, `write`, `conventions`, `spec-review`, `non-spec-review`, `finalize` |
 | `baseModel` | launch | `opus` | the model every agent runs at unless it names its own |
 | `baseEffort` | launch | `medium` | the reasoning effort every agent runs at |
+| `agentType` | launch | `cp-writer` | the subagent type every agent runs as. `cp-writer` (`.claude/agents/cp-writer.md`) opens each agent with the Read, Bash, Edit, and Write tools only, which shortens the fixed context every turn carries. The type registers when the launching session starts; pass `workflow-subagent` to run the default workflow subagent in a session that started before the type was defined. |
 | `mode` | launch | — | `new`, `review`, or `redesign` |
 | `problem` | anchored | — | required in `new`: the problem dossier |
 | `proposalPath` | launch | — | required in `review` and `redesign`: the directory, or a legacy `.md` |

@@ -227,6 +227,13 @@ const MODELS = ["opus", "sonnet", "haiku", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
+// The custom subagent type every agent runs as, from .claude/agents/. A custom
+// type carries only the tools its definition lists, so an agent opens without the
+// tool definitions and listings a review or fix agent never uses. Unset, every
+// agent runs as cp-writer. The value "workflow-subagent" selects the default
+// workflow subagent, for a session that started before cp-writer was defined.
+const agentType =
+  input.agentType === "workflow-subagent" ? null : input.agentType || "cp-writer";
 if (!MODELS.includes(baseModel)) {
   throw new Error('args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"');
 }
@@ -257,6 +264,7 @@ const ARG_CLASS = {
   lockSpecChanges: "forward",
   baseModel: "launch",
   baseEffort: "launch",
+  agentType: "launch",
   maxPeriodicFirings: "forward",
   impactWindow: "forward",
   humanReadings: "forward",
@@ -303,6 +311,7 @@ async function robustAgent(prompt, opts, attempts = 4) {
   const based = { ...(opts || {}) };
   if (!based.model) based.model = baseModel;
   if (!based.effort) based.effort = baseEffort;
+  if (agentType && !based.agentType) based.agentType = agentType;
   opts = based;
   const fallbackAt = 3;
   for (let i = 1; i <= attempts; i++) {

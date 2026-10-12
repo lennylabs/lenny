@@ -1,3 +1,8 @@
+---
+paths:
+  - "docs/assets/diagrams/**"
+---
+
 # Diagram style
 
 Project-wide style rules for SVG documentation diagrams. These rules apply to every `.svg` file in `docs/assets/diagrams/`, to the markdown that embeds them, and to the ASCII fallback blocks that accompany them.

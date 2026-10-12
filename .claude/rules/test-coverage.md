@@ -1,3 +1,13 @@
+---
+paths:
+  - "pkg/**"
+  - "cmd/**"
+  - "sdks/**"
+  - "migrations/**"
+  - "charts/**"
+  - "tests/**"
+---
+
 # Test coverage
 
 Project-wide rules for testing code changes. They apply to every change under `pkg/`, `cmd/`, `sdks/`, `migrations/`, and `charts/`, and to any agent or workflow that writes or modifies code in this repository.

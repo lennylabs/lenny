@@ -182,6 +182,13 @@ const MODELS = ["opus", "sonnet", "haiku", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const baseModel = input.baseModel || "opus";
 const baseEffort = input.baseEffort || "medium";
+// The custom subagent type every agent runs as, from .claude/agents/. A custom
+// type carries only the tools its definition lists, so an agent opens without the
+// tool definitions and listings a review or fix agent never uses. Unset, every
+// agent runs as cp-writer. The value "workflow-subagent" selects the default
+// workflow subagent, for a session that started before cp-writer was defined.
+const agentType =
+  input.agentType === "workflow-subagent" ? null : input.agentType || "cp-writer";
 
 // THE RELAYED LAUNCH MESSAGE IS NOT THE AGENT'S TASK. The harness shows every
 // subagent the user message that launched the run and calls it the only user
@@ -485,6 +492,7 @@ const ARG_CLASS = {
   // making them `let` and adding them to applyOverrides.
   baseModel: "launch",
   baseEffort: "launch",
+  agentType: "launch",
   startPhase: "launch",
   mode: "launch",
   problem: "anchored",
@@ -4755,6 +4763,7 @@ async function robustAgent(prompt, opts, attempts = 4) {
   const based = { ...(opts || {}) };
   if (!based.model) based.model = baseModel;
   if (!based.effort) based.effort = baseEffort;
+  if (agentType && !based.agentType) based.agentType = agentType;
   opts = based;
   // Model fallback: the first two attempts use the configured base model;
   // attempts 3+ fall back to Sonnet. A 529 "Overloaded" is
@@ -5195,6 +5204,7 @@ async function fireDecisionsPhase(trigger) {
         lockSpecChanges,
         baseModel,
         baseEffort,
+        agentType: agentType || "workflow-subagent",
         maxPeriodicFirings,
         impactWindow,
         humanReadings: input.humanReadings,
