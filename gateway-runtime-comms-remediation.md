@@ -2617,11 +2617,16 @@ R20's two additions.
 
 Direct BUILD-GAPS fixes, now, in parallel with 0092's review (none touches a function 0092 edits):
 
-- [ ] F-4.9.30 (TT-69): render the Token Service tenant flag in the gateway chart, and fail startup when it
-  is empty while a Token Service is configured.
-- [ ] F-4.9.31 (TT-70): classify `ResourceExhausted` as a user-class error in `classifyTokenServiceError`.
-- [ ] F-12.8.29 (TT-98): add a `session_tree_archive` tenant eraser ahead of the `sessions` eraser.
-- [ ] F-8.8.20 (TT-89): map `deadlock_timeout` to the `DEADLOCK_TIMEOUT` code.
+- [x] F-4.9.30 (TT-69): render the Token Service tenant flag in the gateway chart, and fail startup when it
+  is empty while a Token Service is configured. Landed in merge 7a240ad61 on `proposal-b`, 2026-10-12. The
+  fix resolves an empty flag to the default tenant in single-tenant mode rather than failing startup, and a
+  release never sends an empty tenant.
+- [x] F-4.9.31 (TT-70): classify `ResourceExhausted` as a user-class error in `classifyTokenServiceError`.
+  Landed in merge 7a240ad61 on `proposal-b`, 2026-10-12.
+- [x] F-12.8.29 (TT-98): add a `session_tree_archive` tenant eraser ahead of the `sessions` eraser. Landed
+  in merge 7a240ad61 on `proposal-b`, 2026-10-12.
+- [x] F-8.8.20 (TT-89): map `deadlock_timeout` to the `DEADLOCK_TIMEOUT` code. Landed in merge 7a240ad61 on
+  `proposal-b`, 2026-10-12.
 
 Direct BUILD-GAPS fixes after 0092 lands, because each touches a function 0092 edits:
 
@@ -2645,6 +2650,8 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
   - **Members.** F-4.6.26 to F-4.6.29 (TT-18 to TT-21), F-4.9.32 to F-4.9.35 (TT-71 to TT-74), F-5.2.49
     (TT-22), F-7.3.33 (TT-27), F-7.3.34 (TT-30), F-10.1.21 (TT-14), F-10.1.28 (TT-15), F-10.1.30 (TT-24),
     F-10.1.32 (TT-26), F-11.4.10 (TT-75), F-11.4.11 (TT-76), and F-11.4.15 (TT-80). Eleven are High.
+    F-4.9.34 also holds the retry decision for a failed lease release, which the F-4.9.30 fix now logs and
+    returns but does not retry; the specification does not decide whether such a release is reconciled.
   - **Dependencies.** After 0092, because it builds on D6, hook step H6, and `ReleaseUncommitted`. The
     credential fail-open fix lands first, because it touches `resolveCredentialPools` next to TT-72.
     F-10.1.22 (the generation on `CH-ATTACH` frames) is related through TT-15 and TT-26. P1's full_revoke
@@ -2664,8 +2671,9 @@ Proposals, first wave after 0092 (after R4 and the credential fail-open fix):
     and for which sessions a release runs, and P1 decides how. §12.8 gains the statement that erasure
     terminates the user's sessions and waits for their terminal hooks before the erasers run.
   - **Members.** F-11.4.12 to F-11.4.14 (TT-77 to TT-79), F-12.8.26 to F-12.8.28 (TT-95 to TT-97),
-    F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101), and
-    F-15.1.51 (TT-102). Nine are High.
+    F-12.8.30 to F-12.8.33 (TT-99, TT-100, TT-103, and TT-104), F-15.1.48 (TT-93), F-15.1.50 (TT-101),
+    F-15.1.51 (TT-102), and F-12.8.34 and F-12.8.35 (the Phase 4 stores and the in-memory checkpoint
+    metadata that the F-12.8.29 fix run left unerased). Ten are High.
   - **Dependencies.** Its implementation lands after 0092's, because 0092 edits the erasure job (item 17)
     and the full_revoke handler (item 2a). Its full_revoke edits follow P1's. Direct fix F-12.8.29 (TT-98)
     lands before it.
