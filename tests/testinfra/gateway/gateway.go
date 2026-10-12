@@ -28,9 +28,10 @@ import (
 
 // Process represents a running lenny-gateway subprocess.
 type Process struct {
-	cmd     *exec.Cmd
-	baseURL string
-	stderr  *os.File
+	cmd        *exec.Cmd
+	baseURL    string
+	stderr     *os.File
+	stderrPath string
 }
 
 // SkipUnlessAvailable t.Skips when the prerequisites for booting
@@ -137,7 +138,7 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
-	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile}
+	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile, stderrPath: stderrPath}
 
 	t.Cleanup(func() {
 		defer func() { _ = stderrFile.Close() }()
@@ -175,6 +176,17 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 
 // BaseURL returns the http://host:port the gateway is listening on.
 func (p *Process) BaseURL() string { return p.baseURL }
+
+// Logs returns the gateway's combined stdout and stderr written so far,
+// so a test can include the gateway's own account of a failure in its
+// message. It returns an empty string when the log cannot be read.
+func (p *Process) Logs() string {
+	b, err := os.ReadFile(p.stderrPath)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
 
 // waitReady polls /v1/sessions until the gateway responds (or until
 // the deadline expires). Any 2xx-5xx response means the listener is

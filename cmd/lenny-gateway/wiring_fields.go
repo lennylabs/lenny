@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
@@ -357,9 +358,13 @@ type gatewayWiringFields struct {
 	evals                     evalstore.Store
 	immediateGCSweep          func(ctx context.Context, tenantID string)
 	partialManifests          partialmanifeststore.Store
-	securityBus               *pubsub.Bus
-	memories                  memorystore.Store
-	memoryBackendLabel        string
+	// checkpointRetention is the §12.5 checkpoint retention catalog
+	// (session_checkpoints). The §12.8 tenant-deletion Phase 4 eraser
+	// erases the tenant's rows through it.
+	checkpointRetention checkpointretention.Store
+	securityBus         *pubsub.Bus
+	memories            memorystore.Store
+	memoryBackendLabel  string
 
 	// tokenServiceConn is the §4.3 token-service gRPC connection. buildStores
 	// dials it; runGateway closes it on exit (the original deferred close is
