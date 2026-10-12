@@ -66,7 +66,8 @@ func newLink(t *testing.T, replicaTenant string) *link {
 	gs := grpc.NewServer()
 	tokensv1.RegisterTokenServiceServer(gs, tokenservice.NewGRPCServer(assign, serverLeases))
 	go func() { _ = gs.Serve(lis) }()
-	conn, err := grpc.NewClient("passthrough://bufnet",
+	conn, err := grpc.NewClient(
+		"passthrough://bufnet",
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
 			return lis.DialContext(context.Background())
 		}),
