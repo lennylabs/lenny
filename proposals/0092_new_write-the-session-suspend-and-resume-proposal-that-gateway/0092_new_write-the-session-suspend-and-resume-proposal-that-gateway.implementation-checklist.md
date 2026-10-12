@@ -14,7 +14,7 @@ Every step lands after proposal 0091 is implemented.
       Tiers 0, 11. Depends on: S1, S2, S3, S4
 - [ ] **S6 · spec** — SPEC-6. Lands every SPEC-6 edit.
       Tiers 0, 11. Depends on: S3, S5
-- [ ] **S7 · test** — TEST-0. Lands the `spec_28_register_writers_test.go` and `off_holder_matrix_stated_outcome_test.go` updates. Its tier-11 run passes every test except `TestFrameIdentifierAgreesAcrossSchemaSpecAndReference`, which is red from S5 until S8.
+- [ ] **S7 · test** — TEST-0. Lands the tier-11 spec-text test updates that intents T0.1 and T0.2 state. Its tier-11 run passes every test except `TestFrameIdentifierAgreesAcrossSchemaSpecAndReference`, which is red from S5 until S8.
       Tiers 0, 11. Depends on: S2, S5
 - [ ] **S8 · schema** — The non-spec **Heartbeat frames.** edits. Lands the `heartbeat` and `heartbeat_ack` schema, adapter-contract reference, and tier-3 address-test changes in one commit.
       Tiers 0, 3, 11. Depends on: S5
