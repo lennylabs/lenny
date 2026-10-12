@@ -1883,10 +1883,9 @@ func toTaskResult(s sessionstore.Session, maxRetries int) sessionrecord.Result {
 // RUNTIME_CRASH → TRANSIENT mapping is exactly this fallback.
 // spec: §8.8; §15.2.1. F-8.8.4.
 func taskErrorForRow(s sessionstore.Session, maxRetries int) *sessionrecord.Error {
-	code := s.FailureReason
-	if code == "" {
-		code = "CHILD_" + strings.ToUpper(string(s.State))
-	}
+	// spec: §8.8 — the stored reason maps to its catalog code, such as
+	// deadlock_timeout to DEADLOCK_TIMEOUT. F-8.8.6.
+	code := session.TaskErrorCode(s.FailureReason, s.State)
 	cat, _ := errorclassify.Classify(code)
 	return &sessionrecord.Error{
 		Code:             code,
