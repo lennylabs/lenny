@@ -176,7 +176,9 @@ func TestTokenServiceClientReleaseReleasesBothSides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	h.client.Release(lease.LeaseID)
+	if err := h.client.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 	if _, ok := h.clientLeases.GetByID(lease.LeaseID); ok {
 		t.Errorf("gateway-local lease %q still present after Release", lease.LeaseID)
 	}

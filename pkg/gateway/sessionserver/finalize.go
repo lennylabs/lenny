@@ -513,7 +513,10 @@ func (s *Server) reclaimFinalizedPod(ctx context.Context, sandboxName, sessionID
 // harmless.
 // spec: §7.1 step 23 (lease release), §4.9
 func (s *Server) revokeFinalizeLease(sessionID string) {
-	if s.podBinder != nil && s.podBinder.Credentials != nil {
-		s.podBinder.Credentials.ReleaseSession(sessionID)
+	if s.podBinder == nil || s.podBinder.Credentials == nil {
+		return
+	}
+	if err := s.podBinder.Credentials.ReleaseSession(sessionID); err != nil {
+		log.Printf("sessionserver: release credential leases for session %s after finalize failure: %v", sessionID, err)
 	}
 }

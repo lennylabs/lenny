@@ -555,8 +555,11 @@ func (b *Binder) releaseAttemptCredentials(leaseIDs []string) {
 		return
 	}
 	for _, id := range leaseIDs {
-		if id != "" {
-			b.Credentials.Release(id)
+		if id == "" {
+			continue
+		}
+		if err := b.Credentials.Release(id); err != nil {
+			log.Printf("podsession: release credential lease %s of a failed bind attempt: %v", id, err)
 		}
 	}
 }

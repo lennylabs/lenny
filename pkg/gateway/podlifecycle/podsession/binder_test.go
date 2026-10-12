@@ -385,12 +385,14 @@ func (a *fakeAssigner) AssignProto(pool, session, spiffe, tenant string) (*adapt
 	}, nil
 }
 
-func (a *fakeAssigner) ReleaseSession(sessionID string) {
+func (a *fakeAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
 
-func (a *fakeAssigner) Release(leaseID string) {
+func (a *fakeAssigner) Release(leaseID string) error {
 	a.leaseReleases = append(a.leaseReleases, leaseID)
+	return nil
 }
 
 func TestBindClaimsAndStartsTheSession(t *testing.T) {

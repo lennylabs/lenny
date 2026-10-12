@@ -124,8 +124,8 @@ func (f *fakeExtendAssigner) AssignProto(_, _, _, _ string) (*adapterv1.Credenti
 func (f *fakeExtendAssigner) ProtoLeaseByID(string) (*adapterv1.CredentialLease, error) {
 	return nil, nil
 }
-func (f *fakeExtendAssigner) Release(string)                              {}
-func (f *fakeExtendAssigner) ReleaseSession(string)                       {}
+func (f *fakeExtendAssigner) Release(string) error                        { return nil }
+func (f *fakeExtendAssigner) ReleaseSession(string) error                 { return nil }
 func (f *fakeExtendAssigner) OnAssigned(func(credassign.LeaseAssignment)) {}
 
 // directLease builds a valid direct-mode pool-backed lease record for the

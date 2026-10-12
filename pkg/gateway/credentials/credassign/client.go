@@ -211,6 +211,10 @@ func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (creden
 		if err != nil {
 			return credential.Lease{}, nil, mapAssignError(poolName, err)
 		}
+		// The subsystem refused the call before the RPC ran (for
+		// example a limiter rejection on a cancelled context). resp is
+		// nil on this path, so return the refusal rather than reading it.
+		return credential.Lease{}, nil, fmt.Errorf("credassign: Token Service AssignCredentials for pool %q: %w", poolName, callErr)
 	}
 	if err != nil {
 		return credential.Lease{}, nil, mapAssignError(poolName, err)
@@ -239,33 +243,52 @@ func (c *Client) assign(poolName, sessionID, spiffeURI, tenantID string) (creden
 	return lease, observer, nil
 }
 
-// classifyTokenServiceError filters which gRPC errors should count as
-// breaker-triggering. Only transient transport failures (Unavailable,
-// DeadlineExceeded, ResourceExhausted of the server itself,
-// Internal/Unknown) trip the breaker; logical errors (NotFound,
-// InvalidArgument) report user-level conditions that do not indicate
-// Token Service degradation. spec: §4.3.
+// classifyTokenServiceError filters which gRPC errors count against the
+// Token Service breaker. §4.3 opens the breaker when the Token Service
+// becomes unavailable, so only a status that reports a fault of the
+// service or of the transport to it counts: Unavailable,
+// DeadlineExceeded, Internal, Unknown, DataLoss, Aborted, and Canceled.
+//
+// Every other status is an answer the service gave while healthy, and
+// counting it would let ordinary traffic open the breaker. In particular
+// ResourceExhausted is the Token Service's answer for an exhausted
+// credential pool (and for a materialization failure that §4.9 surfaces
+// as CREDENTIAL_POOL_EXHAUSTED). An exhausted pool is a capacity
+// condition of one pool rather than a degraded service; counting it
+// would open the breaker for every pool on the replica and push the
+// §4.9 renewal worker into its breaker-open extension path, ending
+// sessions on healthy pools at the extension cap.
+//
+// spec: §4.3 (Token Service, High availability and failure handling),
+// §4.9 (Credential Leasing Service).
 func classifyTokenServiceError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch status.Code(err) {
-	case codes.OK,
-		codes.NotFound,
-		codes.InvalidArgument,
-		codes.PermissionDenied,
-		codes.Unauthenticated,
-		codes.AlreadyExists,
-		codes.FailedPrecondition,
-		codes.OutOfRange,
-		codes.Unimplemented:
-		// User-classified errors: do not count against the breaker.
-		return nil
-	default:
-		// Unavailable, DeadlineExceeded, Internal, Unknown,
-		// ResourceExhausted-of-the-server, etc.: count as failure so a
-		// degraded Token Service trips the breaker.
+	if countsAgainstBreaker(status.Code(err)) {
 		return err
+	}
+	return nil
+}
+
+// countsAgainstBreaker reports whether a gRPC status code from the Token
+// Service is a service or transport fault that §4.3 counts toward
+// opening the breaker. The list is closed: a status code added to gRPC
+// later is treated as a healthy answer until it is classified here.
+//
+// spec: §4.3 (Token Service, High availability and failure handling).
+func countsAgainstBreaker(code codes.Code) bool {
+	switch code {
+	case codes.Unavailable,
+		codes.DeadlineExceeded,
+		codes.Internal,
+		codes.Unknown,
+		codes.DataLoss,
+		codes.Aborted,
+		codes.Canceled:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -291,40 +314,88 @@ func (c *Client) ProtoLeaseByID(leaseID string) (*adapterv1.CredentialLease, err
 	return ProtoLease(lease)
 }
 
+// ErrReleaseTenantUnknown reports that a lease release could not name
+// the tenant the Token Service applies §4.2 row-level security against:
+// the lease record carries no tenant and the client has no replica-wide
+// tenant. The RPC is not sent, because the Token Service rejects an
+// empty tenant_id with InvalidArgument and the lease would stay
+// allocated either way.
+var ErrReleaseTenantUnknown = errors.New("credassign: lease release has no tenant to carry to the Token Service")
+
 // Release issues a §4.9 RevokeCredentials RPC for the lease and removes
 // it from the local lease store. The credential cache entry is left in
 // place because other leases on the same pool credential continue to
 // need it; the cache is managed by the AssignCredentials path and the
 // §4.9 emergency revocation deny-list, not by Release.
-func (c *Client) Release(leaseID string) {
+//
+// The request carries the tenant recorded on the lease, which is the
+// session's tenant the lease was minted for, and falls back to the
+// client's replica-wide tenant only for a lease that recorded none. A
+// multi-tenant replica serves several tenants, so the replica-wide value
+// cannot name the right tenant for every lease.
+//
+// The local lease is removed whatever the RPC outcome, so the §4.9 LLM
+// proxy stops resolving the bearer of a released session. A failed
+// revocation leaves the lease allocated on the Token Service, which is
+// the authoritative store, so Release returns the failure for the caller
+// to log rather than dropping it. An unknown lease, and a lease the
+// Token Service no longer holds (NotFound), release cleanly: §7.1 step
+// 23 requires the release to be idempotent.
+//
+// The RPC runs through the §4.3 per-subsystem breaker like every other
+// Token Service call, so an open breaker fails the release fast with
+// ErrTokenServiceUnavailable.
+//
+// spec: §7.1 (Normal Flow, step 23), §4.3 (Token Service), §4.9
+// (Credential Leasing Service).
+func (c *Client) Release(leaseID string) error {
 	lease, ok := c.leases.GetByID(leaseID)
 	if !ok {
-		return
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-	defer cancel()
-	_, err := c.stub.RevokeCredentials(ctx, &tokensv1.RevokeCredentialsRequest{
-		TenantId: c.tenantID,
-		LeaseId:  leaseID,
-		Reason:   "session_released",
-	})
-	if err != nil && status.Code(err) != codes.NotFound {
-		// The Token Service is the authoritative store; a transient
-		// error leaves the lease alive there. The gateway-side removal
-		// still happens so the local proxy stops resolving the bearer.
-		// A subsequent renewal worker pass or admin tool will reconcile.
-		// The §16 lenny_credential_revoke_failed_total counter (when
-		// wired) labels this for alerting.
-		_ = err
-	}
+	revokeErr := c.revoke(lease)
 	c.leases.Remove(leaseID)
 	c.mu.Lock()
 	delete(c.renewalPool, leaseID)
-	if lease.Source == credential.SourcePool {
-		// No further bookkeeping; the Token Service decrements the
-		// pool's per-credential slot count on its side.
-	}
 	c.mu.Unlock()
+	if revokeErr != nil {
+		return fmt.Errorf("credassign: revoke lease %s for session %s: %w", leaseID, lease.SessionID, revokeErr)
+	}
+	return nil
+}
+
+// revoke sends the RevokeCredentials RPC for lease through the breaker
+// and returns the failure, if any. NotFound is a clean outcome: the
+// lease is already gone on the Token Service.
+func (c *Client) revoke(lease credential.Lease) error {
+	tenant := lease.TenantID
+	if tenant == "" {
+		tenant = c.tenantID
+	}
+	if tenant == "" {
+		return ErrReleaseTenantUnknown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	var rpcErr error
+	callErr := c.callTokenService(ctx, func(ctx context.Context) error {
+		_, rpcErr = c.stub.RevokeCredentials(ctx, &tokensv1.RevokeCredentialsRequest{
+			TenantId: tenant,
+			LeaseId:  lease.LeaseID,
+			Reason:   "session_released",
+		})
+		return classifyTokenServiceError(rpcErr)
+	})
+	if errors.Is(callErr, ErrTokenServiceUnavailable) {
+		return callErr
+	}
+	if rpcErr != nil {
+		if status.Code(rpcErr) == codes.NotFound {
+			return nil
+		}
+		return rpcErr
+	}
+	return callErr
 }
 
 // ReleaseSession releases every §4.9 credential lease the client holds
@@ -332,15 +403,21 @@ func (c *Client) Release(leaseID string) {
 // the local lease entry, returning the session's pool slots. It is the
 // §7.1 step 23 session-teardown lease release the gateway runs when a
 // session reaches a terminal state. A session with no leases is a no-op.
+// Every lease is attempted even when an earlier one fails, and the
+// failures are returned joined so the caller sees each one.
 //
-// spec: §7.1.
-func (c *Client) ReleaseSession(sessionID string) {
+// spec: §7.1 (Normal Flow, step 23).
+func (c *Client) ReleaseSession(sessionID string) error {
 	if sessionID == "" {
-		return
+		return nil
 	}
+	var errs []error
 	for _, lease := range c.leases.LeasesBySession([]string{sessionID}) {
-		c.Release(lease.LeaseID)
+		if err := c.Release(lease.LeaseID); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // recordAssignedLease mirrors the §4.3 AssignCredentials response into

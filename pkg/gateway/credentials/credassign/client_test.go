@@ -214,7 +214,9 @@ func TestClientReleaseRemovesLeaseEndToEnd(t *testing.T) {
 		t.Fatalf("lease not on server before Release")
 	}
 
-	h.client.Release(lease.LeaseID)
+	if err := h.client.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	if _, ok := h.clientLeases.GetByID(lease.LeaseID); ok {
 		t.Errorf("lease %q still in client store after Release", lease.LeaseID)
@@ -285,7 +287,9 @@ func TestClientPoolForLeaseLifecycle(t *testing.T) {
 		t.Errorf("PoolForLease = (%q, %v), want (claude-prod, true)", got, ok)
 	}
 
-	h.client.Release(lease.LeaseID)
+	if err := h.client.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 	if _, ok := h.client.PoolForLease(lease.LeaseID); ok {
 		t.Errorf("PoolForLease still resolves after Release")
 	}

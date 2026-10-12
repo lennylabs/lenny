@@ -115,7 +115,10 @@ func TestReleaseFreesTheCredentialSlot(t *testing.T) {
 
 	first, _ := svc.Assign("claude-prod", "s_1", "", "") // key-1, active{key-1:1}
 	_, _ = svc.Assign("claude-prod", "s_2", "", "")      // key-2, active{key-2:1}
-	svc.Release(first.LeaseID)                           // active{key-1:0}
+	// active{key-1:0}
+	if err := svc.Release(first.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	// key-1 is now the least loaded, so the next assignment picks it.
 	third, err := svc.Assign("claude-prod", "s_3", "", "")
@@ -133,7 +136,9 @@ func TestReleaseRemovesLeaseFromStore(t *testing.T) {
 		healthyCred("key-1", "sk-one")))
 
 	lease, _ := svc.Assign("claude-prod", "s_1", "", "")
-	svc.Release(lease.LeaseID)
+	if err := svc.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	if _, ok := leases.GetByID(lease.LeaseID); ok {
 		t.Error("the lease store still holds a released lease")
@@ -142,7 +147,10 @@ func TestReleaseRemovesLeaseFromStore(t *testing.T) {
 
 func TestReleaseUnknownLeaseIsNoOp(t *testing.T) {
 	svc, _, _ := newService(t)
-	svc.Release("cl-absent") // must not panic
+	// must not panic
+	if err := svc.Release("cl-absent"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 }
 
 // TestReleaseSessionReturnsEveryLeaseToPool_spec_7_1 asserts the §7.1
@@ -165,7 +173,9 @@ func TestReleaseSessionReturnsEveryLeaseToPool_spec_7_1(t *testing.T) {
 		t.Fatalf("lease store holds %d leases, want 3", leases.Len())
 	}
 
-	svc.ReleaseSession("s_1")
+	if err := svc.ReleaseSession("s_1"); err != nil {
+		t.Fatalf("ReleaseSession: %v", err)
+	}
 
 	// Both of s_1's leases are gone; s_2's lease is untouched.
 	if _, ok := leases.GetByID(la.LeaseID); ok {
@@ -195,8 +205,14 @@ func TestReleaseSessionUnknownSessionIsNoOp_spec_7_1(t *testing.T) {
 		healthyCred("key-a", "sk-a")))
 	lease, _ := svc.Assign("anthropic", "s_1", "", "")
 
-	svc.ReleaseSession("")         // empty id: no panic, no effect
-	svc.ReleaseSession("s_absent") // unknown session: no effect
+	// empty id: no panic, no effect
+	if err := svc.ReleaseSession(""); err != nil {
+		t.Fatalf("ReleaseSession: %v", err)
+	}
+	// unknown session: no effect
+	if err := svc.ReleaseSession("s_absent"); err != nil {
+		t.Fatalf("ReleaseSession: %v", err)
+	}
 	if _, ok := leases.GetByID(lease.LeaseID); !ok {
 		t.Error("ReleaseSession for an unrelated/empty session removed a live lease")
 	}
@@ -321,7 +337,9 @@ func TestRevokeCredentialSkipsRevokedOnReassign(t *testing.T) {
 		if got.CredentialID != "key-2" {
 			t.Fatalf("post-revoke assignment %d = %q, want key-2 (key-1 revoked)", i, got.CredentialID)
 		}
-		svc.Release(got.LeaseID)
+		if err := svc.Release(got.LeaseID); err != nil {
+			t.Fatalf("Release: %v", err)
+		}
 	}
 }
 

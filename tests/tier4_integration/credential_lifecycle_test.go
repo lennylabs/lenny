@@ -260,7 +260,9 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	}
 	// §4.7 grace period: release the old lease now that the runtime
 	// acknowledged the rebind, leaving v2 as the session's sole active lease.
-	assign.Release(v1.GetLeaseId())
+	if err := assign.Release(v1.GetLeaseId()); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	// ---- stage 3: emergency revoke → active session terminated ----
 	// The real §4.9 admin emergency-revocation endpoint, wired to the deny

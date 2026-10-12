@@ -129,11 +129,11 @@ type failingAssigner struct{}
 func (failingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
-func (failingAssigner) ReleaseSession(string) {}
+func (failingAssigner) ReleaseSession(string) error { return nil }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (failingAssigner) Release(string) {}
+func (failingAssigner) Release(string) error { return nil }
 
 // recordingAssigner assigns a real lease and records every ReleaseSession so a
 // test can assert the §7.1 step-23 lease revoke ran during a post-launch
@@ -144,13 +144,14 @@ func (a *recordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.Credentia
 	return &adapterv1.CredentialLease{}, nil
 }
 
-func (a *recordingAssigner) ReleaseSession(sessionID string) {
+func (a *recordingAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
 
 // Release is the attempt-scoped lease release podsession.CredentialAssigner
 // requires; this fake records nothing for it.
-func (*recordingAssigner) Release(string) {}
+func (*recordingAssigner) Release(string) error { return nil }
 
 // updateFaultStore fails store.Update while fail is set, leaving Get/Create
 // intact, so a test can inject the terminal transition-persist failure
