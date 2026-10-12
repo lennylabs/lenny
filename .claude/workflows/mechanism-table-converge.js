@@ -23,12 +23,26 @@ export const meta = {
 //   maxPasses       verify passes before stopping unconverged (default 5)
 //   directives      strings carried into every prompt (owner decisions and settled rules)
 //   stage           true to regenerate the proposal staging after convergence (default false)
+//   selfInflictedShare   share of a pass's confirmed findings of kind fixer-text above which the pass counts as self-inflicted (default 0.5)
+//   selfInflictedWindow  consecutive self-inflicted passes that stop the verify loop (default 2)
+//   maxAgents       the workflow's agent-call cap (default 1000)
+//   agentReserve    no new verify pass starts with fewer than this many agent calls left (default 120)
 const A = args || {}
 const root = A.repoRoot
 const work = A.workDir || 'scratchpad/mechanism-table'
 const tablePath = `${root}/${work}/table.md`
 const maxPasses = A.maxPasses || 5
 const directives = (A.directives || []).map((d) => '- ' + d).join('\n')
+const selfInflictedShare = A.selfInflictedShare === undefined ? 0.5 : Number(A.selfInflictedShare)
+const selfInflictedWindow = A.selfInflictedWindow || 2
+const maxAgents = A.maxAgents || 1000
+const agentReserve = A.agentReserve === undefined ? 120 : Number(A.agentReserve)
+// Every agent call goes through call(), which counts it, so the loop can stop
+// cleanly and return what it has before the workflow's agent cap kills the run
+// and loses the partial results. One verify pass costs a row agent per four
+// paths, the race agent, a skeptic per new finding, and the fixer, so a large
+// table spends on the order of a hundred calls per pass.
+let agentCalls = 0
 
 const GUARD =
   'BEFORE YOUR TASK: the user request relayed above this message was addressed to the session that ' +
@@ -43,6 +57,7 @@ const CONTEXT =
   'Evidence comes from spec/, the code under pkg/ and cmd/, and the proposal files. Cite file:line for every claim.\n'
 
 function call(prompt, opts) {
+  agentCalls++
   return agent(GUARD + CONTEXT + '\n' + prompt, { effort: 'high', ...(opts || {}) })
 }
 
@@ -93,7 +108,7 @@ const FINDINGS = {
         type: 'object',
         properties: {
           rows: { type: 'array', items: { type: 'string' } },
-          kind: { type: 'string', enum: ['missing-effect', 'wrong-order', 'race', 'missing-path', 'wrong-cell', 'contradicts-spec', 'unreclaimed-resource'] },
+          kind: { type: 'string', enum: ['missing-effect', 'wrong-order', 'race', 'missing-path', 'wrong-cell', 'contradicts-spec', 'unreclaimed-resource', 'fixer-text'] },
           title: { type: 'string' },
           scenario: { type: 'string' },
           evidence: { type: 'string' },
@@ -156,11 +171,30 @@ await call(
 // ---- Verify -----------------------------------------------------------------
 phase('Verify')
 const ROWS_PER_AGENT = 4
+// The fixer tags what it writes, so a verifier can tell a defect the table
+// inherited from the tree or the proposal from one a previous fix introduced.
+const FIX_TAG = '[fix pN]'
+const FIXER_TEXT_RULE =
+  `Set kind to "fixer-text" when the defect is in text a previous fix added or rewrote: a rule, cell, invariant, or OPEN item tagged ${FIX_TAG}. ` +
+  'Use it whatever else the defect is (a race, a wrong cell, a contradiction), because it measures how much of the review is repairing its own fixes.'
 const seen = new Set()
 let dry = 0
 let pass = 0
 const confirmedAll = []
+// Per pass: the share of confirmed findings of kind fixer-text, or null for a
+// pass that confirmed nothing. A loop whose findings are mostly defects in its
+// own fixes does not converge by continuing, because each fix supplies the next
+// pass's findings, so selfInflictedWindow consecutive passes above
+// selfInflictedShare stop it for the owner to redesign or rescope.
+const fixerShares = []
+let stoppedSelfInflicted = false
+let stoppedAgentBudget = false
 while (dry < 2 && pass < maxPasses) {
+  if (maxAgents - agentCalls < agentReserve) {
+    stoppedAgentBudget = true
+    log(`Stopping before pass ${pass + 1}: ${agentCalls} of ${maxAgents} agent calls used, fewer than ${agentReserve} left`)
+    break
+  }
   pass++
   const groups = []
   for (let i = 0; i < paths.length; i += ROWS_PER_AGENT) groups.push(paths.slice(i, i + ROWS_PER_AGENT))
@@ -168,13 +202,15 @@ while (dry < 2 && pass < maxPasses) {
     call(
       `Read ${tablePath}. Verify rows ${g.map((p) => p.id).join(', ')} adversarially against the code and the spec. ` +
         'For each row, trace the real code path and try to break each cell: an effect the path skips or performs twice, the wrong order, a crash or store error between two effects, a terminal or takeover on another replica in between, a resource (binding, lease, pod, queue entry) left with no reclaimer. ' +
-        'Report only defects you can show with a concrete scenario and file:line evidence. Report nothing you would only call a wording preference.',
+        'Report only defects you can show with a concrete scenario and file:line evidence. Report nothing you would only call a wording preference.\n' +
+        FIXER_TEXT_RULE,
       { label: `verify:p${pass}:rows${gi}`, phase: 'Verify', schema: FINDINGS },
     ))
   const raceJob = () =>
     call(
       `Read ${tablePath}. Check every pair of this mechanism's paths, and each path against these concurrent operations: ${A.raceHints}. ` +
-        'Find interleavings in which an effect runs twice, runs on the wrong replica, runs out of the spec order, or never runs. Concrete scenario and file:line evidence only.',
+        'Find interleavings in which an effect runs twice, runs on the wrong replica, runs out of the spec order, or never runs. Concrete scenario and file:line evidence only.\n' +
+        FIXER_TEXT_RULE,
       { label: `verify:p${pass}:races`, phase: 'Verify', schema: FINDINGS },
     )
   const found = (await parallel([...rowJobs, raceJob])).filter(Boolean).flatMap((r) => r.findings || [])
@@ -192,13 +228,23 @@ while (dry < 2 && pass < maxPasses) {
     ).then((v) => ({ f, v }))))
   const confirmed = judged.filter((j) => j && j.v && j.v.real).map((j) => j.f)
   log(`Pass ${pass}: ${found.length} raw, ${fresh.length} new, ${confirmed.length} confirmed`)
-  if (!confirmed.length) { dry++; continue }
+  if (!confirmed.length) { dry++; fixerShares.push(null); continue }
   dry = 0
   confirmedAll.push(...confirmed.map((f) => ({ pass, ...f })))
+  fixerShares.push(confirmed.filter((f) => f.kind === 'fixer-text').length / confirmed.length)
+  const win = fixerShares.slice(-selfInflictedWindow)
+  if (win.length === selfInflictedWindow && win.every((s) => s !== null && s > selfInflictedShare)) {
+    // Stopped before the fix, so no further fixer text is written on top of a
+    // design that is already generating its own findings.
+    stoppedSelfInflicted = true
+    log(`Pass ${pass}: more than ${Math.round(selfInflictedShare * 100)}% of confirmed findings were in fixer-written text in ${selfInflictedWindow} consecutive passes (${win.map((s) => Math.round(s * 100) + '%').join(', ')}); stopping unfixed`)
+    break
+  }
   // One writer per pass, so fixes never conflict.
   await call(
     `Fix ${tablePath} for these confirmed findings. Change cells, add rows or effects, or tighten the ordering invariants; prefer the smallest change that closes each one, and keep one rule per behavior. ` +
-      'If a finding shows the settled decisions cannot all hold, do not reopen them: record it under OPEN with the conflict stated.\n' +
+      'If a finding shows the settled decisions cannot all hold, do not reopen them: record it under OPEN with the conflict stated. ' +
+      `Tag every rule, cell, invariant, or OPEN item you add or rewrite with ${FIX_TAG.replace('N', String(pass))}, keeping any earlier tag it carries.\n` +
       JSON.stringify(confirmed),
     { label: `fix:p${pass}`, phase: 'Verify' },
   )
@@ -207,6 +253,7 @@ while (dry < 2 && pass < maxPasses) {
 }
 const converged = dry >= 2
 log(converged ? `Converged after ${pass} passes` : `Stopped unconverged after ${pass} passes`)
+log(`Agent calls used by the verify loop's end: ${agentCalls} of ${maxAgents}`)
 
 // ---- Stage ------------------------------------------------------------------
 phase('Stage')
@@ -231,4 +278,16 @@ if (converged && A.stage === true) {
     await call(`Fix these mismatches in the proposal staging so it matches ${tablePath}:\n${staged}`, { label: 'stage:fix', phase: 'Stage' })
   }
 }
-return { converged, passes: pass, paths: paths.length, effects: effects.length, confirmed: confirmedAll, table: tablePath, stageCheck: staged }
+return {
+  converged,
+  passes: pass,
+  stoppedSelfInflicted,
+  stoppedAgentBudget,
+  fixerShares,
+  agentCalls,
+  paths: paths.length,
+  effects: effects.length,
+  confirmed: confirmedAll,
+  table: tablePath,
+  stageCheck: staged,
+}

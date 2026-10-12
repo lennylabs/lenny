@@ -548,6 +548,8 @@ const ARG_CLASS = {
   introspectEffort: "launch",
   haltWindow: "forward",
   haltRepeatTitle: "forward",
+  selfInflictedShare: "forward",
+  selfInflictedWindow: "forward",
   churnWindow: "forward",
   churnMinFindings: "forward",
   churnStrikes: "forward",
@@ -4424,6 +4426,52 @@ if (!EFFORTS.includes(introspectEffort)) {
 // because what "flat" means depends on how large the proposal is.
 const haltWindow = input.haltWindow || 4;
 const haltRepeatTitle = input.haltRepeatTitle || 3;
+// The self-inflicted signal: a review loop whose confirmed findings are mostly
+// defects in text the loop itself wrote does not converge by continuing, because
+// each fix supplies the next round's findings. Measured on a table-convergence
+// run, the share of findings in fixer-written text reached one half by the third
+// pass and stayed between one half and four fifths for eleven more passes while
+// the total never fell. The signal fires when the share exceeds
+// selfInflictedShare in selfInflictedWindow consecutive rounds of one loop.
+const selfInflictedShare =
+  input.selfInflictedShare === undefined ? 0.5 : Number(input.selfInflictedShare);
+const selfInflictedWindow = input.selfInflictedWindow || 2;
+// Per-loop, reset at the top of runReviewLoop. The round whose signal last
+// forced an introspection pass, so one streak forces one pass and a later
+// window of rounds after it is needed to force another.
+let lastSelfInflictedWake = 0;
+
+// The share of a round's confirmed findings that were introduced by this run's
+// own fixes, or null when the round's findings do not record it. A round with no
+// confirmed finding, or whose findings all carry `unknown` or no introducedBy,
+// has no share, so the signal cannot fire on data the reviewers did not supply.
+function selfInflictedShareOf(confirmed) {
+  if (!confirmed.length) return null;
+  const known = confirmed.filter(
+    (f) => f.introducedBy === "this-run" || f.introducedBy === "pre-existing",
+  );
+  if (!known.length) return null;
+  return confirmed.filter((f) => f.introducedBy === "this-run").length / confirmed.length;
+}
+
+// The hard signal, as a sentence, when the last selfInflictedWindow rounds of
+// this loop each exceeded selfInflictedShare; otherwise null. `since` excludes
+// rounds at or before an earlier forced wake, so a continuing streak does not
+// force a pass every round.
+function selfInflictedSignal(since) {
+  const mine = history.filter((h) => h.loop === LOOP.name && h.round > (since || 0));
+  const win = mine.slice(-selfInflictedWindow);
+  if (win.length < selfInflictedWindow) return null;
+  const over = (h) => typeof h.selfInflictedShare === "number" && h.selfInflictedShare > selfInflictedShare;
+  if (!win.every(over)) return null;
+  return (
+    "in each of the last " + selfInflictedWindow + " rounds more than " +
+    Math.round(selfInflictedShare * 100) + "% of the confirmed findings were defects in text this run's " +
+    "own fixes wrote (" +
+    win.map((h) => "round " + h.round + ": " + Math.round(h.selfInflictedShare * 100) + "%").join(", ") +
+    ")"
+  );
+}
 
 // The script-side evidence a stop needs. A pass that says halt on a run whose
 // counts are falling is reading something the numbers do not show, and in the
@@ -4456,6 +4504,8 @@ function hardSignals() {
         repeated.slice(0, 3).join("; ").slice(0, 300),
     );
   }
+  const selfInflicted = selfInflictedSignal(0);
+  if (selfInflicted) signals.push(selfInflicted);
   return signals;
 }
 
@@ -4521,7 +4571,7 @@ const GATE = {
   },
 };
 
-async function introspect(rnd, reason, churn, byCadence) {
+async function introspect(rnd, reason, churn, byCadence, selfInflicted) {
   // The counters that wake this pass are crude and are often wrong in both
   // directions, so the pass's first act is to decide whether it should be
   // running at all. A counter wake that is not warranted returns healthy
@@ -4536,7 +4586,8 @@ async function introspect(rnd, reason, churn, byCadence) {
   // gate read the empty list as "the counter emitted nothing" and ruled every
   // sweep wake unwarranted, so the wake the loop learns most from never ran.
   const counterWake = Array.isArray(churn) && churn.length > 0;
-  if (introspectGate && !byCadence && counterWake) {
+  // A self-inflicted wake is forced, so the gate does not get to skip it either.
+  if (introspectGate && !byCadence && !selfInflicted && counterWake) {
     const gate = await robustAgent(
       "Decide whether an introspection pass is warranted right now, before one runs.\n\n" +
         READ_ONLY +
@@ -4629,6 +4680,14 @@ async function introspect(rnd, reason, churn, byCadence) {
         null,
         2,
       ).slice(0, 12000) +
+      (selfInflicted
+        ? "\n\nA HARD SIGNAL FORCED THIS PASS: " + selfInflicted + ". A review loop whose findings are mostly " +
+          "defects in text it wrote itself does not converge by continuing: each fix supplies the next round's " +
+          "findings. Read the self-inflicted findings and the mechanisms they correct, and weigh `redesign` " +
+          "(specify those mechanisms whole, or remove the ones the spec does not require) and `reframe` (the " +
+          "scope admits more than the proposal changes) before `healthy`. Choosing `healthy` here needs evidence " +
+          "that the self-inflicted share is about to fall, stated as a prediction.\n"
+        : "") +
       (churn && churn.length
         ? "\n\nA COUNTER TRIPPED, which is why you were woken early. It is a crude instrument and it is often " +
           "wrong in both directions, so adjudicate rather than ratify:\n" + JSON.stringify(churn, null, 2)
@@ -5632,6 +5691,7 @@ async function runReviewLoop(cfg) {
   // standingRaises, compactionRan and lastGrowthSnap -- are deliberately NOT
   // reset here; each says why at its declaration.
   lastIntrospectRound = 0;
+  lastSelfInflictedWake = 0;
   const POOL = cfg.pool;
   const maxRounds = cfg.maxRounds;
   const retired = LOOP.retired;
@@ -6453,6 +6513,7 @@ async function runReviewLoop(cfg) {
       deduped: deduped.length,
       confirmed: confirmed.length,
       confirmedTitles: confirmed.map((f) => f.title),
+      selfInflictedShare: selfInflictedShareOf(confirmed),
       complete: roundComplete,
       retiredAfter: [...retired],
     });
@@ -6968,13 +7029,23 @@ async function runReviewLoop(cfg) {
     if (churn.length) history[history.length - 1].churnDetected = churn.map((c) => c.area);
     const dueByCadence = round - lastIntrospectRound >= introspectEvery;
     const dueBySweep = isSweep && confirmed.length > 0;
-    if (churn.length || dueByCadence || dueBySweep) {
-      const why = churn.length
+    // Forced regardless of introspectEvery and of the warrant gate. Null when
+    // the reviewers did not record introducedBy, which leaves the wake
+    // conditions as they were.
+    const selfInflicted = selfInflictedSignal(lastSelfInflictedWake);
+    if (selfInflicted) {
+      history[history.length - 1].selfInflictedSignal = selfInflicted;
+      lastSelfInflictedWake = round;
+    }
+    if (churn.length || dueByCadence || dueBySweep || selfInflicted) {
+      const why = selfInflicted
+        ? "a hard signal fired: " + selfInflicted
+        : churn.length
         ? "a churn counter tripped on " + churn.map((c) => c.area).join(", ")
         : dueBySweep
           ? "a full sweep confirmed findings, which is when the loop learns most about itself"
           : introspectEvery + " rounds since the last introspection";
-      const pass = await introspect(round, why, churn, dueByCadence);
+      const pass = await introspect(round, why, churn, dueByCadence, selfInflicted);
 
       // EVERY verdict goes to a panel now, including `healthy`. A wrong healthy
       // is the most expensive verdict in the loop -- it spends every remaining

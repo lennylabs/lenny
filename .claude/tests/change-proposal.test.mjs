@@ -2298,6 +2298,7 @@ t.section("B32. each review loop introspects and counts churn on its OWN rounds"
     {
       ...REVIEW_ARGS, ...ACTING, introspectEvery: 99, maxSpecReviewRounds: 2,
       maxNonSpecReviewRounds: 2, allowNonSpecOnUnconvergedSpec: true,
+      selfInflictedWindow: 99, // fixture findings are all "this-run"; only churn may wake a pass
     },
     introStubs({
       "probe:spec-changes": { stagesSpecChanges: true, why: "SPEC-1" },

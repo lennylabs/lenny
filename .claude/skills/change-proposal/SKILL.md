@@ -161,6 +161,7 @@ Every argument carries a class, and the class decides how you change it. `forwar
 | `introspectMode` | forward | `advisory` | `advisory`: `healthy` continues and any other verdict stops the run for the caller to correct. `acting`: panels on every verdict, redesign and prune executed in the loop |
 | `introspectModel`, `introspectEffort` | launch | `opus`, `high` | what the pass and its judges run at |
 | `haltWindow`, `haltRepeatTitle` | forward | 4, 3 | the informational hard signals a stop carries: rounds over which confirmed findings did not fall, and confirmations of one title |
+| `selfInflictedShare`, `selfInflictedWindow` | forward | 0.5, 2 | the self-inflicted hard signal: when the share of a round's confirmed findings that reviewers marked `introducedBy: this-run` exceeds the share in this many consecutive rounds of one loop, the next introspection pass is forced, bypassing `introspectEvery` and the warrant gate, and its brief states the signal so the pass weighs `redesign` or `reframe`. A round whose findings do not record `introducedBy` has no share and cannot fire it |
 | `directives` | anchored | none | strings carried into every lens, fix-design, and fixer prompt from round 1; how a relaunch carries what the stopped run learned |
 | `judgesPerVerdict` | forward | 3 | panel size for non-healthy verdicts, in the `acting` mode |
 | `judgesHealthy` | forward | 2 | panel size for `healthy`, in the `acting` mode |
