@@ -24,7 +24,9 @@
 //     "sections": ["7.2", "28.5.3"],    // spec sections to return whole, by number
 //     "context":  "what the caller is trying to establish",   // narrows which exact hits print in full
 //     "maxChars": 24000,                // output budget
-//     "exhaustive": false               // meaning: judge every paragraph in scope instead of a shortlist
+//     "exhaustive": true,               // meaning: judge every passage in scope. Default: only when the
+//                                       // scope holds 3,000 passages or fewer; false forces a shortlist
+//     "format": "text"                  // "json" returns every judged candidate, for tuning
 //   }
 //
 // Exact search is complete: every hit is listed by location even when its text is
@@ -66,7 +68,7 @@ const SKIP_DIR = new Set(["node_modules", ".git", "vendor", "testdata", "dist", 
 const MAX_FILE_BYTES = 6_000_000;
 const JEV_URL = "https://api.typesafe.ai/v1/systemone";
 const JEV_MODEL = process.env.LOOKUP_JEV_MODEL || "jev-latest";
-const JEV_CONCURRENCY = 16;
+const JEV_CONCURRENCY = Number(process.env.LOOKUP_JEV_CONCURRENCY) || 32;
 // A passage Jev rates at or above this is treated as relevant. Tune against real
 // lookups before relying on the boundary; the probability is printed with each hit.
 const RELEVANT = 0.5;
@@ -74,9 +76,14 @@ const RELEVANT = 0.5;
 // every occurrence, so a passage is dropped from the printed text only when Jev
 // rates it clearly unrelated. It stays in the location list either way.
 const NARROW = 0.35;
-// Passages each shortlist contributes to what Jev judges. The two lists overlap,
-// so the union is usually well under their sum.
-const SHORTLIST = 80;
+// Passages each shortlist contributes to what Jev judges. Measured against Jev
+// judging every passage of five spec files for eight paraphrase queries, 80 per
+// list reached 81% of the passages Jev rates 0.8 or higher and 160 reached 89%.
+const SHORTLIST = Number(process.env.LOOKUP_SHORTLIST) || 160;
+// At or below this many passages in scope, meaning search skips the shortlists and
+// judges everything: Jev judges about 2,000 passages in 9 seconds, so a scope of a
+// few files is cheaper to judge whole than to shortlist and miss.
+const JUDGE_ALL_BELOW = Number(process.env.LOOKUP_JUDGE_ALL_BELOW) || 3000;
 
 function usage(msg) {
   process.stderr.write(`lookup.mjs: ${msg}\nSee the header of .claude/tools/lookup.mjs for the request format.\n`);
@@ -362,42 +369,55 @@ async function jevAsk(key, state, questions) {
 }
 
 // One request per passage. Jev's accuracy falls as the state fills with text
-// unrelated to the question, so a passage is judged alone with its heading.
-async function judge(key, blocks, question) {
-  const out = new Array(blocks.length).fill(null);
+// unrelated to the question, so a passage is judged alone with its heading. Jev
+// answers every question in a request against the same state, so when several
+// queries shortlist one passage they travel together and the passage is sent once.
+// `items` is [{ block, questions: { id: question } }]; the result maps each id to
+// its probability, per item, or null where the request failed.
+async function judgeMany(key, items) {
+  const out = new Array(items.length).fill(null);
   let next = 0;
   let failed = 0;
   const worker = async () => {
     for (;;) {
       const i = next++;
-      if (i >= blocks.length) return;
-      const b = blocks[i];
+      if (i >= items.length) return;
+      const b = items[i].block;
       try {
-        const a = await jevAsk(key, { section_heading: b.heading, passage: b.text.slice(0, 12000) }, { q: question });
-        out[i] = a.q.noul;
+        const a = await jevAsk(key, { section_heading: b.heading, passage: b.text.slice(0, 12000) }, items[i].questions);
+        out[i] = Object.fromEntries(Object.entries(a).map(([id, v]) => [id, v.noul]));
       } catch {
         failed++;
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(JEV_CONCURRENCY, blocks.length) }, worker));
-  return { probs: out, failed };
+  await Promise.all(Array.from({ length: Math.min(JEV_CONCURRENCY, items.length) }, worker));
+  return { answers: out, failed };
 }
 
+async function judge(key, blocks, question) {
+  const { answers, failed } = await judgeMany(key, blocks.map((block) => ({ block, questions: { q: question } })));
+  return { probs: answers.map((a) => (a ? a.q : null)), failed };
+}
+
+// The wording was chosen by comparing variants on hand-labelled spec passages.
+// Asking for "the same rule about the same subject" ranks analogous rules about
+// other subjects lower than asking whether the passage "restates" the query; a
+// graded Score in place of the yes/no question ranked them worse than either.
 function meaningQuestion(query, context) {
   const instructions = { looking_for: query };
   if (context) instructions.caller_goal = context;
   instructions.question =
-    "Does `passage` state, define, require, or restate what `looking_for` describes" +
+    "Does `passage` state the same rule, limit, or behavior that `looking_for` describes, about the same subject and under the same condition" +
     (context ? ", in a way that bears on `caller_goal`" : "") +
-    "? The wording may differ from `looking_for`; judge the meaning.";
+    "? The wording may differ from `looking_for`.";
   return {
     type: "noul",
     instructions,
     criteria: {
-      true: "The passage itself contains a statement, rule, definition, table row, or example that expresses what `looking_for` describes.",
+      true: "The passage states that same rule, limit, or behavior, for the same subject as `looking_for`, in any wording.",
       false:
-        "The passage is about something else, or only mentions a related word without stating what `looking_for` describes.",
+        "The passage states a different rule, states a similar rule about a different subject, or only shares vocabulary with `looking_for`.",
     },
   };
 }
@@ -454,6 +474,7 @@ async function main() {
   }
 
   const out = [];
+  const records = [];
   let used = 0;
   // Prints text while the budget lasts; a hit that does not fit is still listed
   // by location, so the caller knows it exists and can ask for it.
@@ -552,12 +573,15 @@ async function main() {
     const all = [];
     for (const bl of blocksOf.values()) for (const b of bl) if (!b.isHeading && b.text.trim().length > 40) all.push(b);
     for (const m of meaning) if (!m || typeof m.query !== "string" || !m.query.trim()) usage("each meaning entry needs a query");
+    // A small scope is judged whole; so is any scope when the caller asks. Without
+    // a key there is no judge, so the shortlists are all there is to show.
+    const whole = key ? req.exhaustive === true || (req.exhaustive !== false && all.length <= JUDGE_ALL_BELOW) : false;
     // One embedding run serves every query in the call.
-    const emb = req.exhaustive || !all.length ? null : embedShortlist(all, meaning.map((m) => m.query), SHORTLIST);
+    const emb = whole || !all.length ? null : embedShortlist(all, meaning.map((m) => m.query), SHORTLIST);
     if (emb && emb.reason) emit(`\nEmbedding shortlist unavailable (${emb.reason}); meaning search used word overlap only.`);
     meaning.forEach((m, mi) => {
       m.ctx = m.context || req.context || "";
-      if (req.exhaustive) m.cands = all.map((b) => ({ block: b, via: "all" }));
+      if (whole) m.cands = all.map((b) => ({ block: b, via: "all" }));
       else {
         const byBlock = new Map();
         for (const b of shortlist(all, m.query + " " + m.ctx, SHORTLIST)) byBlock.set(b, "words");
@@ -565,6 +589,23 @@ async function main() {
         m.cands = [...byBlock].map(([block, via]) => ({ block, via }));
       }
     });
+    // Judge every query's candidates in one pass, one request per distinct passage.
+    let judgedFailed = 0;
+    if (key) {
+      const byBlock = new Map();
+      meaning.forEach((m, mi) => {
+        const q = meaningQuestion(m.query, m.ctx);
+        for (const c of m.cands) {
+          if (!byBlock.has(c.block)) byBlock.set(c.block, {});
+          byBlock.get(c.block)["q" + mi] = q;
+        }
+      });
+      const items = [...byBlock].map(([block, questions]) => ({ block, questions }));
+      const { answers, failed } = await judgeMany(key, items);
+      judgedFailed = failed;
+      const at = new Map(items.map((it, i) => [it.block, answers[i]]));
+      meaning.forEach((m, mi) => (m.probs = m.cands.map((c) => at.get(c.block)?.["q" + mi] ?? null)));
+    }
     for (const m of meaning) {
       const ctx = m.ctx;
       const cands = m.cands;
@@ -575,7 +616,7 @@ async function main() {
         continue;
       }
       const n = (v) => cands.filter((c) => c.via === v).length;
-      const mix = req.exhaustive ? "every passage in scope" : `${n("words")} by word overlap, ${n("embedding")} by embedding, ${n("both")} by both, of ${all.length} in scope`;
+      const mix = whole ? "every passage in scope" : `${n("words")} by word overlap, ${n("embedding")} by embedding, ${n("both")} by both, of ${all.length} in scope`;
       if (!key) {
         emit(`No TypeSafe key is set, so these are shortlisted candidates (${mix}), unjudged and unranked.`);
         // Without a judge there is no common score, so the two lists are interleaved.
@@ -588,15 +629,17 @@ async function main() {
         done++;
         continue;
       }
-      const { probs, failed } = await judge(key, cands.map((c) => c.block), meaningQuestion(m.query, ctx));
+      const probs = m.probs;
+      const failed = probs.filter((p) => p === null).length && judgedFailed ? probs.filter((p) => p === null).length : 0;
+      records.push({ query: m.query, context: ctx, inScope: all.length, candidates: cands.map((c, i) => ({ file: c.block.file, from: c.block.from, to: c.block.to, heading: c.block.heading, via: c.via, p: probs[i], text: c.block.text })) });
       const ranked = cands
         .map((c, i) => ({ ...c.block, via: c.via, p: probs[i] }))
         .filter((b) => b.p !== null && b.p >= RELEVANT)
         .sort((a, b) => b.p - a.p);
-      emit(`Jev judged ${cands.length} passage(s) (${mix}); ${ranked.length} matched.${failed ? ` ${failed} could not be judged.` : ""} This is a ranking, not a complete list${req.exhaustive ? "" : '; set "exhaustive": true to judge every passage'}.`);
+      emit(`Jev judged ${cands.length} passage(s) (${mix}); ${ranked.length} matched.${failed ? ` ${failed} could not be judged.` : ""} ${whole ? "Every passage in scope was judged, so a passage missing here was rated below the threshold." : 'This is a ranking over a shortlist, not a complete list; narrow "paths" or set "exhaustive": true to judge every passage.'}`);
       const skipped = [];
       for (const b of ranked) {
-        const head = `\n### ${where(b)}  (match ${b.p.toFixed(2)}, shortlisted by ${b.via})`;
+        const head = `\n### ${where(b)}  (match ${b.p.toFixed(2)}${b.via === "all" ? "" : ", shortlisted by " + b.via})`;
         if (fits(head + "\n" + render(b))) emit(head + "\n" + render(b));
         else skipped.push(b);
       }
@@ -608,7 +651,10 @@ async function main() {
     }
   }
 
-  process.stdout.write(out.join("\n") + "\n");
+  // "format": "json" returns every judged candidate with its probability, matched
+  // or not. It exists for measuring and tuning the search, not for reviewers.
+  if (req.format === "json") process.stdout.write(JSON.stringify({ meaning: records }) + "\n");
+  else process.stdout.write(out.join("\n") + "\n");
 }
 
 main().catch((e) => {
