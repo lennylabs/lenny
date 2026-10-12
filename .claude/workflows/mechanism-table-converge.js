@@ -22,6 +22,7 @@ export const meta = {
 //   workDir         scratch directory for the table and the logs, relative to repoRoot
 //   maxPasses       verify passes before stopping unconverged (default 5)
 //   directives      strings carried into every prompt (owner decisions and settled rules)
+//   stage           true to regenerate the proposal staging after convergence (default false)
 const A = args || {}
 const root = A.repoRoot
 const work = A.workDir || 'scratchpad/mechanism-table'
@@ -210,7 +211,10 @@ log(converged ? `Converged after ${pass} passes` : `Stopped unconverged after ${
 // ---- Stage ------------------------------------------------------------------
 phase('Stage')
 let staged = null
-if (converged) {
+// Staging rewrites the proposal, so it runs only when the caller asks for it.
+// The default stops after the table converges, so the owner can review the
+// table and its confirmed findings before any proposal text changes.
+if (converged && A.stage === true) {
   await call(
     `Regenerate the proposal's staging for this mechanism from ${tablePath}. Targets: ${A.stagingTargets}. ` +
       'Put the table (or its essential columns) in one home in non-spec-changes.md, state each ordering invariant once there, and replace every other statement of a cell, a writer list, or an order with a pointer to it. ' +
